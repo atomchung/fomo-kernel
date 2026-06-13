@@ -128,7 +128,7 @@ def fetch_prices(tickers, start):
     except ImportError:
         return None, "yfinance 未安裝"
     try:
-        data = yf.download(sorted(set(tickers) | {"SPY"}), start=start,
+        data = yf.download(sorted(set(tickers) | {"SPY", "QQQ", "SOXX"}), start=start,
                            progress=False, auto_adjust=True)["Close"]
     except Exception as e:
         return None, f"yfinance 下載失敗: {e}"
@@ -162,68 +162,89 @@ def fwd_from_px(rts, data, n_fwd=N_FWD):
         fwds.append(r["fwd"])
     return fwds, last_px
 
-def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
-    """Tier3 · E2：重建投組日報酬 vs SPY 回歸 → β、Jensen's Alpha。驗『你以為的 edge 是不是 beta』。"""
-    try:
-        import pandas as pd
-    except ImportError:
-        return dict(dim="alpha/beta", tier=3, triggered=False, severity=0, note="無 pandas")
-    if data is None or "SPY" not in list(getattr(data, "columns", [])):
-        return dict(dim="alpha/beta", tier=3, triggered=False, severity=0, note="無價格/SPY")
+def _port_daily_returns(rows, px):
+    """重建投組日報酬序列(昨日持股 × 今日價,排除當日買賣現金流)。"""
+    import pandas as pd
     from collections import defaultdict
-    px = data.ffill()
     days = list(px.index)
     ev = defaultdict(list)
     for r in rows:
         ev[pd.Timestamp(r["date"])].append(r)
     shares = defaultdict(float); prev = {}; port_rets = {}
     for i, day in enumerate(days):
-        if i > 0 and prev:                       # 用「昨日持股 × 今日價」算日報酬，排除當日買賣的現金流
+        if i > 0 and prev:
             num = den = 0.0
             for t, sh in prev.items():
                 if sh == 0 or t not in px.columns: continue
                 p1 = px[t].iloc[i]; p0 = px[t].iloc[i-1]
                 if pd.isna(p1) or pd.isna(p0): continue
                 num += sh * p1; den += sh * p0
-            if den > 0:
-                port_rets[day] = num / den - 1
+            if den > 0: port_rets[day] = num / den - 1
         for r in ev.get(day, []):
             shares[r["ticker"]] += r["qty"] if r["side"] == "buy" else -r["qty"]
         prev = dict(shares)
-    port = pd.Series(port_rets)
-    spy = px["SPY"].pct_change()
-    df = pd.DataFrame({"p": port, "s": spy}).dropna()
-    df = df[df["p"].abs() < 0.5]                  # 去離群（split/資料錯）
-    if len(df) < 60:
-        return dict(dim="alpha/beta", tier=3, triggered=False, severity=0, note=f"樣本不足 {len(df)} 天")
-    rf_d = rf_annual / 252.0                                       # 無風險利率(日)
+    return pd.Series(port_rets)
+
+def _regress(port, bench_px, rf_annual):
+    """對單一 benchmark 回歸 → β / Jensen α / 超額報酬。"""
+    import pandas as pd
+    df = pd.DataFrame({"p": port, "s": bench_px.pct_change()}).dropna()
+    df = df[df["p"].abs() < 0.5]                 # 去離群(split/資料錯)
+    if len(df) < 60: return None
+    rf_d = rf_annual / 252.0
     beta = df["p"].cov(df["s"]) / df["s"].var()
-    # Jensen's Alpha（通用標準）= 你的報酬 − [無風險 + β×(大盤 − 無風險)]
-    alpha_daily = df["p"].mean() - (rf_d + beta * (df["s"].mean() - rf_d))
-    alpha_ann = alpha_daily * 252.0
+    alpha_ann = (df["p"].mean() - (rf_d + beta * (df["s"].mean() - rf_d))) * 252.0
     port_tot = (1 + df["p"]).prod() - 1
-    spy_tot = (1 + df["s"]).prod() - 1
-    excess_vs_spy = port_tot - spy_tot                            # 入門版：純比大盤(不調風險)
-    rf_period = (1 + rf_d) ** len(df) - 1
-    jensen_period = port_tot - (rf_period + beta * (spy_tot - rf_period))   # 期間 Jensen α
-    beta_frac = 1 - max(jensen_period, 0) / port_tot if port_tot > 0 else 1.0
-    return dict(dim="alpha/beta", tier=3, triggered=(beta_frac > 0.6 and port_tot > 0),
-                severity=min(max(beta_frac, 0), 1), beta=beta, alpha_ann=alpha_ann,
-                port_tot=port_tot, spy_tot=spy_tot, jensen_period=jensen_period,
-                excess_vs_spy=excess_vs_spy, beta_frac=beta_frac, rf_annual=rf_annual, n=len(df))
+    bench_tot = (1 + df["s"]).prod() - 1
+    return dict(beta=beta, alpha_ann=alpha_ann, port_tot=port_tot,
+                bench_tot=bench_tot, excess=port_tot - bench_tot, n=len(df))
+
+BENCH_LABEL = {"SPY": "大盤", "QQQ": "科技股", "SOXX": "半導體"}
+
+def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
+    """E2：投組日報酬 vs 多基準回歸。多基準才誠實——贏 SPY 可能只是贏在板塊,不是 alpha。"""
+    try:
+        import pandas as pd  # noqa
+    except ImportError:
+        return dict(dim="alpha/beta", note="無 pandas")
+    if data is None or "SPY" not in list(getattr(data, "columns", [])):
+        return dict(dim="alpha/beta", note="無價格/SPY")
+    px = data.ffill()
+    port = _port_daily_returns(rows, px)
+    benchmarks = {}
+    for b in ["SPY", "QQQ", "SOXX"]:
+        if b in px.columns:
+            r = _regress(port, px[b], rf_annual)
+            if r: benchmarks[b] = r
+    if "SPY" not in benchmarks:
+        return dict(dim="alpha/beta", note="樣本不足")
+    spy = benchmarks["SPY"]
+    return dict(dim="alpha/beta", tier=3, benchmarks=benchmarks, n=spy["n"],
+                beta=spy["beta"], alpha_ann=spy["alpha_ann"],          # 頂層保留 SPY 值給 overview
+                port_tot=spy["port_tot"], spy_tot=spy["bench_tot"], excess_vs_spy=spy["excess"])
 
 def print_alpha_beta(d):
     print("\n" + "─"*60)
-    print("  真本事檢驗 · alpha / beta（把運氣和大盤扣掉，還剩多少是你的）")
+    print("  真本事檢驗 · 你贏的是 alpha(本事) 還是 beta(板塊)?")
     if d.get("note"):
         print(f"    （{d['note']}）"); return
-    print(f"    過去 {d['n']} 個交易日：你的投組 {d['port_tot']*100:+.0f}%、大盤SPY {d['spy_tot']*100:+.0f}%")
-    print(f"    ① 有沒有贏大盤   超額報酬 {d['excess_vs_spy']*100:+.0f} 個百分點")
-    print(f"    ② 冒了多少險     你的漲跌是大盤的 {d['beta']:.2f} 倍（像 {d['beta']:.1f} 倍槓桿的雲霄飛車）")
-    print(f"    ③ 真本事         Jensen's Alpha 年化 {d['alpha_ann']*100:+.1f}%"
-          f"（扣掉無風險利率 {d['rf_annual']*100:.1f}% 和風險後，仍多賺的；正=有料）")
-    print(f"    ▸ 一句話：你贏大盤 {d['excess_vs_spy']*100:+.0f}pp，但扣掉『膽子大』後，真本事約 {d['alpha_ann']*100:+.0f}%/年")
-    print(f"    ▸ 下次只改：每季只認 alpha，別把『大盤＋槓桿』給你的，當成自己的能力。")
+    bs = d["benchmarks"]
+    print(f"    過去 {d['n']} 個交易日,同一筆投組分別跟三個基準比(基準越貼近你的持股,越誠實):")
+    for b in ["SPY", "QQQ", "SOXX"]:
+        if b not in bs: continue
+        r = bs[b]
+        print(f"      vs {b}({BENCH_LABEL[b]:<3})  贏 {r['excess']*100:>+5.0f}pp ｜ β {r['beta']:.2f} ｜ α 年化 {r['alpha_ann']*100:>+5.0f}%")
+    tightest = "SOXX" if "SOXX" in bs else "QQQ" if "QQQ" in bs else "SPY"
+    r = bs[tightest]
+    if r["excess"] < 0.05:
+        verdict = (f"你連最貼近你持股的 {tightest}({BENCH_LABEL[tightest]}) 都贏不過——"
+                   f"你的『選股』幾乎沒有 alpha,你賺的是『選對板塊』(beta)。無腦買 {tightest} 結果差不多,還更省心。")
+    else:
+        verdict = (f"即使拿最嚴格的 {tightest}({BENCH_LABEL[tightest]}) 比,你還多賺 {r['excess']*100:+.0f}pp——"
+                   f"這部分比較可能是真本事(但仍是持倉法近似,別當機構級結論)。")
+    print(f"    ▸ {verdict}")
+    print(f"    ▸ 準不準?換個基準 α 就跳一大截,本身就是答案:你的 alpha 對基準極敏感 = 大半是 beta。"
+          f"\n      (此為持倉法日報酬近似:忽略現金、ffill 補價、去離群;量級對、非機構級歸因。)")
 
 # ─────────────────────────── 5. 五維 metrics ───────────────────────────
 MIN_WINNERS = 5     # winner_early 至少要這麼多「賣掉的贏家」才算可信(半年資料通常達得到)
@@ -421,6 +442,21 @@ def what_if(held, last_px):
     tot = sum(sh * last_px[t] for t, (sh, c) in held.items() if t in last_px)
     if tot <= 0: return None
     return dict(ai_mval=ai, ai_pct=ai / tot, drop30=ai * 0.30, drop50=ai * 0.50)
+
+def time_trend(rts, avg_down):
+    """時間維度:按年看關鍵行為指標,讓用戶看到自己『有沒有在進步』(復盤的留存核心)。"""
+    from collections import defaultdict
+    yr = defaultdict(lambda: {"pnl": 0.0, "w": 0, "l": 0, "we_w": 0, "we_n": 0, "ad": 0})
+    for r in rts:
+        y = r["exit"].year
+        yr[y]["pnl"] += r["qty"] * (r["sell_px"] - r["buy_px"])
+        yr[y]["w" if r["ret"] > 0 else "l"] += 1
+        if r.get("ret", 0) > 0 and r.get("fwd") is not None:
+            yr[y]["we_n"] += 1
+            if r["fwd"] > SELL_EARLY_TH: yr[y]["we_w"] += 1
+    for e in avg_down:
+        yr[e["date"].year]["ad"] += 1
+    return dict(sorted(yr.items()))
 def number_line(d):
     n = d["dim"]
     if n == "出場紀律":
@@ -443,7 +479,7 @@ def number_line(d):
         return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
     return ""
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None):
+def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None):
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
@@ -466,6 +502,17 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None):
         print(f"\n〔做得最好 / 最差的一筆〕")
         print(f"  ✅ 最賺:{best['ticker']} {best['ret']*100:+.0f}%（{best['buy_px']:.0f}→{best['sell_px']:.0f},抱 {best['hold']} 天）")
         print(f"  ❌ 最虧:{worst['ticker']} {worst['ret']*100:+.0f}%（{worst['buy_px']:.0f}→{worst['sell_px']:.0f},抱 {worst['hold']} 天）")
+    if trend and len(trend) >= 2:                  # 時間維度:有沒有在進步(箭頭看趨勢)
+        yrs = list(trend.keys())
+        def we(y):
+            d = trend[y]; return f"{d['we_w']/d['we_n']*100:.0f}%" if d['we_n'] else "—"
+        arrow = lambda a, b, good_down: ("↘ 變好" if (b < a) == good_down else "↗ 變糟") if a != b else "→"
+        print(f"\n〔時間維度 · 你在進步還是退步?〕")
+        print("           " + "".join(f"{y:>8}" for y in yrs))
+        print("  已實現$  " + "".join(f"{trend[y]['pnl']:>+8,.0f}" for y in yrs))
+        print("  加碼次數 " + "".join(f"{trend[y]['ad']:>8}" for y in yrs)
+              + f"   {arrow(trend[yrs[0]]['ad'], trend[yrs[-1]]['ad'], True)}（越少越好）")
+        print("  賣太早率 " + "".join(f"{we(y):>8}" for y in yrs) + "   （越低越好）")
     if wi:                                          # what-if:可量化的情境,不講「會一起倒」空話
         print(f"\n〔what if〕你 AI 暴險市值約 ${wi['ai_mval']:,.0f}（佔 {wi['ai_pct']*100:.0f}%）")
         print(f"  AI 回檔 30%(一般修正)→ 帳面 -${wi['drop30']:,.0f}；回檔 50%(2022級熊市)→ -${wi['drop50']:,.0f}。撐得住嗎?")
@@ -520,7 +567,8 @@ def main():
     overview = overview_stats(decision_rts, ab, held, last_px)   # 已實現 + 未實現都報
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
     wi = what_if(held, last_px)                            # 可量化的 what-if
-    render(dims, strength, overview, best, worst, wi)
+    trend = time_trend(decision_rts, avg_down)             # 時間維度:有沒有在進步
+    render(dims, strength, overview, best, worst, wi, trend)
     print_alpha_beta(ab)
 
 if __name__ == "__main__":
