@@ -238,20 +238,22 @@ def print_alpha_beta(d):
     port = spy["port_tot"]; vs_spy = spy["excess"]
     print(f"    過去 {d['n']} 個交易日:投組 {port*100:+.0f}%、大盤 SPY {spy['bench_tot']*100:+.0f}% → 你贏大盤 {vs_spy*100:+.0f}pp")
     print(f"    ① alpha(vs 通用大盤,調風險後):{spy['alpha_ann']*100:+.0f}%/年,β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）")
-    sect_key = "SOXX" if "SOXX" in bs else "QQQ" if "QQQ" in bs else None
-    if sect_key:
-        sect = bs[sect_key]; lbl = BENCH_LABEL[sect_key]
-        bonus = sect["bench_tot"] - spy["bench_tot"]   # 賽道 vs 大盤 = 押對方向的紅利
-        pick = port - sect["bench_tot"]                 # 你 vs 賽道 = 純選股力
-        print(f"    ② 你贏大盤的 {vs_spy*100:+.0f}pp,拆成「押對賽道」和「選股」(SOXX/QQQ 只當分解工具,非 alpha 基準):")
-        print(f"         押對 {lbl}賽道  {bonus*100:>+5.0f}pp  ← 無腦買 {sect_key} 就贏大盤這麼多,是押對方向、不是技巧")
-        print(f"         你的選股      {pick*100:>+5.0f}pp  ← 你選的股 vs 直接買 {sect_key},這才是純選股力")
-        if pick < 0:
-            print(f"    ▸ 準確認知:你的超額幾乎全來自「押對 {lbl}」。選股本身是負的——"
-                  f"同樣的錢無腦買 {sect_key} 還多賺 {-pick*100:.0f}pp。你會押賽道,不會選股。")
+    print(f"    ② 你贏大盤的 {vs_spy*100:+.0f}pp,有多少是『選股』、多少是『押對賽道』?——換對照看敏感度:")
+    for sk, tag in [("QQQ", "科技,較中性"), ("SOXX", "半導體,事後最強板塊→偏嚴苛")]:
+        if sk in bs:
+            pick = port - bs[sk]["bench_tot"]      # 你 vs 該賽道 = 純選股力
+            print(f"         你的選股 vs {sk}({tag}):  {pick*100:>+5.0f}pp")
+    if "QQQ" in bs:                                  # verdict 用較中性的 QQQ,不用事後最強的 SOXX
+        pick_n = port - bs["QQQ"]["bench_tot"]
+        if pick_n < -0.05:
+            print(f"    ▸ 準確認知:連較中性的 QQQ 你選股都輸 {-pick_n*100:.0f}pp,選股確實是弱項——"
+                  f"但別全盤否定:ETF 也買爛股、錯過妖股,選股的上限你還留著。")
         else:
-            print(f"    ▸ 準確認知:押對賽道 + 選股也加分,選股這 {pick*100:+.0f}pp 比較像真本事。")
-    print(f"    (持倉法日報酬近似;alpha 基準=通用大盤 SPY,賽道 ETF 只作歸因分解、不拿來判 alpha。)")
+            print(f"    ▸ 準確認知:你選股贏中性的 QQQ {pick_n*100:+.0f}pp,只是跑不贏事後最強的 SOXX。"
+                  f"選股不算爛,別被嚴苛基準嚇到。")
+    print(f"    ⚠️ 基準的坑:SOXX 是『事後』最強板塊,拿它比有存活者偏差(馬後炮),你也不一定該全押半導體。"
+          f"\n       真正公平的對照是『你當時板塊配置的混合』;這版先用現成 ETF 近似,重點看『選股 alpha 對基準多敏感』。")
+    print(f"    (持倉法日報酬近似;alpha 基準=通用大盤 SPY。)")
 
 # ─────────────────────────── 5. 五維 metrics ───────────────────────────
 MIN_WINNERS = 5     # winner_early 至少要這麼多「賣掉的贏家」才算可信(半年資料通常達得到)
@@ -471,21 +473,26 @@ def prescribe(ab, dims, overview):
     dd = {d["dim"]: d for d in dims}
     rx = []
     bs = (ab or {}).get("benchmarks", {})
-    if "SPY" in bs and ("SOXX" in bs or "QQQ" in bs):
-        spy = bs["SPY"]; sk = "SOXX" if "SOXX" in bs else "QQQ"; lbl = BENCH_LABEL[sk]
-        pick = spy["port_tot"] - bs[sk]["bench_tot"]        # 你 vs 賽道 = 純選股力
-        bonus = bs[sk]["bench_tot"] - spy["bench_tot"]      # 賽道 vs 大盤 = 方向紅利
-        if pick < -0.05 and bonus > 0:                       # 方向強、選股弱
-            rx.append(dict(kind="揚長", text=(
-                f"你相對強的是『方向判斷』(押對賽道貢獻 {bonus*100:+.0f}pp)。把研究精力集中在『下一個賽道是什麼』。"
-                f"誠實:這只證明在 AI 一個賽道上,要確認是 edge 不是運氣,得看你下兩三個賽道判斷準不準。")))
-            rx.append(dict(kind="外包短板", verify="個股檔數 / 集中度(降→好)", text=(
-                f"你的『選股』是負的——同樣的錢無腦買 {lbl} 還多賺 {-pick*100:.0f}pp。"
-                f"優化 = 把『在賽道內挑個股』這個決策外包給指數,別自己挑 20 幾檔。"
-                f"(流程建議,非標的建議:是『少做選股這個決策』,不是叫你買哪支)")))
-        elif pick > 0.05:                                    # 選股有 alpha
-            rx.append(dict(kind="揚長", text=(
-                f"你的『選股』有真 alpha(贏 {lbl} {pick*100:+.0f}pp),這是你的 edge——別讓 sizing/紀律問題稀釋它。")))
+    if "SPY" in bs and "QQQ" in bs:                          # 雙基準(中性 QQQ + 嚴苛 SOXX)判選股,避開 survivorship bias
+        spy = bs["SPY"]
+        pick_q = spy["port_tot"] - bs["QQQ"]["bench_tot"]    # 你 vs 中性科技
+        pick_s = (spy["port_tot"] - bs["SOXX"]["bench_tot"]) if "SOXX" in bs else pick_q  # 你 vs 事後最強板塊
+        if spy["excess"] > 0.10:                             # 贏大盤 → 揚長是「假設」不是「定論」
+            rx.append(dict(kind="揚長(假設,待驗證)", verify="記錄『下一個賽道』判斷,事後對帳",
+                           text=("你贏大盤主要靠『押對賽道/方向』(換哪個基準都成立)。但這只是『假設你有方向判斷力』,"
+                                 "不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,"
+                                 "看未來兩三次準不準,對了才叫 edge。")))
+        if pick_q < -0.05 and pick_s < -0.05:               # 連中性基準都輸 → 選股確實弱
+            rx.append(dict(kind="外包短板(漸進)", verify="被動部位佔比(升→好)",
+                           text=("你選股連中性的 QQQ 都輸——優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
+                                 "是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)")))
+        elif pick_q > 0.05 and pick_s > 0.05:               # 連嚴苛基準都贏 → 選股真 edge
+            rx.append(dict(kind="揚長", text="你選股連最嚴苛的 SOXX 都贏,這是真 edge——別讓 sizing/紀律稀釋它。"))
+        else:                                                # 一正一負 → 無定論,誠實不硬下處方
+            rx.append(dict(kind="選股:目前無定論", text=(
+                f"你的選股 alpha 對基準極敏感(vs 中性 QQQ {pick_q*100:+.0f}pp、vs 事後最強 SOXX {pick_s*100:+.0f}pp)——"
+                f"換個比法結論就翻。誠實說:資料還判不出你『會不會選股』,別急著外包、也別自滿。"
+                f"要定論,得拿『你當時的板塊配置混合』當對照(進階,還沒做)。")))
     ad = dd.get("加碼攤平", {})
     if ad.get("count", 0) >= 10 or ad.get("breach", 0) >= 1:
         rx.append(dict(kind="砍損耗", verify="虧損加碼次數(降→好)",
