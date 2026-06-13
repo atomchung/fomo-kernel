@@ -59,6 +59,7 @@ def load_driver_map(path):
 # ─────────────────────────── 1. 解析 ───────────────────────────
 def load(paths):
     rows = []
+    seen = set()        # 多份對帳單(完整歷史 + 最新增量)重疊期去重 → 合併到最新日期
     for p in paths:
         with open(p, newline="", encoding="utf-8-sig") as f:
             for r in csv.DictReader(f):
@@ -77,6 +78,10 @@ def load(paths):
                 if px <= 0 or qty <= 0:   # 濾掉 split/free-share/journal 等 price=0 的偽交易
                     continue
                 d = dt.date.fromisoformat(r["TradeDate"].strip())
+                rec = (sym, act.lower(), round(qty, 2), round(px, 4), d)
+                if rec in seen:           # 完全相同的交易 = 重疊期重複,跳過
+                    continue
+                seen.add(rec)
                 rows.append(dict(ticker=sym, side=act.lower(), qty=qty, price=px, date=d))
     rows.sort(key=lambda x: x["date"])
     return rows
@@ -225,26 +230,28 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
 
 def print_alpha_beta(d):
     print("\n" + "─"*60)
-    print("  真本事檢驗 · 你贏的是 alpha(本事) 還是 beta(板塊)?")
+    print("  你的報酬怎麼來的 · 把運氣(大盤+賽道)和技巧(選股)分開")
     if d.get("note"):
         print(f"    （{d['note']}）"); return
     bs = d["benchmarks"]
-    print(f"    過去 {d['n']} 個交易日,同一筆投組分別跟三個基準比(基準越貼近你的持股,越誠實):")
-    for b in ["SPY", "QQQ", "SOXX"]:
-        if b not in bs: continue
-        r = bs[b]
-        print(f"      vs {b}({BENCH_LABEL[b]:<3})  贏 {r['excess']*100:>+5.0f}pp ｜ β {r['beta']:.2f} ｜ α 年化 {r['alpha_ann']*100:>+5.0f}%")
-    tightest = "SOXX" if "SOXX" in bs else "QQQ" if "QQQ" in bs else "SPY"
-    r = bs[tightest]
-    if r["excess"] < 0.05:
-        verdict = (f"你連最貼近你持股的 {tightest}({BENCH_LABEL[tightest]}) 都贏不過——"
-                   f"你的『選股』幾乎沒有 alpha,你賺的是『選對板塊』(beta)。無腦買 {tightest} 結果差不多,還更省心。")
-    else:
-        verdict = (f"即使拿最嚴格的 {tightest}({BENCH_LABEL[tightest]}) 比,你還多賺 {r['excess']*100:+.0f}pp——"
-                   f"這部分比較可能是真本事(但仍是持倉法近似,別當機構級結論)。")
-    print(f"    ▸ {verdict}")
-    print(f"    ▸ 準不準?換個基準 α 就跳一大截,本身就是答案:你的 alpha 對基準極敏感 = 大半是 beta。"
-          f"\n      (此為持倉法日報酬近似:忽略現金、ffill 補價、去離群;量級對、非機構級歸因。)")
+    spy = bs["SPY"]
+    port = spy["port_tot"]; vs_spy = spy["excess"]
+    print(f"    過去 {d['n']} 個交易日:投組 {port*100:+.0f}%、大盤 SPY {spy['bench_tot']*100:+.0f}% → 你贏大盤 {vs_spy*100:+.0f}pp")
+    print(f"    ① alpha(vs 通用大盤,調風險後):{spy['alpha_ann']*100:+.0f}%/年,β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）")
+    sect_key = "SOXX" if "SOXX" in bs else "QQQ" if "QQQ" in bs else None
+    if sect_key:
+        sect = bs[sect_key]; lbl = BENCH_LABEL[sect_key]
+        bonus = sect["bench_tot"] - spy["bench_tot"]   # 賽道 vs 大盤 = 押對方向的紅利
+        pick = port - sect["bench_tot"]                 # 你 vs 賽道 = 純選股力
+        print(f"    ② 你贏大盤的 {vs_spy*100:+.0f}pp,拆成「押對賽道」和「選股」(SOXX/QQQ 只當分解工具,非 alpha 基準):")
+        print(f"         押對 {lbl}賽道  {bonus*100:>+5.0f}pp  ← 無腦買 {sect_key} 就贏大盤這麼多,是押對方向、不是技巧")
+        print(f"         你的選股      {pick*100:>+5.0f}pp  ← 你選的股 vs 直接買 {sect_key},這才是純選股力")
+        if pick < 0:
+            print(f"    ▸ 準確認知:你的超額幾乎全來自「押對 {lbl}」。選股本身是負的——"
+                  f"同樣的錢無腦買 {sect_key} 還多賺 {-pick*100:.0f}pp。你會押賽道,不會選股。")
+        else:
+            print(f"    ▸ 準確認知:押對賽道 + 選股也加分,選股這 {pick*100:+.0f}pp 比較像真本事。")
+    print(f"    (持倉法日報酬近似;alpha 基準=通用大盤 SPY,賽道 ETF 只作歸因分解、不拿來判 alpha。)")
 
 # ─────────────────────────── 5. 五維 metrics ───────────────────────────
 MIN_WINNERS = 5     # winner_early 至少要這麼多「賣掉的贏家」才算可信(半年資料通常達得到)
@@ -502,17 +509,6 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         print(f"\n〔做得最好 / 最差的一筆〕")
         print(f"  ✅ 最賺:{best['ticker']} {best['ret']*100:+.0f}%（{best['buy_px']:.0f}→{best['sell_px']:.0f},抱 {best['hold']} 天）")
         print(f"  ❌ 最虧:{worst['ticker']} {worst['ret']*100:+.0f}%（{worst['buy_px']:.0f}→{worst['sell_px']:.0f},抱 {worst['hold']} 天）")
-    if trend and len(trend) >= 2:                  # 時間維度:有沒有在進步(箭頭看趨勢)
-        yrs = list(trend.keys())
-        def we(y):
-            d = trend[y]; return f"{d['we_w']/d['we_n']*100:.0f}%" if d['we_n'] else "—"
-        arrow = lambda a, b, good_down: ("↘ 變好" if (b < a) == good_down else "↗ 變糟") if a != b else "→"
-        print(f"\n〔時間維度 · 你在進步還是退步?〕")
-        print("           " + "".join(f"{y:>8}" for y in yrs))
-        print("  已實現$  " + "".join(f"{trend[y]['pnl']:>+8,.0f}" for y in yrs))
-        print("  加碼次數 " + "".join(f"{trend[y]['ad']:>8}" for y in yrs)
-              + f"   {arrow(trend[yrs[0]]['ad'], trend[yrs[-1]]['ad'], True)}（越少越好）")
-        print("  賣太早率 " + "".join(f"{we(y):>8}" for y in yrs) + "   （越低越好）")
     if wi:                                          # what-if:可量化的情境,不講「會一起倒」空話
         print(f"\n〔what if〕你 AI 暴險市值約 ${wi['ai_mval']:,.0f}（佔 {wi['ai_pct']*100:.0f}%）")
         print(f"  AI 回檔 30%(一般修正)→ 帳面 -${wi['drop30']:,.0f}；回檔 50%(2022級熊市)→ -${wi['drop50']:,.0f}。撐得住嗎?")
