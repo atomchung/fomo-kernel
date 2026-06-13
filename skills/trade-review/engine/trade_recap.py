@@ -464,6 +464,39 @@ def time_trend(rts, avg_down):
     for e in avg_down:
         yr[e["date"].year]["ad"] += 1
     return dict(sorted(yr.items()))
+
+def prescribe(ab, dims, overview):
+    """處方層:從歸因 + 診斷生成優化路徑——揚長 edge / 外包短板 / 砍損耗。每條盡量附可驗 metric。
+    關鍵:處方是『放大你強的 + 外包你弱的』,不是通用避短。力量來自歸因精確(ChatGPT 沒你的數字不敢這樣說)。"""
+    dd = {d["dim"]: d for d in dims}
+    rx = []
+    bs = (ab or {}).get("benchmarks", {})
+    if "SPY" in bs and ("SOXX" in bs or "QQQ" in bs):
+        spy = bs["SPY"]; sk = "SOXX" if "SOXX" in bs else "QQQ"; lbl = BENCH_LABEL[sk]
+        pick = spy["port_tot"] - bs[sk]["bench_tot"]        # 你 vs 賽道 = 純選股力
+        bonus = bs[sk]["bench_tot"] - spy["bench_tot"]      # 賽道 vs 大盤 = 方向紅利
+        if pick < -0.05 and bonus > 0:                       # 方向強、選股弱
+            rx.append(dict(kind="揚長", text=(
+                f"你相對強的是『方向判斷』(押對賽道貢獻 {bonus*100:+.0f}pp)。把研究精力集中在『下一個賽道是什麼』。"
+                f"誠實:這只證明在 AI 一個賽道上,要確認是 edge 不是運氣,得看你下兩三個賽道判斷準不準。")))
+            rx.append(dict(kind="外包短板", verify="個股檔數 / 集中度(降→好)", text=(
+                f"你的『選股』是負的——同樣的錢無腦買 {lbl} 還多賺 {-pick*100:.0f}pp。"
+                f"優化 = 把『在賽道內挑個股』這個決策外包給指數,別自己挑 20 幾檔。"
+                f"(流程建議,非標的建議:是『少做選股這個決策』,不是叫你買哪支)")))
+        elif pick > 0.05:                                    # 選股有 alpha
+            rx.append(dict(kind="揚長", text=(
+                f"你的『選股』有真 alpha(贏 {lbl} {pick*100:+.0f}pp),這是你的 edge——別讓 sizing/紀律問題稀釋它。")))
+    ad = dd.get("加碼攤平", {})
+    if ad.get("count", 0) >= 10 or ad.get("breach", 0) >= 1:
+        rx.append(dict(kind="砍損耗", verify="虧損加碼次數(降→好)",
+                       rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)",
+                       text=f"虧損中加碼 {ad.get('count', 0)} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"))
+    sz = dd.get("部位 sizing", {})
+    if sz.get("max_pct", 0) > 0.30 and not any(r["kind"] == "砍損耗" for r in rx):
+        rx.append(dict(kind="砍損耗", verify="單筆最大佔比(降→好)",
+                       rule=f"單筆部位上限定死 20%,超過就減",
+                       text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
+    return rx
 def number_line(d):
     n = d["dim"]
     if n == "出場紀律":
@@ -486,7 +519,7 @@ def number_line(d):
         return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
     return ""
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None):
+def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None):
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
@@ -522,16 +555,23 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         intro = (_LENS or {}).get("strength_intro", "先說你做對的一件事:")
         print(f"  ✅ {intro}")
         print(f"     {strength}\n")
-    if not trig:
-        print("  這幾個地基你目前都守住了。進階維度需要你補一句下單理由。")
-        return
-    print("  復盤卡（top 1-2 最高代價的洞）：\n")
-    for d in trig[:2]:
-        rule, quote = card_for(d["dim"])
-        print(f"  ▍最大漏洞 · {d['dim']}")
-        print(f"    {number_line(d)}")
-        print(f"    ▸ 下次只改這一件：{rule}")
-        print(f"    ▸ {quote}\n")
+    if trig:
+        print("  復盤卡（top 1-2 最高代價的洞）：\n")
+        for d in trig[:2]:
+            rule, quote = card_for(d["dim"])
+            print(f"  ▍最大漏洞 · {d['dim']}")
+            print(f"    {number_line(d)}")
+            print(f"    ▸ {quote}\n")
+    else:
+        print("  這幾個地基你目前都守住了。\n")
+    if rx:                                          # 處方層:揚長 / 外包短板 / 砍損耗
+        print("  〔怎麼優化 · 放大你強的 + 外包你弱的 + 砍掉純損耗〕")
+        for r in rx:
+            v = f"  〔下次驗:{r['verify']}〕" if r.get("verify") else ""
+            print(f"    ▸ {r['kind']}:{r['text']}{v}")
+        actionable = [r for r in rx if r.get("rule")]
+        if actionable:
+            print(f"\n  ★ 下次只改這一件(可立即執行 + 可驗):{actionable[0]['rule']}")
 
 # ─────────────────────────── main ───────────────────────────
 def main():
@@ -563,8 +603,9 @@ def main():
     overview = overview_stats(decision_rts, ab, held, last_px)   # 已實現 + 未實現都報
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
     wi = what_if(held, last_px)                            # 可量化的 what-if
-    trend = time_trend(decision_rts, avg_down)             # 時間維度:有沒有在進步
-    render(dims, strength, overview, best, worst, wi, trend)
+    trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
+    rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
+    render(dims, strength, overview, best, worst, wi, trend, rx)
     print_alpha_beta(ab)
 
 if __name__ == "__main__":
