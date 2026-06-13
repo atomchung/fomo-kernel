@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+
+# 隱私鐵律:任何真實交易資料永不入 git。只有 mock 假資料例外。
+*.csv
+!skills/trade-review/mock/*.csv
