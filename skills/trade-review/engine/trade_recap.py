@@ -365,24 +365,43 @@ def card_for(dim):
         return d.get("rule", ""), f"{d.get('quote', '')}（{m}）"
     return CARD_LIB_FALLBACK.get(dim, ("", ""))
 
-def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim):
-    """負回饋循環解藥:卡片先給『你做對的最強一件事』再給洞。
+def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
+    """負回饋循環解藥:卡片先給『你做對的最強一件事』再給洞。白話 + 附具體案例,不講黑話。
     (demand-side 研究:看虧損=ego受傷;先肯定 → 降低防衛 → 才聽得進那一刀。)"""
     c = []
     we = exit_dim.get("winner_early")
     if we is not None and we < 0.35 and not exit_dim.get("low_conf"):
-        c.append((0.7 + (0.35 - we), f"你抱得住會跑的單——賣掉的贏家只 {we*100:.0f}% 事後續漲,出場不手軟。"))
+        eg = ""
+        if rts:   # 找一筆「賣了賺錢、賣完幾乎沒再漲」的具體案例佐證
+            cand = [r for r in rts if r.get("ret", 0) > 0.10 and r.get("fwd") is not None and r["fwd"] < 0.03]
+            if cand:
+                b = max(cand, key=lambda r: r["ret"])
+                eg = f"（例:{b['ticker']} 你賺 {b['ret']*100:.0f}% 出場,賣完它只動 {b['fwd']*100:+.0f}%——沒賣早）"
+        c.append((0.7+(0.35-we), f"該獲利了結時你不手軟:賣掉的賺錢單只有 {we*100:.0f}% 事後繼續漲,代表你不會「抱著賺錢的捨不得賣、結果回吐」{eg}"))
     mp = size_dim.get("max_pct", 1)
     if mp < 0.22:
-        c.append((1 - mp, f"你 sizing 有紀律——最大一筆只佔 {mp*100:.0f}%,沒梭哈。"))
+        c.append((1-mp, f"單筆部位有控制:押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
     if avgdown_dim.get("breach", 1) == 0 and avgdown_dim.get("count", 0) >= 2:
-        c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次,卻沒讓任何一筆破部位上限——紅線守住了。"))
+        c.append((0.65, f"就算往下加碼 {avgdown_dim['count']} 次,也沒有任何一筆失控加到爆倉(都守在部位上限內)"))
     if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
-        c.append((0.6, f"你 {div_dim['n']} 檔的 driver 夠分散,沒全押單一主題。"))
+        c.append((0.6, f"{div_dim['n']} 檔分布在不同 driver,沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
-        c.append((0.5, f"你有一致的時間框架——中位持有 {hold_dim['median_hold']:.0f} 天,進出沒亂套。"))
+        c.append((0.5, f"進出有一致的節奏:中位持有 {hold_dim['median_hold']:.0f} 天,不是隨機亂買亂賣"))
     if not c: return None
     c.sort(reverse=True); return c[0][1]
+
+def best_worst(rts):
+    """結果最好 / 最差的具體 round-trip,給卡片當案例(點:列出做得最好跟最不好的決策)。"""
+    closed = [r for r in rts if r.get("ret") is not None]
+    if not closed: return None, None
+    return max(closed, key=lambda r: r["ret"]), min(closed, key=lambda r: r["ret"])
+
+def overview_stats(rts, ab):
+    """卡片最上方的量化總覽:配對數 / 勝負 / 勝率 / α / β。"""
+    n = len(rts)
+    wins = sum(1 for r in rts if r["ret"] > 0)
+    losses = sum(1 for r in rts if r["ret"] < 0)
+    return dict(n_rt=n, wins=wins, losses=losses, win_rate=(wins/n if n else 0), ab=ab)
 def number_line(d):
     n = d["dim"]
     if n == "出場紀律":
@@ -405,7 +424,7 @@ def number_line(d):
         return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
     return ""
 
-def render(dims, strength=None):
+def render(dims, strength=None, overview=None, best=None, worst=None):
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
@@ -413,6 +432,17 @@ def render(dims, strength=None):
     print("="*60)
     print(f"  trade-recap · 鏡片 {master}  (引擎產出)")
     print("="*60)
+    if overview:                                   # 〔總覽〕量化:勝負 / 勝率 / α / β
+        o = overview; ab = o.get("ab") or {}
+        print(f"\n〔總覽〕{o['n_rt']} 筆完整買賣配對｜勝 {o['wins']} / 負 {o['losses']}（勝率 {o['win_rate']*100:.0f}%）")
+        if ab and not ab.get("note"):
+            warn = "" if ab["n"] >= 252 else f"  ⚠️ 僅 {ab['n']} 交易日(<1年),α 不可信、僅參考"
+            print(f"       贏大盤 {ab['excess_vs_spy']*100:+.0f}pp｜β {ab['beta']:.2f}（漲跌是大盤 {ab['beta']:.1f} 倍）"
+                  f"｜真本事 α 年化 {ab['alpha_ann']*100:+.0f}%{warn}")
+    if best and worst:                             # 做得最好 / 最差的一筆具體交易
+        print(f"\n〔做得最好 / 最差的一筆〕")
+        print(f"  ✅ 最賺:{best['ticker']} {best['ret']*100:+.0f}%（{best['buy_px']:.0f}→{best['sell_px']:.0f},抱 {best['hold']} 天）")
+        print(f"  ❌ 最虧:{worst['ticker']} {worst['ret']*100:+.0f}%（{worst['buy_px']:.0f}→{worst['sell_px']:.0f},抱 {worst['hold']} 天）")
     print("\n[5 維 severity（× tier 權重後排序）+ 原始數字]")
     for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
         flag = "🔴" if d["triggered"] else "⚪"
@@ -459,9 +489,12 @@ def main():
     d_exit = dim_exit(decision_rts, fwds); d_div = dim_diversify(held, last_px)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held, last_px, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
-    strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold)   # 先給做對的一件事
-    render(dims, strength)
-    print_alpha_beta(dim_alpha_beta(rows, px))
+    strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
+    ab = dim_alpha_beta(rows, px)
+    overview = overview_stats(decision_rts, ab)            # 最上方量化總覽
+    best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
+    render(dims, strength, overview, best, worst)
+    print_alpha_beta(ab)
 
 if __name__ == "__main__":
     main()
