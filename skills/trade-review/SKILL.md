@@ -76,6 +76,8 @@ python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock
 
 **等 Step 2 的確認都回來,才出這張卡。** 卡上的標籤是**定論**:用戶確認凹單的標凹單、確認逢低的標逢低,不留「凹單僥倖/待確認」這種問號(那是 Step 2 沒問完就出卡)。結合「引擎 overview + 機械洞 + 用戶剛確認的持股假設與動機」,出**一張**卡。每句都要**看得懂 + 有數據 + 有案例**,不准黑話:
 
+**呈現方式:用 `show_widget`(visualize MCP)出一張 HTML 卡,版型直接照 [`card-template.html`](card-template.html)。** 那個檔已是跑 mock 的完整四層版型(總覽 metric 卡 → 標的層診斷 → 最大的洞 → 機械層 5 維 → 報酬歸因 → 怎麼優化 → 下次只改 + 引言),換真人資料時把數字/標籤/敘事換掉、結構不動。設計規範:flat、明暗雙模式、Tabler outline icon、**無 emoji**(卡上的 ✓✗⚠ 一律用 `ti-check`/`ti-x`/`ti-alert-triangle` 等 icon + 語意色,不用文字符號或 emoji)、字重只用 400/500。下面這段文字規格定義的是**卡上要有哪些區塊、每句怎麼寫**——內容鐵律照搬,只是渲染成乾淨 HTML、不是 ASCII:
+
 ```
 復盤卡 · 用 {master} 的尺照你的交易
 
