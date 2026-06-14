@@ -126,6 +126,39 @@ def positions(rows):
     held = {t: (sh, c) for t, (sh, c) in pos.items() if sh > 1e-6}
     return held, avg_down
 
+def classify_adds(rows, min_adds=3):
+    """主從分類每個標的的加碼:疑似定投(漲跌都買/規律) vs 疑似凹單(只虧損買+金額加速) vs 待確認。
+    codex+gemini review 定稿:主從不投票;『價格無關 + 時間規律』為主、金額一致性最易誤判只當輔助;
+    機械只下『疑似』,最終靠用戶確認 thesis / 標交易意圖(進場打標 = v2 更根本解)。"""
+    pos = defaultdict(lambda: [0.0, 0.0])
+    buys = defaultdict(list)                       # ticker -> [(date, amount, in_loss)]
+    for r in rows:
+        t = r["ticker"]; sh, cost = pos[t]
+        if r["side"] == "buy":
+            avg = cost / sh if sh > 1e-9 else r["price"]
+            buys[t].append((r["date"], r["qty"] * r["price"], sh > 1e-9 and r["price"] < avg))
+            pos[t][0] += r["qty"]; pos[t][1] += r["qty"] * r["price"]
+        elif sh > 1e-9:
+            pos[t][1] -= min(r["qty"], sh) * (cost / sh); pos[t][0] -= r["qty"]
+    out = {}
+    for t, bs in buys.items():
+        if len(bs) < min_adds: continue
+        n = len(bs)
+        loss_ratio = sum(1 for _, _, il in bs if il) / n            # 主訊號:只在虧損買的比例(價格無關性)
+        loss_amts = [amt for _, amt, il in bs if il]
+        accel = len(loss_amts) >= 3 and statistics.mean(loss_amts[-2:]) > statistics.mean(loss_amts[:2]) * 1.5
+        gaps = [(bs[i + 1][0] - bs[i][0]).days for i in range(n - 1)]
+        mg = statistics.mean(gaps) if gaps else 0
+        regular = bool(gaps) and mg > 0 and statistics.pstdev(gaps) < mg * 0.6   # 輔:時間規律(間隔 CV 低)
+        if loss_ratio < 0.6 or regular:                             # 漲跌都買 或 時間規律 → 定投
+            cls = "疑似定投"
+        elif loss_ratio > 0.8 and accel:                            # 只虧損買 + 金額加速 → 凹單
+            cls = "疑似凹單"
+        else:
+            cls = "待確認"
+        out[t] = dict(cls=cls, n_adds=n, loss_ratio=loss_ratio)
+    return out
+
 # ───────────────────── 4. yfinance 補價（賣太早）─────────────────────
 def fetch_prices(tickers, start):
     try:
@@ -505,57 +538,60 @@ def prescribe(ab, dims, overview):
                        text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
     return rx
 
-def ticker_diagnosis(rts, avg_down, held, last_px, top_n=7):
-    """標的層診斷(對事不對人):每檔的金額影響(已實現+未實現)+ 行為標籤,
-    **按 |金額| 排序只取 top**——抓大放小,佔金額小的標的不糾結。"""
+def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
+    """標的層診斷(對事不對人):每檔金額影響(已實現+未實現)+ 行為標籤,按 |金額| 排序只取 top。
+    加碼用主從分類器(classify_adds)分疑似定投/凹單/待確認,不再用純結果判(避 outcome bias);
+    出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。"""
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
-                                   avgdown=0, cur_ret=None, mval=0.0, held=False))
-    for r in rts:                                          # 已實現損益 + 賣太早
+                                   cur_ret=None, mval=0.0))
+    for r in rts:
         a = agg[r["ticker"]]
         a["realized"] += r["qty"] * (r["sell_px"] - r["buy_px"])
         if r.get("ret", 0) > 0 and r.get("fwd") is not None:
             a["win_n"] += 1
             if r["fwd"] > SELL_EARLY_TH: a["win_early"] += 1
     tot_mval = sum(sh * last_px[t] for t, (sh, c) in held.items() if t in last_px) or 1.0
-    for t, (sh, cost) in held.items():                    # 未實現 + 當前盈虧 + 權重
+    for t, (sh, cost) in held.items():
         px = last_px.get(t)
         if px:
-            a = agg[t]; a["held"] = True
+            a = agg[t]
             a["unreal"] = sh * px - cost
             a["cur_ret"] = (px - cost / sh) / (cost / sh) if sh else 0
             a["mval"] = sh * px
-    for e in avg_down:
-        agg[e["ticker"]]["avgdown"] += 1
     out = []
     for t, a in agg.items():
         impact = a["realized"] + a["unreal"]
         if abs(impact) < 1: continue
         cur, wpct, tags = a["cur_ret"], a["mval"] / tot_mval, []
-        if a["avgdown"] >= 1 and cur is not None and cur < -0.25:
-            tags.append(f"✗凹單:虧 {cur*100:.0f}% 還往下加 {a['avgdown']} 次")
-        elif cur is not None and cur < -0.40:
+        ac = adds_class.get(t) or {}
+        cls, n_adds = ac.get("cls"), ac.get("n_adds", 0)
+        if cls == "疑似凹單":                         # 主從分類:只在虧損買 + 金額加速
+            if cur is not None and cur < -0.10:
+                tags.append(f"✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur*100:.0f}%(待你確認 thesis)")
+            else:
+                tags.append(f"⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣,不是紀律")
+        elif cls == "待確認" and n_adds >= 4:
+            tags.append(f"？加碼 {n_adds} 次待確認:是定投還是凹單,要你定")
+        elif cls == "疑似定投":
+            tags.append(f"✓疑似定投:漲跌都買/規律 {n_adds} 次,不是凹單")
+        if cls != "疑似凹單" and cur is not None and cur < -0.40:
             tags.append(f"✗套牢:{cur*100:.0f}% 還抱著沒處理")
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
-            tags.append(f"✗賣太早:{a['win_early']}/{a['win_n']} 筆賣完續漲")
+            tags.append(f"賣後機會成本:{a['win_early']}/{a['win_n']} 筆賣完它還漲(非審判,看你出場規則一致嗎)")
         if wpct > 0.25:
             tags.append(f"⚠押太重:佔組合 {wpct*100:.0f}%")
-        if cur is not None and cur > 0.20:
-            if a["avgdown"] <= 1:
-                tags.append(f"✓紀律持有:賺 {cur*100:.0f}%、沒亂加")
-            elif a["avgdown"] <= 4:
-                tags.append(f"✓賺錢:賺 {cur*100:.0f}%(中途加 {a['avgdown']} 次,還算節制)")
-            else:                                     # 大量虧損加碼 + 現賺 = 僥倖,不是紀律(避免 outcome bias)
-                tags.append(f"⚠凹單僥倖:現賺 {cur*100:.0f}% 但虧損中加了 {a['avgdown']} 次——漲回來是運氣,跟套牢凹單同款行為")
+        if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
+            tags.append(f"✓紀律持有:賺 {cur*100:.0f}%")
         if not tags:
             tags.append("— 大致中性")
-        thesis_q = None                              # 從行為推測持股假設 → 讓用戶確認(逢低 vs 凹單的真分界)
-        if a["avgdown"] >= 5 and cur is not None:
+        thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問)
+        if cls in ("疑似凹單", "待確認") and n_adds >= 4 and cur is not None:
             if cur < 0:
-                thesis_q = (f"跌了一路加碼 {a['avgdown']} 次、現在還虧 {cur*100:.0f}%——"
+                thesis_q = (f"虧損中加碼 {n_adds} 次、現在還虧 {cur*100:.0f}%——"
                             f"你還相信當初買它的理由嗎,還是只是不想認賠、想攤低等回本?")
             else:
-                thesis_q = (f"跌了一路加碼 {a['avgdown']} 次、現在賺 {cur*100:.0f}%——"
-                            f"這是進場前就定好的『核心倉、跌就加』,還是套牢後才說服自己長期持有?")
+                thesis_q = (f"虧損中加碼 {n_adds} 次、現在賺 {cur*100:.0f}%——"
+                            f"這是進場前定好的『定期買、長期持有』,還是套牢後才合理化、剛好漲回?")
         out.append(dict(ticker=t, impact=impact, tags=tags, thesis_q=thesis_q))
     out.sort(key=lambda x: abs(x["impact"]), reverse=True)
     return out[:top_n]
@@ -676,7 +712,8 @@ def main():
     wi = what_if(held, last_px)                            # 可量化的 what-if
     trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
     rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
-    tdiag = ticker_diagnosis(rts, avg_down, held, last_px) # 標的層:按金額排序,對事不對人
+    adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
+    tdiag = ticker_diagnosis(rts, adds_class, held, last_px)  # 標的層:按金額排序,對事不對人
     render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
     print_alpha_beta(ab)
 
