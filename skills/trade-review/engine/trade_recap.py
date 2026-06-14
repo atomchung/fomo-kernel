@@ -504,6 +504,53 @@ def prescribe(ab, dims, overview):
                        rule=f"單筆部位上限定死 20%,超過就減",
                        text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
     return rx
+
+def ticker_diagnosis(rts, avg_down, held, last_px, top_n=7):
+    """標的層診斷(對事不對人):每檔的金額影響(已實現+未實現)+ 行為標籤,
+    **按 |金額| 排序只取 top**——抓大放小,佔金額小的標的不糾結。"""
+    agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
+                                   avgdown=0, cur_ret=None, mval=0.0, held=False))
+    for r in rts:                                          # 已實現損益 + 賣太早
+        a = agg[r["ticker"]]
+        a["realized"] += r["qty"] * (r["sell_px"] - r["buy_px"])
+        if r.get("ret", 0) > 0 and r.get("fwd") is not None:
+            a["win_n"] += 1
+            if r["fwd"] > SELL_EARLY_TH: a["win_early"] += 1
+    tot_mval = sum(sh * last_px[t] for t, (sh, c) in held.items() if t in last_px) or 1.0
+    for t, (sh, cost) in held.items():                    # 未實現 + 當前盈虧 + 權重
+        px = last_px.get(t)
+        if px:
+            a = agg[t]; a["held"] = True
+            a["unreal"] = sh * px - cost
+            a["cur_ret"] = (px - cost / sh) / (cost / sh) if sh else 0
+            a["mval"] = sh * px
+    for e in avg_down:
+        agg[e["ticker"]]["avgdown"] += 1
+    out = []
+    for t, a in agg.items():
+        impact = a["realized"] + a["unreal"]
+        if abs(impact) < 1: continue
+        cur, wpct, tags = a["cur_ret"], a["mval"] / tot_mval, []
+        if a["avgdown"] >= 1 and cur is not None and cur < -0.25:
+            tags.append(f"✗凹單:虧 {cur*100:.0f}% 還往下加 {a['avgdown']} 次")
+        elif cur is not None and cur < -0.40:
+            tags.append(f"✗套牢:{cur*100:.0f}% 還抱著沒處理")
+        if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
+            tags.append(f"✗賣太早:{a['win_early']}/{a['win_n']} 筆賣完續漲")
+        if wpct > 0.25:
+            tags.append(f"⚠押太重:佔組合 {wpct*100:.0f}%")
+        if cur is not None and cur > 0.20:
+            if a["avgdown"] <= 1:
+                tags.append(f"✓紀律持有:賺 {cur*100:.0f}%、沒亂加")
+            elif a["avgdown"] <= 4:
+                tags.append(f"✓賺錢:賺 {cur*100:.0f}%(中途加 {a['avgdown']} 次,還算節制)")
+            else:                                     # 大量虧損加碼 + 現賺 = 僥倖,不是紀律(避免 outcome bias)
+                tags.append(f"⚠凹單僥倖:現賺 {cur*100:.0f}% 但虧損中加了 {a['avgdown']} 次——漲回來是運氣,跟套牢凹單同款行為")
+        if not tags:
+            tags.append("— 大致中性")
+        out.append(dict(ticker=t, impact=impact, tags=tags))
+    out.sort(key=lambda x: abs(x["impact"]), reverse=True)
+    return out[:top_n]
 def number_line(d):
     n = d["dim"]
     if n == "出場紀律":
@@ -526,7 +573,7 @@ def number_line(d):
         return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
     return ""
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None):
+def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None):
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
@@ -552,6 +599,10 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     if wi:                                          # what-if:可量化的情境,不講「會一起倒」空話
         print(f"\n〔what if〕你 AI 暴險市值約 ${wi['ai_mval']:,.0f}（佔 {wi['ai_pct']*100:.0f}%）")
         print(f"  AI 回檔 30%(一般修正)→ 帳面 -${wi['drop30']:,.0f}；回檔 50%(2022級熊市)→ -${wi['drop50']:,.0f}。撐得住嗎?")
+    if tdiag:                                       # 標的層診斷:按金額排序,對事不對人(小倉不糾結)
+        print(f"\n〔標的層診斷 · 按金額排序,只看影響大的(小倉不糾結)〕")
+        for d in tdiag:
+            print(f"  {d['ticker']:<6}{d['impact']:>+11,.0f}   {' ｜ '.join(d['tags'])}")
     print("\n[5 維 severity（× tier 權重後排序）+ 原始數字]")
     for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
         flag = "🔴" if d["triggered"] else "⚪"
@@ -612,7 +663,8 @@ def main():
     wi = what_if(held, last_px)                            # 可量化的 what-if
     trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
     rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
-    render(dims, strength, overview, best, worst, wi, trend, rx)
+    tdiag = ticker_diagnosis(rts, avg_down, held, last_px) # 標的層:按金額排序,對事不對人
+    render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
     print_alpha_beta(ab)
 
 if __name__ == "__main__":
