@@ -1,8 +1,9 @@
 # trade-review · Backlog
 
 > 從 2026-06-14 的 user-story × engine review 拍出來的待辦。
-> 這個 session 只負責「記錄 + 估範圍」，實作交給後續 session。
 > 背景脈絡：受眾已收窄為「會用 AI 工具的人（含交易上仍憑感覺的散戶）」；skill 是第一期本體（資料留本機解隱私），不是探針。卡的唯一賣點 = 用你自己的數字，誠實說出你「知道卻沒做到」的事。
+
+> ⚠️ **兩條線同步註記（2026-06-14）**：本檔的「願景層 + ISSUE-1」來自下午的 user-story / 願景 review session；另有一條「engine 實作線」今早 10:34–11:53 並行推進（commit c6cb138→dccf9c4），已 pivot 到 `behavior-diagnosis.md`（對事不對人、行為多標籤）並實作標的層診斷。動 engine 前先跟那條線對齊，別重工。
 
 ---
 
@@ -11,42 +12,55 @@
 **問題**
 `engine/trade_recap.py` 的 alpha 在樣本不足時，仍以「真本事 α」的*能力*語氣輸出 → 會在看得懂統計的受眾面前砸掉第一張卡的信任。
 
-- `_regress()` (trade_recap.py:198)：門檻只有 `len(df) < 60`（≈3 個月）就吐 α 數字。
-- overview (trade_recap.py:585-587)：措辭「真本事 α 年化 X%」，<252 天只加一句小警語，**數字照印**。
+- `_regress()` (trade_recap.py:231)：門檻只有 `len(df) < 60`（≈3 個月）就吐 α 數字。
+- overview (trade_recap.py:634-636)：措辭「真本事 α 年化 X%」，<252 天只加一句小警語，**數字照印**。
 - 統計真相：α 作為「能力證據」的顯著性 ≈ Information Ratio × √年數；散戶尺度（1–2 年、幾十筆）**結構上到不了顯著**。而 mock 失真的真因*不是*天數（有 605 天），是**橫截面太窄**（4 檔、98% 同一 driver）→ 算出的是賽道不是選股。
+> 行號已更新至 721 行版 engine（dccf9c4 後）。那批 commit 動的是攤平/出場，**α 邏輯未被動，本 issue 仍有效**。
 
 **要改**
 1. 新增 `alpha_credible(ab, held, rts)` 雙閘門：(a) 天數夠（建議 ≥252，且仍標「個人 α 偏 noisy」）**AND** (b) 橫截面夠寬（持倉檔數 ≥ N 且最大單一 driver 暴險 < ~50%，否則 α = 賽道紅利非選股）。
-2. overview α 印法 (:585-587)：credible 才出「α 年化」；否則只出 β + 「贏大盤 +Xpp（拆帳見下）」，**拿掉「真本事」**。
-3. `print_alpha_beta()` (:231-256)：不 credible 時整段降級成「報酬拆帳」語氣，不出 `alpha_ann` 數字，只留「贏大盤多少 / 多少來自賽道」的描述性分解（這層不需顯著性、誠實）。
-4. lens 同步：`rubric/vincent-yu.lens.json` 的 `dims."alpha/beta".motive_q` + SKILL.md Step 2，不 credible 時不要問「這報酬算你選股本事還是敢押高波動」（前提已不成立）。
+2. overview α 印法 (:634-636)：credible 才出「α 年化」；否則只出 β + 「贏大盤 +Xpp（拆帳見下）」，**拿掉「真本事」**。
+3. `print_alpha_beta()` (約 :264-289)：不 credible 時整段降級成「報酬拆帳」語氣，不出 `alpha_ann` 數字，只留「贏大盤多少 / 多少來自賽道」的描述性分解（這層不需顯著性、誠實）。
+4. lens 同步：`rubric/vincent-yu.lens.json` 的 `dims."alpha/beta".motive_q` + SKILL.md，不 credible 時不要問「這報酬算你選股本事還是敢押高波動」（前提已不成立）。
 
 **驗收**：跑 mock（4 檔 / 98% AI）→ 不再出現「真本事 α +33%」大字，改為「樣本/持倉不足以判定選股能力，先看行為層」之類。
 **範圍**：單檔 ~30–50 行，3 處輸出 gate + 1 判斷函式 + 1 處 lens/SKILL 同步。低風險（純輸出層）。約半天。
-**原則來源**：trader-types.md §2「只對確定的、跟運氣/基準無關的下重話；會不會選股對基準/樣本敏感 → 誠實標無定論」。
+**原則來源**：跟 `behavior-diagnosis.md` 同向——`prescribe()`（:525-527）對「選股 edge」已經誠實標「資料還判不出、別急著外包也別自滿」；α overview 還沒跟上這個誠實標準，本 issue 就是讓它跟上。
 
 ---
 
-## ISSUE-2 ·〔大〕落地 trader-types.md：先判型再評分（revealed style）
+## ISSUE-2 ·〔已作廢校正〕原「落地分型」→ 改為「補 behavior-diagnosis 還缺的純損耗標籤」
 
-**問題**
-`trader-types.md` 已寫完「先分型、再評好壞，否則拿錯尺打人」的完整設計，但 `engine/trade_recap.py` **完全沒接**——5 維對所有人一視同仁、tier 權重寫死。現況等於拿 VY（存活/紀律派）的尺打每個人，會把動能交易者的「追高 / 賣太早」當成洞照出來。這是 PRD §5.1「style-aware lens MUST」+ §3「revealed style 鐵則」+ crux #5 的實作缺口。也是「VY 有沒有意義」的答案：缺了分型這一步，VY 在機械層發揮不出意義、還會誤傷。
+**校正記錄（2026-06-14）**
+本 issue 原寫「落地 trader-types.md 先判型再評分」。**作廢**——`trader-types.md` 已於今早 10:34（c6cb138）被否決移除，正解是 `behavior-diagnosis.md`（對事不對人 · 行為多標籤）。理由比分型強：散戶是風格縫合怪、硬分型會錯判；整個開發照出的真洞全是「對事」算的，分型是多餘中間層；「同訊號不同風格意義相反」用「標的層脈絡」就能解、無單點誤判風險。engine 的 `ticker_diagnosis()`（標的層多標籤）已實作此方向。
 
-**要改**
-1. **新增進場時機資料**：每筆 entry 抓 entry 日前 ~20 交易日的價格區間，算進場價相對位置（追高 vs 逆勢）。⚠️ `fetch_prices` 的 `start`(:639) 目前只往前 10 天、不夠 20 日窗口 → 要拉到 ~entry−35 天。
-2. **分型器** `classify_trader_type()`：用 持有期中位（已有 `median_hold`）+ 進場時機（新）+ 標的性質（driver 表近似）→ trader-types.md 的 6 型 / 「未成形」。
-3. **5 維按型開關/反轉**：5 個 dim 函式吃「型」參數——動能型追高不罰、winner 賣太早加重；價值型逆勢加碼降權但抓「無限攤平 / 套牢叫長期」。跨型純損耗（虧損加碼破線 / 梭哈 / 報復交易）不分型照打。
-4. **誤傷防火牆**（crux #5）：分型信心度低 → 退回普世層（strategy-agnostic 地基），不硬判簽名層。
-5. **SKILL / lens 同步**：VY 動機單元（SKILL Step 2 對照表）按型開關。
+**真正還缺的（= behavior-diagnosis.md §下一步2 的 ⏳）**
+第一層「跨型純損耗」還差兩個標籤未落到 engine：
+- `revenge_trade`：連敗後 / 短時間內報復性加碼同標的 → 處方「連敗 N 次強制冷靜期」。
+- `overtrading` 強化：高頻進出且淨輸大盤（Barber-Odean），目前只有頻率 + α/β 部分覆蓋。
 
-**驗收**：同一份動能型交易，不再把「追高」列為洞；價值型的「逆勢加碼」不再無腦進卡；判不出型 → 標「未成形」當第一個洞。
-**範圍**：跨 engine（新資料 + 分型器 + 5 維重構）+ SKILL.md +（可能）lens 結構。中–高風險（判錯型 = 砸第一張卡 = crux #5）。約 1–2 週。**是 feature 不是 fix。**
-**依賴**：建議先做 ISSUE-1（小、獨立），ISSUE-2 接其後。
+**範圍**：engine 內加 2 個偵測 + 對應可驗處方。中等。跟 ISSUE-1 獨立。
+**注意**：這條屬「engine 實作線」，動工前先跟該線對齊，別重工。
 
 ---
 
-## 候選（未拍板，討論中，先別動工）
+## 願景層（2026-06-14 下午 session 拍板）
 
-- **pre-trade gate**：把卡的「下次只改一件」沉澱成本機 `my-rules.md`，下次下單前 `/trade-review check <ticker>` 拿規矩攔一次。市場空白（無人把復盤回灌下一筆）+ 解 Epic D 留存 + 正中北極星「改下一筆」。
-- **多哲學對照**：同一份交易用 2–3 個*哲學不同*的鏡片照、顯示分歧，讓用戶從分歧認出自己信哪派（= owner「從參照對象找投資哲學」的互動化）。先例：AI Investment Committee。風險：別變成第二份報告，仍要收斂到分歧最大那一點。
-- **吃用戶全 context**：skill 在用戶自己的 Claude 裡跑 → 可讀他的 thesis 筆記 / KOL 內容，把「從交易*推斷*動機」升級成「拿進場 thesis 原文對帳」。SaaS trade journal 結構上做不到（它們只有交易資料）。
+**終局形態 = 投資教練 agent（process coach，不是 stock advisor）。** 從「事後一張卡」進化成「事前承諾 → 事後對帳」的閉環。四條紅線必守：
+1. **過程教練 ≠ 選股顧問**：教怎麼決策（紀律/守則/對帳動機），絕不碰買哪支（IP/法規/北極星）。
+2. **會拒絕 ≠ 有求必應**：有求必應的投資 agent = 「焦慮買答案」的溫床 = 產品要解的病本身。克制是 feature。
+3. **有哲學但不寫死**：哲學寫死=拿錯尺、無哲學=yes-man。靠 behavior-diagnosis 的「風格當脈絡」解。
+4. **記得你 → skill 要長出本機狀態**（`~/.trade-coach/`）才成 agent；Claude Code/Agent SDK 已是 runtime，不必從零造。
+
+**6 步課程弧線**（每步都有現成零件）：初診(卡) → 訂計畫(守則檔) → 賽前提醒(pre-trade gate) → 賽後對帳(驗規矩) → 升級畢業(守則清單) → 哲學演進(behavior-diagnosis 風格脈絡)。
+**演進路徑**：v0 無狀態卡 → v1 守則檔+gate+對帳 → v2 風格脈絡+多鏡片 → v3 全 context 對帳。
+**守北極星**：vision 是 agent，但 next action 仍是「那張卡戳中一個真人」（Stage 0 仍未跑 = 最大未驗風險）。別讓大願景偷走當下該驗的小東西。
+
+---
+
+## 候選（未拍板）
+
+- **pre-trade gate**：把「下次只改一件」沉澱成本機 `my-rules.md`，下單前 `/trade-review check <ticker>` 攔一次。市場空白（無人把復盤回灌下一筆）+ 解 Epic D 留存 + 正中北極星。守則檔就是 skill 的「狀態/記憶」。
+- **thesis 對帳**：⭐ engine 已起頭（`4599f4f` infer-thesis-from-behavior）。可升級成「拿用戶*寫過的*進場 thesis 原文對帳」——從推斷動機 → 核對原文。skill 能吃用戶全 context，SaaS 結構上做不到。
+- **行為 counterfactual 重放**：「賣太早那批多抱 30 天會怎樣」——`fwd_from_px` 已有資料，低成本高回報。
+- **多哲學對照**：部分已被 behavior-diagnosis「風格當脈絡」吸收；若要做成「多鏡片顯示分歧」，守住收斂——只呈現分歧最大那一點，別變第二份報告。
