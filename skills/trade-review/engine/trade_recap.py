@@ -548,7 +548,15 @@ def ticker_diagnosis(rts, avg_down, held, last_px, top_n=7):
                 tags.append(f"⚠凹單僥倖:現賺 {cur*100:.0f}% 但虧損中加了 {a['avgdown']} 次——漲回來是運氣,跟套牢凹單同款行為")
         if not tags:
             tags.append("— 大致中性")
-        out.append(dict(ticker=t, impact=impact, tags=tags))
+        thesis_q = None                              # 從行為推測持股假設 → 讓用戶確認(逢低 vs 凹單的真分界)
+        if a["avgdown"] >= 5 and cur is not None:
+            if cur < 0:
+                thesis_q = (f"跌了一路加碼 {a['avgdown']} 次、現在還虧 {cur*100:.0f}%——"
+                            f"你還相信當初買它的理由嗎,還是只是不想認賠、想攤低等回本?")
+            else:
+                thesis_q = (f"跌了一路加碼 {a['avgdown']} 次、現在賺 {cur*100:.0f}%——"
+                            f"這是進場前就定好的『核心倉、跌就加』,還是套牢後才說服自己長期持有?")
+        out.append(dict(ticker=t, impact=impact, tags=tags, thesis_q=thesis_q))
     out.sort(key=lambda x: abs(x["impact"]), reverse=True)
     return out[:top_n]
 def number_line(d):
@@ -603,6 +611,11 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         print(f"\n〔標的層診斷 · 按金額排序,只看影響大的(小倉不糾結)〕")
         for d in tdiag:
             print(f"  {d['ticker']:<6}{d['impact']:>+11,.0f}   {' ｜ '.join(d['tags'])}")
+        tq = [d for d in tdiag if d.get("thesis_q")]
+        if tq:
+            print(f"\n  〔待你確認的持股假設 · 機械分不出逢低/凹單,從行為推測、要你定〕")
+            for d in tq:
+                print(f"    {d['ticker']}: {d['thesis_q']}")
     print("\n[5 維 severity（× tier 權重後排序）+ 原始數字]")
     for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
         flag = "🔴" if d["triggered"] else "⚪"
