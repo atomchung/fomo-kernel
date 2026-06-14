@@ -64,3 +64,4 @@
 - **thesis 對帳**：⭐ engine 已起頭（`4599f4f` infer-thesis-from-behavior）。可升級成「拿用戶*寫過的*進場 thesis 原文對帳」——從推斷動機 → 核對原文。skill 能吃用戶全 context，SaaS 結構上做不到。
 - **行為 counterfactual 重放**：「賣太早那批多抱 30 天會怎樣」——`fwd_from_px` 已有資料，低成本高回報。
 - **多哲學對照**：部分已被 behavior-diagnosis「風格當脈絡」吸收；若要做成「多鏡片顯示分歧」，守住收斂——只呈現分歧最大那一點，別變第二份報告。
+- **lens 迭代回 kol（2026-06-14,VY 已降為可換鏡片、demo 已去名後）**：把 `lens.json` 的可換架構連回母專案 `kol_collector` / `kol_collect` 的多 KOL 蒸餾——那邊已沉澱 12+ 追蹤 KOL，各可蒸一面鏡片讓用戶選大師；trade-review 的 lens 是這個 distill-KOL→lens 的第一個落地（VY = 第一面，現已通用化呈現、demo 不掛名）。owner 標「之後再迭代」。背景見記憶 `project-kol-collect-vs-collector-overlap`。
