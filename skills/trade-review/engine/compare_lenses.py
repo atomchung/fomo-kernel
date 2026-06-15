@@ -1,5 +1,10 @@
 """compare_lenses · 多哲學對照引擎(N-way, 2-D stance)
 
+⚠️ STATUS: 實驗品 / v2c,尚未接進 skill。本檔的 stance × lean 正是未來「哲學層」的 schema 種子
+(每個 dim 的『這套哲學怎麼判這個行為』)。v1 只出一面鏡片,直接跑只會優雅退化(見 __main__);
+真正的多哲學對照,等第二面哲學寫出來、且 lens 檔補上 stance/lean 後再啟用。
+復活時注意:divergence = severity × dist 的排序不可蓋過「先看大額虧損」的收斂鐵律。
+
 把「用 2~N 把不同哲學的尺照同一份交易、顯示分歧」做成可重複跑的函式。
 北極星:對照的價值不在「給 N 份意見」,在「逼出一個岔路」——岔路本身就是診斷工具
 (使用者想反駁哪一邊,就暴露他信哪套)。所以只端分歧最大的那一個洞(收斂鐵律照舊)。
@@ -141,6 +146,14 @@ LENS_NAMES = ["vincent-yu", "momentum-discipline", "concentration-conviction",
               "margin-of-safety", "trading-psychology"]
 
 if __name__ == "__main__":
-    lenses = [load_lens(n) for n in LENS_NAMES]
-    print("載入鏡片:" + " / ".join(L["master"] for L in lenses))
+    # v2c 守門:只載入實際存在的鏡片檔,<2 面就優雅退化,不 crash(原本寫死 5 面只存在 1 面)。
+    available = [n for n in LENS_NAMES
+                 if os.path.exists(os.path.join(LENS_DIR, f"{n}.lens.json"))]
+    if len(available) < 2:
+        print("compare_lenses 需要 ≥2 面鏡片才有岔路可端;目前可用:"
+              + (", ".join(available) or "(無)")
+              + "。多哲學對照是 v2c —— 等第二面哲學鏡片寫出來、補上 stance/lean 後再跑。")
+        raise SystemExit(0)
+    lenses = [load_lens(n) for n in available]
+    print("載入鏡片:" + " / ".join(L.get("philosophy") or L.get("master", "?") for L in lenses))
     render(compare_lenses(DEMO_DIMS, lenses))
