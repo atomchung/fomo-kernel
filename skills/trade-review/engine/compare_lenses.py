@@ -1,5 +1,10 @@
 """compare_lenses · 多哲學對照引擎(N-way, 2-D stance)
 
+⚠️ STATUS: 對照工具 / v2c,尚未接進 skill 主卡片流(valve 整合見 docs/v2c-lens-selection.md,屬 v2a+)。
+本檔的 stance × lean 是「哲學層」schema 種子。鏡片庫現有 6 面哲學(皆含 stance/lean),compare_lenses
+可實跑 N-way 對照(見 __main__)。注意:① divergence = severity × dist 的排序不可蓋過「先看大額虧損」
+的收斂鐵律;② 缺 stance 的維,valve 啟用時應視為 OFF(非 aligned),見藍圖 §4。
+
 把「用 2~N 把不同哲學的尺照同一份交易、顯示分歧」做成可重複跑的函式。
 北極星:對照的價值不在「給 N 份意見」,在「逼出一個岔路」——岔路本身就是診斷工具
 (使用者想反駁哪一邊,就暴露他信哪套)。所以只端分歧最大的那一個洞(收斂鐵律照舊)。
@@ -89,8 +94,8 @@ def compare_lenses(dims, lenses):
 
 
 def _name(lens):
-    """去掉括號來源,取學派短名:『動能紀律(O'Neil…)』→『動能紀律』。"""
-    return lens["master"].split("(")[0].strip()
+    """顯示用學派短名:優先 philosophy(v1 去名),否則 master 去括號。engine 不印人名。"""
+    return (lens.get("philosophy") or lens.get("master", "?")).split("(")[0].strip()
 
 
 def _short(lens, key):
@@ -126,7 +131,7 @@ def render(rows):
         d = lens["dims"][key]
         stance = d.get("stance", "aligned")
         verb = STANCE_VERB.get(stance, "問你")
-        print(f"\n  〔{lens['master']}〕 立場:{STANCE_ZH[stance]}" + (f" · 方向:{d['lean']}" if d.get("lean") else ""))
+        print(f"\n  〔{_name(lens)}〕 立場:{STANCE_ZH[stance]}" + (f" · 方向:{d['lean']}" if d.get("lean") else ""))
         print(f"     {verb}:{_fill(d['motive_q'], dim)}")
         print(f"     規矩:{d['rule']}")
         print(f"     「{d['quote']}」")
@@ -148,6 +153,14 @@ LENS_NAMES = ["vincent-yu", "momentum-discipline", "concentration-conviction",
               "margin-of-safety", "trading-psychology", "grayscale-thinking"]
 
 if __name__ == "__main__":
-    lenses = [load_lens(n) for n in LENS_NAMES]
-    print("載入鏡片:" + " / ".join(L["master"] for L in lenses))
+    # v2c 守門:只載入實際存在的鏡片檔,<2 面就優雅退化,不 crash(原本寫死 5 面只存在 1 面)。
+    available = [n for n in LENS_NAMES
+                 if os.path.exists(os.path.join(LENS_DIR, f"{n}.lens.json"))]
+    if len(available) < 2:
+        print("compare_lenses 需要 ≥2 面鏡片才有岔路可端;目前可用:"
+              + (", ".join(available) or "(無)")
+              + "。多哲學對照是 v2c —— 等第二面哲學鏡片寫出來、補上 stance/lean 後再跑。")
+        raise SystemExit(0)
+    lenses = [load_lens(n) for n in available]
+    print("載入鏡片:" + " / ".join(L.get("philosophy") or L.get("master", "?") for L in lenses))
     render(compare_lenses(DEMO_DIMS, lenses))

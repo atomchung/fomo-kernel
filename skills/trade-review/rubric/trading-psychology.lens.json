@@ -1,4 +1,5 @@
 {
+  "philosophy": "交易心理",
   "master": "交易心理",
   "source": "原則蒸餾自 Steenbarger 交易心理著作(The Daily Trading Coach / Trading Psychology 2.0),引用非轉載、非經本人背書。⚠️ 引言為意譯,尚未對原書逐句校對,上線前需 verbatim 對齊審查。",
   "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 trading-psychology.md。刻意全 stance=aligned、不掛 lean:此派不在『該怎麼交易』上 fork(他背書普世層),價值在 meta——記錄/復盤/揚長。所以 compare_lenses 會顯示他低分歧,這是正確的(不是每個大師都製造岔路)。他的單鏡 motive_q 是『這是不是一個你記錄過的情緒 pattern』。",
@@ -20,49 +21,49 @@
   "dims": {
     "部位 sizing": {
       "stance": "aligned",
-      "unit": "size 由流程決定,不被情緒放大",
+      "rubric_unit": "size 由流程決定,不被情緒放大",
       "rule": "size 要一致、能被你寫好的流程解釋;別讓單筆 size 跟著興奮或不甘漂移。",
       "quote": "成功來自一致的流程,不是單筆的英雄主義。",
       "motive_q": "{max_ticker} 佔你 {max_pct}%。這個 size 是你寫好的流程算出來的,還是當下情緒(興奮 / 不甘)放大的?"
     },
     "加碼攤平": {
       "stance": "aligned",
-      "unit": "加碼是計畫,還是情緒 pattern?",
+      "rubric_unit": "加碼是計畫,還是情緒 pattern?",
       "rule": "加碼前回看:這是交易計畫的一部分,還是情緒反應?把 trigger / 想法 / 結果記下來,週末看 pattern。",
       "quote": "把情緒反應變成可觀察的 pattern,你才改得動它。",
       "motive_q": "{tickers} 你往下加。這是你計畫裡寫好的動作,還是一個你反覆出現的情緒 pattern(不甘認賠)?你記錄它了嗎?"
     },
     "出場紀律": {
       "stance": "aligned",
-      "unit": "賣太早常是可矯正的情緒 pattern",
+      "rubric_unit": "賣太早常是可矯正的情緒 pattern",
       "rule": "若你常賣太早,把每次的 trigger / 想法 / 結果記下、找出觸發點,改一條具體規則,下週驗它。",
       "quote": "持續在小幅獲利後就出場,通常是一個可被記錄、可被矯正的情緒 pattern,不是性格。",
       "motive_q": "你賣掉賺錢的有 {winner_early}% 後來續漲。這是不是一個重複出現的 pattern?你有沒有記下『每次想賣的當下在想什麼』?"
     },
     "分散": {
       "stance": "aligned",
-      "unit": "持倉結構是流程,還是情緒累積?",
+      "rubric_unit": "持倉結構是流程,還是情緒累積?",
       "rule": "回看你的持倉:是一套流程決定的,還是隨盤面情緒東買西買累積成的?",
       "quote": "好的交易日誌會讓你看見:很多『決策』其實是情緒。",
       "motive_q": "你 {n} 檔有 {ai_pct}% 同一個 driver。這個集中是你流程選出來的,還是『哪個熱就追哪個』情緒累積的?"
     },
     "持有時間": {
       "stance": "aligned",
-      "unit": "持有期是計畫,還是套牢後合理化",
+      "rubric_unit": "持有期是計畫,還是套牢後合理化",
       "rule": "進場前先寫下計畫持有框架;事後對照實際——落差本身就是要記錄的 pattern。",
       "quote": "進步來自把『計畫』和『實際』並排看,然後縮小落差。",
       "motive_q": "{incon_tickers} 你同一檔又短又長。這是計畫好的兩套策略,還是套牢後改口的合理化?你進場時寫下框架了嗎?"
     },
     "alpha/beta": {
       "stance": "aligned",
-      "unit": "用真實帳本校準自我認知",
+      "rubric_unit": "用真實帳本校準自我認知",
       "rule": "用真實帳本(不是記憶)定期回看:你的優勢到底在哪一類交易?把它放大、把弱項流程化或外包。",
       "quote": "找出你做得最好的,然後刻意去放大它。",
       "motive_q": "你贏大盤 {excess}pp(β={beta})。你有沒有用真實帳本拆過——你的錢到底是哪一類交易賺的?那一類,你能不能刻意多做?"
     },
     "進場": {
       "stance": "aligned",
-      "unit": "進場是寫好的 setup,還是情緒衝動｜待 engine B.9",
+      "rubric_unit": "進場是寫好的 setup,還是情緒衝動｜待 engine B.9",
       "rule": "進場前先有一個寫好的 setup(觸發條件);事後記下『當下情緒』,週末檢查衝動進場的比例。",
       "quote": "最好的交易者不是沒有情緒,而是知道情緒何時在替他們做決定。",
       "motive_q": "{entry_ticker} 這筆進場,你有沒有一個事前寫好的 setup?還是看盤面在動、情緒上來就進?你記下當下的情緒了嗎?"

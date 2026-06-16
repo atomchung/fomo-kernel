@@ -1,4 +1,5 @@
 {
+  "philosophy": "灰階思考",
   "master": "灰階思考",
   "source": "原則蒸餾自 謝孟恭(股癌)《灰階思考》(天下文化, 2021)+ 公開節目/訪談,引用非轉載、非經本人背書。⚠️ 引言為書摘意譯,尚未對原書逐句校對,上線前需 verbatim 對齊審查。",
   "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 grayscale-thinking.md。stance 多為 conditional(反教條,鮮少 unconditional/inverted);分歧主要來自獨特 lean,不來自判得更兇。招牌 fork 在 alpha/beta(別深信單一來源=回音檢查,會點亮原本全 aligned 的 alpha/beta 維)與 出場(反市場情緒、拋得太早)。",
@@ -20,49 +21,49 @@
   "dims": {
     "部位 sizing": {
       "stance": "conditional", "lean": "cash-level",
-      "unit": "資金水位決定加減碼,不被波動嚇",
+      "rubric_unit": "資金水位決定加減碼,不被波動嚇",
       "rule": "加減碼的依據是『資金水位/計畫』,不是『今天跌了好可怕』;下單前先確認這筆在你整體水位的位置。",
       "quote": "用資金水位決定加減碼,別被短期波動嚇退。",
       "motive_q": "{max_ticker} 佔你 {max_pct}%。你加減碼是看資金水位/計畫,還是被它的短期波動嚇進嚇出?"
     },
     "加碼攤平": {
       "stance": "conditional", "lean": "script",
-      "unit": "劇本不對就退,不是往下凹",
+      "rubric_unit": "劇本不對就退,不是往下凹",
       "rule": "往下加之前先問『劇本還照我設想走嗎』;劇本破了就斷然退場、另起爐灶,不是攤平等回本。",
       "quote": "如果事情不照你原先設想的劇本走,就斷然退場、另起爐灶。",
       "motive_q": "{tickers} 你在虧損裡往下加。灰階派問:劇本還照你當初設想走嗎?還是劇本早就破了、你只是不想認賠?"
     },
     "出場紀律": {
       "stance": "conditional", "lean": "early-defensive",
-      "unit": "反市場情緒,寧可拋太早躲災難",
+      "rubric_unit": "反市場情緒,寧可拋太早躲災難",
       "rule": "出場看市場情緒與劇本,不看捨不得;眾人最狂熱時就該開始減,寧可拋早一點。",
       "quote": "我能躲過災難,是因為我每次都拋得太早。",
       "motive_q": "你賣掉賺錢的有 {winner_early}% 後來續漲。灰階派寧可拋太早躲災難——但你這是『反市場情緒的紀律』,還是『沒有劇本、隨手就跑』?"
     },
     "分散": {
       "stance": "conditional", "lean": "core-satellite",
-      "unit": "防守底倉 + 衛星,不是全押衛星",
+      "rubric_unit": "防守底倉 + 衛星,不是全押衛星",
       "rule": "先有一個防守底倉(市值型 ETF),再用一小部分資金當衛星去博爆發;別把整個帳戶都當衛星。",
       "quote": "市值型 ETF 當防守底倉,小部分資金把自己當 VC 創投在操盤。",
       "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。你有沒有一個防守底倉(市值 ETF),還是整個帳戶都在衛星賭注上?"
     },
     "持有時間": {
       "stance": "aligned", "lean": "flexible",
-      "unit": "灰階:隨新資訊修正,不故步自封",
+      "rubric_unit": "灰階:隨新資訊修正,不故步自封",
       "rule": "持有期不是死標籤;選定策略後持續接收新訊息、微調修正——但別讓『修正』變成套牢後的合理化漂移。",
       "quote": "策略選定也別故步自封,持續接收最新市場訊息,對策略作出微調和修正。",
       "motive_q": "{incon_tickers} 你同一檔又短又長。這是灰階式『隨新資訊修正』,還是套牢後沒劇本的漂移?"
     },
     "alpha/beta": {
       "stance": "conditional", "lean": "multi-source",
-      "unit": "別深信單一來源(回音檢查)",
+      "rubric_unit": "別深信單一來源(回音檢查)",
       "rule": "下注前先 cross-check 幾個彼此獨立的來源;切莫深信某位人士/團體的單一意見——質疑是態度,求證是行動。",
       "quote": "切莫深信某位人士或團體的單一意見;質疑是態度,求證是行動。",
       "motive_q": "你贏大盤 {excess}pp。灰階派問:這是你 cross-check 多個獨立來源後的判斷,還是某個 KOL/題材的回音?這筆你驗證過幾個彼此獨立的來源?"
     },
     "進場": {
       "stance": "conditional", "lean": "contrarian-sentiment",
-      "unit": "反市場情緒進場｜待 engine B.9",
+      "rubric_unit": "反市場情緒進場｜待 engine B.9",
       "rule": "進場前先看市場情緒在哪一端:眾人歡呼狂熱時別追,沒人要、被嫌棄時才是好球;熱題材/主流共識要警惕。",
       "quote": "眾人為股市歡呼時果斷賣,便宜到沒人要時敢於買。",
       "motive_q": "{entry_ticker} 你進場時,市場情緒是狂熱還是沒人要?灰階派反市場情緒:你是『眾人歡呼時還在追』,還是『沒人要時敢買』?"

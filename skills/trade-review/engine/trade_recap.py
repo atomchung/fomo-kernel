@@ -406,25 +406,25 @@ def load_lens(path=DEFAULT_LENS):
     import json
     try:
         with open(path, encoding="utf-8") as f: _LENS = json.load(f)
-        return _LENS.get("master")
+        return _LENS.get("philosophy")
     except (OSError, ValueError): return None
 
 CARD_LIB_FALLBACK = {
  "出場紀律": ("賣出前先寫一句『我賣的理由是 thesis 破了，還是手癢/想換現金?』",
-              "在清醒時先把出場規則寫好，把判斷從『當下』移到『事前』。(VY)"),
+              "在清醒時先把出場規則寫好，把判斷從『當下』移到『事前』。"),
  "部位 sizing": ("下單前先決定『這筆最多佔幾 %、為什麼是這個數而不是兩倍』。",
-                 "門檻低只配小部位，門檻高才配得起大部位。(VY)"),
+                 "門檻低只配小部位，門檻高才配得起大部位。"),
  "分散": ("加新倉前先問『它跟我最大那塊是不是同一個 driver?』是 → 不加。",
-          "分散不是檔數多，是讓持有的標的來自不同的 underlying drivers。(VY)"),
+          "分散不是檔數多，是讓持有的標的來自不同的 underlying drivers。"),
  "持有時間": ("每筆進場先標『短線/波段/長線』，出場只准用同框架的理由。",
-              "先想清楚你的時間軸，讓所有後續分析匹配它。(VY)"),
+              "先想清楚你的時間軸，讓所有後續分析匹配它。"),
  "加碼攤平": ("往下加碼前必須寫出『一個進場時不知道的新證據』；寫不出 → 不加。",
-              "不要出現『再加碼就能回本』就破線。(VY)"),
+              "不要出現『再加碼就能回本』就破線。"),
 }
 def card_for(dim):
     """(rule, quote):優先用 lens 檔(可換大師),載入失敗用 fallback。"""
     if _LENS and dim in _LENS.get("dims", {}):
-        d = _LENS["dims"][dim]; m = _LENS.get("master", "VY")
+        d = _LENS["dims"][dim]; m = _LENS.get("philosophy", "鏡片")
         return d.get("rule", ""), f"{d.get('quote', '')}（{m}）"
     return CARD_LIB_FALLBACK.get(dim, ("", ""))
 
@@ -621,7 +621,7 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
-    master = (_LENS or {}).get("master", "Vincent Yu")
+    master = (_LENS or {}).get("philosophy", "交易哲學鏡片")
     print("="*60)
     print(f"  trade-recap · 鏡片 {master}  (引擎產出)")
     print("="*60)
@@ -684,7 +684,7 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
 def main():
     paths = sys.argv[1:] or [DEFAULT_CSV]
     rows = load(paths)
-    master = load_lens()                                  # 鏡片(預設 VY,可換大師檔)
+    master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
     dm = os.environ.get("TR_DRIVER_MAP")                  # Claude 生成的 driver map(冷門股分類)
     n_dm = load_driver_map(dm) if dm else 0
     rts, open_lots = round_trips(rows)
