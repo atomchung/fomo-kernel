@@ -1,9 +1,9 @@
 """compare_lenses · 多哲學對照引擎(N-way, 2-D stance)
 
-⚠️ STATUS: 實驗品 / v2c,尚未接進 skill。本檔的 stance × lean 正是未來「哲學層」的 schema 種子
-(每個 dim 的『這套哲學怎麼判這個行為』)。v1 只出一面鏡片,直接跑只會優雅退化(見 __main__);
-真正的多哲學對照,等第二面哲學寫出來、且 lens 檔補上 stance/lean 後再啟用。
-復活時注意:divergence = severity × dist 的排序不可蓋過「先看大額虧損」的收斂鐵律。
+⚠️ STATUS: 對照工具 / v2c,尚未接進 skill 主卡片流(valve 整合見 docs/v2c-lens-selection.md,屬 v2a+)。
+本檔的 stance × lean 是「哲學層」schema 種子。鏡片庫現有 6 面哲學(皆含 stance/lean),compare_lenses
+可實跑 N-way 對照(見 __main__)。注意:① divergence = severity × dist 的排序不可蓋過「先看大額虧損」
+的收斂鐵律;② 缺 stance 的維,valve 啟用時應視為 OFF(非 aligned),見藍圖 §4。
 
 把「用 2~N 把不同哲學的尺照同一份交易、顯示分歧」做成可重複跑的函式。
 北極星:對照的價值不在「給 N 份意見」,在「逼出一個岔路」——岔路本身就是診斷工具
@@ -31,7 +31,9 @@ import os
 
 LENS_DIR = os.path.join(os.path.dirname(__file__), "..", "rubric")
 
-STANCE_J = {"inverted": -1.0, "conditional": 0.5, "aligned": 0.7, "unconditional": 1.0}
+STANCE_J = {"inverted": -1.0, "conditional": 0.5, "aligned": 0.0, "unconditional": 1.0}
+# aligned = 0.0(中立基線):普世/meta 派(如交易心理)不該被當「最對立」,它沒在 fork。
+# 它對各派的距離由 lean 軸補(有 lean 才算方向分歧),所以仍保留「VY 在乎 sizing」這種訊號。
 LEAN_W = 0.6
 STANCE_ZH = {
     "aligned": "普世·兩派同看",
@@ -91,10 +93,15 @@ def compare_lenses(dims, lenses):
     return rows
 
 
+def _name(lens):
+    """顯示用學派短名:優先 philosophy(v1 去名),否則 master 去括號。engine 不印人名。"""
+    return (lens.get("philosophy") or lens.get("master", "?")).split("(")[0].strip()
+
+
 def _short(lens, key):
     d = lens["dims"][key]
     lean = f"·{d['lean']}" if d.get("lean") else ""
-    return f"{lens['master']:<28} [{d.get('stance','aligned')}{lean}]"
+    return f"{_name(lens):<8} [{d.get('stance','aligned')}{lean}]"
 
 
 def render(rows):
@@ -106,7 +113,7 @@ def render(rows):
     print("[分歧排序]  洞          severity × 2D距離 = 分歧度   最對立的一對")
     for r in rows:
         mark = "🔱" if r is rows[0] else ("🔸" if r["div"] > 0 else "⚪")
-        pair = f"{r['a']['master'][:6]} ⟷ {r['b']['master'][:6]}" if r["dist"] > 0 else "(無岔路)"
+        pair = f"{_name(r['a'])} ⟷ {_name(r['b'])}" if r["dist"] > 0 else "(無岔路)"
         print(f"  {mark} {r['key']:<9} {r['sev']:.2f} × {r['dist']:.2f} = {r['div']:.2f}   {pair}")
 
     top = rows[0]
@@ -124,7 +131,7 @@ def render(rows):
         d = lens["dims"][key]
         stance = d.get("stance", "aligned")
         verb = STANCE_VERB.get(stance, "問你")
-        print(f"\n  〔{lens['master']}〕 立場:{STANCE_ZH[stance]}" + (f" · 方向:{d['lean']}" if d.get("lean") else ""))
+        print(f"\n  〔{_name(lens)}〕 立場:{STANCE_ZH[stance]}" + (f" · 方向:{d['lean']}" if d.get("lean") else ""))
         print(f"     {verb}:{_fill(d['motive_q'], dim)}")
         print(f"     規矩:{d['rule']}")
         print(f"     「{d['quote']}」")
@@ -143,7 +150,7 @@ DEMO_DIMS = [
 ]
 
 LENS_NAMES = ["vincent-yu", "momentum-discipline", "concentration-conviction",
-              "margin-of-safety", "trading-psychology"]
+              "margin-of-safety", "trading-psychology", "grayscale-thinking"]
 
 if __name__ == "__main__":
     # v2c 守門:只載入實際存在的鏡片檔,<2 面就優雅退化,不 crash(原本寫死 5 面只存在 1 面)。
