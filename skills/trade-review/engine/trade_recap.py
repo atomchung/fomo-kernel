@@ -261,6 +261,23 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
                 beta=spy["beta"], alpha_ann=spy["alpha_ann"],          # 頂層保留 SPY 值給 overview
                 port_tot=spy["port_tot"], spy_tot=spy["bench_tot"], excess_vs_spy=spy["excess"])
 
+def alpha_credible(ab, dims):
+    """α 當『選股能力證據』的雙閘門:① 樣本夠長(≥1 年) ② 橫截面夠寬。
+    不夠 → 算出的 α 主要是賽道紅利 + 雜訊,不可用『真本事』語氣
+    (散戶尺度 α 顯著性 ≈ IR×√年數,結構上難顯著;mock 4 檔 98% 同 driver 就是反例)。"""
+    if not isinstance(ab, dict) or ab.get("note"):
+        return False
+    if ab.get("n", 0) < 252:                                   # (a) < ~1 年交易日 → 不顯著
+        return False
+    div = next((d for d in dims if d.get("dim") == "分散"), None)
+    if not div:                                                # 無橫截面證據 → 閉閘(fail-closed,codex review)
+        return False
+    if (max(div.get("ai_pct", 0), div.get("max_sector_pct", 0)) >= 0.50
+            or div.get("n", 0) < 8):                           # (b) 橫截面太窄 = 押賽道,非選股
+        return False
+    return True
+
+
 def print_alpha_beta(d):
     print("\n" + "─"*60)
     print("  你的報酬怎麼來的 · 把運氣(大盤+賽道)和技巧(選股)分開")
@@ -270,7 +287,17 @@ def print_alpha_beta(d):
     spy = bs["SPY"]
     port = spy["port_tot"]; vs_spy = spy["excess"]
     print(f"    過去 {d['n']} 個交易日:投組 {port*100:+.0f}%、大盤 SPY {spy['bench_tot']*100:+.0f}% → 你贏大盤 {vs_spy*100:+.0f}pp")
-    print(f"    ① alpha(vs 通用大盤,調風險後):{spy['alpha_ann']*100:+.0f}%/年,β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）")
+    if d.get("credible"):
+        print(f"    ① alpha(vs 通用大盤,調風險後):{spy['alpha_ann']*100:+.0f}%/年,β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）")
+    else:
+        print(f"    ① β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）;α 不單獨報數——樣本 <1 年或持倉過度集中時,α=賽道紅利+雜訊,非選股能力")
+    if not d.get("credible"):                                  # codex review:不 credible 時不輸出任何「選股能力」結論
+        sens = "、".join(f"vs {sk} {(port - bs[sk]['bench_tot'])*100:+.0f}pp"
+                         for sk in ("QQQ", "SOXX") if sk in bs)
+        extra = f"(贏大盤對基準極敏感:{sens},換基準結論就翻)" if sens else ""
+        print(f"    ② α / 選股能力:資料不足以判定{extra}——還分不出『選股』還是『押對賽道』,先看行為層。")
+        print(f"    (持倉法日報酬近似;基準=通用大盤 SPY。)")
+        return
     print(f"    ② 你贏大盤的 {vs_spy*100:+.0f}pp,有多少是『選股』、多少是『押對賽道』?——換對照看敏感度:")
     for sk, tag in [("QQQ", "科技,較中性"), ("SOXX", "半導體,事後最強板塊→偏嚴苛")]:
         if sk in bs:
@@ -515,7 +542,11 @@ def prescribe(ab, dims, overview):
                            text=("你贏大盤主要靠『押對賽道/方向』(換哪個基準都成立)。但這只是『假設你有方向判斷力』,"
                                  "不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,"
                                  "看未來兩三次準不準,對了才叫 edge。")))
-        if pick_q < -0.05 and pick_s < -0.05:               # 連中性基準都輸 → 選股確實弱
+        if not ab.get("credible"):                          # codex review:不 credible → 不下選股能力定論(外包/真 edge)
+            rx.append(dict(kind="選股:資料不足以判定", text=(
+                f"你的選股 alpha 對基準極敏感(vs 中性 QQQ {pick_q*100:+.0f}pp、vs 事後最強 SOXX {pick_s*100:+.0f}pp),"
+                f"且樣本/持倉還不夠厚——資料判不出你『會不會選股』,別急著外包、也別自滿。")))
+        elif pick_q < -0.05 and pick_s < -0.05:             # 連中性基準都輸 → 選股確實弱
             rx.append(dict(kind="外包短板(漸進)", verify="被動部位佔比(升→好)",
                            text=("你選股連中性的 QQQ 都輸——優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
                                  "是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)")))
@@ -631,9 +662,11 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         print(f"  = 已實現(賣掉落袋){o['realized']:+,.0f}  +  未實現(還抱著){o['unrealized']:+,.0f}")
         print(f"  你『主動買賣』的盈虧比 {o['payoff']:.1f}（平均賺 ${o['avg_win']:,.0f} vs 平均賠 ${abs(o['avg_loss']):,.0f}）")
         if ab and not ab.get("note"):
-            warn = "" if ab["n"] >= 252 else f"  ⚠️ 只 {ab['n']} 天,要 ≥1 年才準"
-            print(f"  贏大盤 {ab['excess_vs_spy']*100:+.0f}pp｜β {ab['beta']:.2f}（漲跌是大盤 {ab['beta']:.1f} 倍）"
-                  f"｜真本事 α 年化 {ab['alpha_ann']*100:+.0f}%{warn}")
+            base = f"  贏大盤 {ab['excess_vs_spy']*100:+.0f}pp｜β {ab['beta']:.2f}（漲跌是大盤 {ab['beta']:.1f} 倍）"
+            if ab.get("credible"):
+                print(base + f"｜真本事 α 年化 {ab['alpha_ann']*100:+.0f}%")
+            else:
+                print(base + "｜選股 α:樣本/持倉不足以判定能力,先看行為層(α 為何不可判,見下)")
         elif ab and ab.get("note"):
             print(f"  α/β:{ab['note']}")
     if best and worst:                             # 做得最好 / 最差的一筆具體交易
@@ -707,6 +740,7 @@ def main():
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
     ab = dim_alpha_beta(rows, px)
+    if isinstance(ab, dict): ab["credible"] = alpha_credible(ab, dims)   # α 雙閘門(#4):不夠厚不用「真本事」語氣
     overview = overview_stats(decision_rts, ab, held, last_px)   # 已實現 + 未實現都報
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
     wi = what_if(held, last_px)                            # 可量化的 what-if
