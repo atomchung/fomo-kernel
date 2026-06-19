@@ -542,7 +542,11 @@ def prescribe(ab, dims, overview):
                            text=("你贏大盤主要靠『押對賽道/方向』(換哪個基準都成立)。但這只是『假設你有方向判斷力』,"
                                  "不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,"
                                  "看未來兩三次準不準,對了才叫 edge。")))
-        if pick_q < -0.05 and pick_s < -0.05:               # 連中性基準都輸 → 選股確實弱
+        if not ab.get("credible"):                          # codex review:不 credible → 不下選股能力定論(外包/真 edge)
+            rx.append(dict(kind="選股:資料不足以判定", text=(
+                f"你的選股 alpha 對基準極敏感(vs 中性 QQQ {pick_q*100:+.0f}pp、vs 事後最強 SOXX {pick_s*100:+.0f}pp),"
+                f"且樣本/持倉還不夠厚——資料判不出你『會不會選股』,別急著外包、也別自滿。")))
+        elif pick_q < -0.05 and pick_s < -0.05:             # 連中性基準都輸 → 選股確實弱
             rx.append(dict(kind="外包短板(漸進)", verify="被動部位佔比(升→好)",
                            text=("你選股連中性的 QQQ 都輸——優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
                                  "是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)")))
