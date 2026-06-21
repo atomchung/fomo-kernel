@@ -515,9 +515,9 @@ def payoff_attribution(rts, top_n=4):
     pnls = [pnl(r) for r in closed]
     wins = [p for p in pnls if p > 0]; losses = [p for p in pnls if p < 0]
     win_sum, loss_sum = sum(wins), sum(losses)                  # loss_sum < 0
-    avg_win = win_sum / len(wins) if wins else 0
-    avg_loss = loss_sum / len(losses) if losses else 0
-    payoff = avg_win / abs(avg_loss) if avg_loss else 0
+    avg_win = win_sum / len(wins) if wins else 0.0
+    avg_loss = loss_sum / len(losses) if losses else 0.0
+    payoff = (avg_win / abs(avg_loss)) if avg_loss else None    # 無已實現虧損 → None(∞),不報 0(codex)
     by = defaultdict(lambda: {"win": 0.0, "loss": 0.0, "net": 0.0, "n": 0})
     for r in closed:
         p = pnl(r); a = by[r["ticker"]]; a["n"] += 1; a["net"] += p
@@ -531,8 +531,9 @@ def payoff_attribution(rts, top_n=4):
         worst = draggers[0][0]
         rest = [r for r in closed if r["ticker"] != worst]
         w = [pnl(r) for r in rest if pnl(r) > 0]; l = [pnl(r) for r in rest if pnl(r) < 0]
-        aw = sum(w) / len(w) if w else 0; al = sum(l) / len(l) if l else 0
-        cf = dict(ticker=worst, payoff=(aw / abs(al) if al else 0), drag=by[worst]["net"])
+        aw = sum(w) / len(w) if w else 0.0; al = sum(l) / len(l) if l else 0.0
+        cf = dict(ticker=worst, drag=by[worst]["net"],
+                  payoff=(aw / abs(al)) if al else None)    # 拿掉後若再無虧損 → None(∞),非 0(codex)
     return dict(payoff=payoff, avg_win=avg_win, avg_loss=avg_loss,
                 win_sum=win_sum, loss_sum=loss_sum, n=len(closed),
                 carriers=carriers, draggers=draggers, counterfactual=cf)
@@ -540,16 +541,17 @@ def payoff_attribution(rts, top_n=4):
 def print_payoff_attr(pa):
     if not pa:
         return
+    fmt = lambda v: "∞" if v is None else f"{v:.1f}"            # 無虧損 → ∞,不印 0
     print("\n" + "─"*60)
     print("  盈虧比拆解 · 誰在撐、誰在拖(已實現交易的貢獻度)")
-    print(f"    盈虧比 {pa['payoff']:.1f}（平均賺 ${pa['avg_win']:,.0f} / 賠 ${abs(pa['avg_loss']):,.0f}，{pa['n']} 筆已實現）")
-    car = "、".join(f"{t} ${w:,.0f}({p*100:.0f}%)" for t, w, p in pa["carriers"])
-    dra = "、".join(f"{t} ${l:,.0f}({p*100:.0f}%)" for t, l, p in pa["draggers"])
+    print(f"    盈虧比 {fmt(pa['payoff'])}（平均賺 ${pa['avg_win']:,.0f} / 賠 ${abs(pa['avg_loss']):,.0f}，{pa['n']} 筆已實現）")
+    car = "、".join(f"{t} ${w:,.0f}({p*100:.0f}%)" for t, w, p in pa["carriers"]) or "(無已實現獲利)"
+    dra = "、".join(f"{t} ${l:,.0f}({p*100:.0f}%)" for t, l, p in pa["draggers"]) or "(無已實現虧損)"
     print(f"    撐盤(佔總賺):{car}")
     print(f"    拖累(佔總賠):{dra}")
     cf = pa["counterfactual"]
     if cf:
-        print(f"    → 拿掉最大拖累 {cf['ticker']}（淨 ${cf['drag']:,.0f}）後,盈虧比 {pa['payoff']:.1f} → {cf['payoff']:.1f}")
+        print(f"    → 拿掉最大拖累 {cf['ticker']}（淨 ${cf['drag']:,.0f}）後,盈虧比 {fmt(pa['payoff'])} → {fmt(cf['payoff'])}")
 
 def what_if(held, last_px):
     """把『會一起倒』的空話換成可量化的 what-if:AI 暴險市值 × 回檔情境。"""
@@ -799,8 +801,10 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
     # 因 prescribe 攤平處方排在 sizing 前、且 sizing 規矩被 not any(砍損耗) 擋掉)。
     actionable = [r for r in (rx or []) if r.get("rule")]
     rule = actionable[0]["rule"] if actionable else None
-    # 樣本不足(§10.1 + §4.4):round-trip < 3 或 α/β 樣本 < 60 交易日 → 不硬出 commitment
-    insufficient = len(rts) < 3 or ab.get("n", 0) < 60
+    # 樣本不足(§4.4):round-trip < 3 → 行為訊號太薄,不硬出 commitment。
+    # 不綁 α 樣本(ab.n):離線/無價格時 ab.n=0,但行為維(sizing/攤平/分散)仍可承諾;
+    # α 是否可信另由 alpha_credible 表示,別讓「沒價格」誤殺行為層的 commitment(codex review)。
+    insufficient = len(rts) < 3
     # commitment = 下次要對帳的「規矩 + 它對應的可追蹤 metric」。對帳必須查這一維(用戶真承諾的),
     # 不是查 headline(否則第二張卡拿 sizing 比、用戶卻承諾攤平 = 對錯帳)。rule 關鍵字 → metric。
     commitment = None
@@ -850,6 +854,7 @@ def main():
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
     px, yf_err = fetch_prices(tickers, start)
     fwds, last_px = fwd_from_px(rts, px, adaptive_n_fwd(rows))   # 觀察窗隨資料長度自適應
+    last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
     print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
           f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
     print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
