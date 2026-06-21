@@ -2,7 +2,7 @@
   "philosophy": "反脆弱 · 槓鈴 · 凸性",
   "master": "Nassim Taleb（Antifragile）",
   "source": "原則蒸餾自 Nassim Taleb 公開著作（Antifragile / Fooled by Randomness / Skin in the Game）與 virattt/ai-hedge-fund 的 nassim_taleb agent prompt（MIT，以 antifragility/凸性/肥尾/via negativa/skin-in-the-game 編碼此哲學）。引用非轉載、非經本人背書。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 antifragile.md。stance/lean 供 compare_lenses。此派引入庫內最強的兩個獨立反轉：① sizing=barbell（槓鈴：絕大部分極保守、小錢搏凸性，最反對『均勻中等部位』），與『集中重壓(big)』和『風險上限(risk-capped)』都不同向；② 加碼=unconditional『一律不攤平』（往下加脆弱部位＝火上加油）；③ alpha/beta=inverted『低波動＝危險』（火雞問題），與所有派的 decompose 對立。引言為意譯，上線前需 verbatim 對齊審查。",
+  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 antifragile.md。stance/lean 供 compare_lenses。此派引入庫內最強的三個獨立反轉：① sizing=barbell（槓鈴：極保守 + 小錢搏凸性，與 big / risk-capped 都不同向）；② 加碼=unconditional『一律不攤平』（庫內唯一無後門）；③ alpha/beta=inverted『低波動=危險』（火雞問題，與所有派的 decompose 對立）。引言已對 verbatim 校對（英文原句逐條見 antifragile.md），少數標【意譯】。",
 
   "master_intro": {
     "one_line": "這套尺的核心：先確保你不會被一次肥尾打死，再用小錢去搏『虧有限、賺無限』的凸性。它不問你『看得準不準』，問你『萬一錯了，你會只是擦傷，還是直接出局』。",
@@ -23,49 +23,49 @@
       "rubric_unit": "槓鈴：絕大部分極保守 + 一小撮搏凸性；最反對均勻中等部位",
       "stance": "inverted", "lean": "barbell",
       "rule": "把資金擺成槓鈴兩端：大部分放極安全處（不被炸掉），只用一小撮（如 5–15%）押高凸性賭注；別把錢均勻攤成一堆中等部位。",
-      "quote": "別把錢放在中間。極度保守加上極度冒進，勝過溫吞的中庸。",
+      "quote": "一邊極度趨避風險、一邊極度擁抱風險，勝過不上不下的『中度』——中度其實是傻瓜遊戲。",
       "motive_q": "{max_ticker} 佔你 {max_pct}%。槓鈴派問：這是『你願意整筆歸零、用來搏無限上檔的小錢』，還是『你以為穩、其實一次肥尾就會重創你的中間部位』？"
     },
     "加碼攤平": {
       "rubric_unit": "對脆弱部位往下加＝火上加油，一律不攤平",
       "stance": "unconditional", "lean": "no-average-down",
       "rule": "往下加碼一律不做：賠錢往下加，是在一個正在證明自己脆弱的部位上放大暴險；要嘛當初就用有限的小注，要嘛認賠。",
-      "quote": "在虧損裡加碼，是用更多錢去賭『這次不一樣』——脆弱的東西會在你加最重時崩給你看。",
+      "quote": "在虧損裡加碼，是用更多錢去賭『這次不一樣』——脆弱的東西會在你加最重時崩給你看。【意譯】",
       "motive_q": "{tickers} 你在虧損裡一路往下加。這派不問你動機就先攔：你有沒有算過『這筆最壞歸零，會不會傷到你不該被傷的本金』？攤平正是把有限的虧，變成可能讓你出局的虧。"
     },
     "出場紀律": {
       "rubric_unit": "砍掉脆弱的、留住凸性的；讓凸性部位的肥尾跑",
       "stance": "conditional", "lean": "cut-fragile",
       "rule": "賣出的優先順序：先砍『脆弱、下檔無底』的，留住『虧有限、上檔無限』的凸性部位讓它跑；別反過來把凸性的小贏先了結。",
-      "quote": "贏家要讓它跑出肥尾，輸家中該砍的是那些『再跌沒有底』的。",
+      "quote": "贏家要讓它跑出肥尾，該砍的是那些『再跌沒有底』的脆弱部位。【意譯】",
       "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些是『凸性已經兌現、上檔有限了』，還是『你把少數能噴出肥尾的凸性部位，因為怕回吐提早了結』？"
     },
     "分散": {
       "rubric_unit": "分散要分在『不相關的脆弱來源』，別讓單一隱藏脆弱性炸掉全部",
       "stance": "conditional", "lean": "uncorrelated-tails",
       "rule": "看的不是檔數，是『會不會一個肥尾事件同時打穿全部』；確保各部位的崩潰來源不相關，別讓隱藏的共同脆弱性串成一條。",
-      "quote": "你以為的分散，常常在崩盤那天全部變成同一個賭注。",
+      "quote": "你以為的分散，常常在崩盤那天全部變成同一個賭注。【意譯】",
       "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。這派問：一個肥尾事件來時，這些部位會不會同時崩？你分散的是『檔數』，還是真的分散了『會害死你的那個風險來源』？"
     },
     "持有時間": {
       "rubric_unit": "林迪：活得久的更穩健；凸性部位可長抱等肥尾",
       "stance": "conditional", "lean": "lindy",
       "rule": "持有期看『脆弱還是反脆弱』：脆弱的別久留（時間是敵人），有凸性、經得起時間考驗（林迪）的可以長抱、等肥尾。",
-      "quote": "一樣東西活得越久，預期還能再活的時間反而越長——脆弱的東西則相反。",
+      "quote": "對非易腐的事物而言，每多活一天，預期還能再活的時間反而更長；脆弱的東西則相反。【意譯】",
       "motive_q": "{incon_tickers} 你同一檔又短又長。是『它的脆弱/凸性性質讓你有意切換』，還是『脆弱的東西套牢了，你卻改口說要長抱』？"
     },
     "alpha/beta": {
       "rubric_unit": "低波動＝危險（火雞問題）；別把賣凸性的穩定收益當 alpha",
       "stance": "inverted", "lean": "convexity",
       "rule": "別用『波動低、回撤小』當作做得好的證據；穩定的收益常來自賣出凸性（撿火車前的硬幣），肥尾來時一次全吐。看的是凸性，不是平滑。",
-      "quote": "低波動不是安全，是火雞在被宰前的那段太平日子。",
+      "quote": "市場缺乏波動，會讓隱藏的風險無聲累積；太平日子拖得越久，動盪來時傷得越重。",
       "motive_q": "你贏大盤 {excess}pp，但 β={beta}。這派反問：這報酬是『有凸性、錯了也只擦傷』賺來的，還是『一路撿硬幣的穩定收益、肥尾還沒來』？平滑的曲線最會騙人。"
     },
     "進場": {
       "rubric_unit": "進場找不對稱凸性（虧有限、賺無限）；追在低波動伸展處＝買脆弱｜待 engine B.9",
       "stance": "conditional", "lean": "optionality",
       "rule": "進場前先問『這筆的賠率對稱嗎』：要的是『最壞虧一個有限小數、最好賺很多倍』的凸性；追在大漲、低波動的伸展處，往往是在買進脆弱。",
-      "quote": "我要的是選擇權式的不對稱——下檔被鎖死，上檔開放給運氣。",
+      "quote": "我要的是選擇權式的不對稱——下檔被鎖死，上檔開放給運氣。【意譯】",
       "motive_q": "{entry_ticker} 你買在近 20 日高點、當天還大漲。是『這筆有凸性（虧有限、賺無限）』，還是『追在一個看似平靜、其實脆弱的伸展高點，下檔根本沒鎖住』？"
     }
   }
