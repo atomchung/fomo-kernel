@@ -100,6 +100,26 @@ def test_three_styles_have_distinct_top_holes():
     assert holes["fundamental"] != holes["value"] != holes["momentum"]
 
 
+def test_offline_pipeline_no_crash():
+    """離線(無 yfinance,last_px=None)時,卡片層全鏈路不得 crash。
+
+    回歸守門:ticker_diagnosis / overview_stats / what_if 都吃 last_px,
+    只要 yfinance 沒裝或下載失敗 last_px 就是 None。先前 ticker_diagnosis
+    沒 guard None → main() 在最後一步崩潰,而本檔測試只跑 dim_* 沒跑這層,
+    所以紅燈被掩蓋。這個測試把『成本基礎(last_px=None)』全鏈路跑一遍。
+    """
+    s = _dims("momentum")
+    rows, rts = s["rows"], s["rts"]
+    held, avg_down = tr.positions(rows)
+    adds = tr.classify_adds(rows)
+    # last_px=None 不得 crash(降級成只用已實現/成本基礎)
+    tdiag = tr.ticker_diagnosis(rts, adds, held, None)
+    assert isinstance(tdiag, list)
+    ov = tr.overview_stats(rts, {}, held, None)
+    assert ov["unrealized"] == 0          # 無價格 → 未實現視為 0,不爆
+    assert tr.what_if(held, None) is None  # 無價格 → what-if 直接 None,不爆
+
+
 # ─────────────────────── 選配:network smoke(β 方向)───────────────────────
 
 def test_beta_direction_network():

@@ -182,9 +182,9 @@ def adaptive_n_fwd(rows):
     return 30 if span >= 365 else 20 if span >= 120 else 10   # ≥1年→30d,半年→20d,更短→10d
 
 def fwd_from_px(rts, data, n_fwd=N_FWD):
-    import pandas as pd
-    if data is None:
+    if data is None:                       # 無 yfinance/價格 → 先短路再 import,離線也能優雅降級
         return None, None
+    import pandas as pd
     fwds, last_px = [], {}
     for r in rts:
         t = r["ticker"]
@@ -318,7 +318,7 @@ def print_alpha_beta(d):
 # ─────────────────────────── 5. 五維 metrics ───────────────────────────
 MIN_WINNERS = 5     # winner_early 至少要這麼多「賣掉的贏家」才算可信(半年資料通常達得到)
 
-def dim_exit(rts, fwds):
+def dim_exit(rts, fwds, n_fwd=N_FWD):
     # rts 已在 main 預先濾成「決策賣出」（排除大盤/債/商品 ETF 再平衡）
     early_rate = avg_forgone = winner_early = None
     n_winners = 0
@@ -345,7 +345,7 @@ def dim_exit(rts, fwds):
     return dict(dim="出場紀律", tier=1, triggered=trig, severity=min(max(sev,0),1),
                 early_rate=early_rate, avg_forgone=avg_forgone, winner_early=winner_early,
                 disp_gap=disp, hold_win=hw, hold_lose=hl, sell_win_rate=win_rate,
-                n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc,
+                n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc, n_fwd=n_fwd,
                 n_winners=n_winners, low_conf=low_conf)
 
 def dim_size(rows, held, last_px):
@@ -573,6 +573,7 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
     """標的層診斷(對事不對人):每檔金額影響(已實現+未實現)+ 行為標籤,按 |金額| 排序只取 top。
     加碼用主從分類器(classify_adds)分疑似定投/凹單/待確認,不再用純結果判(避 outcome bias);
     出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。"""
+    last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
                                    cur_ret=None, mval=0.0))
     for r in rts:
@@ -632,7 +633,7 @@ def number_line(d):
         s = []
         if d["early_rate"] is not None:
             we = f"；賣掉賺錢的有 {d['winner_early']*100:.0f}% 續漲（賣太早）" if d.get("winner_early") is not None else ""
-            s.append(f"{d['n_rt']} 筆決策賣出（{d['n_scored']} 有 fwd、{d['n_trunc']} 截斷）中 {d['early_rate']*100:.0f}% 在 {N_FWD} 天後更高、平均續漲 {d['avg_forgone']*100:+.1f}%{we}")
+            s.append(f"{d['n_rt']} 筆決策賣出（{d['n_scored']} 有 fwd、{d['n_trunc']} 截斷）中 {d['early_rate']*100:.0f}% 在 {d.get('n_fwd', N_FWD)} 天後更高、平均續漲 {d['avg_forgone']*100:+.1f}%{we}")
         s.append(f"賺錢抱 {d['hold_win']:.0f} 天 / 賠錢抱 {d['hold_lose']:.0f} 天（處置缺口 {d['disp_gap']:+.0f}）")
         return "；".join(s)
     if n == "部位 sizing":
@@ -725,7 +726,8 @@ def main():
     tickers = {r["ticker"] for r in rts} | set(held.keys())
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
     px, yf_err = fetch_prices(tickers, start)
-    fwds, last_px = fwd_from_px(rts, px, adaptive_n_fwd(rows))   # 觀察窗隨資料長度自適應
+    n_fwd = adaptive_n_fwd(rows)                                 # 觀察窗隨資料長度自適應
+    fwds, last_px = fwd_from_px(rts, px, n_fwd)
     print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
           f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
     print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
@@ -735,7 +737,7 @@ def main():
     print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
           f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
     d_size = dim_size(rows, held, last_px)
-    d_exit = dim_exit(decision_rts, fwds); d_div = dim_diversify(held, last_px)
+    d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held, last_px)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held, last_px, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
