@@ -504,6 +504,55 @@ def overview_stats(rts, ab, held=None, last_px=None):
                 n_wins=len(wins), n_losses=len(losses), avg_win=avg_win, avg_loss=avg_loss,
                 payoff=payoff, pf=pf, ab=ab)
 
+def payoff_attribution(rts, top_n=4):
+    """盈虧比拆解(每次復盤都算『幾個重點交易的貢獻度』):把已實現 round-trip 的賺/賠
+    歸到標的——誰在撐 win_sum、誰在拖 loss_sum,各佔該池多少 %;再算【拿掉最大拖累標的後
+    payoff 變多少】(反事實)。只看已實現(payoff 的定義),抱著的浮盈贏家不在此池。"""
+    pnl = lambda r: r["qty"] * (r["sell_px"] - r["buy_px"])
+    closed = [r for r in rts if r.get("sell_px") and r.get("buy_px")]
+    if not closed:
+        return None
+    pnls = [pnl(r) for r in closed]
+    wins = [p for p in pnls if p > 0]; losses = [p for p in pnls if p < 0]
+    win_sum, loss_sum = sum(wins), sum(losses)                  # loss_sum < 0
+    avg_win = win_sum / len(wins) if wins else 0.0
+    avg_loss = loss_sum / len(losses) if losses else 0.0
+    payoff = (avg_win / abs(avg_loss)) if avg_loss else None    # 無已實現虧損 → None(∞),不報 0(codex)
+    by = defaultdict(lambda: {"win": 0.0, "loss": 0.0, "net": 0.0, "n": 0})
+    for r in closed:
+        p = pnl(r); a = by[r["ticker"]]; a["n"] += 1; a["net"] += p
+        a["win" if p > 0 else "loss"] += p
+    carriers = sorted(((t, a["win"], a["win"] / win_sum if win_sum else 0)        # 撐盤者(佔總賺 %)
+                       for t, a in by.items() if a["win"] > 0), key=lambda x: -x[1])[:top_n]
+    draggers = sorted(((t, a["loss"], a["loss"] / loss_sum if loss_sum else 0)    # 拖累者(佔總賠 %)
+                       for t, a in by.items() if a["loss"] < 0), key=lambda x: x[1])[:top_n]
+    cf = None                                                   # 反事實:拿掉最大拖累標的後的 payoff
+    if draggers:
+        worst = draggers[0][0]
+        rest = [r for r in closed if r["ticker"] != worst]
+        w = [pnl(r) for r in rest if pnl(r) > 0]; l = [pnl(r) for r in rest if pnl(r) < 0]
+        aw = sum(w) / len(w) if w else 0.0; al = sum(l) / len(l) if l else 0.0
+        cf = dict(ticker=worst, drag=by[worst]["net"],
+                  payoff=(aw / abs(al)) if al else None)    # 拿掉後若再無虧損 → None(∞),非 0(codex)
+    return dict(payoff=payoff, avg_win=avg_win, avg_loss=avg_loss,
+                win_sum=win_sum, loss_sum=loss_sum, n=len(closed),
+                carriers=carriers, draggers=draggers, counterfactual=cf)
+
+def print_payoff_attr(pa):
+    if not pa:
+        return
+    fmt = lambda v: "∞" if v is None else f"{v:.1f}"            # 無虧損 → ∞,不印 0
+    print("\n" + "─"*60)
+    print("  盈虧比拆解 · 誰在撐、誰在拖(已實現交易的貢獻度)")
+    print(f"    盈虧比 {fmt(pa['payoff'])}（平均賺 ${pa['avg_win']:,.0f} / 賠 ${abs(pa['avg_loss']):,.0f}，{pa['n']} 筆已實現）")
+    car = "、".join(f"{t} ${w:,.0f}({p*100:.0f}%)" for t, w, p in pa["carriers"]) or "(無已實現獲利)"
+    dra = "、".join(f"{t} ${l:,.0f}({p*100:.0f}%)" for t, l, p in pa["draggers"]) or "(無已實現虧損)"
+    print(f"    撐盤(佔總賺):{car}")
+    print(f"    拖累(佔總賠):{dra}")
+    cf = pa["counterfactual"]
+    if cf:
+        print(f"    → 拿掉最大拖累 {cf['ticker']}（淨 ${cf['drag']:,.0f}）後,盈虧比 {fmt(pa['payoff'])} → {fmt(cf['payoff'])}")
+
 def what_if(held, last_px):
     """把『會一起倒』的空話換成可量化的 what-if:AI 暴險市值 × 回檔情境。"""
     if not last_px: return None
@@ -713,6 +762,85 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         if actionable:
             print(f"\n  ★ 下次只改這一件(可立即執行 + 可驗):{actionable[0]['rule']}")
 
+# ─────────────────── 結構化 state(跨次對帳用)───────────────────
+def build_state(rows, rts, held, dims, overview, ab, rx):
+    """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
+    只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
+    設計依 requirements §4/§10:
+      - schema_version 跟欄位語意走:半年後 skill 更新不可損毀舊狀態(§4.6)。
+      - 誠實鐵律:α 不 credible(#11 雙閘門)→ alpha_ann=None,不讓賽道紅利冒充選股 metric。
+      - metrics 永遠同時帶 sizing/攤平 兩個指標:對帳時要查「上次承諾那一維」的數字,
+        不是查這次新 headline(否則第二張卡只是重新初診,不是復盤)。
+    """
+    TW = {1: 1.0, 2: 0.7}                                   # 與 render() 同權重,headline 才一致
+    dd = {d["dim"]: d for d in dims}
+    d_size = dd.get("部位 sizing", {})
+    d_avg = dd.get("加碼攤平", {})
+    d_div = dd.get("分散", {})
+    ab = ab if isinstance(ab, dict) else {}
+    has_ab = not ab.get("note")                             # ab 帶 note = 無 pandas/價格/樣本 → 無 α/β
+    credible = bool(ab.get("credible"))                     # #11 雙閘門:樣本夠長 + 橫截面夠寬才算選股能力
+    # headline dim:沿用 render() 的選法 —— triggered 中 severity×tier 權重最高那一個
+    trig = sorted((d for d in dims if d.get("triggered")),
+                  key=lambda d: d.get("severity", 0) * TW.get(d.get("tier", 2), 0.7),
+                  reverse=True)
+    headline = trig[0] if trig else None
+    headline_dim = headline["dim"] if headline else None
+    # headline_metric:sizing→max_pos_pct、攤平→avgdown_count、其餘維→該維 severity
+    HKEY = {"部位 sizing": ("max_pos_pct", d_size.get("max_pct")),
+            "加碼攤平":   ("avgdown_count", d_avg.get("count")),
+            "分散":       ("ai_pct", d_div.get("ai_pct"))}      # 集中押注 → 追 AI 暴險 %
+    if headline_dim in HKEY:
+        hk, hv = HKEY[headline_dim]
+    elif headline_dim:
+        hk, hv = "severity", headline.get("severity")
+    else:
+        hk, hv = None, None
+    # rule = render() 的「下次只改這一件」= rx 第一個帶 rule 的處方。
+    # 注意:rule 來自 prescribe,不必然 = headline 維(實例:headline=sizing 但 rule=攤平,
+    # 因 prescribe 攤平處方排在 sizing 前、且 sizing 規矩被 not any(砍損耗) 擋掉)。
+    actionable = [r for r in (rx or []) if r.get("rule")]
+    rule = actionable[0]["rule"] if actionable else None
+    # 樣本不足(§4.4):round-trip < 3 → 行為訊號太薄,不硬出 commitment。
+    # 不綁 α 樣本(ab.n):離線/無價格時 ab.n=0,但行為維(sizing/攤平/分散)仍可承諾;
+    # α 是否可信另由 alpha_credible 表示,別讓「沒價格」誤殺行為層的 commitment(codex review)。
+    insufficient = len(rts) < 3
+    # commitment = 下次要對帳的「規矩 + 它對應的可追蹤 metric」。對帳必須查這一維(用戶真承諾的),
+    # 不是查 headline(否則第二張卡拿 sizing 比、用戶卻承諾攤平 = 對錯帳)。rule 關鍵字 → metric。
+    commitment = None
+    if rule and not insufficient:                          # §4.4:樣本不足不硬出 commitment
+        RULE_METRIC = {"不加碼": ("avgdown_count", d_avg.get("count")),   # 攤平:追蹤累計加碼次數(增=退步)
+                       "部位上限": ("max_pos_pct", d_size.get("max_pct"))}  # sizing:追蹤最大持倉佔比(降=進步)
+        mk, mv = next(((k, v) for kw, (k, v) in RULE_METRIC.items() if kw in rule), (None, None))
+        commitment = {"rule": rule, "metric_key": mk, "metric_value": mv, "goal": "down"}
+    return {
+        "schema_version": 1,
+        "date_start": rows[0]["date"].isoformat() if rows else None,
+        "date_end": rows[-1]["date"].isoformat() if rows else None,
+        "n_trades": len(rows),
+        "n_round_trips": len(rts),
+        "n_held": len(held),
+        "headline_dim": headline_dim,                      # 這次最大的洞(給「新增診斷」用)
+        "headline_metric": {"key": hk, "value": hv},
+        "commitment": commitment,                          # 下次對帳的錨點(規矩 + 追蹤 metric)
+        "metrics": {
+            "max_pos_pct": d_size.get("max_pct"),
+            "max_pos_ticker": d_size.get("max_ticker"),
+            "avgdown_count": d_avg.get("count"),
+            "avgdown_breach": d_avg.get("breach"),
+            "payoff": (overview or {}).get("payoff"),
+            "ai_pct": d_div.get("ai_pct"),                  # 同一 driver(AI capex)暴險佔比
+            "max_sector_pct": d_div.get("max_sector_pct"),
+            "top3_pct": d_div.get("top3"),
+            "n_holdings": d_div.get("n"),
+            "beta": ab.get("beta"),
+            "alpha_ann": ab.get("alpha_ann") if credible else None,  # 不 credible 不報數(誠實)
+            "alpha_credible": credible if has_ab else None,
+        },
+        "rule": rule,
+        "insufficient_data": insufficient,
+    }
+
 # ─────────────────────────── main ───────────────────────────
 def main():
     paths = sys.argv[1:] or [DEFAULT_CSV]
@@ -726,6 +854,7 @@ def main():
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
     px, yf_err = fetch_prices(tickers, start)
     fwds, last_px = fwd_from_px(rts, px, adaptive_n_fwd(rows))   # 觀察窗隨資料長度自適應
+    last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
     print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
           f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
     print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
@@ -742,6 +871,7 @@ def main():
     ab = dim_alpha_beta(rows, px)
     if isinstance(ab, dict): ab["credible"] = alpha_credible(ab, dims)   # α 雙閘門(#4):不夠厚不用「真本事」語氣
     overview = overview_stats(decision_rts, ab, held, last_px)   # 已實現 + 未實現都報
+    pa = payoff_attribution(decision_rts)                  # 盈虧比拆解:重點交易的貢獻度
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
     wi = what_if(held, last_px)                            # 可量化的 what-if
     trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
@@ -750,6 +880,17 @@ def main():
     tdiag = ticker_diagnosis(rts, adds_class, held, last_px)  # 標的層:按金額排序,對事不對人
     render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
     print_alpha_beta(ab)
+    print_payoff_attr(pa)                                 # 盈虧比拆解(誰在撐/拖,反事實)
+    if os.environ.get("TR_STATE_OUT"):                    # 設了才寫薄 state;不設 → 卡片 stdout 零變
+        import json, tempfile
+        path = os.environ["TR_STATE_OUT"]
+        state = build_state(rows, rts, held, dims, overview, ab, rx)
+        outdir = os.path.dirname(os.path.abspath(path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=outdir, suffix=".tmp")  # 原子寫:tmp→replace,不留半寫髒狀態(§4.6)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        print(f"# [state] {path}", file=sys.stderr)        # 訊息走 stderr,不污染卡片
 
 if __name__ == "__main__":
     main()
