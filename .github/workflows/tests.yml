@@ -1,0 +1,22 @@
+name: tests
+
+# 每次 push / PR 自動跑離線確定性測試。
+# 補掉 review 發現的盲區:測試以前只「想到時手動在本地跑」,main()/邊界路徑無人守。
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run deterministic tests (offline)
+        # network smoke(β 方向)預設 skip——它需要連 Yahoo,會 flaky,不該讓 CI 變紅。
+        # 現有測試已 gate 在 TR_TEST_NETWORK=1 後面,所以這裡會自動跳過它。
+        run: python3 tests/test_sample_styles.py
