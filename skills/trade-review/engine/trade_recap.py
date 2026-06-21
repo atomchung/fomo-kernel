@@ -122,9 +122,24 @@ def positions(rows):
             if sh > 1e-9:
                 ac = cost / sh
                 pos[t][1] -= min(r["qty"], sh) * ac
-                pos[t][0] -= r["qty"]
+                pos[t][0] -= min(r["qty"], sh)   # clamp:賣量超過持有不讓股數變負(對帳單可能漏最早建倉)
     held = {t: (sh, c) for t, (sh, c) in pos.items() if sh > 1e-6}
     return held, avg_down
+
+def orphan_sells(rows):
+    """偵測『賣超』:某檔賣量超過已知買量。多半是對帳單沒涵蓋最早的建倉,
+    或先賣後買(做空)。只計數+列名,當報告最後的資料完整性提示,不進盈虧/洞的計算。
+    現階段範圍只處理『先買後賣』;先賣後買(做空)另開 issue 討論。"""
+    pos = defaultdict(float); orphan = defaultdict(float)
+    for r in rows:
+        t = r["ticker"]
+        if r["side"] == "buy":
+            pos[t] += r["qty"]
+        else:
+            if r["qty"] > pos[t] + 1e-9:
+                orphan[t] += r["qty"] - max(pos[t], 0.0)
+            pos[t] = max(pos[t] - r["qty"], 0.0)
+    return {t: q for t, q in orphan.items() if q > 1e-6}
 
 def classify_adds(rows, min_adds=3):
     """主從分類每個標的的加碼:疑似定投(漲跌都買/規律) vs 疑似凹單(只虧損買+金額加速) vs 待確認。
@@ -752,6 +767,13 @@ def main():
     tdiag = ticker_diagnosis(rts, adds_class, held, last_px)  # 標的層:按金額排序,對事不對人
     render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
     print_alpha_beta(ab)
+    orphans = orphan_sells(rows)                            # 資料完整性提示放最後,不干擾洞
+    if orphans:
+        names = ", ".join(f"{t}({q:.0f} 股)" for t, q in sorted(orphans.items()))
+        print("\n" + "─"*60)
+        print(f"  ⓘ 資料完整性:偵測到 {len(orphans)} 檔『賣超』(賣量 > 已知買量):{names}")
+        print(f"    多半是對帳單沒涵蓋最早的建倉。這些賣超已從盈虧/診斷忽略,不影響上面的洞。"
+              f"（先賣後買/做空的支援另議。）")
 
 if __name__ == "__main__":
     main()
