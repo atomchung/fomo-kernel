@@ -23,6 +23,19 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 > 分工原則:**engine 做純算(確定性),Claude 做世界知識(格式 / 分類 / 動機)。** 需要認得世界的事都交給 Claude,engine 不 hardcode。
 
+### 開場 · 判定這次是「初診」還是「對帳」(讀本機狀態)
+
+**投資不是復盤一次就結束。** 同一個人第二次來,卡的價值在**進度**(上次那條規矩守了沒),不在再算一次同一個洞。所以**動 CSV 之前先讀本機狀態檔**:
+
+```bash
+cat ~/.trade-coach/log.jsonl 2>/dev/null   # 每行一輪復盤的薄狀態(JSON);不存在或空 = 第一次
+```
+
+- **空 / 不存在 → 初診**:照常跑完整流程(Step 0→4),收尾在 log 寫第一筆。
+- **非空 → 對帳**:讀**最後一行**的 `commitment`(上次承諾的規矩 + 要追蹤的 metric),這次重算後比新舊值。卡**開頭先對帳**(「上次說要把單筆壓到 20%,當時 51% → 現在 48%:在降、還沒達標」),**再**講新一輪的洞。
+
+> 這個檔是**用戶自己的**本機教練狀態(放 `~/.trade-coach/`),只存**聚合 metric + 規矩文字**(如 `max_pos_pct=0.48`、「虧損不加碼」)——**不含任何單筆交易**,永不外傳、不回作者(隱私第一)。它就是 R6–R9「記憶/持續」的載體。
+
 ### Step 0 · 把任意券商格式變成引擎吃得下的(用讀檔者自己的 Claude)
 
 用戶的 CSV 可能來自任何券商、欄位名各異,甚至是一張對帳單截圖。**不要寫死 parser**——你(Claude)直接讀它,轉成標準欄位存暫存 CSV:`Symbol,Action(BUY|SELL),Quantity,Price,TradeDate(YYYY-MM-DD),RecordType(填 Trade)`。這步用的是用戶自己的 Claude 額度,零後端成本,且天生吃得下所有券商——不必為每家券商寫轉換器。
@@ -34,12 +47,20 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 ### Step 1 · 跑引擎,抓大放小
 
 ```bash
-python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock demo
+mkdir -p ~/.trade-coach
+TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap.py <標準化後的CSV>
+# 沒給路徑 = 跑 mock demo;TR_STATE_OUT 讓引擎多吐一份結構化 state(卡片 stdout 不受影響)
 ```
 引擎吃標準欄位(Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate),輸出:
 - **5 維行為診斷**(每維 severity 0–1):部位 sizing / 加碼攤平 / 出場紀律 / 分散 / 持有時間。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。
 - 已選好的 **top 1–2 機械洞**(× tier 權重排序)。
+- **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
+  - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
+  - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。
+  - `metrics`:全 metric 快照(`max_pos_pct / avgdown_count / ai_pct / max_sector_pct / top3_pct / payoff / beta / alpha_ann …`),對帳時拿承諾的 `metric_key` 反查新值(集中度承諾就追 `ai_pct`)。
+  - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(#11 雙閘門),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
+  - `insufficient_data`:`true`(round-trip<3 或樣本<60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
 
@@ -63,20 +84,27 @@ python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock
 | 虧損中加碼攤平 | **A2** 試探≠加碼、**G** 不想認賠 | 「PLTR 你從 24 一路加到 15,是因為**你知道了一個進場時不知道的新利多**,還是**不想認賠、想攤低成本等回本**?」 |
 | winner 賣太早 | **D1** 時間軸、**G1** 焦慮驅動 | 「你賣掉賺錢的有 71% 後來繼續漲。那些賣出是**thesis 到價了**,還是**賺了怕回吐、落袋為安**?」 |
 | 部位梭哈 | **B1** 賠率、**A1** 信念是光譜上的sizing | 「PLTR 佔你 48%。這個 size 是**算過最壞情況能承受**,還是**就是很看好、直接重壓**?」 |
-| 假分散(同一driver) | **B2** driver 不同才算分散 | 「你 4 檔 98% 是 AI。你當初**覺得這樣算分散**,還是**根本沒把它們當同一個賭注**?」 |
+| 集中在同一 driver | **B2** driver 不同才算分散 | 「你 X 檔 Y% 是 AI。你當初**覺得這樣算分散**,還是**刻意押這個賽道**?」→ 答案決定標題,見下規則 |
 | 把 beta 當 alpha | **E2** 拆解你承擔什麼風險 | 「你贏大盤 +80pp,但 β=1.8。這些報酬你算**自己選股的本事**,還是**敢押高波動 AI**換來的?」 |
 | 連勝後加大 sizing | **G2** 連勝是該檢查的警報 | 「這筆加大,是**有獨立的新理由**,還是**最近都對、覺得手感正順**?」 |
 
 **規則**:
 - 一次最多問 **2–3 個**(抓大放小,別審問)。每個都是二選一,5 秒可答。
 - 用戶選哪個都不要說教——這是**鏡子,不是審判**。他選「不想認賠」就接「好,那這就是下面那條規矩要擋的事」。
+- **答案要改標題,不是只補在『看動機』那行**——這是 Step 2 的全部意義。最常踩雷的是**集中度**:用戶答「**刻意押賽道 / 知道集中**」→ 那個洞**絕不准叫「假分散」**(他沒在騙自己,你問了他還罵他=自相矛盾)。改框成「**你選的集中押注**」,打的點變兩個:① 它讓你的**選股本事測不出來**(就是 α 判不出的原因,串起來講)② **集中回檔風險**——有沒有減碼/停損線。答「以為分散」→ 才用「假分散」。凹單/逢低、梭哈同理:答案怎麼說,標題就怎麼標。
 - 用戶若略過不答,就只用機械洞出卡,不強逼。
 
 ### Step 3 · 出一張卡(收斂鐵律)——拿到 Step 2 答案後才出
 
 **等 Step 2 的確認都回來,才出這張卡。** 卡上的標籤是**定論**:用戶確認凹單的標凹單、確認逢低的標逢低,不留「凹單僥倖/待確認」這種問號(那是 Step 2 沒問完就出卡)。結合「引擎 overview + 機械洞 + 用戶剛確認的持股假設與動機」,出**一張**卡。每句都要**看得懂 + 有數據 + 有案例**,不准黑話:
 
-**呈現方式:用 `show_widget`(visualize MCP)出一張 HTML 卡,版型直接照 [`card-template.html`](card-template.html)。** 那個檔已是跑 mock 的完整四層版型(總覽 metric 卡 → 標的層診斷 → 最大的洞 → 機械層 5 維 → 報酬歸因 → 怎麼優化 → 下次只改 + 引言),換真人資料時把數字/標籤/敘事換掉、結構不動。設計規範:flat、明暗雙模式、Tabler outline icon、**無 emoji**(卡上的 ✓✗⚠ 一律用 `ti-check`/`ti-x`/`ti-alert-triangle` 等 icon + 語意色,不用文字符號或 emoji)、字重只用 400/500。下面這段文字規格定義的是**卡上要有哪些區塊、每句怎麼寫**——內容鐵律照搬,只是渲染成乾淨 HTML、不是 ASCII:
+**呈現方式:文字卡優先,圖形卡是加分(絕不能只出圖形卡)。**
+- **主交付 = markdown 文字卡**,直接寫在回覆裡。**任何客戶端都看得到,含純終端機 Claude Code。**(實測缺陷:`show_widget` 只在圖形介面 claude.ai / 桌面 app / IDE webview 渲染;終端機用戶會**整張看不到** → 只出 show_widget = 用戶以為 skill 壞了。)
+- **加分 = HTML 卡**:若在圖形介面,**可再額外**用 `show_widget` 出一張,版型參考 [`card-template.html`](card-template.html)。設計規範:flat、明暗雙模式、Tabler outline icon、**無 emoji**、字重 400/500。
+- **卡片結構**(文字 / HTML 同):總覽 → 做對的 → 標的層 → 最大的洞(數字 / 實例 / 動機 / 萬一)→ 報酬歸因 → 下次只改 + 引言。
+- **不放機械層 5 維小數表**(`.64 🔴` 用戶看不懂、就是另一份報表)。要提其他維度,**一句人話**帶過:「加碼 / sizing / 持有你都守得不錯,只有 X 要處理」。
+
+下面的文字規格定義**卡上要有哪些區塊、每句怎麼寫**——內容鐵律照搬:
 
 ```
 復盤卡 · 用 {philosophy} 的尺照你的交易
@@ -86,6 +114,11 @@ python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock
 
 ✅ 你做對的:{引擎 strength,已含具體案例,原樣保留}
 📊 最賺 {best ticker +%} / 最虧 {worst ticker -%}                     ← 點4
+
+〔盈虧比拆解 · 誰在撐、誰在拖〕(引擎 payoff_attribution,每次都出)
+   撐盤:{top carriers 標的 + 佔總賺%}  ·  拖累:{top draggers 標的 + 佔總賠%}
+   → 拿掉最大拖累 {ticker}（淨 ${drag}）→ 盈虧比 {payoff} 變 {cf_payoff}
+   ← 別只報「盈虧比 0.8」這個總數;指名是哪一兩檔(常是凹單)把它拖翻,該動哪一刀就清楚了
 
 🔴 最大的洞:{一句白話結論,人話}
    ▫ 看數字:{用戶自己的數字}
@@ -99,6 +132,7 @@ python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock
 
 **卡片是一個故事,不是 dashboard**(真人交易者 review 後的鐵律):
 - **連貫敘事,不准標籤拼接**。`〔這次成績〕A｜B｜C` 這種一塊塊的格式,交易者讀起來「像幾份報告硬湊」。用完整句子把數字織成一段他自己的故事。
+- **卡上不放給作者看的註解**。`〔這次成績 · 看金額不看勝率〕`、`(供參)`、`← 點5`、`機械層 5 維` 這種內部理由 / 設計標記一律不上卡——卡上只有用戶的數字和話,理由你心裡有就好。
 - **先承認他的本事,再打**。直接打會被頂回來(「抱也是我的決策」「不交易哪來部位」)。先講他做對的(選股、抱住賺 6 倍),他才沒法用「你否定我交易價值」嘴硬——尤其當 realized P&L 是負的,那是他嘴硬不了的鐵證,對準那裡。
 - **數字要「髒」**。最戳人的是「你每筆平均賺 $81、賠 $105」「虧損加碼 138 次」這種甩臉上的具體數字,不是形容詞。
 - **不講散戶聽不懂的話**。「α 只有 5%」交易者會回「我又不是基金經理」。翻成他在乎的:「你贏大盤是因為敢壓+槓桿,不是會做價差」。
@@ -137,6 +171,44 @@ python3 engine/trade_recap.py <標準化後的CSV>     # 沒給路徑 = 跑 mock
 - **鏡片是可換層**:換一套哲學 = 換 `rubric/*.lens.json`,engine 程式碼一律不動;同一架構可掛多套哲學。
 - 對外定位:**research / coaching support**,不構成投資建議。
 
-## 第二次以後:驗規矩,不要再照同一個洞
+## 狀態迴圈(記憶 + 持續):對帳 + 收尾
 
-同一個人第二次來,**先對帳上次那條規矩守了沒**(用引擎重算那個 metric),再找新洞。不要每次都照出同一個「分散」——機械洞會收斂、會重複,第二張卡的價值在**進度**(方法論在長),不在再算一次。
+「投資不是復盤一次就結束。」第二張卡的價值在**進度**——上次那條規矩守了沒,不是再照出同一個「分散」(機械洞會收斂、會重複)。這靠開場讀、收尾寫的本機狀態 `~/.trade-coach/log.jsonl` 撐起來。
+
+**對帳(log 非空時,卡開頭先做)**:
+1. 讀 log **最後一行**的 `commitment = {rule, metric_key, metric_value}`。
+2. 這次引擎 state 的 `metrics[commitment.metric_key]` = 新值。
+3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。
+4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
+
+**收尾(出完卡 + Step 4 收完反饋,append 一行)**:
+```bash
+# 把這次的薄狀態接到 log(只存聚合 metric + 規矩,不存任何交易)。
+# ⚠️ commitment 要存【卡上最終那條規矩】,不是引擎機械預設 —— Step 2 動機問完常推翻它。
+#    實例:engine 預設「虧損別加碼」,但用戶答「NVDA 是計畫內定投」→ 規矩改成盯集中度 ai_pct。
+#    教練填下面兩格(= 卡上「下次只改這一件」+ 要追蹤的 state.metrics 鍵);留空才退回 engine 預設。
+FINAL_RULE="AI 暴險封頂 70%:要加 AI 新倉先問新賽道還是同一注往上疊"
+METRIC_KEY="ai_pct"
+python3 - "$FINAL_RULE" "$METRIC_KEY" <<'PY'
+import json, os, sys, pathlib
+st = json.load(open(os.path.expanduser("~/.trade-coach/last_state.json")))
+dflt = st.get("commitment") or {}                         # engine 機械預設(fallback)
+rule = (sys.argv[1] if len(sys.argv) > 1 else "") or dflt.get("rule")
+mk   = (sys.argv[2] if len(sys.argv) > 2 else "") or dflt.get("metric_key")
+commitment = None
+if rule and mk and not st["insufficient_data"]:           # 樣本不足不硬塞 commitment(§4.4)
+    commitment = {"rule": rule, "metric_key": mk,
+                  "metric_value": st["metrics"].get(mk), "goal": "down"}
+entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
+         "commitment": commitment,                        # 對帳對的是這條(教練最終版,非機械版)
+         "metrics_snapshot": {k: st["metrics"].get(k)
+                              for k in ("ai_pct","max_pos_pct","avgdown_count","avgdown_breach")}}
+p = pathlib.Path(os.path.expanduser("~/.trade-coach/log.jsonl"))
+with p.open("a", encoding="utf-8") as f: f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+print("appended commitment:", json.dumps(commitment, ensure_ascii=False))
+PY
+```
+
+**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或歷史<60 交易日,引擎已把 `commitment` 設成 `null`。**只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。卡收尾講一句「資料還太短,先存個底,累積多幾筆 round-trip 再回來對帳」,log 照樣 append(commitment=null),下次來就接得上。
+
+> 驗收這套有沒有真的「記憶」:`engine/test_state_loop.py` 把一份 CSV 按時間切兩段,累積跑「初診→對帳」,驗第二張卡有沒有真的對帳第一張承諾的那一維(而非重新初診)。改完 engine 或這段流程都先跑它。
