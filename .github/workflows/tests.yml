@@ -22,10 +22,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # state-loop 測試經 subprocess 跑完整 main(),而 main 硬依賴 pandas(fwd_from_px)。
+      # 引擎 import 期就硬依賴 pandas(fwd_from_px)與 rich(卡片渲染,top-level import),
+      # 缺任一個 → import 直接 ModuleNotFoundError,三套測試全紅。故這兩個都要裝。
       # 但刻意【不】裝 yfinance —— 讓 fetch_prices() 走「未安裝→不連網」降級,
       # CI 維持離線、確定性(不抓即時股價、不 flaky),也順便驗證了引擎的優雅降級。
-      - name: Install pandas only (offline by design — no yfinance)
-        run: python3 -m pip install pandas
+      # (這裡逐一列依賴而非 `-r requirements.txt`,正是為了把 yfinance 排除在外。)
+      - name: Install pandas + rich (offline by design — no yfinance)
+        run: python3 -m pip install pandas rich
       - name: Run full test suite (offline, deterministic)
         run: python3 tests/run_all.py
