@@ -1,0 +1,31 @@
+name: tests
+
+# 每次 push / PR 自動跑全套測試 —— 引擎或規格被改壞時當場紅燈,擋在 merge 前。
+on:
+  push:
+  pull_request:
+
+# 同一 ref 連續推送只保留最新一次 run,省 CI 額度。
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # state-loop 測試經 subprocess 跑完整 main(),而 main 硬依賴 pandas(fwd_from_px)。
+      # 但刻意【不】裝 yfinance —— 讓 fetch_prices() 走「未安裝→不連網」降級,
+      # CI 維持離線、確定性(不抓即時股價、不 flaky),也順便驗證了引擎的優雅降級。
+      - name: Install pandas only (offline by design — no yfinance)
+        run: python3 -m pip install pandas
+      - name: Run full test suite (offline, deterministic)
+        run: python3 tests/run_all.py
