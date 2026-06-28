@@ -902,17 +902,8 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
                 '  '.join(d['tags'])
             )
         parts.append(Padding(tbl, (0, 1)))
-        tq = [d for d in tdiag if d.get("thesis_q")]
-        if tq:
-            head = Text("\n待你確認的持股假設 ", style="bold yellow")
-            head.append("· 機械分不出逢低/凹單,從行為推測、要你定", style="dim")
-            parts.append(Padding(head, (0, 1)))
-            tq_tbl = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False, expand=False)
-            tq_tbl.add_column(width=6, no_wrap=True)
-            tq_tbl.add_column(overflow="fold")
-            for d in tq:
-                tq_tbl.add_row(Text(d['ticker'], style="bold"), d['thesis_q'])
-            parts.append(Padding(tq_tbl, (0, 1)))
+        # thesis_q 不印在卡上 → Step 2 對話用(SKILL L77-79「確認在出卡之前」);
+        # 留在 tdiag dict 給 SKILL 取用,卡上只放用戶答完的定論(規格鐵律 issue #20)。
 
     # 5 維行為診斷 — 用 bar 取代「sev=0.80 ×tier1」內部加權公式
     parts.append(Rule(style="dim cyan"))
@@ -983,15 +974,27 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         parts.append(Padding(rx_tbl, (0, 1)))
         actionable = [r for r in rx if r.get("rule")]
         if actionable:
-            star_hdr = Text("\n★ 下次只改這一件 ", style="bold yellow")
-            star_hdr.append("(可立即執行 + 可驗)", style="dim yellow")
-            parts.append(Padding(star_hdr, (0, 1)))
-            parts.append(Padding(Text(actionable[0]['rule'], style="bold"), (0, 3)))
+            n = min(len(actionable), 3)
+            if n == 1:                                  # 只 1 條 → 單行(避免「從這 1 條候選挑」語意怪)
+                star_hdr = Text("\n★ 下次只改這一件 ", style="bold yellow")
+                star_hdr.append("(可立即執行 + 可驗)", style="dim yellow")
+                parts.append(Padding(star_hdr, (0, 1)))
+                parts.append(Padding(Text(actionable[0]['rule'], style="bold"), (0, 3)))
+            else:                                       # 2-3 條候選讓用戶挑/改一條(SKILL L182「給 2-3 條候選讓他挑」)
+                star_hdr = Text("\n★ 下次只改這一件 ", style="bold yellow")
+                star_hdr.append(f"(從這 {n} 條候選挑/改一條)", style="dim yellow")
+                parts.append(Padding(star_hdr, (0, 1)))
+                cand_tbl = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False, expand=False)
+                cand_tbl.add_column(width=2, no_wrap=True)
+                cand_tbl.add_column(overflow="fold")
+                for i, r in enumerate(actionable[:3], 1):
+                    cand_tbl.add_row(Text(f"{i}.", style="bold yellow"), Text(r['rule'], style="bold"))
+                parts.append(Padding(cand_tbl, (0, 3)))
 
     _console.print()
     _console.print(Panel(
         Group(*parts),
-        title=f"[bold]trade-recap  ·  鏡片 {master}[/]  [dim](引擎產出)[/]",
+        title=f"[bold]trade-recap  ·  鏡片 {master}[/]",
         title_align="left",
         border_style="cyan",
         padding=(1, 2),
