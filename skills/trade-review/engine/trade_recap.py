@@ -134,12 +134,12 @@ def current_cycles(rows):
     for r in rows:
         t = r["ticker"]
         if r["side"] == "buy":
-            if sh[t] <= 1e-9:                       # 從 0 建倉 = 新 cycle
+            if sh[t] <= 1e-6:                        # 從 0/清倉後 建倉 = 新 cycle（閾值對齊 positions held）
                 seq[t] += 1; start[t] = r["date"].isoformat()
             sh[t] += r["qty"]
-        elif sh[t] > 1e-9:                          # 同 positions():只在有倉時減,不跌負
-            sh[t] -= r["qty"]
-            if sh[t] <= 1e-9: start.pop(t, None)    # 清倉 → cycle 結束
+        elif r["side"] == "sell" and sh[t] > 1e-6:  # 明確 sell（防 deposit 等誤觸，雙審）；只在有倉時減
+            sh[t] = max(0.0, sh[t] - r["qty"])      # 截斷防跌負（oversell 賣超持倉）→ 否則後續 buy 被負數污染（雙審 blocker）
+            if sh[t] <= 1e-6: start.pop(t, None)    # 清倉 → cycle 結束
     return {t: {"start": start[t], "seq": seq[t]} for t in start}
 
 def classify_adds(rows, min_adds=3):
