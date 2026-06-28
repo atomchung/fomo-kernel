@@ -714,12 +714,28 @@ def number_line(d):
     return ""
 
 def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None):
+    """乾淨『demo 人話卡』(預設輸出)。
+
+    這不是 SKILL Step 3 的「定論卡」——定論卡是 Claude 拿 build_card_data() JSON 自己寫的。
+    這函式只負責:
+      1. README quickstart demo(讓用戶第一次跑 `python3 engine/trade_recap.py` 看到合理輸出)
+      2. SKILL Step 3 沒跑通時的 fallback
+
+    對應 issue #20 規格鐵律,以下違規條目已砍/移位:
+      - `(引擎產出)` 內部標記 → 刪
+      - 「待你確認的持股假設」段(thesis_q) → 刪(SKILL L77-79「確認在出卡之前」;
+         thesis_q 留在 build_card_data() 給 Step 2 對話用)
+      - 5 維 severity 小數表 → 移到 TR_DEBUG=1 才印(SKILL L158「不放機械層 5 維小數表」)
+      - 鏡片 quote 當每漏洞結語 → 刪(SKILL L192「鏡片引言別當結語」;quote 留在
+         build_card_data() 給 Claude 融入敘事)
+      - 「下次只改這一件」單條 → 改成 2-3 條候選(SKILL L182「給 2-3 條候選讓他挑」)
+    """
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
     master = (_LENS or {}).get("philosophy", "交易哲學鏡片")
     print("="*60)
-    print(f"  trade-recap · 鏡片 {master}  (引擎產出)")
+    print(f"  trade-recap · 鏡片 {master}")
     print("="*60)
     if overview:                                   # 〔總覽〕已實現 + 未實現都報,看金額不看筆數
         o = overview; ab = o.get("ab") or {}
@@ -745,16 +761,15 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         print(f"\n〔標的層診斷 · 按金額排序,只看影響大的(小倉不糾結)〕")
         for d in tdiag:
             print(f"  {d['ticker']:<6}{d['impact']:>+11,.0f}   {' ｜ '.join(d['tags'])}")
-        tq = [d for d in tdiag if d.get("thesis_q")]
-        if tq:
-            print(f"\n  〔待你確認的持股假設 · 機械分不出逢低/凹單,從行為推測、要你定〕")
-            for d in tq:
-                print(f"    {d['ticker']}: {d['thesis_q']}")
-    print("\n[5 維 severity（× tier 權重後排序）+ 原始數字]")
-    for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
-        flag = "🔴" if d["triggered"] else "⚪"
-        print(f"  {flag} {d['dim']:<8} sev={d['severity']:.2f} ×tier{d['tier']} = {d['severity']*TW[d['tier']]:.2f}")
-        print(f"      {number_line(d)}")
+        # thesis_q 已移到 build_card_data() → Step 2 對話用,不印在卡上(SKILL L77-79)
+
+    if os.environ.get("TR_DEBUG"):                  # 5 維 raw 表只在 debug 模式印,不污染用戶卡(SKILL L158)
+        print("\n[debug · 5 維 severity（× tier 權重後排序）+ 原始數字]")
+        for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
+            flag = "🔴" if d["triggered"] else "⚪"
+            print(f"  {flag} {d['dim']:<8} sev={d['severity']:.2f} ×tier{d['tier']} = {d['severity']*TW[d['tier']]:.2f}")
+            print(f"      {number_line(d)}")
+
     print("\n" + "─"*60)
     if strength:                                   # 先肯定做對的一件事(降 ego 防衛),再給洞
         intro = (_LENS or {}).get("strength_intro", "先說你做對的一件事:")
@@ -763,10 +778,8 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     if trig:
         print("  復盤卡（top 1-2 最高代價的洞）：\n")
         for d in trig[:2]:
-            rule, quote = card_for(d["dim"])
             print(f"  ▍最大漏洞 · {d['dim']}")
-            print(f"    {number_line(d)}")
-            print(f"    ▸ {quote}\n")
+            print(f"    {number_line(d)}\n")        # quote 已移到 build_card_data,別當結語(SKILL L192)
     else:
         print("  這幾個地基你目前都守住了。\n")
     if rx:                                          # 處方層:揚長 / 外包短板 / 砍損耗
@@ -776,7 +789,13 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
             print(f"    ▸ {r['kind']}:{r['text']}{v}")
         actionable = [r for r in rx if r.get("rule")]
         if actionable:
-            print(f"\n  ★ 下次只改這一件(可立即執行 + 可驗):{actionable[0]['rule']}")
+            n = min(len(actionable), 3)
+            if n == 1:                                  # 只 1 條 → 單行(避免「從這 1 條候選挑」語意怪)
+                print(f"\n  ★ 下次只改這一件:{actionable[0]['rule']}")
+            else:                                       # 2-3 條 → 候選列表(SKILL L182「給 2-3 條候選讓他挑」)
+                print(f"\n  ★ 下次只改這一件(從這 {n} 條候選挑/改一條):")
+                for i, r in enumerate(actionable[:3], 1):
+                    print(f"     {i}. {r['rule']}")
 
 # ─────────────────── 結構化 state(跨次對帳用)───────────────────
 def build_state(rows, rts, held, dims, overview, ab, rx):
@@ -872,6 +891,66 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
         },
     }
 
+# ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
+def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
+                    ab, pa, master, is_demo=False):
+    """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
+
+    Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
+    不准照搬欄位、不准印 5 維 raw、不准把 thesis_q 印在卡上(Step 2 對話用)。
+    跟 build_state() 平行:build_state 給「對帳記憶」,build_card_data 給「Step 3 渲染」。
+
+    對應 issue #20 七條規格鐵律破洞 — 把渲染責任從 engine 移到 Claude:
+    - thesis_questions 包出來但標明只在 Step 2 對話用(SKILL L77-79「確認在出卡之前」)
+    - top_holes 帶 lens_quote 但別當結語用(SKILL L192)
+    - candidate_rules 給 2-3 條候選,不只第一條(SKILL L182)
+    - dims_raw 5 維給結構化資料,讓 Claude「一句人話帶過其餘維」(SKILL L158-159)
+    - is_demo 標明 → mock 卡頭應加 [demo · 非真實成績]
+    """
+    TW = {1: 1.0, 2: 0.7}
+    trig = sorted([d for d in dims if d["triggered"]],
+                  key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
+
+    # top 1-2 漏洞:結構化,含 lens 規矩/引言(融入敘事用,別當結語)
+    top_holes = []
+    for d in trig[:2]:
+        rule, quote = card_for(d["dim"])
+        top_holes.append({
+            "dim": d["dim"],
+            "severity": round(d["severity"], 2),
+            "tier_weight": TW[d["tier"]],
+            "number_line": number_line(d),                  # 數字白話(可直接用)
+            "lens_rule": rule,                              # 鏡片這維的規矩
+            "lens_quote": quote,                            # ⚠️ 融入敘事用,別當結語(SKILL L192)
+            "raw": d,
+        })
+
+    # 候選規矩:Step 3 對話跟用戶挑 1-3 條(SKILL L182「給 2-3 條候選讓他挑」)
+    candidate_rules = [r for r in (rx or []) if r.get("rule")][:3]
+
+    # ⚠️ thesis_questions 給 Step 2 對話用,絕不准印在卡上(SKILL L77-79「確認在出卡之前」)
+    thesis_questions = [{"ticker": d["ticker"], "question": d["thesis_q"]}
+                        for d in (tdiag or []) if d.get("thesis_q")]
+
+    return {
+        "schema_version": 1,
+        "philosophy": master,
+        "is_demo": is_demo,                                 # mock csv → True,卡頭應加 [demo · 非真實成績]
+        "strength": strength,
+        "overview": overview,
+        "best_trade": best,
+        "worst_trade": worst,
+        "what_if": wi,
+        "ticker_diagnosis": tdiag,                          # tags 已是人話
+        "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
+        "top_holes": top_holes,                             # top 1-2,Claude 寫敘事用
+        "candidate_rules": candidate_rules,                 # 2-3 條,讓用戶挑
+        "prescriptions": rx,                                # 完整處方層
+        "alpha_beta_breakdown": ab,
+        "payoff_attribution": pa,
+        "dims_raw": dims,                                   # 5 維 raw,Claude 用「一句人話」帶過其餘維
+    }
+
 # ─────────────────────────── main ───────────────────────────
 def main():
     paths = sys.argv[1:] or [DEFAULT_CSV]
@@ -886,14 +965,10 @@ def main():
     px, yf_err = fetch_prices(tickers, start)
     fwds, last_px = fwd_from_px(rts, px, adaptive_n_fwd(rows))   # 觀察窗隨資料長度自適應
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
-    print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
-          f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
-    print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
-          f"｜driver map: {n_dm} 檔" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
+    # is_demo:任一輸入 path 含 'mock' → 是 demo,卡頭/JSON 都標(SKILL Step 3 + issue #21:mock alpha 失真,要當下標警告)
+    is_demo = any("mock" in p.replace(os.sep, "/").lower() for p in paths)
     BROAD = {"大盤ETF", "商品", "債券", "區域ETF"}   # 再平衡/現金管理，非選股決策
     decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BROAD]
-    print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
-          f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
     d_size = dim_size(rows, held, last_px)
     d_exit = dim_exit(decision_rts, fwds); d_div = dim_diversify(held, last_px)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held, last_px, d_size)
@@ -909,9 +984,34 @@ def main():
     rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
     tdiag = ticker_diagnosis(rts, adds_class, held, last_px)  # 標的層:按金額排序,對事不對人
-    render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
-    print_alpha_beta(ab)
-    print_payoff_attr(pa)                                 # 盈虧比拆解(誰在撐/拖,反事實)
+
+    # JSON 模式(SKILL Step 3 走這條):stdout 純 JSON 給 Claude 寫敘事卡;meta 走 stderr 不污染
+    if os.environ.get("TR_JSON"):
+        import json
+        meta = (f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
+                f"{len(rts)} round-trip,持倉 {len(held)}｜yfinance: {'OK' if not yf_err else yf_err}"
+                f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔"
+                + (" (純 fallback,冷門股可能失準)" if not n_dm else "")
+                + ("｜⚠️ DEMO 模式" if is_demo else ""))
+        print(meta, file=sys.stderr)
+        card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
+                               ab, pa, master, is_demo=is_demo)
+        print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
+    else:
+        # 預設:乾淨人話卡(demo / fallback 用,#20 違規條目已砍)
+        if is_demo:
+            print("="*60)
+            print("  ⚠️ DEMO 模式 · mock 假資料 · α/β 含 yfinance 真實漲幅 → 失真,勿解讀為實戰績效")
+            print("="*60)
+        print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
+              f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
+        print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
+              f"｜driver map: {n_dm} 檔" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
+        print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
+              f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
+        render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
+        print_alpha_beta(ab)
+        print_payoff_attr(pa)                             # 盈虧比拆解(誰在撐/拖,反事實)
     if os.environ.get("TR_STATE_OUT"):                    # 設了才寫薄 state;不設 → 卡片 stdout 零變
         import json, tempfile
         path = os.environ["TR_STATE_OUT"]
