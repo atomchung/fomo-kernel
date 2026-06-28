@@ -9,6 +9,16 @@ trade-review · trade-recap engine v0.2
 """
 import csv, os, sys, statistics, datetime as dt
 from collections import defaultdict, deque
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.text import Text
+from rich.rule import Rule
+from rich.table import Table
+from rich.padding import Padding
+
+# 卡片固定寬度（含邊框），與 ccstory 對齊；中英混排靠 Rich East Asian Width
+CARD_WIDTH = 84
+_console = Console(width=CARD_WIDTH, highlight=False)
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
@@ -295,41 +305,68 @@ def alpha_credible(ab, dims):
 
 
 def print_alpha_beta(d):
-    print("\n" + "─"*60)
-    print("  你的報酬怎麼來的 · 把運氣(大盤+賽道)和技巧(選股)分開")
+    """獨立 Panel:把報酬拆成「運氣(大盤+賽道)」vs「技巧(選股)」。"""
     if d.get("note"):
-        print(f"    （{d['note']}）"); return
-    bs = d["benchmarks"]
-    spy = bs["SPY"]
+        _console.print()
+        _console.print(Panel(
+            Text(d['note'], style="dim"),
+            title="[bold]你的報酬怎麼來的[/]  [dim]· 運氣 vs 技巧[/]",
+            title_align="left", border_style="cyan", padding=(1, 2), width=CARD_WIDTH,
+        ))
+        return
+    bs = d["benchmarks"]; spy = bs["SPY"]
     port = spy["port_tot"]; vs_spy = spy["excess"]
-    print(f"    過去 {d['n']} 個交易日:投組 {port*100:+.0f}%、大盤 SPY {spy['bench_tot']*100:+.0f}% → 你贏大盤 {vs_spy*100:+.0f}pp")
+    t = Text()
+    t.append(f"過去 {d['n']} 個交易日:投組 ")
+    t.append(f"{port*100:+.0f}%", style="bold green" if port >= 0 else "bold red")
+    t.append("、大盤 SPY ")
+    t.append(f"{spy['bench_tot']*100:+.0f}%", style="green" if spy['bench_tot'] >= 0 else "red")
+    t.append(" → 你贏大盤 ")
+    t.append(f"{vs_spy*100:+.0f}pp", style="bold green" if vs_spy >= 0 else "bold red")
+    t.append("\n\n① ", style="bold")
     if d.get("credible"):
-        print(f"    ① alpha(vs 通用大盤,調風險後):{spy['alpha_ann']*100:+.0f}%/年,β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）")
+        t.append("alpha (vs 通用大盤,調風險後):  ")
+        t.append(f"{spy['alpha_ann']*100:+.0f}%/年", style="bold cyan")
+        t.append(f"   β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)")
     else:
-        print(f"    ① β {spy['beta']:.2f}（波動是大盤 {spy['beta']:.1f} 倍）;α 不單獨報數——樣本 <1 年或持倉過度集中時,α=賽道紅利+雜訊,非選股能力")
-    if not d.get("credible"):                                  # codex review:不 credible 時不輸出任何「選股能力」結論
+        t.append(f"β {spy['beta']:.2f} ", style="bold")
+        t.append(f"(波動是大盤 {spy['beta']:.1f} 倍)")
+        t.append("\n   α 不單獨報數 ", style="dim")
+        t.append("— 樣本 <1 年或持倉過度集中時,α = 賽道紅利 + 雜訊,非選股能力", style="dim")
+    t.append("\n\n② ", style="bold")
+    if not d.get("credible"):
         sens = "、".join(f"vs {sk} {(port - bs[sk]['bench_tot'])*100:+.0f}pp"
                          for sk in ("QQQ", "SOXX") if sk in bs)
-        extra = f"(贏大盤對基準極敏感:{sens},換基準結論就翻)" if sens else ""
-        print(f"    ② α / 選股能力:資料不足以判定{extra}——還分不出『選股』還是『押對賽道』,先看行為層。")
-        print(f"    (持倉法日報酬近似;基準=通用大盤 SPY。)")
-        return
-    print(f"    ② 你贏大盤的 {vs_spy*100:+.0f}pp,有多少是『選股』、多少是『押對賽道』?——換對照看敏感度:")
-    for sk, tag in [("QQQ", "科技,較中性"), ("SOXX", "半導體,事後最強板塊→偏嚴苛")]:
-        if sk in bs:
-            pick = port - bs[sk]["bench_tot"]      # 你 vs 該賽道 = 純選股力
-            print(f"         你的選股 vs {sk}({tag}):  {pick*100:>+5.0f}pp")
-    if "QQQ" in bs:                                  # verdict 用較中性的 QQQ,不用事後最強的 SOXX
-        pick_n = port - bs["QQQ"]["bench_tot"]
-        if pick_n < -0.05:
-            print(f"    ▸ 準確認知:連較中性的 QQQ 你選股都輸 {-pick_n*100:.0f}pp,選股確實是弱項——"
-                  f"但別全盤否定:ETF 也買爛股、錯過妖股,選股的上限你還留著。")
-        else:
-            print(f"    ▸ 準確認知:你選股贏中性的 QQQ {pick_n*100:+.0f}pp,只是跑不贏事後最強的 SOXX。"
-                  f"選股不算爛,別被嚴苛基準嚇到。")
-    print(f"    ⚠️ 基準的坑:SOXX 是『事後』最強板塊,拿它比有存活者偏差(馬後炮),你也不一定該全押半導體。"
-          f"\n       真正公平的對照是『你當時板塊配置的混合』;這版先用現成 ETF 近似,重點看『選股 alpha 對基準多敏感』。")
-    print(f"    (持倉法日報酬近似;alpha 基準=通用大盤 SPY。)")
+        extra = f" (贏大盤對基準極敏感:{sens},換基準結論就翻)" if sens else ""
+        t.append("α / 選股能力:資料不足以判定", style="bold yellow")
+        t.append(extra, style="dim")
+        t.append("\n   還分不出『選股』還是『押對賽道』,先看行為層。", style="dim")
+        t.append("\n\n(持倉法日報酬近似;基準=通用大盤 SPY)", style="dim italic")
+    else:
+        t.append(f"你贏大盤的 {vs_spy*100:+.0f}pp,有多少是『選股』、多少是『押對賽道』?換對照看敏感度:\n")
+        for sk, tag in [("QQQ", "科技,較中性"), ("SOXX", "半導體,事後最強板塊→偏嚴苛")]:
+            if sk in bs:
+                pick = port - bs[sk]["bench_tot"]
+                t.append(f"   你的選股 vs {sk:<4} ({tag}):  ")
+                t.append(f"{pick*100:+.0f}pp\n", style="bold green" if pick >= 0 else "bold red")
+        if "QQQ" in bs:
+            pick_n = port - bs["QQQ"]["bench_tot"]
+            t.append("\n▸ 準確認知:", style="bold")
+            if pick_n < -0.05:
+                t.append(f"連較中性的 QQQ 你選股都輸 {-pick_n*100:.0f}pp,選股確實是弱項")
+                t.append(" — 但別全盤否定:ETF 也買爛股、錯過妖股,選股的上限你還留著。", style="dim")
+            else:
+                t.append(f"你選股贏中性的 QQQ {pick_n*100:+.0f}pp,只是跑不贏事後最強的 SOXX。")
+                t.append(" 選股不算爛,別被嚴苛基準嚇到。", style="dim")
+        t.append("\n\n⚠ 基準的坑:", style="yellow")
+        t.append("SOXX 是『事後』最強板塊,有存活者偏差(馬後炮);真正公平的對照是『你當時板塊配置的混合』。", style="dim")
+        t.append("\n(持倉法日報酬近似;alpha 基準=通用大盤 SPY)", style="dim italic")
+    _console.print()
+    _console.print(Panel(
+        t,
+        title="[bold]你的報酬怎麼來的[/]  [dim]· 把運氣(大盤+賽道)和技巧(選股)分開[/]",
+        title_align="left", border_style="cyan", padding=(1, 2), width=CARD_WIDTH,
+    ))
 
 # ─────────────────────────── 5. 五維 metrics ───────────────────────────
 MIN_WINNERS = 5     # winner_early 至少要這麼多「賣掉的贏家」才算可信(半年資料通常達得到)
@@ -408,7 +445,11 @@ def dim_hold(rts):
     # 真問題是「同一檔 ticker 又當沖又長抱」= 沒有一致框架；不同檔用不同框架是合理的兩套策略。
     hs = [r["hold"] for r in rts]
     if not hs:
-        return dict(dim="持有時間", tier=2, triggered=False, severity=0)
+        # 無已實現 round-trip(全買未賣)→ keys 補空,讓下游 number_line 不 KeyError
+        return dict(dim="持有時間", tier=2, triggered=False, severity=0,
+                    median_hold=0, iqr=0, min=0, max=0,
+                    incon_rate=0, n_incon=0, n_multi=0, incon_tickers=[],
+                    no_data=True)
     med = statistics.median(hs)
     q = sorted(hs); iqr = (q[int(.75*len(q))-1] - q[int(.25*len(q))]) if len(q) > 3 else 0
     overtrading = (5 - med) / 5 if med < 5 else 0          # 中位過短 = 疑似無 edge 的過度交易
@@ -555,27 +596,80 @@ def payoff_attribution(rts, top_n=4):
                 carriers=carriers, draggers=draggers, counterfactual=cf)
 
 def print_payoff_attr(pa):
+    """獨立 Panel:已實現交易的貢獻度,誰在撐 vs 誰在拖,加反事實。"""
     if not pa:
         return
-    fmt = lambda v: "∞" if v is None else f"{v:.1f}"            # 無虧損 → ∞,不印 0
-    print("\n" + "─"*60)
-    print("  盈虧比拆解 · 誰在撐、誰在拖(已實現交易的貢獻度)")
-    print(f"    盈虧比 {fmt(pa['payoff'])}（平均賺 ${pa['avg_win']:,.0f} / 賠 ${abs(pa['avg_loss']):,.0f}，{pa['n']} 筆已實現）")
-    car = "、".join(f"{t} ${w:,.0f}({p*100:.0f}%)" for t, w, p in pa["carriers"]) or "(無已實現獲利)"
-    dra = "、".join(f"{t} ${l:,.0f}({p*100:.0f}%)" for t, l, p in pa["draggers"]) or "(無已實現虧損)"
-    print(f"    撐盤(佔總賺):{car}")
-    print(f"    拖累(佔總賠):{dra}")
+    fmt = lambda v: "∞" if v is None else f"{v:.1f}"
+    t = Text()
+    t.append("盈虧比 ")
+    t.append(f"{fmt(pa['payoff'])}", style="bold cyan")
+    t.append(f"   平均賺 ${pa['avg_win']:,.0f}  /  賠 ${abs(pa['avg_loss']):,.0f}  ({pa['n']} 筆已實現)\n")
+    t.append("\n撐盤 ", style="bold green")
+    t.append("(佔總賺):  ", style="dim green")
+    t.append("、".join(f"{tk} ${w:,.0f}({p*100:.0f}%)" for tk, w, p in pa["carriers"]) or "(無已實現獲利)")
+    t.append("\n拖累 ", style="bold red")
+    t.append("(佔總賠):  ", style="dim red")
+    t.append("、".join(f"{tk} ${l:,.0f}({p*100:.0f}%)" for tk, l, p in pa["draggers"]) or "(無已實現虧損)")
     cf = pa["counterfactual"]
     if cf:
-        print(f"    → 拿掉最大拖累 {cf['ticker']}（淨 ${cf['drag']:,.0f}）後,盈虧比 {fmt(pa['payoff'])} → {fmt(cf['payoff'])}")
+        t.append(f"\n\n→ 拿掉最大拖累 {cf['ticker']} (淨 ${cf['drag']:,.0f}) 後,盈虧比 ", style="dim")
+        t.append(f"{fmt(pa['payoff'])}", style="dim")
+        t.append(" → ", style="dim")
+        t.append(f"{fmt(cf['payoff'])}", style="bold cyan")
+    _console.print()
+    _console.print(Panel(
+        t,
+        title="[bold]盈虧比拆解[/]  [dim]· 誰在撐、誰在拖(已實現交易的貢獻度)[/]",
+        title_align="left", border_style="cyan", padding=(1, 2), width=CARD_WIDTH,
+    ))
 
-def what_if(held, last_px):
-    """把『會一起倒』的空話換成可量化的 what-if:AI 暴險市值 × 回檔情境。"""
+def what_if(held, last_px, threshold=0.25):
+    """基於用戶實際持倉動態挑「最大集中暴險」做壓測,而非寫死 AI。
+    三個候選:① AI thematic(跨多 sector,driver[1]==1)② 最大 sector ③ 最大個股。
+    取佔比最高 且 ≥ threshold 那個當壓測標的;若三者都 < threshold(真正分散)→ return None。
+    壓測情境:回檔 30%(一般修正)/ 50%(深熊)。"""
     if not last_px: return None
-    ai = sum(sh * last_px[t] for t, (sh, c) in held.items() if driver(t)[1] == 1 and t in last_px)
-    tot = sum(sh * last_px[t] for t, (sh, c) in held.items() if t in last_px)
+    mv = {t: sh * last_px[t] for t, (sh, c) in held.items() if t in last_px}
+    tot = sum(mv.values())
     if tot <= 0: return None
-    return dict(ai_mval=ai, ai_pct=ai / tot, drop30=ai * 0.30, drop50=ai * 0.50)
+
+    # 候選 1:AI thematic 全集(跨 sector)
+    ai_mv = sum(v for t, v in mv.items() if driver(t)[1] == 1)
+    ai_pct = ai_mv / tot
+
+    # 候選 2:最大 sector(排除「未分類」,避免 driver map 沒載入時誤觸發)
+    sector_mv = defaultdict(float)
+    for t, v in mv.items():
+        sec = driver(t)[0]
+        if sec != "未分類":
+            sector_mv[sec] += v
+    if sector_mv:
+        max_sec, max_sec_mv = max(sector_mv.items(), key=lambda x: x[1])
+        max_sec_pct = max_sec_mv / tot
+    else:
+        max_sec, max_sec_mv, max_sec_pct = None, 0.0, 0.0
+
+    # 候選 3:最大個股
+    max_t, max_t_mv = max(mv.items(), key=lambda x: x[1])
+    max_t_pct = max_t_mv / tot
+
+    # 候選清單(只收 ≥ threshold 的;label/mval/pct)
+    cands = []
+    if ai_pct >= threshold:
+        cands.append(("AI capex 主題(跨板塊)", ai_mv, ai_pct, "AI 主題回檔"))
+    if max_sec and max_sec_pct >= threshold:
+        # 若 AI thematic 已是候選且涵蓋了這個 sector,避免重複(AI 通常 ≥ max_sec)
+        if not (ai_pct >= threshold and ai_pct >= max_sec_pct):
+            cands.append((f"「{max_sec}」板塊", max_sec_mv, max_sec_pct, f"{max_sec}回檔"))
+    if max_t_pct >= threshold:
+        # 若 AI 或 sector 已涵蓋且佔比更高,個股不再重複(避免「單檔 NVDA 50%」與「半導體 50%」並列)
+        if max_t_pct > max(ai_pct, max_sec_pct):
+            cands.append((f"單檔 {max_t}", max_t_mv, max_t_pct, f"{max_t} 個股回檔"))
+
+    if not cands: return None
+    label, mval, pct, scenario_prefix = max(cands, key=lambda x: x[2])  # 取佔比最高那個
+    return dict(label=label, mval=mval, pct=pct, scenario_prefix=scenario_prefix,
+                drop30=mval * 0.30, drop50=mval * 0.50)
 
 def time_trend(rts, avg_down):
     """時間維度:按年看關鍵行為指標,讓用戶看到自己『有沒有在進步』(復盤的留存核心)。"""
@@ -705,6 +799,8 @@ def number_line(d):
     if n == "分散":
         return f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、top3 {d['top3']*100:.0f}%——同一個 driver"
     if n == "持有時間":
+        if d.get("no_data"):
+            return "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）"
         base = f"你持有時間 {d['min']}~{d['max']} 天、中位 {d['median_hold']:.0f} 天"
         if d.get("n_incon", 0) > 0:
             return base + f"；其中 {d['n_incon']}/{d['n_multi']} 檔同一檔又當沖又長抱（{', '.join(d['incon_tickers'][:5])}）——同檔沒有一致框架"
@@ -713,70 +809,194 @@ def number_line(d):
         return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
     return ""
 
+def _money(v, with_sign=True):
+    """金額帶 +/- 並上色（綠正紅負）；with_sign=False 時不強制正號。"""
+    s = f"{v:+,.0f}" if with_sign else f"{v:,.0f}"
+    return Text(s, style="bold green" if v >= 0 else "bold red")
+
+def _pct(v, unit="%", bold=False):
+    """unit='pp' 用在「超額報酬」對比,'%' 用在「個股/組合報酬率」。"""
+    s = f"{v*100:+.0f}{unit}"
+    style = ("bold " if bold else "") + ("green" if v >= 0 else "red")
+    return Text(s, style=style)
+
 def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None):
+    """把復盤卡渲染成一張 Rich Panel（cyan 邊框，ANSI color，中英對齊）。
+    架構：一張外框大 Panel，內部按段用 Rule(───) 分節；五維行為診斷用 bar chart 取代內部加權公式。"""
     TW = {1: 1.0, 2: 0.7}
     trig = [d for d in dims if d["triggered"]]
     trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
     master = (_LENS or {}).get("philosophy", "交易哲學鏡片")
-    print("="*60)
-    print(f"  trade-recap · 鏡片 {master}  (引擎產出)")
-    print("="*60)
-    if overview:                                   # 〔總覽〕已實現 + 未實現都報,看金額不看筆數
+    parts = []
+
+    # 〔總覽 · 金額〕
+    if overview:
         o = overview; ab = o.get("ab") or {}
-        print(f"\n〔總覽 · 金額〕帳面總損益 {o['total_pnl']:+,.0f}")
-        print(f"  = 已實現(賣掉落袋){o['realized']:+,.0f}  +  未實現(還抱著){o['unrealized']:+,.0f}")
-        print(f"  你『主動買賣』的盈虧比 {o['payoff']:.1f}（平均賺 ${o['avg_win']:,.0f} vs 平均賠 ${abs(o['avg_loss']):,.0f}）")
+        ov = Text()
+        ov.append("帳面總損益  ", style="bold")
+        ov.append_text(_money(o['total_pnl']))
+        ov.append("\n  = 已實現 ")
+        ov.append_text(_money(o['realized']))
+        ov.append("   未實現 ")
+        ov.append_text(_money(o['unrealized']))
+        ov.append("\n盈虧比 ")
+        ov.append(f"{o['payoff']:.1f}", style="bold")
+        ov.append(f"   平均賺 ${o['avg_win']:,.0f}  vs  平均賠 ${abs(o['avg_loss']):,.0f}")
         if ab and not ab.get("note"):
-            base = f"  贏大盤 {ab['excess_vs_spy']*100:+.0f}pp｜β {ab['beta']:.2f}（漲跌是大盤 {ab['beta']:.1f} 倍）"
+            ov.append("\n贏大盤 ")
+            ov.append_text(_pct(ab['excess_vs_spy'], unit="pp", bold=True))
+            ov.append(f"   β {ab['beta']:.2f}  (漲跌是大盤 {ab['beta']:.1f} 倍)")
             if ab.get("credible"):
-                print(base + f"｜真本事 α 年化 {ab['alpha_ann']*100:+.0f}%")
+                ov.append("   真本事 α ", style="bold")
+                ov.append(f"年化 {ab['alpha_ann']*100:+.0f}%", style="bold cyan")
             else:
-                print(base + "｜選股 α:樣本/持倉不足以判定能力,先看行為層(α 為何不可判,見下)")
+                ov.append("\n選股 α:", style="yellow")
+                ov.append(" 樣本/持倉不足以判定能力,先看行為層 ", style="dim")
+                ov.append("(α 為何不可判 → 見下方分析)", style="dim italic")
         elif ab and ab.get("note"):
-            print(f"  α/β:{ab['note']}")
-    if best and worst:                             # 做得最好 / 最差的一筆具體交易
-        print(f"\n〔做得最好 / 最差的一筆〕")
-        print(f"  ✅ 最賺:{best['ticker']} {best['ret']*100:+.0f}%（{best['buy_px']:.0f}→{best['sell_px']:.0f},抱 {best['hold']} 天）")
-        print(f"  ❌ 最虧:{worst['ticker']} {worst['ret']*100:+.0f}%（{worst['buy_px']:.0f}→{worst['sell_px']:.0f},抱 {worst['hold']} 天）")
-    if wi:                                          # what-if:可量化的情境,不講「會一起倒」空話
-        print(f"\n〔what if〕你 AI 暴險市值約 ${wi['ai_mval']:,.0f}（佔 {wi['ai_pct']*100:.0f}%）")
-        print(f"  AI 回檔 30%(一般修正)→ 帳面 -${wi['drop30']:,.0f}；回檔 50%(2022級熊市)→ -${wi['drop50']:,.0f}。撐得住嗎?")
-    if tdiag:                                       # 標的層診斷:按金額排序,對事不對人(小倉不糾結)
-        print(f"\n〔標的層診斷 · 按金額排序,只看影響大的(小倉不糾結)〕")
+            ov.append(f"\nα/β:{ab['note']}", style="dim")
+        parts.append(Padding(ov, (0, 1)))
+
+    # 〔做得最好 / 最差的一筆〕
+    if best and worst:
+        parts.append(Rule(style="dim cyan"))
+        bw = Text()
+        bw.append("✓ 最賺  ", style="bold green")
+        bw.append(f"{best['ticker']:<5} ")
+        bw.append_text(_pct(best['ret'], bold=True))
+        bw.append(f"   {best['buy_px']:.0f} → {best['sell_px']:.0f}   抱 {best['hold']} 天")
+        bw.append("\n✗ 最虧  ", style="bold red")
+        bw.append(f"{worst['ticker']:<5} ")
+        bw.append_text(_pct(worst['ret'], bold=True))
+        bw.append(f"   {worst['buy_px']:.0f} → {worst['sell_px']:.0f}   抱 {worst['hold']} 天")
+        parts.append(Padding(bw, (0, 1)))
+
+    # 〔what if〕— 動態挑「最大集中暴險」(AI thematic / 最大 sector / 最大個股 取最高)
+    # 都低於 25% 門檻(真分散)→ wi 為 None,整段省略
+    if wi:
+        parts.append(Rule(style="dim cyan"))
+        wif = Text()
+        wif.append("what if · 最大集中暴險壓測", style="bold yellow")
+        wif.append(f"\n你 {wi['label']} 暴險約 ${wi['mval']:,.0f}  (佔 ")
+        wif.append(f"{wi['pct']*100:.0f}%", style="bold")
+        wif.append(")")
+        wif.append("\n  回檔 30% (一般修正)  → 帳面 ")
+        wif.append(f"-${wi['drop30']:,.0f}", style="red")
+        wif.append("\n  回檔 50% (深熊)       → 帳面 ")
+        wif.append(f"-${wi['drop50']:,.0f}", style="bold red")
+        wif.append("   撐得住嗎?", style="italic dim")
+        parts.append(Padding(wif, (0, 1)))
+
+    # 〔標的層診斷〕
+    if tdiag:
+        parts.append(Rule(style="dim cyan"))
+        parts.append(Padding(Text("標的層診斷  ·  按金額排序,只看影響大的", style="bold"), (0, 1)))
+        tbl = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False, expand=False)
+        tbl.add_column(width=6, no_wrap=True)
+        tbl.add_column(justify="right", width=11, no_wrap=True)
+        tbl.add_column(overflow="fold")
         for d in tdiag:
-            print(f"  {d['ticker']:<6}{d['impact']:>+11,.0f}   {' ｜ '.join(d['tags'])}")
+            tbl.add_row(
+                Text(d['ticker'], style="bold"),
+                _money(d['impact']),
+                '  '.join(d['tags'])
+            )
+        parts.append(Padding(tbl, (0, 1)))
         tq = [d for d in tdiag if d.get("thesis_q")]
         if tq:
-            print(f"\n  〔待你確認的持股假設 · 機械分不出逢低/凹單,從行為推測、要你定〕")
+            head = Text("\n待你確認的持股假設 ", style="bold yellow")
+            head.append("· 機械分不出逢低/凹單,從行為推測、要你定", style="dim")
+            parts.append(Padding(head, (0, 1)))
+            tq_tbl = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False, expand=False)
+            tq_tbl.add_column(width=6, no_wrap=True)
+            tq_tbl.add_column(overflow="fold")
             for d in tq:
-                print(f"    {d['ticker']}: {d['thesis_q']}")
-    print("\n[5 維 severity（× tier 權重後排序）+ 原始數字]")
+                tq_tbl.add_row(Text(d['ticker'], style="bold"), d['thesis_q'])
+            parts.append(Padding(tq_tbl, (0, 1)))
+
+    # 5 維行為診斷 — 用 bar 取代「sev=0.80 ×tier1」內部加權公式
+    parts.append(Rule(style="dim cyan"))
+    parts.append(Padding(Text("5 維行為診斷  ·  bar 長 = 嚴重度 × 維度權重", style="bold"), (0, 1)))
+    dim_tbl = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False, expand=False)
+    dim_tbl.add_column(width=1, no_wrap=True)            # ● ○
+    dim_tbl.add_column(width=11, no_wrap=True)           # 維度名（夠塞「部位 sizing」）
+    dim_tbl.add_column(width=14, no_wrap=True)           # bar
+    dim_tbl.add_column(overflow="fold")                  # 描述
     for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
-        flag = "🔴" if d["triggered"] else "⚪"
-        print(f"  {flag} {d['dim']:<8} sev={d['severity']:.2f} ×tier{d['tier']} = {d['severity']*TW[d['tier']]:.2f}")
-        print(f"      {number_line(d)}")
-    print("\n" + "─"*60)
-    if strength:                                   # 先肯定做對的一件事(降 ego 防衛),再給洞
+        triggered = d["triggered"]
+        sev_w = d["severity"] * TW[d["tier"]]
+        filled = max(0, min(14, int(round(sev_w * 14))))
+        bar = "█" * filled + "░" * (14 - filled)
+        if not triggered:
+            flag, dot_style, bar_style = "○", "dim", "dim"
+        elif sev_w >= 0.7:
+            flag, dot_style, bar_style = "●", "bold red", "red"
+        elif sev_w >= 0.4:
+            flag, dot_style, bar_style = "●", "yellow", "yellow"
+        else:
+            flag, dot_style, bar_style = "●", "dim yellow", "dim yellow"
+        dim_tbl.add_row(
+            Text(flag, style=dot_style),
+            Text(d['dim'], style="bold" if triggered else "dim"),
+            Text(bar, style=bar_style),
+            Text(number_line(d), style="" if triggered else "dim"),
+        )
+    parts.append(Padding(dim_tbl, (0, 1)))
+
+    # 先肯定 + 復盤卡（top 1-2 最高代價的洞）
+    parts.append(Rule(style="dim cyan"))
+    if strength:
         intro = (_LENS or {}).get("strength_intro", "先說你做對的一件事:")
-        print(f"  ✅ {intro}")
-        print(f"     {strength}\n")
+        st = Text("✓ ", style="bold green")
+        st.append(intro, style="bold green")
+        st.append(f"\n  {strength}")
+        parts.append(Padding(st, (0, 1)))
     if trig:
-        print("  復盤卡（top 1-2 最高代價的洞）：\n")
+        parts.append(Padding(Text("\n復盤卡  ·  top 1-2 最高代價的洞", style="bold"), (0, 1)))
         for d in trig[:2]:
-            rule, quote = card_for(d["dim"])
-            print(f"  ▍最大漏洞 · {d['dim']}")
-            print(f"    {number_line(d)}")
-            print(f"    ▸ {quote}\n")
+            _, quote = card_for(d["dim"])
+            block = Table(show_header=False, box=None, padding=(0, 0), pad_edge=False, expand=False)
+            block.add_column(width=2, no_wrap=True)
+            block.add_column(overflow="fold")
+            block.add_row(Text("▍", style="bold red"),
+                          Text(f"最大漏洞 · {d['dim']}", style="bold red"))
+            block.add_row("", Text(number_line(d)))
+            block.add_row(Text("▸", style="italic dim"), Text(quote, style="italic"))
+            parts.append(Padding(block, (0, 1)))
     else:
-        print("  這幾個地基你目前都守住了。\n")
-    if rx:                                          # 處方層:揚長 / 外包短板 / 砍損耗
-        print("  〔怎麼優化 · 放大你強的 + 外包你弱的 + 砍掉純損耗〕")
+        parts.append(Padding(Text("這幾個地基你目前都守住了。", style="green"), (0, 1)))
+
+    # 處方層
+    if rx:
+        parts.append(Rule(style="dim cyan"))
+        parts.append(Padding(Text("怎麼優化  ·  放大你強的 + 外包你弱的 + 砍掉純損耗", style="bold"), (0, 1)))
+        rx_tbl = Table(show_header=False, box=None, padding=(0, 0), pad_edge=False, expand=False)
+        rx_tbl.add_column(width=2, no_wrap=True)
+        rx_tbl.add_column(overflow="fold")
         for r in rx:
-            v = f"  〔下次驗:{r['verify']}〕" if r.get("verify") else ""
-            print(f"    ▸ {r['kind']}:{r['text']}{v}")
+            cell = Text()
+            cell.append(f"{r['kind']}:", style="bold")
+            cell.append(r['text'])
+            if r.get("verify"):
+                cell.append(f"  〔下次驗:{r['verify']}〕", style="dim italic")
+            rx_tbl.add_row(Text("▸", style="bold"), cell)
+        parts.append(Padding(rx_tbl, (0, 1)))
         actionable = [r for r in rx if r.get("rule")]
         if actionable:
-            print(f"\n  ★ 下次只改這一件(可立即執行 + 可驗):{actionable[0]['rule']}")
+            star_hdr = Text("\n★ 下次只改這一件 ", style="bold yellow")
+            star_hdr.append("(可立即執行 + 可驗)", style="dim yellow")
+            parts.append(Padding(star_hdr, (0, 1)))
+            parts.append(Padding(Text(actionable[0]['rule'], style="bold"), (0, 3)))
+
+    _console.print()
+    _console.print(Panel(
+        Group(*parts),
+        title=f"[bold]trade-recap  ·  鏡片 {master}[/]  [dim](引擎產出)[/]",
+        title_align="left",
+        border_style="cyan",
+        padding=(1, 2),
+        width=CARD_WIDTH,
+    ))
 
 # ─────────────────── 結構化 state(跨次對帳用)───────────────────
 def build_state(rows, rts, held, dims, overview, ab, rx):
