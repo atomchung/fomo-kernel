@@ -945,14 +945,14 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     if trig:
         parts.append(Padding(Text("\n復盤卡  ·  top 1-2 最高代價的洞", style="bold"), (0, 1)))
         for d in trig[:2]:
-            _, quote = card_for(d["dim"])
+            # lens quote 不當段尾結語(SKILL L192「鏡片引言別當結語」);
+            # 留 card_for 給 build_card_data/SKILL 融入敘事,卡上只放數字白話。
             block = Table(show_header=False, box=None, padding=(0, 0), pad_edge=False, expand=False)
             block.add_column(width=2, no_wrap=True)
             block.add_column(overflow="fold")
             block.add_row(Text("▍", style="bold red"),
                           Text(f"最大漏洞 · {d['dim']}", style="bold red"))
             block.add_row("", Text(number_line(d)))
-            block.add_row(Text("▸", style="italic dim"), Text(quote, style="italic"))
             parts.append(Padding(block, (0, 1)))
     else:
         parts.append(Padding(Text("這幾個地基你目前都守住了。", style="green"), (0, 1)))
