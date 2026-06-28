@@ -198,9 +198,9 @@ def adaptive_n_fwd(rows):
     return 30 if span >= 365 else 20 if span >= 120 else 10   # ≥1年→30d,半年→20d,更短→10d
 
 def fwd_from_px(rts, data, n_fwd=N_FWD):
-    import pandas as pd
     if data is None:
         return None, None
+    import pandas as pd  # 只有真有價格資料才需要 pandas;無價(乾淨環境/未裝)時提早 return,別硬依賴
     fwds, last_px = [], {}
     for r in rts:
         t = r["ticker"]
