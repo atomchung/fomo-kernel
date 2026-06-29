@@ -7,7 +7,7 @@
 每組附一個 `driver_map.json`(SKILL Step 0.5:讓 engine 對實際持倉用正確 sector/主題分類,冷門股不失準),用環境變數餵進去:
 
 ```bash
-cd skills/trade-review
+cd skills/fomo-kernel
 TR_DRIVER_MAP=mock/sample_fundamental.driver_map.json python3 engine/trade_recap.py mock/sample_fundamental.csv
 TR_DRIVER_MAP=mock/sample_momentum.driver_map.json    python3 engine/trade_recap.py mock/sample_momentum.csv
 TR_DRIVER_MAP=mock/sample_value.driver_map.json       python3 engine/trade_recap.py mock/sample_value.csv

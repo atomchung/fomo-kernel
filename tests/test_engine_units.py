@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SKILL = os.path.join(HERE, "..", "skills", "trade-review")
+SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
 MOCK = os.path.join(SKILL, "mock")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402

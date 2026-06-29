@@ -1,4 +1,4 @@
-# trade-review · Backlog
+# fomo-kernel · Backlog
 
 > 從 2026-06-14 的 user-story × engine review 拍出來的待辦。
 > 背景脈絡：受眾已收窄為「會用 AI 工具的人（含交易上仍憑感覺的散戶）」；skill 是第一期本體（資料留本機解隱私），不是探針。卡的唯一賣點 = 用你自己的數字，誠實說出你「知道卻沒做到」的事。
@@ -46,7 +46,7 @@
 
 ## ISSUE-3 ·〔小〕Step 2 從「自我定性」改「證據門檻」：堵住 thesis 洗白器
 
-> 來源：2026-06-19 三方 revisit（Claude 初評 + gemini 3.5 Flash + codex，各自獨立跑，簡報 `/tmp/trade-review-userstory-review.md`）。gemini 與 codex **未互看卻收斂到同一刀**，信號強。
+> 來源：2026-06-19 三方 revisit（Claude 初評 + gemini 3.5 Flash + codex，各自獨立跑，簡報 `/tmp/fomo-kernel-userstory-review.md`）。gemini 與 codex **未互看卻收斂到同一刀**，信號強。
 
 **問題**
 `SKILL.md` Step 2(a)（約 :52-55）把「動機定性權」整個交給用戶的嘴：「答『逢低/計劃內』→ 移除警告、標逢低……**你的答案定性**」。對「不是不知道在凹單、是不想承認」的目標用戶，這內建一個**洗白器**：
@@ -86,8 +86,8 @@
 
 ## 候選（未拍板）
 
-- **pre-trade gate**：把「下次只改一件」沉澱成本機 `my-rules.md`，下單前 `/trade-review check <ticker>` 攔一次。市場空白（無人把復盤回灌下一筆）+ 解 Epic D 留存 + 正中北極星。守則檔就是 skill 的「狀態/記憶」。
+- **pre-trade gate**：把「下次只改一件」沉澱成本機 `my-rules.md`，下單前 `/fomo-kernel check <ticker>` 攔一次。市場空白（無人把復盤回灌下一筆）+ 解 Epic D 留存 + 正中北極星。守則檔就是 skill 的「狀態/記憶」。
 - **thesis 對帳**：⭐ engine 已起頭（`4599f4f` infer-thesis-from-behavior）。可升級成「拿用戶*寫過的*進場 thesis 原文對帳」——從推斷動機 → 核對原文。skill 能吃用戶全 context，SaaS 結構上做不到。→ **其 MVP 已拆成 ISSUE-3**（先做「事後逼舉證」的證據門檻，再長成「事前存原文對帳」）。
 - **行為 counterfactual 重放**：「賣太早那批多抱 30 天會怎樣」——`fwd_from_px` 已有資料，低成本高回報。
 - **多哲學對照**：部分已被 behavior-diagnosis「風格當脈絡」吸收；若要做成「多鏡片顯示分歧」，守住收斂——只呈現分歧最大那一點，別變第二份報告。
-- **lens 迭代回 kol（2026-06-14,VY 已降為可換鏡片、demo 已去名後）**：把 `lens.json` 的可換架構連回母專案 `kol_collector` / `kol_collect` 的多 KOL 蒸餾——那邊已沉澱 12+ 追蹤 KOL，各可蒸一面鏡片讓用戶選大師；trade-review 的 lens 是這個 distill-KOL→lens 的第一個落地（VY = 第一面，現已通用化呈現、demo 不掛名）。owner 標「之後再迭代」。背景見記憶 `project-kol-collect-vs-collector-overlap`。
+- **lens 迭代回 kol（2026-06-14,VY 已降為可換鏡片、demo 已去名後）**：把 `lens.json` 的可換架構連回母專案 `kol_collector` / `kol_collect` 的多 KOL 蒸餾——那邊已沉澱 12+ 追蹤 KOL，各可蒸一面鏡片讓用戶選大師；fomo-kernel 的 lens 是這個 distill-KOL→lens 的第一個落地（VY = 第一面，現已通用化呈現、demo 不掛名）。owner 標「之後再迭代」。背景見記憶 `project-kol-collect-vs-collector-overlap`。

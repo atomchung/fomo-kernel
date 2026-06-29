@@ -1,4 +1,4 @@
-# trade-review · 需求單一權威(Requirements SSOT)
+# fomo-kernel · 需求單一權威(Requirements SSOT)
 
 > 狀態:草案。本檔為**需求**的 single source of truth;PRD/issues 回指本檔。
 > 日期:2026-06-20
@@ -10,9 +10,9 @@
 
 ## 0. 最終目標(owner 2026-06-20 拍板)
 
-> 把 `record-trade` 的功能抽離出來、結合進 `trade-review`,設計一個系統**同時給別人用 + 給自己用**。
+> 把 `record-trade` 的功能抽離出來、結合進 `fomo-kernel`,設計一個系統**同時給別人用 + 給自己用**。
 
-這定了 issue #12 三個開放問題:#1 定位 = **雙前端**;#2 既有系統關係 = **吸收功能不吸收形態**(trade-review 當本體);#5 = **同一薄引擎 + 雙前端**。
+這定了 issue #12 三個開放問題:#1 定位 = **雙前端**;#2 既有系統關係 = **吸收功能不吸收形態**(fomo-kernel 當本體);#5 = **同一薄引擎 + 雙前端**。
 
 ---
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-trade-review · trade-recap engine v0.2
+fomo-kernel · trade-recap engine v0.2
 實作 5 維行為診斷算法 → 一張 VY 鏡片復盤卡的「機械層」(抓大放小)。
 純函式：trades CSV → 5 維 metrics → 卡片(選 top 1-2)。動機那層由 SKILL.md 的對話流程補。
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-一鍵跑 trade-review 的全部測試 —— 之後每次迭代引擎/規格,跑這一條就知道有沒有改壞。
+一鍵跑 fomo-kernel 的全部測試 —— 之後每次迭代引擎/規格,跑這一條就知道有沒有改壞。
 
 零依賴(只用標準庫,免裝 pytest);全程離線、確定性(不碰 yfinance,不需網路)。
 subprocess 依序跑三套測試,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
@@ -8,7 +8,7 @@ subprocess 依序跑三套測試,任一非零退出 → 整體 exit 1(給 CI / p
 三套測試的分工:
   1. 機械層純函式單元  tests/test_engine_units.py
   2. 三風格端到端      tests/test_sample_styles.py
-  3. 狀態迴圈端到端    skills/trade-review/engine/test_state_loop.py
+  3. 狀態迴圈端到端    skills/fomo-kernel/engine/test_state_loop.py
 
 跑法:
   python3 tests/run_all.py
@@ -23,7 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUITES = [
     ("機械層純函式單元", "tests/test_engine_units.py"),
     ("三風格端到端", "tests/test_sample_styles.py"),
-    ("狀態迴圈端到端", os.path.join("skills", "trade-review", "engine", "test_state_loop.py")),
+    ("狀態迴圈端到端", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
 ]
 
 
