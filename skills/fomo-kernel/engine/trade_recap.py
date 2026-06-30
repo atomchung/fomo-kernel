@@ -31,6 +31,7 @@ def _no_rich_notice(what="復盤卡"):
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
 N_FWD = 30          # 賣出後 N 交易日看續漲（tunable）
+MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交易跨度短於此 → insufficient(§4.4, #21.4)
 SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.50
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
@@ -72,9 +73,12 @@ def load_driver_map(path):
     try:
         with open(path, encoding="utf-8") as f:
             m = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        # 靜默 fallback 會讓用戶分不出「沒設 driver map」vs「設錯路徑/壞 JSON」(#22.5)
+        print(f"⚠️  driver map 載入失敗 ({path}): {e} — 改用 fallback,冷門股 driver 可能失準", file=sys.stderr)
         return 0
     if not isinstance(m, dict):
+        print(f"⚠️  driver map 格式應為 dict ({path}),實得 {type(m).__name__} — 改用 fallback", file=sys.stderr)
         return 0
     ok = 0
     for t, v in m.items():
@@ -718,11 +722,15 @@ def print_payoff_attr(pa):
         return
     if not pa:
         return
-    fmt = lambda v: "∞" if v is None else f"{v:.1f}"
+    fmt = lambda v: "—" if v is None else f"{v:.1f}"        # None=無虧損可比,別印 ∞(#21.2);人話在下方補
     t = Text()
     t.append("盈虧比 ")
-    t.append(f"{fmt(pa['payoff'])}", style="bold cyan")
-    t.append(f"   平均賺 ${pa['avg_win']:,.0f}  /  賠 ${abs(pa['avg_loss']):,.0f}  ({pa['n']} 筆已實現)\n")
+    if pa["payoff"] is None:                                # 沒有任何已實現虧損 → 比率無意義,不印 ∞
+        t.append("—", style="bold cyan")
+        t.append(f"   {pa['n']} 筆已實現全是賺的,沒有虧損可拿來比\n")
+    else:
+        t.append(f"{fmt(pa['payoff'])}", style="bold cyan")
+        t.append(f"   平均賺 ${pa['avg_win']:,.0f}  /  賠 ${abs(pa['avg_loss']):,.0f}  ({pa['n']} 筆已實現)\n")
     t.append("\n撐盤 ", style="bold green")
     t.append("(佔總賺):  ", style="dim green")
     t.append("、".join(f"{tk} ${w:,.0f}({p*100:.0f}%)" for tk, w, p in pa["carriers"]) or "(無已實現獲利)")
@@ -731,10 +739,14 @@ def print_payoff_attr(pa):
     t.append("、".join(f"{tk} ${l:,.0f}({p*100:.0f}%)" for tk, l, p in pa["draggers"]) or "(無已實現虧損)")
     cf = pa["counterfactual"]
     if cf:
-        t.append(f"\n\n→ 拿掉最大拖累 {cf['ticker']} (淨 ${cf['drag']:,.0f}) 後,盈虧比 ", style="dim")
-        t.append(f"{fmt(pa['payoff'])}", style="dim")
-        t.append(" → ", style="dim")
-        t.append(f"{fmt(cf['payoff'])}", style="bold cyan")
+        if cf["payoff"] is None:                            # 拿掉最大拖累後就沒有虧損了 → 它是唯一拖累
+            t.append(f"\n\n→ 它是你唯一的已實現虧損:拿掉 {cf['ticker']} (淨 ${cf['drag']:,.0f}) 後,"
+                     f"已實現就只剩賺的、沒有虧損可比了", style="dim")
+        else:
+            t.append(f"\n\n→ 拿掉最大拖累 {cf['ticker']} (淨 ${cf['drag']:,.0f}) 後,盈虧比 ", style="dim")
+            t.append(f"{fmt(pa['payoff'])}", style="dim")
+            t.append(" → ", style="dim")
+            t.append(f"{fmt(cf['payoff'])}", style="bold cyan")
     _console.print()
     _console.print(Panel(
         t,
@@ -982,6 +994,8 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     # 〔做得最好 / 最差的一筆〕
     if best and worst:
         parts.append(Rule(style="dim cyan"))
+        # 明標這是「已賣出 round-trip」報酬,跟下方標的層的「仍持有 cost→現價」cur_ret 區隔(#21.1)
+        parts.append(Padding(Text("做得最好 / 最差的一筆  ·  已賣出 round-trip(買→賣)", style="bold"), (0, 1)))
         bw = Text()
         bw.append("✓ 最賺  ", style="bold green")
         bw.append(f"{best['ticker']:<5} ")
@@ -1162,10 +1176,13 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
     # 因 prescribe 攤平處方排在 sizing 前、且 sizing 規矩被 not any(砍損耗) 擋掉)。
     actionable = [r for r in (rx or []) if r.get("rule")]
     rule = actionable[0]["rule"] if actionable else None
-    # 樣本不足(§4.4):round-trip < 3 → 行為訊號太薄,不硬出 commitment。
+    # 樣本不足(§4.4):round-trip < 3,或交易跨度 < 60 交易日 → 行為訊號太薄,不硬出 commitment。
+    # 跨度 gate 堵「≥3 round-trip 但全擠在一兩週」的假承諾(SKILL.md:80,316;#21.4);
+    # 60 交易日 ≈ 84 日曆日(×7/5),用日曆跨度當 proxy,免維護市場行事曆。
     # 不綁 α 樣本(ab.n):離線/無價格時 ab.n=0,但行為維(sizing/攤平/分散)仍可承諾;
     # α 是否可信另由 alpha_credible 表示,別讓「沒價格」誤殺行為層的 commitment(codex review)。
-    insufficient = len(rts) < 3
+    span_days = (rows[-1]["date"] - rows[0]["date"]).days if rows else 0
+    insufficient = len(rts) < 3 or span_days < MIN_SPAN_DAYS
     # commitment = 下次要對帳的「規矩 + 它對應的可追蹤 metric」。對帳必須查這一維(用戶真承諾的),
     # 不是查 headline(否則第二張卡拿 sizing 比、用戶卻承諾攤平 = 對錯帳)。rule 關鍵字 → metric。
     commitment = None

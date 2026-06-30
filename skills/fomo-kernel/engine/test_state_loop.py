@@ -89,6 +89,39 @@ def coach_turn(state, log_path):
     return mode, line
 
 
+def test_insufficient_span_gate():
+    """#21.4:≥3 round-trip 但全擠在 <60 交易日(≈84 日曆日)→ 仍應判 insufficient。
+    舊碼只查 len(rts)<3 會放行(把缺資料的猜測當已確認承諾);新碼加 span gate 才擋得住。
+    長跨度 case 反向守:同樣 3 round-trip、跨度 >84 日,不該被 span gate 誤殺。"""
+    tmp = tempfile.mkdtemp(prefix="tr_span_test_")
+    HEADER = "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
+    def _csv(name, trades):
+        p = os.path.join(tmp, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(HEADER)
+            for sym, act, qty, px, d in trades:
+                f.write(f"{sym},{act},{qty},{px},{d},Trade\n")
+        return p
+    short = _csv("short.csv", [                                # 3 round-trip,跨度 39 天(<84)
+        ("AAA", "BUY", 10, 100, "2024-01-02"), ("AAA", "SELL", 10, 110, "2024-01-10"),
+        ("BBB", "BUY", 10, 100, "2024-01-15"), ("BBB", "SELL", 10, 90,  "2024-01-25"),
+        ("CCC", "BUY", 10, 100, "2024-02-01"), ("CCC", "SELL", 10, 120, "2024-02-10")])
+    long_ = _csv("long.csv", [                                 # 同 3 round-trip,跨度 ~280 天(>84)
+        ("AAA", "BUY", 10, 100, "2024-01-02"), ("AAA", "SELL", 10, 110, "2024-02-10"),
+        ("BBB", "BUY", 10, 100, "2024-04-15"), ("BBB", "SELL", 10, 90,  "2024-06-25"),
+        ("CCC", "BUY", 10, 100, "2024-08-01"), ("CCC", "SELL", 10, 120, "2024-10-08")])
+    s_short = run_engine([short], os.path.join(tmp, "st_short.json"))
+    s_long = run_engine([long_], os.path.join(tmp, "st_long.json"))
+    assert s_short["n_round_trips"] == 3, f"short 應有 3 rt,實得 {s_short['n_round_trips']}"
+    assert s_long["n_round_trips"] == 3, f"long 應有 3 rt,實得 {s_long['n_round_trips']}"
+    assert s_short["insufficient_data"] is True, \
+        "≥3 rt 但跨度<84 日應判 insufficient(#21.4 span gate;舊碼 len(rts)<3 會在此漏放)"
+    assert s_long["insufficient_data"] is False, \
+        "≥3 rt 且跨度>84 日不該被 span gate 誤殺"
+    assert s_short["commitment"] is None, "insufficient → commitment 必須為 None(§4.4)"
+    print("✅ #21.4 insufficient span gate（<60 交易日擋假承諾 / 長跨度不誤殺）全過\n")
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
     cutoff = sys.argv[2] if len(sys.argv) > 2 else "2024-07-01"
@@ -104,6 +137,8 @@ def main():
     _c = current_cycles([_R("Z","sell",50,"2024-01-01"), _R("Z","buy",10,"2024-02-01")])
     assert _c.get("Z") == {"start":"2024-02-01","seq":1}, f"缺期初: {_c}"
     print("✅ current_cycles 邊界（oversell / 清倉重建 / 缺期初）全過\n")
+
+    test_insufficient_span_gate()                              # #21.4:60 交易日 gate
 
     tmp = tempfile.mkdtemp(prefix="tr_state_test_")
     seg1, seg2 = os.path.join(tmp, "seg1.csv"), os.path.join(tmp, "seg2.csv")
