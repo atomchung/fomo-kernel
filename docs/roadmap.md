@@ -1,5 +1,7 @@
 # FOMO Kernel · Roadmap v0→v3(規矩軸 × 鏡片軸)
 
+> 🗄️ **設計史快照(2026-06-17,非當前規格)**:本文是改名前的 v0→v3 設計藍圖,記錄當時思路與 owner 拍板的排序決策。**部分已被 main 實作超越**——當前的本機狀態格式、engine 是否已有結構化輸出等,一律以 `skills/fomo-kernel/SKILL.md` 與 `engine/trade_recap.py` 為準(例:state 已是 `log.jsonl`/`theses.jsonl` + `TR_JSON`/`TR_STATE_OUT`,engine 已輸出結構化 card JSON)。文中 `trade_recap.py:NNN` 行號為當時版本、可能已位移。保留作設計脈絡與決策史。
+
 > 狀態:規劃中(2026-06-17),待 codex + gemini 審。把 `BACKLOG.md` 願景層、`docs/v1-weekly-coach.md`、`docs/v2c-lens-selection.md` 整合成一張 v0→v3 總圖,標清楚**兩條演化軸**的依賴與排序。
 > 北極星:卡是鏡子不是法官;一張卡一個洞;克制 = feature;對事不對人。
 > 紅線:① 保持薄(別變回 owner 那套 447 檔案重系統)② 一張卡一個洞 ③ 過程教練 ≠ 選股顧問 ④ 有哲學但不寫死 ⑤ **Stage 0(卡戳中一個真人)未過前,別讓大願景偷走當下**。
@@ -79,7 +81,7 @@
 
 ### v3a · 形成自己的鏡片 ○ 概念(`v1-weekly-coach.md` §11)
 - **鏡片軸**:【綜合】階段——跨復盤累積「哪些原則一直打中你、哪些洞你真的在修」,縫成 `personal.lens.json`(human-in-the-loop)。= distill-KOL→lens 同機制,套到 distill 你自己的復盤。
-- **依賴**:v2b(先借鑑過幾家才知道認同啥)+ v1 迴圈(累積過幾次復盤)。
+- **依賴**:v2c(先借鑑過幾家才知道認同啥)+ v1 迴圈(累積過幾次復盤)。
 - **紅線**:personal lens 仍是薄 lens.json(非 manifesto);誠實閥仍守(不准自製尺放過普世洞)。
 
 ### v3b · 優化鏡片 + 全 context 對帳 ○ 概念

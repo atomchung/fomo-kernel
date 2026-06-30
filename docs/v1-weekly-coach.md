@@ -1,5 +1,7 @@
 # v1 藍圖:每週復盤迴圈(初次 × 持續 review × 持續優化)+ 薄本機狀態
 
+> 🗄️ **設計史快照(2026-06-17,非當前規格)**:本文是改名前的 v1 每週迴圈設計藍圖。**部分已被 main 實作超越**——尤其 §2 的 `~/.trade-coach/profile.json` 狀態格式、與 §6「engine 尚無結構化輸出、需建 JSON contract」的前提,當前已不同(SKILL.md 用 `log.jsonl`/`theses.jsonl`、engine 已有 `TR_JSON`/`TR_STATE_OUT` 結構化輸出)。當前規格一律以 `skills/fomo-kernel/SKILL.md` 與 `engine/trade_recap.py` 為準;本文保留作設計脈絡與決策史。
+
 > 狀態:設計中(v1)。把 `BACKLOG.md` 願景層 6 步弧線中的 `初診(卡) → 賽後對帳(驗規矩) → 升級畢業` 三步,落成可實作的最小規格。
 > 目的:讓 `/fomo-kernel` 從「一次性 demo」變成「每週重跑、記得上次那條規矩」的迴圈,且**絕不長回成重系統**。
 > 北極星:一張卡、一個洞;第二張卡的價值在**進度**(規矩守了沒、洞有沒有縮),不在再算一次。
