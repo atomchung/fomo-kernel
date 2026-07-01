@@ -100,6 +100,86 @@ def test_three_styles_have_distinct_top_holes():
     assert holes["fundamental"] != holes["value"] != holes["momentum"]
 
 
+# ───────────── 投資者畫像 fixture(風格 × 持有長度,2026-06-30 擴充)─────────────
+# 設計與三方 review 見 mock/SAMPLES.md。每型頭號洞都由「與最新股價無關」的訊號決定
+# (driver flag / 成本權重 / 純日期)→ 離線確定性。
+
+def test_ai_holder_top_hole_is_diversify():
+    """AI 長期投資者 → 頭號洞 = 分散(假分散:整副身家押同一 AI 敘事)。"""
+    s = _dims("ai_holder")
+    assert _top_hole(s["dims"]) == "分散"
+    assert s["div"]["ai_pct"] == 1.0 and s["div"]["triggered"]   # AI 暴險 100%
+    # 龍頭重倉是「次要洞」:sizing 有 triggered 但分數低於分散(max_pct 控在 0.41 臨界下)
+    assert s["size"]["triggered"] and s["size"]["max_pct"] < 0.41
+    assert s["size"]["severity"] * TIER_W[1] < s["div"]["severity"] * TIER_W[2]
+    # 長抱:中位持有遠超短線,且有 >=3 筆已實現 round trip(否則 engine 標 insufficient、不出 commitment)
+    assert len(s["rts"]) >= 3
+    assert s["hold"]["median_hold"] > 200 and not s["hold"]["triggered"]
+    # 漲著加碼 != 攤平
+    assert s["avg"]["count"] == 0
+
+
+def test_oldecon_is_clean_strength_baseline():
+    """傳統產業投資者 → 紀律乾淨基準:無任何洞觸發,改走『揚長(strength)』路徑。
+
+    補上既有 fixture 全缺的覆蓋:當組合沒有洞時,卡片該如何呈現。
+    """
+    s = _dims("oldecon")
+    # 五維全綠 → 無頭號洞
+    assert _top_hole(s["dims"]) is None
+    assert not any(d["triggered"] for d in s["dims"])
+    # 老經濟:無 AI 暴險、真分散、不梭哈、不攤平、賺賠持有期相近(無處置缺口)
+    assert s["div"]["ai_pct"] == 0
+    assert s["size"]["max_pct"] < 0.25
+    assert s["avg"]["count"] == 0
+    assert abs(s["exit"]["disp_gap"]) < 20
+    # 揚長卡必須有東西可講(否則乾淨組合會印空白)
+    strengths = tr.dim_strength(s["exit"], s["size"], s["avg"], s["div"], s["hold"], s["rts"])
+    assert strengths, "乾淨基準應產出至少一張揚長卡"
+
+
+def test_swing_top_hole_is_inconsistent_timeframe():
+    """快進快出 → 頭號洞 = 持有時間(框架不一致:同檔又當沖又凹單)。"""
+    s = _dims("swing")
+    assert _top_hole(s["dims"]) == "持有時間"
+    # incon:同一檔既有 <5 天也有 >30 天的 round trip
+    assert s["hold"]["incon_rate"] > 0.3 and s["hold"]["triggered"]
+    assert s["hold"]["min"] < 5 and s["hold"]["max"] > 30
+    # 與當沖區隔:median 不是 0(不是純當沖)
+    assert s["hold"]["median_hold"] >= 5
+
+
+def test_day_trader_top_hole_is_overtrading():
+    """當沖 → 頭號洞 = 持有時間(過度交易:同日進出,中位持有 0 天)。"""
+    s = _dims("day_trader")
+    assert _top_hole(s["dims"]) == "持有時間"
+    # 同日進出 → 中位持有 0 天(overtrading),且全平倉 → 無持倉
+    assert s["hold"]["median_hold"] < 5
+    assert s["hold"]["max"] == 0          # 全部同日 round trip
+    # 當天全平 → 無持倉 → sizing/分散/攤平 全失效(max_pct=0、無持倉檔數)
+    assert s["size"]["max_pct"] == 0 and s["div"]["n"] == 0
+    assert not s["size"]["triggered"] and not s["div"]["triggered"]
+
+
+def test_swing_and_day_trader_distinct_by_mechanism():
+    """swing 與 day_trader 同走『持有時間』維,但機制不同 → 可穩定區分。"""
+    sw, dy = _dims("swing")["hold"], _dims("day_trader")["hold"]
+    # day_trader 靠 overtrading(median 0),swing 靠 incon(median>=5、incon_rate 高)
+    assert dy["median_hold"] == 0 and dy["incon_rate"] == 0
+    assert sw["median_hold"] >= 5 and sw["incon_rate"] > 0.3
+
+
+def test_personas_have_distinct_headlines():
+    """五型畫像 + 既有 3 組:頭號洞分配應如設計(撞維者靠 sub-signal 區分)。"""
+    holes = {st: _top_hole(_dims(st)["dims"]) for st in
+             ("ai_holder", "oldecon", "swing", "day_trader", "momentum", "fundamental", "value")}
+    assert holes["ai_holder"] == "分散"
+    assert holes["oldecon"] is None              # 乾淨基準,無洞
+    assert holes["swing"] == "持有時間"
+    assert holes["day_trader"] == "持有時間"
+    assert holes["momentum"] in ("部位 sizing", "分散")
+
+
 def test_offline_pipeline_no_crash():
     """離線(無 yfinance,last_px=None)時,卡片層全鏈路不得 crash。
 
