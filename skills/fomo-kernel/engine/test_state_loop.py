@@ -34,7 +34,7 @@ def run_engine(csv_paths, state_out):
     """跑 engine,設 TR_STATE_OUT 取結構化 state。回傳 state dict。"""
     env = dict(os.environ, TR_STATE_OUT=state_out)
     r = subprocess.run([sys.executable, ENGINE, *csv_paths],
-                       env=env, capture_output=True, text=True)
+                       env=env, capture_output=True, text=True, timeout=180)  # fail-fast:本機裝 yfinance 時別讓網路卡住整套(review)
     assert r.returncode == 0, f"engine 失敗:\n{r.stderr}"
     with open(state_out, encoding="utf-8") as f:
         return json.load(f)
