@@ -216,7 +216,7 @@ def classify_adds(rows, min_adds=3):
         accel = len(loss_amts) >= 3 and statistics.mean(loss_amts[-2:]) > statistics.mean(loss_amts[:2]) * 1.5
         gaps = [(adds[i + 1][0] - adds[i][0]).days for i in range(n - 1)]
         mg = statistics.mean(gaps) if gaps else 0
-        regular = bool(gaps) and mg > 0 and statistics.pstdev(gaps) < mg * 0.6   # 輔:加碼時間規律(間隔 CV 低)
+        regular = len(gaps) >= 2 and mg > 0 and statistics.pstdev(gaps) < mg * 0.6   # 輔:加碼時間規律(間隔 CV 低);需≥2 間隔(≥3 加碼)—— 單一 gap 的 pstdev 恆=0 會誤判規律(#41 review)
         if loss_ratio < 0.6 or regular:                             # 漲跌都買 或 時間規律 → 定投
             cls = "疑似定投"
         elif loss_ratio > 0.8 and accel:                            # 只虧損買 + 金額加速 → 凹單

@@ -139,7 +139,12 @@ def test_classify_adds_fixes():
                         _B("BBB", 100, 80, "2024-02-01"), _B("BBB", 100, 70, "2024-03-01")])
     assert g2["BBB"]["loss_ratio"] > 0.0, \
         f"oversell 後的虧損加碼應被偵測(舊碼股數變負會漏 → loss_ratio=0.0),實得 {g2['BBB']['loss_ratio']}"
-    print("✅ #41 G classify_adds（首筆不算加碼 / oversell 不污染後續偵測）全過\n")
+    # G3(review 補):2 筆全虧加碼、間隔不規律 → 不該因單一 gap 的 pstdev=0 被誤判「規律」而標定投
+    g3 = classify_adds([_B("ZZZ", 100, 100, "2024-01-01"), _B("ZZZ", 100, 90, "2024-01-02"),
+                        _B("ZZZ", 100, 80, "2024-04-01")])
+    assert g3["ZZZ"]["cls"] != "疑似定投", \
+        f"2 筆不規律全虧加碼不該標定投(單一 gap pstdev=0 誤判規律),實得 {g3['ZZZ']['cls']}"
+    print("✅ #41 G classify_adds（首筆不算加碼 / oversell 不污染 / 單一gap不誤判規律）全過\n")
 
 
 def main():
