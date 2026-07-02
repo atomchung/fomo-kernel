@@ -672,7 +672,7 @@ def overview_stats(rts, ab, held=None, last_px=None):
     win_sum, loss_sum = sum(wins), sum(losses)      # loss_sum 為負
     avg_win = win_sum / len(wins) if wins else 0
     avg_loss = loss_sum / len(losses) if losses else 0
-    payoff = avg_win / abs(avg_loss) if avg_loss else 0          # 平均賺 / 平均賠
+    payoff = avg_win / abs(avg_loss) if avg_loss else None       # 無已實現虧損 → None(非 0,別跟真 0 混淆);#21.2 補完
     pf = win_sum / abs(loss_sum) if loss_sum else 0              # 賺總額 / 賠總額(獲利因子)
     realized = win_sum + loss_sum
     unrealized = sum(sh * last_px[t] - c for t, (sh, c) in (held or {}).items()
@@ -974,8 +974,12 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         ov.append("   未實現 ")
         ov.append_text(_money(o['unrealized']))
         ov.append("\n盈虧比 ")
-        ov.append(f"{o['payoff']:.1f}", style="bold")
-        ov.append(f"   平均賺 ${o['avg_win']:,.0f}  vs  平均賠 ${abs(o['avg_loss']):,.0f}")
+        if o['payoff'] is None:                                # 無已實現虧損 → 比率無意義,不印 0/∞(#21.2 補完)
+            ov.append("—", style="bold")
+            ov.append("   沒有已實現虧損可比,全賺")
+        else:
+            ov.append(f"{o['payoff']:.1f}", style="bold")
+            ov.append(f"   平均賺 ${o['avg_win']:,.0f}  vs  平均賠 ${abs(o['avg_loss']):,.0f}")
         if ab and not ab.get("note"):
             ov.append("\n贏大盤 ")
             ov.append_text(_pct(ab['excess_vs_spy'], unit="pp", bold=True))
@@ -1299,6 +1303,10 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
 def main():
     paths = sys.argv[1:] or [DEFAULT_CSV]
     rows = load(paths)
+    if not rows:                                          # 空 / 全過濾 CSV → 別在下游 rows[0] crash(#41 F),給人話
+        print("沒有可解析的交易:CSV 為空,或沒有任何 BUY/SELL 的 Trade 列。"
+              "請確認欄位 Symbol / Action / Quantity / Price / TradeDate 都在。", file=sys.stderr)
+        sys.exit(1)
     master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
     dm = os.environ.get("TR_DRIVER_MAP")                  # Claude 生成的 driver map(冷門股分類)
     n_dm = load_driver_map(dm) if dm else 0

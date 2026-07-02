@@ -16,6 +16,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 - **用戶的交易 CSV 全程留在他本機**。你只在他的環境裡跑 `engine/trade_recap.py`,不上傳、不複製到別處、不寫進任何雲端。
 - **不要把用戶的交易內容寫進記憶、不要外傳給任何人**(包括 skill 作者)。
+- **誠實邊界(隱私話術別過度承諾)**:資料**不上傳後端、不落地儲存到別處、作者永遠拿不到**;但你(Claude)為了復盤**必須讀** CSV/JSON,交易內容自然進你的 context —— 這跟用戶平常用 Claude 一樣,不是「完全不經過任何伺服器」。README / 卡上的隱私話術照這個精度寫,別講成「絕對不離開你的電腦」。
 - 要回給作者的只有一件事:**「這張卡有沒有用」的文字反饋**(用戶自願)——不含任何交易明細。
 - 用戶沒給資料時,**只跑 `mock/mock_trades.csv`**(假資料),絕不要去找他機器上的真實對帳單。
 
@@ -77,7 +78,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
   - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。
   - `metrics`:全 metric 快照(`max_pos_pct / avgdown_count / ai_pct / max_sector_pct / top3_pct / payoff / beta / alpha_ann …`),對帳時拿承諾的 `metric_key` 反查新值(集中度承諾就追 `ai_pct`)。
   - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(#11 雙閘門),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
-  - `insufficient_data`:`true`(round-trip<3 或樣本<60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
+  - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
 
@@ -292,7 +293,10 @@ import json, os, pathlib
 # thesis 是對話 articulate 出來的(engine 不碰);append-only:更新用 revises 指回舊 thesis_id,不蓋舊的。
 session_date = "YYYY-MM-DD"          # 本次 review 日(= engine state 的 date_end)
 theses = [
-  # {"ticker":"NVDA","cycle_id":"NVDA#2024-01-12",
+  # ⚠️ cycle_id 必須【照抄】engine state holdings.positions[ticker].cycle_id(3 段格式 ticker#開倉日#序號,
+  #    如 "NVDA#2024-01-12#1"),別自己拼 2 段 —— 格式不符 → 對帳(開場 §偵測缺 thesis)永遠匹配不上 →
+  #    每週把已寫過 thesis 的持倉當「缺 thesis」重問,記憶迴圈失效。
+  # {"ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
   #  "why":"一句:為什麼持有",
   #  "triggers":{"review":"什麼消息/數字該重看","reduce":"什麼情況減碼","exit":"什麼代表看錯(非股價跌)"},
   #  "maturity":"inferred",          # inferred(AI 猜,預設)| testable(用戶確認過)| draft(投機跟風沒 thesis)
@@ -313,6 +317,6 @@ PY
 
 **收尾 part 3 · 個人 profile(只第一次建,目標⑤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
 
-**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或歷史<60 交易日,引擎已把 `commitment` 設成 `null`。**只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。卡收尾講一句「資料還太短,先存個底,累積多幾筆 round-trip 再回來對帳」,log 照樣 append(commitment=null),下次來就接得上。
+**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。卡收尾講一句「資料還太短,先存個底,累積多幾筆 round-trip 再回來對帳」,log 照樣 append(commitment=null),下次來就接得上。
 
 > 驗收這套有沒有真的「記憶」:`engine/test_state_loop.py` 把一份 CSV 按時間切兩段,累積跑「初診→對帳」,驗第二張卡有沒有真的對帳第一張承諾的那一維(而非重新初診)。改完 engine 或這段流程都先跑它。
