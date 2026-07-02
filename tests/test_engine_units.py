@@ -157,7 +157,7 @@ def test_classify_adds_dca():
             _R("DCA", "buy", 10, 105, "2024-05-01")]
     out = tr.classify_adds(rows).get("DCA")
     assert out and out["cls"] == "疑似定投", f"規律漲跌都買應為定投,實得 {out}"
-    assert out["n_adds"] == 5
+    assert out["n_adds"] == 4    # 5 筆買入 = 首筆建倉 + 4 筆加碼;n_adds 只計加碼、不含首筆(#41 G1)
 
 
 def test_classify_adds_averaging_down():
@@ -171,14 +171,15 @@ def test_classify_adds_averaging_down():
             _R("Z", "buy", 80, 40, "2024-04-23")]     # gap 10,金額加速
     out = tr.classify_adds(rows).get("Z")
     assert out and out["cls"] == "疑似凹單", f"只虧損買+不規律+加速應為凹單,實得 {out}"
-    assert out["n_adds"] == 6 and out["loss_ratio"] > 0.8
+    assert out["n_adds"] == 5 and out["loss_ratio"] > 0.8    # 6 筆買入 = 首筆 + 5 筆加碼;n_adds 只計加碼(#41 G1)
 
 
 def test_classify_adds_below_min():
-    """加碼次數 < min_adds(預設 3)→ 樣本太薄,不分類(回傳不含該 ticker)。"""
+    """加碼次數 < min_adds(預設 2)→ 樣本太薄,不分類(回傳不含該 ticker)。
+    此例:1 筆建倉 + 1 筆加碼 = 1 加碼 < 2(#41 review:gate 改用加碼數,與分類同口徑)。"""
     rows = [_R("X", "buy", 10, 100, "2024-01-01"),
             _R("X", "buy", 10, 90, "2024-02-01")]
-    assert tr.classify_adds(rows).get("X") is None, "< 3 次加碼不應分類"
+    assert tr.classify_adds(rows).get("X") is None, "1 次加碼(<2)不應分類"
 
 
 # ─────────────────────── E. overview_stats():金額總覽 ───────────────────────
