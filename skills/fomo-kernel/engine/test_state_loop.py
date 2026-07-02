@@ -134,11 +134,13 @@ def test_classify_adds_fixes():
     assert g1["AAA"]["n_adds"] == 3, f"首筆不該算加碼,期望 n_adds=3,實得 {g1['AAA']['n_adds']}"
     assert abs(g1["AAA"]["loss_ratio"] - 1.0) < 1e-9, \
         f"3 筆加碼全虧 → loss_ratio 應=1.0(舊碼含首筆會被稀釋成 0.75),實得 {g1['AAA']['loss_ratio']}"
-    # G2:oversell(持 100 賣 200)後再進場、再虧損加碼 → 不因股數變負而漏掉那筆加碼
-    g2 = classify_adds([_B("BBB", 100, 100, "2024-01-01"), _S("BBB", 200, 110, "2024-01-15"),
-                        _B("BBB", 100, 80, "2024-02-01"), _B("BBB", 100, 70, "2024-03-01")])
-    assert g2["BBB"]["loss_ratio"] > 0.0, \
-        f"oversell 後的虧損加碼應被偵測(舊碼股數變負會漏 → loss_ratio=0.0),實得 {g2['BBB']['loss_ratio']}"
+    # G2:oversell(持 10 賣 50)清倉後接 2 筆虧損加碼 → clamp 讓股數歸零、後續加碼被正確偵測。
+    #     舊碼股數變負 → 後續全被當初始建倉、adds=0 → 整檔被 gate 濾掉(BBB 消失)。有效 discriminator(review)
+    g2 = classify_adds([_B("BBB", 10, 100, "2024-01-01"), _S("BBB", 50, 110, "2024-01-15"),
+                        _B("BBB", 10, 90, "2024-02-01"), _B("BBB", 10, 80, "2024-03-01"),
+                        _B("BBB", 10, 70, "2024-04-01")])
+    assert "BBB" in g2 and g2["BBB"]["n_adds"] == 2, \
+        f"oversell 後的 2 筆虧損加碼應被偵測(舊碼股數變負 → adds=0 → BBB 被濾掉),實得 {g2.get('BBB')}"
     # G3(review 補):2 筆全虧加碼、間隔不規律 → 不該因單一 gap 的 pstdev=0 被誤判「規律」而標定投
     g3 = classify_adds([_B("ZZZ", 100, 100, "2024-01-01"), _B("ZZZ", 100, 90, "2024-01-02"),
                         _B("ZZZ", 100, 80, "2024-04-01")])

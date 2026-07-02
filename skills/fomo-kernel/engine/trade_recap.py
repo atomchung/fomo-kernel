@@ -190,7 +190,7 @@ def orphan_sells(rows):
             pos[t] = max(pos[t] - r["qty"], 0.0)
     return {t: q for t, q in orphan.items() if q > 1e-6}
 
-def classify_adds(rows, min_adds=3):
+def classify_adds(rows, min_adds=2):   # min_adds 指「加碼」筆數(排除首筆);原「≥3 買入」≈「≥2 加碼」,改口徑後對齊(#41 review)
     """主從分類每個標的的加碼:疑似定投(漲跌都買/規律) vs 疑似凹單(只虧損買+金額加速) vs 待確認。
     codex+gemini review 定稿:主從不投票;『價格無關 + 時間規律』為主、金額一致性最易誤判只當輔助;
     機械只下『疑似』,最終靠用戶確認 thesis / 標交易意圖(進場打標 = v2 更根本解)。"""
@@ -207,9 +207,8 @@ def classify_adds(rows, min_adds=3):
             pos[t][1] -= min(r["qty"], sh) * (cost / sh); pos[t][0] -= min(r["qty"], sh)   # #41 G2:clamp 股數不跌負(對齊 positions)
     out = {}
     for t, bs in buys.items():
-        if len(bs) < min_adds: continue                             # gate:總買入筆數(維持既有觸發門檻)
-        adds = [b for b in bs if b[3]]                              # 只看「加碼」(sh>0 的買),排除首筆建倉 → loss_ratio 不被稀釋(#41 G1)
-        if not adds: continue                                       # 每筆都是初始建倉、無真正加碼 → 不分類
+        adds = [b for b in bs if b[3]]                              # 只看「加碼」(sh>0 的買),排除首筆建倉/清倉後重建(#41 G1)
+        if len(adds) < min_adds: continue                           # gate 用加碼數,與分類同口徑;擋掉 0/1 筆加碼的無意義分類(#41 review 共識)
         n = len(adds)
         loss_ratio = sum(1 for _, _, il, _ in adds if il) / n       # 主訊號:加碼中虧損買的比例(價格無關性)
         loss_amts = [amt for _, amt, il, _ in adds if il]
