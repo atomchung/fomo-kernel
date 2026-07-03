@@ -1,6 +1,6 @@
 ---
 name: fomo-kernel
-description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把你的真實交易復盤成一張卡——一個最大的洞 + 一條下次要守的規矩 + 一句鏡片原則。先用機械算抓出最大的行為漏洞(假分散 / 梭哈 / 攤平 / 賣太早 / 把beta當alpha),再用鏡片的思路問出每筆交易背後的「動機」(焦慮還是判斷、看好還是不想認賠)。用戶說 /fomo-kernel、復盤我的交易、看我的交易紀錄、幫我 review 這份對帳單、trade review 時使用。資料全程留在用戶本機,不外傳。
+description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把你的真實交易復盤成一張卡——一個最大的洞 + 一條下次要守的規矩 + 一句鏡片原則。先用機械算抓出最大的行為漏洞(假分散 / 梭哈 / 攤平 / 賣太早 / 把beta當alpha),再用鏡片的思路問出每筆交易背後的「動機」(焦慮還是判斷、看好還是不想認賠)。用戶說 /fomo-kernel、復盤我的交易、看我的交易紀錄、幫我 review 這份對帳單、trade review 時使用。不用於個股研究、選股建議、大盤預測或財經新聞問答——那些不是復盤,不要觸發。資料全程留在用戶本機,不外傳。
 ---
 
 # FOMO Kernel · 用哲學鏡片復盤你的交易
@@ -77,7 +77,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
   - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。
   - `metrics`:全 metric 快照(`max_pos_pct / avgdown_count / ai_pct / max_sector_pct / top3_pct / payoff / beta / alpha_ann …`),對帳時拿承諾的 `metric_key` 反查新值(集中度承諾就追 `ai_pct`)。
-  - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(#11 雙閘門),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
+  - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(雙閘門擋掉),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
   - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
@@ -112,7 +112,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **答案要改標題,不是只補在『看動機』那行**——這是 Step 2 的全部意義。最常踩雷的是**集中度**:用戶答「**刻意押賽道 / 知道集中**」→ 那個洞**絕不准叫「假分散」**(他沒在騙自己,你問了他還罵他=自相矛盾)。改框成「**你選的集中押注**」,打的點變兩個:① 它讓你的**選股本事測不出來**(就是 α 判不出的原因,串起來講)② **集中回檔風險**——有沒有減碼/停損線。答「以為分散」→ 才用「假分散」。凹單/逢低、梭哈同理:答案怎麼說,標題就怎麼標。
 - 用戶若略過不答,就只用機械洞出卡,不強逼。
 
-**(c) 建立 / 更新 thesis(AI 猜為主、問為輔 —— 取代週記錄的核心,目標④)**
+**(c) 建立 / 更新 thesis(AI 猜為主、問為輔 —— 取代週記錄的核心)**
 
 > **鐵律:降摩擦 + 克制。** 這產品的命是「不變成你想逃的重系統」。thesis **絕不逼用戶坐下來填** —— 由你(Claude)從交易行為 + ticker 世界知識**猜**,預設落盤標 `inferred`,用戶不爽再改。讓用戶**冷啟動就有完整 thesis 庫、零填寫成本**。
 
@@ -130,18 +130,18 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 
 **鐵律不變:`exit_trigger`(看錯了,事實)≠ `stop`(跌多少賣,價格)。** 猜的時候 exit 也猜「thesis 失效的事實」,不是猜停損價。寧可 `inferred` 也不要假的 `testable`。
 
-### Step 2.5 · 對帳上次的 thesis 與承諾(只在對帳模式 / log 非空,目標⑤)
+### Step 2.5 · 對帳上次的 thesis 與承諾(只在對帳模式 / log 非空)
 
-**先重建「目前有效的 thesis」(雙審 codex#2 + gemini#2:append-only 讀取必做,否則 active 爆掉)**:`theses.jsonl` 是 append-only,同一 thesis 有多筆 revision。讀取時按 `thesis_id` 建 event log,**每個 cycle 只取 latest 未被 supersede 的**:
+**先重建「目前有效的 thesis」(append-only 讀取必做,否則 active 名單會爆掉)**:`theses.jsonl` 是 append-only,同一 thesis 有多筆 revision。讀取時按 `thesis_id` 建 event log,**每個 cycle 只取 latest 未被 supersede 的**:
 - 後出現的 `revises: <舊 id>` → 把舊 id 標 superseded、排除。
 - cycle 已清倉(該 `cycle_id` 不在 engine `holdings.positions`)→ 該 thesis 標 closed、不進對帳(歷史保留)。
 - 結果 = 每個 active cycle 恰一筆有效 thesis。
 
 出新卡先回看上次:
 1. **承諾 metric**:上次 `commitment.metric_key` 舊值 → 這次 engine state 新值(「上次說壓到 20%,當時 51% → 現在 48%:在降、沒達標」)。
-2. **trigger 檢查 —— 只查三類,別逐檔掃(雙審 codex#6:逐檔掃 = 把復盤變研究任務 = 回到高級拖延)**:
+2. **trigger 檢查 —— 只查三類,別逐檔掃(逐檔掃 = 把復盤變研究任務 = 回到高級拖延)**:
    - 只查:**本週有交易的 ticker** + **上次承諾關聯的 ticker** + **最大風險 1 檔**。其餘 active thesis 標「本週未檢查」。**外部新聞 / 基本面查是 opt-in**(用戶說要才查,不每週必跑)。
-   - 對這幾檔看 trigger 觸發,**措辭依 maturity 分(雙審 codex#1 + gemini#4,最關鍵 —— 別把 AI 猜的當你的承諾)**:
+   - 對這幾檔看 trigger 觸發,**措辭依 maturity 分(最關鍵 —— 別把 AI 猜的當你的承諾)**:
      - **`testable`(你確認過的)** → 才用定論:`exit_trigger` 觸發 = 🔴「你定的『{exit}』發生了 —— thesis broken,該走」。
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
@@ -154,86 +154,8 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 2. **Step 2 對話完成了嗎?** — `thesis_questions` 至少對「金額最大 + 行為矛盾」的 1 檔問過 + 拿到答案;主要動機鏡片(對應 headline_dim 的)問過 1 句。沒問完就出卡 = 退化成「engine + 套版」,失去 SKILL 的價值。
 3. **你打算自己用敘事寫卡,不是照搬 JSON 欄位?** 把 JSON 當資料源,自己組句子,不要列 `〔X〕內容` 的 dashboard 拼接。
 
-**等 Step 2 的確認都回來,才出這張卡。** 卡上的標籤是**定論**:用戶確認凹單的標凹單、確認逢低的標逢低,不留「凹單僥倖/待確認」這種問號(那是 Step 2 沒問完就出卡)。結合「引擎 `build_card_data` JSON + 用戶剛確認的持股假設與動機」,出**一張**卡。每句都要**看得懂 + 有數據 + 有案例**,不准黑話:
-
-**🚫 卡上禁止出現的東西(engine 已把這些移出渲染,別自己加回來)**:
-- ❌ `〔X〕內容` 標籤拼接(SKILL 鐵律:連貫敘事,不准 dashboard)
-- ❌ 5 維 severity 小數表(`.64 🔴`)— 用「一句人話」帶過非 headline 維度
-- ❌ `thesis_questions` 任何一條 — 那是 Step 2 對話用的,卡上只有用戶答完的定論
-- ❌ 鏡片 `lens_quote` 當每漏洞段尾結語 — 融進敘事或徹底不用
-- ❌ 把你寫的規矩當定論硬塞 — 從 `candidate_rules` 給 2-3 條候選讓用戶挑/改(引擎只給一條時就用那條)
-- ❌ `(引擎產出)` 或任何內部分工標記
-
-**先分兩種卡(雙審:社群分發的命)**:
-- **private review(你自己看)** —— 完整:金額、股數、ticker、持倉佔比、損益。寫進回覆 + 落 `~/.trade-coach/`。
-- **public card(可分享,redact)** —— **預設不自動出,用戶說要才給**。隱藏絕對金額 / 股數 / 完整持倉清單,只留**可傳播又不洩資產**的:行為 pattern、最大的洞、下次規矩、績效用**相對值**(β、贏大盤 pp、盈虧比,不放 $)。給一個能直接貼 X / Thread 的純文字版。
-  - redact 規則(雙審 codex#5 + gemini#3:防 portfolio reconstruction —— 精確佔比 + ticker + 連續多週可聯立反推總資產):
-    - 絕對金額、股數 → **砍**。
-    - 佔比 → **不給精確 %,改 bucket**:`>30%` / `20–30%` / `<10%`,或只給排序「最大持倉」;損益轉「賺 / 虧約 X 成」。
-    - 日期 → 模糊成「近幾週」,不給精確交易日(連續精確日期 + 佔比 = 可反解股數)。
-    - ticker → 預設保留(行為才有意義);要更隱私 → 全匿名(`某 AI 核心倉`)。
-    - 正名:沒現金 + 即時價時,佔比只能叫「**CSV 內成本占比**」,不是「資產權重」。
-
-**呈現方式:文字卡優先,圖形卡是加分(絕不能只出圖形卡)。**
-- **主交付 = markdown 文字卡**,直接寫在回覆裡。**任何客戶端都看得到,含純終端機 Claude Code。**(實測缺陷:`show_widget` 只在圖形介面 claude.ai / 桌面 app / IDE webview 渲染;終端機用戶會**整張看不到** → 只出 show_widget = 用戶以為 skill 壞了。)
-- **加分 = HTML 卡**:若在圖形介面,**可再額外**用 `show_widget` 出一張,版型參考 [`card-template.html`](card-template.html)。設計規範:flat、明暗雙模式、Tabler outline icon、**無 emoji**、字重 400/500。
-- **卡片結構**(文字 / HTML 同):總覽 → 做對的 → 標的層 → 最大的洞(數字 / 實例 / 動機 / 萬一)→ 報酬歸因 → 下次只改 + 引言。
-- **不放機械層 5 維小數表**(`.64 🔴` 用戶看不懂、就是另一份報表)。要提其他維度,**一句人話**帶過:「加碼 / sizing / 持有你都守得不錯,只有 X 要處理」。
-
-下面的文字規格定義**卡上要有哪些區塊、每句怎麼寫**——內容鐵律照搬:
-
-```
-復盤卡 · 用 {philosophy} 的尺照你的交易
-
-〔這次成績〕{已實現損益 $ · 盈虧比(平均賺 vs 平均賠) · β · α}          ← 點5,看金額不看筆數勝率
-〔這把尺是什麼〕{lens.master_intro.one_line}                          ← 點3,一句話帶過,不展開
-
-✅ 你做對的:{引擎 strength,已含具體案例,原樣保留}
-📊 最賺 {best ticker +%} / 最虧 {worst ticker -%}                     ← 點4
-
-〔盈虧比拆解 · 誰在撐、誰在拖〕(引擎 payoff_attribution,每次都出)
-   撐盤:{top carriers 標的 + 佔總賺%}  ·  拖累:{top draggers 標的 + 佔總賠%}
-   → 拿掉最大拖累 {ticker}（淨 ${drag}）→ 盈虧比 {payoff} 變 {cf_payoff}
-   ← 別只報「盈虧比 0.8」這個總數;指名是哪一兩檔(常是凹單)把它拖翻,該動哪一刀就清楚了
-
-🔴 最大的洞:{一句白話結論,人話}
-   ▫ 看數字:{用戶自己的數字}
-   ▫ 看實例:{指名一筆具體交易當例子}                                 ← 點1,最重要那句一定要有案例
-   ▫ 看動機:{用戶剛在 Step 2 確認的 why}
-   ▫ what if:{引擎算的具體情境,給數字讓他自己想——不准「會一起倒」這種空話}   ← 點3
-
-▸ 下次只改這一件:{candidate_rules 的具體 if-then,2–3 條候選讓他挑/改一條}    ← 點2
-▸ {philosophy}:「{lens 的 quote 原話}」
-```
-
-**卡片是一個故事,不是 dashboard**(真人交易者 review 後的鐵律):
-- **連貫敘事,不准標籤拼接**。`〔這次成績〕A｜B｜C` 這種一塊塊的格式,交易者讀起來「像幾份報告硬湊」。用完整句子把數字織成一段他自己的故事。
-- **卡上不放給作者看的註解**。`〔這次成績 · 看金額不看勝率〕`、`(供參)`、`← 點5`、`機械層 5 維` 這種內部理由 / 設計標記一律不上卡——卡上只有用戶的數字和話,理由你心裡有就好。
-- **先承認他的本事,再打**。直接打會被頂回來(「抱也是我的決策」「不交易哪來部位」)。先講他做對的(選股、抱住賺 6 倍),他才沒法用「你否定我交易價值」嘴硬——尤其當 realized P&L 是負的,那是他嘴硬不了的鐵證,對準那裡。
-- **數字要「髒」**。最戳人的是「你每筆平均賺 $81、賠 $105」「虧損加碼 138 次」這種甩臉上的具體數字,不是形容詞。
-- **不講散戶聽不懂的話**。「α 只有 5%」交易者會回「我又不是基金經理」。翻成他在乎的:「你贏大盤是因為敢壓+槓桿,不是會做價差」。
-- **鏡片引言別當結語**。結尾突然冒「鏡片原則:…」像老師訓話,交易者「差點關掉」。要嘛融進敘事,要嘛不用。
-- **規矩是機械的,不是自我喊話**。「動手前問自己…」沒用(沒人下單時覺得自己會賠)。要給「不靠當下忍住」的機制:「虧損部位一律不加碼,想加先整筆賣掉隔天重買」。
-
-**金額 > 筆數勝率**:總覽絕不放「勝 X/負 Y、勝率 %」當主數字——勝率高 ≠ 賺錢。放**已實現 + 未實現損益(兩個都要,只報一個失真)、盈虧比(平均賺 vs 平均賠)**,才看得出「大賺小賠還是大賠小賺、賺的是交易還是抱著」。
-**α 要餵夠長歷史 + 正確基準**:<1 年(~252 交易日)算不準;**alpha 一律 vs 通用大盤(SPY),板塊 ETF(SOXX/QQQ)只拿來做歸因分解(押對賽道 vs 選股),絕不拿板塊當 alpha 基準**。把「贏大盤」拆成「押對賽道(方向紅利)」+「選股(你 vs 賽道)」——這個分離才是用戶要的準確認知。
-**廢話零容忍**:像「偏存活紀律、有些是提問不是判你錯」這種學究句一律刪。每行不是數字就是實例,沒有形容詞填充。
-
-**處方層(從「你哪裡爛」進到「下一步換什麼做法」)**:診斷讓人知道問題,處方讓人回來——留存的鉤子在「下一步怎麼做」。engine 的 `prescribe()` 已從歸因 + 診斷算出三類,照著說人話:
-- **揚長**:放大用戶證明有 edge 的決策(歸因正貢獻那層)。多數工具只會避短;這個 skill 因為算得出歸因,能告訴用戶「你強在哪、去放大它」。
-- **外包短板**:某決策層是負貢獻(如選股 -99pp)→ 建議把那個決策外包(交給指數),不是叫他「學會」。**流程建議,非標的建議**:是「少做某個決策」,絕不碰「買哪支」(IP/法律邊界)。
-- **砍損耗**:純扣分行為(虧損加碼、梭哈)→ 機械規則砍掉,可驗。
-- 處方的力量來自**歸因精確**:ChatGPT 沒有那個 -99pp,不敢叫人「別選股」;這個 skill 敢。越具體反直覺,越證明不是套話。**因人而異**:同把尺,「方向強/選股弱」→外包選股;「選股強/紀律弱」→守紀律別稀釋選股。
-
-**規則:**
-- **每句都要能落地到一筆真實交易**。「出場不手軟」這種黑話不准單獨出現,一定要接「(例:MRVL 賺 47% 賣完只動 -3%)」。最重要的那句洞,必須指名一筆具體交易,否則用戶看不懂、也不信。
-- **先給「你做對的」再給洞(不可省)**。看自己虧損 = ego 受傷會直接關掉;先肯定一個**真實**優點(引擎已附案例),降防衛,才聽得進那一刀。reframe:結帳學費,不是審判。
-- **if-then 規矩由你(Claude)幫他寫具體,不要丟抽象句**(點2:「AI 幫人寫規矩」):
-  - 抽象(❌):「注意分散」「加碼前想清楚」——用戶下次還是不知道怎麼做。
-  - 具體(✅):用他的數字寫成「下次引擎能驗」的:「把 AI 部位從 95% 砍到 70% 以下」/「為 MU(37%)掛一個跌破 $X 就減半的條件單」/「往下加碼前在卡上寫一行新證據,寫不出就不加」。
-  - **給 2–3 條候選讓他挑一條 / 改一條**,別逼他接受你寫的。用戶說不出具體規矩,但能從選項裡認出「對,就是這個」——這就是 AI 幫人寫規矩。
-- **永遠只收斂到一個洞 + 一條規矩**。第二份十維報告 = 失敗。
-- 引言用 `rubric/vincent-yu.lens.json` 裡**那個洞對應 dim 的 `quote`**;**換鏡片/哲學 = 換 lens 檔,這步不動**。
+**三項都過了,才讀 [card-spec.md](card-spec.md),照裡面的規格出卡**——卡的結構、禁止清單、private/public 兩種卡與 redact 規則、敘事鐵律、處方層全在那份檔裡,這裡不重複。
+**Step 2 還沒問完,不要提前打開它**:在那之前,你唯一的目標是把動機問完、拿到答案。
 
 ### Step 4 · 收一句反饋(驗證用)
 
@@ -272,7 +194,7 @@ dflt = st.get("commitment") or {}                         # engine 機械預設(
 rule = (sys.argv[1] if len(sys.argv) > 1 else "") or dflt.get("rule")
 mk   = (sys.argv[2] if len(sys.argv) > 2 else "") or dflt.get("metric_key")
 commitment = None
-if rule and mk and not st["insufficient_data"]:           # 樣本不足不硬塞 commitment(§4.4)
+if rule and mk and not st["insufficient_data"]:           # 樣本不足不硬塞 commitment
     commitment = {"rule": rule, "metric_key": mk,
                   "metric_value": st["metrics"].get(mk), "goal": "down"}
 entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
@@ -285,7 +207,7 @@ print("appended commitment:", json.dumps(commitment, ensure_ascii=False))
 PY
 ```
 
-**收尾 part 2 · 把本週建立 / 更新的 thesis append 到 `theses.jsonl`(目標④,append-only)**:
+**收尾 part 2 · 把本週建立 / 更新的 thesis append 到 `theses.jsonl`(append-only)**:
 ```bash
 python3 - <<'PY'
 import json, os, pathlib
@@ -303,7 +225,7 @@ theses = [
   #  "stop":"", "target_size":"20%",
   #  "revises": None},               # 更新既有 thesis 才填舊 thesis_id
 ]
-import time; _sid = int(time.time())                       # session 戳：防同日多次 review 撞 id（雙審 gemini#5）
+import time; _sid = int(time.time())                       # session 戳：防同日多次 review 撞 id
 p = pathlib.Path(os.path.expanduser("~/.trade-coach/theses.jsonl"))
 with p.open("a", encoding="utf-8") as f:
     for i, t in enumerate(theses):
@@ -315,7 +237,7 @@ PY
 ```
 > `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發。**隱私同 log:純本機、不外傳、不回作者。**
 
-**收尾 part 3 · 個人 profile(只第一次建,目標⑤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
+**收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
 
 **第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。卡收尾講一句「資料還太短,先存個底,累積多幾筆 round-trip 再回來對帳」,log 照樣 append(commitment=null),下次來就接得上。
 

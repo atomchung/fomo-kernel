@@ -146,6 +146,7 @@ python3 engine/trade_recap.py                          # 不帶參數 = mock_tra
 ```
 skills/fomo-kernel/
   SKILL.md                  ← skill 本體(四步流程:格式 → 引擎 → 出卡前確認 → 定論卡)
+  card-spec.md              ← Step 3 卡規格(禁止清單 / redact / 敘事鐵律;Step 2 問完才讀)
   engine/trade_recap.py     ← 機械層:5 維 + 標的層主從分類 + 歸因(純函式,無真實路徑)
   rubric/
     vincent-yu.md           ← 預設鏡片的原則蒸餾(逐條標出處;可換成別的大師)
