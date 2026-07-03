@@ -1,9 +1,13 @@
 name: tests
 
 # 每次 push / PR 自動跑全套測試 —— 引擎或規格被改壞時當場紅燈,擋在 merge 前。
+# 另有每週排程的 network smoke(見 network-smoke job):非阻塞,只給線上半邊訊號(#62)。
 on:
   push:
   pull_request:
+  workflow_dispatch:          # 手動也能點一次 network smoke
+  schedule:
+    - cron: "17 3 * * 1"      # 每週一 03:17 UTC:離線套件照跑 + network smoke 補線上訊號
 
 # 同一 ref 連續推送只保留最新一次 run,省 CI 額度。
 concurrency:
@@ -29,3 +33,20 @@ jobs:
         run: python3 -m pip install pandas rich
       - name: Run full test suite (offline, deterministic)
         run: python3 tests/run_all.py
+
+  # 線上半邊的訊號源(#62):裝 yfinance、設 TR_TEST_NETWORK=1 跑全套(含 β 方向 network smoke)。
+  # 非阻塞:只在排程/手動觸發跑,紅了不擋任何 merge —— 行情/yfinance 抖動不該綁架 PR,
+  # 但「線上半邊完全沒訊號」也不行(SELL_EARLY_TH 類突變曾三套全綠存活)。
+  network-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime deps (with yfinance — online on purpose)
+        run: python3 -m pip install pandas rich yfinance
+      - name: Run full suite + network smoke (non-blocking)
+        run: TR_TEST_NETWORK=1 python3 tests/run_all.py
