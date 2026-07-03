@@ -65,6 +65,8 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 # 都不設 → 跑 demo 卡(README quickstart 用)
 # TR_DEBUG=1 → 在 demo 模式補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
 ```
+
+> 🔧 **引擎報 `ModuleNotFoundError`(如 pandas / yfinance)**:依賴多半裝在 venv / pyenv 的另一個 python 裡。找到裝了依賴的直譯器路徑重跑一次即可,常見是 repo 根的 `.venv/bin/python3`(README 安裝節的 venv 三行裝出來的)——把上面指令的 `python3` 換成那個路徑;別急著全域 pip(新 macOS 會被 PEP 668 擋)。
 引擎吃標準欄位(Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate),`TR_JSON=1` 吐的結構含:
 - **`top_holes`**:已選好的 top 1–2 機械洞 + 對應鏡片 quote(融入敘事,**別當結語**)。
 - **`candidate_rules`**:2–3 條候選規矩(Step 3 跟用戶挑/改一條,**別只給第一條**;引擎只給一條時就用那條)。
