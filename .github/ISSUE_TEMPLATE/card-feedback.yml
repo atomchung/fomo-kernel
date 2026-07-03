@@ -1,0 +1,36 @@
+# Stage 0 反饋回收入口(#42):skill Step 4 與 README 隱私節都連到這裡。
+# 鐵律:只收「卡有沒有用」的感想,不誘導、不接受任何交易明細。
+name: 卡片反饋 · Card feedback
+description: 這張卡有戳中你嗎?哪裡不對?(只收感想,別貼交易明細)
+title: "[card] 一句話反饋"
+labels: ["card-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報!「這張卡有沒有用」是這個 skill **唯一**回收的東西。
+        ⚠️ **別貼任何交易明細**(金額、股數、損益、持倉、對帳單截圖)——只要你的感想。
+  - type: textarea
+    id: hit
+    attributes:
+      label: 這張卡有戳中你嗎?
+      description: 一句話就好——哪一句戳中了?還是完全沒感覺?
+      placeholder: 例:「賣太早那段講中了,我確實每次 +10% 就想跑」
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: 哪裡不對 / 哪裡怪?(選填)
+      description: 數字怪、動機問句問錯、規矩不合身、話術太重…都算
+    validations:
+      required: false
+  - type: dropdown
+    id: source
+    attributes:
+      label: 你跑的是?
+      options:
+        - 自己的真實 CSV
+        - 內建 mock / sample
+    validations:
+      required: true
