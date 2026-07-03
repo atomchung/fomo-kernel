@@ -88,7 +88,9 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 
 ### Step 2 · 出卡前的對話確認(持股假設 + 動機)——這層才是鏡片,不可省
 
-**流程鐵律:確認在出卡之前,不在卡上。** 機械算得出「你做了什麼」(what),算不出「你為什麼這樣做」(why)。所以**先在對話裡問完所有需要你定性的問題、拿到答案,Step 3 才出最終卡**——卡是確認後的定論,不是帶問號的待辦。**別把問題做成卡上的按鈕**(那是把 Step 2/3 混在一起)。用 AskUserQuestion 或直接對話問,二選一、5 秒可答。
+**流程鐵律:確認在出卡之前,不在卡上。** 機械算得出「你做了什麼」(what),算不出「你為什麼這樣做」(why)。所以**先在對話裡問完所有需要你定性的問題、拿到答案,Step 3 才出最終卡**——卡是確認後的定論,不是帶問號的待辦。**別把問題做成卡上的按鈕**(那是把 Step 2/3 混在一起)。
+
+**問法鐵律(#55):動機/定性問題一律用 `AskUserQuestion` 工具問,不要寫成文字段落等用戶打字。** 每題二選一(選項裡把兩個動機都寫成人話)+ 用戶可跳過,一次最多 2–3 題,5 秒可點完。自由打字 = 摩擦:用戶會直接略過 Step 2,卡就只能標「待確認」半成品,教練迴圈斷在第一環。只有執行環境沒有 AskUserQuestion 工具(非 Claude Code 的 agent)才退回對話問。
 
 **(a) 持股假設:逢低加碼 vs 凹單(標的層挑出來的)** —— 引擎 `ticker_diagnosis` 對「金額大 + 虧損中狂加碼」的標的生成 `thesis_q`。機械分不出逢低/凹單,因為**差別在加碼當下 thesis 還在不在(= why,算不出)**,所以挑出來問你:
 - 還在虧的(如 MSTR 加 26 次還虧):「你還相信當初的理由,還是不想認賠在凹單?」
@@ -125,7 +127,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **maturity = `inferred`**,全部**直接落盤、零提問**。
 
 **只在一種情況問用戶一句**(抓大放小,別審問):
-- **行為矛盾、金額最大的那 1 檔**(疑似凹單 / 深虧還加碼)—— 機械分不出「逢低 vs 凹單」,差別只在 why(算不出)。問一句:「{ticker} 加碼 N 次還虧 X%,我猜是不想認賠(凹單)—— 對 / 有新理由(逢低)/ 跳過」。
+- **行為矛盾、金額最大的那 1 檔**(疑似凹單 / 深虧還加碼)—— 機械分不出「逢低 vs 凹單」,差別只在 why(算不出)。問一句(同樣走 AskUserQuestion,三個選項直接給他點):「{ticker} 加碼 N 次還虧 X%,我猜是不想認賠(凹單)—— 對 / 有新理由(逢低)/ 跳過」。
 - **一次最多問 1 檔**;其他全用猜的,不打擾。用戶跳過 → 留 `inferred`,不追問。
 
 **校正走「對帳時順手改」,不是「坐下來填」**:對帳(Step 2.5)呈現猜的 thesis + trigger 觸發,用戶看到猜歪的**順手改一條** → 該 thesis 升 `testable`(用戶確認過)。明說「投機跟風沒 thesis」→ 標 `draft`。thesis 越用越準,但從不逼填。
@@ -181,22 +183,27 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。
 4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
+**規矩承諾:用戶主動選,你不准代選(#56)。** 出完卡、寫 log 之前,用 `AskUserQuestion` 讓用戶從 `candidate_rules` 裡**自己挑一條**:每條候選一個選項(規矩原文寫進選項),用戶也可用 Other 自己改寫,另加一個「這週不承諾」。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
+
 **收尾(出完卡 + Step 4 收完反饋,append 一行)**:
 ```bash
 # 把這次的薄狀態接到 log(只存聚合 metric + 規矩,不存任何交易)。
-# ⚠️ commitment 要存【卡上最終那條規矩】,不是引擎機械預設 —— Step 2 動機問完常推翻它。
-#    實例:engine 預設「虧損別加碼」,但用戶答「NVDA 是計畫內定投」→ 規矩改成盯集中度 ai_pct。
-#    教練填下面兩格(= 卡上「下次只改這一件」+ 要追蹤的 state.metrics 鍵);留空才退回 engine 預設。
+# ⚠️ commitment 要存【用戶在 AskUserQuestion 親選的那條】(#56),不是引擎機械預設、更不是你代選的 ——
+#    Step 2 動機問完常推翻引擎預設。實例:engine 預設「虧損別加碼」,但用戶答「NVDA 是計畫內定投」
+#    → 用戶改挑「盯集中度 ai_pct」那條。
+#    兩格填用戶挑的規矩 + 對應 state.metrics 鍵;用戶選「這週不承諾」→ FINAL_RULE 填 SKIP。
 FINAL_RULE="AI 暴險封頂 70%:要加 AI 新倉先問新賽道還是同一注往上疊"
 METRIC_KEY="ai_pct"
 python3 - "$FINAL_RULE" "$METRIC_KEY" <<'PY'
 import json, os, sys, pathlib
 st = json.load(open(os.path.expanduser("~/.trade-coach/last_state.json")))
 dflt = st.get("commitment") or {}                         # engine 機械預設(fallback)
-rule = (sys.argv[1] if len(sys.argv) > 1 else "") or dflt.get("rule")
+arg1 = sys.argv[1] if len(sys.argv) > 1 else ""
+skip = (arg1 == "SKIP")                                   # 用戶明確「這週不承諾」(#56):不硬塞錨點
+rule = ("" if skip else arg1) or dflt.get("rule")
 mk   = (sys.argv[2] if len(sys.argv) > 2 else "") or dflt.get("metric_key")
 commitment = None
-if rule and mk and not st["insufficient_data"]:           # 樣本不足不硬塞 commitment
+if not skip and rule and mk and not st["insufficient_data"]:   # 樣本不足/用戶不承諾 → 不硬塞 commitment
     commitment = {"rule": rule, "metric_key": mk,
                   "metric_value": st["metrics"].get(mk), "goal": "down"}
 entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
