@@ -521,9 +521,10 @@ def dim_size(rows, held, last_px):
     max_t = max(weights, key=weights.get) if weights else None
     max_pct = weights.get(max_t, 0)
     sev = min(max((max_pct - 0.20) / 0.30, 0), 1)
+    others = [w for t, w in weights.items() if t != max_t]      # 「其餘平均」要排除最大那檔,否則 mean(全部)=1/檔數、跟集中度無關,還會跟「最大佔 X%」自相矛盾
     return dict(dim="部位 sizing", tier=1, triggered=max_pct > 0.25,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
-                avg_pct=statistics.mean(weights.values()) if weights else 0, weights=weights)
+                avg_pct=statistics.mean(others) if others else 0.0, weights=weights)
 
 def dim_diversify(held, last_px):
     vals = {}
@@ -678,7 +679,9 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
     if mp < 0.22:
         c.append((1-mp, f"單筆部位有控制:押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
     if avgdown_dim.get("breach", 1) == 0 and avgdown_dim.get("count", 0) >= 2:
-        c.append((0.65, f"就算往下加碼 {avgdown_dim['count']} 次,也沒有任何一筆失控加到爆倉(都守在部位上限內)"))
+        _egt = (avgdown_dim.get("tickers") or [""])[0]         # 帶一個具體標的當案例;「爆倉」是黑話,改人話「越攤越重」
+        c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次,卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
+                        + (f"(例:{_egt})" if _egt else "")))
     if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
         c.append((0.6, f"{div_dim['n']} 檔分布在不同 driver,沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
@@ -1314,8 +1317,8 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "is_demo": is_demo,                                 # mock csv → True,卡頭應加 [demo · 非真實成績]
         "strength": strength,
         "overview": overview,
-        "best_trade": best,
-        "worst_trade": worst,
+        "best_trade": {**best, "pnl": best["qty"] * (best["sell_px"] - best["buy_px"])} if best else None,   # 補 $ 損益,卡上 %和$ 都要
+        "worst_trade": {**worst, "pnl": worst["qty"] * (worst["sell_px"] - worst["buy_px"])} if worst else None,
         "what_if": wi,
         "ticker_diagnosis": tdiag,                          # tags 已是人話
         "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
