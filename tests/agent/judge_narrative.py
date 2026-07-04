@@ -80,15 +80,23 @@ SCORE_TOOL = {
 
 def judge(card_text: str) -> dict:
     client = anthropic.Anthropic()  # 讀 ANTHROPIC_API_KEY
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=RUBRIC,
-        tools=[SCORE_TOOL],
-        tool_choice={"type": "tool", "name": "score_narrative"},
-        messages=[{"role": "user", "content": f"待審的卡:\n\n{card_text}"}],
-    )
-    tool_use = next(b for b in resp.content if b.type == "tool_use")
+    try:
+        resp = client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=RUBRIC,
+            tools=[SCORE_TOOL],
+            tool_choice={"type": "tool", "name": "score_narrative"},
+            messages=[{"role": "user", "content": f"待審的卡:\n\n{card_text}"}],
+        )
+    except anthropic.APIError as e:
+        raise RuntimeError(f"judge() 呼叫 Anthropic API 失敗:{e}") from e
+    try:
+        tool_use = next(b for b in resp.content if b.type == "tool_use")
+    except StopIteration:
+        raise RuntimeError(
+            f"judge() 的回應沒有 tool_use 區塊,即使已強制 tool_choice(stop_reason={resp.stop_reason!r})"
+        ) from None
     return tool_use.input
 
 
@@ -96,7 +104,11 @@ def _main():
     if len(sys.argv) != 2:
         print(f"用法: {sys.argv[0]} <card.txt|->", file=sys.stderr)
         return 2
-    text = sys.stdin.read() if sys.argv[1] == "-" else open(sys.argv[1], encoding="utf-8").read()
+    if sys.argv[1] == "-":
+        text = sys.stdin.read()
+    else:
+        with open(sys.argv[1], encoding="utf-8") as f:
+            text = f.read()
     print(json.dumps(judge(text), ensure_ascii=False, indent=2))
     return 0
 

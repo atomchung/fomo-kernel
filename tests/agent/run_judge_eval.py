@@ -25,6 +25,8 @@ FIXTURES = HERE / "fixtures"
 PASS_THRESHOLD = 4
 FAIL_THRESHOLD = 3
 N_RUNS = int(os.environ.get("TR_JUDGE_N_RUNS", "2"))
+if N_RUNS < 1:
+    sys.exit(f"TR_JUDGE_N_RUNS 必須 >= 1(拿到 {N_RUNS})—— 0 次跑不出多數決,別設成 0。")
 
 
 def _verdict(overall: int) -> str:
@@ -42,12 +44,15 @@ def _run_case(case: dict) -> bool:
         result = judge(text)
         v = _verdict(result["overall"])
         verdicts.append((v, result["overall"]))
-    majority, count = Counter(v for v, _ in verdicts).most_common(1)[0]
+    tally = Counter(v for v, _ in verdicts).most_common()
+    top_count = tally[0][1]
+    tied = sum(1 for _, c in tally if c == top_count) > 1
+    majority = "ambiguous(tie)" if tied else tally[0][0]  # 平票不准偷偷選一邊當多數
     ok = majority == case["expect"]
     scores = ", ".join(str(o) for _, o in verdicts)
     status = "✅" if ok else "❌"
     print(f"{status} {case['file']:<28} expect={case['expect']:<5} "
-          f"got={majority}({count}/{N_RUNS}, scores={scores})  {case['label']}")
+          f"got={majority}({top_count}/{N_RUNS}, scores={scores})  {case['label']}")
     return ok
 
 
