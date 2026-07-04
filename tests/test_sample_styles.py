@@ -180,6 +180,110 @@ def test_personas_have_distinct_headlines():
     assert holes["momentum"] in ("部位 sizing", "分散")
 
 
+def test_pyramid_top_hole_is_sizing_not_avgdown():
+    """金字塔加碼者(只在浮盈時加碼,非攤平)→ 頭號洞 = 部位 sizing;加碼攤平維必須是 0。
+
+    區隔 sample_value(虧損中加碼):兩者都會把單一標的養成重倉,但成因相反——
+    這裡測 engine 不會把『越漲越加碼』誤判成攤平(dim_avgdown 只認買價 < 均價*0.9)。
+    """
+    s = _dims("pyramid")
+    assert _top_hole(s["dims"]) == "部位 sizing"
+    assert s["avg"]["count"] == 0 and s["avg"]["breach"] == 0
+    assert s["size"]["triggered"] and s["size"]["max_pct"] > 0.25
+    assert len(s["rts"]) >= 3   # 足夠樣本,不落 insufficient_data 分支
+    # 加碼分類:應為「疑似定投」(漲跌都買/規律)而非「疑似凹單」(只虧損買)
+    rows = tr.load([os.path.join(MOCK, "sample_pyramid.csv")])
+    adds = tr.classify_adds(rows)
+    assert adds and all(v["cls"] != "疑似凹單" for v in adds.values())
+
+
+def test_insufficient_sample_blocks_commitment():
+    """樣本不足者(2 個 round-trip、跨度 <84 天)→ engine 不得硬出 commitment(A-10)。
+
+    對應 eval-design.md A-10:round-trip < 3 或交易跨度 < MIN_SPAN_DAYS → insufficient_data=True、
+    commitment 必為 None(除非用戶親選,那是 SKILL 層 Step 3.5 的例外,engine 本身不做這件事)。
+    """
+    tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+    tr.load_driver_map(os.path.join(MOCK, "sample_insufficient.driver_map.json"))
+    rows = tr.load([os.path.join(MOCK, "sample_insufficient.csv")])
+    rts, _ = tr.round_trips(rows)
+    span_days = (rows[-1]["date"] - rows[0]["date"]).days
+    assert len(rts) < 3
+    assert span_days < tr.MIN_SPAN_DAYS
+    # 直接跑 build_state 驗證 engine 真的擋下 commitment(不只是靠 gate 條件成立就假設)
+    held, avg_down = tr.positions(rows)
+    d_size = tr.dim_size(rows, held, None)
+    d_exit = tr.dim_exit(rts, None)
+    d_div = tr.dim_diversify(held, None)
+    d_hold = tr.dim_hold(rts)
+    d_avg = tr.dim_avgdown(avg_down, held, None, d_size)
+    dims = [d_exit, d_size, d_div, d_hold, d_avg]
+    overview = tr.overview_stats(rts, {}, held, None)
+    ab = {"credible": False, "note": "樣本不足"}
+    rx = tr.prescribe(ab, dims, overview)
+    state = tr.build_state(rows, rts, held, dims, overview, ab, rx)
+    assert state["insufficient_data"] is True
+    assert state["commitment"] is None
+
+
+def test_noisy_broker_csv_matches_clean_baseline():
+    """混入股息/轉帳/利息/再投資等非 Trade 雜訊列 → 解析結果須與乾淨版(oldecon)完全一致。
+
+    測 CSV 健壯性:load() 的 RecordType!='Trade' 與 Action not in (BUY,SELL) 兩道過濾
+    要把雜訊列全部濾掉,不能讓雜訊污染任何一維的 severity。
+    """
+    clean, noisy = _dims("oldecon"), _dims("noisy_broker")
+    assert len(clean["rows"]) == len(noisy["rows"])
+    assert len(clean["rts"]) == len(noisy["rts"])
+    for cd, nd in zip(clean["dims"], noisy["dims"]):
+        assert cd["dim"] == nd["dim"]
+        assert cd["triggered"] == nd["triggered"]
+        assert abs(cd["severity"] - nd["severity"]) < 1e-9
+
+
+def test_rotator_top_hole_is_sizing_via_theme_churn():
+    """輪動追熱點者(依序全倉重壓不同賽道,每次都清倉才換下一個)→ 頭號洞 = 部位 sizing。
+
+    區隔 sample_momentum(全程同一賽道全押):rotator 的每個 round-trip 標的 driver 全部不同
+    (沒有重複賽道),而 momentum 是同一 driver 反覆押注——同樣落在『部位 sizing/分散』頭號洞,
+    但成因不同,靠 driver 序列的『churn』(全不重複)區分,不是靠頭號洞本身。
+    """
+    s = _dims("rotator")
+    assert _top_hole(s["dims"]) == "部位 sizing"
+    assert len(s["rts"]) >= 4
+    # 每次持有長度落在「波段」區間(介於 momentum 的 <15 天與 ai_holder 的 >200 天之間)
+    assert 20 < s["hold"]["median_hold"] < 60
+    assert not s["hold"]["triggered"]           # 每檔只交易一次,無框架不一致
+    # 賽道全換過一輪,不重複(驅動因子churn):與 momentum 的『同一 driver 反覆押注』相反
+    rows = tr.load([os.path.join(MOCK, "sample_rotator.csv")])
+    rts, _ = tr.round_trips(rows)
+    sectors = [tr.driver(r["ticker"])[0] for r in rts]
+    assert len(set(sectors)) == len(sectors), f"賽道應該逐輪全換不重複,實得 {sectors}"
+
+
+def test_panic_seller_extreme_disposition_and_chase_back():
+    """恐慌全出者(長抱虧損倉到極限,某週同時全數認賠出清,幾個月後又追高買回)→ 頭號洞 = 出場紀律。
+
+    比 sample_fundamental 的處置缺口(+258 天)更極端(+526 天),且多兩個 fundamental 沒有的訊號:
+    ① 多檔虧損倉在同一週內同步出清(恐慌,非個股別的紀律賣出);② 賣飛之後追高買回同一檔——
+    『賣在恐慌低點、買回追高點』雙重行為錯置。
+    """
+    s = _dims("panic_seller")
+    assert _top_hole(s["dims"]) == "出場紀律"
+    assert s["exit"]["disp_gap"] > 300, "處置缺口應遠比 fundamental(+258 天)更極端"
+    assert s["exit"]["hold_lose"] > s["exit"]["hold_win"]
+    # 恐慌訊號①:多檔虧損倉在極短窗口內同步出清(而不是分散在不同時間點各自出場)
+    rows = tr.load([os.path.join(MOCK, "sample_panic_seller.csv")])
+    loss_tickers = {"BA", "NKE", "LOW"}
+    loss_sells = sorted(r["date"] for r in rows if r["side"] == "sell" and r["ticker"] in loss_tickers)
+    assert (loss_sells[-1] - loss_sells[0]).days <= 5, "三檔虧損倉應在同一個恐慌窗口內同步出清"
+    # 恐慌訊號②:賣飛之後,同一檔用更高的價格追買回來(追高買回)
+    ba_rows = [r for r in rows if r["ticker"] == "BA"]
+    ba_sell_px = next(r["price"] for r in ba_rows if r["side"] == "sell")
+    ba_rebuy_px = next(r["price"] for r in ba_rows if r["side"] == "buy" and r["date"] > ba_rows[0]["date"])
+    assert ba_rebuy_px > ba_sell_px * 1.05, "追高買回應明顯高於恐慌賣出價"
+
+
 def test_offline_pipeline_no_crash():
     """離線(無 yfinance,last_px=None)時,卡片層全鏈路不得 crash。
 

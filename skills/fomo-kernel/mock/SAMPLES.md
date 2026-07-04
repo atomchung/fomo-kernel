@@ -2,7 +2,9 @@
 
 **虛構**交易紀錄,各自模擬一種投資者畫像(風格 × 持有長度),用來測 engine 的 5 維診斷能不能把每種風格**最該被照出的洞**排到復盤卡最前面。和 `mock_trades.csv`(方法論建立期那個人)並列,都是假資料、可入 git。
 
-目前共 **7 組**:三組散戶風格基準(fundamental / momentum / value)+ 四組投資者畫像擴充(ai_holder / oldecon / swing / day_trader,2026-06-30 經 Claude+Codex+Gemini 三方 review 定稿,見下方「投資者畫像擴充」)。
+目前共 **12 組**:三組散戶風格基準(fundamental / momentum / value)+ 四組投資者畫像擴充(ai_holder / oldecon / swing / day_trader,2026-06-30 經 Claude+Codex+Gemini 三方 review 定稿,見下方「投資者畫像擴充」)+ 五組 engine 邊界情境擴充(pyramid / insufficient / noisy_broker / rotator / panic_seller,2026-07-04,見下方「engine 邊界情境擴充」)。
+
+範圍限定:全部是**現股 long-only**(BUY/SELL),不含選擇權/賣空——engine 本身只認 `RecordType=="Trade"` 且 `Action in ("BUY","SELL")`([trade_recap.py:105-108](../engine/trade_recap.py#L105)),沒有做空/選擇權的計算邏輯,造這類 fixture 對回歸沒有增益。
 
 ## 怎麼跑
 
@@ -18,6 +20,12 @@ TR_DRIVER_MAP=mock/sample_ai_holder.driver_map.json   python3 engine/trade_recap
 TR_DRIVER_MAP=mock/sample_oldecon.driver_map.json     python3 engine/trade_recap.py mock/sample_oldecon.csv
 TR_DRIVER_MAP=mock/sample_swing.driver_map.json       python3 engine/trade_recap.py mock/sample_swing.csv
 TR_DRIVER_MAP=mock/sample_day_trader.driver_map.json  python3 engine/trade_recap.py mock/sample_day_trader.csv
+# engine 邊界情境擴充
+TR_DRIVER_MAP=mock/sample_pyramid.driver_map.json      python3 engine/trade_recap.py mock/sample_pyramid.csv
+TR_DRIVER_MAP=mock/sample_insufficient.driver_map.json python3 engine/trade_recap.py mock/sample_insufficient.csv
+TR_DRIVER_MAP=mock/sample_noisy_broker.driver_map.json python3 engine/trade_recap.py mock/sample_noisy_broker.csv
+TR_DRIVER_MAP=mock/sample_rotator.driver_map.json      python3 engine/trade_recap.py mock/sample_rotator.csv
+TR_DRIVER_MAP=mock/sample_panic_seller.driver_map.json python3 engine/trade_recap.py mock/sample_panic_seller.csv
 ```
 
 > ⚠️ 數字會漂移:engine 用 yfinance 抓**真實歷史價 + 最新收盤**算 α/β、市值權重、套牢。標的代碼與日期都真實(2023–2024),所以重跑時絕對數字會隨當前股價變,但**每組設計觸發的「頭號洞」是穩定的**(由交易行為決定,不靠特定股價)。
@@ -99,3 +107,29 @@ TR_DRIVER_MAP=mock/sample_day_trader.driver_map.json  python3 engine/trade_recap
 - **傳統產業**:「沒有洞要照——你跨 6 個產業、最重一檔 16%、賺賠都抱得住。守住紀律本身就是答案。」
 - **快進快出**:「同一檔 SHOP 你抱過 3 天也抱過 44 天——賺的快跑、賠的拖著,你缺的不是進出點是時間框架。」
 - **當沖**:「14 筆同日進出、中位持有 0 天——先問自己:這個頻率需要的 edge,你真的有嗎?」
+
+---
+
+# engine 邊界情境擴充(2026-07-04)
+
+前兩批都在造「畫像」——真人交易者的行為模式。這批不再造新畫像,改造 **engine 判斷分支本身**的邊界情境:
+每一支既有鐵律(A-10 樣本不足 / 攤平 vs 加碼贏家的方向判斷 / CSV 雜訊過濾)都該有一組 fixture 專門去戳它,
+而不是只能等真人交易者剛好撞上才發現。範圍限定現股 long-only(見上方「範圍限定」)。
+
+| 檔案 | 模擬情境 | 行為設計 | 測的 engine 分支 | 回歸斷言 |
+|---|---|---|---|---|
+| `sample_pyramid.csv` | **金字塔加碼者** | 只在浮盈時加碼(COST 550→600→650 一路買高、UNH 480→520),從未在虧損時加碼,最終部位轉重倉 | `dim_avgdown` 必須靠「買價 < 均價×0.9」判斷方向,不能把「越漲越加碼」誤判成攤平 | `tests/test_sample_styles.py::test_pyramid_top_hole_is_sizing_not_avgdown` — 頭號洞=部位 sizing、`avgdown.count==0`、`classify_adds` 分類為疑似定投而非疑似凹單 |
+| `sample_insufficient.csv` | **樣本不足者** | 只有 2 個 round-trip(AAPL、MSFT 各一組買賣),交易跨度 41 天(<`MIN_SPAN_DAYS`=84) | `build_state()` 的 `insufficient = len(rts) < 3 or span_days < MIN_SPAN_DAYS` gate | `test_insufficient_sample_blocks_commitment` — 直接跑 `build_state()` 驗證 `insufficient_data=True` 且 `commitment=None`(對應 eval-design.md A-10) |
+| `sample_noisy_broker.csv` | **CSV 雜訊版** | 複製 `sample_oldecon.csv` 的交易列,插入股息/轉帳/利息/帳戶手續費/股息再投資等非典型列(`RecordType` 非 Trade,或 `Action="REINVEST"`) | `load()` 的兩道過濾:`RecordType!="Trade"` 續行、`Action not in (BUY,SELL)` 續行 | `test_noisy_broker_csv_matches_clean_baseline` — 解析後應與乾淨版 `oldecon` 五維結果逐一比對相同(差分斷言,雜訊必須被完全濾除) |
+| `sample_rotator.csv` | **輪動追熱點者** | 依序全倉重壓 4 個不同熱門賽道(AI半導體→生技→能源→電動車),每個都在 30–40 天內清倉才換下一個,最後重壓最新熱點(金融科技) | `dim_size`/`dim_diversify` 在單一持倉快照下天然觸發集中;真正的區隔訊號是 round-trip 標的的 driver **逐輪全換不重複**,對照 momentum 的『同一 driver 反覆押注』 | `test_rotator_top_hole_is_sizing_via_theme_churn` — 頭號洞=部位 sizing、持有天數落在 20–60 天(介於 momentum 的 <15 與 ai_holder 的 >200 之間)、4 個 round-trip 的 driver 兩兩不同 |
+| `sample_panic_seller.csv` | **恐慌全出者** | 3 檔虧損倉長抱 500+ 天,某個真實有過大盤重挫的那週(2024-08-05~07)同時全數認賠出清;幾個月後追高買回其中一檔 | `dim_exit` 的處置缺口公式在『多檔同週恐慌出清』下天然放大到極端值;`disp_gap` 沒有專門的『恐慌同步』訊號,靠日期群聚(plain check)佐證 | `test_panic_seller_extreme_disposition_and_chase_back` — 頭號洞=出場紀律、處置缺口 >300 天(比 fundamental 的 +258 天更極端)、3 檔虧損倉出清日期落在 ≤5 天窗口內、同一檔追高買回價格 >恐慌賣出價 105% |
+
+## 設計重點
+
+- **這批不是新畫像,是新故障模式**:三支都對應一條既有鐵律的「反例」——如果沒特意造,這些分支只能等真人資料剛好踩到才會被驗證到,而 A-10 這種 gate 條件本來就很少在既有 7 組畫像的正常交易量下被觸發。
+- **金字塔 vs 攤平的方向對照**:`sample_value.csv`(既有)是「往虧損倉加碼」,`sample_pyramid.csv`(新)是「往獲利倉加碼」——同樣是「多次加碼同一檔」的交易表面模式,但 engine 的 `dim_avgdown` 只認買價相對均價的方向,不能靠加碼次數本身判斷,兩組刻意對照確保這個方向判斷沒有被次數污染。
+- **`sample_insufficient.csv` 直接跑 `build_state()`,不只斷言 gate 條件成立**:先前 fixture 都只驗 `dim_*` 純函式,這組因為要測的是 `insufficient_data`/`commitment` 這兩個只存在於 `build_state()` 輸出的欄位,測試因此改為直接呼叫 `build_state()` 全鏈路,而非只驗證 `len(rts)<3` 這個中間條件本身。
+- **`sample_noisy_broker.csv` 用差分斷言而非獨立斷言**:不另外斷言「頭號洞是什麼」,而是要求跟乾淨版 `oldecon` 逐維 diff 相同——這樣任何未來對雜訊列的誤判(哪怕只影響一維的 severity 小數點),都會在差分裡現形,比各自獨立斷言更敏感。
+- **`sample_rotator.csv` 頭號洞跟 momentum 撞維,靠序列訊號(不是 dim 本身)區分**:engine 的 5 維只看「當下持倉快照」,追熱點者清倉重壓下一個賽道後,快照必然是單一新持倉(集中度天然滿分)——跟 momentum 表面同一種頭號洞形狀。真正的行為差異(每次都換賽道 vs 從頭到尾同一賽道)沒有專屬 dim,測試改為直接檢查 round-trip 標的的 driver 序列有沒有重複,這是刻意留在 fixture/測試層的訊號,不是逼 engine 生出新維度。
+- **`sample_panic_seller.csv` 是 fundamental 處置效應的極端版,加兩個 engine 沒有專屬 dim 的訊號**:① 多檔虧損倉在同一週同步出清(恐慌的特徵是『同步』,不是『個股別考量後賣出』,但 `dim_exit` 只看賣出後的持有天數分布,量不到『是不是同一週』)——用交易日期直接檢查窗口寬度佐證;② 賣飛之後追高買回同一檔(『賣在恐慌低點、買回追高點』的雙重行為錯置)——用同檔前後兩筆買入價格比對佐證。兩者都刻意寫在測試而非新增 engine 邏輯,對齊本次任務範圍(豐富測試用例,不是擴充 engine 功能)。
+- **五支都經 mutation 驗活**:分別故意弄壞 `insufficient` gate、`dim_avgdown` 的 0.90 閾值、`RecordType` 過濾、`dim_exit` 的 severity 公式、`driver()` 分類函式,確認對應測試真的會亮紅,才收進回歸(見 repo 一貫的「鐵則=先探測真實輸出+全綠後跑突變測試證明非假綠燈」)。
