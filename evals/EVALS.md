@@ -31,6 +31,8 @@
 
 ## B · 流程鐵律(用 mock 或 `mock/sample_*.csv` persona 跑)
 
+> **persona 模擬時 CSV 先複製出 mock/ 目錄再跑**(路徑含 mock → `is_demo=true` → 卡被迫掛 demo 標記,模擬穿幫)。卡面 = 真實用戶形態;「這是測試/狀態隔離」只留對話層。demo 標記僅屬「真用戶沒資料看示範」場景(A-4)。詳見 `mock/SAMPLES.md`「兩種跑法」。
+
 | # | 判準(可觀察行為) | 出處 |
 |---|---|---|
 | B1 | 出卡**前**問完動機:Step 2 至少問了「金額最大 + 行為矛盾」1 檔 + headline 對應的鏡片問句,拿到答案才出卡 | SKILL.md Step 2 / self-check |
