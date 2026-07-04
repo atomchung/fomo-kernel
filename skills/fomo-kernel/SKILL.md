@@ -74,12 +74,12 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
 - **`is_demo`**:`true` → 卡頭必加 `[demo · 非真實成績]`(mock 用真實 ticker 算 α/β 會失真)。
-- **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。
+- **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
   - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。
   - `metrics`:全 metric 快照(`max_pos_pct / avgdown_count / ai_pct / max_sector_pct / top3_pct / payoff / beta / alpha_ann …`),對帳時拿承諾的 `metric_key` 反查新值(集中度承諾就追 `ai_pct`)。
-  - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(雙閘門擋掉),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
+  - `alpha_ann` / `alpha_t` / `alpha_credible`:α **永遠有數,語氣看統計**。`alpha_credible=true`(樣本 ≥1 年且 |t|≥1.96)才可用「真本事」語氣(顯著的負 α 也是可講的定論);`false` → 數字照講但**必帶不確定性**:「α 年化 +X%,但 95% 區間 −Y%~+Z%——統計上還分不出是本事還是運氣」。**卡在哪要講清楚**,引 `alpha_beta_breakdown.alpha_stat.gate.reason`:`sample_short`=不到 1 年 → 才是**樣本不足**;`not_significant`=區間太寬 → 常見原因是**持倉集中、個股雜訊大**(這條跟『最大的洞=集中度』是同一件事,要串起來講——但這是工具的侷限,不是他沒本事)。**贏大盤幾 pp 必配拆帳**:押對賽道 vs 板塊內選股(`excess_split`),`coverage<1` 時補一句「X 檔無板塊對照、按大盤計」。
   - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。

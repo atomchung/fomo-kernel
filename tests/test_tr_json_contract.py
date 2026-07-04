@@ -43,7 +43,7 @@ STATE_KEYS = {
 STATE_METRIC_KEYS = {
     "max_pos_pct", "max_pos_ticker", "avgdown_count", "avgdown_breach",
     "payoff", "ai_pct", "max_sector_pct", "top3_pct", "n_holdings",
-    "beta", "alpha_ann", "alpha_credible",
+    "beta", "alpha_ann", "alpha_t", "alpha_credible",   # alpha v2(#80):α 永遠出數,t 一起存
 }
 
 PASS = 0

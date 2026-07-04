@@ -219,21 +219,38 @@ def test_payoff_attribution_all_wins_is_none():
     assert pa["draggers"] == [] and pa["counterfactual"] is None
 
 
-# ─────────────────────── G. alpha_credible():α 雙閘門 ───────────────────────
+# ─────────────────────── G. alpha 統計閘 v2(#80) ───────────────────────
 
-def test_alpha_credible_double_gate():
-    """#11 誠實化的核心:α 要當『選股能力證據』須同時通過 ① 樣本≥1年(n≥252)
-    ② 橫截面夠寬(最大板塊/AI 暴險 <50% 且 ≥8 檔)。任一不過 → False(賽道紅利+雜訊)。
-    這道閘門若被改鬆,引擎會把『押對賽道』冒充成『真本事 α』—— 產品誠信的紅線。"""
-    div_wide = dict(dim="分散", ai_pct=0.3, max_sector_pct=0.3, n=10)
-    div_narrow = dict(dim="分散", ai_pct=0.7, max_sector_pct=0.7, n=10)
-    div_thin = dict(dim="分散", ai_pct=0.3, max_sector_pct=0.3, n=4)
-    assert tr.alpha_credible(dict(note="無價格"), [div_wide]) is False, "有 note(無價格/樣本)→ False"
-    assert tr.alpha_credible(dict(n=100), [div_wide]) is False, "樣本 <252 → False"
-    assert tr.alpha_credible(dict(n=300), []) is False, "無分散維(無橫截面證據)→ fail-closed"
-    assert tr.alpha_credible(dict(n=300), [div_narrow]) is False, "橫截面太窄(押賽道)→ False"
-    assert tr.alpha_credible(dict(n=300), [div_thin]) is False, "檔數 <8 → False"
-    assert tr.alpha_credible(dict(n=300), [div_wide]) is True, "樣本夠長 + 橫截面夠寬 → True"
+def test_alpha_credible_stat_gate():
+    """v2(#80):credible = 統計顯著(alpha_stat.grade == significant),檔數/集中度閘退役——
+    集中的雜訊由回歸 SE 直接量(集中 → 殘差大 → t 低,自然過不了),
+    「押賽道 vs 選股」由 excess_split 拆帳正面回答。
+    這道閘若被改鬆,引擎會把噪音 α 冒充成『真本事』——紅線沒變,測量方式變了。"""
+    assert tr.alpha_credible(dict(note="無價格")) is False, "有 note(無價格/樣本)→ False"
+    assert tr.alpha_credible({}) is False, "無 alpha_stat → fail-closed"
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="noise"))) is False
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="suggestive"))) is False
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="significant"))) is True
+    assert tr.alpha_credible(dict(note="樣本不足", alpha_stat=dict(grade="significant"))) is False, \
+        "note 優先於 grade(fail-closed)"
+
+
+def test_alpha_grade_thresholds_anchored():
+    """分級門檻有統計錨(#63 教訓):n≥252(1 年,業界慣例)+ |t|≥1.96(95%)。
+    #80 回歸驗證:分級只看 t 與樣本天數——5 檔集中投組不再被持倉檔數結構性排除。"""
+    g = tr._alpha_grade(dict(alpha_t=2.5, n=300))
+    assert g["grade"] == "significant" and g["gate"] is None
+    g = tr._alpha_grade(dict(alpha_t=-2.4, n=300))
+    assert g["grade"] == "significant", "顯著的負 α 也是可談的定論"
+    g = tr._alpha_grade(dict(alpha_t=2.5, n=100))
+    assert g["grade"] == "suggestive" and g["gate"]["reason"] == "sample_short", \
+        "樣本 <1 年:再顯著也不給能力語氣"
+    g = tr._alpha_grade(dict(alpha_t=1.3, n=300))
+    assert g["grade"] == "suggestive" and g["gate"]["reason"] == "not_significant"
+    g = tr._alpha_grade(dict(alpha_t=0.4, n=300))
+    assert g["grade"] == "noise" and g["gate"]["reason"] == "not_significant"
+    g = tr._alpha_grade(dict(alpha_t=None, n=300))
+    assert g["grade"] == "noise", "t 無定義(se=0 完美複製品)→ 保守歸 noise"
 
 
 # ─────────────────────── H. dim_avgdown():breach 主導觸發 ───────────────────────
@@ -284,15 +301,17 @@ def _state_from(rows, ab):
     return tr.build_state(rows, rts, held, dims, ov, ab, rx)
 
 
-def test_build_state_honesty_alpha_none_when_not_credible():
-    """誠實鐵律:α 不 credible 時 metrics.alpha_ann 必為 None(β 仍可報)。
-    這是 build_state 把『不可信 α』擋在狀態之外的最後一關,被改鬆等於默許賽道紅利冒充選股。"""
+def test_build_state_alpha_always_reported_with_uncertainty():
+    """誠實鐵律 v2(#80):α 永遠出數 + 同存 alpha_t(數字+不確定性,比封殺更誠實);
+    能力語氣由 alpha_credible 管。被改回「不 credible 就 None」= 回到檔數封殺時代。"""
     rows = tr.load([os.path.join(MOCK, "mock_trades.csv")])
-    ab = dict(dim="alpha/beta", beta=1.5, alpha_ann=0.25, credible=False, n=300)
+    ab = dict(dim="alpha/beta", beta=1.5, alpha_ann=0.25, credible=False, n=300,
+              alpha_stat=dict(alpha_ann=0.25, t=0.8, grade="noise"))
     st = _state_from(rows, ab)
     assert st["schema_version"] == 2, "schema_version 應為 2"
     assert _approx(st["metrics"]["beta"], 1.5), "β 照常入狀態"
-    assert st["metrics"]["alpha_ann"] is None, "不 credible → alpha_ann 必為 None"
+    assert _approx(st["metrics"]["alpha_ann"], 0.25), "v2:不 credible 也出數(語氣另管)"
+    assert _approx(st["metrics"]["alpha_t"], 0.8), "不確定性(t)一起入狀態,對帳才知道數字多可信"
     assert st["metrics"]["alpha_credible"] is False
     assert st["holdings"]["is_complete"] is False, "CSV 推算不宣稱完整持倉"
 
