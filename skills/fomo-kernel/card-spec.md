@@ -36,9 +36,9 @@
     - ticker → 預設保留(行為才有意義);要更隱私 → 全匿名(`某 AI 核心倉`)。
     - 正名:沒現金 + 即時價時,佔比只能叫「**CSV 內成本占比**」,不是「資產權重」。
 
-**呈現方式:文字卡優先,圖形卡是加分(絕不能只出圖形卡)。**
-- **主交付 = markdown 文字卡**,直接寫在回覆裡。**任何客戶端都看得到,含純終端機 Claude Code。**(實測缺陷:`show_widget` 只在圖形介面 claude.ai / 桌面 app / IDE webview 渲染;終端機用戶會**整張看不到** → 只出 show_widget = 用戶以為 skill 壞了。)
-- **加分 = HTML 卡**:若在圖形介面,**可再額外**用 `show_widget` 出一張,版型參考 [`card-template.html`](card-template.html)。設計規範:flat、明暗雙模式、Tabler outline icon、**無 emoji**、字重 400/500。
+**呈現方式:一張卡只出一次——widget 渲染成功就以 HTML 卡為主交付,回覆文字絕不重講一遍。**
+- **圖形介面(`show_widget` 可用且回傳成功)**:HTML 卡 = 主交付,版型照 [`card-template.html`](card-template.html)。設計規範(2026-07-04 triad UI review 定版):flat、**大區塊一律中性底(surface + 邊框),語義色只准在 icon / 區塊小標 / 關鍵字 / 損益數字**(綠紅藍黃色底同卡 = 多色告警面板,被真人打過);tag 用 outline 不用色底膠囊;明暗雙模式、Tabler outline icon、**無 emoji**、字重 400/500。**出完 widget,回覆文字只留三件事:一句收尾(資料狀態 + 存檔位置)、Step 3.5 規矩收斂問句、Step 4 反饋問句**——把卡的內容用文字再敘述一遍 = 逼用戶讀兩遍(真人反饋)。
+- **純終端機或 show_widget 失敗**:markdown 文字卡 = 主交付,直接寫在回覆裡。(實測缺陷:`show_widget` 只在圖形介面 claude.ai / 桌面 app / IDE webview 渲染;終端機用戶會**整張看不到** → 只出 show_widget = 用戶以為 skill 壞了。)
 - **卡片結構**(文字 / HTML 同):總覽 → 做對的 → 標的層 → 最大的洞(數字 / 實例 / 動機 / 萬一)→ 報酬歸因 → 下次只改 + 引言。
 - **不放機械層 5 維小數表**(`.64 🔴` 用戶看不懂、就是另一份報表)。要提其他維度,**一句人話**帶過:「加碼 / sizing / 持有你都守得不錯,只有 X 要處理」。
 
@@ -67,6 +67,8 @@
 ▸ 下次只改這一件:{candidate_rules 的具體 if-then,2–3 條候選讓他挑/改一條}
 ▸ {philosophy}:「{lens 的 quote 原話}」
 ```
+
+> 卡上列的是**候選**;出完卡立刻走 SKILL.md **Step 3.5** 用 AskUserQuestion 讓用戶挑一條(或改寫),選中那條才落盤成 `commitment`——這是下次對帳的記憶入口,漏掉 = 下週對不了帳。
 
 **卡片是一個故事,不是 dashboard**(真人交易者 review 後的鐵律):
 - **連貫敘事,不准標籤拼接**。`〔這次成績〕A｜B｜C` 這種一塊塊的格式,交易者讀起來「像幾份報告硬湊」。用完整句子把數字織成一段他自己的故事。

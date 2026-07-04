@@ -163,6 +163,16 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 **三項都過了,才讀 [card-spec.md](card-spec.md),照裡面的規格出卡**——卡的結構、禁止清單、private/public 兩種卡與 redact 規則、敘事鐵律、處方層全在那份檔裡,這裡不重複。
 **Step 2 還沒問完,不要提前打開它**:在那之前,你唯一的目標是把動機問完、拿到答案。
 
+### Step 3.5 · 規矩收斂:讓用戶挑一條,存進記憶(不可省——這是下次對帳的入口)
+
+卡上列的 2–3 條候選規矩**不是結局**。出完卡立刻用 AskUserQuestion(選項 = 各候選 + **「這週不承諾」**,Other 可改寫)問一句:**「選一條當下週對帳的承諾?會存進本機 log,下次開場第一句就對它:說到有沒有做到。」**(#56:你不准代選,他點了哪條才存哪條。)
+
+- **選項標籤 = 規矩短語**,description 寫「追蹤哪個 metric + 現在的值」(例:`追蹤 max_pos_pct,現在 42%`)。用戶要能 5 秒選完。
+- **metric_key 對映**:規矩管單一標的佔比 → `max_pos_pct`;管虧損加碼 → `avgdown_count`;管賽道集中 → `ai_pct`;管板塊 → `max_sector_pct`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
+- **用戶挑完 → 立刻走下面收尾腳本落盤**,`FINAL_RULE` / `METRIC_KEY` 填他選(或改寫)的那條。
+- **`insufficient_data=true` 時的分工**:機械預設 commitment 照舊**不出**(引擎已設 null,別把缺資料的猜測當承諾);但**用戶自己選的規矩照存**——行為承諾是他的意志,跟樣本夠不夠無關;樣本不足影響的只是 metric 基線的解讀。落盤時標 `source: "user_chosen"` + `baseline_note: "short-sample baseline"`,下次對帳措辭看**方向**(在降/沒動/變糟),不判達標。
+- 用戶選「這週不承諾」/ 跳過 → 收尾 `FINAL_RULE` 填 `SKIP`:log 照存本週 metrics(供趨勢對帳),commitment=null,下週不拿規矩對他。
+
 ### Step 4 · 收一句反饋(驗證用)
 
 出完卡,問一句:**「這張卡,有戳中你嗎?還是哪裡不對?」** 把這句反饋(純文字、不含交易明細)記下來給作者——這是這個 skill 唯一要回收的東西,用來驗證「這面鏡片產出的卡對別人有沒有用」。
@@ -182,18 +192,20 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 **對帳(log 非空時,卡開頭先做)**:
 1. 讀 log **最後一行**的 `commitment = {rule, metric_key, metric_value}`。
 2. 這次引擎 state 的 `metrics[commitment.metric_key]` = 新值。
-3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。
+3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
 4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
-**規矩承諾:用戶主動選,你不准代選(#56)。** 出完卡、寫 log 之前,用 `AskUserQuestion` 讓用戶從 `candidate_rules` 裡**自己挑一條**:每條候選一個選項(規矩原文寫進選項),用戶也可用 Other 自己改寫,另加一個「這週不承諾」。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
+**規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
 
-**收尾(出完卡 + Step 4 收完反饋,append 一行)**:
+**收尾(出完卡 + Step 3.5 用戶挑完規矩 + Step 4 收完反饋,append 一行)**:
 ```bash
 # 把這次的薄狀態接到 log(只存聚合 metric + 規矩,不存任何交易)。
-# ⚠️ commitment 要存【用戶在 AskUserQuestion 親選的那條】(#56),不是引擎機械預設、更不是你代選的 ——
+# ⚠️ commitment 要存【用戶在 Step 3.5 親選的那條】(#56),不是引擎機械預設、更不是你代選的 ——
 #    Step 2 動機問完常推翻引擎預設。實例:engine 預設「虧損別加碼」,但用戶答「NVDA 是計畫內定投」
 #    → 用戶改挑「盯集中度 ai_pct」那條。
 #    兩格填用戶挑的規矩 + 對應 state.metrics 鍵;用戶選「這週不承諾」→ FINAL_RULE 填 SKIP。
+#    gate 規則:SKIP 一律不存 commitment;insufficient_data 只擋「engine 預設 fallback」,不擋用戶明選
+#    (行為承諾跟樣本無關,只是基線標 short-sample、下次對帳看方向不判達標)。
 FINAL_RULE="AI 暴險封頂 70%:要加 AI 新倉先問新賽道還是同一注往上疊"
 METRIC_KEY="ai_pct"
 python3 - "$FINAL_RULE" "$METRIC_KEY" <<'PY'
@@ -202,14 +214,18 @@ st = json.load(open(os.path.expanduser("~/.trade-coach/last_state.json")))
 dflt = st.get("commitment") or {}                         # engine 機械預設(fallback)
 arg1 = sys.argv[1] if len(sys.argv) > 1 else ""
 skip = (arg1 == "SKIP")                                   # 用戶明確「這週不承諾」(#56):不硬塞錨點
+user_chose = (not skip) and bool(arg1.strip())            # 填了非 SKIP = Step 3.5 用戶親選
 rule = ("" if skip else arg1) or dflt.get("rule")
 mk   = (sys.argv[2] if len(sys.argv) > 2 else "") or dflt.get("metric_key")
 commitment = None
-if not skip and rule and mk and not st["insufficient_data"]:   # 樣本不足/用戶不承諾 → 不硬塞 commitment
+if not skip and rule and mk and (user_chose or not st["insufficient_data"]):  # SKIP 一律不存;樣本不足只擋機械預設
     commitment = {"rule": rule, "metric_key": mk,
-                  "metric_value": st["metrics"].get(mk), "goal": "down"}
+                  "metric_value": st["metrics"].get(mk), "goal": "down",
+                  "source": "user_chosen" if user_chose else "engine_default"}
+    if user_chose and st["insufficient_data"]:
+        commitment["baseline_note"] = "short-sample baseline"   # 下次對帳看方向,不判達標
 entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
-         "commitment": commitment,                        # 對帳對的是這條(教練最終版,非機械版)
+         "commitment": commitment,                        # 對帳對的是這條(用戶選定版,非機械版)
          "metrics_snapshot": {k: st["metrics"].get(k)
                               for k in ("ai_pct","max_pos_pct","avgdown_count","avgdown_breach")}}
 p = pathlib.Path(os.path.expanduser("~/.trade-coach/log.jsonl"))
@@ -250,6 +266,6 @@ PY
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
 
-**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。卡收尾講一句「資料還太短,先存個底,累積多幾筆 round-trip 再回來對帳」,log 照樣 append(commitment=null),下次來就接得上。
+**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**機械層只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。但 **Step 3.5 照走**:用戶自己挑的規矩照存(`source:"user_chosen"` + `baseline_note`,見收尾腳本 gate)——體檢卡也要留下記憶入口,否則第二週還是初診。卡收尾講一句「資料還太短,基線先存個底,累積多幾筆 round-trip 後對帳才看達標」;用戶跳過不選 → log append(commitment=null),下次來就接得上。
 
 > 驗收這套有沒有真的「記憶」:`engine/test_state_loop.py` 把一份 CSV 按時間切兩段,累積跑「初診→對帳」,驗第二張卡有沒有真的對帳第一張承諾的那一維(而非重新初診)。改完 engine 或這段流程都先跑它。

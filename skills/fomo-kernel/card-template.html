@@ -15,12 +15,25 @@
 
   · 資料來源:engine/trade_recap.py 跑 mock/mock_trades.csv 的真實輸出。
   · 換成真人 CSV:把數字 / 標籤 / 敘事換掉,版型結構不動。
-  · 設計規範:flat、明暗雙模式、Tabler outline icon、無 emoji、字重只用 400/500。
-  · 內容鐵律(見 SKILL.md Step 3):收斂到「一個洞 + 一條規矩」;每句要有數字+實例;
-    先肯定再打;金額 > 筆數勝率;α 一律 vs SPY,板塊 ETF 只做歸因。
+  · 設計規範(2026-07-04 triad UI review 後定版):
+    - flat、明暗雙模式、Tabler outline icon、無 emoji、字重只用 400/500。
+    - 大區塊一律中性底(--surface-1 + 0.5px --border),絕不用語義色當
+      版面底色——綠/紅/藍/黃同卡即「多色告警面板」,這是上一版被打的主因。
+      語義色只准出現在:icon、區塊小標(htag/rt)、關鍵字、損益數字。
+    - tag 一律 outline(透明底 + 邊框),不用色底膠囊。
+    - h1 20px 是全卡唯一最大字;metric 數字 19px 退一級;不用負 letter-spacing。
+    - 進度條中性灰,只有警示那條用 --text-warning;藍色會像連結/CTA,不用。
+    - CSS 變數用 host 真名:--surface-* / --text-* / --border / --radius /
+      --font-{sans,voice,mono}。舊的 --color-background-* 名已廢棄。
+  · 內容鐵律(見 card-spec.md):收斂到「一個洞 + 一條規矩」;每句要有數字+實例;
+    先肯定再打;金額 > 筆數勝率;α 一律 vs SPY,板塊 ETF 只做歸因;
+    不放 5 維 severity 表(舊版型曾示範過,已按 card-spec 禁令移除)。
+  · 規矩區兩態:出卡當下用 <ol> 列 2-3 條候選(Step 3.5 才讓用戶挑);
+    用戶選完(或對帳卡)改用 .picked(選中那條)+ .alt(沒選的一句帶過)。
 
   下面 <head> 內標示 "PREVIEW SHIM" 的區塊只為了讓本檔能用瀏覽器直接打開預覽,
   它「不是」widget fragment 的一部分;餵進 show_widget 時不要帶。
+  shim 的 dark 值已對齊 host 階層:surface-0(頁面)最暗 → surface-2(卡)最亮。
   ====================================================================
 -->
 
@@ -29,23 +42,21 @@
 <style>
 :root{
   --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;
-  --font-serif:Georgia,"Songti TC",serif;
+  --font-voice:Georgia,"Songti TC",serif;
   --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
-  --color-background-primary:#ffffff;--color-background-secondary:#f5f4ef;--color-background-tertiary:#eceae1;
-  --color-background-success:#eaf3de;--color-background-danger:#fcebeb;--color-background-warning:#faeeda;--color-background-info:#e6f1fb;
-  --color-text-primary:#1a1915;--color-text-secondary:#5f5e5a;--color-text-tertiary:#8a8980;
-  --color-text-success:#3b6d11;--color-text-danger:#a32d2d;--color-text-warning:#854f0b;--color-text-info:#185fa5;
-  --color-border-tertiary:rgba(0,0,0,0.10);--color-border-secondary:rgba(0,0,0,0.18);
-  --border-radius-md:8px;--border-radius-lg:12px;
+  --surface-2:#ffffff;--surface-1:#f5f4ef;--surface-0:#eceae1;
+  --text-primary:#1a1915;--text-secondary:#5f5e5a;--text-muted:#8a8980;
+  --text-success:#3b6d11;--text-danger:#a32d2d;--text-warning:#854f0b;--text-accent:#185fa5;
+  --border:rgba(0,0,0,0.10);--border-strong:rgba(0,0,0,0.18);
+  --radius:8px;
 }
 @media (prefers-color-scheme:dark){:root{
-  --color-background-primary:#262624;--color-background-secondary:#1f1e1c;--color-background-tertiary:#34332f;
-  --color-background-success:#1c2b10;--color-background-danger:#38191a;--color-background-warning:#382806;--color-background-info:#11233c;
-  --color-text-primary:#f5f4ef;--color-text-secondary:#b4b2a9;--color-text-tertiary:#8a8980;
-  --color-text-success:#97c459;--color-text-danger:#f09595;--color-text-warning:#ef9f27;--color-text-info:#85b7eb;
-  --color-border-tertiary:rgba(255,255,255,0.12);--color-border-secondary:rgba(255,255,255,0.22);
+  --surface-2:#2b2a27;--surface-1:#232220;--surface-0:#1a1917;
+  --text-primary:#f5f4ef;--text-secondary:#b4b2a9;--text-muted:#8a8980;
+  --text-success:#a7be83;--text-danger:#df8b84;--text-warning:#c9aa68;--text-accent:#a9b5c2;
+  --border:rgba(255,250,240,0.10);--border-strong:rgba(255,250,240,0.16);
 }}
-body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;display:flex;justify-content:center}
+body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify-content:center}
 .page{width:680px;max-width:100%}
 </style>
 <!-- ^^^^^ PREVIEW SHIM end ^^^^^ -->
@@ -55,78 +66,79 @@ body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;disp
 
 <!-- vvvvv WIDGET FRAGMENT — 這段(含 <style>)就是餵進 show_widget 的內容 vvvvv -->
 <style>
-.rc{font-family:var(--font-sans);color:var(--color-text-primary);background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden;line-height:1.6}
+.rc{font-family:var(--font-sans);color:var(--text-primary);background:var(--surface-2);border:0.5px solid var(--border);border-radius:12px;overflow:hidden;line-height:1.6}
 .rc .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .rc .sec{padding:20px 22px}
-.rc .sec+.sec{border-top:0.5px solid var(--color-border-tertiary)}
-.rc .eyebrow{font-size:12px;color:var(--color-text-tertiary);letter-spacing:.04em;margin:0 0 6px;display:flex;align-items:center;gap:6px}
-.rc h1{font-size:22px;font-weight:500;margin:0;letter-spacing:-.01em}
-.rc .lens{font-size:13px;color:var(--color-text-secondary);margin:8px 0 0;line-height:1.6}
-.rc .meta{font-size:12px;color:var(--color-text-tertiary);margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px}
+.rc .sec+.sec{border-top:0.5px solid var(--border)}
+.rc .eyebrow{font-size:12px;color:var(--text-muted);margin:0 0 6px;display:flex;align-items:center;gap:6px}
+.rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
+.rc .lens{font-size:13px;color:var(--text-secondary);margin:8px 0 0;line-height:1.6}
+.rc .meta{font-size:12px;color:var(--text-muted);margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px}
 .rc .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
-.rc .m{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:13px 15px}
-.rc .m .lbl{font-size:12px;color:var(--color-text-secondary);margin:0}
-.rc .m .val{font-size:23px;font-weight:500;margin:5px 0 0;letter-spacing:-.02em}
-.rc .m .sub{font-size:11px;color:var(--color-text-tertiary);margin:4px 0 0;line-height:1.4}
-.rc .pos{color:var(--color-text-success)}.rc .neg{color:var(--color-text-danger)}
-.rc .story{font-size:14px;color:var(--color-text-secondary);line-height:1.7;margin:14px 0 0}
-.rc h2{font-size:16px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
-.rc h2 i{font-size:18px}
-.rc .good-bar{background:var(--color-background-success);border-radius:var(--border-radius-md);padding:12px 15px;display:flex;gap:10px;align-items:flex-start}
-.rc .good-bar i{font-size:18px;color:var(--color-text-success);margin-top:1px}
-.rc .good-bar p{margin:0;font-size:14px;color:var(--color-text-success);line-height:1.55}
+.rc .m{background:var(--surface-1);border-radius:var(--radius);padding:13px 15px}
+.rc .m .lbl{font-size:12px;color:var(--text-secondary);margin:0}
+.rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25}
+.rc .m .sub{font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4}
+.rc .pos{color:var(--text-success)}.rc .neg{color:var(--text-danger)}
+.rc .story{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0}
+.rc h2{font-size:15px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+.rc h2 i{font-size:17px}
+.rc .good-bar{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px 15px;display:flex;gap:10px;align-items:flex-start}
+.rc .good-bar i{font-size:18px;color:var(--text-success);margin-top:1px}
+.rc .good-bar p{margin:0;font-size:14px;color:var(--text-secondary);line-height:1.6}
+.rc .good-bar b{font-weight:500;color:var(--text-primary)}
 .rc .trow{margin:0 0 11px}
 .rc .ttop{display:flex;align-items:baseline;gap:10px}
-.rc .tk{font-family:var(--font-mono);font-size:14px;font-weight:500;width:50px;flex:none}
-.rc .tamt{font-size:14px;font-weight:500;width:78px;flex:none;text-align:right;letter-spacing:-.01em}
+.rc .tk{font-family:var(--font-mono);font-size:14px;font-weight:500;width:52px;flex:none}
+.rc .tamt{font-size:14px;font-weight:500;width:78px;flex:none;text-align:right}
 .rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
-.rc .tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 9px;border-radius:var(--border-radius-md);white-space:nowrap;line-height:1.5}
+.rc .tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:6px;white-space:nowrap;line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
 .rc .tag i{font-size:13px}
-.rc .t-good{background:var(--color-background-success);color:var(--color-text-success)}
-.rc .t-warn{background:var(--color-background-warning);color:var(--color-text-warning)}
-.rc .t-bad{background:var(--color-background-danger);color:var(--color-text-danger)}
-.rc .t-neu{background:var(--color-background-secondary);color:var(--color-text-tertiary)}
-.rc .track{height:4px;border-radius:99px;background:var(--color-background-tertiary);margin:6px 0 0;overflow:hidden}
-.rc .fill{height:100%;border-radius:99px}
-.rc .f-pos{background:var(--color-text-success)}.rc .f-neg{background:var(--color-text-danger)}
-.rc .cap{font-size:12px;color:var(--color-text-tertiary);margin:12px 0 0}
-.rc .hole{background:var(--color-background-danger);border-radius:var(--border-radius-lg);padding:18px 20px}
-.rc .hole .htag{font-size:12px;color:var(--color-text-danger);letter-spacing:.04em;margin:0 0 8px;display:flex;align-items:center;gap:6px}
-.rc .hole h2{color:var(--color-text-danger);font-size:17px;margin:0 0 10px}
-.rc .hole .lead{font-size:15px;color:var(--color-text-primary);line-height:1.65;margin:0 0 14px}
-.rc .hrow{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:8px 0;border-top:0.5px solid var(--color-border-secondary)}
-.rc .hrow .k{font-size:12px;color:var(--color-text-danger);font-weight:500;padding-top:1px}
-.rc .hrow .v{font-size:13px;color:var(--color-text-primary);line-height:1.6}
-.rc .hrow .v .mono{font-family:var(--font-mono)}
-.rc .dimbox{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:14px 16px}
-.rc .dim{display:grid;grid-template-columns:74px 1fr 30px;align-items:center;gap:11px;margin:9px 0}
-.rc .dim .dn{font-size:13px}
-.rc .dim .dv{font-size:12px;color:var(--color-text-tertiary);font-family:var(--font-mono);text-align:right}
-.rc .dim .dt{height:6px;border-radius:99px;background:var(--color-background-tertiary);overflow:hidden;position:relative}
-.rc .dim .df{height:100%;border-radius:99px}
+.rc .t-warn{color:var(--text-warning);border-color:var(--border-strong)}
+.rc .t-bad{color:var(--text-danger);border-color:var(--border-strong)}
+.rc .t-good{color:var(--text-success)}
+.rc .track{height:4px;border-radius:99px;background:var(--surface-1);margin:6px 0 0;overflow:hidden}
+.rc .fill{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
+.rc .fill-hot{background:var(--text-warning);opacity:.85}
+.rc .cap{font-size:12px;color:var(--text-muted);margin:12px 0 0;line-height:1.6}
+.rc .hole{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
+.rc .hole .htag{font-size:12px;color:var(--text-danger);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
+.rc .hole h2{color:var(--text-primary);font-size:16px;margin:0 0 10px}
+.rc .hole .lead{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:0 0 14px}
+.rc .hrow{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:8px 0;border-top:0.5px solid var(--border)}
+.rc .hrow .k{font-size:12px;color:var(--text-muted);font-weight:500;padding-top:1px}
+.rc .hrow .v{font-size:13px;color:var(--text-primary);line-height:1.65}
+.rc .mono{font-family:var(--font-mono)}
 .rc .attr-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;font-size:14px;margin:0 0 14px}
-.rc .attr-head .big{font-size:20px;font-weight:500}
+.rc .attr-head .big{font-size:19px;font-weight:500}
 .rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
-.rc .arow .al{font-size:13px;color:var(--color-text-secondary)}
+.rc .arow .al{font-size:13px;color:var(--text-secondary)}
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
-.rc .abar{height:6px;border-radius:99px;background:var(--color-background-tertiary);margin:5px 0 0;overflow:hidden}
-.rc .abar div{height:100%;border-radius:99px;background:var(--color-text-info)}
-.rc .rx{display:flex;gap:11px;padding:11px 0;border-top:0.5px solid var(--color-border-tertiary)}
+.rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
+.rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
+.rc .rx{display:flex;gap:11px;padding:11px 0;border-top:0.5px solid var(--border)}
 .rc .rx:first-of-type{border-top:none;padding-top:2px}
-.rc .rx .ic{width:30px;height:30px;border-radius:var(--border-radius-md);display:flex;align-items:center;justify-content:center;flex:none}
+.rc .rx .ic{width:30px;height:30px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-1);border:0.5px solid var(--border)}
 .rc .rx .ic i{font-size:17px}
+.rc .ic-amp i{color:var(--text-success)}
+.rc .ic-test i{color:var(--text-accent)}
+.rc .ic-cut i{color:var(--text-danger)}
 .rc .rx .kind{font-size:13px;font-weight:500;margin:0 0 2px}
-.rc .rx .desc{font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin:0}
-.rc .ic-amp{background:var(--color-background-success)}.rc .ic-amp i{color:var(--color-text-success)}
-.rc .ic-test{background:var(--color-background-info)}.rc .ic-test i{color:var(--color-text-info)}
-.rc .ic-cut{background:var(--color-background-danger)}.rc .ic-cut i{color:var(--color-text-danger)}
-.rc .rule{background:var(--color-background-info);border-radius:var(--border-radius-lg);padding:18px 20px}
-.rc .rule .rt{font-size:12px;color:var(--color-text-info);letter-spacing:.04em;margin:0 0 8px;display:flex;align-items:center;gap:6px}
-.rc .rule .rmain{font-size:16px;color:var(--color-text-primary);line-height:1.6;margin:0;font-weight:500}
-.rc .rule .rmain b{color:var(--color-text-info);font-weight:500}
-.rc .quote{font-family:var(--font-serif);font-size:14px;color:var(--color-text-secondary);font-style:italic;line-height:1.65;margin:14px 0 0;padding-top:13px;border-top:0.5px solid var(--color-border-secondary)}
-.rc .quote .who{font-style:normal;font-size:12px;color:var(--color-text-tertiary);display:block;margin-top:6px}
-.rc .foot{font-size:11px;color:var(--color-text-tertiary);line-height:1.6;background:var(--color-background-secondary)}
+.rc .rx .desc{font-size:13px;color:var(--text-secondary);line-height:1.55;margin:0}
+.rc .rule{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
+.rc .rule .rt{font-size:12px;color:var(--text-accent);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
+.rc .rule .rmain{font-size:15px;color:var(--text-primary);line-height:1.65;margin:0;font-weight:500}
+.rc .rule .rmain b{color:var(--text-primary);font-weight:500}
+.rc .rule ol{margin:0;padding-left:20px}
+.rc .rule li{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:0 0 10px}
+.rc .rule li:last-child{margin-bottom:0}
+.rc .rule li b{color:var(--text-primary);font-weight:500}
+.rc .rule .picked{font-size:14px;color:var(--text-primary);line-height:1.7;margin:0}
+.rc .rule .picked b{font-weight:500}
+.rc .rule .alt{font-size:12px;color:var(--text-muted);line-height:1.6;margin:10px 0 0}
+.rc .quote{font-family:var(--font-voice);font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0;padding-top:13px;border-top:0.5px solid var(--border)}
+.rc .quote .who{font-size:12px;color:var(--text-muted);display:block;margin-top:6px;font-family:var(--font-sans)}
+.rc .foot{font-size:11px;color:var(--text-muted);line-height:1.6;background:var(--surface-1)}
 </style>
 <div class="rc">
   <h2 class="sr-only">交易復盤卡:帳面損益 +143,197,做對的是出場節奏一致;最大的洞是部位押太重(PLTR 49%、NVDA 48%)且 100% 集中在 AI 同一個 driver;下次只改一件——虧損部位一律不加碼。</h2>
@@ -146,7 +158,7 @@ body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;disp
       <div class="m"><p class="lbl">帳面總損益</p><p class="val pos">+$143,197</p><p class="sub">已實現 +$18,960 · 未實現 +$124,237</p></div>
       <div class="m"><p class="lbl">主動買賣盈虧比</p><p class="val">2.9</p><p class="sub">平均賺 $2,851 vs 賠 $1,000</p></div>
       <div class="m"><p class="lbl">贏大盤</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · 漲跌是大盤 2 倍</p></div>
-      <div class="m"><p class="lbl">真本事 α(年化)</p><p class="val">+33%<span style="font-size:12px;color:var(--color-text-tertiary);font-weight:400"> *</span></p><p class="sub">* demo 資料,α 失真僅示意</p></div>
+      <div class="m"><p class="lbl">真本事 α(年化)</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo 資料,α 失真僅示意</p></div>
     </div>
     <p class="story">帳面賺 14.3 萬很漂亮,但 87% 是還沒落袋的浮盈,真正賣掉的只有 1.9 萬。盈虧比 2.9 說明你大賺小賠、跑得掉——可是贏大盤的 261pp 裡,β 高到 2.05,多半是膽子大、敢壓,不是會做價差。</p>
   </div>
@@ -154,7 +166,7 @@ body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;disp
   <div class="sec">
     <div class="good-bar">
       <i class="ti ti-circle-check" aria-hidden="true"></i>
-      <p><b style="font-weight:500">你做對的:</b>進出有一致的節奏——中位持有 162 天,不是隨機亂買亂賣。該抱的抱得住(NVDA 賺 162% 沒亂加、ORCL 賺 60% 沒亂加),這是你聽得進下面那刀的本錢。</p>
+      <p><b>你做對的:</b>進出有一致的節奏——中位持有 162 天,不是隨機亂買亂賣。該抱的抱得住(NVDA 賺 162% 沒亂加、ORCL 賺 60% 沒亂加),這是你聽得進下面那刀的本錢。</p>
     </div>
   </div>
 
@@ -163,37 +175,37 @@ body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;disp
     <div class="trow">
       <div class="ttop"><span class="tk">PLTR</span><span class="tamt pos">+$73,207</span>
         <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>押太重 49%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>賺 606%(加 2 次還算節制)</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:100%"></div></div>
+      <div class="track"><div class="fill fill-hot" style="width:100%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">NVDA</span><span class="tamt pos">+$60,556</span>
         <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>押太重 48%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>紀律持有 162%、沒亂加</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:83%"></div></div>
+      <div class="track"><div class="fill" style="width:83%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">TSLA</span><span class="tamt pos">+$3,750</span>
-        <div class="ttags"><span class="tag t-neu"><i class="ti ti-minus" aria-hidden="true"></i>大致中性</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:5%"></div></div>
+        <div class="ttags"><span class="tag">大致中性</span></div></div>
+      <div class="track"><div class="fill" style="width:5%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">ORCL</span><span class="tamt pos">+$2,974</span>
         <div class="ttags"><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>紀律持有 60%、沒亂加</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:4%"></div></div>
+      <div class="track"><div class="fill" style="width:4%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">ARM</span><span class="tamt pos">+$2,450</span>
-        <div class="ttags"><span class="tag t-neu"><i class="ti ti-minus" aria-hidden="true"></i>大致中性</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:3%"></div></div>
+        <div class="ttags"><span class="tag">大致中性</span></div></div>
+      <div class="track"><div class="fill" style="width:3%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">MU</span><span class="tamt pos">+$1,260</span>
-        <div class="ttags"><span class="tag t-neu"><i class="ti ti-minus" aria-hidden="true"></i>大致中性</span></div></div>
-      <div class="track"><div class="fill f-pos" style="width:2%"></div></div>
+        <div class="ttags"><span class="tag">大致中性</span></div></div>
+      <div class="track"><div class="fill" style="width:2%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">AMD</span><span class="tamt neg">−$1,000</span>
-        <div class="ttags"><span class="tag t-neu"><i class="ti ti-minus" aria-hidden="true"></i>大致中性</span></div></div>
-      <div class="track"><div class="fill f-neg" style="width:2%"></div></div>
+        <div class="ttags"><span class="tag">大致中性</span></div></div>
+      <div class="track"><div class="fill" style="width:2%"></div></div>
     </div>
     <p class="cap">單筆最賺 NVDA +104%(50→102,抱 207 天)· 最虧 AMD −12%(160→140,抱 175 天)</p>
   </div>
@@ -211,23 +223,11 @@ body{margin:0;background:var(--color-background-tertiary);padding:28px 16px;disp
   </div>
 
   <div class="sec">
-    <h2><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i>機械層全貌 · 5 維(供參,別當報表看)</h2>
-    <div class="dimbox">
-      <div class="dim"><span class="dn">部位 sizing</span><div class="dt"><div class="df" style="width:92%;background:var(--color-text-danger)"></div></div><span class="dv">.92</span></div>
-      <div class="dim"><span class="dn">加碼攤平</span><div class="dt"><div class="df" style="width:80%;background:var(--color-text-danger)"></div></div><span class="dv">.80</span></div>
-      <div class="dim"><span class="dn">分散</span><div class="dt"><div class="df" style="width:100%;background:var(--color-text-danger)"></div></div><span class="dv">1.0</span></div>
-      <div class="dim"><span class="dn">出場紀律</span><div class="dt"><div class="df" style="width:62%;background:var(--color-text-warning)"></div></div><span class="dv">.62</span></div>
-      <div class="dim"><span class="dn">持有時間</span><div class="dt"><div class="df" style="width:6%;background:var(--color-text-success)"></div></div><span class="dv">.00</span></div>
-    </div>
-    <p class="cap">紅 = 該補的洞、黃 = 留意、綠 = 守住了。出場紀律 0.62:賣掉賺錢的有 57% 賣完續漲(賣早了一點)。</p>
-  </div>
-
-  <div class="sec">
     <h2><i class="ti ti-arrows-split-2" aria-hidden="true"></i>報酬歸因 · 押對賽道,還是會選股?</h2>
-    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--color-text-secondary)">贏大盤(你 +321% vs SPY +60%)</span></p>
-    <div class="arow"><span class="al">選股力 vs 科技股 QQQ <span style="color:var(--color-text-tertiary)">(中性對照)</span></span><span class="av pos">+243pp</span></div>
+    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--text-secondary)">贏大盤(你 +321% vs SPY +60%)</span></p>
+    <div class="arow"><span class="al">選股力 vs 科技股 QQQ <span style="color:var(--text-muted)">(中性對照)</span></span><span class="av pos">+243pp</span></div>
     <div class="abar"><div style="width:100%"></div></div>
-    <div class="arow" style="margin-top:12px"><span class="al">選股力 vs 半導體 SOXX <span style="color:var(--color-text-tertiary)">(事後最強)</span></span><span class="av pos">+96pp</span></div>
+    <div class="arow" style="margin-top:12px"><span class="al">選股力 vs 半導體 SOXX <span style="color:var(--text-muted)">(事後最強)</span></span><span class="av pos">+96pp</span></div>
     <div class="abar"><div style="width:40%"></div></div>
     <p class="story" style="margin-top:14px">換對照結論就翻——選股贏中性的 QQQ、輸給事後最強的 SOXX。誠實說:資料還判不出你「會不會選股」。而 β 2.05 代表贏的這一塊很大部分來自「敢壓 + 押對 AI 賽道」,不全是價差本事。</p>
   </div>
