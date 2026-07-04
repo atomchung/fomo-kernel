@@ -7,7 +7,7 @@ fomo-kernel · trade-recap engine v0.2
 用法：python3 trade_recap.py [trades.csv ...]   (預設吃 ../mock/mock_trades.csv)
 隱私：本檔不含任何真實帳戶路徑;預設只跑 mock 資料。用戶自己的 CSV 由參數傳入,留在本機。
 """
-import csv, os, sys, statistics, datetime as dt
+import csv, os, re, sys, statistics, datetime as dt
 from collections import defaultdict, deque
 try:
     from rich.console import Console, Group
@@ -32,6 +32,12 @@ DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades
 
 N_FWD = 30          # 賣出後 N 交易日看續漲（tunable）
 MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交易跨度短於此 → insufficient(§4.4, #21.4)
+
+# cycle_id 契約(單一事實源,#61):SKILL 對帳、theses.jsonl 綁定、測試斷言都以這兩條為準。
+# 正常 = 3 段「ticker#開倉日#序號」;CSV 缺期初持倉算不出開倉 → 2 段「ticker#unknown」。
+# 改格式 = schema 變更:必須同步 SKILL.md(開場路由/收尾 theses 註解)並讓 tests/test_tr_json_contract.py 紅燈把關。
+CYCLE_ID_RE = re.compile(r"^[^#\s]+#\d{4}-\d{2}-\d{2}#\d+$")
+CYCLE_ID_UNKNOWN_RE = re.compile(r"^[^#\s]+#unknown$")
 SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.50
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
@@ -1204,6 +1210,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
                     "cycle_start": cyc.get(t, {}).get("start"),
                     # 算不出開倉（CSV 缺期初持倉）→ 標 #unknown，不 fallback 裸 ticker（雙審 codex#4）
+                    # ⚠️ 格式契約 = 頂部 CYCLE_ID_RE / CYCLE_ID_UNKNOWN_RE(#61):改這裡必先改常數,契約測試會抓
                     "cycle_id": f"{t}#{cyc[t]['start']}#{cyc[t]['seq']}" if t in cyc else f"{t}#unknown"}
                 for t, (sh, c) in held.items()}
     return {
