@@ -258,6 +258,18 @@ def test_dim_avgdown_breach_drives_trigger():
     assert d2["breach"] == 1 and d2["triggered"] is True, "攤平破倉 → breach 觸發"
 
 
+# ─────────────────────── H2. dim_size():其餘平均排除最大檔 ───────────────────────
+
+def test_dim_size_avg_pct_excludes_max():
+    """「其餘平均」必須排除最大那檔——否則 mean(全部)恆=1/檔數、跟集中度無關,
+    還跟卡上「最大佔 X%」自相矛盾(91% + 其餘每檔 25% > 100%)。"""
+    held = {"BIG": (100, 10000.0), "S1": (10, 1000.0), "S2": (10, 1000.0)}   # 成本權重 ≈ 0.833 / 0.083 / 0.083
+    d = tr.dim_size([], held, None)                                          # last_px=None → 用成本算權重
+    assert d["max_ticker"] == "BIG"
+    assert abs(d["avg_pct"] - 1000.0 / 12000.0) < 1e-6, \
+        f"其餘平均應=排除最大檔後的平均≈0.083(舊碼 mean(全部)=1/3≈0.333),實得 {d['avg_pct']}"
+
+
 # ─────────────────────── I. build_state():薄狀態 + 誠實鐵律 ───────────────────────
 
 def _state_from(rows, ab):

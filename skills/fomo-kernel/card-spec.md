@@ -60,7 +60,7 @@
 〔這把尺是什麼〕{lens.master_intro.one_line}                          ← 一句話帶過,不展開
 
 ✅ 你做對的:{引擎 strength,已含具體案例,原樣保留}
-📊 最賺 {best ticker +%} / 最虧 {worst ticker -%}
+📊 最賺 {best ticker +% · +$pnl} / 最虧 {worst ticker −% · −$pnl}   ← %和$都要;$ 來自 best_trade.pnl / worst_trade.pnl
 
 〔盈虧比拆解 · 誰在撐、誰在拖〕(引擎 payoff_attribution,每次都出)
    撐盤:{top carriers 標的 + 佔總賺%}  ·  拖累:{top draggers 標的 + 佔總賠%}
