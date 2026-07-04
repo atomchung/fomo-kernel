@@ -5,6 +5,10 @@
 
 不是又一份統計報表。它做的是報表做不到的事:**先算出你看不見的行為漏洞,再問出你不願承認的動機,最後逼你下次只改一件事。**
 
+**🇬🇧 TL;DR** — A [Claude Code](https://claude.com/claude-code) skill that turns your broker CSV into **one behavioral review card**: a deterministic Python engine finds your biggest leak (sizing / averaging down / exit discipline / fake diversification), then a master-lens dialogue asks the motive questions machines can't answer — you leave with one rule to keep next week.
+**Privacy**: your trades never touch a third-party backend and the author never sees a row — inference runs through your own Claude session, coach memory lives locally in `~/.trade-coach/`.
+**Quick start**: `pip install -r requirements.txt`, symlink `skills/fomo-kernel` into `~/.claude/skills/`, then run `/fomo-kernel your.csv`. Docs below are in Traditional Chinese.
+
 ## Quick start
 
 **完整流程(這才是產品本體)—— 在 Claude Code 裡:**
@@ -160,3 +164,4 @@ skills/fomo-kernel/
 
 預設鏡片來自一位投資人公開文章的原則蒸餾(來源逐條標在 `rubric/` 裡),屬引用非轉載、非經本人背書;鏡片可換,之後會補多位。
 本工具定位 **research / coaching support**,所有輸出僅為交易行為回顧與紀律建議,**不構成投資建議、不涉及任何標的買賣推薦**;最終投資決策與結果由使用者自負。
+程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的鏡片內容屬原則引用,出處逐條標註,不隨 MIT 轉授權。
