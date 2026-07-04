@@ -1,0 +1,20 @@
+{
+  "_comment": "敘事品質 judge 的 mutation 驗活 fixtures(docs/eval-design.md §4 唯一的 LLM-judge 項 + §6 Mutation 驗活)。expect=pass 應被判 narrative_score>=4;expect=fail 應被判 <3。門檻本身在 run_judge_eval.py。",
+  "cases": [
+    {
+      "file": "card_good.txt",
+      "expect": "pass",
+      "label": "遵守 card-spec.md 全部敘事鐵律的乾淨卡"
+    },
+    {
+      "file": "card_bad_dashboard.txt",
+      "expect": "fail",
+      "label": "標籤拼接 + 5維小數表 + 內部 metric key + 說教語氣 + 引言當結語(card-spec 🚫 清單多條違反)"
+    },
+    {
+      "file": "card_bad_vague.txt",
+      "expect": "fail",
+      "label": "沒有具體 ticker/數字/案例,形容詞堆砌,規矩抽象(機制①②:沒新資訊/不可行動)"
+    }
+  ]
+}
