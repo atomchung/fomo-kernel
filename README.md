@@ -21,7 +21,7 @@
 **想先零安裝、看引擎在算什麼**(機械層的*原始診斷*,還不是定論卡):
 ```bash
 git clone https://github.com/atomchung/fomo-kernel && cd fomo-kernel
-pip install -r requirements.txt
+pip install -r requirements.txt      # 若報 externally-managed-environment → 見下方「安裝」的 venv 三行
 cd skills/fomo-kernel && python3 engine/trade_recap.py   # 跑內建 mock,印出引擎原始診斷
 ```
 
@@ -101,15 +101,20 @@ cat ~/.trade-coach/last_state.json # 最近一次引擎算出的薄狀態(含各
 
 ## 安裝
 
-需要 Python 3.11+:
+**前置:這是 [Claude Code](https://claude.com/claude-code) 的 skill**——Anthropic 的終端 / 桌面 AI 工具(需 Claude 訂閱)。沒用過的話,先花 5 分鐘[裝好並登入](https://docs.claude.com/en/docs/claude-code/setup),再回來走下面三步。
+
+需要 Python 3.11+。**新 macOS(Homebrew / 系統 Python)直接 `pip install` 會被 PEP 668 擋下**(`externally-managed-environment`),用 venv 三行裝:
 ```bash
-pip install -r requirements.txt           # yfinance + pandas
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt                            # yfinance + pandas + rich
+python3 -c "import yfinance, pandas, rich; print('ok')"    # 驗證:印出 ok 才算裝好
 ```
 把 skill 掛進 Claude Code(二選一):
 ```bash
 ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel   # A. symlink(推薦)
 cp -r skills/fomo-kernel ~/.claude/skills/                         # B. 複製(給別人用)
 ```
+> ⚠️ 用 venv 裝的話,之後 Claude Code 跑引擎時要吃得到這些依賴:在**啟用了 venv 的終端**開 `claude`,或引擎報 `ModuleNotFoundError` 時把 `python3` 換成 `.venv/bin/python3` 重跑(SKILL 內建這個補救指引)。
 
 ## 用法
 
