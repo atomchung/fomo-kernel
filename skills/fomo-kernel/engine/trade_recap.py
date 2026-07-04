@@ -289,17 +289,37 @@ def adaptive_n_fwd(rows):
     span = (rows[-1]["date"] - rows[0]["date"]).days
     return 30 if span >= 365 else 20 if span >= 120 else 10   # ≥1年→30d,半年→20d,更短→10d
 
+def last_prices(data, max_stale_days=10):
+    """全價格 universe 的最新收盤價 {ticker: px}。
+    #79:last_px 不能依附在只掃 round-trip 的迴圈裡——持有中、從未平倉的標的
+    (往往是最大倉位)會被結構性排除,未實現損益/套牢診斷/what-if 全部靜默漏算。
+    抓價清單本來就含 held(main:tickers = rts | held),這裡把已抓到的價全放出來。
+    staleness gate:最後有效價距價格框末日 > max_stale_days(日曆日)→ 不給價,
+    下游自然降級成本基礎。下市/長期停牌的殭屍持倉,殘價當現價餵進未實現損益
+    比「判不出」更糟;10 天罩得住連假與單日資料延遲,擋得住下市數月的殘價。"""
+    if data is None:
+        return {}
+    out = {}
+    latest = data.index[-1]
+    for t in data.columns:
+        col = data[t].dropna()
+        if col.empty:
+            continue
+        if (latest - col.index[-1]).days > max_stale_days:
+            continue
+        out[t] = float(col.iloc[-1])
+    return out
+
 def fwd_from_px(rts, data, n_fwd=N_FWD):
     if data is None:
         return None, None
     import pandas as pd  # 只有真有價格資料才需要 pandas;無價(乾淨環境/未裝)時提早 return,別硬依賴
-    fwds, last_px = [], {}
+    fwds, last_px = [], last_prices(data)
     for r in rts:
         t = r["ticker"]
         if t not in data.columns: continue
         col = data[t].dropna()
         if col.empty: continue
-        last_px[t] = float(col.iloc[-1])
         after = col[col.index > pd.Timestamp(r["exit"])]
         if len(after) == 0: continue
         target = after.iloc[min(n_fwd-1, len(after)-1)]

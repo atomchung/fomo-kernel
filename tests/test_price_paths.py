@@ -106,6 +106,42 @@ def test_dim_exit_early_rate_and_threshold_boundary():
     assert d3["early_rate"] == 0.0, f"恰等於 SELL_EARLY_TH(0.10)不算賣太早(嚴格 >),實得 {d3['early_rate']}"
 
 
+def test_last_px_covers_held_only_tickers():
+    """issue #79:持有中、從未平倉的標的也要有 last_px。
+    修前 last_px 只從 round-trip 迴圈填 → held-only 標的(往往是最大倉位)的
+    未實現損益/套牢診斷/what-if 全部靜默漏算(sample_value 實測漏 $46,202)。"""
+    px = _px_frame({"AAA": [100.0] * 300,
+                    "BBB": [50.0] * 299 + [80.0],      # held-only:從沒有任何 round-trip
+                    "CCC": [30.0] * 240 + [float("nan")] * 60,   # 下市殭屍:尾端 60 交易日無價
+                    "SPY": [400.0] * 300})
+    rts = [_rt("AAA", 50)]                             # 只有 AAA 曾平倉
+    _, last_px = tr.fwd_from_px(rts, px, n_fwd=30)
+    assert abs(last_px.get("BBB", 0.0) - 80.0) < 1e-9, \
+        f"held-only 的 BBB 應拿到最新價 80,實得 {last_px.get('BBB')}"
+    assert abs(last_px.get("AAA", 0.0) - 100.0) < 1e-9, "曾平倉的 AAA 行為不變"
+    assert "CCC" not in last_px, \
+        f"staleness gate:殘價距末日 >10 天不可當現價(下游降級成本基礎),實得 {last_px.get('CCC')}"
+
+    # 下游①:未實現損益要把 held-only 倉位算進去(10 股、成本 $500 → 10×80−500 = +$300)
+    held = {"BBB": (10.0, 500.0)}
+    ov = tr.overview_stats(rts, {"note": "x"}, held, last_px)
+    assert abs(ov["unrealized"] - 300.0) < 1e-9, \
+        f"unrealized 應為 +300(修前 BBB 無現價 → 0),實得 {ov.get('unrealized')}"
+
+    # 下游②:what_if 壓測候選要看得到 held-only 的最大倉位
+    wi = tr.what_if(held, last_px)
+    assert wi and "BBB" in wi["label"], f"what_if 應鎖定 BBB,實得 {wi}"
+
+    # 下游③:ticker_diagnosis 對 held-only 倉位給得出現價相關診斷
+    #(impact=未實現 +300;tags 的「押太重 wpct」「賺 60%」都得靠 last_px 才算得出)
+    td = tr.ticker_diagnosis(rts, {}, held, last_px)
+    bbb = next((d for d in td if d["ticker"] == "BBB"), None)
+    assert bbb is not None and abs(bbb["impact"] - 300.0) < 1e-9, \
+        f"BBB 的 impact 應為未實現 +300,實得 {bbb}"
+    assert any("押太重" in t for t in bbb["tags"]) and any("60%" in t for t in bbb["tags"]), \
+        f"BBB 應有現價相關 tags(押太重/賺 60%),實得 {bbb['tags']}"
+
+
 # ─────────────── B. β / Jensen α:合成序列的回歸恆等式 ───────────────
 
 def test_beta_two_alpha_rf_for_leveraged_clone():
