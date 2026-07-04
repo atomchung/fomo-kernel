@@ -167,8 +167,8 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 
 卡上列的 2–3 條候選規矩**不是結局**。出完卡立刻用 AskUserQuestion(選項 = 各候選 + **「這週不承諾」**,Other 可改寫)問一句:**「選一條當下週對帳的承諾?會存進本機 log,下次開場第一句就對它:說到有沒有做到。」**(#56:你不准代選,他點了哪條才存哪條。)
 
-- **選項標籤 = 規矩短語**,description 寫「追蹤哪個 metric + 現在的值」(例:`追蹤 max_pos_pct,現在 42%`)。用戶要能 5 秒選完。
-- **metric_key 對映**:規矩管單一標的佔比 → `max_pos_pct`;管虧損加碼 → `avgdown_count`;管賽道集中 → `ai_pct`;管板塊 → `max_sector_pct`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
+- **選項標籤 = 規矩短語**,description 寫「下週看哪個數 + 現在的值」——**一律人話,內部 metric key 不准出現在任何用戶看得到的文字裡**(真人反饋:「追蹤 max_pos_pct,本週基線 42%」= 拗口)。✅「下週就看:最大單注佔比,現在 42%」/ ❌「追蹤 max_pos_pct,基線 42%」。用戶要能 5 秒選完。
+- **metric_key 對映(log 存內部名,顯示用人話)**:單一標的佔比 → `max_pos_pct`(人話「最大單注佔比」);虧損加碼 → `avgdown_count`(「虧損加碼次數」);賽道集中 → `ai_pct`(「同賽道佔比」);板塊 → `max_sector_pct`(「最大板塊佔比」);盈虧比 → `payoff`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
 - **用戶挑完 → 立刻走下面收尾腳本落盤**,`FINAL_RULE` / `METRIC_KEY` 填他選(或改寫)的那條。
 - **`insufficient_data=true` 時的分工**:機械預設 commitment 照舊**不出**(引擎已設 null,別把缺資料的猜測當承諾);但**用戶自己選的規矩照存**——行為承諾是他的意志,跟樣本夠不夠無關;樣本不足影響的只是 metric 基線的解讀。落盤時標 `source: "user_chosen"` + `baseline_note: "short-sample baseline"`,下次對帳措辭看**方向**(在降/沒動/變糟),不判達標。
 - 用戶選「這週不承諾」/ 跳過 → 收尾 `FINAL_RULE` 填 `SKIP`:log 照存本週 metrics(供趨勢對帳),commitment=null,下週不拿規矩對他。
@@ -192,7 +192,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 **對帳(log 非空時,卡開頭先做)**:
 1. 讀 log **最後一行**的 `commitment = {rule, metric_key, metric_value}`。
 2. 這次引擎 state 的 `metrics[commitment.metric_key]` = 新值。
-3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
+3. 卡**第一句**就對帳:`上次說要{rule 白話},當時{metric 人話}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`(例:「上次說逢低加碼要有頂,當時最大單注 42% → 現在 31%:在降」)。用戶的數字、白話、**metric key 內部名不上卡**(人話對映見 Step 3.5)。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
 4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
 **規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
