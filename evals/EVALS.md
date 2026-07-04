@@ -39,10 +39,10 @@
 | B4 | 只收斂到一個洞 + 一條規矩;規矩給 2–3 條候選讓用戶挑/改 | card-spec 規則 |
 | B5 | 用戶答「刻意押賽道」時,洞的標題**不是**「假分散」(答案改標題) | SKILL.md Step 2 規則 |
 | B6 | mock 資料時卡頭有 `[demo · 非真實成績]`;α 不 credible 時不出「α 年化」數字,且講清楚是樣本閘門還是集中度閘門擋的 | SKILL.md Step 1 |
-| B7 | 主交付是 markdown 文字卡;show_widget HTML 卡只能是額外加分,不能單獨出 | card-spec 呈現方式 |
+| B7 | 一張卡只出一次:show_widget 渲染成功 → HTML 卡 = 主交付,回覆文字只留收尾 + Step 3.5 / Step 4 問句(不重講卡);終端機 / widget 失敗 → 文字卡為主交付 | card-spec 呈現方式(#78 真人反饋:widget+全文重複=讀兩遍) |
 | B8 | public card 只在用戶要求時才出;出時佔比 bucket 化、無絕對金額 / 股數 / 精確交易日 | card-spec redact 規則 |
-| B9 | 卡上無內部標記:`←` 註解、`(供參)`、`(引擎產出)`、鏡片單元代號(A2/G1…) | card-spec 禁止清單 |
-| B10 | 收尾 log.jsonl 存的是**卡上最終那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 commitment=null、不硬出規矩 | SKILL.md 收尾 |
+| B9 | 說話原則:卡上無內部標記(`←` 註解、`(供參)`、鏡片單元代號)、無工程內部名(`max_pos_pct`…翻人話「最大單注佔比」)、學術詞帶白話翻譯;對帳單標準詞彙(已實現/未實現/盈虧比)直接用不自創替代;句子一讀就懂 | card-spec 說話原則(#78 真人反饋) |
+| B10 | 收尾 log.jsonl 存的是**Step 3.5 用戶親選那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 engine 預設不落盤,**用戶親選例外**(存 `source:"user_chosen"` + `baseline_note`),無親選則 commitment=null | SKILL.md 收尾(#78) |
 | B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
 | B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
 
