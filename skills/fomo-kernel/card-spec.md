@@ -2,6 +2,8 @@
 
 > 只在「Step 2 對話確認全部完成、🚦 self-check 三項都過」之後才讀這份檔。
 > 讀到這裡代表你手上已經有:engine 的 `TR_JSON=1` 結構化 JSON + 用戶剛確認的持股假設與動機答案。
+>
+> 維護者注意(#68,不是給執行 agent 的):這份檔的鐵律 = eval 判準的事實源。動 🚫 清單 / 敘事鐵律 / redact 規則,同步 `docs/eval-design.md`(自動化 spec,§5)與 `evals/EVALS.md`(手動驗收)。
 
 ## Contents
 - 出卡前提(定論卡,不留問號)

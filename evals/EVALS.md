@@ -3,6 +3,20 @@
 > 這份是**作者用的驗收清單**,不是給執行 skill 的 agent 讀的——SKILL.md 不引用它,不佔執行時 context。
 > 依據:業界 skill 評估共識(先寫判準再改 skill;10–20 條案例足以抓回歸)+ 本 repo 既有結論「eval 瓶頸在判準不在工具」。
 > 跑法:改完 SKILL.md / card-spec.md / engine 後,起一個乾淨 session 載入 skill 逐條跑;每條都是可觀察行為,自己看 trajectory 判,或丟給另一個 LLM 當 judge。engine 數值層的回歸另有 `tests/run_all.py` + `engine/test_state_loop.py`,這裡只管 agent 行為層。
+>
+> **分工(#68)**:本檔 = **手動驗收入口**(輕、乾淨 session 逐條跑、人判);[`docs/eval-design.md`](../docs/eval-design.md) = **自動化 harness 的單一權威**(重、`tests/agent/`、機檢+judge)。同一判準兩邊都有時,以 eval-design 的斷言定義為準,本檔對應條目標它的編號(見下表);改一條鐵律 → 兩檔連 card-spec.md 一起動(eval-design §5)。
+
+**與 eval-design.md 的判準對照**(同源判準,兩套編號):
+
+| 本檔 | eval-design | 判準核心 |
+|---|---|---|
+| B1 | C-1 / C-2 | 先問完(engine 先跑、Step 2 先於卡) |
+| B2 | A-1 | thesis_questions 不上卡 |
+| B3 | A-2 | 無 5 維小數表 |
+| B5 | B-4 | 集中度差分:「刻意押賽道」≠「假分散」 |
+| B6 | A-4 / A-5 | demo 標 + α 閘門誠實 |
+| B10 | A-10(+B-3 差分) | commitment 存最終版;insufficient → null |
+| B11 | B-6 | 回頭客先對帳、同維不開新戰場 |
 
 ## A · 觸發(description 對不對)
 
