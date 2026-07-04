@@ -364,10 +364,10 @@ def _port_daily_returns(rows, px, proxy=None):
                     num_m += sh * p0 * (float(m1) / float(m0))
                 elif spy is not None and not (pd.isna(spy.iloc[i]) or pd.isna(spy.iloc[i-1])):
                     num_m += sh * p0 * (float(spy.iloc[i]) / float(spy.iloc[i-1]))  # 按 SPY 計:配置 0,全歸選股
-                    fb += sh * p0
+                    fb += sh * p0; unproxied.add(t)    # 對照欄位存在但這天缺值(如新上市 ETF)→ 仍記為 fallback,誠實揭露
                 else:
                     num_m += sh * p1                  # 連 SPY 都沒價(序列頭)→ 用股票自身,該檔當日選股=0
-                    fb += sh * p0
+                    fb += sh * p0; unproxied.add(t)
             if den > 0:
                 port_rets[day] = num / den - 1
                 if proxy is not None:
@@ -391,17 +391,22 @@ def _regress(port, bench_px, rf_annual):
     """對單一 benchmark 回歸 → β / Jensen α + 標準誤/t/95% 區間。
     對 excess(扣 rf)回歸,截距即 Jensen α(值與舊式恆等);SE 用 OLS 截距公式——
     持倉越集中、個股雜訊越大 → 殘差越大 → SE 越寬:「集中=判不準」由統計直接量,
-    不再用持倉檔數當代理(#80)。se=0(完美複製品)→ t=None,別除零。"""
+    不再用持倉檔數當代理(#80)。se=0(完美複製品)→ t=None,別除零。
+    回傳的 days = 對齊後實際回歸用的天索引,給 dim_alpha_beta 的拆帳重用,
+    別再對同一組序列重跑一次 _aligned(不然兩處門檻一旦分岔,拆帳恆等式會悄悄壞掉)。"""
     df = _aligned(port, bench_px)
     n = len(df)
     if n < 60: return None
     rf_d = rf_annual / 252.0
     xe = df["s"] - rf_d; ye = df["p"] - rf_d
-    beta = xe.cov(ye) / xe.var()
+    var_x = float(xe.var())
+    if var_x <= 1e-12:            # 基準幾乎零波動(整段停牌/假期資料)→ β/α 無定義,別除出 NaN 漏進 JSON
+        return None
+    beta = xe.cov(ye) / var_x
     alpha_d = ye.mean() - beta * xe.mean()
     resid = ye - alpha_d - beta * xe
     s2 = float((resid ** 2).sum()) / (n - 2)
-    sxx = float(xe.var()) * (n - 1)
+    sxx = var_x * (n - 1)
     se_d = (s2 * (1.0 / n + float(xe.mean()) ** 2 / sxx)) ** 0.5 if sxx > 0 else 0.0
     alpha_ann = alpha_d * 252.0
     se_ann = se_d * 252.0
@@ -412,7 +417,8 @@ def _regress(port, bench_px, rf_annual):
     bench_tot = (1 + df["s"]).prod() - 1
     return dict(beta=beta, alpha_ann=alpha_ann, alpha_se_ann=se_ann, alpha_t=t,
                 alpha_ci95=[alpha_ann - 1.96 * se_ann, alpha_ann + 1.96 * se_ann],
-                port_tot=port_tot, bench_tot=bench_tot, excess=port_tot - bench_tot, n=n)
+                port_tot=port_tot, bench_tot=bench_tot, excess=port_tot - bench_tot, n=n,
+                days=df.index)
 
 # ── 賽道/選股拆帳(Brinson 式兩層)的板塊基準 ──
 # sector(driver)標籤 → 板塊 ETF。mimic 投組 = 同權重、每檔換成其板塊基準 →
@@ -447,13 +453,13 @@ def _alpha_grade(r):
     suggestive = 1≤|t|<1.96 → 有跡象未達顯著;noise = 其餘 → 分不出本事還是運氣。
     gate 記「為何到不了 significant」(#80/#82:機械欄位,卡片講原因不靠 Claude 記性)。"""
     t, n = r.get("alpha_t"), r.get("n", 0)
-    if n < ALPHA_MIN_DAYS:
-        return dict(grade="suggestive" if (t is not None and abs(t) >= 1) else "noise",
-                    gate=dict(reason="sample_short", n_days=n, need=ALPHA_MIN_DAYS))
-    if t is None or abs(t) < ALPHA_T_TH:
-        return dict(grade="suggestive" if (t is not None and abs(t) >= 1) else "noise",
-                    gate=dict(reason="not_significant", t=t, need=ALPHA_T_TH))
-    return dict(grade="significant", gate=None)
+    if n >= ALPHA_MIN_DAYS and t is not None and abs(t) >= ALPHA_T_TH:
+        return dict(grade="significant", gate=None)
+    grade = "suggestive" if (t is not None and abs(t) >= 1) else "noise"   # 單一算式,門檻只在一處調
+    reason = "sample_short" if n < ALPHA_MIN_DAYS else "not_significant"
+    gate = (dict(reason="sample_short", n_days=n, need=ALPHA_MIN_DAYS) if reason == "sample_short"
+            else dict(reason="not_significant", t=t, need=ALPHA_T_TH))
+    return dict(grade=grade, gate=gate)
 
 def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
     """E2:投組日報酬 vs 多基準回歸 + 贏大盤拆帳(押對賽道 vs 板塊內選股)。
@@ -477,7 +483,7 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
     if "SPY" not in benchmarks:
         return dict(dim="alpha/beta", note="樣本不足")
     spy = benchmarks["SPY"]
-    days = _aligned(port, px["SPY"]).index                # 與 SPY 回歸同一天集 → 拆帳與 excess 恰相等
+    days = spy["days"]                                     # 重用 SPY 回歸已對齊的天集(別再跑一次 _aligned,兩處才不會分岔)
     mimic_tot = float((1 + mimic.reindex(days)).prod() - 1)
     split = dict(excess=spy["excess"],
                  allocation=mimic_tot - spy["bench_tot"],  # 押對賽道:你的板塊配置混合 − 大盤
@@ -485,7 +491,9 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
                  mimic_tot=mimic_tot,
                  coverage=round(1.0 - fb_share, 4),        # 有板塊對照的平均權重(按 SPY 計的部分=1−coverage)
                  unproxied=sorted(unproxied),
-                 proxy={t: p for t, p in sorted(proxy.items()) if p and t != p})
+                 # 只列「全程沒 fallback 過」的對照(t not in unproxied)——曾 fallback 的 ticker
+                 # 已在 unproxied 誠實揭露,proxy 不該同時宣稱「配置的對照」聽起來像全程有效
+                 proxy={t: p for t, p in sorted(proxy.items()) if p and t != p and t not in unproxied})
     g = _alpha_grade(spy)
     stat = dict(alpha_ann=spy["alpha_ann"], se_ann=spy["alpha_se_ann"], t=spy["alpha_t"],
                 ci95=spy["alpha_ci95"], n_days=spy["n"], grade=g["grade"], gate=g["gate"])
@@ -545,7 +553,7 @@ def print_alpha_beta(d):
     if st:
         ci = st.get("ci95") or [None, None]
         t.append(f"年化 {st['alpha_ann']*100:+.0f}%", style="bold cyan")
-        if st.get("se_ann"):
+        if st.get("se_ann") is not None:              # se_ann==0(完美複製品)是合法值,別被 truthy 檢查漏掉
             t.append(f"  (95% 區間 {ci[0]*100:+.0f}%~{ci[1]*100:+.0f}%)", style="dim")
         t.append(f"   β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)\n   ")
         if st.get("grade") == "significant":
@@ -1459,8 +1467,7 @@ def main():
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
     # is_demo:任一輸入 path 含 'mock' → 是 demo,卡頭/JSON 都標(SKILL Step 3 + issue #21:mock alpha 失真,要當下標警告)
     is_demo = any("mock" in p.replace(os.sep, "/").lower() for p in paths)
-    BROAD = {"大盤ETF", "商品", "債券", "區域ETF"}   # 再平衡/現金管理，非選股決策
-    decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BROAD]
+    decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BENCH_SELF]   # 再平衡/現金管理,非選股決策(=配置類,同 BENCH_SELF)
     d_size = dim_size(rows, held, last_px)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held, last_px)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held, last_px, d_size)

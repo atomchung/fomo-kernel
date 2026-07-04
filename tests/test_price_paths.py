@@ -226,6 +226,37 @@ def test_excess_split_broad_etf_is_allocation():
     assert sp["unproxied"] == [] and sp["coverage"] > 0.999
 
 
+def test_flat_benchmark_returns_none_not_nan():
+    """#90 review 修:基準變異數=0(整段停牌/假期資料)→ _regress 回 None,不除出 NaN。
+    改前 beta=xe.cov(ye)/xe.var() 在 var=0 時算出 NaN,會漏進 TR_JSON 變成非法 token。"""
+    rets = _spy_returns()
+    flat_spy = [400.0] * len(IDX)                      # 變異數恆 0
+    stk = _prices_from_returns(100.0, rets)
+    px = _px_frame({"ZZZZ": stk, "SPY": flat_spy})
+    rows = [dict(ticker="ZZZZ", side="buy", qty=10, price=100.0, date=IDX[0].date())]
+    ab = tr.dim_alpha_beta(rows, px)
+    assert ab.get("note") == "樣本不足", f"SPY 零波動應直接判樣本不足,不該算出 NaN:{ab}"
+
+
+def test_partial_nan_proxy_recorded_as_unproxied():
+    """#90 review 修(Codex):板塊 ETF 有欄但開頭 NaN(如新上市 ETF)→ 那幾天降級用 SPY,
+    coverage 該 <1;該檔必須進 unproxied(誠實揭露),且不該同時出現在 proxy 字典裡
+    (否則卡片一邊說『NVDA 對照 SOXX』一邊 coverage 又 <1,自相矛盾)。"""
+    rets = _spy_returns()
+    spy = _prices_from_returns(400.0, rets)
+    soxx = _prices_from_returns(200.0, rets)
+    soxx[:30] = [float("nan")] * 30                     # 開頭 30 天無價(新上市 ETF 的常見情況)
+    nvda = _prices_from_returns(100.0, [r + 0.001 for r in rets])
+    px = _px_frame({"NVDA": nvda, "SOXX": soxx, "SPY": spy})
+    rows = [dict(ticker="NVDA", side="buy", qty=10, price=100.0, date=IDX[0].date())]
+    ab = tr.dim_alpha_beta(rows, px)
+    sp = ab["excess_split"]
+    assert sp["coverage"] < 1.0, f"開頭 30 天 fallback 應反映在 coverage:{sp}"
+    assert "NVDA" in sp["unproxied"], f"部分日 fallback 也要誠實記入 unproxied:{sp}"
+    assert "NVDA" not in sp["proxy"], \
+        f"曾 fallback 的 ticker 不該同時宣稱『對照 SOXX』(誤導 coverage<1 卻像全程有效):{sp}"
+
+
 def test_alpha_se_widens_with_idiosyncratic_noise():
     """#80 的核心測量:集中(個股雜訊大)→ 殘差大 → SE 寬 → t 低。
     同一 α、雜訊 ×4 → SE 應近乎 ×4——「判不準」由統計直接量,不再靠持倉檔數代理。"""
