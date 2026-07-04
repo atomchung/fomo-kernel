@@ -69,7 +69,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 > 🔧 **引擎報 `ModuleNotFoundError`(如 pandas / yfinance)**:依賴多半裝在 venv / pyenv 的另一個 python 裡。找到裝了依賴的直譯器路徑重跑一次即可,常見是 repo 根的 `.venv/bin/python3`(README 安裝節的 venv 三行裝出來的)——把上面指令的 `python3` 換成那個路徑;別急著全域 pip(新 macOS 會被 PEP 668 擋)。
 引擎吃標準欄位(Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate),`TR_JSON=1` 吐的結構含:
 - **`top_holes`**:已選好的 top 1–2 機械洞 + 對應鏡片 quote(融入敘事,**別當結語**)。
-- **`candidate_rules`**:2–3 條候選規矩(Step 3 跟用戶挑/改一條,**別只給第一條**;引擎只給一條時就用那條)。
+- **`candidate_rules`**:2–3 條候選規矩(卡上列候選,**Step 3.5** 讓用戶挑/改一條,**別只給第一條**;引擎只給一條時就用那條)。
 - **`thesis_questions`**:per-ticker 持股假設問句 — **這是給 Step 2 對話用的,絕不准印在卡上**(SKILL 鐵律:確認在出卡之前)。
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
