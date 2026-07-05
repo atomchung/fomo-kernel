@@ -98,6 +98,7 @@ cat ~/.trade-coach/last_state.json # 最近一次引擎算出的薄狀態(含各
 - **換哲學鏡片重來 / 清空對帳基準** → 刪掉或改名 `~/.trade-coach/`(刪了下次就當第一次)。
 - **thesis 寫歪了** → 改 `theses.jsonl`;它是 append-only,修正 = 補一筆新 event(別蓋舊的,才能跨期看你當初怎麼想、後來怎麼變)。
 - **隱私自證**:教練記憶就在 `~/.trade-coach/` 這幾個檔、全在你機器上,作者那邊一行都沒有。
+- **想先看「多週迴圈」長什麼樣**(全程在 temp 目錄跑,**不碰**你正式的 `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`:把內建 mock 按時間切 3 段模擬「初診 → 對帳 → 對帳」,直接看到第二張卡怎麼引用上週承諾、log.jsonl 怎麼一行行長出來。
 
 > 💡 **想分享給社群?** 卡預設只出完整私人版。對我說「給我分享版」,會輸出**去敏感化**的純文字版(隱藏金額 / 股數 / 精確佔比,只留行為 pattern + 相對績效 β/贏大盤 pp),可直接貼 X / Thread。
 
