@@ -1,4 +1,4 @@
-# AGENTS.md — trade-review
+# AGENTS.md — fomo-kernel
 
 > 給 AI coding agent(**Codex**、Cursor、Claude Code 等)的操作指引。
 > 人類使用說明見 [README.md](README.md);**完整流程權威見 [skills/fomo-kernel/SKILL.md](skills/fomo-kernel/SKILL.md)**。
