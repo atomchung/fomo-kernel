@@ -143,7 +143,7 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py ~/Downloads/my.csv
 
 ## 風格 sample(直接可跑,看不同風格照出不同洞)
 
-`mock/` 下有 **7 組風格 sample**(3 組散戶風格基準 + 4 組投資者畫像擴充)外加 `mock_trades`,各觸發一種典型洞。下面列 4 個代表,完整 7 組與設計意圖見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+`mock/` 下有 **12 組 sample**(3 組散戶風格基準 + 4 組投資者畫像擴充 + 5 組 engine 邊界情境)外加 `mock_trades`,各觸發一種典型洞或 engine 邊界。下面列 4 個代表,完整 12 組與設計意圖見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
 
 ```bash
 cd skills/fomo-kernel
@@ -175,7 +175,7 @@ skills/fomo-kernel/
     vincent-yu.lens.json    ← 鏡片的「可換大師層」:規矩/引言/動機問句(換大師 = 換這檔)
   behavior-diagnosis.md     ← 診斷哲學:對事不對人、行為多標籤(why 的設計記錄)
   card-template.html        ← 復盤卡 HTML 版型範例
-  mock/                     ← 7 組風格 sample + mock_trades + 各自 driver map + SAMPLES.md
+  mock/                     ← 12 組 sample + mock_trades + 各自 driver map + SAMPLES.md
 ```
 
 ## 免責

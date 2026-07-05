@@ -145,7 +145,7 @@ If you use Codex / Cursor or another coding agent, point it at [`AGENTS.md`](AGE
 
 ## Style samples (runnable — see how different styles surface different leaks)
 
-`mock/` holds **7 style samples** (3 retail-style baselines + 4 investor-persona extensions) plus `mock_trades`, all **fictional**, each triggering one archetypal leak. Four representatives below; the full seven and their design intent are in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+`mock/` holds **12 sample sets** (3 retail-style baselines + 4 investor-persona extensions + 5 engine edge-case fixtures) plus `mock_trades`, all **fictional**, each triggering one archetypal leak or engine boundary. Four representatives below; the full twelve and their design intent are in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
 
 ```bash
 cd skills/fomo-kernel
@@ -177,7 +177,7 @@ skills/fomo-kernel/
     vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
   behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
   card-template.html        ← review-card HTML layout example
-  mock/                     ← 7 style samples + mock_trades + each one's driver map + SAMPLES.md
+  mock/                     ← 12 sample sets + mock_trades + each one's driver map + SAMPLES.md
 ```
 
 ## Disclaimer
