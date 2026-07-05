@@ -13,8 +13,8 @@ Not another stats report. It does what a report can't: **first it computes the b
 
 **The full flow (this is the actual product) — inside Claude Code:**
 ```
-/fomo-kernel                      # no file → runs the built-in mock through the whole flow
 /fomo-kernel ~/Downloads/my.csv   # review your own trades (CSV from any broker)
+/fomo-kernel                      # no file → asks you for one, or offers a "test drive" on built-in fake data (nothing written to coach memory)
 ```
 The card's value is in step ② — the engine flags a suspicious position and asks *"averaging down on conviction, or refusing to cut a loser?"*; your one-sentence answer is what turns the raw diagnosis into a verdict. **You can't see that layer from the engine's raw output alone.** Install steps under [Install](#install).
 
@@ -27,16 +27,18 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py   # runs the built-in moc
 
 ## What it looks like
 
-Running the built-in mock, the **raw engine diagnosis** looks like this (this is the mechanical layer; the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Translated below to show the shape — the engine currently renders in Traditional Chinese:*
+Running the built-in mock, the **illustrative card** looks like this (below is the simplified quick-view; the actual engine output is a full-color terminal card that also includes a what-if drawdown stress test, 5-dimension behavior bars, and a return-attribution section — the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Translated below to show the shape — the engine currently renders in Traditional Chinese:*
 
 ```text
-Review card · Master lens · mock demo
+Review card · Master lens · mock sample
 On paper you're up +$143k, but almost all of it is "held and never sold";
 your active trades are what need discipline, not luck.
 
   Total P&L             +$143,197    (realized $19k + unrealized $124k)
   Active win/loss ratio  2.9         (avg win $2,851 vs avg loss $1,000)
   Beat the market +261pp · β 2.05 · AI exposure 100% (30% drawdown = −$51k)
+      └ splitting "beat the market" into luck vs skill: right sector +180pp + picking within the sector +81pp
+        (the α interval is still wide — can't yet tell skill from luck; don't take the demo literally)
 
 Per-position diagnosis (sorted by size; small lots not nitpicked):
   PLTR  +$73,207   [v] likely DCA (buys up and down, not averaging a loser) · [!] too heavy 49%
@@ -55,7 +57,7 @@ The same card, rendered as a dark visual card:
 ![fomo-kernel review card demo](docs/demo-card.png)
 
 > In real use, the engine also flags positions that are "large + being averaged down while underwater" and asks you, *before* the card is issued, "is this a dip-buy or refusing to cut a loser?" — the motive a machine can't tell apart, settled by your one sentence, is what lets the card reach a verdict.
-> ⚠️ The mock's α numbers are distorted (too concentrated, too narrow a cross-section) — don't take the demo literally; real α needs a genuinely diversified book.
+> ⚠️ The mock's α numbers are distorted (too concentrated, too narrow a cross-section) — don't take them literally; real α needs a genuinely diversified book.
 
 ---
 
@@ -97,6 +99,7 @@ cat ~/.trade-coach/last_state.json # the thin state the engine last computed (pe
 - **Switch philosophy lens / reset the reconciliation baseline** → delete or rename `~/.trade-coach/` (deleting makes next time a fresh first visit).
 - **Wrote a thesis wrong** → edit `theses.jsonl`; it's append-only, so a correction = append a new event (don't overwrite the old one — that's how you see, across time, how you first reasoned and how it later changed).
 - **Privacy, self-verifiable**: coach memory is just these files under `~/.trade-coach/`, all on your machine; there isn't a single row on the author's side.
+- **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
 
 > 💡 **Want to share with a community?** By default the card is the full private version only. Tell me "give me the shareable version" and it outputs a **de-sensitized** plain-text version (hides amounts / share counts / exact ratios, keeps only the behavior pattern + relative performance β / beat-the-market pp) — ready to paste to X / Threads.
 
@@ -121,8 +124,8 @@ cp -r skills/fomo-kernel ~/.claude/skills/                         # B. copy (to
 
 Inside Claude Code:
 ```
-/fomo-kernel                      # no file → runs the built-in mock, one full demo
-/fomo-kernel ~/Downloads/my.csv   # review your own trades
+/fomo-kernel ~/Downloads/my.csv   # review your own trades (a statement screenshot works too)
+/fomo-kernel                      # no file → asks you for one, or a "test drive" through all four steps on built-in fake data (labeled as demo, nothing written to coach memory)
 ```
 Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`); you don't hand-clean anything.
 
@@ -140,9 +143,9 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py ~/Downloads/my.csv
 
 If you use Codex / Cursor or another coding agent, point it at [`AGENTS.md`](AGENTS.md) and have it follow along — that file is the routing guide for non-Claude-Code agents, telling it how to run the engine, ask about motive, and issue the card.
 
-## Three style samples (runnable — see how different styles surface different leaks)
+## Style samples (runnable — see how different styles surface different leaks)
 
-`mock/` holds four sets of **fictional** trades, each triggering one archetypal leak. Full design in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+`mock/` holds **7 style samples** (3 retail-style baselines + 4 investor-persona extensions) plus `mock_trades`, all **fictional**, each triggering one archetypal leak. Four representatives below; the full seven and their design intent are in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
 
 ```bash
 cd skills/fomo-kernel
@@ -156,9 +159,10 @@ python3 engine/trade_recap.py                          # no args = mock_trades.c
 |---|---|---|
 | `sample_fundamental` | fundamental stock-picking | exit discipline (rides a winner 120 days then bails, holds a loser 378 days waiting to break even) |
 | `sample_momentum` | chase-the-momentum | position all-in + fake diversification (mistaking beta for alpha) |
-| `sample_value` | only-buy-cheap | averaging down (the lower it goes the more you add, averaging INTC into a 43% overweight) |
+| `sample_value` | only-buy-cheap | averaging down (the lower it goes the more you add, averaging INTC into a single dominant position) |
 | `mock_trades` | methodology-building phase | FOMO all-AI fake diversification + PLTR averaging down |
 
+> Four more investor-persona extensions (`sample_ai_holder` / `sample_oldecon` / `sample_swing` / `sample_day_trader` — from an AI believer holding for a year and a half to a same-day in-and-out day trader) — how to run them and their design intent in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md).
 > ⚠️ The engine uses yfinance to pull real historical prices for α/β, market cap, and how far each position is underwater — so **absolute numbers drift with the current share price on each rerun**; but the headline leak each set is designed to trigger is stable (it's set by the trading behavior, not by any particular price).
 
 ## Layout
@@ -173,7 +177,7 @@ skills/fomo-kernel/
     vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
   behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
   card-template.html        ← review-card HTML layout example
-  mock/                     ← four sample fixture sets + each one's driver map + SAMPLES.md
+  mock/                     ← 7 style samples + mock_trades + each one's driver map + SAMPLES.md
 ```
 
 ## Disclaimer

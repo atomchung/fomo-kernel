@@ -5,6 +5,8 @@
 本機狀態 ~/.trade-coach/log.jsonl 【怎麼一行行長出來】show 給你看。
 
 跟 test_state_loop.py 的差別:那支是 pass/fail 驗收;這支是給人看的【體驗 demo】。
+log 行格式對齊 SKILL.md 收尾契約(metrics_snapshot 四鍵);真實流程的 commitment 是
+用戶在 Step 3.5 親選的規矩(#56),這裡無互動 → 用引擎機械預設代替。
 
 跑法:
   python3 demo_weeks.py                                   # mock,預設切點
@@ -18,6 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.join(HERE, "trade_recap.py")
 DEFAULT_CSV = os.path.join(HERE, "..", "mock", "mock_trades.csv")
 PCT = lambda v: f"{v*100:.0f}%" if isinstance(v, (int, float)) else "—"
+FMT = lambda mk, v: PCT(v) if (mk or "").endswith("_pct") else v  # 比例鍵一律顯示成百分比
 
 
 def cumulative_csvs(src, cuts, outdir):
@@ -73,15 +76,14 @@ def main():
             c = prior[-1]["commitment"]
             mk, old = c["metric_key"], c["metric_value"]
             new = st["metrics"].get(mk)
-            fmt = PCT if mk == "max_pos_pct" else (lambda v: v)
             if old is None or new is None:
                 verdict = "缺值,無法比"
             elif new < old:
-                verdict = f"↓ 在改善({fmt(old)} → {fmt(new)})"
+                verdict = f"↓ 在改善({FMT(mk, old)} → {FMT(mk, new)})"
             elif new > old:
-                verdict = f"↑ 變糟了({fmt(old)} → {fmt(new)})"
+                verdict = f"↑ 變糟了({FMT(mk, old)} → {FMT(mk, new)})"
             else:
-                verdict = f"→ 沒動({fmt(old)})"
+                verdict = f"→ 沒動({FMT(mk, old)})"
             print(f"  ✅ 先對帳上週承諾「{rule_plain(c['rule'])}…」")
             print(f"      盯的數字 {mk}:{verdict}")
         elif prior:
@@ -94,17 +96,17 @@ def main():
             print(f"  ⚠ 本週樣本還太薄(round-trip {st['n_round_trips']}),只做體檢、不硬立規矩")
         else:
             hk = st["headline_metric"]; hv = hk.get("value")
-            fmt = PCT if hk.get("key") == "max_pos_pct" else (lambda v: v)
-            print(f"  🔴 本週最大的洞:{st['headline_dim']}（{hk.get('key')} = {fmt(hv)}）")
+            print(f"  🔴 本週最大的洞:{st['headline_dim']}（{hk.get('key')} = {FMT(hk.get('key'), hv)}）")
             c = st["commitment"]
             if c:
                 print(f"  ★ 本週承諾:{rule_plain(c['rule'])}… → 之後盯 {c['metric_key']}")
 
-        # ── 收尾 append(模擬 SKILL 收尾)→ context 長一行 ──
+        # ── 收尾 append(模擬 SKILL 收尾;真實流程 commitment = 用戶親選 #56,demo 用機械預設)──
+        # metrics_snapshot 四鍵對齊 SKILL.md 收尾契約(集中度承諾要能追 ai_pct)
         entry = {"week": k + 1, "date_end": st["date_end"], "headline_dim": st["headline_dim"],
                  "commitment": st["commitment"],
                  "metrics_snapshot": {m: st["metrics"].get(m)
-                                      for m in ("max_pos_pct", "avgdown_count", "avgdown_breach")}}
+                                      for m in ("ai_pct", "max_pos_pct", "avgdown_count", "avgdown_breach")}}
         with open(log, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         print(f"  💾 收尾:本機記憶 log.jsonl 現在 {k+1} 行\n")
@@ -116,7 +118,7 @@ def main():
     for l in open(log, encoding="utf-8"):
         e = json.loads(l)
         c = e.get("commitment")
-        cm = f"承諾 {c['metric_key']}={c['metric_value']}" if c else "無承諾(樣本不足)"
+        cm = f"承諾 {c['metric_key']}={FMT(c['metric_key'], c['metric_value'])}" if c else "無承諾(樣本不足)"
         print(f"  週{e['week']} | 到 {e['date_end']} | 洞={e['headline_dim']} | {cm}")
     print("\n每次回來:讀最後一行的承諾 → 重算 → 比那個數字 → 報進度 → 找新洞 → 再 append。")
 
