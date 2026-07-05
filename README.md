@@ -27,7 +27,7 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py   # 跑內建 mock,印出
 
 ## 跑出來長什麼樣
 
-跑內建 mock 的**引擎原始診斷**長這樣(這是機械層輸出;真正的定論卡是 Claude 在 Step ② 對話問完動機後才收斂的):
+跑內建 mock 的**示意卡**長這樣(下面是簡化速覽版;實際引擎輸出是彩色終端卡,另含 what-if 回檔壓測、5 維行為 bar、報酬拆帳專區——真正的定論卡則是 Claude 在 Step ② 對話問完動機後才收斂的):
 
 ```text
 復盤卡 · 大師鏡片 · mock demo
@@ -36,6 +36,8 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py   # 跑內建 mock,印出
   帳面總損益      +$143,197    (已實現 $19k + 未實現 $124k)
   主動買賣盈虧比   2.9          (平均賺 $2,851 vs 賠 $1,000)
   贏大盤 +261pp · β 2.05 · AI 暴險 100%(回檔 30% = −$51k)
+      └ 把「贏大盤」拆成運氣和技巧:押對賽道 +180pp + 板塊內選股 +81pp
+        (α 區間仍寬,還分不出選股是本事還是運氣 —— demo 別當真)
 
 標的層診斷(按金額排序,小倉不糾結):
   PLTR  +$73,207   [v] 疑似定投(漲跌都買,不是凹單) · [!] 押太重 49%
@@ -139,9 +141,9 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py ~/Downloads/my.csv
 
 如果你用 Codex / Cursor 等其他 coding agent,叫它讀 [`AGENTS.md`](AGENTS.md) 照著走——那份檔案是給非 Claude Code agent 的路由指南,會告訴它怎麼跑引擎、怎麼問動機、怎麼出卡。
 
-## 三組風格 sample(直接可跑,看不同風格照出不同洞)
+## 風格 sample(直接可跑,看不同風格照出不同洞)
 
-`mock/` 下有四組**虛構**交易,各觸發一種典型洞。完整設計見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+`mock/` 下有 **7 組風格 sample**(3 組散戶風格基準 + 4 組投資者畫像擴充)外加 `mock_trades`,各觸發一種典型洞。下面列 4 個代表,完整 7 組與設計意圖見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
 
 ```bash
 cd skills/fomo-kernel
@@ -155,9 +157,10 @@ python3 engine/trade_recap.py                          # 不帶參數 = mock_tra
 |---|---|---|
 | `sample_fundamental` | 基本面選股 | 出場紀律(賺錢抱 120 天就跑、賠錢抱 378 天等回本) |
 | `sample_momentum` | 動能衝衝衝 | 部位梭哈 + 假分散(把 beta 當 alpha) |
-| `sample_value` | 只買便宜 | 加碼攤平(越跌越凹,把 INTC 凹成 43% 重倉) |
+| `sample_value` | 只買便宜 | 加碼攤平(越跌越凹,把 INTC 凹成單一重倉) |
 | `mock_trades` | 方法論建立期 | FOMO 全 AI 假分散 + PLTR 攤平 |
 
+> 另有 4 組投資者畫像擴充(`sample_ai_holder` / `sample_oldecon` / `sample_swing` / `sample_day_trader`,從長抱一年半的 AI 信徒到同日進出的當沖客)——跑法與設計見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md)。
 > ⚠️ 引擎用 yfinance 抓真實歷史價算 α/β、市值、套牢,**重跑時絕對數字會隨當前股價漂移**;但每組設計觸發的頭號洞是穩定的(由交易行為決定,不靠特定股價)。
 
 ## 結構
@@ -172,7 +175,7 @@ skills/fomo-kernel/
     vincent-yu.lens.json    ← 鏡片的「可換大師層」:規矩/引言/動機問句(換大師 = 換這檔)
   behavior-diagnosis.md     ← 診斷哲學:對事不對人、行為多標籤(why 的設計記錄)
   card-template.html        ← 復盤卡 HTML 版型範例
-  mock/                     ← 四組 sample 假資料 + 各自 driver map + SAMPLES.md
+  mock/                     ← 7 組風格 sample + mock_trades + 各自 driver map + SAMPLES.md
 ```
 
 ## 免責
