@@ -257,22 +257,47 @@ def test_alpha_grade_thresholds_anchored():
 
 def test_dim_avgdown_breach_drives_trigger():
     """B.5 修:觸發由 breach(攤平到破自己 size 上限)主導,純次數高不觸發。
-    若退回『次數高就觸發』,常買 dip 的人會被永遠誤排頭號洞。"""
-    # 純次數高、小倉、無 breach → 不觸發
-    avg_down = [dict(ticker="DCA", date=dt.date(2024, 1, i + 1), px=10, avg=12) for i in range(8)]
+    若退回『次數高就觸發』,常買 dip 的人會被永遠誤排頭號洞。
+    #94 修後:breach 判準改吃逐筆 weight_then(加碼當下的成本權重),不再查 size_dim["weights"]
+    (那是「今天」市值的單一快照)——這裡的 fixture 直接手造 weight_then 模擬『當下』的佔比。"""
+    # 純次數高、每筆加碼當下都是小倉(weight_then 低)、無 breach → 不觸發
+    avg_down = [dict(ticker="DCA", date=dt.date(2024, 1, i + 1), px=10, avg=12, weight_then=0.05)
+                for i in range(8)]
     held = {"DCA": (100, 1000), "BIG": (100, 50000)}
     size_dim = tr.dim_size([_R("DCA", "buy", 100, 10, "2024-01-01"),
                             _R("BIG", "buy", 100, 500, "2024-01-01")], held, None)
     d = tr.dim_avgdown(avg_down, held, None, size_dim)
     assert d["count"] == 8 and d["breach"] == 0 and d["triggered"] is False, \
         f"純次數高無 breach 不該觸發,實得 {d['count']}/{d['breach']}/{d['triggered']}"
-    # 攤平破 size 上限 → 觸發
-    avg_down2 = [dict(ticker="BIG", date=dt.date(2024, 1, 1), px=400, avg=500)]
+    # 攤平「當下」破 size 上限(weight_then > 0.25)→ 觸發
+    avg_down2 = [dict(ticker="BIG", date=dt.date(2024, 1, 1), px=400, avg=500, weight_then=0.30)]
     held2 = {"BIG": (100, 50000), "SMALL": (10, 1000)}
     size2 = tr.dim_size([_R("BIG", "buy", 100, 500, "2024-01-01"),
                          _R("SMALL", "buy", 10, 100, "2024-01-01")], held2, None)
     d2 = tr.dim_avgdown(avg_down2, held2, None, size2)
-    assert d2["breach"] == 1 and d2["triggered"] is True, "攤平破倉 → breach 觸發"
+    assert d2["breach"] == 1 and d2["triggered"] is True, "攤平當下破倉 → breach 觸發"
+
+
+def test_dim_avgdown_uses_weight_then_not_todays_snapshot():
+    """#94 回歸:同一檔『今天』佔比很高,但這筆加碼『當下』佔比不高 → 不該 breach。
+    真實案例(sample_value.csv,issue #94):INTC 第一次加碼當下只佔 ~12.5%(成本基礎)不該破線,
+    但 INTC 今天(被後續大量加碼推高後)的市值/成本權重遠超 25%——舊邏輯查 size_dim["weights"]
+    (今天快照)會誤判這筆『當下不算重倉』的加碼為 breach。同時驗證反向案例:今天佔比低、
+    但當下確實重倉的加碼,仍應正確 breach(不能矯枉過正變成永遠不觸發)。"""
+    # INTC 今天(size_dim)佔比刻意做到遠超 25%,但這筆加碼「當下」(weight_then)只有 12.5%
+    avg_down = [dict(ticker="INTC", date=dt.date(2024, 4, 1), px=40, avg=49, weight_then=0.125)]
+    held = {"INTC": (450, 12460.0), "CVS": (120, 7480.0)}   # INTC 今天成本權重 ≈ 62.5%,遠超 25%
+    size_dim = tr.dim_size([_R("INTC", "buy", 450, 27.69, "2024-01-01"),
+                            _R("CVS", "buy", 120, 62.33, "2024-01-01")], held, None)
+    assert size_dim["weights"]["INTC"] > 0.25, "前提:INTC 今天快照本身確實 > 25%(否則此測試無意義)"
+    d = tr.dim_avgdown(avg_down, held, None, size_dim)
+    assert d["breach"] == 0 and d["triggered"] is False, \
+        f"加碼當下 weight_then=12.5%(<25%)不該因『今天』佔比高被誤判 breach,實得 breach={d['breach']}"
+    # 反向對照:當下確實重倉(weight_then > 0.25)的加碼,即使今天佔比不同,仍應正確 breach
+    avg_down2 = [dict(ticker="CVS", date=dt.date(2024, 5, 1), px=55, avg=67.57, weight_then=0.2623)]
+    d2 = tr.dim_avgdown(avg_down2, held, None, size_dim)
+    assert d2["breach"] == 1 and d2["triggered"] is True, \
+        f"當下確實破 25%(weight_then=26.23%)應正確 breach,實得 breach={d2['breach']}"
 
 
 # ─────────────────────── H2. dim_size():其餘平均排除最大檔 ───────────────────────
