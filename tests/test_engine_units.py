@@ -219,43 +219,121 @@ def test_payoff_attribution_all_wins_is_none():
     assert pa["draggers"] == [] and pa["counterfactual"] is None
 
 
-# ─────────────────────── G. alpha_credible():α 雙閘門 ───────────────────────
+# ─────────────────────── G. alpha 統計閘 v2(#80) ───────────────────────
 
-def test_alpha_credible_double_gate():
-    """#11 誠實化的核心:α 要當『選股能力證據』須同時通過 ① 樣本≥1年(n≥252)
-    ② 橫截面夠寬(最大板塊/AI 暴險 <50% 且 ≥8 檔)。任一不過 → False(賽道紅利+雜訊)。
-    這道閘門若被改鬆,引擎會把『押對賽道』冒充成『真本事 α』—— 產品誠信的紅線。"""
-    div_wide = dict(dim="分散", ai_pct=0.3, max_sector_pct=0.3, n=10)
-    div_narrow = dict(dim="分散", ai_pct=0.7, max_sector_pct=0.7, n=10)
-    div_thin = dict(dim="分散", ai_pct=0.3, max_sector_pct=0.3, n=4)
-    assert tr.alpha_credible(dict(note="無價格"), [div_wide]) is False, "有 note(無價格/樣本)→ False"
-    assert tr.alpha_credible(dict(n=100), [div_wide]) is False, "樣本 <252 → False"
-    assert tr.alpha_credible(dict(n=300), []) is False, "無分散維(無橫截面證據)→ fail-closed"
-    assert tr.alpha_credible(dict(n=300), [div_narrow]) is False, "橫截面太窄(押賽道)→ False"
-    assert tr.alpha_credible(dict(n=300), [div_thin]) is False, "檔數 <8 → False"
-    assert tr.alpha_credible(dict(n=300), [div_wide]) is True, "樣本夠長 + 橫截面夠寬 → True"
+def test_alpha_credible_stat_gate():
+    """v2(#80):credible = 統計顯著(alpha_stat.grade == significant),檔數/集中度閘退役——
+    集中的雜訊由回歸 SE 直接量(集中 → 殘差大 → t 低,自然過不了),
+    「押賽道 vs 選股」由 excess_split 拆帳正面回答。
+    這道閘若被改鬆,引擎會把噪音 α 冒充成『真本事』——紅線沒變,測量方式變了。"""
+    assert tr.alpha_credible(dict(note="無價格")) is False, "有 note(無價格/樣本)→ False"
+    assert tr.alpha_credible({}) is False, "無 alpha_stat → fail-closed"
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="noise"))) is False
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="suggestive"))) is False
+    assert tr.alpha_credible(dict(alpha_stat=dict(grade="significant"))) is True
+    assert tr.alpha_credible(dict(note="樣本不足", alpha_stat=dict(grade="significant"))) is False, \
+        "note 優先於 grade(fail-closed)"
+
+
+def test_alpha_grade_thresholds_anchored():
+    """分級門檻有統計錨(#63 教訓):n≥252(1 年,業界慣例)+ |t|≥1.96(95%)。
+    #80 回歸驗證:分級只看 t 與樣本天數——5 檔集中投組不再被持倉檔數結構性排除。"""
+    g = tr._alpha_grade(dict(alpha_t=2.5, n=300))
+    assert g["grade"] == "significant" and g["gate"] is None
+    g = tr._alpha_grade(dict(alpha_t=-2.4, n=300))
+    assert g["grade"] == "significant", "顯著的負 α 也是可談的定論"
+    g = tr._alpha_grade(dict(alpha_t=2.5, n=100))
+    assert g["grade"] == "suggestive" and g["gate"]["reason"] == "sample_short", \
+        "樣本 <1 年:再顯著也不給能力語氣"
+    g = tr._alpha_grade(dict(alpha_t=1.3, n=300))
+    assert g["grade"] == "suggestive" and g["gate"]["reason"] == "not_significant"
+    g = tr._alpha_grade(dict(alpha_t=0.4, n=300))
+    assert g["grade"] == "noise" and g["gate"]["reason"] == "not_significant"
+    g = tr._alpha_grade(dict(alpha_t=None, n=300))
+    assert g["grade"] == "noise", "t 無定義(se=0 完美複製品)→ 保守歸 noise"
 
 
 # ─────────────────────── H. dim_avgdown():breach 主導觸發 ───────────────────────
 
 def test_dim_avgdown_breach_drives_trigger():
     """B.5 修:觸發由 breach(攤平到破自己 size 上限)主導,純次數高不觸發。
-    若退回『次數高就觸發』,常買 dip 的人會被永遠誤排頭號洞。"""
-    # 純次數高、小倉、無 breach → 不觸發
-    avg_down = [dict(ticker="DCA", date=dt.date(2024, 1, i + 1), px=10, avg=12) for i in range(8)]
+    若退回『次數高就觸發』,常買 dip 的人會被永遠誤排頭號洞。
+    #94 修後:breach 判準改吃逐筆 weight_then(加碼當下的成本權重),不再查 size_dim["weights"]
+    (那是「今天」市值的單一快照)——這裡的 fixture 直接手造 weight_then 模擬『當下』的佔比。"""
+    # 純次數高、每筆加碼當下都是小倉(weight_then 低)、無 breach → 不觸發
+    avg_down = [dict(ticker="DCA", date=dt.date(2024, 1, i + 1), px=10, avg=12, weight_then=0.05)
+                for i in range(8)]
     held = {"DCA": (100, 1000), "BIG": (100, 50000)}
     size_dim = tr.dim_size([_R("DCA", "buy", 100, 10, "2024-01-01"),
                             _R("BIG", "buy", 100, 500, "2024-01-01")], held, None)
     d = tr.dim_avgdown(avg_down, held, None, size_dim)
     assert d["count"] == 8 and d["breach"] == 0 and d["triggered"] is False, \
         f"純次數高無 breach 不該觸發,實得 {d['count']}/{d['breach']}/{d['triggered']}"
-    # 攤平破 size 上限 → 觸發
-    avg_down2 = [dict(ticker="BIG", date=dt.date(2024, 1, 1), px=400, avg=500)]
+    # 攤平「當下」破 size 上限(weight_then > 0.25)→ 觸發
+    avg_down2 = [dict(ticker="BIG", date=dt.date(2024, 1, 1), px=400, avg=500, weight_then=0.30)]
     held2 = {"BIG": (100, 50000), "SMALL": (10, 1000)}
     size2 = tr.dim_size([_R("BIG", "buy", 100, 500, "2024-01-01"),
                          _R("SMALL", "buy", 10, 100, "2024-01-01")], held2, None)
     d2 = tr.dim_avgdown(avg_down2, held2, None, size2)
-    assert d2["breach"] == 1 and d2["triggered"] is True, "攤平破倉 → breach 觸發"
+    assert d2["breach"] == 1 and d2["triggered"] is True, "攤平當下破倉 → breach 觸發"
+
+
+def test_dim_avgdown_uses_weight_then_not_todays_snapshot():
+    """#94 回歸:同一檔『今天』佔比很高,但這筆加碼『當下』佔比不高 → 不該 breach。
+    真實案例(sample_value.csv,issue #94):INTC 第一次加碼當下只佔 ~12.5%(成本基礎)不該破線,
+    但 INTC 今天(被後續大量加碼推高後)的市值/成本權重遠超 25%——舊邏輯查 size_dim["weights"]
+    (今天快照)會誤判這筆『當下不算重倉』的加碼為 breach。同時驗證反向對照:換一檔今天權重不同
+    (CVS)的加碼事件,只要它自己的 weight_then 本身破 25%,一樣正確 breach——不是改吃 weight_then
+    後就矯枉過正變成『永遠不觸發』(triad review 2026-07-05:CVS 今天成本權重其實也 >25%,並非
+    「今天佔比低」,這裡驗證的重點是判準只看 weight_then、不管今天佔比高或低)。"""
+    # INTC 今天(size_dim)佔比刻意做到遠超 25%,但這筆加碼「當下」(weight_then)只有 12.5%
+    avg_down = [dict(ticker="INTC", date=dt.date(2024, 4, 1), px=40, avg=49, weight_then=0.125)]
+    held = {"INTC": (450, 12460.5), "CVS": (120, 7479.6)}   # 精確對齊下面 buy rows 的 qty*price,INTC 今天成本權重 ≈ 62.5%,遠超 25%
+    size_dim = tr.dim_size([_R("INTC", "buy", 450, 27.69, "2024-01-01"),
+                            _R("CVS", "buy", 120, 62.33, "2024-01-01")], held, None)
+    assert size_dim["weights"]["INTC"] > 0.25, "前提:INTC 今天快照本身確實 > 25%(否則此測試無意義)"
+    d = tr.dim_avgdown(avg_down, held, None, size_dim)
+    assert d["breach"] == 0 and d["triggered"] is False, \
+        f"加碼當下 weight_then=12.5%(<25%)不該因『今天』佔比高被誤判 breach,實得 breach={d['breach']}"
+    # 反向對照:當下確實重倉(weight_then > 0.25)的加碼,不管今天佔比是什麼,仍應正確 breach
+    avg_down2 = [dict(ticker="CVS", date=dt.date(2024, 5, 1), px=55, avg=67.57, weight_then=0.2623)]
+    d2 = tr.dim_avgdown(avg_down2, held, None, size_dim)
+    assert d2["breach"] == 1 and d2["triggered"] is True, \
+        f"當下確實破 25%(weight_then=26.23%)應正確 breach,實得 breach={d2['breach']}"
+
+
+def test_positions_computes_weight_then_as_point_in_time_cost_share():
+    """#94:直接測 positions() 產生 weight_then 這個計算本身(不是像上面兩個測試手造 weight_then
+    餵給 dim_avgdown),鎖住『加碼決定做出之前的成本佔比,且每筆事件現算、不是沿用舊快照』這個語意
+    ——這是 #94 真正修的那段程式碼,只測 dim_avgdown 吃現成 weight_then 測不到 positions() 自己
+    算錯分子分母或算錯時機的迴歸。"""
+    rows = [
+        _R("A", "buy", 100, 10, "2024-01-01"),    # A 建倉,成本 1000
+        _R("B", "buy", 100, 10, "2024-01-02"),    # B 建倉,成本 1000;此刻 A:B = 50:50
+        _R("A", "buy", 100, 8, "2024-01-03"),     # 攤平#1(8 < 10*0.9=9):加碼當下 A 成本 1000,總成本 1000+1000=2000 → weight_then=0.5;之後 A:[200,1800]
+        _R("C", "buy", 200, 10, "2024-01-04"),    # C 建倉,成本 2000;此刻 A=1800,B=1000,C=2000,總成本 4800
+        _R("A", "buy", 100, 5, "2024-01-05"),     # 攤平#2(5 < 9*0.9=8.1):加碼當下 A 成本仍是 1800(此筆套用前),總成本 4800 → weight_then=1800/4800=0.375
+    ]
+    held, avg_down = tr.positions(rows)
+    a_events = [e for e in avg_down if e["ticker"] == "A"]
+    assert len(a_events) == 2, f"應有兩次 A 的攤平事件,實得 {len(a_events)}"
+    assert _approx(a_events[0]["weight_then"], 0.5, tol=1e-9), \
+        f"攤平#1 當下(套用前)A 佔全部持倉成本應為 1000/2000=0.5,實得 {a_events[0]['weight_then']}"
+    assert _approx(a_events[1]["weight_then"], 0.375, tol=1e-9), \
+        (f"攤平#2 當下 A 佔全部持倉成本應為 1800/4800=0.375(C 加入後現算,不是沿用攤平#1 的 0.5 快照),"
+         f"實得 {a_events[1]['weight_then']}")
+
+
+# ─────────────────────── H2. dim_size():其餘平均排除最大檔 ───────────────────────
+
+def test_dim_size_avg_pct_excludes_max():
+    """「其餘平均」必須排除最大那檔——否則 mean(全部)恆=1/檔數、跟集中度無關,
+    還跟卡上「最大佔 X%」自相矛盾(91% + 其餘每檔 25% > 100%)。"""
+    held = {"BIG": (100, 10000.0), "S1": (10, 1000.0), "S2": (10, 1000.0)}   # 成本權重 ≈ 0.833 / 0.083 / 0.083
+    d = tr.dim_size([], held, None)                                          # last_px=None → 用成本算權重
+    assert d["max_ticker"] == "BIG"
+    assert abs(d["avg_pct"] - 1000.0 / 12000.0) < 1e-6, \
+        f"其餘平均應=排除最大檔後的平均≈0.083(舊碼 mean(全部)=1/3≈0.333),實得 {d['avg_pct']}"
 
 
 # ─────────────────────── I. build_state():薄狀態 + 誠實鐵律 ───────────────────────
@@ -272,15 +350,17 @@ def _state_from(rows, ab):
     return tr.build_state(rows, rts, held, dims, ov, ab, rx)
 
 
-def test_build_state_honesty_alpha_none_when_not_credible():
-    """誠實鐵律:α 不 credible 時 metrics.alpha_ann 必為 None(β 仍可報)。
-    這是 build_state 把『不可信 α』擋在狀態之外的最後一關,被改鬆等於默許賽道紅利冒充選股。"""
+def test_build_state_alpha_always_reported_with_uncertainty():
+    """誠實鐵律 v2(#80):α 永遠出數 + 同存 alpha_t(數字+不確定性,比封殺更誠實);
+    能力語氣由 alpha_credible 管。被改回「不 credible 就 None」= 回到檔數封殺時代。"""
     rows = tr.load([os.path.join(MOCK, "mock_trades.csv")])
-    ab = dict(dim="alpha/beta", beta=1.5, alpha_ann=0.25, credible=False, n=300)
+    ab = dict(dim="alpha/beta", beta=1.5, alpha_ann=0.25, credible=False, n=300,
+              alpha_stat=dict(alpha_ann=0.25, t=0.8, grade="noise"))
     st = _state_from(rows, ab)
     assert st["schema_version"] == 2, "schema_version 應為 2"
     assert _approx(st["metrics"]["beta"], 1.5), "β 照常入狀態"
-    assert st["metrics"]["alpha_ann"] is None, "不 credible → alpha_ann 必為 None"
+    assert _approx(st["metrics"]["alpha_ann"], 0.25), "v2:不 credible 也出數(語氣另管)"
+    assert _approx(st["metrics"]["alpha_t"], 0.8), "不確定性(t)一起入狀態,對帳才知道數字多可信"
     assert st["metrics"]["alpha_credible"] is False
     assert st["holdings"]["is_complete"] is False, "CSV 推算不宣稱完整持倉"
 
@@ -308,6 +388,105 @@ def test_prescribe_multiple_candidate_rules():
     rx = tr.prescribe(None, dims, {})        # ab=None → 跳過 alpha/beta 段,只看處方互斥
     rules = [r for r in rx if r.get("rule")]
     assert len(rules) >= 2, f"#29:兩條都觸發應給 ≥2 條候選 rule,實得 {len(rules)}: {[r.get('kind') for r in rx]}"
+
+
+def test_prescribe_rx_entries_tagged_with_dim():
+    """#87/#95:prescribe() 產出的「加碼攤平」「部位 sizing」兩條 rx 必須帶 dim= 標籤,
+    build_card_data() 的 candidate_rules 補滿邏輯靠這個做 dedup(見下面 K 節)。"""
+    dims = [
+        dict(dim="加碼攤平", count=12, breach=2),
+        dict(dim="部位 sizing", max_pct=0.55, max_ticker="NVDA"),
+    ]
+    rx = tr.prescribe(None, dims, {})
+    tagged = {r["dim"]: r for r in rx if r.get("rule")}
+    assert tagged.keys() == {"加碼攤平", "部位 sizing"}, f"兩條 rule 應各自帶對應 dim,實得 {list(tagged.keys())}"
+
+
+# ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
+
+def _card_from(dims, rx):
+    """組出 build_card_data 需要的最小參數(其餘用不到的欄位餵 None/{})。"""
+    return tr.build_card_data(dims, None, {}, None, None, None, rx, [], None, None, None)
+
+
+def test_candidate_rules_backfilled_from_top_holes_when_prescribe_empty():
+    """#87/#95 Bug A:出場紀律/分散/持有時間三維在 prescribe() 完全沒有 rule 生成路徑——
+    headline 是這三維之一時,candidate_rules 不該是空陣列(否則 SKILL Step 3.5 的記憶迴圈斷鏈)。
+    用 top_holes[].lens_rule(headline 優先,因 top_holes 已按 severity 排序)補滿。"""
+    dims = [
+        dict(dim="持有時間", tier=2, triggered=True, severity=1.0,
+             min=1, max=45, median_hold=8.0, n_incon=2, n_multi=5, incon_tickers=["AAA", "BBB"]),
+        dict(dim="出場紀律", tier=1, triggered=True, severity=0.69,
+             early_rate=0.5, n_rt=4, n_scored=4, n_trunc=0, avg_forgone=0.05,
+             winner_early=0.5, n_fwd=30, hold_win=10, hold_lose=3, disp_gap=7),
+    ]
+    rx = tr.prescribe(None, dims, {})           # 加碼攤平/部位 sizing 都沒觸發 → rx 應為空
+    assert rx == [], f"這兩維都不在 prescribe() 覆蓋範圍,rx 應為空,實得 {rx}"
+    card = _card_from(dims, rx)
+    assert card["candidate_rules"], "#87/#95:candidate_rules 不該是空陣列——headline 維度應補到規矩"
+    got_dims = [r["dim"] for r in card["candidate_rules"]]
+    assert got_dims[0] == "持有時間", f"headline(severity 最高)應排第一,實得 {got_dims}"
+    assert set(got_dims) == {"持有時間", "出場紀律"}
+    for r in card["candidate_rules"]:
+        assert r.get("rule"), f"補滿的候選必須帶非空 rule,實得 {r}"
+
+
+def test_candidate_rules_dedup_skips_dim_already_covered_by_rx():
+    """#87/#95:若某 dim 已經被 prescribe() 的 rx 貢獻了一條 rule(例如它剛好也是 headline),
+    backfill 不該再從 lens_rule 幫同一個 dim 補第二條——否則同一維度出現兩條用詞不同的規矩,
+    使用者在 Step 3.5 選規矩時會困惑『到底哪條才是engine真正要的』。"""
+    dims = [
+        dict(dim="部位 sizing", tier=1, triggered=True, severity=1.0,
+             max_pct=0.55, max_ticker="NVDA", avg_pct=0.10),   # headline,且 prescribe() 會給它一條 rule
+        dict(dim="分散", tier=2, triggered=True, severity=0.9,
+             n=6, ai_pct=0.1, max_sector="半導體", max_sector_pct=0.5, top3=0.7),  # 沒有 rule 生成路徑
+    ]
+    rx = tr.prescribe(None, dims, {})
+    rule_dims = {r["dim"] for r in rx if r.get("rule")}
+    assert rule_dims == {"部位 sizing"}, f"只有部位 sizing 觸發 rule,實得 {rule_dims}"
+    card = _card_from(dims, rx)
+    got_dims = [r["dim"] for r in card["candidate_rules"]]
+    assert got_dims.count("部位 sizing") == 1, f"部位 sizing 已被 rx 涵蓋,不該再被 lens_rule 重複補一次,實得 {got_dims}"
+    assert "分散" in got_dims, "分散沒有 rule 生成路徑,應由 lens_rule 補上"
+    assert len(card["candidate_rules"]) == 2, f"應為『rx 一條 + backfill 一條』共 2 條,實得 {len(card['candidate_rules'])}"
+
+
+# ─────────────────── L. dim_diversify():未分類桶不冒充集中度(#87/#95 Bug B) ───────────────────
+
+def test_dim_diversify_excludes_unclassified_from_severity():
+    """#87/#95 Bug B:全部持倉都落進 driver() 的 fallback 桶「未分類」時,
+    這個桶不是真的『同產業集中』,是資料品質缺口(driver_map 沒建好)——
+    severity 不該被這個假訊號拉到 1.0(那是跟 data_integrity.unclassified_drivers 打對台的謊報)。"""
+    held = {t: (10, 1000.0) for t in ["CVX", "DUK", "HON", "JNJ", "JPM", "PG", "SO"]}  # 全部沒進 driver_map
+    d = tr.dim_diversify(held, None)
+    assert d["max_sector"] is None, f"沒有任何已分類 sector 時 max_sector 應為 None,實得 {d['max_sector']}"
+    assert d["max_sector_pct"] == 0, f"排除未分類後應無真實 sector 集中訊號,實得 {d['max_sector_pct']}"
+    assert d["severity"] < 0.1, f"未分類桶不該冒充成高嚴重度,實得 severity={d['severity']}"
+    assert _approx(d["sectors"]["未分類"], 1.0, tol=1e-6), \
+        f"sectors 原始分布仍應如實記錄未分類佔比(供 data_integrity 揭露用),實得 {d['sectors']['未分類']}"
+
+
+def test_dim_diversify_triggered_severity_thresholds_aligned():
+    """#87/#95 Bug B:triggered 的 sector 門檻(SECTOR_MAX_TH)必須跟 severity 的 40% 起算點對齊,
+    否則會出現『severity 拉滿但 triggered=False』或反過來的自相矛盾組合。
+    邊界案例:max_sec_pct 卡在 0.40~0.50 之間時,兩者理應一致觸發(對齊後),不該一個算集中一個算不集中。"""
+    assert tr.SECTOR_MAX_TH == 0.40, f"SECTOR_MAX_TH 應與 severity 40% 起算點對齊,實得 {tr.SECTOR_MAX_TH}"
+    # 8 檔(過 len(w)>=8 閘門),同一 sector 佔 45%(卡在新舊門檻之間:>0.40 但 <0.50)
+    held = {"S1": (10, 4500.0)}
+    for i in range(7):
+        held[f"O{i}"] = (10, (10000.0 - 4500.0) / 7)
+    orig_map = tr._DRIVER_MAP                              # 存原始參照(而非重設成固定值)才能真正物歸原位
+    try:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+        tr._DRIVER_MAP["S1"] = ("半導體", 0)
+        for i in range(7):
+            tr._DRIVER_MAP[f"O{i}"] = (f"產業{i}", 0)      # 其餘 7 檔各自不同 sector,避免湊出另一個大桶
+        d = tr.dim_diversify(held, None)
+    finally:
+        tr._DRIVER_MAP = orig_map                          # 還原成呼叫前的原始參照,別讓別的測試(若曾 load_driver_map)被這裡悄悄清空
+    assert abs(d["max_sector_pct"] - 0.45) < 1e-6
+    assert d["triggered"] is True, f"45% 過新門檻(40%)應觸發,實得 triggered={d['triggered']}"
+    assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
 
 
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────

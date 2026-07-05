@@ -39,7 +39,7 @@ MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交
 CYCLE_ID_RE = re.compile(r"^[^#\s]+#\d{4}-\d{2}-\d{2}#\d+$")
 CYCLE_ID_UNKNOWN_RE = re.compile(r"^[^#\s]+#unknown$")
 SELL_EARLY_TH = 0.10
-SECTOR_MAX_TH = 0.50
+SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
 
 # ── ticker → (sector, thematic?)  thematic=1 代表同屬一個跨產業主題(如 AI capex)= VY B2 的「driver」──
@@ -155,7 +155,11 @@ def positions(rows):
         t = r["ticker"]; sh, cost = pos[t]
         if r["side"] == "buy":
             if sh > 1e-9 and r["price"] < (cost / sh) * 0.90:  # 買價比 avg_cost 低 >10% = 有意義攤平（濾掉微幅 DCA）
-                avg_down.append(dict(ticker=t, date=r["date"], px=r["price"], avg=cost/sh))
+                # #94:point-in-time 成本權重 —— 用「加碼這個決定做出之前」的 pos 快照(此刻 cost/sh 尚未套用本筆買入)
+                # 算這檔在當下佔全部持倉成本基礎的比例,不回推今日市值(分母排除已清倉 s2<=1e-9,對齊下面 held 的過濾閾值)。
+                total_cost_then = sum(c for s2, c in pos.values() if s2 > 1e-9)
+                weight_then = (cost / total_cost_then) if total_cost_then > 1e-9 else 0.0
+                avg_down.append(dict(ticker=t, date=r["date"], px=r["price"], avg=cost/sh, weight_then=weight_then))
             pos[t][0] += r["qty"]; pos[t][1] += r["qty"] * r["price"]
         else:
             if sh > 1e-9:
@@ -289,17 +293,37 @@ def adaptive_n_fwd(rows):
     span = (rows[-1]["date"] - rows[0]["date"]).days
     return 30 if span >= 365 else 20 if span >= 120 else 10   # ≥1年→30d,半年→20d,更短→10d
 
+def last_prices(data, max_stale_days=10):
+    """全價格 universe 的最新收盤價 {ticker: px}。
+    #79:last_px 不能依附在只掃 round-trip 的迴圈裡——持有中、從未平倉的標的
+    (往往是最大倉位)會被結構性排除,未實現損益/套牢診斷/what-if 全部靜默漏算。
+    抓價清單本來就含 held(main:tickers = rts | held),這裡把已抓到的價全放出來。
+    staleness gate:最後有效價距價格框末日 > max_stale_days(日曆日)→ 不給價,
+    下游自然降級成本基礎。下市/長期停牌的殭屍持倉,殘價當現價餵進未實現損益
+    比「判不出」更糟;10 天罩得住連假與單日資料延遲,擋得住下市數月的殘價。"""
+    if data is None:
+        return {}
+    out = {}
+    latest = data.index[-1]
+    for t in data.columns:
+        col = data[t].dropna()
+        if col.empty:
+            continue
+        if (latest - col.index[-1]).days > max_stale_days:
+            continue
+        out[t] = float(col.iloc[-1])
+    return out
+
 def fwd_from_px(rts, data, n_fwd=N_FWD):
     if data is None:
         return None, None
     import pandas as pd  # 只有真有價格資料才需要 pandas;無價(乾淨環境/未裝)時提早 return,別硬依賴
-    fwds, last_px = [], {}
+    fwds, last_px = [], last_prices(data)
     for r in rts:
         t = r["ticker"]
         if t not in data.columns: continue
         col = data[t].dropna()
         if col.empty: continue
-        last_px[t] = float(col.iloc[-1])
         after = col[col.index > pd.Timestamp(r["exit"])]
         if len(after) == 0: continue
         target = after.iloc[min(n_fwd-1, len(after)-1)]
@@ -308,8 +332,13 @@ def fwd_from_px(rts, data, n_fwd=N_FWD):
         fwds.append(r["fwd"])
     return fwds, last_px
 
-def _port_daily_returns(rows, px):
-    """重建投組日報酬序列(昨日持股 × 今日價,排除當日買賣現金流)。"""
+def _port_daily_returns(rows, px, proxy=None):
+    """重建投組日報酬序列(昨日持股 × 今日價,排除當日買賣現金流)。
+    proxy={ticker: 板塊基準 ticker} 給定時,同步重建「板塊配置混合」mimic 投組
+    (同權重、每檔換成其板塊基準)→ 回傳 (port, mimic, fb_share, unproxied):
+    fb_share = 無板塊對照、按 SPY 計的平均權重(拆帳 coverage 用),unproxied = 這些 ticker。
+    mimic 與 port 定義在完全相同的日集(缺對照時逐層降級 SPY → 股票自身),恆等式才守得住。
+    不給 proxy → 只回 port Series(相容舊呼叫)。"""
     import pandas as pd
     from collections import defaultdict
     days = list(px.index)
@@ -317,38 +346,130 @@ def _port_daily_returns(rows, px):
     for r in rows:
         ev[pd.Timestamp(r["date"])].append(r)
     shares = defaultdict(float); prev = {}; port_rets = {}
+    mimic_rets = {}; fb_w = 0.0; fb_days = 0; unproxied = set()
+    spy = px["SPY"] if (proxy is not None and "SPY" in px.columns) else None
     for i, day in enumerate(days):
         if i > 0 and prev:
-            num = den = 0.0
+            num = den = num_m = fb = 0.0
             for t, sh in prev.items():
                 if sh == 0 or t not in px.columns: continue
                 p1 = px[t].iloc[i]; p0 = px[t].iloc[i-1]
                 if pd.isna(p1) or pd.isna(p0): continue
                 num += sh * p1; den += sh * p0
-            if den > 0: port_rets[day] = num / den - 1
+                if proxy is None: continue
+                pt = proxy.get(t)
+                if pt and pt not in px.columns:       # 有對照但整條沒抓到價(離線/下市)→ 視同無對照
+                    unproxied.add(t); pt = None
+                if not pt:
+                    unproxied.add(t)
+                m1 = px[pt].iloc[i] if pt else None
+                m0 = px[pt].iloc[i-1] if pt else None
+                if pt and not (pd.isna(m1) or pd.isna(m0)):
+                    num_m += sh * p0 * (float(m1) / float(m0))
+                elif spy is not None and not (pd.isna(spy.iloc[i]) or pd.isna(spy.iloc[i-1])):
+                    num_m += sh * p0 * (float(spy.iloc[i]) / float(spy.iloc[i-1]))  # 按 SPY 計:配置 0,全歸選股
+                    fb += sh * p0; unproxied.add(t)    # 對照欄位存在但這天缺值(如新上市 ETF)→ 仍記為 fallback,誠實揭露
+                else:
+                    num_m += sh * p1                  # 連 SPY 都沒價(序列頭)→ 用股票自身,該檔當日選股=0
+                    fb += sh * p0; unproxied.add(t)
+            if den > 0:
+                port_rets[day] = num / den - 1
+                if proxy is not None:
+                    mimic_rets[day] = num_m / den - 1
+                    fb_w += fb / den; fb_days += 1
         for r in ev.get(day, []):
             shares[r["ticker"]] += r["qty"] if r["side"] == "buy" else -r["qty"]
         prev = dict(shares)
-    return pd.Series(port_rets)
+    port = pd.Series(port_rets)
+    if proxy is None:
+        return port
+    return port, pd.Series(mimic_rets), (fb_w / fb_days if fb_days else 0.0), unproxied
 
-def _regress(port, bench_px, rf_annual):
-    """對單一 benchmark 回歸 → β / Jensen α / 超額報酬。"""
+def _aligned(port, bench_px):
+    """對齊投組/基準日報酬:去 NaN + 去離群(split/資料錯)。回歸與拆帳共用同一天集,數字才對得上。"""
     import pandas as pd
     df = pd.DataFrame({"p": port, "s": bench_px.pct_change()}).dropna()
-    df = df[df["p"].abs() < 0.5]                 # 去離群(split/資料錯)
-    if len(df) < 60: return None
+    return df[df["p"].abs() < 0.5]
+
+def _regress(port, bench_px, rf_annual):
+    """對單一 benchmark 回歸 → β / Jensen α + 標準誤/t/95% 區間。
+    對 excess(扣 rf)回歸,截距即 Jensen α(值與舊式恆等);SE 用 OLS 截距公式——
+    持倉越集中、個股雜訊越大 → 殘差越大 → SE 越寬:「集中=判不準」由統計直接量,
+    不再用持倉檔數當代理(#80)。se=0(完美複製品)→ t=None,別除零。
+    回傳的 days = 對齊後實際回歸用的天索引,給 dim_alpha_beta 的拆帳重用,
+    別再對同一組序列重跑一次 _aligned(不然兩處門檻一旦分岔,拆帳恆等式會悄悄壞掉)。"""
+    df = _aligned(port, bench_px)
+    n = len(df)
+    if n < 60: return None
     rf_d = rf_annual / 252.0
-    beta = df["p"].cov(df["s"]) / df["s"].var()
-    alpha_ann = (df["p"].mean() - (rf_d + beta * (df["s"].mean() - rf_d))) * 252.0
+    xe = df["s"] - rf_d; ye = df["p"] - rf_d
+    var_x = float(xe.var())
+    if var_x <= 1e-12:            # 基準幾乎零波動(整段停牌/假期資料)→ β/α 無定義,別除出 NaN 漏進 JSON
+        return None
+    beta = xe.cov(ye) / var_x
+    alpha_d = ye.mean() - beta * xe.mean()
+    resid = ye - alpha_d - beta * xe
+    s2 = float((resid ** 2).sum()) / (n - 2)
+    sxx = var_x * (n - 1)
+    se_d = (s2 * (1.0 / n + float(xe.mean()) ** 2 / sxx)) ** 0.5 if sxx > 0 else 0.0
+    alpha_ann = alpha_d * 252.0
+    se_ann = se_d * 252.0
+    # 地板 1e-10(日尺度):真實資料 se 遠大於此;只有「完美複製品」的浮點噪音殘差(~1e-17)
+    # 會落在其下 → t 無意義(會算出 1e13 這種天文數字),判 None,分級保守歸 noise。
+    t = (float(alpha_d) / se_d) if se_d > 1e-10 else None
     port_tot = (1 + df["p"]).prod() - 1
     bench_tot = (1 + df["s"]).prod() - 1
-    return dict(beta=beta, alpha_ann=alpha_ann, port_tot=port_tot,
-                bench_tot=bench_tot, excess=port_tot - bench_tot, n=len(df))
+    return dict(beta=beta, alpha_ann=alpha_ann, alpha_se_ann=se_ann, alpha_t=t,
+                alpha_ci95=[alpha_ann - 1.96 * se_ann, alpha_ann + 1.96 * se_ann],
+                port_tot=port_tot, bench_tot=bench_tot, excess=port_tot - bench_tot, n=n,
+                days=df.index)
 
-BENCH_LABEL = {"SPY": "大盤", "QQQ": "科技股", "SOXX": "半導體"}
+# ── 賽道/選股拆帳(Brinson 式兩層)的板塊基準 ──
+# sector(driver)標籤 → 板塊 ETF。mimic 投組 = 同權重、每檔換成其板塊基準 →
+# 「押對賽道」= mimic − SPY、「板塊內選股」= 你 − mimic;兩項相加恆等於贏大盤 pp。
+# 這就是卡面一直說的『真正公平的對照 = 你當時板塊配置的混合』——現在真的算它。
+# 標籤來源 = DRIVER_FALLBACK + Claude driver_map(GICS 式中文,含常見同義變體);
+# 沒對照的標籤 → 該檔按 SPY 計(配置效果 0,超額全歸選股)+ 記入 unproxied,卡上要誠實提。
+SECTOR_BENCH = {
+    "半導體": "SOXX", "軟體雲": "QQQ", "科技": "XLK",
+    "能源": "XLE", "金融": "XLF", "金融科技": "XLF",
+    "醫療": "XLV", "醫療保健": "XLV", "生技": "XLV",
+    "必需消費": "XLP", "消費": "XLY", "非必需消費": "XLY", "汽車": "XLY", "電動車AI": "XLY",
+    "工業": "XLI", "無人機國防": "XLI", "國防": "XLI",
+    "公用事業": "XLU", "公用": "XLU", "資料中心電力": "XLU",
+    "電信": "XLC", "通訊": "XLC", "媒體": "XLC",
+    "原物料": "XLB", "材料": "XLB", "稀土材料": "XLB",
+    "房地產": "XLRE",
+}
+BENCH_SELF = {"大盤ETF", "區域ETF", "商品", "債券"}  # 持有 ETF 本身=配置決策:基準=它自己(選股恆 0,超額全歸賽道)
+ALPHA_MIN_DAYS, ALPHA_T_TH = 252, 1.96  # 能力語氣門檻:≥1 年(業界慣例)+ 95% 顯著;統計錨,非拍腦袋(#63)
+
+def _sector_proxy(t):
+    """ticker → 拆帳基準:ETF 類=自己;有板塊對照=板塊 ETF;無 → None(按 SPY 計 + 記 unproxied)。"""
+    sec, _ = driver(t)
+    if sec in BENCH_SELF:
+        return t
+    return SECTOR_BENCH.get(sec)
+
+def _alpha_grade(r):
+    """α 分級:數字永遠出,語氣看統計(#4 誠實鐵律 v2:「不夠厚不出數」→「出數 + 說得清多不確定」)。
+    significant = 樣本 ≥252 交易日 且 |t|≥1.96 → 可用能力語氣(正負皆然,顯著的負 α 也是定論);
+    suggestive = 1≤|t|<1.96 → 有跡象未達顯著;noise = 其餘 → 分不出本事還是運氣。
+    gate 記「為何到不了 significant」(#80/#82:機械欄位,卡片講原因不靠 Claude 記性)。"""
+    t, n = r.get("alpha_t"), r.get("n", 0)
+    if n >= ALPHA_MIN_DAYS and t is not None and abs(t) >= ALPHA_T_TH:
+        return dict(grade="significant", gate=None)
+    grade = "suggestive" if (t is not None and abs(t) >= 1) else "noise"   # 單一算式,門檻只在一處調
+    reason = "sample_short" if n < ALPHA_MIN_DAYS else "not_significant"
+    gate = (dict(reason="sample_short", n_days=n, need=ALPHA_MIN_DAYS) if reason == "sample_short"
+            else dict(reason="not_significant", t=t, need=ALPHA_T_TH))
+    return dict(grade=grade, gate=gate)
 
 def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
-    """E2：投組日報酬 vs 多基準回歸。多基準才誠實——贏 SPY 可能只是贏在板塊,不是 alpha。"""
+    """E2:投組日報酬 vs 多基準回歸 + 贏大盤拆帳(押對賽道 vs 板塊內選股)。
+    α 一律 vs 通用大盤 SPY,永遠出數、帶 SE/t/95% 區間(alpha_stat);
+    excess_split:配置(賽道)= 板塊配置混合 mimic − SPY、選股 = 你 − mimic——
+    與 excess 同一天集、同一複利 → 配置+選股 ≡ 贏大盤 pp(會計恆等,不需顯著性,#80)。"""
     try:
         import pandas as pd  # noqa
     except ImportError:
@@ -356,7 +477,8 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
     if data is None or "SPY" not in list(getattr(data, "columns", [])):
         return dict(dim="alpha/beta", note="無價格/SPY")
     px = data.ffill()
-    port = _port_daily_returns(rows, px)
+    proxy = {t: _sector_proxy(t) for t in {r["ticker"] for r in rows}}
+    port, mimic, fb_share, unproxied = _port_daily_returns(rows, px, proxy=proxy)
     benchmarks = {}
     for b in ["SPY", "QQQ", "SOXX"]:
         if b in px.columns:
@@ -365,26 +487,34 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
     if "SPY" not in benchmarks:
         return dict(dim="alpha/beta", note="樣本不足")
     spy = benchmarks["SPY"]
+    days = spy["days"]                                     # 重用 SPY 回歸已對齊的天集(別再跑一次 _aligned,兩處才不會分岔)
+    mimic_tot = float((1 + mimic.reindex(days)).prod() - 1)
+    split = dict(excess=spy["excess"],
+                 allocation=mimic_tot - spy["bench_tot"],  # 押對賽道:你的板塊配置混合 − 大盤
+                 selection=spy["port_tot"] - mimic_tot,    # 板塊內選股:你 − 板塊配置混合
+                 mimic_tot=mimic_tot,
+                 coverage=round(1.0 - fb_share, 4),        # 有板塊對照的平均權重(按 SPY 計的部分=1−coverage)
+                 unproxied=sorted(unproxied),
+                 # 只列「全程沒 fallback 過」的對照(t not in unproxied)——曾 fallback 的 ticker
+                 # 已在 unproxied 誠實揭露,proxy 不該同時宣稱「配置的對照」聽起來像全程有效
+                 proxy={t: p for t, p in sorted(proxy.items()) if p and t != p and t not in unproxied})
+    g = _alpha_grade(spy)
+    stat = dict(alpha_ann=spy["alpha_ann"], se_ann=spy["alpha_se_ann"], t=spy["alpha_t"],
+                ci95=spy["alpha_ci95"], n_days=spy["n"], grade=g["grade"], gate=g["gate"])
     return dict(dim="alpha/beta", tier=3, benchmarks=benchmarks, n=spy["n"],
                 beta=spy["beta"], alpha_ann=spy["alpha_ann"],          # 頂層保留 SPY 值給 overview
+                alpha_stat=stat, excess_split=split,
                 port_tot=spy["port_tot"], spy_tot=spy["bench_tot"], excess_vs_spy=spy["excess"])
 
-def alpha_credible(ab, dims):
-    """α 當『選股能力證據』的雙閘門:① 樣本夠長(≥1 年) ② 橫截面夠寬。
-    不夠 → 算出的 α 主要是賽道紅利 + 雜訊,不可用『真本事』語氣
-    (散戶尺度 α 顯著性 ≈ IR×√年數,結構上難顯著;mock 4 檔 98% 同 driver 就是反例)。"""
+def alpha_credible(ab):
+    """α 可用「能力語氣」嗎:樣本 ≥1 年 且 |t|≥1.96(alpha_stat.grade == significant)。
+    v2(#80):持倉檔數/集中度閘門退役——兩個舊閘門的意圖各自有了直接測量:
+      「集中 → 雜訊大」由回歸 SE 直接量(集中 → 殘差大 → t 低,自然過不了);
+      「押賽道 ≠ 選股」由 excess_split 拆帳正面回答(描述性,永遠可出)。
+    無 alpha_stat / 有 note → fail-closed。"""
     if not isinstance(ab, dict) or ab.get("note"):
         return False
-    if ab.get("n", 0) < 252:                                   # (a) < ~1 年交易日 → 不顯著
-        return False
-    div = next((d for d in dims if d.get("dim") == "分散"), None)
-    if not div:                                                # 無橫截面證據 → 閉閘(fail-closed,codex review)
-        return False
-    if (max(div.get("ai_pct", 0), div.get("max_sector_pct", 0)) >= 0.50
-            or div.get("n", 0) < 8):                           # (b) 橫截面太窄 = 押賽道,非選股
-        return False
-    return True
-
+    return (ab.get("alpha_stat") or {}).get("grade") == "significant"
 
 def print_alpha_beta(d):
     """獨立 Panel:把報酬拆成「運氣(大盤+賽道)」vs「技巧(選股)」。"""
@@ -400,51 +530,48 @@ def print_alpha_beta(d):
         return
     bs = d["benchmarks"]; spy = bs["SPY"]
     port = spy["port_tot"]; vs_spy = spy["excess"]
+    st = d.get("alpha_stat") or {}; sp = d.get("excess_split") or {}
     t = Text()
     t.append(f"過去 {d['n']} 個交易日:投組 ")
     t.append(f"{port*100:+.0f}%", style="bold green" if port >= 0 else "bold red")
     t.append("、大盤 SPY ")
     t.append(f"{spy['bench_tot']*100:+.0f}%", style="green" if spy['bench_tot'] >= 0 else "red")
-    t.append(" → 你贏大盤 ")
+    t.append(" → 你贏大盤 " if vs_spy >= 0 else " → 你輸大盤 ")
     t.append(f"{vs_spy*100:+.0f}pp", style="bold green" if vs_spy >= 0 else "bold red")
-    t.append("\n\n① ", style="bold")
-    if d.get("credible"):
-        t.append("alpha (vs 通用大盤,調風險後):  ")
-        t.append(f"{spy['alpha_ann']*100:+.0f}%/年", style="bold cyan")
-        t.append(f"   β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)")
+    t.append("\n\n① 這 ", style="bold")
+    t.append(f"{vs_spy*100:+.0f}pp", style="bold")
+    t.append(" 從哪來(對照=你當時的板塊配置混合,兩項相加=贏大盤):", style="bold")
+    if sp:
+        alloc, sel = sp["allocation"], sp["selection"]
+        t.append("\n   押對賽道(板塊配置):  ")
+        t.append(f"{alloc*100:+.0f}pp", style="bold green" if alloc >= 0 else "bold red")
+        t.append("\n   板塊內選股:          ")
+        t.append(f"{sel*100:+.0f}pp", style="bold green" if sel >= 0 else "bold red")
+        if sp.get("coverage", 1.0) < 0.995 and sp.get("unproxied"):
+            miss = "、".join(sp["unproxied"][:4])
+            t.append(f"\n   (板塊對照覆蓋 {sp['coverage']*100:.0f}% 市值;{miss} 無板塊 ETF → 按大盤計、歸入選股)",
+                     style="dim")
     else:
-        t.append(f"β {spy['beta']:.2f} ", style="bold")
-        t.append(f"(波動是大盤 {spy['beta']:.1f} 倍)")
-        t.append("\n   α 不單獨報數 ", style="dim")
-        t.append("— 樣本 <1 年或持倉過度集中時,α = 賽道紅利 + 雜訊,非選股能力", style="dim")
-    t.append("\n\n② ", style="bold")
-    if not d.get("credible"):
-        sens = "、".join(f"vs {sk} {(port - bs[sk]['bench_tot'])*100:+.0f}pp"
-                         for sk in ("QQQ", "SOXX") if sk in bs)
-        extra = f" (贏大盤對基準極敏感:{sens},換基準結論就翻)" if sens else ""
-        t.append("α / 選股能力:資料不足以判定", style="bold yellow")
-        t.append(extra, style="dim")
-        t.append("\n   還分不出『選股』還是『押對賽道』,先看行為層。", style="dim")
-        t.append("\n\n(持倉法日報酬近似;基準=通用大盤 SPY)", style="dim italic")
+        t.append("\n   拆帳算不出(缺板塊價格)", style="dim")
+    t.append("\n\n② α(vs 通用大盤,調風險後):  ", style="bold")
+    if st:
+        ci = st.get("ci95") or [None, None]
+        t.append(f"年化 {st['alpha_ann']*100:+.0f}%", style="bold cyan")
+        if st.get("se_ann") is not None:              # se_ann==0(完美複製品)是合法值,別被 truthy 檢查漏掉
+            t.append(f"  (95% 區間 {ci[0]*100:+.0f}%~{ci[1]*100:+.0f}%)", style="dim")
+        t.append(f"   β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)\n   ")
+        if st.get("grade") == "significant":
+            t.append("樣本 ≥1 年且統計顯著——這塊可以當能力談(正負都算數)。", style="bold")
+        elif st.get("grade") == "suggestive":
+            t.append("有跡象但未達顯著——傾向有,還不能下定論。", style="yellow")
+        else:
+            gate = st.get("gate") or {}
+            why = "樣本不到 1 年" if gate.get("reason") == "sample_short" else "區間太寬(常見原因:持倉集中、個股雜訊大)"
+            t.append(f"統計上分不出是本事還是運氣({why})——工具的侷限,不是說你沒本事;拆帳與行為層照樣能看。",
+                     style="dim")
     else:
-        t.append(f"你贏大盤的 {vs_spy*100:+.0f}pp,有多少是『選股』、多少是『押對賽道』?換對照看敏感度:\n")
-        for sk, tag in [("QQQ", "科技,較中性"), ("SOXX", "半導體,事後最強板塊→偏嚴苛")]:
-            if sk in bs:
-                pick = port - bs[sk]["bench_tot"]
-                t.append(f"   你的選股 vs {sk:<4} ({tag}):  ")
-                t.append(f"{pick*100:+.0f}pp\n", style="bold green" if pick >= 0 else "bold red")
-        if "QQQ" in bs:
-            pick_n = port - bs["QQQ"]["bench_tot"]
-            t.append("\n▸ 準確認知:", style="bold")
-            if pick_n < -0.05:
-                t.append(f"連較中性的 QQQ 你選股都輸 {-pick_n*100:.0f}pp,選股確實是弱項")
-                t.append(" — 但別全盤否定:ETF 也買爛股、錯過妖股,選股的上限你還留著。", style="dim")
-            else:
-                t.append(f"你選股贏中性的 QQQ {pick_n*100:+.0f}pp,只是跑不贏事後最強的 SOXX。")
-                t.append(" 選股不算爛,別被嚴苛基準嚇到。", style="dim")
-        t.append("\n\n⚠ 基準的坑:", style="yellow")
-        t.append("SOXX 是『事後』最強板塊,有存活者偏差(馬後炮);真正公平的對照是『你當時板塊配置的混合』。", style="dim")
-        t.append("\n(持倉法日報酬近似;alpha 基準=通用大盤 SPY)", style="dim italic")
+        t.append(f"β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)——α 統計量缺(樣本不足)", style="dim")
+    t.append("\n\n(持倉法日報酬近似;α 基準=通用大盤 SPY;拆帳=Brinson 式兩層,配置+選股=贏大盤)", style="dim italic")
     _console.print()
     _console.print(Panel(
         t,
@@ -501,9 +628,10 @@ def dim_size(rows, held, last_px):
     max_t = max(weights, key=weights.get) if weights else None
     max_pct = weights.get(max_t, 0)
     sev = min(max((max_pct - 0.20) / 0.30, 0), 1)
+    others = [w for t, w in weights.items() if t != max_t]      # 「其餘平均」要排除最大那檔,否則 mean(全部)=1/檔數、跟集中度無關,還會跟「最大佔 X%」自相矛盾
     return dict(dim="部位 sizing", tier=1, triggered=max_pct > 0.25,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
-                avg_pct=statistics.mean(weights.values()) if weights else 0, weights=weights)
+                avg_pct=statistics.mean(others) if others else 0.0, weights=weights)
 
 def dim_diversify(held, last_px):
     vals = {}
@@ -514,8 +642,9 @@ def dim_diversify(held, last_px):
     sec = defaultdict(float); ai = 0.0
     for t, wt in w.items():
         s, is_ai = driver(t); sec[s] += wt; ai += wt * is_ai
-    max_sec = max(sec, key=sec.get) if sec else None
-    max_sec_pct = sec.get(max_sec, 0)
+    classified_sec = {s: v for s, v in sec.items() if s != "未分類"}   # 排除未分類桶,避免 driver_map 沒建好冒充集中度訊號(對齊 what_if() 既有作法)
+    max_sec = max(classified_sec, key=classified_sec.get) if classified_sec else None
+    max_sec_pct = classified_sec.get(max_sec, 0)
     top3 = sum(sorted(w.values(), reverse=True)[:3])
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
     trig = (len(w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > 0.60 or ai > 0.60
@@ -550,10 +679,13 @@ def dim_hold(rts):
                 incon_tickers=sorted(incon.keys()))
 
 def dim_avgdown(avg_down, held, last_px, size_dim):
+    # #94:breach 判準改用加碼「當下」的成本權重(positions() 算好放在 weight_then),
+    # 不再查 size_dim["weights"]——那是用「今天」市值回推的單一快照,會把今天的重倉/輕倉
+    # 誤套到三年前或上週的每一筆歷史加碼決定上,方向可能整個判反(見 issue #94)。
     cnt = len(avg_down)
     breach = 0
     for e in avg_down:
-        w = size_dim["weights"].get(e["ticker"], 0)
+        w = e.get("weight_then", 0)
         if w > 0.25: breach += 1
     # breach（攤平破 size 上限）才是危險訊號；原始攤平次數對常買 dip 的人不可靠 → 降權 + 封頂 0.8
     # （spec C-limit：無法從交易區分計畫性建倉 vs 恐慌攤平 → 此維以「問句」呈現，不當高信心判決）
@@ -658,7 +790,9 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
     if mp < 0.22:
         c.append((1-mp, f"單筆部位有控制:押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
     if avgdown_dim.get("breach", 1) == 0 and avgdown_dim.get("count", 0) >= 2:
-        c.append((0.65, f"就算往下加碼 {avgdown_dim['count']} 次,也沒有任何一筆失控加到爆倉(都守在部位上限內)"))
+        _egt = (avgdown_dim.get("tickers") or [""])[0]         # 帶一個具體標的當案例;「爆倉」是黑話,改人話「越攤越重」
+        c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次,卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
+                        + (f"(例:{_egt})" if _egt else "")))
     if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
         c.append((0.6, f"{div_dim['n']} 檔分布在不同 driver,沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
@@ -831,38 +965,39 @@ def prescribe(ab, dims, overview):
     dd = {d["dim"]: d for d in dims}
     rx = []
     bs = (ab or {}).get("benchmarks", {})
-    if "SPY" in bs and "QQQ" in bs:                          # 雙基準(中性 QQQ + 嚴苛 SOXX)判選股,避開 survivorship bias
+    sp = (ab or {}).get("excess_split") or {}
+    st = (ab or {}).get("alpha_stat") or {}
+    if "SPY" in bs and sp:                                   # 拆帳(配置 vs 選股)取代舊「換基準看敏感度」:恆等式,不會翻
         spy = bs["SPY"]
-        pick_q = spy["port_tot"] - bs["QQQ"]["bench_tot"]    # 你 vs 中性科技
-        pick_s = (spy["port_tot"] - bs["SOXX"]["bench_tot"]) if "SOXX" in bs else pick_q  # 你 vs 事後最強板塊
-        if spy["excess"] > 0.10:                             # 贏大盤 → 揚長是「假設」不是「定論」
+        alloc, sel = sp["allocation"], sp["selection"]
+        if spy["excess"] > 0.10 and alloc >= max(sel, 0.0):  # 贏大盤且賽道佔大頭 → 揚長是「假設」不是「定論」
             rx.append(dict(kind="揚長(假設,待驗證)", verify="記錄『下一個賽道』判斷,事後對帳",
-                           text=("你贏大盤主要靠『押對賽道/方向』(換哪個基準都成立)。但這只是『假設你有方向判斷力』,"
-                                 "不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,"
-                                 "看未來兩三次準不準,對了才叫 edge。")))
-        if not ab.get("credible"):                          # codex review:不 credible → 不下選股能力定論(外包/真 edge)
+                           text=(f"你贏大盤 {spy['excess']*100:+.0f}pp 裡,押對賽道佔 {alloc*100:+.0f}pp(拆帳)。"
+                                 "但這只是『假設你有方向判斷力』,不是已證實的 edge——押對 AI 也可能只是站到風口。"
+                                 "壓測它:寫下你『下一個看好的賽道』、記時間,看未來兩三次準不準,對了才叫 edge。")))
+        if not ab.get("credible"):                           # t 不顯著 → 不下選股能力定論(外包/真 edge)
+            t_note = (f"α 的 95% 區間還太寬(t={st['t']:.1f})" if st.get("t") is not None
+                      else "α 統計量還算不穩")
             rx.append(dict(kind="選股:資料不足以判定", text=(
-                f"你的選股 alpha 對基準極敏感(vs 中性 QQQ {pick_q*100:+.0f}pp、vs 事後最強 SOXX {pick_s*100:+.0f}pp),"
-                f"且樣本/持倉還不夠厚——資料判不出你『會不會選股』,別急著外包、也別自滿。")))
-        elif pick_q < -0.05 and pick_s < -0.05:             # 連中性基準都輸 → 選股確實弱
+                f"拆帳看,板塊內選股貢獻 {sel*100:+.0f}pp(描述性、這數字站得住);但 {t_note},"
+                f"統計上還分不出選股是本事還是運氣——別急著外包、也別自滿。")))
+        elif sel < -0.05 or st.get("alpha_ann", 0) < 0:      # 統計站得住且選股在虧 → 外包
             rx.append(dict(kind="外包短板(漸進)", verify="被動部位佔比(升→好)",
-                           text=("你選股連中性的 QQQ 都輸——優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
+                           text=(f"扣掉賽道,你板塊內選股貢獻 {sel*100:+.0f}pp、α 統計上站得住地差——"
+                                 "優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
                                  "是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)")))
-        elif pick_q > 0.05 and pick_s > 0.05:               # 連嚴苛基準都贏 → 選股真 edge
-            rx.append(dict(kind="揚長", text="你選股連最嚴苛的 SOXX 都贏,這是真 edge——別讓 sizing/紀律稀釋它。"))
-        else:                                                # 一正一負 → 無定論,誠實不硬下處方
-            rx.append(dict(kind="選股:目前無定論", text=(
-                f"你的選股 alpha 對基準極敏感(vs 中性 QQQ {pick_q*100:+.0f}pp、vs 事後最強 SOXX {pick_s*100:+.0f}pp)——"
-                f"換個比法結論就翻。誠實說:資料還判不出你『會不會選股』,別急著外包、也別自滿。"
-                f"要定論,得拿『你當時的板塊配置混合』當對照(進階,還沒做)。")))
+        elif sel > 0.05:                                      # 統計站得住且選股在賺 → 真 edge
+            rx.append(dict(kind="揚長", text=(
+                f"扣掉賽道紅利,你板塊內選股仍貢獻 {sel*100:+.0f}pp、α 統計顯著——"
+                "這是真 edge,別讓 sizing/紀律稀釋它。")))
     ad = dd.get("加碼攤平", {})
     if ad.get("count", 0) >= 10 or ad.get("breach", 0) >= 1:
-        rx.append(dict(kind="砍損耗", verify="虧損加碼次數(降→好)",
+        rx.append(dict(kind="砍損耗", dim="加碼攤平", verify="虧損加碼次數(降→好)",
                        rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)",
                        text=f"虧損中加碼 {ad.get('count', 0)} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"))
     sz = dd.get("部位 sizing", {})
     if sz.get("max_pct", 0) > 0.30:                          # #29:解開互斥 gate,攤平與 sizing 可同時成候選(讓 candidate_rules 能 2-3 條)
-        rx.append(dict(kind="砍損耗", verify="單筆最大佔比(降→好)",
+        rx.append(dict(kind="砍損耗", dim="部位 sizing", verify="單筆最大佔比(降→好)",
                        rule=f"單筆部位上限定死 20%,超過就減",
                        text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
     return rx
@@ -991,14 +1126,21 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         if ab and not ab.get("note"):
             ov.append("\n贏大盤 ")
             ov.append_text(_pct(ab['excess_vs_spy'], unit="pp", bold=True))
-            ov.append(f"   β {ab['beta']:.2f}  (漲跌是大盤 {ab['beta']:.1f} 倍)")
-            if ab.get("credible"):
-                ov.append("   真本事 α ", style="bold")
-                ov.append(f"年化 {ab['alpha_ann']*100:+.0f}%", style="bold cyan")
-            else:
-                ov.append("\n選股 α:", style="yellow")
-                ov.append(" 樣本/持倉不足以判定能力,先看行為層 ", style="dim")
-                ov.append("(α 為何不可判 → 見下方分析)", style="dim italic")
+            sp = ab.get("excess_split") or {}
+            if sp:                                             # 拆帳恆等式:賽道 + 選股 = 贏大盤(永遠可出)
+                ov.append("  = 押對賽道 ")
+                ov.append(f"{sp['allocation']*100:+.0f}pp", style="bold")
+                ov.append(" + 板塊內選股 ")
+                ov.append(f"{sp['selection']*100:+.0f}pp", style="bold")
+            ov.append(f"\nβ {ab['beta']:.2f}  (漲跌是大盤 {ab['beta']:.1f} 倍)")
+            st = ab.get("alpha_stat") or {}
+            if st:                                             # α 永遠出數,語氣看統計(#80)
+                ov.append("   α ")
+                ov.append(f"年化 {st['alpha_ann']*100:+.0f}%", style="bold cyan")
+                if ab.get("credible"):
+                    ov.append(" (≥1 年 + 統計顯著,可當能力談)", style="bold")
+                else:
+                    ov.append(" (區間寬,分不出本事還是運氣 → 見下方)", style="dim")
         elif ab and ab.get("note"):
             ov.append(f"\nα/β:{ab['note']}", style="dim")
         parts.append(Padding(ov, (0, 1)))
@@ -1155,7 +1297,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
       - schema_version 跟欄位語意走:半年後 skill 更新不可損毀舊狀態(§4.6)。
-      - 誠實鐵律:α 不 credible(#11 雙閘門)→ alpha_ann=None,不讓賽道紅利冒充選股 metric。
+      - 誠實鐵律 v2(#80):α 永遠出數 + 出 t(數字+不確定性,比封殺更誠實);
+        credible=統計顯著(≥1 年且 |t|≥1.96)才可用能力語氣;賽道紅利由 excess_split 拆帳現形。
       - metrics 永遠同時帶 sizing/攤平 兩個指標:對帳時要查「上次承諾那一維」的數字,
         不是查這次新 headline(否則第二張卡只是重新初診,不是復盤)。
     """
@@ -1166,7 +1309,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
     d_div = dd.get("分散", {})
     ab = ab if isinstance(ab, dict) else {}
     has_ab = not ab.get("note")                             # ab 帶 note = 無 pandas/價格/樣本 → 無 α/β
-    credible = bool(ab.get("credible"))                     # #11 雙閘門:樣本夠長 + 橫截面夠寬才算選股能力
+    credible = bool(ab.get("credible"))                     # v2(#80):統計顯著(≥1 年 + |t|≥1.96)才算,檔數閘退役
     # headline dim:沿用 render() 的選法 —— triggered 中 severity×tier 權重最高那一個
     trig = sorted((d for d in dims if d.get("triggered")),
                   key=lambda d: d.get("severity", 0) * TW.get(d.get("tier", 2), 0.7),
@@ -1234,7 +1377,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
             "top3_pct": d_div.get("top3"),
             "n_holdings": d_div.get("n"),
             "beta": ab.get("beta"),
-            "alpha_ann": ab.get("alpha_ann") if credible else None,  # 不 credible 不報數(誠實)
+            "alpha_ann": ab.get("alpha_ann"),               # v2(#80):永遠出數;能力語氣由 alpha_credible 管
+            "alpha_t": (ab.get("alpha_stat") or {}).get("t"),   # 不確定性一起存,對帳時才知道數字多可信
             "alpha_credible": credible if has_ab else None,
         },
         "rule": rule,
@@ -1249,7 +1393,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                    ab, pa, master, is_demo=False, data_integrity=None):
+                    ab, pa, master, data_integrity=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1261,7 +1405,6 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
     - top_holes 帶 lens_quote 但別當結語用(SKILL L192)
     - candidate_rules:2-3 條候選規矩(Step 3 讓用戶挑/改一條,別只給第一條;#29 已讓 prescribe 能產多條)
     - dims_raw 5 維給結構化資料,讓 Claude「一句人話帶過其餘維」(SKILL L158-159)
-    - is_demo 標明 → mock 卡頭應加 [demo · 非真實成績]
     """
     TW = {1: 1.0, 2: 0.7}
     trig = sorted([d for d in dims if d["triggered"]],
@@ -1283,6 +1426,14 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
 
     # 候選規矩:2-3 條候選(#29 解開互斥 gate 後可多條),Step 3 跟用戶挑/改一條
     candidate_rules = [r for r in (rx or []) if r.get("rule")][:3]
+    covered_dims = {r.get("dim") for r in candidate_rules if r.get("dim")}
+    for h in top_holes:                    # #87/#95:出場紀律/分散/持有時間三維在 prescribe() 沒有 rule 生成路徑,candidate_rules 可能全空;用已算好的 lens_rule 補滿(headline dim 優先,因 top_holes 已按 severity 排序)
+        if len(candidate_rules) >= 3:
+            break
+        if h["dim"] in covered_dims or not h.get("lens_rule"):
+            continue
+        candidate_rules.append({"kind": h["dim"], "dim": h["dim"], "rule": h["lens_rule"], "text": h.get("lens_quote", "")})
+        covered_dims.add(h["dim"])
 
     # ⚠️ thesis_questions 給 Step 2 對話用,絕不准印在卡上(SKILL L77-79「確認在出卡之前」)
     thesis_questions = [{"ticker": d["ticker"], "question": d["thesis_q"]}
@@ -1291,11 +1442,10 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
     return {
         "schema_version": 1,
         "philosophy": master,
-        "is_demo": is_demo,                                 # mock csv → True,卡頭應加 [demo · 非真實成績]
         "strength": strength,
         "overview": overview,
-        "best_trade": best,
-        "worst_trade": worst,
+        "best_trade": {**best, "pnl": best["qty"] * (best["sell_px"] - best["buy_px"])} if best else None,   # 補 $ 損益,卡上 %和$ 都要
+        "worst_trade": {**worst, "pnl": worst["qty"] * (worst["sell_px"] - worst["buy_px"])} if worst else None,
         "what_if": wi,
         "ticker_diagnosis": tdiag,                          # tags 已是人話
         "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
@@ -1324,21 +1474,19 @@ def main():
     held, avg_down = positions(rows)
     tickers = {r["ticker"] for r in rts} | set(held.keys())
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
-    px, yf_err = fetch_prices(tickers, start)
+    bench = {p for p in (_sector_proxy(t) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
+    px, yf_err = fetch_prices(tickers | bench, start)
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
-    # is_demo:任一輸入 path 含 'mock' → 是 demo,卡頭/JSON 都標(SKILL Step 3 + issue #21:mock alpha 失真,要當下標警告)
-    is_demo = any("mock" in p.replace(os.sep, "/").lower() for p in paths)
-    BROAD = {"大盤ETF", "商品", "債券", "區域ETF"}   # 再平衡/現金管理，非選股決策
-    decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BROAD]
+    decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BENCH_SELF]   # 再平衡/現金管理,非選股決策(=配置類,同 BENCH_SELF)
     d_size = dim_size(rows, held, last_px)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held, last_px)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held, last_px, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
     ab = dim_alpha_beta(rows, px)
-    if isinstance(ab, dict): ab["credible"] = alpha_credible(ab, dims)   # α 雙閘門(#4):不夠厚不用「真本事」語氣
+    if isinstance(ab, dict): ab["credible"] = alpha_credible(ab)   # α 能力語氣閘 v2(#80):統計顯著才算,檔數閘退役
     overview = overview_stats(decision_rts, ab, held, last_px)   # 已實現 + 未實現都報
     pa = payoff_attribution(decision_rts)                  # 盈虧比拆解:重點交易的貢獻度
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆
@@ -1364,18 +1512,13 @@ def main():
         meta = (f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
                 f"{len(rts)} round-trip,持倉 {len(held)}｜yfinance: {'OK' if not yf_err else yf_err}"
                 f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔{dm_skip}{split_note}"
-                + (" (純 fallback,冷門股可能失準)" if not n_dm else "")
-                + ("｜⚠️ DEMO 模式" if is_demo else ""))
+                + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(meta, file=sys.stderr)
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                               ab, pa, master, is_demo=is_demo, data_integrity=data_integrity)
+                               ab, pa, master, data_integrity=data_integrity)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
-        # 預設:乾淨人話卡(demo / fallback 用,#20 違規條目已砍)
-        if is_demo:
-            print("="*60)
-            print("  ⚠️ DEMO 模式 · mock 假資料 · α/β 含 yfinance 真實漲幅 → 失真,勿解讀為實戰績效")
-            print("="*60)
+        # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
         print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
               f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
         print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"

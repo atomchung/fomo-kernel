@@ -10,7 +10,17 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 ## 何時用
 
-用戶想復盤自己的交易、想知道「我反覆犯的錯是什麼」、丟給你一份券商 CSV / 對帳單、或直接說 `/fomo-kernel`。沒有資料時,用內建 mock 跑一次 demo 給他看。
+用戶想復盤自己的交易、想知道「我反覆犯的錯是什麼」、丟給你一份券商 CSV / 對帳單、或直接說 `/fomo-kernel`。沒有資料時,請他提供券商 CSV / 對帳單(截圖也行,Step 0 讀得懂),**並同時給「試駕」選項**(見下節);只想看靜態長相 → README 的範例卡。
+
+## 🧪 試駕模式(沒資料也能體驗流程;三個防護缺一不可)
+
+用戶沒資料或想先體驗 → 用 AskUserQuestion 給兩選項:「**提供我的 CSV** / **先用內建假資料試駕一遍**」。選試駕 → 拿 `mock/mock_trades.csv` 走完整四步流程,但:
+
+1. **狀態一律不落盤**:`TR_STATE_OUT` 指到臨時目錄(如 `mktemp -d` 下);`~/.trade-coach/` 的 log.jsonl / theses.jsonl / profile.md **一個字都不寫**——假資料的承諾進了教練記憶,下次真復盤的對帳基準就是髒的。收尾改成一句講解:「真實使用時,這條規矩會存進你本機的教練記憶,下週回來先對帳」。
+2. **Step 2 照問,但標明是演練**:動機問題照走 AskUserQuestion——試駕就是要讓他體驗「我的答案會改變卡」這個差異化;但問句裡標明「示範資料,隨便選一個,看卡怎麼跟著變」,不逼他為不是他的交易編動機(#53 的尷尬就消了)。
+3. **卡標示範**:卡頭標「示範 · 假資料,非真實成績」;α/β 附一句「示範資料失真,別當真」——失真警告是**呈現層(你)的責任**,引擎對任何輸入一致、沒有 demo 分支(#89)。
+
+卡尾必收一句引導:「想復盤自己的交易 → `/fomo-kernel your.csv`」。
 
 ## 🔒 隱私第一(每次都要遵守)
 
@@ -18,7 +28,23 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 - **不要把用戶的交易內容寫進記憶、不要外傳給任何人**(包括 skill 作者)。
 - **誠實邊界(隱私話術別過度承諾)**:資料**不上傳後端、不落地儲存到別處、作者永遠拿不到**;但你(Claude)為了復盤**必須讀** CSV/JSON,交易內容自然進你的 context —— 這跟用戶平常用 Claude 一樣,不是「完全不經過任何伺服器」。README / 卡上的隱私話術照這個精度寫,別講成「絕對不離開你的電腦」。
 - 要回給作者的只有一件事:**「這張卡有沒有用」的文字反饋**(用戶自願)——不含任何交易明細。
-- 用戶沒給資料時,**只跑 `mock/mock_trades.csv`**(假資料),絕不要去找他機器上的真實對帳單。
+- 用戶沒給資料時,**請他提供或走試駕模式**(內建假資料、不落盤);絕不要主動去翻他機器上的真實對帳單。
+
+## 🌐 Output language (apply every time)
+
+Everything the user sees — your dialogue, the `AskUserQuestion` options, and the final card — must be in **one resolved output language**. Do not hardcode a language. Resolve it per session, first match wins:
+
+1. **Explicit request this session** — the user says "give it to me in English" / "用中文" / passes `lang=en`.
+2. **Saved preference** — `output_lang:` in `~/.trade-coach/profile.md`, if present.
+3. **Conversation language** — the language the user is speaking to you in right now. This is the default; follow it, don't impose a language.
+4. **Fallback** — Traditional Chinese (`zh-TW`).
+
+Once resolved:
+- Run the whole flow (dialogue, questions, card) in that language. Lens files (`rubric/*.lens.json`) currently carry Traditional-Chinese quotes/prompts — translate them faithfully on the fly into the resolved language when you write the card.
+- Pass it to the engine each run as `TR_LANG=<code>` (e.g. `TR_LANG=en`) for forward-compatibility. The engine does not consume it yet — its own printed CLI card and lens strings stay Chinese for now; full engine/lens localization keyed on `TR_LANG` (a strings table) is tracked separately as internationalization work. This still governs what the user sees **today**, because the card is one **you** write from `build_card_data()`'s structured JSON, not the engine's printed card.
+- Persist it: on first run, or whenever the user switches, write `output_lang: <code>` into `~/.trade-coach/profile.md` (alongside the profile principles) so the next session resolves to their preference at step 2.
+
+> The Traditional-Chinese phrasings, question templates, and card examples throughout the rest of this SKILL are **illustrative of intent**, not literal strings to copy — express their meaning in the resolved language.
 
 ## 工作流程(四步)
 
@@ -55,15 +81,15 @@ cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人
 
 ### Step 1 · 跑引擎,抓大放小
 
-**SKILL 走 JSON 模式拿結構化資料,Step 3 你自己寫卡 ——** 不要照搬 engine 預設輸出(那是 README quickstart 用的乾淨 demo / fallback,不是 SKILL 規格那張定論卡):
+**SKILL 走 JSON 模式拿結構化資料,Step 3 你自己寫卡 ——** 不要照搬 engine 預設輸出(那是 README quickstart 用的乾淨人話卡 / fallback,不是 SKILL 規格那張定論卡):
 
 ```bash
 mkdir -p ~/.trade-coach
 TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap.py <標準化後的CSV>
 # TR_JSON=1   → stdout 純 JSON(build_card_data,給你在 Step 3 寫敘事卡用);meta 走 stderr
 # TR_STATE_OUT → 寫一份薄 state(對帳用),跟 TR_JSON 平行,可同時設
-# 都不設 → 跑 demo 卡(README quickstart 用)
-# TR_DEBUG=1 → 在 demo 模式補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
+# 都不設 → 印預設人話卡(README quickstart 用)
+# TR_DEBUG=1 → 在預設輸出補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
 ```
 
 > 🔧 **引擎報 `ModuleNotFoundError`(如 pandas / yfinance)**:依賴多半裝在 venv / pyenv 的另一個 python 裡。找到裝了依賴的直譯器路徑重跑一次即可,常見是 repo 根的 `.venv/bin/python3`(README 安裝節的 venv 三行裝出來的)——把上面指令的 `python3` 換成那個路徑;別急著全域 pip(新 macOS 會被 PEP 668 擋)。
@@ -73,18 +99,15 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`thesis_questions`**:per-ticker 持股假設問句 — **這是給 Step 2 對話用的,絕不准印在卡上**(SKILL 鐵律:確認在出卡之前)。
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
-- **`is_demo`**:`true` → 卡頭必加 `[demo · 非真實成績]`(mock 用真實 ticker 算 α/β 會失真)。
-- **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。
+- **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
   - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。
   - `metrics`:全 metric 快照(`max_pos_pct / avgdown_count / ai_pct / max_sector_pct / top3_pct / payoff / beta / alpha_ann …`),對帳時拿承諾的 `metric_key` 反查新值(集中度承諾就追 `ai_pct`)。
-  - `alpha_ann` / `alpha_credible`:α **不 credible 時 `alpha_ann=null`**(雙閘門擋掉),別講成「沒 α」。**講清楚是哪個閘門擋的,別把兩件事混成「樣本/持倉不足」**:① `n<252`(不到 1 年)→ 才是**樣本不足**;② `n≥252` 但 `ai_pct≥0.5`(夠久但太集中)→ 是**持倉太集中**:「你有 2.5 年資料、夠了;判不出是因為 66% 押同一個 driver,分不出『選股』還是『押對賽道』——跟資料量無關。」(這條跟『最大的洞=集中度』是同一件事,要串起來講。)
+  - `alpha_ann` / `alpha_t` / `alpha_credible`:α **永遠有數,語氣看統計**。`alpha_credible=true`(樣本 ≥1 年且 |t|≥1.96)才可用「真本事」語氣(顯著的負 α 也是可講的定論);`false` → 數字照講但**必帶不確定性**:「α 年化 +X%,但 95% 區間 −Y%~+Z%——統計上還分不出是本事還是運氣」。**卡在哪要講清楚**,引 `alpha_beta_breakdown.alpha_stat.gate.reason`:`sample_short`=不到 1 年 → 才是**樣本不足**;`not_significant`=區間太寬 → 常見原因是**持倉集中、個股雜訊大**(這條跟『最大的洞=集中度』是同一件事,要串起來講——但這是工具的侷限,不是他沒本事)。**贏大盤幾 pp 必配拆帳**:押對賽道 vs 板塊內選股(`excess_split`),`coverage<1` 時補一句「X 檔無板塊對照、按大盤計」。
   - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
-
-> mock 的 alpha 數字(+33%/年)是假資料失真,demo 時不要當真;真實資料才看 alpha。
 
 ### Step 2 · 出卡前的對話確認(持股假設 + 動機)——這層才是鏡片,不可省
 
@@ -156,7 +179,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 ### Step 3 · 出一張卡(收斂鐵律)——拿到 Step 2 答案後才出
 
 **🚦 出卡前 self-check(沒過一律不准出卡)**:
-1. **engine 用 `TR_JSON=1` 跑過了嗎?** 拿到的是 `build_card_data()` 結構化 JSON,不是預設那張 demo 卡。
+1. **engine 用 `TR_JSON=1` 跑過了嗎?** 拿到的是 `build_card_data()` 結構化 JSON,不是預設那張人話卡。
 2. **Step 2 對話完成了嗎?** — `thesis_questions` 至少對「金額最大 + 行為矛盾」的 1 檔問過 + 拿到答案;主要動機鏡片(對應 headline_dim 的)問過 1 句。沒問完就出卡 = 退化成「engine + 套版」,失去 SKILL 的價值。
 3. **你打算自己用敘事寫卡,不是照搬 JSON 欄位?** 把 JSON 當資料源,自己組句子,不要列 `〔X〕內容` 的 dashboard 拼接。
 
@@ -167,8 +190,8 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 
 卡上列的 2–3 條候選規矩**不是結局**。出完卡立刻用 AskUserQuestion(選項 = 各候選 + **「這週不承諾」**,Other 可改寫)問一句:**「選一條當下週對帳的承諾?會存進本機 log,下次開場第一句就對它:說到有沒有做到。」**(#56:你不准代選,他點了哪條才存哪條。)
 
-- **選項標籤 = 規矩短語**,description 寫「追蹤哪個 metric + 現在的值」(例:`追蹤 max_pos_pct,現在 42%`)。用戶要能 5 秒選完。
-- **metric_key 對映**:規矩管單一標的佔比 → `max_pos_pct`;管虧損加碼 → `avgdown_count`;管賽道集中 → `ai_pct`;管板塊 → `max_sector_pct`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
+- **選項標籤 = 規矩短語**,description 寫「下週看哪個數 + 現在的值」——**一律人話,內部 metric key 不准出現在任何用戶看得到的文字裡**(真人反饋:「追蹤 max_pos_pct,本週基線 42%」= 拗口)。✅「下週就看:最大單注佔比,現在 42%」/ ❌「追蹤 max_pos_pct,基線 42%」。用戶要能 5 秒選完。
+- **metric_key 對映(log 存內部名,顯示用人話)**:單一標的佔比 → `max_pos_pct`(人話「最大單注佔比」);虧損加碼 → `avgdown_count`(「虧損加碼次數」);賽道集中 → `ai_pct`(「同賽道佔比」);板塊 → `max_sector_pct`(「最大板塊佔比」);盈虧比 → `payoff`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
 - **用戶挑完 → 立刻走下面收尾腳本落盤**,`FINAL_RULE` / `METRIC_KEY` 填他選(或改寫)的那條。
 - **`insufficient_data=true` 時的分工**:機械預設 commitment 照舊**不出**(引擎已設 null,別把缺資料的猜測當承諾);但**用戶自己選的規矩照存**——行為承諾是他的意志,跟樣本夠不夠無關;樣本不足影響的只是 metric 基線的解讀。落盤時標 `source: "user_chosen"` + `baseline_note: "short-sample baseline"`,下次對帳措辭看**方向**(在降/沒動/變糟),不判達標。
 - 用戶選「這週不承諾」/ 跳過 → 收尾 `FINAL_RULE` 填 `SKIP`:log 照存本週 metrics(供趨勢對帳),commitment=null,下週不拿規矩對他。
@@ -192,7 +215,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 **對帳(log 非空時,卡開頭先做)**:
 1. 讀 log **最後一行**的 `commitment = {rule, metric_key, metric_value}`。
 2. 這次引擎 state 的 `metrics[commitment.metric_key]` = 新值。
-3. 卡**第一句**就對帳:`上次說要{rule 白話},當時 {metric_key}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`。用戶的數字、白話、不黑話。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
+3. 卡**第一句**就對帳:`上次說要{rule 白話},當時{metric 人話}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`(例:「上次說逢低加碼要有頂,當時最大單注 42% → 現在 31%:在降」)。用戶的數字、白話、**metric key 內部名不上卡**(人話對映見 Step 3.5)。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
 4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
 **規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。

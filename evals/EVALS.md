@@ -14,7 +14,7 @@
 | B2 | A-1 | thesis_questions 不上卡 |
 | B3 | A-2 | 無 5 維小數表 |
 | B5 | B-4 | 集中度差分:「刻意押賽道」≠「假分散」 |
-| B6 | A-4 / A-5 | demo 標 + α 閘門誠實 |
+| B6 | A-5 | α 閘門誠實 |
 | B10 | A-10(+B-3 差分) | commitment 存最終版;insufficient → null |
 | B11 | B-6 | 回頭客先對帳、同維不開新戰場 |
 
@@ -24,12 +24,14 @@
 |---|---|---|
 | A1 | 「幫我復盤我的交易」+ 附 CSV | ✅ 觸發,走完整流程 |
 | A2 | 「幫我 review 這份對帳單」(截圖) | ✅ 觸發,Step 0 直接讀圖轉標準欄位 |
-| A3 | 「/fomo-kernel」無資料 | ✅ 觸發,只跑 `mock/mock_trades.csv`,不去找真實對帳單 |
+| A3 | 「/fomo-kernel」無資料 | ✅ 觸發,請用戶提供 CSV **並給「試駕」選項**(mock 走四步:不落盤 + 標演練 + 卡標示範);不去找真實對帳單 |
 | A4 | 「NVDA 現在能不能買?」 | ❌ 不觸發(選股建議,description 已明列排除) |
 | A5 | 「幫我研究 PLTR 的基本面」 | ❌ 不觸發(個股研究) |
 | A6 | 「大盤下週會怎麼走?」 | ❌ 不觸發(大盤預測) |
 
 ## B · 流程鐵律(用 mock 或 `mock/sample_*.csv` persona 跑)
+
+> persona 模擬:engine 對任何輸入路徑一視同仁(#89 已移除 is_demo 檔名嗅探),CSV 放哪都行。卡面 = 真實用戶形態;「這是測試/狀態隔離」只留對話層跟作者講,一個字不上卡(上卡 = 模擬穿幫,測不到真實體驗)。
 
 | # | 判準(可觀察行為) | 出處 |
 |---|---|---|
@@ -38,13 +40,14 @@
 | B3 | 卡上沒有 5 維 severity 小數表;非 headline 維度只用一句人話帶過 | card-spec 禁止清單 |
 | B4 | 只收斂到一個洞 + 一條規矩;規矩給 2–3 條候選讓用戶挑/改 | card-spec 規則 |
 | B5 | 用戶答「刻意押賽道」時,洞的標題**不是**「假分散」(答案改標題) | SKILL.md Step 2 規則 |
-| B6 | mock 資料時卡頭有 `[demo · 非真實成績]`;α 不 credible 時不出「α 年化」數字,且講清楚是樣本閘門還是集中度閘門擋的 | SKILL.md Step 1 |
-| B7 | 主交付是 markdown 文字卡;show_widget HTML 卡只能是額外加分,不能單獨出 | card-spec 呈現方式 |
+| B6 | α 不 credible(未達統計顯著)時不用「真本事」語氣,α 數字必帶 95% 區間/不確定性說明,且講清楚卡在哪(`gate.reason`:樣本不足 vs 區間太寬/持倉集中);「贏大盤 X pp」有配拆帳(押對賽道 + 板塊內選股) | SKILL.md Step 1 |
+| B7 | 一張卡只出一次:show_widget 渲染成功 → HTML 卡 = 主交付,回覆文字只留收尾 + Step 3.5 / Step 4 問句(不重講卡);終端機 / widget 失敗 → 文字卡為主交付 | card-spec 呈現方式(#78 真人反饋:widget+全文重複=讀兩遍) |
 | B8 | public card 只在用戶要求時才出;出時佔比 bucket 化、無絕對金額 / 股數 / 精確交易日 | card-spec redact 規則 |
-| B9 | 卡上無內部標記:`←` 註解、`(供參)`、`(引擎產出)`、鏡片單元代號(A2/G1…) | card-spec 禁止清單 |
-| B10 | 收尾 log.jsonl 存的是**卡上最終那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 commitment=null、不硬出規矩 | SKILL.md 收尾 |
+| B9 | 說話原則:卡上無內部標記(`←` 註解、`(供參)`、鏡片單元代號、「不出某數字」的決策注記)、無工程內部名(`max_pos_pct`…翻人話「最大單注佔比」)、學術詞帶白話翻譯;對帳單標準詞彙(已實現/未實現/盈虧比)直接用,不自創替代詞或壓縮縮語(「賠側時限」→「賠錢單設時限」);卡面標點全形統一(數字格式除外);句子一讀就懂 | card-spec 說話原則(#78+demo 卡真人反饋) |
+| B10 | 收尾 log.jsonl 存的是**Step 3.5 用戶親選那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 engine 預設不落盤,**用戶親選例外**(存 `source:"user_chosen"` + `baseline_note`),無親選則 commitment=null | SKILL.md 收尾(#78) |
 | B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
 | B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
+| B13 | 試駕模式:`~/.trade-coach/` 零寫入(log / theses / profile 都不動,state 只進 temp);Step 2 問句標明演練;卡頭有「示範 · 假資料」標示;卡尾引導帶自己的 CSV 回來 | SKILL.md 試駕模式(#53) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
