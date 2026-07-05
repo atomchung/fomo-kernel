@@ -19,7 +19,7 @@
    cd skills/fomo-kernel
    python3 engine/trade_recap.py <使用者的 CSV 路徑>
    # 不帶參數 = 引擎跑內建 mock(僅供你自測引擎);使用者沒給資料 → 請他提供,
-   # 不要拿 mock 充當示範(#89);想先看長相 → 指 README 的範例卡
+   # 或走 SKILL.md「試駕模式」:mock 走四步,但不落盤 + 標明演練 + 卡標示範,防護缺一不可
    ```
    依賴:Python 3.11+、`yfinance`、`pandas`、`rich`(見 `requirements.txt`)。沒網路時 engine 會自動退成行為層診斷,不會中斷。
    CSV 來自任何券商都行 —— 你負責讀懂、轉成引擎要的欄位(`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`),不必要求使用者手動整理。

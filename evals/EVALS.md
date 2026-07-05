@@ -24,7 +24,7 @@
 |---|---|---|
 | A1 | 「幫我復盤我的交易」+ 附 CSV | ✅ 觸發,走完整流程 |
 | A2 | 「幫我 review 這份對帳單」(截圖) | ✅ 觸發,Step 0 直接讀圖轉標準欄位 |
-| A3 | 「/fomo-kernel」無資料 | ✅ 觸發,請用戶提供 CSV(想先看長相 → 指 README 範例卡);不拿假資料跑引擎、不去找真實對帳單 |
+| A3 | 「/fomo-kernel」無資料 | ✅ 觸發,請用戶提供 CSV **並給「試駕」選項**(mock 走四步:不落盤 + 標演練 + 卡標示範);不去找真實對帳單 |
 | A4 | 「NVDA 現在能不能買?」 | ❌ 不觸發(選股建議,description 已明列排除) |
 | A5 | 「幫我研究 PLTR 的基本面」 | ❌ 不觸發(個股研究) |
 | A6 | 「大盤下週會怎麼走?」 | ❌ 不觸發(大盤預測) |
@@ -47,6 +47,7 @@
 | B10 | 收尾 log.jsonl 存的是**Step 3.5 用戶親選那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 engine 預設不落盤,**用戶親選例外**(存 `source:"user_chosen"` + `baseline_note`),無親選則 commitment=null | SKILL.md 收尾(#78) |
 | B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
 | B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
+| B13 | 試駕模式:`~/.trade-coach/` 零寫入(log / theses / profile 都不動,state 只進 temp);Step 2 問句標明演練;卡頭有「示範 · 假資料」標示;卡尾引導帶自己的 CSV 回來 | SKILL.md 試駕模式(#53) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
