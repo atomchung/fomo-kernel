@@ -1,182 +1,183 @@
 # FOMO Kernel
 
-> 一個 Claude Code skill:用**一面大師鏡片**(預設一套交易原則蒸餾、可換),把你的真實交易復盤成**一張卡**——
-> 你做對的一件事 + 一個最大的洞(用你自己的數字)+ 一條下次要守的規矩 + 一句大師的話。
+**English** · [繁體中文](README.zh-TW.md)
 
-不是又一份統計報表。它做的是報表做不到的事:**先算出你看不見的行為漏洞,再問出你不願承認的動機,最後逼你下次只改一件事。**
+> A [Claude Code](https://claude.com/claude-code) skill that reviews your real trades through **one master's lens** (a swappable distillation of a trading philosophy) and hands you back **a single card** —
+> the one thing you did right + your biggest leak (in your own numbers) + one rule to keep next time + one line from the master.
 
-**🇬🇧 TL;DR** — A [Claude Code](https://claude.com/claude-code) skill that turns your broker CSV into **one behavioral review card**: a deterministic Python engine finds your biggest leak (sizing / averaging down / exit discipline / fake diversification), then a master-lens dialogue asks the motive questions machines can't answer — you leave with one rule to keep next week.
-**Privacy**: your trades never touch a third-party backend and the author never sees a row — inference runs through your own Claude session, coach memory lives locally in `~/.trade-coach/`.
-**Quick start**: `pip install -r requirements.txt`, symlink `skills/fomo-kernel` into `~/.claude/skills/`, then run `/fomo-kernel your.csv`. Docs below are in Traditional Chinese.
+Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it forces you to change exactly one thing next time.**
+
+> 📝 **Note on language.** This README is in English, but the skill's runtime output, the master lens, `SKILL.md`, and `AGENTS.md` are currently in Traditional Chinese — FOMO Kernel is Chinese-first today. This page covers setup and concepts so you can decide whether to install; the card you'll actually get renders in Chinese.
 
 ## Quick start
 
-**完整流程(這才是產品本體)—— 在 Claude Code 裡:**
+**The full flow (this is the actual product) — inside Claude Code:**
 ```
-/fomo-kernel                      # 沒給資料 → 跑內建 mock,走完「引擎診斷 → 對話問動機 → 定論卡」
-/fomo-kernel ~/Downloads/my.csv   # 復盤你自己的交易(任何券商 CSV)
+/fomo-kernel                      # no file → runs the built-in mock through the whole flow
+/fomo-kernel ~/Downloads/my.csv   # review your own trades (CSV from any broker)
 ```
-卡的價值在第 ② 步那段對話 —— 引擎挑出可疑標的、問你「逢低還是凹單?」,你一句話定案,卡才出定論。**光看引擎原始輸出看不到這層。** 安裝見下方 [安裝](#安裝)。
+The card's value is in step ② — the engine flags a suspicious position and asks *"averaging down on conviction, or refusing to cut a loser?"*; your one-sentence answer is what turns the raw diagnosis into a verdict. **You can't see that layer from the engine's raw output alone.** Install steps under [Install](#install).
 
-**想先零安裝、看引擎在算什麼**(機械層的*原始診斷*,還不是定論卡):
+**Want zero-install, just to see what the engine computes** (the *raw diagnosis* from the mechanical layer — not yet the finished card):
 ```bash
 git clone https://github.com/atomchung/fomo-kernel && cd fomo-kernel
-pip install -r requirements.txt      # 若報 externally-managed-environment → 見下方「安裝」的 venv 三行
-cd skills/fomo-kernel && python3 engine/trade_recap.py   # 跑內建 mock,印出引擎原始診斷
+pip install -r requirements.txt      # if it errors with externally-managed-environment → see the venv steps under Install
+cd skills/fomo-kernel && python3 engine/trade_recap.py   # runs the built-in mock, prints the raw diagnosis
 ```
 
-## 跑出來長什麼樣
+## What it looks like
 
-跑內建 mock 的**引擎原始診斷**長這樣(這是機械層輸出;真正的定論卡是 Claude 在 Step ② 對話問完動機後才收斂的):
+Running the built-in mock, the **raw engine diagnosis** looks like this (this is the mechanical layer; the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Translated below to show the shape — the engine currently renders in Traditional Chinese:*
 
 ```text
-復盤卡 · 大師鏡片 · mock demo
-你帳面賺 +$143k,但幾乎全是「抱著沒賣」賺的;真正進出操作,要靠紀律不靠運氣。
+Review card · Master lens · mock demo
+On paper you're up +$143k, but almost all of it is "held and never sold";
+your active trades are what need discipline, not luck.
 
-  帳面總損益      +$143,197    (已實現 $19k + 未實現 $124k)
-  主動買賣盈虧比   2.9          (平均賺 $2,851 vs 賠 $1,000)
-  贏大盤 +261pp · β 2.05 · AI 暴險 100%(回檔 30% = −$51k)
+  Total P&L             +$143,197    (realized $19k + unrealized $124k)
+  Active win/loss ratio  2.9         (avg win $2,851 vs avg loss $1,000)
+  Beat the market +261pp · β 2.05 · AI exposure 100% (30% drawdown = −$51k)
 
-標的層診斷(按金額排序,小倉不糾結):
-  PLTR  +$73,207   [v] 疑似定投(漲跌都買,不是凹單) · [!] 押太重 49%
-  NVDA  +$60,556   [v] 疑似定投 · [!] 押太重 48%
-  ORCL   +$2,974   [v] 紀律持有:賺 60%
-  AMD    -$1,000   --  大致中性
+Per-position diagnosis (sorted by size; small lots not nitpicked):
+  PLTR  +$73,207   [v] likely DCA (buys up and down, not averaging a loser) · [!] too heavy 49%
+  NVDA  +$60,556   [v] likely DCA · [!] too heavy 48%
+  ORCL   +$2,974   [v] disciplined hold: +60%
+  AMD    -$1,000   --  roughly neutral
 
-[v] 你做對的:進出有一致節奏,中位持有 162 天
-[X] 最大的洞:部位 sizing — 最大一筆 PLTR 佔 48%,其餘平均 25%
-[*] 下次只改:虧損部位一律不加碼;真想加,先整筆賣掉、隔天重買
- >  鏡片原則:可以低成本試探一次,不代表完成長期信任的驗證
+[v] What you did right: consistent entry/exit rhythm, median hold 162 days
+[X] Biggest leak: position sizing — largest single lot PLTR is 48%, the rest average 25%
+[*] Change only this next time: never add to a losing position; if you truly want in, sell the whole lot first, re-buy tomorrow
+ >  Lens principle: a cheap one-time probe is allowed — it doesn't count as completing long-term validation of trust
 ```
 
-同一張卡的視覺版(深色卡片):
+The same card, rendered as a dark visual card:
 
-![fomo-kernel 復盤卡 demo](docs/demo-card.png)
+![fomo-kernel review card demo](docs/demo-card.png)
 
-> 真實使用時,引擎還會挑出「金額大 + 虧損中狂加碼」的標的,在**出卡前**先問你「這是逢低還是凹單?」——機械分不出的動機,你一句話定案,卡才出定論。
-> ⚠️ mock 的 α 數字會失真(持倉太集中、橫截面太窄),demo 別當真;真實多元持倉才看 α。
+> In real use, the engine also flags positions that are "large + being averaged down while underwater" and asks you, *before* the card is issued, "is this a dip-buy or refusing to cut a loser?" — the motive a machine can't tell apart, settled by your one sentence, is what lets the card reach a verdict.
+> ⚠️ The mock's α numbers are distorted (too concentrated, too narrow a cross-section) — don't take the demo literally; real α needs a genuinely diversified book.
 
 ---
 
-## 它跟「貼對帳單給 ChatGPT」差在哪
+## How it differs from "pasting your statement into ChatGPT"
 
-ChatGPT 算不出 FIFO 配對的真實 α/β、分不清你是「定投」還是「凹單」、也沒有你的歷史。這個 skill 三層遞進:
+ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averaging a loser," and has none of your history. This skill layers three passes:
 
-1. **機械層(Python,確定性精算)** — 算 ChatGPT 估不準的東西:
-   - 5 維行為診斷:部位 sizing / 加碼攤平 / 出場 / 分散 / 持有一致性
-   - **標的層診斷**:按**金額**排序每檔(小倉不糾結),主從分類器分「疑似定投 vs 疑似凹單 vs 待確認」
-   - **報酬歸因**:把「贏大盤」拆成「押對賽道(運氣/方向)」vs「選股(技巧)」——讓你看清賺的是本事還是膽子
-2. **鏡片層(大師原則 × 對話)** — 機械分不出的「為什麼」,出卡前問你:
-   - 持股假設:「MSTR 一路加碼還虧,是還相信 thesis,還是不想認賠在凹單?」
-   - 動機:「賣掉賺錢的賣太早,是 thesis 到價,還是怕回吐?」
-   - **機械挑該問的少數標的,你的答案定性**——機械永遠在猜,你一句話定案
-3. **處方層** — 從「你哪裡爛」進到「下一步換什麼做法」:揚長(放大你的 edge)/ 砍損耗(機械規則,下次可驗)
+1. **Mechanical layer (Python, deterministic)** — computes what ChatGPT only estimates:
+   - 5-dimension behavioral diagnosis: position sizing / averaging down / exit / diversification / holding consistency
+   - **Per-position diagnosis**: every ticker ranked **by dollar size** (small lots not nitpicked), with a classifier splitting "likely DCA vs likely averaging-a-loser vs unclear"
+   - **Return attribution**: splits "beat the market" into "right sector (luck / direction)" vs "stock picking (skill)" — so you see whether the gains were edge or nerve
+2. **Lens layer (a master's principles × dialogue)** — the "why" a machine can't infer, asked before the card is issued:
+   - Thesis check: "MSTR — you kept adding and it's still down. Do you still believe the thesis, or just won't book the loss?"
+   - Motive: "You sold a winner early — was the thesis at target, or were you afraid of giving back the gain?"
+   - **The engine picks the few positions worth asking about; your answer sets the read** — the machine is always guessing, your one sentence decides
+3. **Prescription layer** — from "where you're leaking" to "what to do differently next time": amplify (scale your edge) / cut waste (a mechanical rule you can check next time)
 
-→ 最後收斂成**一張卡**,一個洞、一條下次能驗的規矩。第二次來,先對帳「上次那條守了沒」。
+→ It all converges into **one card**: one leak, one checkable rule for next time. Come back a second time and it first reconciles "did you keep that rule?"
 
-## 🔒 隱私:不上傳後端、作者拿不到
+## 🔒 Privacy: no backend upload, the author can't see it
 
-- skill 在**你自己的機器**上跑你的 CSV,**不上傳到任何後端、不落地儲存到別處、不寫進記憶**。
-- 作者拿不到你的交易明細。唯一(自願)回收的是一句「這張卡有沒有用」,不含交易內容。
-- `.gitignore` 已設:**任何 `.csv` 都不會被 commit**,只有 mock/sample 假資料例外。
-- 精確說:唯一會讀到你交易的,是你**正在用的 Claude 本身**——它要讀 CSV 才能幫你復盤,就跟你平常用 Claude 一樣。這跟把對帳單交給一個會存檔、你看不到、作者能撈的 SaaS,是兩回事(所以不是「完全不經過任何伺服器」,而是「不落地、不回作者、不進第三方」)。
+- The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing written to any memory**.
+- The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content.
+- `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
+- Precisely: the only thing that reads your trades is **the Claude you're already using** — it has to read the CSV to review it for you, exactly like any other time you use Claude. That's a different thing from handing your statement to a SaaS that stores it, that you can't see into, that the author can query. (So it's not "never touches any server" — it's "not persisted, not sent to the author, not through a third party.")
 
-## 📁 你的教練記憶在哪 / 怎麼維護
+## 📁 Where your coach memory lives / how to maintain it
 
-第二次來,卡會先對帳「上次那條規矩守了沒」——這靠三個**純本機**檔撐起來(都在 `~/.trade-coach/`,永不外傳、不回作者):
+On your second visit, the card first reconciles "did you keep last time's rule?" — backed by three **local-only** files (all under `~/.trade-coach/`, never sent anywhere, never to the author):
 
 ```bash
-cat ~/.trade-coach/log.jsonl       # 每行一次復盤(薄 metric + 你承諾的規矩);空 = 第一次
-cat ~/.trade-coach/theses.jsonl    # 每筆持倉的「為什麼持有 + 什麼條件算錯」(append-only,不覆蓋)
-cat ~/.trade-coach/profile.md      # 你的交易目標 + 3 條個人原則(復盤對照基準)
-cat ~/.trade-coach/last_state.json # 最近一次引擎算出的薄狀態(含各持倉 shares/cost,對帳用;每次跑覆蓋)
+cat ~/.trade-coach/log.jsonl       # one line per review (thin metrics + the rule you committed to); empty = first time
+cat ~/.trade-coach/theses.jsonl    # per-position "why I hold + what would prove me wrong" (append-only, never overwritten)
+cat ~/.trade-coach/profile.md      # your trading goals + 3 personal principles (the baseline each review compares against)
+cat ~/.trade-coach/last_state.json # the thin state the engine last computed (per-position shares/cost, for reconciliation; overwritten each run)
 ```
 
-- **看歷次復盤** → `cat ~/.trade-coach/log.jsonl`。
-- **換哲學鏡片重來 / 清空對帳基準** → 刪掉或改名 `~/.trade-coach/`(刪了下次就當第一次)。
-- **thesis 寫歪了** → 改 `theses.jsonl`;它是 append-only,修正 = 補一筆新 event(別蓋舊的,才能跨期看你當初怎麼想、後來怎麼變)。
-- **隱私自證**:教練記憶就在 `~/.trade-coach/` 這幾個檔、全在你機器上,作者那邊一行都沒有。
+- **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
+- **Switch philosophy lens / reset the reconciliation baseline** → delete or rename `~/.trade-coach/` (deleting makes next time a fresh first visit).
+- **Wrote a thesis wrong** → edit `theses.jsonl`; it's append-only, so a correction = append a new event (don't overwrite the old one — that's how you see, across time, how you first reasoned and how it later changed).
+- **Privacy, self-verifiable**: coach memory is just these files under `~/.trade-coach/`, all on your machine; there isn't a single row on the author's side.
 
-> 💡 **想分享給社群?** 卡預設只出完整私人版。對我說「給我分享版」,會輸出**去敏感化**的純文字版(隱藏金額 / 股數 / 精確佔比,只留行為 pattern + 相對績效 β/贏大盤 pp),可直接貼 X / Thread。
+> 💡 **Want to share with a community?** By default the card is the full private version only. Tell me "give me the shareable version" and it outputs a **de-sensitized** plain-text version (hides amounts / share counts / exact ratios, keeps only the behavior pattern + relative performance β / beat-the-market pp) — ready to paste to X / Threads.
 
-## 安裝
+## Install
 
-**前置:這是 [Claude Code](https://claude.com/claude-code) 的 skill**——Anthropic 的終端 / 桌面 AI 工具(需 Claude 訂閱)。沒用過的話,先花 5 分鐘[裝好並登入](https://docs.claude.com/en/docs/claude-code/setup),再回來走下面三步。
+**Prerequisite: this is a skill for [Claude Code](https://claude.com/claude-code)** — Anthropic's terminal / desktop AI tool (needs a Claude subscription). If you haven't used it, spend 5 minutes to [install and log in](https://docs.claude.com/en/docs/claude-code/setup) first, then come back for the three steps below.
 
-需要 Python 3.11+。**新 macOS(Homebrew / 系統 Python)直接 `pip install` 會被 PEP 668 擋下**(`externally-managed-environment`),用 venv 三行裝:
+Needs Python 3.11+. **On recent macOS (Homebrew / system Python) a bare `pip install` is blocked by PEP 668** (`externally-managed-environment`); use a venv:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt                            # yfinance + pandas + rich
-python3 -c "import yfinance, pandas, rich; print('ok')"    # 驗證:印出 ok 才算裝好
+python3 -c "import yfinance, pandas, rich; print('ok')"    # verify: only 'ok' means it installed
 ```
-把 skill 掛進 Claude Code(二選一):
+Hook the skill into Claude Code (pick one):
 ```bash
-ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel   # A. symlink(推薦)
-cp -r skills/fomo-kernel ~/.claude/skills/                         # B. 複製(給別人用)
+ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel   # A. symlink (recommended)
+cp -r skills/fomo-kernel ~/.claude/skills/                         # B. copy (to hand to someone)
 ```
-> ⚠️ 用 venv 裝的話,之後 Claude Code 跑引擎時要吃得到這些依賴:在**啟用了 venv 的終端**開 `claude`,或引擎報 `ModuleNotFoundError` 時把 `python3` 換成 `.venv/bin/python3` 重跑(SKILL 內建這個補救指引)。
+> ⚠️ If you installed via venv, Claude Code needs those dependencies on its path when it runs the engine: launch `claude` from a **terminal with the venv activated**, or when the engine reports `ModuleNotFoundError`, swap `python3` for `.venv/bin/python3` and re-run (SKILL.md has this fallback built in).
 
-## 用法
+## Usage
 
-在 Claude Code 裡:
+Inside Claude Code:
 ```
-/fomo-kernel                      # 沒給資料 → 跑內建 mock,看一次完整 demo
-/fomo-kernel ~/Downloads/my.csv   # 復盤你自己的交易
+/fomo-kernel                      # no file → runs the built-in mock, one full demo
+/fomo-kernel ~/Downloads/my.csv   # review your own trades
 ```
-你的 CSV 來自**任何券商**都行——Claude 會自動讀懂、轉成引擎要的欄位(`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`),不必你手動整理。
+Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`); you don't hand-clean anything.
 
-> 🏷️ **冷門股**(引擎 sector 表不認的)Claude 會**自動產生 driver map** 給你確認(每檔標 `[sector, 主題]`),讓「分散」維不會把同主題的標的當成真分散——不必你手動弄,也別讓它落到 `driver map: 0 檔` 的 fallback(分散維會失準)。細節見 SKILL Step 0.5。
+> 🏷️ For **obscure tickers** the engine's sector table doesn't recognize, Claude **auto-generates a driver map** for you to confirm (each tagged `[sector, theme]`), so the "diversification" dimension doesn't count same-theme names as real diversification — you don't do this by hand, and don't let it fall back to the `driver map: 0 tickers` case (diversification goes off). Details in SKILL Step 0.5.
 
-**會發生什麼**:① 引擎跑診斷 → ② Claude 在對話裡問你 1–3 個持股假設/動機問題(逢低還是凹單?)→ ③ 拿到你的答案,出一張定論卡。卡的版型見 [`card-template.html`](skills/fomo-kernel/card-template.html)(完整四層的 HTML 範例)。
+**What happens**: ① the engine runs the diagnosis → ② Claude asks you 1–3 thesis/motive questions in dialogue (dip-buy or averaging a loser?) → ③ with your answers, it issues one verdict card. Card layout is in [`card-template.html`](skills/fomo-kernel/card-template.html) (a full four-layer HTML example).
 
-## 其他 coding agent 怎麼用
+## Using it from other coding agents
 
-沒有 Claude Code 的 skill 系統一樣能用——核心引擎是純 Python,不依賴任何 agent 機制:
+You don't need Claude Code's skill system — the core engine is plain Python and depends on no agent machinery:
 
 ```bash
 cd skills/fomo-kernel && python3 engine/trade_recap.py ~/Downloads/my.csv
 ```
 
-如果你用 Codex / Cursor 等其他 coding agent,叫它讀 [`AGENTS.md`](AGENTS.md) 照著走——那份檔案是給非 Claude Code agent 的路由指南,會告訴它怎麼跑引擎、怎麼問動機、怎麼出卡。
+If you use Codex / Cursor or another coding agent, point it at [`AGENTS.md`](AGENTS.md) and have it follow along — that file is the routing guide for non-Claude-Code agents, telling it how to run the engine, ask about motive, and issue the card.
 
-## 三組風格 sample(直接可跑,看不同風格照出不同洞)
+## Three style samples (runnable — see how different styles surface different leaks)
 
-`mock/` 下有四組**虛構**交易,各觸發一種典型洞。完整設計見 [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+`mock/` holds four sets of **fictional** trades, each triggering one archetypal leak. Full design in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
 
 ```bash
 cd skills/fomo-kernel
 TR_DRIVER_MAP=mock/sample_fundamental.driver_map.json python3 engine/trade_recap.py mock/sample_fundamental.csv
 TR_DRIVER_MAP=mock/sample_momentum.driver_map.json    python3 engine/trade_recap.py mock/sample_momentum.csv
 TR_DRIVER_MAP=mock/sample_value.driver_map.json       python3 engine/trade_recap.py mock/sample_value.csv
-python3 engine/trade_recap.py                          # 不帶參數 = mock_trades.csv
+python3 engine/trade_recap.py                          # no args = mock_trades.csv
 ```
 
-| sample | 風格 | 該照出的頭號洞 |
+| sample | style | the leak it should surface |
 |---|---|---|
-| `sample_fundamental` | 基本面選股 | 出場紀律(賺錢抱 120 天就跑、賠錢抱 378 天等回本) |
-| `sample_momentum` | 動能衝衝衝 | 部位梭哈 + 假分散(把 beta 當 alpha) |
-| `sample_value` | 只買便宜 | 加碼攤平(越跌越凹,把 INTC 凹成 43% 重倉) |
-| `mock_trades` | 方法論建立期 | FOMO 全 AI 假分散 + PLTR 攤平 |
+| `sample_fundamental` | fundamental stock-picking | exit discipline (rides a winner 120 days then bails, holds a loser 378 days waiting to break even) |
+| `sample_momentum` | chase-the-momentum | position all-in + fake diversification (mistaking beta for alpha) |
+| `sample_value` | only-buy-cheap | averaging down (the lower it goes the more you add, averaging INTC into a 43% overweight) |
+| `mock_trades` | methodology-building phase | FOMO all-AI fake diversification + PLTR averaging down |
 
-> ⚠️ 引擎用 yfinance 抓真實歷史價算 α/β、市值、套牢,**重跑時絕對數字會隨當前股價漂移**;但每組設計觸發的頭號洞是穩定的(由交易行為決定,不靠特定股價)。
+> ⚠️ The engine uses yfinance to pull real historical prices for α/β, market cap, and how far each position is underwater — so **absolute numbers drift with the current share price on each rerun**; but the headline leak each set is designed to trigger is stable (it's set by the trading behavior, not by any particular price).
 
-## 結構
+## Layout
 
 ```
 skills/fomo-kernel/
-  SKILL.md                  ← skill 本體(四步流程:格式 → 引擎 → 出卡前確認 → 定論卡)
-  card-spec.md              ← Step 3 卡規格(禁止清單 / redact / 敘事鐵律;Step 2 問完才讀)
-  engine/trade_recap.py     ← 機械層:5 維 + 標的層主從分類 + 歸因(純函式,無真實路徑)
+  SKILL.md                  ← the skill itself (four-step flow: format → engine → pre-card confirm → verdict card)
+  card-spec.md              ← Step 3 card spec (blocklist / redact / narrative rules; read only after Step 2 questions)
+  engine/trade_recap.py     ← mechanical layer: 5-dim + per-position DCA/loser classifier + attribution (pure functions, no real paths)
   rubric/
-    vincent-yu.md           ← 預設鏡片的原則蒸餾(逐條標出處;可換成別的大師)
-    vincent-yu.lens.json    ← 鏡片的「可換大師層」:規矩/引言/動機問句(換大師 = 換這檔)
-  behavior-diagnosis.md     ← 診斷哲學:對事不對人、行為多標籤(why 的設計記錄)
-  card-template.html        ← 復盤卡 HTML 版型範例
-  mock/                     ← 四組 sample 假資料 + 各自 driver map + SAMPLES.md
+    vincent-yu.md           ← the default lens's principle distillation (each cited to source; swappable for another master)
+    vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
+  behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
+  card-template.html        ← review-card HTML layout example
+  mock/                     ← four sample fixture sets + each one's driver map + SAMPLES.md
 ```
 
-## 免責
+## Disclaimer
 
-預設鏡片來自一位投資人公開文章的原則蒸餾(來源逐條標在 `rubric/` 裡),屬引用非轉載、非經本人背書;鏡片可換,之後會補多位。
-本工具定位 **research / coaching support**,所有輸出僅為交易行為回顧與紀律建議,**不構成投資建議、不涉及任何標的買賣推薦**;最終投資決策與結果由使用者自負。
-程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的鏡片內容屬原則引用,出處逐條標註,不隨 MIT 轉授權。
+The default lens is a principle distillation from one investor's public writing (sources cited line-by-line in `rubric/`) — quoted, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
+This tool is positioned as **research / coaching support**; all output is trade-behavior review and discipline suggestions only — **not investment advice, and no buy/sell recommendation on any instrument**; final investment decisions and outcomes are your own.
+The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is principle quotation with sources cited line-by-line, and is not relicensed under MIT.

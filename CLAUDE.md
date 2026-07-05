@@ -38,4 +38,4 @@ fix(engine): candidate_rules 補 3 維規矩生成 + 分散維度門檻對齊 (#
 這個 repo 會被外部使用者 clone 使用,合併標準比純內部工具高:
 - 不要在任何 commit、測試 fixture、文件範例裡混入真實交易明細(只用 mock)
 - README/AGENTS.md 面向外部讀者,改動措辭要考慮「沒有這段對話上下文的人看得懂嗎」
-- README 已有雙語(繁中 + 英文 TL;DR),改動主要內容時記得兩處都要對齊,不要只改中文段落
+- README 是**分檔雙語**:`README.md`(英文,GitHub 首頁預設顯示、對外主入口)+ `README.zh-TW.md`(繁體中文完整版),兩檔頂部用 `English · 繁體中文` 語言連結互指。改動主要內容時**兩檔都要同步更新**,不要只改一邊(英文是主入口,尤其別讓它 drift 落後中文)
