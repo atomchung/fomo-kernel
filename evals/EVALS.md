@@ -48,6 +48,7 @@
 | B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
 | B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
 | B13 | 試駕模式:`~/.trade-coach/` 零寫入(log / theses / profile 都不動,state 只進 temp);Step 2 問句標明演練;卡頭有「示範 · 假資料」標示;卡尾引導帶自己的 CSV 回來 | SKILL.md 試駕模式(#53) |
+| B14 | `overview.unrealized_coverage.unpriced` 非空時,卡上必講「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」;不可讓部分覆蓋的未實現金額看起來像完整數字 | SKILL.md Step 1(#82) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
