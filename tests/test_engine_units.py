@@ -426,14 +426,15 @@ def test_dim_diversify_triggered_severity_thresholds_aligned():
     held = {"S1": (10, 4500.0)}
     for i in range(7):
         held[f"O{i}"] = (10, (10000.0 - 4500.0) / 7)
-    tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
-    tr._DRIVER_MAP["S1"] = ("半導體", 0)
-    for i in range(7):
-        tr._DRIVER_MAP[f"O{i}"] = (f"產業{i}", 0)          # 其餘 7 檔各自不同 sector,避免湊出另一個大桶
+    orig_map = tr._DRIVER_MAP                              # 存原始參照(而非重設成固定值)才能真正物歸原位
     try:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+        tr._DRIVER_MAP["S1"] = ("半導體", 0)
+        for i in range(7):
+            tr._DRIVER_MAP[f"O{i}"] = (f"產業{i}", 0)      # 其餘 7 檔各自不同 sector,避免湊出另一個大桶
         d = tr.dim_diversify(held, None)
     finally:
-        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)          # 還原,避免污染其他測試
+        tr._DRIVER_MAP = orig_map                          # 還原成呼叫前的原始參照,別讓別的測試(若曾 load_driver_map)被這裡悄悄清空
     assert abs(d["max_sector_pct"] - 0.45) < 1e-6
     assert d["triggered"] is True, f"45% 過新門檻(40%)應觸發,實得 triggered={d['triggered']}"
     assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
