@@ -29,7 +29,7 @@ import trade_recap  # noqa: E402  # 只取常數(CYCLE_ID_RE),不跑 main
 
 # ── SKILL.md Step 1/3 消費清單:改 engine 輸出欄位 = 改這份契約,兩邊要一起動 ──
 TR_JSON_KEYS = {
-    "schema_version", "philosophy", "is_demo", "strength", "overview",
+    "schema_version", "philosophy", "strength", "overview",
     "best_trade", "worst_trade", "what_if", "ticker_diagnosis",
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
@@ -90,7 +90,7 @@ def main():
         ok(set(card.keys()) == TR_JSON_KEYS, "TR_JSON 頂層 key 恰等於 SKILL 消費清單",
            f"多了 {set(card.keys()) - TR_JSON_KEYS} / 少了 {TR_JSON_KEYS - set(card.keys())}")
         ok(card["schema_version"] == 1, "card schema_version == 1", repr(card["schema_version"]))
-        ok(card["is_demo"] is True, "mock 路徑 is_demo is True(卡頭 demo 標的依據)")
+        ok("is_demo" not in card, "is_demo 已移除(#89):engine 對任何輸入路徑一致,無 demo 分支")
         ok(isinstance(card["philosophy"], str) and card["philosophy"], "philosophy 非空字串")
 
         cr = card["candidate_rules"]

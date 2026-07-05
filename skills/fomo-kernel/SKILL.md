@@ -10,7 +10,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 ## 何時用
 
-用戶想復盤自己的交易、想知道「我反覆犯的錯是什麼」、丟給你一份券商 CSV / 對帳單、或直接說 `/fomo-kernel`。沒有資料時,用內建 mock 跑一次 demo 給他看。
+用戶想復盤自己的交易、想知道「我反覆犯的錯是什麼」、丟給你一份券商 CSV / 對帳單、或直接說 `/fomo-kernel`。沒有資料時,請他提供券商 CSV / 對帳單(截圖也行,Step 0 讀得懂);想先看長什麼樣 → 指他看 README 的範例卡(靜態展示),**不要拿假資料跑引擎充當示範**。
 
 ## 🔒 隱私第一(每次都要遵守)
 
@@ -18,7 +18,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 - **不要把用戶的交易內容寫進記憶、不要外傳給任何人**(包括 skill 作者)。
 - **誠實邊界(隱私話術別過度承諾)**:資料**不上傳後端、不落地儲存到別處、作者永遠拿不到**;但你(Claude)為了復盤**必須讀** CSV/JSON,交易內容自然進你的 context —— 這跟用戶平常用 Claude 一樣,不是「完全不經過任何伺服器」。README / 卡上的隱私話術照這個精度寫,別講成「絕對不離開你的電腦」。
 - 要回給作者的只有一件事:**「這張卡有沒有用」的文字反饋**(用戶自願)——不含任何交易明細。
-- 用戶沒給資料時,**只跑 `mock/mock_trades.csv`**(假資料),絕不要去找他機器上的真實對帳單。
+- 用戶沒給資料時,**請他提供**;絕不要主動去翻他機器上的真實對帳單。
 
 ## 🌐 Output language (apply every time)
 
@@ -71,15 +71,15 @@ cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人
 
 ### Step 1 · 跑引擎,抓大放小
 
-**SKILL 走 JSON 模式拿結構化資料,Step 3 你自己寫卡 ——** 不要照搬 engine 預設輸出(那是 README quickstart 用的乾淨 demo / fallback,不是 SKILL 規格那張定論卡):
+**SKILL 走 JSON 模式拿結構化資料,Step 3 你自己寫卡 ——** 不要照搬 engine 預設輸出(那是 README quickstart 用的乾淨人話卡 / fallback,不是 SKILL 規格那張定論卡):
 
 ```bash
 mkdir -p ~/.trade-coach
 TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap.py <標準化後的CSV>
 # TR_JSON=1   → stdout 純 JSON(build_card_data,給你在 Step 3 寫敘事卡用);meta 走 stderr
 # TR_STATE_OUT → 寫一份薄 state(對帳用),跟 TR_JSON 平行,可同時設
-# 都不設 → 跑 demo 卡(README quickstart 用)
-# TR_DEBUG=1 → 在 demo 模式補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
+# 都不設 → 印預設人話卡(README quickstart 用)
+# TR_DEBUG=1 → 在預設輸出補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
 ```
 
 > 🔧 **引擎報 `ModuleNotFoundError`(如 pandas / yfinance)**:依賴多半裝在 venv / pyenv 的另一個 python 裡。找到裝了依賴的直譯器路徑重跑一次即可,常見是 repo 根的 `.venv/bin/python3`(README 安裝節的 venv 三行裝出來的)——把上面指令的 `python3` 換成那個路徑;別急著全域 pip(新 macOS 會被 PEP 668 擋)。
@@ -89,7 +89,6 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`thesis_questions`**:per-ticker 持股假設問句 — **這是給 Step 2 對話用的,絕不准印在卡上**(SKILL 鐵律:確認在出卡之前)。
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
-- **`is_demo`**:`true` → 卡頭必加 `[demo · 非真實成績]`(mock 用真實 ticker 算 α/β 會失真)。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
@@ -99,8 +98,6 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
   - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
-
-> mock 的 alpha 數字(+33%/年)是假資料失真,demo 時不要當真;真實資料才看 alpha。
 
 ### Step 2 · 出卡前的對話確認(持股假設 + 動機)——這層才是鏡片,不可省
 
@@ -172,7 +169,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 ### Step 3 · 出一張卡(收斂鐵律)——拿到 Step 2 答案後才出
 
 **🚦 出卡前 self-check(沒過一律不准出卡)**:
-1. **engine 用 `TR_JSON=1` 跑過了嗎?** 拿到的是 `build_card_data()` 結構化 JSON,不是預設那張 demo 卡。
+1. **engine 用 `TR_JSON=1` 跑過了嗎?** 拿到的是 `build_card_data()` 結構化 JSON,不是預設那張人話卡。
 2. **Step 2 對話完成了嗎?** — `thesis_questions` 至少對「金額最大 + 行為矛盾」的 1 檔問過 + 拿到答案;主要動機鏡片(對應 headline_dim 的)問過 1 句。沒問完就出卡 = 退化成「engine + 套版」,失去 SKILL 的價值。
 3. **你打算自己用敘事寫卡,不是照搬 JSON 欄位?** 把 JSON 當資料源,自己組句子,不要列 `〔X〕內容` 的 dashboard 拼接。
 

@@ -1393,7 +1393,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx):
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                    ab, pa, master, is_demo=False, data_integrity=None):
+                    ab, pa, master, data_integrity=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1405,7 +1405,6 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
     - top_holes 帶 lens_quote 但別當結語用(SKILL L192)
     - candidate_rules:2-3 條候選規矩(Step 3 讓用戶挑/改一條,別只給第一條;#29 已讓 prescribe 能產多條)
     - dims_raw 5 維給結構化資料,讓 Claude「一句人話帶過其餘維」(SKILL L158-159)
-    - is_demo 標明 → mock 卡頭應加 [demo · 非真實成績]
     """
     TW = {1: 1.0, 2: 0.7}
     trig = sorted([d for d in dims if d["triggered"]],
@@ -1443,7 +1442,6 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
     return {
         "schema_version": 1,
         "philosophy": master,
-        "is_demo": is_demo,                                 # mock csv → True,卡頭應加 [demo · 非真實成績]
         "strength": strength,
         "overview": overview,
         "best_trade": {**best, "pnl": best["qty"] * (best["sell_px"] - best["buy_px"])} if best else None,   # 補 $ 損益,卡上 %和$ 都要
@@ -1481,8 +1479,6 @@ def main():
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
-    # is_demo:任一輸入 path 含 'mock' → 是 demo,卡頭/JSON 都標(SKILL Step 3 + issue #21:mock alpha 失真,要當下標警告)
-    is_demo = any("mock" in p.replace(os.sep, "/").lower() for p in paths)
     decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BENCH_SELF]   # 再平衡/現金管理,非選股決策(=配置類,同 BENCH_SELF)
     d_size = dim_size(rows, held, last_px)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held, last_px)
@@ -1516,18 +1512,13 @@ def main():
         meta = (f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
                 f"{len(rts)} round-trip,持倉 {len(held)}｜yfinance: {'OK' if not yf_err else yf_err}"
                 f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔{dm_skip}{split_note}"
-                + (" (純 fallback,冷門股可能失準)" if not n_dm else "")
-                + ("｜⚠️ DEMO 模式" if is_demo else ""))
+                + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(meta, file=sys.stderr)
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                               ab, pa, master, is_demo=is_demo, data_integrity=data_integrity)
+                               ab, pa, master, data_integrity=data_integrity)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
-        # 預設:乾淨人話卡(demo / fallback 用,#20 違規條目已砍)
-        if is_demo:
-            print("="*60)
-            print("  ⚠️ DEMO 模式 · mock 假資料 · α/β 含 yfinance 真實漲幅 → 失真,勿解讀為實戰績效")
-            print("="*60)
+        # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
         print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
               f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
         print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
