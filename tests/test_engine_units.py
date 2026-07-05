@@ -341,6 +341,104 @@ def test_prescribe_multiple_candidate_rules():
     assert len(rules) >= 2, f"#29:兩條都觸發應給 ≥2 條候選 rule,實得 {len(rules)}: {[r.get('kind') for r in rx]}"
 
 
+def test_prescribe_rx_entries_tagged_with_dim():
+    """#87/#95:prescribe() 產出的「加碼攤平」「部位 sizing」兩條 rx 必須帶 dim= 標籤,
+    build_card_data() 的 candidate_rules 補滿邏輯靠這個做 dedup(見下面 K 節)。"""
+    dims = [
+        dict(dim="加碼攤平", count=12, breach=2),
+        dict(dim="部位 sizing", max_pct=0.55, max_ticker="NVDA"),
+    ]
+    rx = tr.prescribe(None, dims, {})
+    tagged = {r["dim"]: r for r in rx if r.get("rule")}
+    assert tagged.keys() == {"加碼攤平", "部位 sizing"}, f"兩條 rule 應各自帶對應 dim,實得 {list(tagged.keys())}"
+
+
+# ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
+
+def _card_from(dims, rx):
+    """組出 build_card_data 需要的最小參數(其餘用不到的欄位餵 None/{})。"""
+    return tr.build_card_data(dims, None, {}, None, None, None, rx, [], None, None, None)
+
+
+def test_candidate_rules_backfilled_from_top_holes_when_prescribe_empty():
+    """#87/#95 Bug A:出場紀律/分散/持有時間三維在 prescribe() 完全沒有 rule 生成路徑——
+    headline 是這三維之一時,candidate_rules 不該是空陣列(否則 SKILL Step 3.5 的記憶迴圈斷鏈)。
+    用 top_holes[].lens_rule(headline 優先,因 top_holes 已按 severity 排序)補滿。"""
+    dims = [
+        dict(dim="持有時間", tier=2, triggered=True, severity=1.0,
+             min=1, max=45, median_hold=8.0, n_incon=2, n_multi=5, incon_tickers=["AAA", "BBB"]),
+        dict(dim="出場紀律", tier=1, triggered=True, severity=0.69,
+             early_rate=0.5, n_rt=4, n_scored=4, n_trunc=0, avg_forgone=0.05,
+             winner_early=0.5, n_fwd=30, hold_win=10, hold_lose=3, disp_gap=7),
+    ]
+    rx = tr.prescribe(None, dims, {})           # 加碼攤平/部位 sizing 都沒觸發 → rx 應為空
+    assert rx == [], f"這兩維都不在 prescribe() 覆蓋範圍,rx 應為空,實得 {rx}"
+    card = _card_from(dims, rx)
+    assert card["candidate_rules"], "#87/#95:candidate_rules 不該是空陣列——headline 維度應補到規矩"
+    got_dims = [r["dim"] for r in card["candidate_rules"]]
+    assert got_dims[0] == "持有時間", f"headline(severity 最高)應排第一,實得 {got_dims}"
+    assert set(got_dims) == {"持有時間", "出場紀律"}
+    for r in card["candidate_rules"]:
+        assert r.get("rule"), f"補滿的候選必須帶非空 rule,實得 {r}"
+
+
+def test_candidate_rules_dedup_skips_dim_already_covered_by_rx():
+    """#87/#95:若某 dim 已經被 prescribe() 的 rx 貢獻了一條 rule(例如它剛好也是 headline),
+    backfill 不該再從 lens_rule 幫同一個 dim 補第二條——否則同一維度出現兩條用詞不同的規矩,
+    使用者在 Step 3.5 選規矩時會困惑『到底哪條才是engine真正要的』。"""
+    dims = [
+        dict(dim="部位 sizing", tier=1, triggered=True, severity=1.0,
+             max_pct=0.55, max_ticker="NVDA", avg_pct=0.10),   # headline,且 prescribe() 會給它一條 rule
+        dict(dim="分散", tier=2, triggered=True, severity=0.9,
+             n=6, ai_pct=0.1, max_sector="半導體", max_sector_pct=0.5, top3=0.7),  # 沒有 rule 生成路徑
+    ]
+    rx = tr.prescribe(None, dims, {})
+    rule_dims = {r["dim"] for r in rx if r.get("rule")}
+    assert rule_dims == {"部位 sizing"}, f"只有部位 sizing 觸發 rule,實得 {rule_dims}"
+    card = _card_from(dims, rx)
+    got_dims = [r["dim"] for r in card["candidate_rules"]]
+    assert got_dims.count("部位 sizing") == 1, f"部位 sizing 已被 rx 涵蓋,不該再被 lens_rule 重複補一次,實得 {got_dims}"
+    assert "分散" in got_dims, "分散沒有 rule 生成路徑,應由 lens_rule 補上"
+    assert len(card["candidate_rules"]) == 2, f"應為『rx 一條 + backfill 一條』共 2 條,實得 {len(card['candidate_rules'])}"
+
+
+# ─────────────────── L. dim_diversify():未分類桶不冒充集中度(#87/#95 Bug B) ───────────────────
+
+def test_dim_diversify_excludes_unclassified_from_severity():
+    """#87/#95 Bug B:全部持倉都落進 driver() 的 fallback 桶「未分類」時,
+    這個桶不是真的『同產業集中』,是資料品質缺口(driver_map 沒建好)——
+    severity 不該被這個假訊號拉到 1.0(那是跟 data_integrity.unclassified_drivers 打對台的謊報)。"""
+    held = {t: (10, 1000.0) for t in ["CVX", "DUK", "HON", "JNJ", "JPM", "PG", "SO"]}  # 全部沒進 driver_map
+    d = tr.dim_diversify(held, None)
+    assert d["max_sector"] is None, f"沒有任何已分類 sector 時 max_sector 應為 None,實得 {d['max_sector']}"
+    assert d["max_sector_pct"] == 0, f"排除未分類後應無真實 sector 集中訊號,實得 {d['max_sector_pct']}"
+    assert d["severity"] < 0.1, f"未分類桶不該冒充成高嚴重度,實得 severity={d['severity']}"
+    assert _approx(d["sectors"]["未分類"], 1.0, tol=1e-6), \
+        f"sectors 原始分布仍應如實記錄未分類佔比(供 data_integrity 揭露用),實得 {d['sectors']['未分類']}"
+
+
+def test_dim_diversify_triggered_severity_thresholds_aligned():
+    """#87/#95 Bug B:triggered 的 sector 門檻(SECTOR_MAX_TH)必須跟 severity 的 40% 起算點對齊,
+    否則會出現『severity 拉滿但 triggered=False』或反過來的自相矛盾組合。
+    邊界案例:max_sec_pct 卡在 0.40~0.50 之間時,兩者理應一致觸發(對齊後),不該一個算集中一個算不集中。"""
+    assert tr.SECTOR_MAX_TH == 0.40, f"SECTOR_MAX_TH 應與 severity 40% 起算點對齊,實得 {tr.SECTOR_MAX_TH}"
+    # 8 檔(過 len(w)>=8 閘門),同一 sector 佔 45%(卡在新舊門檻之間:>0.40 但 <0.50)
+    held = {"S1": (10, 4500.0)}
+    for i in range(7):
+        held[f"O{i}"] = (10, (10000.0 - 4500.0) / 7)
+    tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+    tr._DRIVER_MAP["S1"] = ("半導體", 0)
+    for i in range(7):
+        tr._DRIVER_MAP[f"O{i}"] = (f"產業{i}", 0)          # 其餘 7 檔各自不同 sector,避免湊出另一個大桶
+    try:
+        d = tr.dim_diversify(held, None)
+    finally:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)          # 還原,避免污染其他測試
+    assert abs(d["max_sector_pct"] - 0.45) < 1e-6
+    assert d["triggered"] is True, f"45% 過新門檻(40%)應觸發,實得 triggered={d['triggered']}"
+    assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():
