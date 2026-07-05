@@ -155,7 +155,11 @@ def positions(rows):
         t = r["ticker"]; sh, cost = pos[t]
         if r["side"] == "buy":
             if sh > 1e-9 and r["price"] < (cost / sh) * 0.90:  # 買價比 avg_cost 低 >10% = 有意義攤平（濾掉微幅 DCA）
-                avg_down.append(dict(ticker=t, date=r["date"], px=r["price"], avg=cost/sh))
+                # #94:point-in-time 成本權重 —— 用「加碼這個決定做出之前」的 pos 快照(此刻 cost/sh 尚未套用本筆買入)
+                # 算這檔在當下佔全部持倉成本基礎的比例,不回推今日市值(分母排除已清倉 s2<=1e-9,對齊下面 held 的過濾閾值)。
+                total_cost_then = sum(c for s2, c in pos.values() if s2 > 1e-9)
+                weight_then = (cost / total_cost_then) if total_cost_then > 1e-9 else 0.0
+                avg_down.append(dict(ticker=t, date=r["date"], px=r["price"], avg=cost/sh, weight_then=weight_then))
             pos[t][0] += r["qty"]; pos[t][1] += r["qty"] * r["price"]
         else:
             if sh > 1e-9:
@@ -674,10 +678,13 @@ def dim_hold(rts):
                 incon_tickers=sorted(incon.keys()))
 
 def dim_avgdown(avg_down, held, last_px, size_dim):
+    # #94:breach 判準改用加碼「當下」的成本權重(positions() 算好放在 weight_then),
+    # 不再查 size_dim["weights"]——那是用「今天」市值回推的單一快照,會把今天的重倉/輕倉
+    # 誤套到三年前或上週的每一筆歷史加碼決定上,方向可能整個判反(見 issue #94)。
     cnt = len(avg_down)
     breach = 0
     for e in avg_down:
-        w = size_dim["weights"].get(e["ticker"], 0)
+        w = e.get("weight_then", 0)
         if w > 0.25: breach += 1
     # breach（攤平破 size 上限）才是危險訊號；原始攤平次數對常買 dip 的人不可靠 → 降權 + 封頂 0.8
     # （spec C-limit：無法從交易區分計畫性建倉 vs 恐慌攤平 → 此維以「問句」呈現，不當高信心判決）
