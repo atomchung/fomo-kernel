@@ -33,9 +33,28 @@ fix(engine): candidate_rules 補 3 維規矩生成 + 分散維度門檻對齊 (#
 ```
 這個 repo 走**issue → PR → close issue** 的正規流程,延續這個格式,不要另創一套。開 PR/issue 前**先 `gh issue list` / `git log --grep` 查一下有沒有已經修過**——這個 repo 修 bug 的節奏很快,容易撞到已經處理過的東西。
 
+## 並行開發慣例(多 session / 多 agent 同時動這個 repo 是常態)
+
+- **認領再修**:動手修某個 issue 前,先 assign 自己或在 issue 下留言認領;開修復 PR 前 `gh pr list` 查同一 issue / 同一函式區域有沒有 open PR。前例:同一個 bug 被獨立診斷兩次(#87/#95,互不引用),`render()` 被兩個 PR 並行大改產生 4 個規格 regression(#23/#24)。
+- **開新 branch 先 fetch、從最新 `origin/main` 開**;merge 完手上的 PR 後再 `gh pr list` 一次,查剛冒出的新 PR、以及與剛 merge 內容的**語意重疊**(git 只擋文字衝突,不擋語意衝突)。
+- **修 bug 不只修發現的那個實例**:同一根因常住在多處,動手前先 grep fixtures / docs / tests 掃其他實例,PR body 寫「掃過的範圍與結果」。前例:拆股 fixture 的同款定價 bug 分三批被動發現(#93 → #98 → #108)。
+- **批次 merge(一次合 ≥2 個 PR)前做一輪 zoom-out**,不只逐 diff 看正確性:①同主題 issue 第二次出現=同一設計缺陷的第二個症狀,先問「這條線該不該存在」再修單點 ②文檔/測試出現「繞過/避開/先…再跑」措辭=系統在教人繞過自己 ③ engine 靠檔名/環境變數等隱性訊號做行為分支=違反 data-agnostic(#89 前例)。含 engine 改動時,對全部 mock persona CSV 跑一輪產卡並核對數字——#93/#94/#95 三個正確性 bug 全是這樣現形的,任何 diff review 都看不到。
+- **批次 merge 收尾**:這一輪產生的 agent worktree / 本地 branch,PR 全 merge 後,驗證 commit 已可從 main 達到、且 `git worktree list` 確認沒有其他 session 在用,才清掉。
+
+## 鏡像檔案對照表(同一份事實住在多處,改一處要連動)
+
+漏同步的 drift 反覆發生過(#68、#96、cycle_id 對帳失效),改下列任何一處,照表連動其餘:
+
+| 事實 | 住在哪些檔案 |
+|---|---|
+| 行為契約 | engine ↔ `skills/fomo-kernel/SKILL.md`(權威)↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
+| demo 卡示意數字 | README 文字卡 ↔ `docs/demo-card.html`(改後重截 `demo-card.png`) |
+| README 雙語 | 繁中主文 ↔ 英文 TL;DR,語意要對齊,不要只改一邊 |
+
+引用**產品假設**(誰是用戶、當前卡點是什麼)做優先級決策時,帶上判定日期;判定已隔數週或出現矛盾訊號,先跟 maintainer 對帳再據以行動——過時結論被跨 session 複讀的案例見 #112。
+
 ## 公開 repo 的品質門檻
 
 這個 repo 會被外部使用者 clone 使用,合併標準比純內部工具高:
 - 不要在任何 commit、測試 fixture、文件範例裡混入真實交易明細(只用 mock)
 - README/AGENTS.md 面向外部讀者,改動措辭要考慮「沒有這段對話上下文的人看得懂嗎」
-- README 已有雙語(繁中 + 英文 TL;DR),改動主要內容時記得兩處都要對齊,不要只改中文段落
