@@ -282,22 +282,46 @@ def test_dim_avgdown_uses_weight_then_not_todays_snapshot():
     """#94 回歸:同一檔『今天』佔比很高,但這筆加碼『當下』佔比不高 → 不該 breach。
     真實案例(sample_value.csv,issue #94):INTC 第一次加碼當下只佔 ~12.5%(成本基礎)不該破線,
     但 INTC 今天(被後續大量加碼推高後)的市值/成本權重遠超 25%——舊邏輯查 size_dim["weights"]
-    (今天快照)會誤判這筆『當下不算重倉』的加碼為 breach。同時驗證反向案例:今天佔比低、
-    但當下確實重倉的加碼,仍應正確 breach(不能矯枉過正變成永遠不觸發)。"""
+    (今天快照)會誤判這筆『當下不算重倉』的加碼為 breach。同時驗證反向對照:換一檔今天權重不同
+    (CVS)的加碼事件,只要它自己的 weight_then 本身破 25%,一樣正確 breach——不是改吃 weight_then
+    後就矯枉過正變成『永遠不觸發』(triad review 2026-07-05:CVS 今天成本權重其實也 >25%,並非
+    「今天佔比低」,這裡驗證的重點是判準只看 weight_then、不管今天佔比高或低)。"""
     # INTC 今天(size_dim)佔比刻意做到遠超 25%,但這筆加碼「當下」(weight_then)只有 12.5%
     avg_down = [dict(ticker="INTC", date=dt.date(2024, 4, 1), px=40, avg=49, weight_then=0.125)]
-    held = {"INTC": (450, 12460.0), "CVS": (120, 7480.0)}   # INTC 今天成本權重 ≈ 62.5%,遠超 25%
+    held = {"INTC": (450, 12460.5), "CVS": (120, 7479.6)}   # 精確對齊下面 buy rows 的 qty*price,INTC 今天成本權重 ≈ 62.5%,遠超 25%
     size_dim = tr.dim_size([_R("INTC", "buy", 450, 27.69, "2024-01-01"),
                             _R("CVS", "buy", 120, 62.33, "2024-01-01")], held, None)
     assert size_dim["weights"]["INTC"] > 0.25, "前提:INTC 今天快照本身確實 > 25%(否則此測試無意義)"
     d = tr.dim_avgdown(avg_down, held, None, size_dim)
     assert d["breach"] == 0 and d["triggered"] is False, \
         f"加碼當下 weight_then=12.5%(<25%)不該因『今天』佔比高被誤判 breach,實得 breach={d['breach']}"
-    # 反向對照:當下確實重倉(weight_then > 0.25)的加碼,即使今天佔比不同,仍應正確 breach
+    # 反向對照:當下確實重倉(weight_then > 0.25)的加碼,不管今天佔比是什麼,仍應正確 breach
     avg_down2 = [dict(ticker="CVS", date=dt.date(2024, 5, 1), px=55, avg=67.57, weight_then=0.2623)]
     d2 = tr.dim_avgdown(avg_down2, held, None, size_dim)
     assert d2["breach"] == 1 and d2["triggered"] is True, \
         f"當下確實破 25%(weight_then=26.23%)應正確 breach,實得 breach={d2['breach']}"
+
+
+def test_positions_computes_weight_then_as_point_in_time_cost_share():
+    """#94:直接測 positions() 產生 weight_then 這個計算本身(不是像上面兩個測試手造 weight_then
+    餵給 dim_avgdown),鎖住『加碼決定做出之前的成本佔比,且每筆事件現算、不是沿用舊快照』這個語意
+    ——這是 #94 真正修的那段程式碼,只測 dim_avgdown 吃現成 weight_then 測不到 positions() 自己
+    算錯分子分母或算錯時機的迴歸。"""
+    rows = [
+        _R("A", "buy", 100, 10, "2024-01-01"),    # A 建倉,成本 1000
+        _R("B", "buy", 100, 10, "2024-01-02"),    # B 建倉,成本 1000;此刻 A:B = 50:50
+        _R("A", "buy", 100, 8, "2024-01-03"),     # 攤平#1(8 < 10*0.9=9):加碼當下 A 成本 1000,總成本 1000+1000=2000 → weight_then=0.5;之後 A:[200,1800]
+        _R("C", "buy", 200, 10, "2024-01-04"),    # C 建倉,成本 2000;此刻 A=1800,B=1000,C=2000,總成本 4800
+        _R("A", "buy", 100, 5, "2024-01-05"),     # 攤平#2(5 < 9*0.9=8.1):加碼當下 A 成本仍是 1800(此筆套用前),總成本 4800 → weight_then=1800/4800=0.375
+    ]
+    held, avg_down = tr.positions(rows)
+    a_events = [e for e in avg_down if e["ticker"] == "A"]
+    assert len(a_events) == 2, f"應有兩次 A 的攤平事件,實得 {len(a_events)}"
+    assert _approx(a_events[0]["weight_then"], 0.5, tol=1e-9), \
+        f"攤平#1 當下(套用前)A 佔全部持倉成本應為 1000/2000=0.5,實得 {a_events[0]['weight_then']}"
+    assert _approx(a_events[1]["weight_then"], 0.375, tol=1e-9), \
+        (f"攤平#2 當下 A 佔全部持倉成本應為 1800/4800=0.375(C 加入後現算,不是沿用攤平#1 的 0.5 快照),"
+         f"實得 {a_events[1]['weight_then']}")
 
 
 # ─────────────────────── H2. dim_size():其餘平均排除最大檔 ───────────────────────
