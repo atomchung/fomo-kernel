@@ -817,9 +817,13 @@ def overview_stats(rts, ab, held=None, last_px=None):
     payoff = avg_win / abs(avg_loss) if avg_loss else None       # 無已實現虧損 → None(非 0,別跟真 0 混淆);#21.2 補完
     pf = win_sum / abs(loss_sum) if loss_sum else 0              # 賺總額 / 賠總額(獲利因子)
     realized = win_sum + loss_sum
-    unrealized = sum(sh * last_px[t] - c for t, (sh, c) in (held or {}).items()
-                     if last_px and t in last_px)                 # 還抱著的帳面盈虧
+    held = held or {}
+    unpriced = sorted(t for t in held if not (last_px and t in last_px))  # 沒抓到現價的持倉(#82:結構化揭露,別讓未實現靜默漏算)
+    unrealized = sum(sh * last_px[t] - c for t, (sh, c) in held.items()
+                     if last_px and t in last_px)                 # 還抱著的帳面盈虧(僅涵蓋有現價者)
+    unrealized_coverage = dict(priced_n=len(held) - len(unpriced), held_n=len(held), unpriced=unpriced)
     return dict(n_rt=len(rts), realized=realized, unrealized=unrealized,
+                unrealized_coverage=unrealized_coverage,
                 total_pnl=realized + unrealized, win_sum=win_sum, loss_sum=loss_sum,
                 n_wins=len(wins), n_losses=len(losses), avg_win=avg_win, avg_loss=avg_loss,
                 payoff=payoff, pf=pf, ab=ab)
@@ -1116,6 +1120,10 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
         ov.append_text(_money(o['realized']))
         ov.append("   未實現 ")
         ov.append_text(_money(o['unrealized']))
+        cov = o.get("unrealized_coverage") or {}
+        if cov.get("unpriced"):                                  # 未實現非全覆蓋 → 明講缺誰(#82:別讓省略靜默發生)
+            ov.append(f"\n  ⚠ 未實現僅反映 {cov['priced_n']}/{cov['held_n']} 檔持倉,"
+                      f"缺現價:{'、'.join(cov['unpriced'])}", style="dim yellow")
         ov.append("\n盈虧比 ")
         if o['payoff'] is None:                                # 無已實現虧損 → 比率無意義,不印 0/∞(#21.2 補完)
             ov.append("—", style="bold")

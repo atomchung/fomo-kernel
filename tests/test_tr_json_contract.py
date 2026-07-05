@@ -116,6 +116,21 @@ def main():
         ok(set(card["data_integrity"].keys()) == {"orphan_sells", "unclassified_drivers"},
            "data_integrity = {orphan_sells, unclassified_drivers}")
 
+        ov = card["overview"]
+        need_ov = {"n_rt", "realized", "unrealized", "unrealized_coverage", "total_pnl",
+                   "win_sum", "loss_sum", "n_wins", "n_losses", "avg_win", "avg_loss",
+                   "payoff", "pf", "ab"}
+        ok(set(ov.keys()) == need_ov, "overview 頂層欄位恰等於契約",
+           f"diff: {set(ov.keys()) ^ need_ov}")
+        cov = ov["unrealized_coverage"]
+        ok(set(cov.keys()) == {"priced_n", "held_n", "unpriced"},
+           "unrealized_coverage = {priced_n, held_n, unpriced}(#82)", repr(cov))
+        ok(cov["priced_n"] + len(cov["unpriced"]) == cov["held_n"],
+           "priced_n + len(unpriced) == held_n(覆蓋率算式自洽)", repr(cov))
+        ok(cov["priced_n"] == 0 and len(cov["unpriced"]) == cov["held_n"] > 0,
+           "強制離線 shim 下,全部持倉都抓不到現價 → unrealized_coverage 如實反映全未覆蓋",
+           repr(cov))
+
         # ── 2. state 契約 ──
         st = json.loads(state_path.read_text(encoding="utf-8"))
         ok(set(st.keys()) == STATE_KEYS, "state 頂層 key 恰等於契約",
@@ -134,6 +149,9 @@ def main():
            "holdings 結構 4 欄位")
         pos = hold["positions"]
         ok(len(pos) >= 1, "mock 至少 1 檔在手持倉")
+        ok(cov["held_n"] == len(pos),
+           "overview.unrealized_coverage.held_n 與 state.holdings.positions 檔數一致(同一份 held,對帳不分岔)",
+           f"cov.held_n={cov['held_n']} vs len(pos)={len(pos)}")
         for t, p in pos.items():
             ok({"shares", "cost", "avg_cost", "cycle_start", "cycle_id"} <= set(p.keys()),
                f"position[{t}] 5 欄位齊")
