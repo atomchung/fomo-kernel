@@ -74,7 +74,9 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
 .rc .lens{font-size:13px;color:var(--text-secondary);margin:8px 0 0;line-height:1.6}
 .rc .meta{font-size:12px;color:var(--text-muted);margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px}
-.rc .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.rc .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media (max-width:520px){.rc .grid4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:380px){.rc .grid4{grid-template-columns:1fr}}
 .rc .m{background:var(--surface-1);border-radius:var(--radius);padding:13px 15px}
 .rc .m .lbl{font-size:12px;color:var(--text-secondary);margin:0}
 .rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25}
