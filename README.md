@@ -92,6 +92,16 @@ cp -r skills/trade-review ~/.claude/skills/                         # B. 複製(
 
 **會發生什麼**:① 引擎跑診斷 → ② Claude 在對話裡問你 1–3 個持股假設/動機問題(逢低還是凹單?)→ ③ 拿到你的答案,出一張定論卡。卡的版型見 [`card-template.html`](skills/trade-review/card-template.html)(完整四層的 HTML 範例)。
 
+## 其他 coding agent 怎麼用
+
+沒有 Claude Code 的 skill 系統一樣能用——核心引擎是純 Python,不依賴任何 agent 機制:
+
+```bash
+cd skills/trade-review && python3 engine/trade_recap.py ~/Downloads/my.csv
+```
+
+如果你用 Codex / Cursor 等其他 coding agent,叫它讀 [`AGENTS.md`](AGENTS.md) 照著走——那份檔案是給非 Claude Code agent 的路由指南,會告訴它怎麼跑引擎、怎麼問動機、怎麼出卡。
+
 ## 三組風格 sample(直接可跑,看不同風格照出不同洞)
 
 `mock/` 下有四組**虛構**交易,各觸發一種典型洞。完整設計見 [`mock/SAMPLES.md`](skills/trade-review/mock/SAMPLES.md):
