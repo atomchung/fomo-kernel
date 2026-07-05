@@ -705,6 +705,8 @@ def number_line(d):
     if n == "分散":
         return f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、top3 {d['top3']*100:.0f}%——同一個 driver"
     if n == "持有時間":
+        if d.get("min") is None:
+            return "本期無已實現 round-trip，持有時間待下期累積"
         base = f"你持有時間 {d['min']}~{d['max']} 天、中位 {d['median_hold']:.0f} 天"
         if d.get("n_incon", 0) > 0:
             return base + f"；其中 {d['n_incon']}/{d['n_multi']} 檔同一檔又當沖又長抱（{', '.join(d['incon_tickers'][:5])}）——同檔沒有一致框架"
@@ -886,6 +888,12 @@ def main():
     px, yf_err = fetch_prices(tickers, start)
     fwds, last_px = fwd_from_px(rts, px, adaptive_n_fwd(rows))   # 觀察窗隨資料長度自適應
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
+    if px is not None:                                     # 補收 held 但尚未賣出的 ticker 最新價（修：原本只收 round-trip ticker）
+        for t in held:
+            if t not in last_px and t in px.columns:
+                col = px[t].dropna()
+                if not col.empty:
+                    last_px[t] = float(col.iloc[-1])
     print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
           f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
     print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
