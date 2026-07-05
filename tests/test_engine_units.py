@@ -93,8 +93,30 @@ def test_load_sorts_by_date():
         rows = tr.load([p])
     finally:
         os.unlink(p)
+    # #64:先前這裡沒鎖 len,若 dedup 鍵漏掉日期把 3 筆「同規格不同日」誤砍成 1 筆,
+    # 排序斷言仍空洞通過(單一元素必是已排序)——len 斷言才是這條測試真正要守的東西。
+    assert len(rows) == 3, f"3 筆同規格不同日應全保留(非去重對象),實得 {len(rows)} 筆"
     dates = [r["date"].isoformat() for r in rows]
     assert dates == sorted(dates), f"load 應按日期排序,實得 {dates}"
+
+
+def test_load_dedup_keeps_same_spec_different_date():
+    """#64/#14:dedup 鍵必須含日期 —— 同(ticker, action, qty, price)但不同日,是 3 筆獨立交易
+    (例:每月固定日期定期定額買同股數同價位),不是重疊對帳單造成的重複列,不該被去重。
+    跟 test_load_dedup_and_filters 的『完全相同(含同日)才去重』互為正反面。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "DCA,10,50.00,BUY,2024-01-01,Trade\n"
+        "DCA,10,50.00,BUY,2024-02-01,Trade\n"
+        "DCA,10,50.00,BUY,2024-03-01,Trade\n"
+    )
+    try:
+        rows = tr.load([p])
+    finally:
+        os.unlink(p)
+    assert len(rows) == 3, \
+        f"同規格不同日的 3 筆定期定額交易應全保留,實得 {len(rows)} 筆(dedup 鍵漏了日期才會誤砍)"
+    assert sorted(r["date"].isoformat() for r in rows) == ["2024-01-01", "2024-02-01", "2024-03-01"]
 
 
 # ─────────────────────── B. round_trips():FIFO 配對 ───────────────────────
