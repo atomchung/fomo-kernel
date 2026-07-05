@@ -3,8 +3,9 @@
 測「最小心臟」:把一份交易 CSV 按時間切兩段,累積跑「初診 → 對帳」,
 驗第二張卡有沒有【真的對帳第一張承諾的規矩】(而不是重新初診同一個洞)。
 
-對應 requirements.md §10.3 的驗收項。不需網路:行為維(sizing/攤平)不靠 yfinance,
-α/β 缺價格時走 note 分支,測試照常通過。
+對應 requirements.md §10.3 的驗收項。強制離線、確定性(#64):subprocess 注入假 yfinance
+(import 即 ImportError,見 offline_shim()),本機有沒有裝 yfinance 都跑同一條降級路徑,
+不再隨行情漂——行為維(sizing/攤平)本來就不靠 yfinance,α/β 缺價格時走 note 分支。
 
 跑法:python3 test_state_loop.py   (預設 ../mock/mock_trades.csv,切點 2024-07-01)
 """
@@ -30,12 +31,28 @@ def split_csv(src, cutoff, d1, d2):
     return len(seg1), len(seg2)
 
 
-def run_engine(csv_paths, state_out):
-    """跑 engine,設 TR_STATE_OUT 取結構化 state。回傳 state dict。"""
+def offline_shim(tmp):
+    """建一個假 yfinance module(import 即 ImportError),給 run_engine() 的 pythonpath 用,
+    強制走離線降級路徑(#64:本機裝了 yfinance 時,舊版沒 shim 會真的連網、隨行情漂)。"""
+    shim = os.path.join(tmp, "shim")
+    os.makedirs(shim, exist_ok=True)
+    with open(os.path.join(shim, "yfinance.py"), "w", encoding="utf-8") as f:
+        f.write('raise ImportError("offline shim: test_state_loop 強制離線(#64)")\n')
+    return shim
+
+
+def run_engine(csv_paths, state_out, pythonpath=None):
+    """跑 engine,設 TR_STATE_OUT 取結構化 state。回傳 state dict。
+    pythonpath 給假 yfinance shim 用,強制離線(#64:本機裝了 yfinance 時,舊版會真的連網、隨行情漂)。"""
     env = dict(os.environ, TR_STATE_OUT=state_out)
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
     r = subprocess.run([sys.executable, ENGINE, *csv_paths],
                        env=env, capture_output=True, text=True, timeout=180)  # fail-fast:本機裝 yfinance 時別讓網路卡住整套(review)
     assert r.returncode == 0, f"engine 失敗:\n{r.stderr}"
+    # 這支跑的是預設 CLI 文字卡模式(未設 TR_JSON)——yfinance 狀態行印在 stdout,JSON 模式才走 stderr;兩邊都查,不綁死是哪一種
+    assert "yfinance 未安裝" in (r.stdout + r.stderr), \
+        f"預期強制離線降級,實際輸出未見『yfinance 未安裝』(shim 沒生效?):{(r.stdout + r.stderr)[:300]}"
     with open(state_out, encoding="utf-8") as f:
         return json.load(f)
 
@@ -110,8 +127,9 @@ def test_insufficient_span_gate():
         ("AAA", "BUY", 10, 100, "2024-01-02"), ("AAA", "SELL", 10, 110, "2024-02-10"),
         ("BBB", "BUY", 10, 100, "2024-04-15"), ("BBB", "SELL", 10, 90,  "2024-06-25"),
         ("CCC", "BUY", 10, 100, "2024-08-01"), ("CCC", "SELL", 10, 120, "2024-10-08")])
-    s_short = run_engine([short], os.path.join(tmp, "st_short.json"))
-    s_long = run_engine([long_], os.path.join(tmp, "st_long.json"))
+    shim = offline_shim(tmp)
+    s_short = run_engine([short], os.path.join(tmp, "st_short.json"), pythonpath=shim)
+    s_long = run_engine([long_], os.path.join(tmp, "st_long.json"), pythonpath=shim)
     assert s_short["n_round_trips"] == 3, f"short 應有 3 rt,實得 {s_short['n_round_trips']}"
     assert s_long["n_round_trips"] == 3, f"long 應有 3 rt,實得 {s_long['n_round_trips']}"
     assert s_short["insufficient_data"] is True, \
@@ -174,15 +192,17 @@ def main():
     n1, n2 = split_csv(src, cutoff, seg1, seg2)
     print(f"切點 {cutoff}:seg1 {n1} 列 / seg2 {n2} 列(累積對帳:第二次餵 seg1+seg2)\n")
 
+    shim = offline_shim(tmp)
+
     # ── 第一次:初診(只有 seg1)──
-    st1 = run_engine([seg1], os.path.join(tmp, "state1.json"))
+    st1 = run_engine([seg1], os.path.join(tmp, "state1.json"), pythonpath=shim)
     m1, l1 = coach_turn(st1, log)
     print(f"【第 1 張卡 · {m1}】 期間 {st1['date_start']}~{st1['date_end']}"
           f"(交易 {st1['n_trades']}、round-trip {st1['n_round_trips']})")
     print(f"  {l1}\n")
 
     # ── 第二次:對帳(seg1+seg2 累積,模擬用戶補上最新對帳單)──
-    st2 = run_engine([seg1, seg2], os.path.join(tmp, "state2.json"))
+    st2 = run_engine([seg1, seg2], os.path.join(tmp, "state2.json"), pythonpath=shim)
     m2, l2 = coach_turn(st2, log)
     print(f"【第 2 張卡 · {m2}】 期間 {st2['date_start']}~{st2['date_end']}"
           f"(交易 {st2['n_trades']}、round-trip {st2['n_round_trips']})")
