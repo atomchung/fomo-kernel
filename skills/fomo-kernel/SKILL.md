@@ -20,6 +20,22 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 - 要回給作者的只有一件事:**「這張卡有沒有用」的文字反饋**(用戶自願)——不含任何交易明細。
 - 用戶沒給資料時,**只跑 `mock/mock_trades.csv`**(假資料),絕不要去找他機器上的真實對帳單。
 
+## 🌐 Output language (apply every time)
+
+Everything the user sees — your dialogue, the `AskUserQuestion` options, and the final card — must be in **one resolved output language**. Do not hardcode a language. Resolve it per session, first match wins:
+
+1. **Explicit request this session** — the user says "give it to me in English" / "用中文" / passes `lang=en`.
+2. **Saved preference** — `output_lang:` in `~/.trade-coach/profile.md`, if present.
+3. **Conversation language** — the language the user is speaking to you in right now. This is the default; follow it, don't impose a language.
+4. **Fallback** — Traditional Chinese (`zh-TW`).
+
+Once resolved:
+- Run the whole flow (dialogue, questions, card) in that language. Lens files (`rubric/*.lens.json`) currently carry Traditional-Chinese quotes/prompts — translate them faithfully on the fly into the resolved language when you write the card.
+- Pass it to the engine each run as `TR_LANG=<code>` (e.g. `TR_LANG=en`) for forward-compatibility. The engine does not consume it yet — its own printed CLI card and lens strings stay Chinese for now; full engine/lens localization keyed on `TR_LANG` (a strings table) is tracked separately as internationalization work. This still governs what the user sees **today**, because the card is one **you** write from `build_card_data()`'s structured JSON, not the engine's printed card.
+- Persist it: on first run, or whenever the user switches, write `output_lang: <code>` into `~/.trade-coach/profile.md` (alongside the profile principles) so the next session resolves to their preference at step 2.
+
+> The Traditional-Chinese phrasings, question templates, and card examples throughout the rest of this SKILL are **illustrative of intent**, not literal strings to copy — express their meaning in the resolved language.
+
 ## 工作流程(四步)
 
 > 分工原則:**engine 做純算(確定性),Claude 做世界知識(格式 / 分類 / 動機)。** 需要認得世界的事都交給 Claude,engine 不 hardcode。
