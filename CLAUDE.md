@@ -1,6 +1,6 @@
 # CLAUDE.md — 開發者 / 維護者指引
 
-> 這份給**改這個 repo 程式碼的你**看。使用者跑這個 skill 時的行為契約在 [AGENTS.md](AGENTS.md)(給 Codex/Claude Code 等 agent 執行時看);兩者角色不同,**不要互相搬內容**——AGENTS.md 講「怎麼用這個 skill」,這份講「怎麼改這個 codebase」。
+> 這份給**改這個 repo 程式碼的你**看。使用者跑這個 skill 時的行為契約在 [AGENTS.md](AGENTS.md)(給非 Claude Code 的 agent,如 Codex,執行時看;Claude Code 自己會自動載入 SKILL.md,不需要 AGENTS.md);兩者角色不同,**不要互相搬內容**——AGENTS.md 講「怎麼用這個 skill」,這份講「怎麼改這個 codebase」。
 
 ## 這個 repo 是什麼(維護者角度)
 
@@ -18,7 +18,7 @@ python3 tests/run_all.py                       # 一鍵跑全部五套測試,離
 TR_TEST_NETWORK=1 python3 tests/run_all.py     # 額外加跑 β 方向 network smoke
 ```
 
-五套分工:機械層純函式單元(`test_engine_units.py`)、TR_JSON/state 契約(`test_tr_json_contract.py`)、價格路徑合成單元(`test_price_paths.py`)、三風格端到端(`test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這五套沒全過就不要 commit。**
+五套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這五套沒全過就不要 commit。**
 
 ## 隱私鐵律的技術防線(不要弱化)
 
@@ -26,7 +26,7 @@ TR_TEST_NETWORK=1 python3 tests/run_all.py     # 額外加跑 β 方向 network 
 
 ## Commit / PR 慣例(從既有 git log 觀察到的模式)
 
-`<type>(<scope>): <description>（closes #NN）(#PR)` 或 `<type>: <description>`。例:
+`<type>(<scope>): <description> (closes #NN) (#PR)` 或 `<type>: <description>`。例:
 ```
 fix(engine): last_px covers all fetched tickers, not just round-trips (closes #79) (#83)
 fix(engine): candidate_rules 補 3 維規矩生成 + 分散維度門檻對齊 (#100)
