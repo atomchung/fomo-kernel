@@ -39,7 +39,7 @@ MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交
 CYCLE_ID_RE = re.compile(r"^[^#\s]+#\d{4}-\d{2}-\d{2}#\d+$")
 CYCLE_ID_UNKNOWN_RE = re.compile(r"^[^#\s]+#unknown$")
 SELL_EARLY_TH = 0.10
-SECTOR_MAX_TH = 0.50
+SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
 
 # ── ticker → (sector, thematic?)  thematic=1 代表同屬一個跨產業主題(如 AI capex)= VY B2 的「driver」──
@@ -642,8 +642,9 @@ def dim_diversify(held, last_px):
     sec = defaultdict(float); ai = 0.0
     for t, wt in w.items():
         s, is_ai = driver(t); sec[s] += wt; ai += wt * is_ai
-    max_sec = max(sec, key=sec.get) if sec else None
-    max_sec_pct = sec.get(max_sec, 0)
+    classified_sec = {s: v for s, v in sec.items() if s != "未分類"}   # 排除未分類桶,避免 driver_map 沒建好冒充集中度訊號(對齊 what_if() 既有作法)
+    max_sec = max(classified_sec, key=classified_sec.get) if classified_sec else None
+    max_sec_pct = classified_sec.get(max_sec, 0)
     top3 = sum(sorted(w.values(), reverse=True)[:3])
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
     trig = (len(w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > 0.60 or ai > 0.60
@@ -991,12 +992,12 @@ def prescribe(ab, dims, overview):
                 "這是真 edge,別讓 sizing/紀律稀釋它。")))
     ad = dd.get("加碼攤平", {})
     if ad.get("count", 0) >= 10 or ad.get("breach", 0) >= 1:
-        rx.append(dict(kind="砍損耗", verify="虧損加碼次數(降→好)",
+        rx.append(dict(kind="砍損耗", dim="加碼攤平", verify="虧損加碼次數(降→好)",
                        rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)",
                        text=f"虧損中加碼 {ad.get('count', 0)} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"))
     sz = dd.get("部位 sizing", {})
     if sz.get("max_pct", 0) > 0.30:                          # #29:解開互斥 gate,攤平與 sizing 可同時成候選(讓 candidate_rules 能 2-3 條)
-        rx.append(dict(kind="砍損耗", verify="單筆最大佔比(降→好)",
+        rx.append(dict(kind="砍損耗", dim="部位 sizing", verify="單筆最大佔比(降→好)",
                        rule=f"單筆部位上限定死 20%,超過就減",
                        text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
     return rx
@@ -1426,6 +1427,14 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
 
     # 候選規矩:2-3 條候選(#29 解開互斥 gate 後可多條),Step 3 跟用戶挑/改一條
     candidate_rules = [r for r in (rx or []) if r.get("rule")][:3]
+    covered_dims = {r.get("dim") for r in candidate_rules if r.get("dim")}
+    for h in top_holes:                    # #87/#95:出場紀律/分散/持有時間三維在 prescribe() 沒有 rule 生成路徑,candidate_rules 可能全空;用已算好的 lens_rule 補滿(headline dim 優先,因 top_holes 已按 severity 排序)
+        if len(candidate_rules) >= 3:
+            break
+        if h["dim"] in covered_dims or not h.get("lens_rule"):
+            continue
+        candidate_rules.append({"kind": h["dim"], "dim": h["dim"], "rule": h["lens_rule"], "text": h.get("lens_quote", "")})
+        covered_dims.add(h["dim"])
 
     # ⚠️ thesis_questions 給 Step 2 對話用,絕不准印在卡上(SKILL L77-79「確認在出卡之前」)
     thesis_questions = [{"ticker": d["ticker"], "question": d["thesis_q"]}
