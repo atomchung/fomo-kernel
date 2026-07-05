@@ -80,7 +80,7 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
 ## 🔒 Privacy: no backend upload, the author can't see it
 
 - The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing written to any memory**.
-- The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content.
+- The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
 - `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
 - Precisely: the only thing that reads your trades is **the Claude you're already using** — it has to read the CSV to review it for you, exactly like any other time you use Claude. That's a different thing from handing your statement to a SaaS that stores it, that you can't see into, that the author can query. (So it's not "never touches any server" — it's "not persisted, not sent to the author, not through a third party.")
 
