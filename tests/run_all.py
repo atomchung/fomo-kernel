@@ -3,7 +3,7 @@
 一鍵跑 fomo-kernel 的全部測試 —— 之後每次迭代引擎/規格,跑這一條就知道有沒有改壞。
 
 零依賴(只用標準庫,免裝 pytest);全程離線、確定性(不碰 yfinance,不需網路)。
-subprocess 依序跑三套測試,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
+subprocess 依序跑 SUITES 列的全部套件,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
 
 七套測試的分工:
   1. 機械層純函式單元    tests/test_engine_units.py

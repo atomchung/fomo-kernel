@@ -105,8 +105,9 @@ def detect_exits(events):
 
 
 def infer_swaps(events, exit_item, window_days=SWAP_WINDOW_DAYS):
-    """賣出後 window 天內、不同 ticker 的買入 = 換入候選(全列,金額大者先);空 = 閒置 cash。
-    AI 推 + 用戶 confirm 的 inference-first 由 SKILL 層做,這裡只給機械候選。"""
+    """賣出「當天起」window 天內、不同 ticker 的買入 = 換入候選(全列,金額大者先);空 = 閒置 cash。
+    同日含(review 2026-07-06):賣早買午是最常見的真實換股;日期無盤中順序,同日買入
+    可能先於賣出,但那也是同一次資金重配——寬進,由用戶 confirm(inference-first)嚴出。"""
     d0 = dt.date.fromisoformat(exit_item["exit_date"])
     d1 = d0 + dt.timedelta(days=window_days)
     cands = []
@@ -119,7 +120,7 @@ def infer_swaps(events, exit_item, window_days=SWAP_WINDOW_DAYS):
         d, t, act, qty, px = n
         if act != "buy" or t == exit_item["ticker"]:
             continue
-        if d0 < d <= d1:
+        if d0 <= d <= d1:
             cands.append({"ticker": t, "date": d.isoformat(),
                           "price": round(px, 6), "qty": round(qty, 4)})
     cands.sort(key=lambda c: -(c["price"] * c["qty"]))

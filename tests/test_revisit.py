@@ -88,13 +88,14 @@ def test_infer_swaps_window_and_idle():
     events = [
         _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
         _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
+        _tr("2026-06-15", "AVGO", "buy", 3, 300.0),      # 同日換股(賣早買午)→ 必須配(review 2026-07-06)
         _tr("2026-06-20", "ORCL", "buy", 5, 180.0),      # 窗內(5 天)→ 配
         _tr("2026-07-10", "META", "buy", 2, 700.0),      # 窗外(25 天)→ 不配
         _tr("2026-06-16", "NVDA", "buy", 1, 118.0),      # 同 ticker → 不配(那是回補不是 swap)
     ]
     x = {"ticker": "NVDA", "exit_date": "2026-06-15"}
     swaps = rv.infer_swaps(events, x)
-    assert [s["ticker"] for s in swaps] == ["ORCL"], f"swap 窗/同檔規則錯:{swaps}"
+    assert sorted(s["ticker"] for s in swaps) == ["AVGO", "ORCL"], f"swap 窗/同檔/同日規則錯:{swaps}"
     lonely = rv.infer_swaps([_tr("2026-06-15", "NVDA", "sell", 10, 120.5)],
                             {"ticker": "NVDA", "exit_date": "2026-06-15"})
     assert lonely == [], "無買入 → 之後 enqueue 標 idle_cash"
