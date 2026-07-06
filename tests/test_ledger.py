@@ -186,6 +186,40 @@ def test_adjustment_is_provenance_only():
     assert _approx(out["holdings"]["NVDA"]["shares"], 40), "adjustment 不改推導"
 
 
+def test_micro_share_rounds_to_zero_not_listed():
+    """review finding(2026-07-06):qty=1e-5 建倉 round(4) 後 = 0.0 → 不准以幽靈持倉出現。"""
+    out = lg.derive_holdings([_tr("2026-07-02", "DUST", "buy", 0.00001, 100.0)])
+    assert "DUST" not in out["holdings"], "round 後歸零的微量殘股不列 holdings"
+
+
+def test_csv_filter_parity_with_trade_recap():
+    """drift 鎖(review altitude finding):trades_from_csv 的收/拒語意 + 去重鍵精度
+    「對齊 trade_recap.load()」不能只活在註解裡——同一份 CSV 餵兩邊,斷言行為一致。
+    之後任何一邊改過濾/精度規則,這條紅燈逼兩邊一起改。"""
+    sys.path.insert(0, ENGINE)
+    import trade_recap as tr
+    csv_text = (
+        "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
+        "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # 正常
+        "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # 完全重複(兩邊都該去重)
+        "PLTR,SELL,5,140.123456,2026-07-02,Trade\n"     # 高精度價
+        "JUNK,BUY,0,10,2026-07-02,Trade\n"              # qty=0(兩邊都拒)
+        "FREE,BUY,3,0,2026-07-02,Trade\n"               # px=0(兩邊都拒)
+        "AAPL,BUY,3,200.0,2026-07-02,Dividend\n"        # 非 Trade(兩邊都拒)
+        "NOK,HOLD,3,10.0,2026-07-02,Trade\n"            # 非 BUY/SELL(兩邊都拒)
+    )
+    p = _tmpfile(csv_text, ".csv")
+    recap_rows = tr.load([p])
+    recap_set = {(r["ticker"], r["side"], round(r["qty"], 2), round(r["price"], 4),
+                  r["date"].isoformat()) for r in recap_rows}
+    led_events, _ = lg.trades_from_csv(p)
+    led_fresh, _ = lg.dedupe_against([], led_events)
+    led_set = {lg._trade_key(ev) for ev in led_fresh}
+    assert led_set == recap_set, (
+        f"ledger 與 trade_recap 對同一 CSV 的收/拒/去重不一致:\n"
+        f"only ledger: {led_set - recap_set}\nonly recap: {recap_set - led_set}")
+
+
 # ─────────────── B. reconcile ───────────────
 
 def test_reconcile_kinds():

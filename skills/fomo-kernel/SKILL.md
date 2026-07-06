@@ -84,6 +84,7 @@ python3 engine/ledger.py holdings 2>/dev/null # 帳本推導的當前持倉(snap
 - **已有帳本、又丟來新快照 → 先 `reconcile`,不要直接 append**:`python3 engine/ledger.py reconcile /tmp/pos.json` 會列宣告 vs 推導的差異——一致 = 對帳通過(卡上可標「帳本已對帳 ✓」);不一致 = 把差異講給用戶聽(「我推 NVDA 40 股,你說 35——中間可能有我沒看到的交易」),他確認後以**他的宣告為準**:`append-snapshot --source reconciled`。這是「數據準確」的機制:每丟一次快照 = 帳本自我修復一次。
 - **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全)。
 - **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
+- **帳本誠實檢查**:`holdings` 輸出的 `counts.skipped_lines > 0` = 帳本檔有壞行(可能是中斷寫入)——**如實告訴用戶**、別當帳本完整;修復法就是請他丟一張最新持倉截圖走 reconcile(新錨點蓋過可疑歷史)。(`ledger.py` 純標準庫,不需要 venv——跟 `trade_recap.py` 的 ModuleNotFoundError 提示無關。)
 - ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾腳本註解的既有規則),ledger 的 cycle_id 只供帳本自身追蹤。
 
 ### Step 0.5 · 生成 driver map(讓冷門股不失準)

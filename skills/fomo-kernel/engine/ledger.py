@@ -149,8 +149,8 @@ def derive_holdings(events):
                 integrity.append({"issue": "bad_avg_cost", "ticker": t})
             pos[t] = {"shares": sh, "cost_total": cost_total,
                       "currency": p.get("currency", "USD"), "market": p.get("market", "US"),
-                      "origin": "snapshot", "seq": 1, "since": anchor_date.isoformat()}
-            seq_base[t] = 1
+                      "origin": "snapshot", "since": anchor_date.isoformat()}
+            seq_base[t] = 1                # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)
 
     trades = []
     for ev in events:
@@ -174,7 +174,7 @@ def derive_holdings(events):
                 seq_base[t] += 1
                 pos[t] = {"shares": qty, "cost_total": qty * px,
                           "currency": ev.get("currency", "USD"), "market": ev.get("market", "US"),
-                          "origin": "trades", "seq": seq_base[t], "since": d.isoformat()}
+                          "origin": "trades", "since": d.isoformat()}
             else:
                 cur["shares"] += qty
                 if cur["cost_total"] is not None:    # 錨點均價未宣告 → 總成本不可知,None 傳播
@@ -197,13 +197,15 @@ def derive_holdings(events):
     holdings = {}
     for t in sorted(pos):
         p = pos[t]
+        if round(p["shares"], 4) <= 0:     # 微量殘股 round 後歸零 → 不列(避免 shares=0.0 的幽靈持倉)
+            continue
         ac = (p["cost_total"] / p["shares"]) if (p["cost_total"] is not None and p["shares"] > EPS) else None
         holdings[t] = {"shares": round(p["shares"], 4),
                        "avg_cost": round(ac, 4) if ac is not None else None,
                        "cost_total": round(p["cost_total"], 2) if p["cost_total"] is not None else None,
                        "currency": p["currency"], "market": p["market"],
                        "origin": p["origin"], "since": p["since"],
-                       "cycle_id": f"{t}#{p['since']}#{p['seq']}"}
+                       "cycle_id": f"{t}#{p['since']}#{seq_base[t]}"}
     return {"anchor": ({"as_of": anchor.get("as_of"), "source": anchor.get("source", "user_declared")}
                        if anchor is not None else None),
             "holdings": holdings,
@@ -390,9 +392,7 @@ def main(argv=None):
     if a.cmd == "reconcile":
         data = _load_positions_file(a.positions_json)
         _emit(reconcile(events, data["positions"]))
-        return 0
-
-    return 2
+    return 0
 
 
 if __name__ == "__main__":
