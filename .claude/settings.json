@@ -9,7 +9,7 @@
             "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/pre_commit_test_gate.sh\"",
             "if": "Bash(git commit*)",
             "timeout": 60,
-            "statusMessage": "commit gate: 6 套測試須全綠"
+            "statusMessage": "commit gate: 7 套測試須全綠"
           }
         ]
       }
