@@ -183,8 +183,8 @@ def main():
         ok(entry["commitment"]["metric_key"] == "max_pos_pct"
            and entry["commitment"]["metric_value"] == st["metrics"]["max_pos_pct"],
            "commitment.metric_value 從 state.metrics 反查成功")
-        ok(set(entry["metrics_snapshot"].keys()) == {"ai_pct", "max_pos_pct", "avgdown_count", "avgdown_breach"},
-           "metrics_snapshot 4 鍵齊(週對帳的最小快照)")
+        ok(set(entry["metrics_snapshot"].keys()) == set(st["metrics"].keys()),
+           "metrics_snapshot = state.metrics 全量快照(開場變化摘要的資料源,#129 PR-4;原 4 鍵子集已升級)")
         r2 = subprocess.run([sys.executable, "-"], input=blocks[1], env=env,
                             capture_output=True, text=True, timeout=60)
         ok(r2.returncode == 0, "收尾片段 2(theses append)空清單跑不炸", r2.stderr[-300:])
