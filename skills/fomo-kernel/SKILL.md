@@ -59,6 +59,7 @@ mkdir -p ~/.trade-coach
 cat ~/.trade-coach/log.jsonl    2>/dev/null   # 每行一次 review session(薄 metric + 承諾);空 = 第一次
 cat ~/.trade-coach/theses.jsonl 2>/dev/null   # 每行一筆 thesis event(append-only,不覆蓋);持股動機庫
 cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人原則(復盤對照基準);空 = 第一次幫你建
+python3 engine/ledger.py holdings 2>/dev/null # 帳本推導的當前持倉(snapshot 錨點+交易疊加);讀不到=還沒開帳
 ```
 
 **路由(讀完上面兩檔 + 跑完 Step 1 engine 後判定):**
@@ -74,6 +75,16 @@ cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人
 ### Step 0 · 把任意券商格式變成引擎吃得下的(用讀檔者自己的 Claude)
 
 用戶的 CSV 可能來自任何券商、欄位名各異,甚至是一張對帳單截圖。**不要寫死 parser**——你(Claude)直接讀它,轉成標準欄位存暫存 CSV:`Symbol,Action(BUY|SELL),Quantity,Price,TradeDate(YYYY-MM-DD),RecordType(填 Trade)`。這步用的是用戶自己的 Claude 額度,零後端成本,且天生吃得下所有券商——不必為每家券商寫轉換器。
+
+**📒 帳本雙輸入(snapshot-anchored;#31 修訂版,設計見 `docs/prd-ledger.md`)**:用戶丟的可能不是交易流水,而是**持倉截圖/持倉頁**——多數人拿不出完整交易紀錄,這是常態不是錯誤。兩種輸入進同一本帳(`~/.trade-coach/ledger.jsonl`,append-only、純本機、不外傳):
+
+- **持倉快照** → 你讀圖/表轉成 positions JSON(`[{"ticker","shares","avg_cost"?,"market"?,"currency"?}]`,**均價不知道就留空,別編**),存暫存檔後:
+  `python3 engine/ledger.py append-snapshot /tmp/pos.json --as-of <宣告日,通常今天>`
+  (snapshot 語意 = 該日**收盤後**狀態,同日交易視為已含在宣告數字內。)
+- **已有帳本、又丟來新快照 → 先 `reconcile`,不要直接 append**:`python3 engine/ledger.py reconcile /tmp/pos.json` 會列宣告 vs 推導的差異——一致 = 對帳通過(卡上可標「帳本已對帳 ✓」);不一致 = 把差異講給用戶聽(「我推 NVDA 40 股,你說 35——中間可能有我沒看到的交易」),他確認後以**他的宣告為準**:`append-snapshot --source reconciled`。這是「數據準確」的機制:每丟一次快照 = 帳本自我修復一次。
+- **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全)。
+- **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
+- ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾腳本註解的既有規則),ledger 的 cycle_id 只供帳本自身追蹤。
 
 ### Step 0.5 · 生成 driver map(讓冷門股不失準)
 
