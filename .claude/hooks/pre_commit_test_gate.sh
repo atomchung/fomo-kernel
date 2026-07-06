@@ -7,7 +7,7 @@
 # self-filter is what guarantees the 11.5s test suite only ever runs at commit
 # time, never on an unrelated `ls`/`git status`.
 #
-# Turns the CLAUDE.md rule "改 engine ... 五套沒全過就不要 commit" from a habit
+# Turns the CLAUDE.md rule "改 engine ... 六套沒全過就不要 commit" from a habit
 # into a MECHANISM:
 #   - Only gates when skills/fomo-kernel/engine/ or tests/ have uncommitted
 #     changes vs HEAD (doc-/readme-only commits are NOT gated — instant allow).
@@ -46,7 +46,7 @@ fi
 
 # Red -> deny. Feed the tail of the failure back so the agent knows what broke.
 fail_tail="$(printf '%s' "$out" | tail -n 15)"
-reason="$(printf '⛔ commit blocked — tests/run_all.py 未全綠(CLAUDE.md:五套沒全過就不要 commit)。修好再 commit。\n\n%s' "$fail_tail")"
+reason="$(printf '⛔ commit blocked — tests/run_all.py 未全綠(CLAUDE.md:六套沒全過就不要 commit)。修好再 commit。\n\n%s' "$fail_tail")"
 esc="$(printf '%s' "$reason" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":%s}}\n' "$esc"
 exit 0
