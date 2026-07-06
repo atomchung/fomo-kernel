@@ -46,6 +46,16 @@ Once resolved:
 
 > The Traditional-Chinese phrasings, question templates, and card examples throughout the rest of this SKILL are **illustrative of intent**, not literal strings to copy — express their meaning in the resolved language.
 
+## 💱 Display currency(幣別呈現,#51/#129;apply every time)
+
+引擎原幣記帳,**換算只發生在你寫卡這層**。規則:
+
+1. **display currency 跟 resolved output language**:en→USD、zh-TW→TWD、zh-CN→CNY;用戶指定(「用美元」)或 `profile.md` 的 `display_currency:` 優先,並照 Output language 同款方式持久化。
+2. **例外:持倉單一市場 → 直接用該市場幣別**(`currency_meta.mixed=false` 時就用 `aggregate_currency`,美股 only 的繁中用戶不該看到滿卡無謂的台幣換算)。
+3. **合計換算、分項原幣**:卡上總覽(已實現/未實現/總損益)可換算成 display currency;**單檔數字一律原幣**、必要時附換算(「NVDA +$1,200(≈NT$38,400)」)——用戶要對得上券商 app。
+4. **換算匯率來源** = `currency_meta.fx`(engine live 抓的兌 USD 匯率);要換成非 USD 的 display currency,用交叉率(例 TWD 顯示:USD 金額 ÷ fx.TWD)。**離線/缺匯率**(`fx_error` 或 `data_integrity.fx_gaps` 非空):讀上次 `last_state.json` 的 `currency_meta.fx` 當快取,卡上標「匯率截至上次對帳」;連快取都沒有 → **只出原幣、分幣別列,不猜匯率**。
+5. **混幣組合**(`mixed=true`):聚合數字(overview/盈虧比/what-if/sizing 權重)已是 USD 基準;`pnl_by_currency` 有原幣分桶供呈現;`fx_gaps` 非空時聚合是原幣近似——**必須在卡上明示**「X 幣別缺匯率,佔比為近似值」。`alpha_beta_note` 非 null 時 α/β 段落照抄該註記(per-market 拆分未上線前,別讓混幣 α 顯得精確)。
+
 ## 工作流程(四步)
 
 > 分工原則:**engine 做純算(確定性),Claude 做世界知識(格式 / 分類 / 動機)。** 需要認得世界的事都交給 Claude,engine 不 hardcode。
@@ -112,6 +122,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
 - **`overview.unrealized_coverage`**:未實現損益只加總抓得到現價的持倉。`unpriced` 非空 → 卡上必補一句「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」,別讓沒抓到價的持倉讓數字看起來完整卻其實漏算(#82)。
+- **`currency_meta`**:聚合幣別與匯率(💱 Display currency 段的資料源)——`aggregate_currency`(overview / what_if / `ticker_diagnosis` 金額等聚合數字的幣別)、`mixed`、`fx`(兌 USD)、`pnl_by_currency`(原幣分桶)、`fx_error`/`alpha_beta_note`。台股/混幣組合寫卡前**先讀這欄**,金額才不會標錯幣;混幣時單檔原幣金額用 `pnl_by_currency` 對照、或由你按 `fx` 反換算。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
