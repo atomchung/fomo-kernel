@@ -124,6 +124,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`overview.unrealized_coverage`**:未實現損益只加總抓得到現價的持倉。`unpriced` 非空 → 卡上必補一句「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」,別讓沒抓到價的持倉讓數字看起來完整卻其實漏算(#82)。
 - **`currency_meta`**:聚合幣別與匯率(💱 Display currency 段的資料源)——`aggregate_currency`(overview / what_if / `ticker_diagnosis` 金額等聚合數字的幣別)、`mixed`、`fx`(兌 USD)、`pnl_by_currency`(原幣分桶)、`fx_error`/`alpha_beta_note`。台股/混幣組合寫卡前**先讀這欄**,金額才不會標錯幣;混幣時單檔原幣金額用 `pnl_by_currency` 對照、或由你按 `fx` 反換算。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
+  **per-market(混市場組合必讀,#129)**:`alpha_beta_breakdown.scope` 非 null = 組合跨市場,α/β 已按市場分算(US→SPY、TW→台股加權指數),**頂層數字僅含 `scope` 那個市場的部位**——卡上 α/β 段要**兩行並列**(每市場一行,各含資金佔比、各對各的大盤、各自的顯著性語氣),讀 `by_market`;**絕不把兩個市場的 α 加總或平均**(不合成總 α)。台股部位的拆帳 `coverage=0`(無板塊對照、按大盤計)→ 只講「贏/輸台股大盤 X pp」,不拆賽道/選股;`by_market` 內某市場帶 `note`(如 `^TWII` 沒抓到價)→ 該行誠實寫「對照基準抓不到價,本期不判」。單一市場組合 `scope=null`,一切照舊。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
   - `headline_dim` / `headline_metric`:這次最大的洞 +(key, value)。
   - `commitment`:`{rule, metric_key, metric_value, goal}` = **引擎的機械預設承諾**(下次只改這一件 + 追蹤哪個 metric)。**Step 2 動機問完可能推翻它**(實例:engine 給「別加碼」,用戶答「計畫內定投」→ 改盯 `ai_pct`)→ 收尾要存**卡上最終那條**,不是這個預設。對帳比 `metric_key`,別比 headline(規矩維 ≠ headline 維才不對錯帳)。

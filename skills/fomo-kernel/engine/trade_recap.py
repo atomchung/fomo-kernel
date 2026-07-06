@@ -413,12 +413,13 @@ def fwd_from_px(rts, data, n_fwd=N_FWD):
         fwds.append(r["fwd"])
     return fwds, last_px
 
-def _port_daily_returns(rows, px, proxy=None):
+def _port_daily_returns(rows, px, proxy=None, fallback_bench="SPY"):
     """重建投組日報酬序列(昨日持股 × 今日價,排除當日買賣現金流)。
     proxy={ticker: 板塊基準 ticker} 給定時,同步重建「板塊配置混合」mimic 投組
     (同權重、每檔換成其板塊基準)→ 回傳 (port, mimic, fb_share, unproxied):
-    fb_share = 無板塊對照、按 SPY 計的平均權重(拆帳 coverage 用),unproxied = 這些 ticker。
-    mimic 與 port 定義在完全相同的日集(缺對照時逐層降級 SPY → 股票自身),恆等式才守得住。
+    fb_share = 無板塊對照、按 fallback_bench 計的平均權重(拆帳 coverage 用),unproxied = 這些 ticker。
+    fallback_bench = 該市場主基準(#129 PR-2b:台股子組合按 ^TWII 計,別把 SPY 硬塞給台股當「大盤」)。
+    mimic 與 port 定義在完全相同的日集(缺對照時逐層降級 主基準 → 股票自身),恆等式才守得住。
     不給 proxy → 只回 port Series(相容舊呼叫)。"""
     import pandas as pd
     from collections import defaultdict
@@ -428,7 +429,7 @@ def _port_daily_returns(rows, px, proxy=None):
         ev[pd.Timestamp(r["date"])].append(r)
     shares = defaultdict(float); prev = {}; port_rets = {}
     mimic_rets = {}; fb_w = 0.0; fb_days = 0; unproxied = set()
-    spy = px["SPY"] if (proxy is not None and "SPY" in px.columns) else None
+    spy = px[fallback_bench] if (proxy is not None and fallback_bench in px.columns) else None
     for i, day in enumerate(days):
         if i > 0 and prev:
             num = den = num_m = fb = 0.0
@@ -525,11 +526,19 @@ SECTOR_BENCH = {
 BENCH_SELF = {"大盤ETF", "區域ETF", "商品", "債券"}  # 持有 ETF 本身=配置決策:基準=它自己(選股恆 0,超額全歸賽道)
 ALPHA_MIN_DAYS, ALPHA_T_TH = 252, 1.96  # 能力語氣門檻:≥1 年(業界慣例)+ 95% 顯著;統計錨,非拍腦袋(#63)
 
-def _sector_proxy(t):
-    """ticker → 拆帳基準:ETF 類=自己;有板塊對照=板塊 ETF;無 → None(按 SPY 計 + 記 unproxied)。"""
+# per-market 主基準(#129 PR-2b,prd-ledger §2.4):各市場子組合對各自的大盤,不合成總 α。
+# TW 用 ^TWII(加權指數,不含息 → 台股 α 略被高估,卡上明標);未知市場 fallback SPY + 誠實註記。
+MARKET_BENCH = {"US": "SPY", "TW": "^TWII"}
+
+def _sector_proxy(t, market="US"):
+    """ticker → 拆帳基準:ETF 類=自己;美股有板塊對照=板塊 ETF;非美股市場的板塊表未建
+    (SECTOR_BENCH 全是美股 ETF,拿來對台股 = 市場/幣別都錯)→ None(按該市場大盤計,
+    coverage 誠實反映「無板塊對照」,對齊 prd-ledger §2.4 台股第一版)。"""
     sec, _ = driver(t)
     if sec in BENCH_SELF:
         return t
+    if market != "US":
+        return None
     return SECTOR_BENCH.get(sec)
 
 def _alpha_grade(r):
@@ -546,46 +555,82 @@ def _alpha_grade(r):
             else dict(reason="not_significant", t=t, need=ALPHA_T_TH))
     return dict(grade=grade, gate=gate)
 
-def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL):
-    """E2:投組日報酬 vs 多基準回歸 + 贏大盤拆帳(押對賽道 vs 板塊內選股)。
-    α 一律 vs 通用大盤 SPY,永遠出數、帶 SE/t/95% 區間(alpha_stat);
-    excess_split:配置(賽道)= 板塊配置混合 mimic − SPY、選股 = 你 − mimic——
-    與 excess 同一天集、同一複利 → 配置+選股 ≡ 贏大盤 pp(會計恆等,不需顯著性,#80)。"""
-    try:
-        import pandas as pd  # noqa
-    except ImportError:
-        return dict(dim="alpha/beta", note="無 pandas")
-    if data is None or "SPY" not in list(getattr(data, "columns", [])):
-        return dict(dim="alpha/beta", note="無價格/SPY")
-    px = data.ffill()
-    proxy = {t: _sector_proxy(t) for t in {r["ticker"] for r in rows}}
-    port, mimic, fb_share, unproxied = _port_daily_returns(rows, px, proxy=proxy)
+def _alpha_beta_for_market(rows_m, px, rf_annual, market):
+    """單一市場子組合的 β/α + 拆帳(原 dim_alpha_beta 主體,基準改按市場查表)。
+    回傳與舊頂層同名的欄位 dict(無 dim/tier),或 note dict。"""
+    bench_main = MARKET_BENCH.get(market, "SPY")
+    if bench_main not in list(getattr(px, "columns", [])):
+        return dict(note=f"無價格/{bench_main}")
+    proxy = {t: _sector_proxy(t, market) for t in {r["ticker"] for r in rows_m}}
+    port, mimic, fb_share, unproxied = _port_daily_returns(rows_m, px, proxy=proxy,
+                                                           fallback_bench=bench_main)
+    aux = ["QQQ", "SOXX"] if market == "US" else []        # 參考基準只對美股有意義
     benchmarks = {}
-    for b in ["SPY", "QQQ", "SOXX"]:
+    for b in [bench_main] + aux:
         if b in px.columns:
             r = _regress(port, px[b], rf_annual)
             if r: benchmarks[b] = r
-    if "SPY" not in benchmarks:
-        return dict(dim="alpha/beta", note="樣本不足")
-    spy = benchmarks["SPY"]
-    days = spy["days"]                                     # 重用 SPY 回歸已對齊的天集(別再跑一次 _aligned,兩處才不會分岔)
+    if bench_main not in benchmarks:
+        return dict(note="樣本不足")
+    main_r = benchmarks[bench_main]
+    days = main_r["days"]                                  # 重用主基準回歸已對齊的天集(別再跑一次 _aligned,兩處才不會分岔)
     mimic_tot = float((1 + mimic.reindex(days)).prod() - 1)
-    split = dict(excess=spy["excess"],
-                 allocation=mimic_tot - spy["bench_tot"],  # 押對賽道:你的板塊配置混合 − 大盤
-                 selection=spy["port_tot"] - mimic_tot,    # 板塊內選股:你 − 板塊配置混合
+    split = dict(excess=main_r["excess"],
+                 allocation=mimic_tot - main_r["bench_tot"],  # 押對賽道:你的板塊配置混合 − 大盤
+                 selection=main_r["port_tot"] - mimic_tot,    # 板塊內選股:你 − 板塊配置混合
                  mimic_tot=mimic_tot,
-                 coverage=round(1.0 - fb_share, 4),        # 有板塊對照的平均權重(按 SPY 計的部分=1−coverage)
+                 coverage=round(1.0 - fb_share, 4),        # 有板塊對照的平均權重;非美股市場第一版恆 0 = 全按大盤計
                  unproxied=sorted(unproxied),
                  # 只列「全程沒 fallback 過」的對照(t not in unproxied)——曾 fallback 的 ticker
                  # 已在 unproxied 誠實揭露,proxy 不該同時宣稱「配置的對照」聽起來像全程有效
                  proxy={t: p for t, p in sorted(proxy.items()) if p and t != p and t not in unproxied})
-    g = _alpha_grade(spy)
-    stat = dict(alpha_ann=spy["alpha_ann"], se_ann=spy["alpha_se_ann"], t=spy["alpha_t"],
-                ci95=spy["alpha_ci95"], n_days=spy["n"], grade=g["grade"], gate=g["gate"])
-    return dict(dim="alpha/beta", tier=3, benchmarks=benchmarks, n=spy["n"],
-                beta=spy["beta"], alpha_ann=spy["alpha_ann"],          # 頂層保留 SPY 值給 overview
+    g = _alpha_grade(main_r)
+    stat = dict(alpha_ann=main_r["alpha_ann"], se_ann=main_r["alpha_se_ann"], t=main_r["alpha_t"],
+                ci95=main_r["alpha_ci95"], n_days=main_r["n"], grade=g["grade"], gate=g["gate"])
+    return dict(benchmarks=benchmarks, n=main_r["n"], bench=bench_main,
+                beta=main_r["beta"], alpha_ann=main_r["alpha_ann"],
                 alpha_stat=stat, excess_split=split,
-                port_tot=spy["port_tot"], spy_tot=spy["bench_tot"], excess_vs_spy=spy["excess"])
+                port_tot=main_r["port_tot"], spy_tot=main_r["bench_tot"],  # 鍵名沿舊契約:值=主基準 tot(TW=^TWII)
+                excess_vs_spy=main_r["excess"])            # 同上:鍵名歷史遺留,語意=「贏該市場大盤」
+
+
+def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL, market_weights=None):
+    """E2:投組日報酬 vs 基準回歸 + 贏大盤拆帳(押對賽道 vs 板塊內選股)。
+    per-market(#129 PR-2b,prd-ledger §2.4):各市場子組合對各自大盤(US→SPY、TW→^TWII),
+    **不合成總 α**(混市場對單一基準 = 假精確)。單一市場 → 輸出 schema 與舊版恆等(scope/by_market
+    為 None);混市場 → 頂層欄位 = 資金佔比最大市場的值 + scope 標明範圍,by_market 給全部。
+    α 永遠出數、帶 SE/t/95% 區間;excess_split 配置+選股 ≡ 贏大盤 pp(會計恆等,#80)。"""
+    try:
+        import pandas as pd  # noqa
+    except ImportError:
+        return dict(dim="alpha/beta", note="無 pandas")
+    if data is None or not len(list(getattr(data, "columns", []))):
+        return dict(dim="alpha/beta", note="無價格/SPY")
+    px = data.ffill()
+    markets = sorted({r.get("market", "US") for r in rows})
+    if len(markets) <= 1:
+        m = markets[0] if markets else "US"
+        r = _alpha_beta_for_market(rows, px, rf_annual, m)
+        if r.get("note"):
+            return dict(dim="alpha/beta", note=r["note"])
+        return dict(dim="alpha/beta", tier=3, scope=None, by_market=None, **r)
+    # 混市場:各跑各的;頂層代表值 = 資金佔比最大且回歸有效的市場(卡上仍應兩行並列,讀 by_market)
+    by_market, weights = {}, {}
+    for m in markets:
+        rows_m = [r for r in rows if r.get("market", "US") == m]
+        res = _alpha_beta_for_market(rows_m, px, rf_annual, m)
+        by_market[m] = res
+        weights[m] = (market_weights or {}).get(m)
+        if weights[m] is None:                             # 無外部權重(直呼/測試)→ 按買入額原幣近似
+            weights[m] = sum(r["qty"] * r["price"] for r in rows_m if r["side"] == "buy")
+    valid = [m for m in markets if not by_market[m].get("note")]
+    if not valid:
+        return dict(dim="alpha/beta", note="樣本不足",
+                    by_market=by_market, scope=None)
+    top = max(valid, key=lambda m: weights.get(m) or 0)
+    out = dict(dim="alpha/beta", tier=3, scope=top, by_market=by_market)
+    out.update(by_market[top])                             # 頂層 = scope 市場的欄位(消費者相容;卡上必標「僅含 {scope} 部位」)
+    return out
 
 def alpha_credible(ab):
     """α 可用「能力語氣」嗎:樣本 ≥1 年 且 |t|≥1.96(alpha_stat.grade == significant)。
@@ -1561,7 +1606,9 @@ def main():
     held, avg_down = positions(rows)
     tickers = {r["ticker"] for r in rts} | set(held.keys())
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
-    bench = {p for p in (_sector_proxy(t) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
+    t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
+    bench = {p for p in (_sector_proxy(t, t_market.get(t, "US")) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
+    bench |= {MARKET_BENCH.get(m, "SPY") for m in set(t_market.values())}   # 各市場主基準(TW→^TWII)一起抓
     px, yf_err = fetch_prices(tickers | bench, start)
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
@@ -1582,8 +1629,13 @@ def main():
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held_u, lastpx_u, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
-    ab = dim_alpha_beta(rows, px)
-    if isinstance(ab, dict): ab["credible"] = alpha_credible(ab)   # α 能力語氣閘 v2(#80):統計顯著才算,檔數閘退役
+    # per-market α/β(#129 PR-2b):混市場時頂層代表值 = 資金佔比最大市場;佔比在 USD 視圖上算(跨市場比較)
+    mkt_weights = defaultdict(float)
+    for t, (sh, c) in held_u.items():
+        pxv = lastpx_u.get(t)
+        mkt_weights[t_market.get(t, "US")] += sh * pxv if pxv else c
+    ab = dim_alpha_beta(rows, px, market_weights=dict(mkt_weights))
+    if isinstance(ab, dict): ab["credible"] = alpha_credible(ab)   # α 能力語氣閘 v2(#80):統計顯著才算,檔數閘退役(混市場=scope 市場的顯著性)
     overview = overview_stats(decision_rts_u, ab, held_u, lastpx_u)   # 已實現 + 未實現都報(聚合幣別上)
     pa = payoff_attribution(decision_rts_u)                # 盈虧比拆解:重點交易的貢獻度(聚合幣別上)
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆(ret%,無因次 → 原幣)
@@ -1617,8 +1669,11 @@ def main():
         "fx_error": fx_err,
         # ⚠️ 分桶刻意吃「原幣」物件(decision_rts/held,非 _u 版):桶的意義就是原幣會計事實,換成 _u = 全桶變 USD 廢掉
         "pnl_by_currency": pnl_by_currency(decision_rts, held, last_px, cur_map) if mixed_ccy else None,
-        "alpha_beta_note": ("多幣別組合的 α/β 暫按合併組合對 SPY 計,per-market 拆分見 #129 PR-2b"
-                            if mixed_ccy else None),
+        "alpha_beta_note": (
+            f"α/β 已 per-market 分算:頂層數字僅含 {ab.get('scope')} 部位(對 {ab.get('bench')}),"
+            f"其他市場見 by_market——不合成總 α"
+            if isinstance(ab, dict) and ab.get("scope")
+            else ("多幣別組合(單一市場)的 α/β 按該市場大盤計" if mixed_ccy else None)),
     }
 
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""

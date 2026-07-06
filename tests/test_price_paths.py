@@ -277,6 +277,86 @@ def test_alpha_se_widens_with_idiosyncratic_noise():
     assert abs((ci[1] - ci[0]) - 2 * 1.96 * lo["se_ann"]) < 1e-9, "CI 寬 = 2×1.96×SE"
 
 
+# ─────────────── B3. per-market α/β(#129 PR-2b,prd-ledger §2.4)───────────────
+
+def test_single_market_schema_unchanged():
+    """回歸鎖:純美股輸出與 per-market 重構前恆等 —— scope/by_market 補 None,其餘欄照舊。"""
+    rets = _spy_returns()
+    px = _px_frame({"CLONE": _prices_from_returns(100.0, rets),
+                    "SPY": _prices_from_returns(400.0, rets)})
+    rows = [dict(ticker="CLONE", side="buy", qty=10, price=100.0, date=IDX[0].date())]
+    ab = tr.dim_alpha_beta(rows, px)
+    assert ab["scope"] is None and ab["by_market"] is None, "單一市場不啟用 per-market 分組"
+    for k in ("benchmarks", "n", "beta", "alpha_ann", "alpha_stat", "excess_split",
+              "port_tot", "spy_tot", "excess_vs_spy"):
+        assert k in ab, f"舊契約欄位 {k} 不見了"
+    assert ab["bench"] == "SPY"
+
+
+def test_per_market_split_each_vs_own_bench():
+    """混市場:美股部位對 SPY(β=2)、台股部位對 ^TWII(β=1)——各算各的,互不污染;
+    頂層 = market_weights 較大的市場 + scope 標明;台股 excess_split coverage=0(無板塊對照)。"""
+    rets = _spy_returns()
+    twii_rets = [0.5 * r for r in rets]                     # 台股大盤 = 獨立(等比)序列
+    px = _px_frame({
+        "SPY": _prices_from_returns(400.0, rets),
+        "^TWII": _prices_from_returns(18000.0, twii_rets),
+        "USLEV": _prices_from_returns(100.0, [2 * r for r in rets]),      # β=2 vs SPY
+        "2330.TW": _prices_from_returns(900.0, twii_rets),                # β=1 vs ^TWII(複製品)
+    })
+    rows = [dict(ticker="USLEV", side="buy", qty=10, price=100.0, date=IDX[0].date(),
+                 market="US", currency="USD"),
+            dict(ticker="2330.TW", side="buy", qty=100, price=900.0, date=IDX[0].date(),
+                 market="TW", currency="TWD")]
+    ab = tr.dim_alpha_beta(rows, px, market_weights={"US": 9.0, "TW": 1.0})
+    assert ab["scope"] == "US", f"權重大的市場當頂層 scope,得 {ab.get('scope')}"
+    bm = ab["by_market"]
+    assert set(bm) == {"US", "TW"}
+    us, tw = bm["US"], bm["TW"]
+    assert us["bench"] == "SPY" and abs(us["beta"] - 2.0) < 1e-9, f"美股部位 β 應 2.0:{us.get('beta')}"
+    assert tw["bench"] == "^TWII" and abs(tw["beta"] - 1.0) < 1e-9, \
+        f"台股部位對 ^TWII β 應 1.0(對 SPY 混算就不會是 1):{tw.get('beta')}"
+    assert abs(tw["excess_vs_spy"]) < 1e-9, "複製品贏自家大盤 = 0(鍵名歷史遺留,語意=該市場大盤)"
+    assert tw["excess_split"]["coverage"] == 0.0, "台股第一版無板塊對照 → coverage 0(按大盤計)"
+    assert abs(tw["excess_split"]["allocation"]) < 1e-9 and \
+           abs(tw["excess_split"]["selection"] - tw["excess_vs_spy"]) < 1e-9, \
+        "無對照 → 配置 0、超額全歸選股(恆等式仍成立)"
+    assert "QQQ" not in tw["benchmarks"], "參考基準(QQQ/SOXX)只掛美股子組合"
+    # 頂層 = US 欄位展開(消費者相容)
+    assert abs(ab["beta"] - 2.0) < 1e-9 and ab["bench"] == "SPY"
+    # 權重反轉 → 頂層變 TW
+    ab2 = tr.dim_alpha_beta(rows, px, market_weights={"US": 1.0, "TW": 9.0})
+    assert ab2["scope"] == "TW" and abs(ab2["beta"] - 1.0) < 1e-9
+
+
+def test_per_market_missing_bench_degrades_honestly():
+    """混市場但 ^TWII 沒抓到價(離線/抓不到):台股子組合 note、美股照算,頂層 scope=US。"""
+    rets = _spy_returns()
+    px = _px_frame({"SPY": _prices_from_returns(400.0, rets),
+                    "USLEV": _prices_from_returns(100.0, [2 * r for r in rets]),
+                    "2330.TW": _prices_from_returns(900.0, rets)})
+    rows = [dict(ticker="USLEV", side="buy", qty=10, price=100.0, date=IDX[0].date(),
+                 market="US", currency="USD"),
+            dict(ticker="2330.TW", side="buy", qty=1, price=900.0, date=IDX[0].date(),
+                 market="TW", currency="TWD")]
+    ab = tr.dim_alpha_beta(rows, px, market_weights={"US": 1.0, "TW": 9.0})
+    assert ab["scope"] == "US", "TW 無基準價 → 有效市場只剩 US(權重再大也輪不到壞資料)"
+    assert ab["by_market"]["TW"].get("note") == "無價格/^TWII"
+    assert abs(ab["beta"] - 2.0) < 1e-9
+
+
+def test_sector_proxy_market_aware():
+    """台股 ticker 即使 driver 命中美股板塊表(半導體→SOXX),也不准拿美股 ETF 當對照。"""
+    tr._DRIVER_MAP["2330.TW"] = ("半導體", 1)
+    try:
+        assert tr._sector_proxy("2330.TW", "US") == "SOXX", "美股市場照舊查表"
+        assert tr._sector_proxy("2330.TW", "TW") is None, "非美股市場 → None(按大盤計)"
+        tr._DRIVER_MAP["0050.TW"] = ("大盤ETF", 0)
+        assert tr._sector_proxy("0050.TW", "TW") == "0050.TW", "ETF=自己(BENCH_SELF 跨市場通用)"
+    finally:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+
+
 # ─────────────── C. prescribe:α 分支(卡面「怎麼優化」主文案)───────────────
 
 def _ab(excess, alloc, sel, credible, t=0.8, alpha_ann=0.01):
