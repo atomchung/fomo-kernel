@@ -511,6 +511,80 @@ def test_dim_diversify_triggered_severity_thresholds_aligned():
     assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
 
 
+# ─────────────────── H. 多市場幣別(#51/#129 PR-2a)───────────────────
+
+def test_load_currency_columns_defaults_and_normalization():
+    p = _write_csv(
+        "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+        "2330.TW,BUY,100,900,2025-01-06,Trade,TW,twd\n"     # 小寫 → 正規化 TWD
+        "NVDA,BUY,10,100,2025-01-06,Trade,,\n")             # 缺 → US/USD(向後相容)
+    rows = tr.load([p])
+    tw = next(r for r in rows if r["ticker"] == "2330.TW")
+    us = next(r for r in rows if r["ticker"] == "NVDA")
+    assert tw["market"] == "TW" and tw["currency"] == "TWD"
+    assert us["market"] == "US" and us["currency"] == "USD"
+
+
+def test_currency_map_detects_mixed_and_conflicts():
+    rows = [_R("NVDA", "buy", 1, 10, "2025-01-06"), _R("2330.TW", "buy", 1, 900, "2025-01-06"),
+            _R("2330.TW", "sell", 1, 950, "2025-02-03")]
+    rows[1]["currency"] = "TWD"
+    rows[2]["currency"] = "USD"                              # 同一檔兩種幣別 = 輸入錯
+    cur_map, currencies, conflicts = tr.currency_map(rows)
+    assert conflicts == ["2330.TW"], f"同檔多幣別要進 conflicts,得 {conflicts}"
+    assert cur_map["2330.TW"] == "USD", "衝突取最後一筆"
+    assert cur_map["NVDA"] == "USD", "未帶 currency 的 row 預設 USD"
+    assert currencies == ["USD"], "currencies = 最終 per-ticker 值域(衝突已另由 conflicts 警告)"
+    rows[1]["currency"] = "TWD"; rows[2]["currency"] = "TWD"   # 真混幣:一檔 TWD 一檔 USD
+    _, currencies2, conflicts2 = tr.currency_map(rows)
+    assert currencies2 == ["TWD", "USD"] and conflicts2 == []
+
+
+def test_usd_view_fixes_mixed_currency_weights():
+    """#51 核心:台股 90 萬(原幣)混美股 4 千(USD)——無換算時台股假性壓垮 sizing,
+    換算後權重才是真的。ret(比率)必須不受等比縮放影響。"""
+    held = {"2330.TW": (1000, 900_000.0), "AAPL": (20, 4_000.0)}
+    cur_map = {"2330.TW": "TWD", "AAPL": "USD"}
+    fx = {"USD": 1.0, "TWD": 1.0 / 30.0}
+    _, held_u, lastpx_u = tr.usd_view([], held, {}, cur_map, fx)
+    d = tr.dim_size([], held_u, lastpx_u)
+    want = 30_000.0 / 34_000.0
+    assert abs(d["max_pct"] - want) < 1e-9, f"換算後 2330 權重應 {want:.4f},得 {d['max_pct']:.4f}"
+    d_raw = tr.dim_size([], held, {})                        # 對照:不換算 = 99.6% 假集中
+    assert d_raw["max_pct"] > 0.99
+
+
+def test_usd_view_ret_and_holdings_shape_invariant():
+    rts = [_RT("2330.TW", 900.0, 990.0, qty=10)]             # ret = +10%
+    rts_u, held_u, lastpx_u = tr.usd_view(rts, {"2330.TW": (5, 4500.0)}, {"2330.TW": 990.0},
+                                          {"2330.TW": "TWD"}, {"USD": 1.0, "TWD": 1.0 / 30.0})
+    r = rts_u[0]
+    assert _approx(r["buy_px"], 30.0) and _approx(r["sell_px"], 33.0)
+    assert _approx((r["sell_px"] - r["buy_px"]) / r["buy_px"], 0.10), "ret 等比不變"
+    assert _approx(held_u["2330.TW"][1], 150.0) and _approx(lastpx_u["2330.TW"], 33.0)
+    assert rts[0]["buy_px"] == 900.0, "原物件不可被改(per-ticker 呈現要原幣)"
+
+
+def test_usd_view_missing_fx_factor_is_one():
+    _, held_u, _ = tr.usd_view([], {"2330.TW": (1, 900.0)}, {}, {"2330.TW": "TWD"}, {"USD": 1.0})
+    assert _approx(held_u["2330.TW"][1], 900.0), "fx 缺 → 因子 1.0 近似(警告由 data_integrity 載)"
+
+
+def test_fetch_fx_usd_only_is_offline_noop():
+    fx, err = tr.fetch_fx(["USD", "USD"])
+    assert fx == {"USD": 1.0} and err is None, "純 USD 不碰網路、不報錯"
+
+
+def test_pnl_by_currency_buckets():
+    rts = [_RT("2330.TW", 900.0, 990.0, qty=10), _RT("NVDA", 100.0, 150.0, qty=10)]
+    held = {"AAPL": (20, 4_000.0), "NOPX": (5, 100.0)}       # NOPX 無現價 → 不入未實現
+    b = tr.pnl_by_currency(rts, held, {"AAPL": 210.0},
+                           {"2330.TW": "TWD", "NVDA": "USD", "AAPL": "USD", "NOPX": "USD"})
+    assert _approx(b["TWD"]["realized"], 900.0)              # 10×(990-900)
+    assert _approx(b["USD"]["realized"], 500.0)
+    assert _approx(b["USD"]["unrealized"], 200.0)            # 20×210 − 4000;NOPX 缺價不硬編
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():

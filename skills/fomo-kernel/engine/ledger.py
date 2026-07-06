@@ -278,7 +278,7 @@ def trades_from_csv(path):
             ev = {"type": "trade", "date": d.isoformat(), "ticker": sym,
                   "action": act.lower(), "qty": round(qty, 4), "price": round(px, 6),
                   "market": (r.get("Market") or "US").strip() or "US",
-                  "currency": (r.get("Currency") or "USD").strip() or "USD",
+                  "currency": (r.get("Currency") or "USD").strip().upper() or "USD",
                   "source_file": os.path.basename(path)}
             fee = (r.get("Fee") or "").strip()
             if fee:

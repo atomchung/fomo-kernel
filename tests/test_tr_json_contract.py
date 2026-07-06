@@ -33,11 +33,13 @@ TR_JSON_KEYS = {
     "best_trade", "worst_trade", "what_if", "ticker_diagnosis",
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
+    "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
 }
 STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "rule", "insufficient_data", "holdings",
+    "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
 }
 # SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾片段另存 metrics_snapshot 4 鍵(子集)
 STATE_METRIC_KEYS = {
