@@ -16,7 +16,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 用戶沒資料或想先體驗 → 用 AskUserQuestion 給兩選項:「**提供我的 CSV** / **先用內建假資料試駕一遍**」。選試駕 → 拿 `mock/mock_trades.csv` 走完整四步流程,但:
 
-1. **狀態一律不落盤**:`TR_STATE_OUT` 指到臨時目錄(如 `mktemp -d` 下);`~/.trade-coach/` 的 log.jsonl / theses.jsonl / profile.md **一個字都不寫**——假資料的承諾進了教練記憶,下次真復盤的對帳基準就是髒的。收尾改成一句講解:「真實使用時,這條規矩會存進你本機的教練記憶,下週回來先對帳」。
+1. **狀態一律不落盤**:`TR_STATE_OUT` 指到臨時目錄(如 `mktemp -d` 下);`~/.trade-coach/` 的 log.jsonl / theses.jsonl / profile.md / ledger.jsonl / revisit.jsonl / cards/ **一個字都不寫**——假資料的承諾進了教練記憶,下次真復盤的對帳基準就是髒的。收尾改成一句講解:「真實使用時,這條規矩會存進你本機的教練記憶,下週回來先對帳」。
 2. **Step 2 照問,但標明是演練**:動機問題照走 AskUserQuestion——試駕就是要讓他體驗「我的答案會改變卡」這個差異化;但問句裡標明「示範資料,隨便選一個,看卡怎麼跟著變」,不逼他為不是他的交易編動機(#53 的尷尬就消了)。
 3. **卡標示範**:卡頭標「示範 · 假資料,非真實成績」;α/β 附一句「示範資料失真,別當真」——失真警告是**呈現層(你)的責任**,引擎對任何輸入一致、沒有 demo 分支(#89)。
 
@@ -54,7 +54,7 @@ Once resolved:
 2. **例外:持倉單一市場 → 直接用該市場幣別**(`currency_meta.mixed=false` 時就用 `aggregate_currency`,美股 only 的繁中用戶不該看到滿卡無謂的台幣換算)。
 3. **合計換算、分項原幣**:卡上總覽(已實現/未實現/總損益)可換算成 display currency;**單檔數字一律原幣**、必要時附換算(「NVDA +$1,200(≈NT$38,400)」)——用戶要對得上券商 app。
 4. **換算匯率來源** = `currency_meta.fx`(engine live 抓的兌 USD 匯率);要換成非 USD 的 display currency,用交叉率(例 TWD 顯示:USD 金額 ÷ fx.TWD)。**離線/缺匯率**(`fx_error` 或 `data_integrity.fx_gaps` 非空):讀上次 `last_state.json` 的 `currency_meta.fx` 當快取,卡上標「匯率截至上次對帳」;連快取都沒有 → **只出原幣、分幣別列,不猜匯率**。
-5. **混幣組合**(`mixed=true`):聚合數字(overview/盈虧比/what-if/sizing 權重)已是 USD 基準;`pnl_by_currency` 有原幣分桶供呈現;`fx_gaps` 非空時聚合是原幣近似——**必須在卡上明示**「X 幣別缺匯率,佔比為近似值」。`alpha_beta_note` 非 null 時 α/β 段落照抄該註記(per-market 拆分未上線前,別讓混幣 α 顯得精確)。
+5. **混幣組合**(`mixed=true`):聚合數字(overview/盈虧比/what-if/sizing 權重)已是 USD 基準;`pnl_by_currency` 有原幣分桶供呈現;`fx_gaps` 非空時聚合是原幣近似——**必須在卡上明示**「X 幣別缺匯率,佔比為近似值」。`alpha_beta_note` 非 null 時 α/β 段落照抄該註記(通常=提醒頂層 α/β 僅含 scope 市場;完整 per-market 呈現規則見 Step 1 的 alpha/beta 段)。
 
 ## 工作流程(四步)
 
@@ -255,7 +255,8 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 1. 讀 log **最後一行**的 `commitment = {rule, metric_key, metric_value}`。
 2. 這次引擎 state 的 `metrics[commitment.metric_key]` = 新值。
 3. 卡**第一句**就對帳:`上次說要{rule 白話},當時{metric 人話}={舊值} → 現在 {新值}:{在降/沒動/變糟}{達標沒}`(例:「上次說逢低加碼要有頂,當時最大單注 42% → 現在 31%:在降」)。用戶的數字、白話、**metric key 內部名不上卡**(人話對映見 Step 3.5)。commitment 帶 `source:"user_chosen"` → 措辭用「**你上次自己選的規矩**」(這是他的承諾,不是系統派的);帶 `baseline_note:"short-sample baseline"` → 只講方向(在降/沒動/變糟),不判達標。
-4. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
+4. **變化摘要(log ≥2 筆時,對帳行之後補一小段「跟上週比」)**:取 log 最近兩筆 `metrics_snapshot`,挑**變化最大的 3 個** metric 用人話講(對映表同 Step 3.5):「AI 暴險 78%→71% 在降;最大單注 42%→45% 反而變重;攤平 +0 次」。**只講 3 個、一行帶過,不攤全表**(那就變 dashboard 了);缺值(None)的 metric 跳過。這一小段是「它記得我」的第二個證據——第二張卡的價值在進度,不在再算一次。
+5. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
 **規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
 
@@ -288,8 +289,7 @@ if not skip and rule and mk and (user_chose or not st["insufficient_data"]):  # 
         commitment["baseline_note"] = "short-sample baseline"   # 下次對帳看方向,不判達標
 entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
          "commitment": commitment,                        # 對帳對的是這條(用戶選定版,非機械版)
-         "metrics_snapshot": {k: st["metrics"].get(k)
-                              for k in ("ai_pct","max_pos_pct","avgdown_count","avgdown_breach")}}
+         "metrics_snapshot": dict(st["metrics"])}         # 全量快照(開場「變化摘要」的資料源,#129 PR-4)
 p = pathlib.Path(os.path.expanduser("~/.trade-coach/log.jsonl"))
 with p.open("a", encoding="utf-8") as f: f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 print("appended commitment:", json.dumps(commitment, ensure_ascii=False))
@@ -327,6 +327,21 @@ PY
 > `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發。**隱私同 log:純本機、不外傳、不回作者。**
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
+
+**收尾 part 4 · 卡片落盤(歷史卡片庫,#129 PR-4)**:出完卡把**最終卡全文**(private review 版)寫進 `~/.trade-coach/cards/<date_end>.md`,頂部 YAML frontmatter:
+
+```markdown
+---
+date: <state.date_end>
+headline_dim: <這次的洞>
+commitment: <Step 3.5 用戶親選的規矩原文;沒選填 null>
+metric_key: <對應追蹤 metric;null>
+feedback: <Step 4 用戶那句反饋;null>
+---
+<卡全文照貼>
+```
+
+同日重跑 → 檔名遞增 `<date>-2.md`,**不蓋舊卡**(append-only 精神)。這個資料夾 = 你的復盤語料庫——歷史可回看,也是日後「蒸餾你自己的鏡片」的原料。同隱私鐵律:純本機、不外傳、不回作者。
 
 **第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**機械層只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。但 **Step 3.5 照走**:用戶自己挑的規矩照存(`source:"user_chosen"` + `baseline_note`,見收尾腳本 gate)——體檢卡也要留下記憶入口,否則第二週還是初診。卡收尾講一句「資料還太短,基線先存個底,累積多幾筆 round-trip 後對帳才看達標」;用戶跳過不選 → log append(commitment=null),下次來就接得上。
 
