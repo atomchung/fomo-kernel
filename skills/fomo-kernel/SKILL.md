@@ -70,6 +70,7 @@ cat ~/.trade-coach/log.jsonl    2>/dev/null   # 每行一次 review session(薄 
 cat ~/.trade-coach/theses.jsonl 2>/dev/null   # 每行一筆 thesis event(append-only,不覆蓋);持股動機庫
 cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人原則(復盤對照基準);空 = 第一次幫你建
 python3 engine/ledger.py holdings 2>/dev/null # 帳本推導的當前持倉(snapshot 錨點+交易疊加);讀不到=還沒開帳
+python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期的 30/60/90 revisit(#32);空 due=本週不問
 ```
 
 **路由(讀完上面兩檔 + 跑完 Step 1 engine 後判定):**
@@ -92,7 +93,7 @@ python3 engine/ledger.py holdings 2>/dev/null # 帳本推導的當前持倉(snap
   `python3 engine/ledger.py append-snapshot /tmp/pos.json --as-of <宣告日,通常今天>`
   (snapshot 語意 = 該日**收盤後**狀態,同日交易視為已含在宣告數字內。)
 - **已有帳本、又丟來新快照 → 先 `reconcile`,不要直接 append**:`python3 engine/ledger.py reconcile /tmp/pos.json` 會列宣告 vs 推導的差異——一致 = 對帳通過(卡上可標「帳本已對帳 ✓」);不一致 = 把差異講給用戶聽(「我推 NVDA 40 股,你說 35——中間可能有我沒看到的交易」),他確認後以**他的宣告為準**:`append-snapshot --source reconciled`。這是「數據準確」的機制:每丟一次快照 = 帳本自我修復一次。
-- **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全)。
+- **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全);記完帳接著排出場追蹤:`python3 engine/revisit.py enqueue-from-ledger`(掃清倉/大減倉 → 30/60/90 佇列,去重、重跑安全)。
 - **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
 - **帳本誠實檢查**:`holdings` 輸出的 `counts.skipped_lines > 0` = 帳本檔有壞行(可能是中斷寫入)——**如實告訴用戶**、別當帳本完整;修復法就是請他丟一張最新持倉截圖走 reconcile(新錨點蓋過可疑歷史)。(`ledger.py` 純標準庫,不需要 venv——跟 `trade_recap.py` 的 ModuleNotFoundError 提示無關。)
 - ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾腳本註解的既有規則),ledger 的 cycle_id 只供帳本自身追蹤。
@@ -199,7 +200,12 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
      - **`testable`(你確認過的)** → 才用定論:`exit_trigger` 觸發 = 🔴「你定的『{exit}』發生了 —— thesis broken,該走」。
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
-3. 對帳完才講本週新洞(headline)。**只收斂一個洞 + 一條規矩**,別把每筆 thesis 攤成報表。
+3. **出場追蹤(#32/#33,開場 `revisit.py scan` 的 `due` 非空才有這段;空 = 靜默跳過,不催)**:
+   - 每筆 due 用 AskUserQuestion 問一題:「{ticker} 你 {exit_date} 在 {exit_price} 賣掉,現在 {現價}(賣後 {orig_ret:+pp})。當時賣的理由現在看——**還成立**(賣早也是紀律)/ **部分對,要調**/ **看錯了**(真錯,進教訓)?」三選項對應 `still_valid / modified / falsified`,可跳過(下次 due 再問)。
+   - **swap framing 必講(#33 鐵律)**:`compare.swap_net_pp` 非 null → 賣飛必對位換入——「賣飛 +X pp,但你換進 {swap ticker} 同期 {swap_ret:+pp} → swap 淨 {net:+pp}」;**只有換入輸給原標的才算真錯,別只算賣早多少**。`idle_cash=true` → 「賣後 cash 閒置,機會成本 = 原標的續漲 X pp」。`needs_prices` 非空 → 把缺的 ticker 現價補進 `--prices` 再算(用 engine state 的 last_px,都缺就標「本週缺價,不判」)。
+   - 用戶答完立刻落盤:`python3 engine/revisit.py resolve <revisit_id> <30|60|90> <status> --note "<他的一句話>"`;`falsified` 的當下把那句話帶進卡的教訓段(這就是 mistakes log 的最小形)。
+   - 卡上的「出場追蹤」小節**只在有 due 時出現**,一筆一行,不攤成報表。
+4. 對帳完才講本週新洞(headline)。**只收斂一個洞 + 一條規矩**,別把每筆 thesis 攤成報表。
 
 ### Step 3 · 出一張卡(收斂鐵律)——拿到 Step 2 答案後才出
 

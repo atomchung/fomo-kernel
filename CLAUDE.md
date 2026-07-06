@@ -14,15 +14,15 @@
 ## 測試(改 engine/ 前後必跑)
 
 ```bash
-python3 tests/run_all.py                       # 一鍵跑全部六套測試,離線、確定性、免裝 pytest
+python3 tests/run_all.py                       # 一鍵跑全部七套測試,離線、確定性、免裝 pytest
 TR_TEST_NETWORK=1 python3 tests/run_all.py     # 額外加跑 β 方向 network smoke
 ```
 
-六套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、snapshot-anchored 帳本(`tests/test_ledger.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這六套沒全過就不要 commit。**
+七套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、snapshot-anchored 帳本(`tests/test_ledger.py`)、出場追蹤+swap(`tests/test_revisit.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這七套沒全過就不要 commit。**
 
 ## `.claude/` hooks(committed 的 agent 護欄)
 
-這個 repo committed 了 Claude Code hooks(`.claude/settings.json` + `.claude/hooks/`),把上面「六套沒全過就不要 commit」從自律變成機制:`pre_commit_test_gate.sh` 是 `PreToolUse:Bash` gate,當 `skills/fomo-kernel/engine/` 或 `tests/` 有未提交改動時跑 `tests/run_all.py`,紅了就 deny 掉 commit。
+這個 repo committed 了 Claude Code hooks(`.claude/settings.json` + `.claude/hooks/`),把上面「七套沒全過就不要 commit」從自律變成機制:`pre_commit_test_gate.sh` 是 `PreToolUse:Bash` gate,當 `skills/fomo-kernel/engine/` 或 `tests/` 有未提交改動時跑 `tests/run_all.py`,紅了就 deny 掉 commit。
 
 ⚠️ **改或加任何 hook 前必讀**:實測目前這版 Claude Code **忽略 hook 的 `if:` filter**——matcher(如 `Bash`)會對**每一個**符合的 tool call 觸發,不是只有 `if` 指定的那種。所以**一律在腳本裡自己讀 stdin `tool_input.command` 判斷、非目標指令立即 `exit 0`,永遠別依賴 `if:`**。少了這道自我過濾,commit-gate 會在 engine dirty 時對每個 Bash 指令各跑一次整套測試(~11.5s)。照 `pre_commit_test_gate.sh` 開頭的 self-filter 範式抄。
 
