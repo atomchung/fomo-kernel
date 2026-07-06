@@ -127,7 +127,7 @@ Inside Claude Code:
 /fomo-kernel ~/Downloads/my.csv   # review your own trades (a statement screenshot works too)
 /fomo-kernel                      # no file → asks you for one, or a "test drive" through all four steps on built-in fake data (labeled as demo, nothing written to coach memory)
 ```
-Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`); you don't hand-clean anything.
+Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`, plus optional `Market / Currency` for non-US stocks — e.g. `2330.TW / TW / TWD`; omitted = US/USD); you don't hand-clean anything.
 
 > 🏷️ For **obscure tickers** the engine's sector table doesn't recognize, Claude **auto-generates a driver map** for you to confirm (each tagged `[sector, theme]`), so the "diversification" dimension doesn't count same-theme names as real diversification — you don't do this by hand, and don't let it fall back to the `driver map: 0 tickers` case (diversification goes off). Details in SKILL Step 0.5.
 

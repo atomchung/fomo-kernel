@@ -575,6 +575,20 @@ def test_fetch_fx_usd_only_is_offline_noop():
     assert fx == {"USD": 1.0} and err is None, "純 USD 不碰網路、不報錯"
 
 
+def test_ticker_diagnosis_ranks_on_aggregate_currency():
+    """混幣時標的層排序/佔比要在 USD 視圖上做:2330 名目 +90k(TWD)其實只值 3k USD,
+    不准霸榜壓過 NVDA 的 +5k USD(review 2026-07-06 抓的聚合遺漏)。"""
+    rts = [_RT("2330.TW", 900.0, 1000.0, qty=900),           # +90,000 TWD = +3,000 USD
+           _RT("NVDA", 100.0, 150.0, qty=100)]               # +5,000 USD
+    cur_map = {"2330.TW": "TWD", "NVDA": "USD"}
+    fx = {"USD": 1.0, "TWD": 1.0 / 30.0}
+    rts_u, held_u, lastpx_u = tr.usd_view(rts, {}, {}, cur_map, fx)
+    out = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u)
+    assert out[0]["ticker"] == "NVDA", f"USD 視圖下 NVDA(+5k)應排第一,得 {out[0]['ticker']}"
+    raw = tr.ticker_diagnosis(rts, {}, {}, {})               # 對照:原幣名目讓 2330 假性第一
+    assert raw[0]["ticker"] == "2330.TW"
+
+
 def test_pnl_by_currency_buckets():
     rts = [_RT("2330.TW", 900.0, 990.0, qty=10), _RT("NVDA", 100.0, 150.0, qty=10)]
     held = {"AAPL": (20, 4_000.0), "NOPX": (5, 100.0)}       # NOPX 無現價 → 不入未實現

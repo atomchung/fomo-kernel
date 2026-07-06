@@ -22,7 +22,7 @@
    # 或走 SKILL.md「試駕模式」:mock 走四步,但不落盤 + 標明演練 + 卡標示範,防護缺一不可
    ```
    依賴:Python 3.11+、`yfinance`、`pandas`、`rich`(見 `requirements.txt`)。沒網路時 engine 會自動退成行為層診斷,不會中斷。
-   CSV 來自任何券商都行 —— 你負責讀懂、轉成引擎要的欄位(`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`),不必要求使用者手動整理。
+   CSV 來自任何券商都行 —— 你負責讀懂、轉成引擎要的欄位(`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`,非美股補選填欄 `Market / Currency`,如 `2330.TW / TW / TWD`;不填 = 美股 USD),不必要求使用者手動整理。
 3. **出卡前問動機(鏡片層)**:engine 標 `[ASK]` 的標的(金額大 + 虧損中加碼),逐一問使用者「逢低布局還是凹單?」,拿到答案才出定論卡。
 4. **出卡(收斂層)**:engine 輸出 + 使用者動機答案 → 收斂成一張卡(版型見 `skills/fomo-kernel/card-template.html`)。
 

@@ -694,12 +694,8 @@ def dim_exit(rts, fwds, n_fwd=N_FWD):
                 n_winners=n_winners, low_conf=low_conf)
 
 def dim_size(rows, held, last_px):
-    # 用市值（有 yf）或成本算當前權重；entry size_pct 用累計淨投入代理
-    cum, sizes = 0.0, []
-    for r in rows:
-        if r["side"] == "buy":
-            cum += r["qty"] * r["price"]
-            sizes.append((r["qty"] * r["price"]) / cum if cum else 0)
+    # 用市值（有 yf）或成本算當前權重（rows 參數保留簽名相容;entry-size 序列已移除:
+    # 從未進輸出,且混幣下 cum 會跨幣別亂加 —— 兩輪 review 均判 dead code,2026-07-06 刪）
     vals = {}
     for t, (sh, cost) in held.items():
         px = (last_px or {}).get(t)
@@ -1595,7 +1591,9 @@ def main():
     trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
     rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
-    tdiag = ticker_diagnosis(rts, adds_class, held, last_px)  # 標的層:按金額排序,對事不對人
+    # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
+    # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
+    tdiag = ticker_diagnosis(rts_u, adds_class, held_u, lastpx_u)
 
     # 資料完整性(賣超 / 未分類 driver)— 影響數據可信度,JSON 與人話卡共用同一份
     orphans = orphan_sells(rows)
@@ -1617,6 +1615,7 @@ def main():
         "aggregate_currency": "USD" if mixed_ccy else (currencies[0] if currencies else "USD"),
         "fx": ({c: r for c, r in fx.items() if c != "USD"} or None) if mixed_ccy else None,  # {cur: 兌 USD}
         "fx_error": fx_err,
+        # ⚠️ 分桶刻意吃「原幣」物件(decision_rts/held,非 _u 版):桶的意義就是原幣會計事實,換成 _u = 全桶變 USD 廢掉
         "pnl_by_currency": pnl_by_currency(decision_rts, held, last_px, cur_map) if mixed_ccy else None,
         "alpha_beta_note": ("多幣別組合的 α/β 暫按合併組合對 SPY 計,per-market 拆分見 #129 PR-2b"
                             if mixed_ccy else None),
