@@ -654,13 +654,16 @@ def print_alpha_beta(d):
             title_align="left", border_style="cyan", padding=(1, 2), width=CARD_WIDTH,
         ))
         return
-    bs = d["benchmarks"]; spy = bs["SPY"]
+    bench = d.get("bench") or "SPY"                     # per-market(#129 PR-2b):主基準隨市場,別硬編 SPY(純台股=^TWII)
+    bs = d["benchmarks"]; spy = bs[bench]
     port = spy["port_tot"]; vs_spy = spy["excess"]
     st = d.get("alpha_stat") or {}; sp = d.get("excess_split") or {}
     t = Text()
+    if d.get("scope"):                                  # 混市場:人話卡只展示 scope 市場,要標明範圍(完整 per-market 在 TR_JSON)
+        t.append(f"(僅含 {d['scope']} 部位;其他市場見 TR_JSON by_market)\n", style="dim")
     t.append(f"過去 {d['n']} 個交易日:投組 ")
     t.append(f"{port*100:+.0f}%", style="bold green" if port >= 0 else "bold red")
-    t.append("、大盤 SPY ")
+    t.append(f"、大盤 {bench} ")
     t.append(f"{spy['bench_tot']*100:+.0f}%", style="green" if spy['bench_tot'] >= 0 else "red")
     t.append(" → 你贏大盤 " if vs_spy >= 0 else " → 你輸大盤 ")
     t.append(f"{vs_spy*100:+.0f}pp", style="bold green" if vs_spy >= 0 else "bold red")
@@ -697,7 +700,7 @@ def print_alpha_beta(d):
                      style="dim")
     else:
         t.append(f"β {spy['beta']:.2f} (波動是大盤 {spy['beta']:.1f} 倍)——α 統計量缺(樣本不足)", style="dim")
-    t.append("\n\n(持倉法日報酬近似;α 基準=通用大盤 SPY;拆帳=Brinson 式兩層,配置+選股=贏大盤)", style="dim italic")
+    t.append(f"\n\n(持倉法日報酬近似;α 基準={bench};拆帳=Brinson 式兩層,配置+選股=贏大盤)", style="dim italic")
     _console.print()
     _console.print(Panel(
         t,
@@ -1093,8 +1096,9 @@ def prescribe(ab, dims, overview):
     bs = (ab or {}).get("benchmarks", {})
     sp = (ab or {}).get("excess_split") or {}
     st = (ab or {}).get("alpha_stat") or {}
-    if "SPY" in bs and sp:                                   # 拆帳(配置 vs 選股)取代舊「換基準看敏感度」:恆等式,不會翻
-        spy = bs["SPY"]
+    bench_main = (ab or {}).get("bench") or "SPY"            # per-market(#129 PR-2b):純台股=^TWII,硬編 SPY 會整段跳過
+    if bench_main in bs and sp:                              # 拆帳(配置 vs 選股)取代舊「換基準看敏感度」:恆等式,不會翻
+        spy = bs[bench_main]
         alloc, sel = sp["allocation"], sp["selection"]
         if spy["excess"] > 0.10 and alloc >= max(sel, 0.0):  # 贏大盤且賽道佔大頭 → 揚長是「假設」不是「定論」
             rx.append(dict(kind="揚長(假設,待驗證)", verify="記錄『下一個賽道』判斷,事後對帳",

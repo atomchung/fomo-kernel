@@ -345,6 +345,28 @@ def test_per_market_missing_bench_degrades_honestly():
     assert abs(ab["beta"] - 2.0) < 1e-9
 
 
+def test_tw_only_consumers_not_spy_hardcoded():
+    """review 抓的消費者 bug:純台股組合 benchmarks 只有 ^TWII——
+    prescribe 的拆帳分支不准因硬編 'SPY' 整段跳過;人話卡渲染同理(bench 動態)。"""
+    twii_rets = _spy_returns()
+    px = _px_frame({"^TWII": _prices_from_returns(18000.0, twii_rets),
+                    "TWLEV": _prices_from_returns(900.0, [2 * r for r in twii_rets])})
+    rows = [dict(ticker="TWLEV", side="buy", qty=100, price=900.0, date=IDX[0].date(),
+                 market="TW", currency="TWD")]
+    ab = tr.dim_alpha_beta(rows, px)
+    assert ab.get("note") is None and ab["bench"] == "^TWII" and "SPY" not in ab["benchmarks"]
+    assert abs(ab["beta"] - 2.0) < 1e-9, "純台股 β 對 ^TWII 應 2.0"
+    dims_min = [dict(dim="出場紀律", triggered=False, severity=0, tier=1),
+                dict(dim="部位 sizing", triggered=False, severity=0, tier=1, max_pct=0.1),
+                dict(dim="分散", triggered=False, severity=0, tier=2, ai_pct=0.1),
+                dict(dim="持有時間", triggered=False, severity=0, tier=2),
+                dict(dim="加碼攤平", triggered=False, severity=0, tier=1, count=0)]
+    ov = dict(payoff=1.5, realized=100.0, pf=2.0)
+    rx = tr.prescribe(ab, dims_min, ov)
+    assert any(("pp" in (r.get("text") or "")) or r.get("kind") for r in rx), \
+        "prescribe 對純台股不得因 'SPY' 硬編而整包空手(至少 α/拆帳分支要活)"
+
+
 def test_sector_proxy_market_aware():
     """台股 ticker 即使 driver 命中美股板塊表(半導體→SOXX),也不准拿美股 ETF 當對照。"""
     tr._DRIVER_MAP["2330.TW"] = ("半導體", 1)
