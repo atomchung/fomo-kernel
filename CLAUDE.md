@@ -14,11 +14,11 @@
 ## 測試(改 engine/ 前後必跑)
 
 ```bash
-python3 tests/run_all.py                       # 一鍵跑全部八套測試,離線、確定性、免裝 pytest
+python3 tests/run_all.py                       # 一鍵跑全部九套測試,離線、確定性、免裝 pytest
 TR_TEST_NETWORK=1 python3 tests/run_all.py     # 額外加跑 β 方向 + 市場背景 network smoke
 ```
 
-八套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、snapshot-anchored 帳本(`tests/test_ledger.py`)、出場追蹤+swap(`tests/test_revisit.py`)、市場背景(`tests/test_market_context.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這八套沒全過就不要 commit。**
+九套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、snapshot-anchored 帳本(`tests/test_ledger.py`)、出場追蹤+swap(`tests/test_revisit.py`)、市場背景(`tests/test_market_context.py`)、問題帳(`tests/test_problems.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這九套沒全過就不要 commit。**
 
 ## `.claude/` hooks(committed 的 agent 護欄)
 

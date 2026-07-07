@@ -1426,7 +1426,74 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     ))
 
 # ─────────────────── 結構化 state(跨次對帳用)───────────────────
-def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None):
+# ─────────────── 問題帳事件規約(#137 三層:統計層是本體,規矩/卡面都消費它)───────────────
+AVGDOWN_BREACH_W = 0.25    # 與 dim_avgdown 的 breach 判準同值:攤平「當下」該檔 ≥25% 成本權重才算破線
+
+
+def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=None):
+    """把本次診斷規約成問題事件流(#137):被統計的是「發生過的問題」,不是規矩。
+
+    兩型事件:
+      behavior(每筆交易=一個決定):事件日=交易日。prev_end 給定(weekly 增量)→
+        只取其後的新交易;不給(初診)→ 全期一次補齊,統計冷啟動就有完整履歷。
+      state(倉位結構的持續選擇):每次 review 一筆、事件日=date_end——超線的倉你
+        每週都在「選擇不動它」,每週一筆才是對的口徑。
+    opportunities = 各 key「本期有沒有機會犯」(Opportunity Check,#137 blocker 級):
+    規矩對位時,無事件+有機會才算守住;沒機會=Skipped 不累計(零事件偏差防護)。
+    """
+    dd = {d["dim"]: d for d in dims}
+    events = []
+
+    def _new(d):
+        return prev_end is None or d.isoformat() > prev_end
+
+    for e in avg_down or []:                               # behavior:破 size 上限的攤平(breach 才是洞)
+        if e.get("weight_then", 0) > AVGDOWN_BREACH_W and _new(e["date"]):
+            events.append({"key": "avgdown_breach", "kind": "behavior",
+                           "week": e["date"].isoformat(), "ticker": e["ticker"], "amount": None,
+                           "note": f"攤平@{e['px']:g},當下佔成本 {e['weight_then']:.0%}"})
+    for r in rts or []:                                    # behavior:賣掉賺錢的、後續大漲(放掉的錢可算)
+        fwd = r.get("fwd")
+        if fwd is not None and fwd > SELL_EARLY_TH and r["ret"] > 0 and _new(r["exit"]):
+            events.append({"key": "sell_winner_early", "kind": "behavior",
+                           "week": r["exit"].isoformat(), "ticker": r["ticker"],
+                           "amount": round(fwd * r["qty"] * r["sell_px"], 2),
+                           "note": f"賣後續漲 {fwd:+.0%}"})
+    d_size = dd.get("部位 sizing", {})
+    if d_size.get("triggered"):                            # state:單注過重
+        events.append({"key": "oversize", "kind": "state", "week": date_end,
+                       "ticker": d_size.get("max_ticker"), "amount": None,
+                       "note": f"最大單注 {d_size.get('max_pct', 0):.0%}"})
+    d_div = dd.get("分散", {})
+    if d_div.get("triggered"):                             # state:同 driver 集中
+        events.append({"key": "concentration", "kind": "state", "week": date_end,
+                       "ticker": None, "amount": None,
+                       "note": f"top3 {d_div.get('top3', 0):.0%}/同賽道 {d_div.get('ai_pct', 0):.0%}"})
+    d_hold = dd.get("持有時間", {})
+    if d_hold.get("triggered"):                            # state:同檔多框架混用
+        events.append({"key": "hold_inconsistency", "kind": "state", "week": date_end,
+                       "ticker": None, "amount": None,
+                       "note": "同檔又短打又長抱:" + "/".join((d_hold.get("incon_tickers") or [])[:3])})
+
+    def _px(t):
+        return (last_px or {}).get(t)
+
+    has_loss_pos = any(_px(t) and _px(t) < c / s
+                       for t, (s, c) in (held or {}).items() if s > 1e-9)
+    has_gain = any(_px(t) and _px(t) > c / s
+                   for t, (s, c) in (held or {}).items() if s > 1e-9) \
+        or any(r["ret"] > 0 and _new(r["exit"]) for r in rts or [])
+    has_pos = bool(held)
+    opportunities = {
+        "avgdown_breach": has_loss_pos,        # 有浮虧持倉才有機會攤平
+        "sell_winner_early": has_gain,         # 有獲利倉(可賣)或本期真賣過獲利單
+        "oversize": has_pos, "concentration": has_pos, "hold_inconsistency": has_pos,
+    }
+    return events, opportunities
+
+
+def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
+                avg_down=None, last_px=None, prev_end=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1490,6 +1557,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None):
                     # ⚠️ 格式契約 = 頂部 CYCLE_ID_RE / CYCLE_ID_UNKNOWN_RE(#61):改這裡必先改常數,契約測試會抓
                     "cycle_id": f"{t}#{cyc[t]['start']}#{cyc[t]['seq']}" if t in cyc else f"{t}#unknown"}
                 for t, (sh, c) in held.items()}
+    p_events, p_opps = build_problem_events(
+        dims, rts, avg_down, held, last_px,
+        rows[-1]["date"].isoformat() if rows else None, prev_end)
     return {
         "schema_version": 2,                               # currency_meta 為 optional 附加欄,舊讀者 .get 不受影響
         "currency_meta": currency_meta,                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶(單幣 USD → 大多為 None)
@@ -1524,6 +1594,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None):
             "is_complete": False,                           # CSV 無法自證完整（雙審 codex#3）：不宣稱完整持倉真相
             "positions": holdings,
         },
+        "problem_events": p_events,                         # #137 問題帳:本次規約出的事件(SKILL 收尾 append 進 problems.jsonl)
+        "problem_opportunities": p_opps,                    # 各 key 本期有無機會犯(規矩對位的 Opportunity Check)
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
@@ -1741,7 +1813,11 @@ def main():
         import json, tempfile
         path = os.environ["TR_STATE_OUT"]
         state = build_state(rows, rts, held, dims, overview, ab, rx,
-                            currency_meta=currency_meta)
+                            currency_meta=currency_meta,
+                            avg_down=avg_down, last_px=last_px,
+                            prev_end=os.environ.get("TR_PREV_END") or None)
+        # TR_PREV_END=上次 review 的 date_end(SKILL 對帳模式傳入)→ behavior 型問題事件
+        # 只取其後的新交易(weekly 增量);不設 = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."
         fd, tmp = tempfile.mkstemp(dir=outdir, suffix=".tmp")  # 原子寫:tmp→replace,不留半寫髒狀態(§4.6)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
