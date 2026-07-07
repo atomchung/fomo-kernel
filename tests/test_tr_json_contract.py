@@ -4,8 +4,9 @@
 守三條契約,任何欄位改名/消失/型別變化都必須讓 CI 變紅:
   1. TR_JSON 頂層 key 集合【恰等於】SKILL.md Step 1 消費清單(top_holes 改名 topHoles 這類突變在此陣亡)。
   2. TR_STATE_OUT 薄 state 的 key 集合 + metrics 鍵 + cycle_id 格式(單一事實源 = engine 的 CYCLE_ID_RE)。
-  3. SKILL.md 內嵌的收尾 python 片段(log append / theses append)真的能吃 engine 寫出的 state
-     —— #41 的 cycle_id 三段 vs 兩段漂移,就是漏了這層「消費者煙霧測試」。
+  3. 收尾 CLI(engine/coach.py,#148 首刀:原 SKILL 內嵌 heredoc 的 code 化)真的能吃 engine
+     寫出的 state —— #41 的 cycle_id 三段 vs 兩段漂移,就是漏了這層「消費者煙霧測試」;
+     另鎖 coach ↔ trade_recap 的 CYCLE_ID_RE 同步、SKILL.md 不再長回收尾 heredoc。
 
 全程離線、確定性:對 subprocess 注入假 yfinance(import 即 ImportError)→ 引擎走「未安裝→不連網」降級,
 本機裝了 yfinance 也不會連網、不隨行情漂(對 #64 的此檔範圍先行示範)。
@@ -26,6 +27,7 @@ MOCK_CSV = SKILL_DIR / "mock" / "mock_trades.csv"
 
 sys.path.insert(0, str(ENGINE.parent))
 import trade_recap  # noqa: E402  # 只取常數(CYCLE_ID_RE),不跑 main
+import coach  # noqa: E402  # 只取常數(CYCLE_ID_RE 同步斷言),不跑 main
 
 # ── SKILL.md Step 1/3 消費清單:改 engine 輸出欄位 = 改這份契約,兩邊要一起動 ──
 TR_JSON_KEYS = {
@@ -42,7 +44,7 @@ STATE_KEYS = {
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
-# SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾片段另存 metrics_snapshot 4 鍵(子集)
+# SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾 CLI 另存 metrics_snapshot 全量快照
 STATE_METRIC_KEYS = {
     "max_pos_pct", "max_pos_ticker", "avgdown_count", "avgdown_breach",
     "payoff", "ai_pct", "max_sector_pct", "top3_pct", "n_holdings",
@@ -162,20 +164,27 @@ def main():
             ok(bool(trade_recap.CYCLE_ID_RE.match(cid) or trade_recap.CYCLE_ID_UNKNOWN_RE.match(cid)),
                f"cycle_id 格式合契約({cid})——單一事實源 = engine.CYCLE_ID_RE")
 
-        # ── 3. SKILL.md 收尾片段煙霧測試(真消費者跑真 state)──
+        # ── 3. 收尾 CLI 煙霧測試(coach.py = 真消費者跑真 state;#148 heredoc 下沉)──
         blocks = extract_skill_py_blocks()
-        ok(len(blocks) >= 2, "SKILL.md 抽得到 ≥2 段收尾 python(log append / theses append)",
+        ok(len(blocks) == 1, "SKILL.md 只剩 part 5a 一段 heredoc(part 1/2/4/5b 已 CLI 化,別長回來)",
            f"抽到 {len(blocks)} 段")
+        ok(coach.CYCLE_ID_RE.pattern == trade_recap.CYCLE_ID_RE.pattern
+           and coach.CYCLE_ID_UNKNOWN_RE.pattern == trade_recap.CYCLE_ID_UNKNOWN_RE.pattern,
+           "coach ↔ trade_recap 的 CYCLE_ID 契約同一條(coach 刻意不 import engine,以此鎖複製 drift)")
         import os
         home = pathlib.Path(tmp) / "home"
         (home / ".trade-coach").mkdir(parents=True)
-        # 用 engine 剛寫出的【真】state 餵 SKILL 片段——schema 漂移(如 #41 的 cycle_id)在這層陣亡
+        # 用 engine 剛寫出的【真】state 餵 CLI——schema 漂移(如 #41 的 cycle_id)在這層陣亡
         (home / ".trade-coach" / "last_state.json").write_text(
             state_path.read_text(encoding="utf-8"), encoding="utf-8")
         env = dict(os.environ, HOME=str(home))
-        r1 = subprocess.run([sys.executable, "-", "測試規矩:單筆上限 20%", "max_pos_pct"],
-                            input=blocks[0], env=env, capture_output=True, text=True, timeout=60)
-        ok(r1.returncode == 0, "收尾片段 1(log append)exit 0", r1.stderr[-300:])
+        COACH = str(SKILL_DIR / "engine" / "coach.py")
+
+        # close:用戶親選規矩蓋過 engine 預設
+        r1 = subprocess.run([sys.executable, COACH, "close",
+                             "--rule", "測試規矩:單筆上限 20%", "--metric", "max_pos_pct"],
+                            env=env, capture_output=True, text=True, timeout=60)
+        ok(r1.returncode == 0, "coach close exit 0", r1.stderr[-300:])
         log_lines = (home / ".trade-coach" / "log.jsonl").read_text(encoding="utf-8").strip().splitlines()
         ok(len(log_lines) == 1, "log.jsonl append 恰 1 行")
         entry = json.loads(log_lines[0])
@@ -185,10 +194,72 @@ def main():
            and entry["commitment"]["metric_value"] == st["metrics"]["max_pos_pct"],
            "commitment.metric_value 從 state.metrics 反查成功")
         ok(set(entry["metrics_snapshot"].keys()) == set(st["metrics"].keys()),
-           "metrics_snapshot = state.metrics 全量快照(開場變化摘要的資料源,#129 PR-4;原 4 鍵子集已升級)")
-        r2 = subprocess.run([sys.executable, "-"], input=blocks[1], env=env,
-                            capture_output=True, text=True, timeout=60)
-        ok(r2.returncode == 0, "收尾片段 2(theses append)空清單跑不炸", r2.stderr[-300:])
+           "metrics_snapshot = state.metrics 全量快照(開場變化摘要的資料源,#129 PR-4)")
+        r2 = subprocess.run([sys.executable, COACH, "close", "--rule", "SKIP"],
+                            env=env, capture_output=True, text=True, timeout=60)
+        ok(r2.returncode == 0 and json.loads(r2.stdout)["commitment"] is None,
+           "close --rule SKIP → commitment null、metrics 照存(#56 這週不承諾)", r2.stdout[:200])
+        r3 = subprocess.run([sys.executable, COACH, "close",
+                             "--rule", "x", "--metric", "no_such_key"],
+                            env=env, capture_output=True, text=True, timeout=60)
+        ok(r3.returncode != 0, "close --metric 填錯 key 拒收(#148 gate:不再靜默存 None)",
+           r3.stderr[-200:])
+
+        # append-theses:空清單不炸;2 段 cycle_id 整批拒收;合法混排落 2 行 + id 生成
+        tj = pathlib.Path(tmp) / "theses.json"
+        tj.write_text("[]", encoding="utf-8")
+        r4 = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
+                             "--session-date", st["date_end"]],
+                            env=env, capture_output=True, text=True, timeout=60)
+        ok(r4.returncode == 0, "append-theses 空清單跑不炸", r4.stderr[-300:])
+        tj.write_text(json.dumps([{"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12",
+                                   "maturity": "inferred"}]), encoding="utf-8")
+        r5 = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
+                             "--session-date", st["date_end"]],
+                            env=env, capture_output=True, text=True, timeout=60)
+        theses_file = home / ".trade-coach" / "theses.jsonl"
+        ok(r5.returncode != 0 and not theses_file.exists(),
+           "append-theses 2 段 cycle_id 整批拒收、0 筆落盤(#41 的坑在 CLI 陣亡)", r5.stderr[-200:])
+        tj.write_text(json.dumps([
+            {"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1", "why": "w", "maturity": "inferred"},
+            {"event": "exit_narrative", "ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1",
+             "revisit_id": "NVDA#2026-07-01#40.0", "exit_date": "2026-07-01",
+             "exit_reason": "thesis_broken", "capture": "user"}]), encoding="utf-8")
+        r6 = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
+                             "--session-date", st["date_end"]],
+                            env=env, capture_output=True, text=True, timeout=60)
+        rows = [json.loads(x) for x in
+                theses_file.read_text(encoding="utf-8").strip().splitlines()]
+        ok(r6.returncode == 0 and len(rows) == 2
+           and rows[0]["thesis_id"].startswith("NVDA-") and rows[0]["status"] == "active"
+           and rows[1]["narrative_id"].startswith("exit-NVDA-")
+           and all(x["session_date"] == st["date_end"] for x in rows),
+           "append-theses 合法混排落 2 行;thesis_id/narrative_id/session_date 由 CLI 生成")
+
+        # append-rules:PKEY 對映 + rule_id/status/created 生成
+        rj = pathlib.Path(tmp) / "rules.json"
+        rj.write_text(json.dumps([{"text": "AI 暴險封頂 70%", "metric_key": "ai_pct",
+                                   "source": "user_chosen"}]), encoding="utf-8")
+        r7 = subprocess.run([sys.executable, COACH, "append-rules", str(rj),
+                             "--created", st["date_end"]],
+                            env=env, capture_output=True, text=True, timeout=60)
+        rrow = json.loads((home / ".trade-coach" / "rules.jsonl")
+                          .read_text(encoding="utf-8").strip())
+        ok(r7.returncode == 0 and rrow["problem_key"] == "concentration"
+           and rrow["status"] == "tracking" and rrow["created"] == st["date_end"]
+           and rrow["rule_id"].startswith("rule-"),
+           "append-rules metric_key→problem_key 對映 + rule_id/status/created 由 CLI 生成")
+
+        # save-card:同日重跑遞增檔名,不蓋舊卡
+        cf = pathlib.Path(tmp) / "card.md"
+        cf.write_text("---\ndate: d\n---\n卡", encoding="utf-8")
+        for _ in range(2):
+            r8 = subprocess.run([sys.executable, COACH, "save-card", str(cf),
+                                 "--date", "2026-07-07"],
+                                env=env, capture_output=True, text=True, timeout=60)
+        cards = sorted(p.name for p in (home / ".trade-coach" / "cards").glob("*.md"))
+        ok(r8.returncode == 0 and cards == ["2026-07-07-2.md", "2026-07-07.md"],
+           "save-card 同日重跑檔名遞增,不蓋舊卡", str(cards))
 
     print(f"\n✅ TR_JSON / state 契約測試全過({PASS} 項)")
     return 0

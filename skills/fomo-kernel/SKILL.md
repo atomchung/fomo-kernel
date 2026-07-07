@@ -98,7 +98,7 @@ python3 engine/problems.py stats --today <今天> --rules ~/.trade-coach/rules.j
 - **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全);記完帳接著排出場追蹤:`python3 engine/revisit.py enqueue-from-ledger`(掃清倉/大減倉 → 30/60/90 佇列,去重、重跑安全)。enqueue 完**再跑一次 `revisit.py scan`**,讀輸出的 **`recent_exits`**(出場 ≤14 天、金額大者先)——這是 Step 2(d) 賣出理由 capture 的候選集(#136:「為什麼賣」只有出場後兩週內問得到,不可回補;空 = 該段靜默跳過)。enqueue 輸出的 `new` 只是「本次新排入」的參考訊號,**capture 候選一律以 `recent_exits` 為準**——上週中斷沒問到的、當週超過限額的,窗口內這裡還會再出現。
 - **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
 - **帳本誠實檢查**:`holdings` 輸出的 `counts.skipped_lines > 0` = 帳本檔有壞行(可能是中斷寫入)——**如實告訴用戶**、別當帳本完整;修復法就是請他丟一張最新持倉截圖走 reconcile(新錨點蓋過可疑歷史)。(`ledger.py` 純標準庫,不需要 venv——跟 `trade_recap.py` 的 ModuleNotFoundError 提示無關。)
-- ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾腳本註解的既有規則),ledger 的 cycle_id 只供帳本自身追蹤。
+- ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾 part 2 的既有規則,CLI 會驗格式),ledger 的 cycle_id 只供帳本自身追蹤。
 
 ### Step 0.5 · 生成 driver map(讓冷門股不失準)
 
@@ -266,9 +266,9 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 
 - **選項標籤 = 規矩短語**,description 寫「下週看哪個數 + 現在的值」——**一律人話,內部 metric key 不准出現在任何用戶看得到的文字裡**(真人反饋:「追蹤 max_pos_pct,本週基線 42%」= 拗口)。✅「下週就看:最大單注佔比,現在 42%」/ ❌「追蹤 max_pos_pct,基線 42%」。用戶要能 5 秒選完。
 - **metric_key 對映(log 存內部名,顯示用人話)**:單一標的佔比 → `max_pos_pct`(人話「最大單注佔比」);虧損加碼 → `avgdown_count`(「虧損加碼次數」);賽道集中 → `ai_pct`(「同賽道佔比」);板塊 → `max_sector_pct`(「最大板塊佔比」);盈虧比 → `payoff`。對帳比 metric,不比 headline(規矩維 ≠ headline 維才不對錯帳)。
-- **用戶挑完 → 立刻走下面收尾腳本落盤**,`FINAL_RULE` / `METRIC_KEY` 填他選(或改寫)的那條。
+- **用戶挑完 → 立刻走下面收尾 CLI 落盤**(`coach.py close`),`--rule` / `--metric` 填他選(或改寫)的那條。
 - **`insufficient_data=true` 時的分工**:機械預設 commitment 照舊**不出**(引擎已設 null,別把缺資料的猜測當承諾);但**用戶自己選的規矩照存**——行為承諾是他的意志,跟樣本夠不夠無關;樣本不足影響的只是 metric 基線的解讀。落盤時標 `source: "user_chosen"` + `baseline_note: "short-sample baseline"`,下次對帳措辭看**方向**(在降/沒動/變糟),不判達標。
-- 用戶選「這週不承諾」/ 跳過 → 收尾 `FINAL_RULE` 填 `SKIP`:log 照存本週 metrics(供趨勢對帳),commitment=null,下週不拿規矩對他。
+- 用戶選「這週不承諾」/ 跳過 → 收尾 `coach.py close --rule SKIP`:log 照存本週 metrics(供趨勢對帳),commitment=null,下週不拿規矩對他。
 
 ### Step 4 · 收一句反饋(驗證用)
 
@@ -301,87 +301,44 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 4. **變化摘要(log ≥2 筆時,對帳行之後補一小段「跟上週比」)**:取 log 最近兩筆 `metrics_snapshot`,挑**變化最大的 3 個** metric 用人話講(對映表同 Step 3.5):「AI 暴險 78%→71% 在降;最大單注 42%→45% 反而變重;攤平 +0 次」。**只講 3 個、一行帶過,不攤全表**(那就變 dashboard 了);缺值(None)的 metric 跳過。這一小段是「它記得我」的第二個證據——第二張卡的價值在進度,不在再算一次。
 5. **再**講新一輪的洞(headline_dim)——若跟上次同維,直說「這條還沒過關,先別開新戰場」;若是新維,才開新洞。永遠只收斂一個洞 + 一條規矩。
 
-**規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 下面 `FINAL_RULE` 填 `SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
+**規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 收尾 CLI `--rule SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
 
 **收尾(出完卡 + Step 3.5 用戶挑完規矩 + Step 4 收完反饋,append 一行)**:
 ```bash
-# 把這次的薄狀態接到 log(只存聚合 metric + 規矩,不存任何交易)。
-# ⚠️ commitment 要存【用戶在 Step 3.5 親選的那條】(#56),不是引擎機械預設、更不是你代選的 ——
-#    Step 2 動機問完常推翻引擎預設。實例:engine 預設「虧損別加碼」,但用戶答「NVDA 是計畫內定投」
-#    → 用戶改挑「盯集中度 ai_pct」那條。
-#    兩格填用戶挑的規矩 + 對應 state.metrics 鍵;用戶選「這週不承諾」→ FINAL_RULE 填 SKIP。
-#    gate 規則:SKIP 一律不存 commitment;insufficient_data 只擋「engine 預設 fallback」,不擋用戶明選
-#    (行為承諾跟樣本無關,只是基線標 short-sample、下次對帳看方向不判達標)。
-FINAL_RULE="AI 暴險封頂 70%:要加 AI 新倉先問新賽道還是同一注往上疊"
-METRIC_KEY="ai_pct"
-python3 - "$FINAL_RULE" "$METRIC_KEY" <<'PY'
-import json, os, sys, pathlib
-st = json.load(open(os.path.expanduser("~/.trade-coach/last_state.json")))
-dflt = st.get("commitment") or {}                         # engine 機械預設(fallback)
-arg1 = sys.argv[1] if len(sys.argv) > 1 else ""
-skip = (arg1 == "SKIP")                                   # 用戶明確「這週不承諾」(#56):不硬塞錨點
-user_chose = (not skip) and bool(arg1.strip())            # 填了非 SKIP = Step 3.5 用戶親選
-rule = ("" if skip else arg1) or dflt.get("rule")
-mk   = (sys.argv[2] if len(sys.argv) > 2 else "") or dflt.get("metric_key")
-commitment = None
-if not skip and rule and mk and (user_chose or not st["insufficient_data"]):  # SKIP 一律不存;樣本不足只擋機械預設
-    commitment = {"rule": rule, "metric_key": mk,
-                  "metric_value": st["metrics"].get(mk), "goal": "down",
-                  "source": "user_chosen" if user_chose else "engine_default"}
-    if user_chose and st["insufficient_data"]:
-        commitment["baseline_note"] = "short-sample baseline"   # 下次對帳看方向,不判達標
-entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
-         "commitment": commitment,                        # 對帳對的是這條(用戶選定版,非機械版)
-         "metrics_snapshot": dict(st["metrics"])}         # 全量快照(開場「變化摘要」的資料源,#129 PR-4)
-p = pathlib.Path(os.path.expanduser("~/.trade-coach/log.jsonl"))
-with p.open("a", encoding="utf-8") as f: f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-print("appended commitment:", json.dumps(commitment, ensure_ascii=False))
-PY
+# commitment 存【用戶在 Step 3.5 親選的那條】(#56)——不是引擎機械預設、更不是你代選
+# (Step 2 動機問完常推翻引擎預設:engine 給「虧損別加碼」,用戶答「計畫內定投」→ 他改挑集中度那條)。
+# 用戶選「這週不承諾」→ --rule SKIP。gate 規則在 CLI 內(#148):SKIP 一律不存 commitment;
+# insufficient_data 只擋機械預設、不擋親選(親選自動補 short-sample 基線註記);--metric 填錯 key 直接拒收。
+python3 engine/coach.py close --rule "AI 暴險封頂 70%:要加 AI 新倉先問新賽道還是同一注往上疊" --metric ai_pct
 ```
 
 **收尾 part 2 · 把本週建立 / 更新的 thesis append 到 `theses.jsonl`(append-only)**:
+thesis 是對話 articulate 出來的(engine 不碰)。把本週「新建倉 / 缺 thesis / trigger 觸發後更新」的 thesis 與 Step 2(d) 的賣出敘事寫成**一個陣列**存暫存 JSON(如 `/tmp/theses.json`,空週傳 `[]` 也行),交給 CLI 落盤——cycle_id 格式、必填欄驗證、`thesis_id`/`narrative_id` 生成、`session_date` 注入全在 CLI 內(#148),格式不合**整批拒收(0 筆落盤)**,照 stderr 修完重跑:
+
 ```bash
-python3 - <<'PY'
-import json, os, pathlib
-# Claude 把本週「新建倉 / 缺 thesis / trigger 觸發後更新」的 thesis 填 theses[]。
-# thesis 是對話 articulate 出來的(engine 不碰);append-only:更新用 revises 指回舊 thesis_id,不蓋舊的。
-session_date = "YYYY-MM-DD"          # 本次 review 日(= engine state 的 date_end)
-theses = [
-  # ⚠️ cycle_id 必須【照抄】engine state holdings.positions[ticker].cycle_id(3 段格式 ticker#開倉日#序號,
-  #    如 "NVDA#2024-01-12#1"),別自己拼 2 段 —— 格式不符 → 對帳(開場 §偵測缺 thesis)永遠匹配不上 →
-  #    每週把已寫過 thesis 的持倉當「缺 thesis」重問,記憶迴圈失效。
-  # {"ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
-  #  "why":"一句:還沒被 price in 的判斷(不是行為描述;driver=B2 嵌這裡,同注要點名,不另立欄)",
-  #  "horizon":"年",                 # 這個判斷是幾週/幾季/幾年的事(週|季|年;#136 五要素 D1)
-  #  "triggers":{"review":"什麼消息/數字該重看","reduce":"什麼情況減碼","exit":"什麼代表看錯(非股價跌)"},
-  #  "maturity":"inferred",          # inferred(AI 猜,預設)| testable(用戶確認過)| draft(投機跟風沒 thesis)
-  #  "stop":"", "target_size":"20%",
-  #  "source_type":"self",           # 想法來源(#38 薄版):kol | research | self | other
-  #  "source_name":None,             # kol/research 才填(如「股癌 EP664」);用戶自己說的名字,不驗證
-  #  "source_confidence":"candidate",# candidate(AI 猜)| confirmed(用戶答過來源題)
-  #  "revises": None},               # 更新既有 thesis 才填舊 thesis_id
-  # —— 賣出理由(Step 2(d),事件形狀不同:event 欄位區分,絕不帶 why/triggers)——
-  # {"event":"exit_narrative","ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
-  #  "revisit_id":"NVDA#2026-07-01#40.0",  # 照抄 enqueue-from-ledger 輸出 new[] 的 revisit_id(對答案的 key)
-  #  "exit_date":"2026-07-01",
-  #  "exit_reason":"thesis_broken",  # price_target | thesis_broken | swap | anxiety | None(跳過)
-  #  "capture":"user",               # user(親答)| inferred(僅 swap 可猜)| skipped(跳過,消重用)
-  #  "note":None},                   # 用戶 Other 補的原話(若有)
-]
-import time; _sid = int(time.time())                       # session 戳：防同日多次 review 撞 id
-p = pathlib.Path(os.path.expanduser("~/.trade-coach/theses.jsonl"))
-with p.open("a", encoding="utf-8") as f:
-    for i, t in enumerate(theses):
-        t["session_date"] = session_date
-        if t.get("event") == "exit_narrative":             # 出場敘事:不進 active thesis 重建
-            t.setdefault("narrative_id", f"exit-{t['ticker']}-{session_date}-{_sid}-{i}")
-        else:
-            t.setdefault("status", "active")
-            t["thesis_id"] = f"{t['ticker']}-{session_date}-{_sid}-{i}"
-        f.write(json.dumps(t, ensure_ascii=False) + "\n")
-print(f"appended {len(theses)} thesis events")
-PY
+python3 engine/coach.py append-theses /tmp/theses.json --session-date <state.date_end>
 ```
+
+兩種行的格式(⚠️ `cycle_id` 必須【照抄】engine state `holdings.positions[ticker].cycle_id` 的 3 段格式如 `"NVDA#2024-01-12#1"`——自己拼 2 段會被 CLI 拒收;當初的坑 = 2 段讓對帳永不匹配、每週把寫過 thesis 的持倉當缺 thesis 重問):
+
+```json
+[
+  {"ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
+   "why":"一句:還沒被 price in 的判斷(不是行為描述;driver=B2 嵌這裡,同注要點名,不另立欄)",
+   "horizon":"年",
+   "triggers":{"review":"什麼消息/數字該重看","reduce":"什麼情況減碼","exit":"什麼代表看錯(非股價跌)"},
+   "maturity":"inferred",
+   "stop":"", "target_size":"20%",
+   "source_type":"self", "source_name":null, "source_confidence":"candidate",
+   "revises":null},
+  {"event":"exit_narrative","ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
+   "revisit_id":"NVDA#2026-07-01#40.0",
+   "exit_date":"2026-07-01", "exit_reason":"thesis_broken",
+   "capture":"user", "note":null}
+]
+```
+
+欄位語意——thesis 行:`horizon` 週|季|年(這個判斷是多長的事,#136 五要素 D1);`maturity` `inferred`(AI 猜,預設)|`testable`(用戶確認過)|`draft`(投機跟風沒 thesis);`source_type` kol|research|self|other(#38 薄版;`source_name` 只在 kol/research 填,`source_confidence` candidate|confirmed);更新既有 thesis 用 `revises` 指回舊 `thesis_id`,不蓋舊的。exit_narrative 行:`revisit_id` 照抄 enqueue-from-ledger 輸出 `new[]` 的 key(對答案用);`exit_reason` price_target|thesis_broken|swap|anxiety|null(跳過);`capture` user(親答)|inferred(僅 swap 可猜)|skipped(跳過,消重用);`note` 存用戶 Other 補的原話;**絕不帶 why/triggers**。
 > `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。`exit_narrative` 事件(賣出理由)也住這個檔——買入的 why 和賣出的 why 同一本帳,30/60/90 對答案按 `revisit_id` 撈。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發 + horizon 時間軸矛盾。**隱私同 log:純本機、不外傳、不回作者。**
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
@@ -399,7 +356,13 @@ feedback: <Step 4 用戶那句反饋;null>
 <卡全文照貼>
 ```
 
-同日重跑 → 檔名遞增 `<date>-2.md`,**不蓋舊卡**(append-only 精神)。這個資料夾 = 你的復盤語料庫——歷史可回看,也是日後「蒸餾你自己的鏡片」的原料。同隱私鐵律:純本機、不外傳、不回作者。
+卡全文(含 frontmatter)寫進暫存檔後交 CLI 落盤——同日重跑的檔名遞增(`<date>-2.md`,**不蓋舊卡**)由 CLI 管(#148),別自己算檔名:
+
+```bash
+python3 engine/coach.py save-card /tmp/card.md --date <state.date_end>
+```
+
+這個資料夾 = 你的復盤語料庫——歷史可回看,也是日後「蒸餾你自己的鏡片」的原料。同隱私鐵律:純本機、不外傳、不回作者。
 
 **收尾 part 5 · 問題帳 + 規矩庫落盤(#137)**:
 
@@ -428,34 +391,18 @@ print((r.stdout or r.stderr).strip())
 PY
 
 # (b) 規矩庫沉澱(只有「新規矩 / 修訂 / 靜音」才 append;同一條繼續守 = 不寫,庫裡已有):
-python3 - <<'PY'
-import json, os, pathlib, time
-# metric_key → problem_key 對映(問題帳對位用;payoff 類無對位 key → None,只走 commitment 迴圈)
-# 沒有 metric 對映的問題(hold_inconsistency / exit_anxiety / horizon_break / fomo_entry)
-# → problem_key 直接手填,不經這張表。
-PKEY = {"max_pos_pct": "oversize", "avgdown_count": "avgdown_breach",
-        "ai_pct": "concentration", "max_sector_pct": "concentration", "top3_pct": "concentration"}
-new_rules = [
-  # {"text": "<Step 3.5 選定的規矩人話>", "metric_key": "ai_pct",
-  #  "problem_key": PKEY.get("ai_pct"), "status": "tracking",
-  #  "source": "user_chosen",           # user_chosen | imported(冷啟動匯入,見下)
-  #  "created": "<date_end>",
-  #  "revises": None},                  # 破戒定性答「定得不合理」→ 填舊 rule_id + 改後文字;
-  #                                     # 用戶說「這條別追了」→ 同 rule 補一筆 status:"muted" + revises 舊 id
-]
-p = pathlib.Path(os.path.expanduser("~/.trade-coach/rules.jsonl"))
-_sid = int(time.time())
-with p.open("a", encoding="utf-8") as f:
-    for i, r in enumerate(new_rules):
-        r.setdefault("rule_id", f"rule-{_sid}-{i}")
-        f.write(json.dumps(r, ensure_ascii=False) + "\n")
-print(f"appended {len(new_rules)} rule(s)")
-PY
+# 寫成陣列存暫存 JSON 後交 CLI(#148)——metric_key→problem_key 對映、rule_id 生成、status/created
+# 預設都在 CLI 內。行格式:
+#   {"text":"<Step 3.5 選定的規矩人話>","metric_key":"ai_pct","source":"user_chosen","revises":null}
+#   · source ∈ user_chosen | imported(冷啟動匯入,見下)
+#   · 破戒定性答「定得不合理」→ 填舊 rule_id 進 revises + 改後文字;「這條別追了」→ 補一筆 status:"muted" + revises 舊 id
+#   · 無 metric 對位的問題(hold_inconsistency / exit_anxiety / horizon_break / fomo_entry)→ 手填 problem_key
+python3 engine/coach.py append-rules /tmp/rules.json --created <state.date_end>
 ```
 
 > **冷啟動匯入**:`rules.jsonl` 不存在、且用戶自己維護過規矩清單(如他的 RULES.md)→ 邀請一次:「把你現有的規矩貼給我,我翻成可對位的格式」——你逐條翻成 `{text, problem_key}`(對不上機械 key 的 `problem_key: None`,只當人話清單陳列)、**他過目確認後**才落盤(`source:"imported"`)。匯入的是**他本機的資料**,照隱私鐵律留在本機。
 > 規矩庫是未來 pre-trade gate 的守則檔:**全部 tracking 的規矩都是守則**(沒有「畢業」門檻)——還在犯的那條,恰恰是下單前最該擋你的。
 
-**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**機械層只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。但 **Step 3.5 照走**:用戶自己挑的規矩照存(`source:"user_chosen"` + `baseline_note`,見收尾腳本 gate)——體檢卡也要留下記憶入口,否則第二週還是初診。卡收尾講一句「資料還太短,基線先存個底,累積多幾筆 round-trip 後對帳才看達標」;用戶跳過不選 → log append(commitment=null),下次來就接得上。
+**第一次樣本不足(`insufficient_data=true`)**:round-trip<3 或交易跨度<~84 日曆日(≈60 交易日),引擎已把 `commitment` 設成 `null`。**機械層只做體檢、不硬出規矩**(否則下次把缺資料的猜測當成已確認的承諾來對帳)。但 **Step 3.5 照走**:用戶自己挑的規矩照存(`source:"user_chosen"` + `baseline_note`,gate 在 `coach.py close` 內)——體檢卡也要留下記憶入口,否則第二週還是初診。卡收尾講一句「資料還太短,基線先存個底,累積多幾筆 round-trip 後對帳才看達標」;用戶跳過不選 → log append(commitment=null),下次來就接得上。
 
 > 驗收這套有沒有真的「記憶」:`engine/test_state_loop.py` 把一份 CSV 按時間切兩段,累積跑「初診→對帳」,驗第二張卡有沒有真的對帳第一張承諾的那一維(而非重新初診)。改完 engine 或這段流程都先跑它。
