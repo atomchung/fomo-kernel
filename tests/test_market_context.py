@@ -73,6 +73,89 @@ def test_single_day_window():
     assert _approx(out["SPY"]["window_ret"], 121.0 / 115.0 - 1), "單日窗口:前收=06-09"
 
 
+def test_cross_year_window_semantics_locked():
+    """跨年窗口:window_ret(窗口前收錨)與 ytd_ret(end 年度錨)**可以符號相反**——
+    語意正確但不直覺,鎖住防未來 reviewer 誤改(PR #145 review, Codex)。"""
+    series = [("2025-12-26", 105.0), ("2025-12-31", 100.0),   # 12/31 低點 = YTD 錨
+              ("2026-01-02", 118.0), ("2026-01-05", 120.0)]
+    out = mc.compute_context({"SPY": series}, "2025-12-28", "2026-01-05")
+    spy = out["SPY"]
+    assert _approx(spy["window_ret"], 120.0 / 105.0 - 1), "窗口前收 = 12-26(105)"
+    assert _approx(spy["ytd_ret"], 120.0 / 100.0 - 1), "YTD 錨 = end 年度的去年末收(12-31)"
+    assert spy["window_ret"] > 0 and spy["ytd_ret"] > spy["window_ret"], "兩錨不同,值可分岔"
+
+
+class _FakeYF:
+    """sys.modules 級 fake yfinance:離線鎖 fetch 層形狀處理(PR #145 review, Codex)。"""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def download(self, *a, **k):
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+    def __enter__(self):
+        self._saved = sys.modules.get("yfinance")
+        sys.modules["yfinance"] = self
+        return self
+
+    def __exit__(self, *exc):
+        if self._saved is None:
+            sys.modules.pop("yfinance", None)
+        else:
+            sys.modules["yfinance"] = self._saved
+
+
+def _pd():
+    import pandas as pd
+    return pd
+
+
+def test_fetch_multiindex_with_partial_nan_symbol():
+    """多 symbol MultiIndex 正常形狀;QQQ 全 NaN → prices 缺 QQQ、error=None,
+    build_output 的 missing 要點名(呼叫端才知道別假設三家都在)。"""
+    pd = _pd()
+    idx = pd.to_datetime(["2026-06-06", "2026-06-09", "2026-06-13"])
+    df = pd.DataFrame({("Close", "SPY"): [110.0, 115.0, 121.0],
+                       ("Close", "QQQ"): [float("nan")] * 3,
+                       ("Close", "^VIX"): [19.8, 18.0, 16.2]}, index=idx)
+    df.columns = pd.MultiIndex.from_tuples(df.columns)
+    with _FakeYF(df):
+        prices, err = mc.fetch_series("2026-06-09", "2026-06-13")
+    assert err is None and set(prices) == {"SPY", "^VIX"}, f"{err} / {set(prices or {})}"
+    out = mc.build_output(prices, err, "2026-06-09", "2026-06-13")
+    assert out["missing"] == ["QQQ"], "部分缺席必須點名,error=None 不代表三家都在"
+    assert set(out["benchmarks"]) == {"SPY", "VIX"}
+
+
+def test_fetch_single_symbol_series_shape():
+    """單 symbol 舊形狀(data['Close'] 是 Series):不得用 .get(sym) 誤查日期 index。"""
+    pd = _pd()
+    idx = pd.to_datetime(["2026-06-06", "2026-06-13"])
+    df = pd.DataFrame({"Close": [110.0, 121.0]}, index=idx)
+    with _FakeYF(df):
+        prices, err = mc.fetch_series("2026-06-09", "2026-06-13", symbols=("SPY",))
+    assert err is None and list(prices) == ["SPY"], f"{err} / {prices}"
+    assert prices["SPY"][-1] == ("2026-06-13", 121.0)
+
+
+def test_fetch_missing_close_degrades_to_error():
+    """非空但缺 Close 欄 → error 退化,不得 raise(檔頭「絕不 crash」契約)。"""
+    pd = _pd()
+    df = pd.DataFrame({"Open": [1.0]}, index=pd.to_datetime(["2026-06-13"]))
+    with _FakeYF(df):
+        prices, err = mc.fetch_series("2026-06-09", "2026-06-13")
+    assert prices is None and err and "形狀異常" in err, f"{prices} / {err}"
+
+
+def test_fetch_download_exception_degrades():
+    with _FakeYF(RuntimeError("boom")):
+        prices, err = mc.fetch_series("2026-06-09", "2026-06-13")
+    assert prices is None and err and "下載失敗" in err
+
+
 def test_cli_rejects_bad_dates():
     ex = os.path.join(ENGINE, "market_context.py")
     r1 = subprocess.run([sys.executable, ex, "--start", "2026-06-13", "--end", "2026-06-09"],
@@ -94,7 +177,7 @@ def test_network_smoke_optional():
     r = subprocess.run([sys.executable, ex, "--start", start.isoformat(),
                         "--end", end.isoformat()], capture_output=True, text=True)
     out = json.loads(r.stdout)                                # stdout 必須純 JSON
-    assert set(out) == {"start", "end", "benchmarks", "error"}
+    assert set(out) == {"start", "end", "benchmarks", "missing", "error"}
     if out["error"] is None:
         assert "SPY" in out["benchmarks"], f"線上路徑該有 SPY:{out['benchmarks'].keys()}"
 

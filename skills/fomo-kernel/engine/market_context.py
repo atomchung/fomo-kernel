@@ -103,19 +103,34 @@ def fetch_series(start, end, symbols=SYMBOLS):
         return None, f"yfinance 下載失敗: {e}"
     if data is None or len(data) == 0:
         return None, "yfinance 無資料"
-    closes = data["Close"]
-    prices = {}
-    for sym in symbols:
-        col = closes.get(sym) if hasattr(closes, "get") else None
-        if col is None:
-            continue
-        series = [(idx.date().isoformat(), float(v))
-                  for idx, v in col.items() if v == v]      # v==v 濾 NaN
-        if series:
-            prices[sym] = series
+    try:                                                    # 回傳形狀異常也走 error 退化,守「絕不 crash」契約
+        closes = data["Close"]
+        prices = {}
+        for sym in symbols:
+            if hasattr(closes, "columns"):                  # DataFrame(多 symbol 正常形狀)
+                col = closes[sym] if sym in closes.columns else None
+            else:                                           # Series(單 symbol 舊形狀)——.get(sym) 會誤查日期 index,別用
+                col = closes if len(symbols) == 1 else None
+            if col is None:
+                continue
+            series = [(idx.date().isoformat(), float(v))
+                      for idx, v in col.items() if v == v]  # v==v 濾 NaN
+            if series:
+                prices[sym] = series
+    except Exception as e:  # noqa: BLE001
+        return None, f"yfinance 回傳形狀異常: {e}"
     if not prices:
         return None, "yfinance 無資料"
     return prices, None
+
+
+def build_output(prices, err, start, end, symbols=SYMBOLS):
+    """組 CLI 輸出(純函式,可測)。missing = 要求的 symbol(呈現名)中最終沒進 benchmarks 的
+    ——部分缺席時 error 仍可能是 None,呼叫端(SKILL)靠這欄知道「有什麼講什麼」,別假設三家都在。"""
+    benchmarks = compute_context(prices, start, end) if prices else {}
+    missing = [s.lstrip("^") for s in symbols if s.lstrip("^") not in benchmarks]
+    return {"start": start, "end": end, "benchmarks": benchmarks,
+            "missing": missing, "error": err}
 
 
 # ─────────────────────────────── CLI ───────────────────────────────
@@ -133,11 +148,9 @@ def main(argv=None):
         print(f"❌ 日期格式錯:{e}", file=sys.stderr)
         return 1
     prices, err = fetch_series(a.start, a.end)
-    benchmarks = compute_context(prices, a.start, a.end) if prices else {}
     if err:
         print(f"⚠️  {err}", file=sys.stderr)
-    print(json.dumps({"start": a.start, "end": a.end,
-                      "benchmarks": benchmarks, "error": err},
+    print(json.dumps(build_output(prices, err, a.start, a.end),
                      ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

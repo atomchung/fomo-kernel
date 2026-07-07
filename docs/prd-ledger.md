@@ -170,7 +170,7 @@ PR-3  revisit + swap（#32 + #33，依賴 PR-1 事件流）
 PR-4  卡片庫 + 變化摘要（獨立可並行，最小）
 ```
 
-每個 PR：過七套測試（`python3 tests/run_all.py`）＋ mock fixture 只用假資料＋ **影響用戶可見行為者同 commit 更新 SKILL.md**（契約同步鐵律）。
+每個 PR：過全部測試套件（`python3 tests/run_all.py`，套數以其總結輸出為準）＋ mock fixture 只用假資料＋ **影響用戶可見行為者同 commit 更新 SKILL.md**（契約同步鐵律）。
 
 ## 6. 開放問題（實作時定，不阻塞動工）
 
