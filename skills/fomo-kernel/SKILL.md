@@ -414,11 +414,16 @@ events = list(st.get("problem_events") or [])
 #                   "week":"<exit_date>","ticker":"NVDA","amount":None,"note":"賣出理由=想落袋"}
 #   horizon_break — horizon 矛盾且答「心態動了/不想認賠」:week=本次 date_end
 #   fomo_entry    — market_context 大漲週(如 SPY 週漲 >3%)新建倉、動機答「怕錯過」:week=建倉日
-mark = {"week": st["date_end"], "opportunities": st.get("problem_opportunities") or {}}
-tmp = "/tmp/tr_problem_events.json"
-json.dump(events, open(tmp, "w", encoding="utf-8"), ensure_ascii=False)
+mark = {"week": st["date_end"], "opportunities": dict(st.get("problem_opportunities") or {})}
+# horizon_break 的機會 engine 判不了(它不讀動機庫)——由你補:有帶 horizon 的 active thesis = True
+# mark["opportunities"]["horizon_break"] = True
+import tempfile
+fd, tmp = tempfile.mkstemp(suffix=".json")            # unique 暫存,別用固定路徑(並行 session 會互蓋)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(events, f, ensure_ascii=False)
 r = subprocess.run([sys.executable, "engine/problems.py", "append", tmp,
                     "--mark", json.dumps(mark, ensure_ascii=False)], capture_output=True, text=True)
+os.unlink(tmp)
 print((r.stdout or r.stderr).strip())
 PY
 
@@ -426,6 +431,8 @@ PY
 python3 - <<'PY'
 import json, os, pathlib, time
 # metric_key → problem_key 對映(問題帳對位用;payoff 類無對位 key → None,只走 commitment 迴圈)
+# 沒有 metric 對映的問題(hold_inconsistency / exit_anxiety / horizon_break / fomo_entry)
+# → problem_key 直接手填,不經這張表。
 PKEY = {"max_pos_pct": "oversize", "avgdown_count": "avgdown_breach",
         "ai_pct": "concentration", "max_sector_pct": "concentration", "top3_pct": "concentration"}
 new_rules = [

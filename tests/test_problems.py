@@ -156,6 +156,63 @@ def test_check_rules_three_way_and_streak():
     assert out2[0]["verdict"] == "broke" and out2[0]["held_streak"] == 0, "破戒中斷 streak"
 
 
+def test_rule_created_lower_bound():
+    """冷啟動全期補齊的歷史事件 = 統計事實,但規矩生效前的行為不對規矩計破(PR #146 review)。"""
+    events = [{"type": "event", "key": "avgdown_breach", "week": "2026-05-10"}]  # 規矩立之前
+    marks = [{"week": "2026-06-13", "opportunities": {"avgdown_breach": True}}]
+    tracking = [{"rule_id": "r1", "text": "虧損不加碼", "problem_key": "avgdown_breach",
+                 "created": "2026-06-13"}]
+    out = pb.check_rules(tracking, events, marks)
+    assert out[0]["verdict"] == "held", "歷史事件不讓才立的規矩滿版 broke"
+    tracking2 = [dict(tracking[0], created=None)]            # 無 created(legacy)→ 保守沿舊行為
+    out2 = pb.check_rules(tracking2, events, marks)
+    assert out2[0]["verdict"] == "broke"
+
+
+def test_same_day_multi_events_not_deduped():
+    """同日同 ticker 兩筆真實攤平(px 不同 → note 不同)不可去重誤殺(PR #146 review)。"""
+    book, _ = _mk()
+    evs = [{"key": "avgdown_breach", "kind": "behavior", "week": "2026-06-20",
+            "ticker": "PLTR", "amount": None, "note": "攤平@15,當下佔成本 30%"},
+           {"key": "avgdown_breach", "kind": "behavior", "week": "2026-06-20",
+            "ticker": "PLTR", "amount": None, "note": "攤平@14.2,當下佔成本 31%"}]
+    n, _m = pb.append_book(book, evs, None)
+    assert n == 2, "早盤+尾盤各攤一次是兩個決定,不是重複資料"
+    n2, _m2 = pb.append_book(book, evs, None)
+    assert n2 == 0, "重跑(同 tuple)仍去重"
+
+
+def test_unobservable_sell_early_not_fake_held():
+    """缺 fwd(離線)的獲利賣出:犯沒犯看不到 → opportunity 必須 False,寧可 skipped 不假 held。"""
+    rts = [{"ticker": "ARM", "exit": _d("2026-06-22"), "entry": _d("2026-05-01"),
+            "qty": 10, "sell_px": 100.0, "buy_px": 80.0, "ret": 0.25, "hold": 52}]  # 無 fwd
+    _, opp = tr.build_problem_events(_dims(), rts, [], {}, {}, "2026-06-27", "2026-06-15")
+    assert opp["sell_winner_early"] is False, "不可觀測不能冒充守住"
+
+
+def test_motive_keys_have_opportunities():
+    """動機類 key 缺 opportunity → 綁它的規矩永遠 skipped(PR #146 review, Gemini)。"""
+    rows = [{"ticker": "NVDA", "side": "buy", "qty": 5, "price": 100.0, "date": _d("2026-06-21")}]
+    rts = [{"ticker": "ARM", "exit": _d("2026-06-22"), "entry": _d("2026-05-01"),
+            "qty": 10, "sell_px": 100.0, "buy_px": 80.0, "ret": 0.25, "hold": 52, "fwd": 0.2}]
+    _, opp = tr.build_problem_events(_dims(), rts, [], {}, {}, "2026-06-27", "2026-06-15", rows=rows)
+    assert opp["exit_anxiety"] is True and opp["fomo_entry"] is True
+    _, opp2 = tr.build_problem_events(_dims(), [], [], {}, {}, "2026-06-27", "2026-06-15", rows=[])
+    assert opp2["exit_anxiety"] is False and opp2["fomo_entry"] is False, "沒交易=沒機會犯"
+
+
+def test_small_worsening_outranks_big_flat():
+    """排序語意鎖(設計意圖,PR #146 review):加權後金額優先——小額但惡化中的,
+    刻意排到大額但持平的前面(惡化要先被看見)。"""
+    events = ([{"type": "event", "key": "sell_winner_early", "week": w, "amount": 1000.0}
+               for w in ("2026-06-12", "2026-05-15")] +          # 近期 1 + 前期 1 = flat,加權 1000
+              [{"type": "event", "key": "avgdown_breach", "week": w, "amount": 600.0}
+               for w in ("2026-06-20", "2026-06-25", "2026-07-01")])  # 近期 3 前期 0 = worse,加權 1800+
+    per, top = pb.compute_stats(events, "2026-07-07", 4)
+    assert per["sell_winner_early"]["trend"] == "flat" and per["avgdown_breach"]["trend"] == "worse"
+    assert top[0] == "avgdown_breach", f"1800×1.5 > 1000×1.0,惡化優先:{top}"
+
+
 # ─────────────── C. CLI roundtrip ───────────────
 
 def test_cli_roundtrip():

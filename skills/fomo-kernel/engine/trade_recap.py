@@ -1430,7 +1430,7 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
 AVGDOWN_BREACH_W = 0.25    # 與 dim_avgdown 的 breach 判準同值:攤平「當下」該檔 ≥25% 成本權重才算破線
 
 
-def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=None):
+def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=None, rows=None):
     """把本次診斷規約成問題事件流(#137):被統計的是「發生過的問題」,不是規矩。
 
     兩型事件:
@@ -1480,14 +1480,24 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 
     has_loss_pos = any(_px(t) and _px(t) < c / s
                        for t, (s, c) in (held or {}).items() if s > 1e-9)
+    # 「賣早」的機會要可觀測才算(review):缺 fwd(離線/缺價)的獲利賣出,犯沒犯根本看不到,
+    # 標 True 會讓 check_rules 把「沒算出來」冒充「守住」——寧可 skipped 不假 held。
     has_gain = any(_px(t) and _px(t) > c / s
                    for t, (s, c) in (held or {}).items() if s > 1e-9) \
-        or any(r["ret"] > 0 and _new(r["exit"]) for r in rts or [])
+        or any(r.get("fwd") is not None and r["ret"] > 0 and _new(r["exit"]) for r in rts or [])
     has_pos = bool(held)
+    has_new_exit = any(_new(r["exit"]) for r in rts or [])
+    has_new_entry = any(r["side"] == "buy" and _new(r["date"]) for r in rows or [])
     opportunities = {
         "avgdown_breach": has_loss_pos,        # 有浮虧持倉才有機會攤平
-        "sell_winner_early": has_gain,         # 有獲利倉(可賣)或本期真賣過獲利單
+        "sell_winner_early": has_gain,         # 有獲利倉(可賣)或本期有 fwd 可觀測的獲利賣出
         "oversize": has_pos, "concentration": has_pos, "hold_inconsistency": has_pos,
+        # 動機類(事件由 SKILL 收尾補,但機會的「事實面」engine 就能判——缺這幾個 key,
+        # 綁它們的規矩會永遠 skipped、held_streak 永不累計(review):
+        "exit_anxiety": has_new_exit,          # 本期有賣出,才有機會恐慌落袋
+        "fomo_entry": has_new_entry,           # 本期有新買入,才有機會追高
+        # horizon_break 的機會=「有帶 horizon 的 active thesis」——engine 不讀動機庫,
+        # 由 SKILL 收尾 part 5 補進 mark.opportunities。
     }
     return events, opportunities
 
@@ -1559,7 +1569,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 for t, (sh, c) in held.items()}
     p_events, p_opps = build_problem_events(
         dims, rts, avg_down, held, last_px,
-        rows[-1]["date"].isoformat() if rows else None, prev_end)
+        rows[-1]["date"].isoformat() if rows else None, prev_end, rows=rows)
     return {
         "schema_version": 2,                               # currency_meta 為 optional 附加欄,舊讀者 .get 不受影響
         "currency_meta": currency_meta,                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶(單幣 USD → 大多為 None)
