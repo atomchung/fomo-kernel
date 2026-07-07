@@ -124,6 +124,7 @@ def test_enqueue_dedup_and_due_schedule():
     item = list(revisits.values())[0]
     assert item["due"] == {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"}
     assert item["idle_cash"] is True
+    assert item["shares_before"] == 10, "減倉比例要靠 shares_before,capture 問句用"
 
 
 def test_scan_due_progression_and_resolution():
@@ -214,6 +215,12 @@ def test_cli_roundtrip():
     out = json.loads(r2.stdout)                          # stdout 必須純 JSON
     assert len(out["due"]) == 1 and out["due"][0]["checkpoint"] == "30"
     assert _approx(out["due"][0]["compare"]["orig_ret"], 160.0 / 120.5 - 1, 1e-6)
+    assert out["recent_exits"] == [], "出場 31 天,超過 capture 鮮度窗 → 不再列為候選"
+    r2b = subprocess.run([sys.executable, ex, "--queue", q, "scan", "--today", "2026-06-20"],
+                         capture_output=True, text=True)
+    recent = json.loads(r2b.stdout)["recent_exits"]
+    assert len(recent) == 1 and recent[0]["ticker"] == "NVDA", \
+        "窗口內(5 天)→ capture 候選,session 中斷/限額沒問到的下次還在"
     rid = out["due"][0]["revisit_id"]
     r3 = subprocess.run([sys.executable, ex, "--queue", q, "resolve", rid, "30",
                          "falsified", "--note", "panic sell", "--date", "2026-07-16"],
