@@ -82,7 +82,7 @@ python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期的 30/60/90 
   4. **補缺的 thesis**(Step 2):缺 thesis 的持倉由 AI **猜**(標 `inferred`、零提問),只對「行為矛盾、金額最大的 1 檔」問一句;已有 thesis 的不碰(除非 trigger 觸發)。
   5. **問新出場的賣出理由**(Step 2(d)):scan 的 `recent_exits` 有還沒問過的 → 對近 14 天的清倉/大減倉問「當時為什麼賣」(窗口過了就永久缺這筆)。
 
-> 兩個狀態檔都是**用戶自己的**本機教練記憶,永不外傳、不回作者(隱私第一)。`log.jsonl` 存聚合 metric + 承諾(`max_pos_pct=0.48`、「虧損不加碼」);`theses.jsonl` 存 per-position「為什麼持有 + 什麼條件算錯」。**append-only**:修正 thesis = 補一筆新 event(帶 `revises` 指回舊的),**不蓋舊的** —— 才能跨期看你當初怎麼想、後來怎麼變(蓋掉 = 跨期對帳失效 + 鼓勵事後合理化)。
+> 兩個狀態檔都是**用戶自己的**本機教練記憶,永不外傳、不回作者(隱私第一)。`log.jsonl` 存聚合 metric + 承諾(`max_pos_pct=0.48`、「虧損不加碼」);`theses.jsonl` 存 per-position 的五要素持股假設(why 判斷 / horizon 時間軸 / triggers / stop・target_size / driver 同注辨識,#136)。**append-only**:修正 thesis = 補一筆新 event(帶 `revises` 指回舊的),**不蓋舊的** —— 才能跨期看你當初怎麼想、後來怎麼變(蓋掉 = 跨期對帳失效 + 鼓勵事後合理化)。
 
 ### Step 0 · 把任意券商格式變成引擎吃得下的(用讀檔者自己的 Claude)
 
@@ -172,9 +172,12 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 
 > **鐵律:降摩擦 + 克制。** 這產品的命是「不變成你想逃的重系統」。thesis **絕不逼用戶坐下來填** —— 由你(Claude)從交易行為 + ticker 世界知識**猜**,預設落盤標 `inferred`,用戶不爽再改。讓用戶**冷啟動就有完整 thesis 庫、零填寫成本**。
 
-**主路徑:AI 推測,不問用戶。** 對每個缺 thesis 的持倉,用 engine 行為訊號(`ticker_diagnosis` 的 定投/凹單/押太重/紀律持有 + 加碼次數 + `cur_ret` + 持有天數)+ ticker 是什麼公司 / 賽道,**猜**一筆 thesis:
-- **why**:從行為猜(規律加碼 + 長抱 + 獲利 → 「定投型核心倉」;疑似凹單 → 「攤平等回本(待確認)」)。
-- **三 trigger**:從 ticker 類別猜常見的 —— 成長股 → 營收 / 用戶增速失速;週期股 → 週期反轉;AI 概念 → capex 轉弱。`reduce` 從當前 sizing 猜(已超標 → 該檔減碼線)。
+**主路徑:AI 推測,不問用戶。** 對每個缺 thesis 的持倉,用 engine 行為訊號(`ticker_diagnosis` 的 定投/凹單/押太重/紀律持有 + 加碼次數 + `cur_ret` + 持有天數)+ ticker 是什麼公司 / 賽道,**按五要素結構猜**一筆 thesis(#136:VY 式判斷缺一要素就不算完整;結構是猜的骨架,**不是逼用戶填的表單**——AI 照樣全猜、用戶照樣順手改,摩擦不變):
+- **why(判斷)**:猜「**他可能知道什麼還沒被 price in**」,不是複述行為——❌「定投型核心倉」(那是行為,不是理由);✅「賭 AI 推論需求外溢到電力缺口,市場還在按舊供需定價(推測自:規律加碼+長抱核電)」。行為是證據,判斷才是 thesis;**真猜不出判斷(如疑似凹單)→ 誠實寫「攤平等回本(待確認)」且 `horizon` 落 `null`**——編不出判斷就沒有時間軸,別給假 thesis 配假 horizon 讓後續對帳拿去當真。
+- **horizon(時間軸,D1)**:這個判斷是**幾週 / 幾季 / 幾年**的事?從行為猜:規律定投 + 長抱 → `年`;押財報 / 事件 → `季`;短進短出 → `週`。沒有時間軸的理由無法對帳——之後「說是三年的事、40 天就跑」這種自相矛盾才抓得到。
+- **三 trigger(可證偽退出 + 情境→action,D2/D3;其對賠率的影響接 B1)**:從 ticker 類別猜常見的 —— 成長股 → 營收 / 用戶增速失速;週期股 → 週期反轉;AI 概念 → capex 轉弱。`reduce` 從當前 sizing 猜(已超標 → 該檔減碼線)。
+- **stop / target_size(賠率 + 信念→倉位,B1/A1)**:既有欄照猜——最壞情況虧多少、這個理由值多大注。
+- **driver(這是不是同一注,B2)**:對照 Step 0.5 你生成的 driver map——與現有持倉同 driver / 同 thematic 的,**why 裡必須點名**(「與 NVDA 同屬 AI capex 一注」),別讓五檔各自漂亮的 thesis 合起來是一注梭哈。
 - 每條標來源 `(推測自:規律加碼+長抱)`,讓用戶一眼看出是猜的、好校正。
 - **maturity = `inferred`**,全部**直接落盤、零提問**。
 - **順猜想法來源(#38 薄版,同樣零提問)**:每筆 thesis 帶 `source_type`(`kol` | `research` | `self` | `other`)+ `source_name` + `source_confidence`。**對話或歷史上下文有明確訊號才標 `kol`/`research`**(用戶這次或先前提過「股癌說」「看了某篇研究」→ `source_name` 填來源名);毫無訊號 → `self` + `source_confidence:"candidate"`(誠實標猜的,別編一個 KOL 出來)。用戶親口確認過才升 `confirmed`。這欄現在只累積、不上卡——等樣本夠了(#38 完整版)才做「自己研究 vs 跟單」勝率分組;**但欄位不可回補,從今天開始收**。
@@ -199,6 +202,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
   - `kind:"full"`(清倉):「{ticker} 你 {exit_date} 在 {exit_price} 全部出清。當時賣的理由是——**到價了**(當初設的目標走完)/ **看錯了**(thesis 的失效條件發生)/ **換更好的**(把錢挪去 {swaps 的 ticker,無 swap 則寫「別的標的」})/ **想落袋**(怕回吐、想鎖住獲利)」+ 可跳過。
   - `kind:"reduce"`(減倉 ≥50%):同四分法但措辭對齊「還留著一半」的事實——「**到了減碼點**(計畫內的部位調整)/ **信心動搖**(thesis 部分失效,先降風險)/ **換更好的**(騰資金去 {…})/ **想落袋**(鎖住一部分,怕回吐)」。落盤的 `exit_reason` 仍用同一組值(`price_target`/`thesis_broken`/`swap`/`anxiety`)——風控降倉、再平衡這類「都不是」→ 用戶點 Other 寫原話,`exit_reason` 落 `null` + `note` 存他的話。
   - 前二=紀律,後一=焦慮訊號——但**問的當下不說教**,這是 capture 不是審判,定性留給 30/60/90 對答案。
+  - **時間軸自相矛盾必帶(#136;門檻要 deterministic,別憑感覺)**:該 cycle 的 active thesis 的 `horizon` 非空,且持有時長觸線——**說`年`、持有 <90 天清倉;說`季`、持有 <21 天清倉**(說`週`的快走正常,不問;數字是初版契約,dogfood 後可調)→ 問句補一句鏡子:「你當初說這是{horizon}的事,{實際持有天數}就走——是判斷變了,還是心態動了?」(thesis `inferred` 時措辭改「我當時猜這是{horizon}的事」)。**`horizon` 缺欄或 `null`(legacy thesis / 猜不出判斷的 fallback)→ 這句靜默跳過,不得回頭從舊 why 腦補一個 horizon 出來。**這正是 horizon 欄存在的理由:沒有時間軸,理由無法對帳。
 - **賣出動機只有一種情況可以猜**:`swaps` 非空 → 猜 `swap`(標 `capture:"inferred"`,對答案時措辭用「我當時猜你是換標的」)。其餘(到價 vs 落袋、證偽 vs 恐慌)全是內心狀態、機械分不出——**用戶沒答就落 `exit_reason: null` + `capture:"skipped"`,絕不編**(有 swap 交易事實撐的才敢猜,沒有事實的猜測=替用戶編賣出動機,比不記還糟)。
 - **落盤**:跟 thesis 一起在收尾 part 2 統一 append 進 `theses.jsonl`(格式見該段 exit_narrative 範例),`exit_reason` ∈ `price_target` | `thesis_broken` | `swap` | `anxiety` | `null`,`note` 存他用 Other 補的原話(若有)。
 
@@ -218,6 +222,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
      - **`testable`(你確認過的)** → 才用定論:`exit_trigger` 觸發 = 🔴「你定的『{exit}』發生了 —— thesis broken,該走」。
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
+   - **順帶看 horizon 反向矛盾(只對這三類 ticker,零額外掃描;門檻同樣 deterministic)**:thesis 的 `horizon` 非空且持有時長觸線——**說`週`、已持有 >60 天;說`季`、已持有 >180 天**(說`年`的長抱正常,不問;`horizon` 缺欄/`null` → 靜默跳過,不回補)→ 一句鏡子:「當初說是{horizon}的事,現在持有 {天數}——是判斷升級成長線了(順手改 horizon),還是不想認賠變長抱?」措辭同樣依 maturity 分(`inferred` 用「我猜」)。**這題受消重鐵律管**:答完立刻把結論落盤(revises——改 horizon,或 why 標凹單定性)→ 矛盾要嘛消失、要嘛已定性,**同一 cycle 不重問**;**跳過也視同答過**(本 cycle 不再追,別把鏡子變成每週催告);只有行為又顯著變了(定性凹單後又加碼)才照消重鐵律的例外重開。
 3. **出場追蹤(#32/#33,開場 `revisit.py scan` 的 `due` 非空才有這段;空 = 靜默跳過,不催)**:
    - **問之前先撈當時的賣出理由**:比對 `theses.jsonl` 的 `event:"exit_narrative"`(同 `revisit_id`)。**有記錄且 `exit_reason` 非空 → 問句必須引用他自己的話對答案**(#136 閉環,這比泛用問句锋利十倍),按 `exit_reason` 客製:`thesis_broken`→「你賣時說是**看錯了**——{orig_ret:+pp} 之後,當時說的失效條件真的發生了嗎?」;`price_target`→「你賣時說**到價了**——它之後又走了 {orig_ret:+pp},是目標定低,還是紀律就該這樣?」;`anxiety`→「你賣時說**想落袋**(怕回吐)——回頭看,那個回吐{發生了嗎}?」;`swap`→ 直接用下面的 swap framing;`capture:"inferred"`(當時是猜的)→ 措辭改「我當時猜你是{理由}」。**無記錄或 `exit_reason` 為空**(舊出場/當時跳過)→ 泛用問句如下。
    - 每筆 due 用 AskUserQuestion 問一題:「{ticker} 你 {exit_date} 在 {exit_price} 賣掉,現在 {現價}(賣後 {orig_ret:+pp})。當時賣的理由現在看——**還成立**(賣早也是紀律)/ **部分對,要調**/ **看錯了**(真錯,進教訓)?」三選項對應 `still_valid / modified / falsified`,可跳過(下次 due 再問)。
@@ -327,7 +332,8 @@ theses = [
   #    如 "NVDA#2024-01-12#1"),別自己拼 2 段 —— 格式不符 → 對帳(開場 §偵測缺 thesis)永遠匹配不上 →
   #    每週把已寫過 thesis 的持倉當「缺 thesis」重問,記憶迴圈失效。
   # {"ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
-  #  "why":"一句:為什麼持有",
+  #  "why":"一句:還沒被 price in 的判斷(不是行為描述;driver=B2 嵌這裡,同注要點名,不另立欄)",
+  #  "horizon":"年",                 # 這個判斷是幾週/幾季/幾年的事(週|季|年;#136 五要素 D1)
   #  "triggers":{"review":"什麼消息/數字該重看","reduce":"什麼情況減碼","exit":"什麼代表看錯(非股價跌)"},
   #  "maturity":"inferred",          # inferred(AI 猜,預設)| testable(用戶確認過)| draft(投機跟風沒 thesis)
   #  "stop":"", "target_size":"20%",
@@ -357,7 +363,7 @@ with p.open("a", encoding="utf-8") as f:
 print(f"appended {len(theses)} thesis events")
 PY
 ```
-> `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。`exit_narrative` 事件(賣出理由)也住這個檔——買入的 why 和賣出的 why 同一本帳,30/60/90 對答案按 `revisit_id` 撈。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發。**隱私同 log:純本機、不外傳、不回作者。**
+> `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。`exit_narrative` 事件(賣出理由)也住這個檔——買入的 why 和賣出的 why 同一本帳,30/60/90 對答案按 `revisit_id` 撈。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發 + horizon 時間軸矛盾。**隱私同 log:純本機、不外傳、不回作者。**
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
 
