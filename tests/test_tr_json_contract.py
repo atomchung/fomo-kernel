@@ -40,6 +40,7 @@ STATE_KEYS = {
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "rule", "insufficient_data", "holdings",
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
+    "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
 # SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾片段另存 metrics_snapshot 4 鍵(子集)
 STATE_METRIC_KEYS = {

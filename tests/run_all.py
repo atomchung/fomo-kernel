@@ -5,15 +5,16 @@
 零依賴(只用標準庫,免裝 pytest);全程離線、確定性(不碰 yfinance,不需網路)。
 subprocess 依序跑 SUITES 列的全部套件,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
 
-八套測試的分工:
+九套測試的分工:
   1. 機械層純函式單元    tests/test_engine_units.py
   2. TR_JSON/state 契約  tests/test_tr_json_contract.py(#61:SKILL 消費介面紅綠燈,強制離線)
   3. 價格路徑合成單元    tests/test_price_paths.py(#62:賣太早/β/α/處方的離線確定性覆蓋)
   4. snapshot-anchored 帳本  tests/test_ledger.py(#31 修訂版/#129 PR-1:雙輸入推導/reconcile/去重)
   5. 出場追蹤+swap       tests/test_revisit.py(#32/#33/#129 PR-3:30/60/90 佇列/swap framing)
   6. 市場背景            tests/test_market_context.py(#37:窗口/YTD 錨點、VIX 水平值、離線退化)
-  7. 三風格端到端        tests/test_sample_styles.py
-  8. 狀態迴圈端到端      skills/fomo-kernel/engine/test_state_loop.py
+  7. 問題帳              tests/test_problems.py(#137:事件規約/統計排序/規矩三分對位)
+  8. 三風格端到端        tests/test_sample_styles.py
+  9. 狀態迴圈端到端      skills/fomo-kernel/engine/test_state_loop.py
 
 跑法:
   python3 tests/run_all.py
@@ -32,6 +33,7 @@ SUITES = [
     ("snapshot-anchored 帳本", "tests/test_ledger.py"),
     ("出場追蹤+swap", "tests/test_revisit.py"),
     ("市場背景", "tests/test_market_context.py"),
+    ("問題帳", "tests/test_problems.py"),
     ("三風格端到端", "tests/test_sample_styles.py"),
     ("狀態迴圈端到端", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
 ]
