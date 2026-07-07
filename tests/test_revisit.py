@@ -114,9 +114,12 @@ def test_enqueue_dedup_and_due_schedule():
         _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
         _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
     ])
-    n1, _ = rv.enqueue_from_ledger(led, q)
-    n2, _ = rv.enqueue_from_ledger(led, q)               # 重跑 → 全去重
-    assert (n1, n2) == (1, 0), f"enqueue 去重錯:{(n1, n2)}"
+    new1, dup1 = rv.enqueue_from_ledger(led, q)
+    new2, dup2 = rv.enqueue_from_ledger(led, q)          # 重跑 → 全去重
+    assert (len(new1), len(new2)) == (1, 0), f"enqueue 去重錯:{(new1, new2)}"
+    assert (dup1, dup2) == (0, 1), f"dup 計數錯:{(dup1, dup2)}"
+    # new = 賣出理由 capture 的訊號源(#136):首跑要帶完整事件,重跑不重報
+    assert new1[0]["ticker"] == "NVDA" and new1[0]["revisit_id"], "new 要含完整 revisit 事件"
     revisits, _, _ = rv.load_queue(q)
     item = list(revisits.values())[0]
     assert item["due"] == {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"}
@@ -200,7 +203,12 @@ def test_cli_roundtrip():
     ex = os.path.join(ENGINE, "revisit.py")
     r1 = subprocess.run([sys.executable, ex, "--queue", q, "enqueue-from-ledger",
                          "--ledger", led], capture_output=True, text=True)
-    assert r1.returncode == 0 and json.loads(r1.stdout)["enqueued"] == 1, r1.stderr
+    out1 = json.loads(r1.stdout)
+    assert r1.returncode == 0 and out1["enqueued"] == 1, r1.stderr
+    assert out1["new"][0]["ticker"] == "NVDA", "new = 本週新出場清單(SKILL 賣出 capture 訊號)"
+    r1b = subprocess.run([sys.executable, ex, "--queue", q, "enqueue-from-ledger",
+                          "--ledger", led], capture_output=True, text=True)
+    assert json.loads(r1b.stdout)["new"] == [], "重跑 new 必空,否則同一出場每週重問"
     r2 = subprocess.run([sys.executable, ex, "--queue", q, "scan", "--today", "2026-07-16",
                          "--prices", '{"NVDA": 160.0}'], capture_output=True, text=True)
     out = json.loads(r2.stdout)                          # stdout 必須純 JSON

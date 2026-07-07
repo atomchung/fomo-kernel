@@ -80,6 +80,7 @@ python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期的 30/60/90 
   2. **偵測缺 thesis 的持倉** = engine state `holdings.positions` 每個 `cycle_id` 比對 `theses.jsonl`。**新建倉(新 cycle_id)或從沒寫過 thesis 的持倉 = 缺**。
   3. **先對帳**(Step 2.5):上次 `commitment` 的 metric 新舊值 + 上次每筆 active thesis 的 `exit_trigger` 有沒有觸發。
   4. **補缺的 thesis**(Step 2):缺 thesis 的持倉由 AI **猜**(標 `inferred`、零提問),只對「行為矛盾、金額最大的 1 檔」問一句;已有 thesis 的不碰(除非 trigger 觸發)。
+  5. **問新出場的賣出理由**(Step 2(d)):`enqueue-from-ledger` 的 `new` 非空 → 對本週新清倉/大減倉問「當時為什麼賣」(不可回補,錯過就永久缺這筆)。
 
 > 兩個狀態檔都是**用戶自己的**本機教練記憶,永不外傳、不回作者(隱私第一)。`log.jsonl` 存聚合 metric + 承諾(`max_pos_pct=0.48`、「虧損不加碼」);`theses.jsonl` 存 per-position「為什麼持有 + 什麼條件算錯」。**append-only**:修正 thesis = 補一筆新 event(帶 `revises` 指回舊的),**不蓋舊的** —— 才能跨期看你當初怎麼想、後來怎麼變(蓋掉 = 跨期對帳失效 + 鼓勵事後合理化)。
 
@@ -93,7 +94,7 @@ python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期的 30/60/90 
   `python3 engine/ledger.py append-snapshot /tmp/pos.json --as-of <宣告日,通常今天>`
   (snapshot 語意 = 該日**收盤後**狀態,同日交易視為已含在宣告數字內。)
 - **已有帳本、又丟來新快照 → 先 `reconcile`,不要直接 append**:`python3 engine/ledger.py reconcile /tmp/pos.json` 會列宣告 vs 推導的差異——一致 = 對帳通過(卡上可標「帳本已對帳 ✓」);不一致 = 把差異講給用戶聽(「我推 NVDA 40 股,你說 35——中間可能有我沒看到的交易」),他確認後以**他的宣告為準**:`append-snapshot --source reconciled`。這是「數據準確」的機制:每丟一次快照 = 帳本自我修復一次。
-- **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全);記完帳接著排出場追蹤:`python3 engine/revisit.py enqueue-from-ledger`(掃清倉/大減倉 → 30/60/90 佇列,去重、重跑安全)。
+- **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全);記完帳接著排出場追蹤:`python3 engine/revisit.py enqueue-from-ledger`(掃清倉/大減倉 → 30/60/90 佇列,去重、重跑安全)。**輸出的 `new` 非空 = 本週偵測到新出場**——記下這份清單,Step 2(d) 要對它問「當時為什麼賣」(#136:賣出理由只有出場當週問得到,不可回補;`new` 空 = 這段靜默跳過)。
 - **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
 - **帳本誠實檢查**:`holdings` 輸出的 `counts.skipped_lines > 0` = 帳本檔有壞行(可能是中斷寫入)——**如實告訴用戶**、別當帳本完整;修復法就是請他丟一張最新持倉截圖走 reconcile(新錨點蓋過可疑歷史)。(`ledger.py` 純標準庫,不需要 venv——跟 `trade_recap.py` 的 ModuleNotFoundError 提示無關。)
 - ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾腳本註解的既有規則),ledger 的 cycle_id 只供帳本自身追蹤。
@@ -176,20 +177,34 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **三 trigger**:從 ticker 類別猜常見的 —— 成長股 → 營收 / 用戶增速失速;週期股 → 週期反轉;AI 概念 → capex 轉弱。`reduce` 從當前 sizing 猜(已超標 → 該檔減碼線)。
 - 每條標來源 `(推測自:規律加碼+長抱)`,讓用戶一眼看出是猜的、好校正。
 - **maturity = `inferred`**,全部**直接落盤、零提問**。
+- **順猜想法來源(#38 薄版,同樣零提問)**:每筆 thesis 帶 `source_type`(`kol` | `research` | `self` | `other`)+ `source_name` + `source_confidence`。**對話或歷史上下文有明確訊號才標 `kol`/`research`**(用戶這次或先前提過「股癌說」「看了某篇研究」→ `source_name` 填來源名);毫無訊號 → `self` + `source_confidence:"candidate"`(誠實標猜的,別編一個 KOL 出來)。用戶親口確認過才升 `confirmed`。這欄現在只累積、不上卡——等樣本夠了(#38 完整版)才做「自己研究 vs 跟單」勝率分組;**但欄位不可回補,從今天開始收**。
 
 **只在一種情況問用戶一句**(抓大放小,別審問):
 - **行為矛盾、金額最大的那 1 檔**(疑似凹單 / 深虧還加碼)—— 機械分不出「逢低 vs 凹單」,差別只在 why(算不出)。問一句(同樣走 AskUserQuestion,三個選項直接給他點):「{ticker} 加碼 N 次還虧 X%,我猜是不想認賠(凹單)—— 對 / 有新理由(逢低)/ 跳過」。
+- **同一次 AskUserQuestion 順帶第二題收來源**(不多一次互動):「{ticker} 這筆的想法最初從哪來?—— 自己研究 / 別人推薦(KOL、朋友——用 Other 填是誰)/ 忘了」。答了 → `source_confidence:"confirmed"`;「忘了」/跳過 → 維持猜的 `candidate`,不追問。
 - **一次最多問 1 檔**;其他全用猜的,不打擾。用戶跳過 → 留 `inferred`,不追問。
 
 **校正走「對帳時順手改」,不是「坐下來填」**:對帳(Step 2.5)呈現猜的 thesis + trigger 觸發,用戶看到猜歪的**順手改一條** → 該 thesis 升 `testable`(用戶確認過)。明說「投機跟風沒 thesis」→ 標 `draft`。thesis 越用越準,但從不逼填。
 
 **鐵律不變:`exit_trigger`(看錯了,事實)≠ `stop`(跌多少賣,價格)。** 猜的時候 exit 也猜「thesis 失效的事實」,不是猜停損價。寧可 `inferred` 也不要假的 `testable`。
 
+**(d) 賣出理由 capture(#136)—— 出場當週唯一的收集窗口,錯過不可回補**
+
+買入的 why 有 thesis 承接,**賣出的 why 目前只活在對話裡**——這段把它落盤,30/60/90 出場追蹤(Step 2.5)才有「你當時自己說的理由」可對答案。
+
+- **觸發**:Step 0 `enqueue-from-ledger` 輸出的 `new` 非空(本週新清倉/大減倉)。`new` 空 → 整段靜默跳過,不提。
+- **消重(重跑安全)**:問之前先讀 `theses.jsonl` 既有的 `event:"exit_narrative"` 行——同 `revisit_id` 已有記錄(含 `capture:"skipped"`)→ 不重問。
+- **只問「新鮮」的出場**:`exit_date` 距今 ≤ 14 天才問(記憶還在);更早的(如初診時匯入的歷史 CSV 一次冒出十筆舊出場)→ 不問、不落盤,revisit 到期時走無記錄的泛用問句。**一次最多問 2 筆**,賣出金額(`exit_price × shares_sold`)大者優先。
+- **問法(AskUserQuestion,一筆一題,四分法選項寫成人話 + 帶他的真實數字)**:「{ticker} 你 {exit_date} 在 {exit_price} {清倉|減倉 X%}(這輪 {盈虧:+.0%})。當時賣的理由是——**到價了**(當初設的目標走完)/ **看錯了**(thesis 的失效條件發生)/ **換更好的**(把錢挪去 {swaps 的 ticker,無 swap 則寫「別的標的」})/ **想落袋**(怕回吐、想鎖住獲利)」+ 可跳過。前二=紀律,後一=焦慮訊號——但**問的當下不說教**,這是 capture 不是審判,定性留給 30/60/90 對答案。
+- **賣出動機只有一種情況可以猜**:`swaps` 非空 → 猜 `swap`(標 `capture:"inferred"`,對答案時措辭用「我當時猜你是換標的」)。其餘(到價 vs 落袋、證偽 vs 恐慌)全是內心狀態、機械分不出——**用戶沒答就落 `exit_reason: null` + `capture:"skipped"`,絕不編**(有 swap 交易事實撐的才敢猜,沒有事實的猜測=替用戶編賣出動機,比不記還糟)。
+- **落盤**:跟 thesis 一起在收尾 part 2 統一 append 進 `theses.jsonl`(格式見該段 exit_narrative 範例),`exit_reason` ∈ `price_target` | `thesis_broken` | `swap` | `anxiety` | `null`,`note` 存他用 Other 補的原話(若有)。
+
 ### Step 2.5 · 對帳上次的 thesis 與承諾(只在對帳模式 / log 非空)
 
 **先重建「目前有效的 thesis」(append-only 讀取必做,否則 active 名單會爆掉)**:`theses.jsonl` 是 append-only,同一 thesis 有多筆 revision。讀取時按 `thesis_id` 建 event log,**每個 cycle 只取 latest 未被 supersede 的**:
 - 後出現的 `revises: <舊 id>` → 把舊 id 標 superseded、排除。
 - cycle 已清倉(該 `cycle_id` 不在 engine `holdings.positions`)→ 該 thesis 標 closed、不進對帳(歷史保留)。
+- **`event:"exit_narrative"` 的行不是 thesis revision**——跳過、不進 active 重建;它是出場敘事(Step 2(d) 落的「當時為什麼賣」),只在出場追蹤對答案時按 `revisit_id` 撈。
 - 結果 = 每個 active cycle 恰一筆有效 thesis。
 
 出新卡先回看上次:
@@ -201,6 +216,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
 3. **出場追蹤(#32/#33,開場 `revisit.py scan` 的 `due` 非空才有這段;空 = 靜默跳過,不催)**:
+   - **問之前先撈當時的賣出理由**:比對 `theses.jsonl` 的 `event:"exit_narrative"`(同 `revisit_id`)。**有記錄 → 問句必須引用他自己的話對答案**(#136 閉環,這比泛用問句锋利十倍),按 `exit_reason` 客製:`thesis_broken`→「你賣時說是**看錯了**——{orig_ret:+pp} 之後,當時說的失效條件真的發生了嗎?」;`price_target`→「你賣時說**到價了**——它之後又走了 {orig_ret:+pp},是目標定低,還是紀律就該這樣?」;`anxiety`→「你賣時說**怕回吐**——回頭看那個回吐{發生了嗎}?」;`swap`→ 直接用下面的 swap framing;`capture:"inferred"`(當時是猜的)→ 措辭改「我當時猜你是{理由}」。**無記錄**(舊出場/當時跳過)→ 泛用問句如下。
    - 每筆 due 用 AskUserQuestion 問一題:「{ticker} 你 {exit_date} 在 {exit_price} 賣掉,現在 {現價}(賣後 {orig_ret:+pp})。當時賣的理由現在看——**還成立**(賣早也是紀律)/ **部分對,要調**/ **看錯了**(真錯,進教訓)?」三選項對應 `still_valid / modified / falsified`,可跳過(下次 due 再問)。
    - **swap framing 必講(#33 鐵律)**:`compare.swap_net_pp` 非 null → 賣飛必對位換入——「賣飛 +X pp,但你換進 {swap ticker} 同期 {swap_ret:+pp} → swap 淨 {net:+pp}」;**只有換入輸給原標的才算真錯,別只算賣早多少**。`idle_cash=true` → 「賣後 cash 閒置,機會成本 = 原標的續漲 X pp」。`needs_prices` 非空 → 把缺的 ticker 現價補進 `--prices` 再算(用 engine state 的 last_px,都缺就標「本週缺價,不判」)。
    - 用戶答完立刻落盤:`python3 engine/revisit.py resolve <revisit_id> <30|60|90> <status> --note "<他的一句話>"`;`falsified` 的當下把那句話帶進卡的教訓段(這就是 mistakes log 的最小形)。
@@ -312,19 +328,33 @@ theses = [
   #  "triggers":{"review":"什麼消息/數字該重看","reduce":"什麼情況減碼","exit":"什麼代表看錯(非股價跌)"},
   #  "maturity":"inferred",          # inferred(AI 猜,預設)| testable(用戶確認過)| draft(投機跟風沒 thesis)
   #  "stop":"", "target_size":"20%",
+  #  "source_type":"self",           # 想法來源(#38 薄版):kol | research | self | other
+  #  "source_name":None,             # kol/research 才填(如「股癌 EP664」);用戶自己說的名字,不驗證
+  #  "source_confidence":"candidate",# candidate(AI 猜)| confirmed(用戶答過來源題)
   #  "revises": None},               # 更新既有 thesis 才填舊 thesis_id
+  # —— 賣出理由(Step 2(d),事件形狀不同:event 欄位區分,絕不帶 why/triggers)——
+  # {"event":"exit_narrative","ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
+  #  "revisit_id":"NVDA#2026-07-01#40.0",  # 照抄 enqueue-from-ledger 輸出 new[] 的 revisit_id(對答案的 key)
+  #  "exit_date":"2026-07-01",
+  #  "exit_reason":"thesis_broken",  # price_target | thesis_broken | swap | anxiety | None(跳過)
+  #  "capture":"user",               # user(親答)| inferred(僅 swap 可猜)| skipped(跳過,消重用)
+  #  "note":None},                   # 用戶 Other 補的原話(若有)
 ]
 import time; _sid = int(time.time())                       # session 戳：防同日多次 review 撞 id
 p = pathlib.Path(os.path.expanduser("~/.trade-coach/theses.jsonl"))
 with p.open("a", encoding="utf-8") as f:
     for i, t in enumerate(theses):
-        t.setdefault("status", "active"); t["session_date"] = session_date
-        t["thesis_id"] = f"{t['ticker']}-{session_date}-{_sid}-{i}"
+        t["session_date"] = session_date
+        if t.get("event") == "exit_narrative":             # 出場敘事:不進 active thesis 重建
+            t.setdefault("narrative_id", f"exit-{t['ticker']}-{session_date}-{_sid}-{i}")
+        else:
+            t.setdefault("status", "active")
+            t["thesis_id"] = f"{t['ticker']}-{session_date}-{_sid}-{i}"
         f.write(json.dumps(t, ensure_ascii=False) + "\n")
 print(f"appended {len(theses)} thesis events")
 PY
 ```
-> `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發。**隱私同 log:純本機、不外傳、不回作者。**
+> `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。`exit_narrative` 事件(賣出理由)也住這個檔——買入的 why 和賣出的 why 同一本帳,30/60/90 對答案按 `revisit_id` 撈。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發。**隱私同 log:純本機、不外傳、不回作者。**
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
 

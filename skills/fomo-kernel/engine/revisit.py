@@ -161,13 +161,17 @@ def load_queue(path):
 
 
 def enqueue_from_ledger(ledger_path, queue_path):
-    """掃 ledger 出場 → 排入 queue(以 revisit_id 去重,重跑安全)。回 (enqueued, skipped_dup)。"""
+    """掃 ledger 出場 → 排入 queue(以 revisit_id 去重,重跑安全)。回 (new_items, skipped_dup)。
+    new_items = 本次新排入的完整 revisit 事件——這是 SKILL 賣出理由 capture(#136)的訊號源:
+    「為什麼賣」只有出場當週問得到,已在佇列的出場不重報,所以 new 非空 = 本週有新出場要問。"""
     events, _ = lg.load_ledger(ledger_path)
     revisits, _, _ = load_queue(queue_path)
     new = []
+    dup = 0
     for x in detect_exits(events):
         rid = _revisit_id(x)
         if rid in revisits:
+            dup += 1
             continue
         d0 = dt.date.fromisoformat(x["exit_date"])
         swaps = infer_swaps(events, x)
@@ -178,7 +182,7 @@ def enqueue_from_ledger(ledger_path, queue_path):
         revisits[rid] = item
     if new:
         lg.append_events(queue_path, new)
-    return len(new), 0
+    return new, dup
 
 
 def scan_due(revisits, resolutions, today):
@@ -260,9 +264,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.cmd == "enqueue-from-ledger":
-        n, _ = enqueue_from_ledger(a.ledger, a.queue)
-        print(f"enqueued {n} revisit(s)", file=sys.stderr)
-        _emit({"enqueued": n})
+        new, _ = enqueue_from_ledger(a.ledger, a.queue)
+        print(f"enqueued {len(new)} revisit(s)", file=sys.stderr)
+        _emit({"enqueued": len(new), "new": new})
         return 0
 
     revisits, resolutions, skipped = load_queue(a.queue)
