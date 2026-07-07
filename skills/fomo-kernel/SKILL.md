@@ -134,6 +134,17 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
   - `alpha_ann` / `alpha_t` / `alpha_credible`:α **永遠有數,語氣看統計**。`alpha_credible=true`(樣本 ≥1 年且 |t|≥1.96)才可用「真本事」語氣(顯著的負 α 也是可講的定論);`false` → 數字照講但**必帶不確定性**:「α 年化 +X%,但 95% 區間 −Y%~+Z%——統計上還分不出是本事還是運氣」。**卡在哪要講清楚**,引 `alpha_beta_breakdown.alpha_stat.gate.reason`:`sample_short`=不到 1 年 → 才是**樣本不足**;`not_significant`=區間太寬 → 常見原因是**持倉集中、個股雜訊大**(這條跟『最大的洞=集中度』是同一件事,要串起來講——但這是工具的侷限,不是他沒本事)。**贏大盤幾 pp 必配拆帳**:押對賽道 vs 板塊內選股(`excess_split`),`coverage<1` 時補一句「X 檔無板塊對照、按大盤計」。
   - `insufficient_data`:`true`(round-trip<3 或交易跨度<~84 日曆日≈60 交易日)→ **只做體檢、不硬出 commitment**(見開場/收尾)。
 
+**市場背景(#37,跑完主引擎順跑;離線缺席不擋流程)**:
+
+```bash
+python3 engine/market_context.py --start <窗口起> --end <state.date_end>
+# 窗口:對帳模式 = 上次 log 的 date_end → 這次 state.date_end;初診 = date_end 往前 7 天
+```
+
+- 輸出 `benchmarks`:SPY / QQQ 的 `window_ret`(窗口漲跌)+ `ytd_ret`,VIX 的 `last / prev / delta`(水平值,情緒溫度計)。這是**語境,不是診斷**——用在:① 卡開頭的市場背景一行(格式見 card-spec)② 歸因語境:他的動作放進大盤同期的背景講(「你這週砍在 SPY -4% 的恐慌週」)③ Step 2 動機輔助訊號:大漲週進場 = FOMO 候選、大跌週砍倉 = 恐慌候選——**只是輔助你選問誰,不是定性**(定性永遠來自他的回答)。
+- **`error` 非 null(離線/未裝)→ 卡上市場背景整段不出**,需要提的話一句「本週缺市場背景(離線)」帶過;**絕不用記憶編大盤數字**。**`missing` 非空(部分家數沒抓到,`error` 可能仍是 null)→ 有什麼講什麼**,缺的那家直接略過、不硬掰——別假設 SPY/QQQ/VIX 三家永遠都在。
+- **帳戶 vs 大盤的數字級對比(帳戶週報酬)目前引擎給不了**(需要每週市值序列)——只做語境對照,別自己算一個「你 vs SPY」的百分比出來(#37 數字版另做)。
+
 **抓大放小鐵律**:只看引擎排在最前面的 1–2 個洞,**其餘忽略**。不要把 5 維全攤給用戶——那就變成另一份報表了。引擎已經幫你收斂,你不要再展開。
 
 ### Step 2 · 出卡前的對話確認(持股假設 + 動機)——這層才是鏡片,不可省
