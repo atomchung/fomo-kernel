@@ -193,15 +193,16 @@ def test_micro_share_rounds_to_zero_not_listed():
 
 
 def test_csv_filter_parity_with_trade_recap():
-    """drift 鎖(review altitude finding):trades_from_csv 的收/拒語意 + 去重鍵精度
-    「對齊 trade_recap.load()」不能只活在註解裡——同一份 CSV 餵兩邊,斷言行為一致。
-    之後任何一邊改過濾/精度規則,這條紅燈逼兩邊一起改。"""
+    """drift 鎖(review altitude finding):trades_from_csv 的收/拒語意 + 去重鍵精度 +
+    #14 同日同價多筆的 multiplicity「對齊 trade_recap.load()」不能只活在註解裡——同一份 CSV
+    餵兩邊,斷言行為一致。**比 multiset(sorted list)不只 set**:否則同日同價「一邊保留一邊併殺」
+    的分歧會靜默漏測(set 兩邊都塌成 1)。之後任一邊改過濾/精度/去重規則,這條紅燈逼兩邊一起改。"""
     sys.path.insert(0, ENGINE)
     import trade_recap as tr
     csv_text = (
         "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
         "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # 正常
-        "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # 完全重複(兩邊都該去重)
+        "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # #14:同檔同日同價 → 兩邊都該保留成 2 筆(非去重)
         "PLTR,SELL,5,140.123456,2026-07-02,Trade\n"     # 高精度價
         "JUNK,BUY,0,10,2026-07-02,Trade\n"              # qty=0(兩邊都拒)
         "FREE,BUY,3,0,2026-07-02,Trade\n"               # px=0(兩邊都拒)
@@ -210,14 +211,16 @@ def test_csv_filter_parity_with_trade_recap():
     )
     p = _tmpfile(csv_text, ".csv")
     recap_rows = tr.load([p])
-    recap_set = {(r["ticker"], r["side"], round(r["qty"], 2), round(r["price"], 4),
-                  r["date"].isoformat()) for r in recap_rows}
+    recap_keys = sorted((r["ticker"], r["side"], round(r["qty"], 2), round(r["price"], 4),
+                         r["date"].isoformat()) for r in recap_rows)
     led_events, _ = lg.trades_from_csv(p)
     led_fresh, _ = lg.dedupe_against([], led_events)
-    led_set = {lg._trade_key(ev) for ev in led_fresh}
-    assert led_set == recap_set, (
-        f"ledger 與 trade_recap 對同一 CSV 的收/拒/去重不一致:\n"
-        f"only ledger: {led_set - recap_set}\nonly recap: {recap_set - led_set}")
+    led_keys = sorted(lg._trade_key(ev) for ev in led_fresh)
+    assert led_keys == recap_keys, (
+        f"ledger 與 trade_recap 對同一 CSV 的收/拒/去重/multiplicity 不一致:\n"
+        f"ledger: {led_keys}\nrecap: {recap_keys}")
+    assert sum(1 for k in recap_keys if k[0] == "NVDA") == 2, \
+        "#14:同日同價兩筆 NVDA 應都在(multiset,非去重成 1)"
 
 
 # ─────────────── B. reconcile ───────────────
@@ -246,14 +249,16 @@ def test_reconcile_kinds():
 # ─────────────── C. 匯入:去重 + 過濾計數 ───────────────
 
 def test_dedupe_against_existing():
+    """#14:跨期重疊(既有 ledger 已記那筆)才去重;同批內同日同價的第 2 筆 = 真獨立成交,保留
+    (與 trade_recap.load() 同語意——一份匯入不會把同一筆成交列兩次)。"""
     existing = [_tr("2026-07-03", "NVDA", "buy", 10, 171.0)]
     fresh, dup = lg.dedupe_against(existing, [
-        _tr("2026-07-03", "NVDA", "buy", 10, 171.0),    # 重複(重疊期再匯)
+        _tr("2026-07-03", "NVDA", "buy", 10, 171.0),    # 與既有重疊(重疊期再匯)→ 去重
         _tr("2026-07-05", "NVDA", "buy", 3, 175.0),     # 新
-        _tr("2026-07-05", "NVDA", "buy", 3, 175.0),     # 同批內重複也擋
+        _tr("2026-07-05", "NVDA", "buy", 3, 175.0),     # 同批同日同價第 2 筆 = 獨立成交,保留(#14)
     ])
-    assert dup == 2 and len(fresh) == 1
-    assert fresh[0]["date"] == "2026-07-05"
+    assert dup == 1 and len(fresh) == 2, f"只有跨期重疊那筆去重、同批同日同價兩筆都留,得 dup={dup} fresh={len(fresh)}"
+    assert all(ev["date"] == "2026-07-05" for ev in fresh), "留下的是兩筆 07-05"
 
 
 def test_trades_from_csv_filters_and_counts():

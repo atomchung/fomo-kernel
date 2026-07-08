@@ -298,21 +298,28 @@ def _trade_key(ev):
 
 
 def dedupe_against(events, new_trades):
-    """新交易對既有 ledger 去重(每週增量匯入、重疊期重複匯入都安全)。→ (fresh, dup_count)。"""
+    """新交易對既有 ledger 去重(每週增量匯入、重疊期重複匯入都安全)。→ (fresh, dup_count)。
+    #14:同日同價的獨立成交靠「出現序號」區分,與 trade_recap.load() 同語意——同一份匯入不會把
+    一筆成交列兩次,故同批同日同價的第 2 筆 = 真獨立成交(保留);只有「超出既有 ledger 已記次數」
+    才算真跨期重疊(跳過)。既有事件先按序號建 seen,新交易各自從 0 起算比對。"""
     seen = set()
+    occ_seen = defaultdict(int)
     for ev in events:
         if ev.get("type") == "trade":
             try:
-                seen.add(_trade_key(ev))
+                key = _trade_key(ev)
             except (TypeError, ValueError):
                 continue
+            seen.add(key + (occ_seen[key],)); occ_seen[key] += 1
     fresh, dup = [], 0
+    occ_new = defaultdict(int)
     for ev in new_trades:
-        k = _trade_key(ev)
-        if k in seen:
+        key = _trade_key(ev)                  # 呼叫端已標準化;壞 key 仍拋(保持原行為)
+        rec = key + (occ_new[key],); occ_new[key] += 1
+        if rec in seen:
             dup += 1
             continue
-        seen.add(k)
+        seen.add(rec)
         fresh.append(ev)
     return fresh, dup
 
