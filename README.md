@@ -95,6 +95,7 @@ cat ~/.trade-coach/profile.md      # your trading goals + 3 personal principles 
 cat ~/.trade-coach/last_state.json # the thin state the engine last computed (per-position shares/cost, for reconciliation; overwritten each run)
 ```
 
+- **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
 - **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
 - **Switch philosophy lens / reset the reconciliation baseline** → delete or rename `~/.trade-coach/` (deleting makes next time a fresh first visit).
 - **Wrote a thesis wrong** → edit `theses.jsonl`; it's append-only, so a correction = append a new event (don't overwrite the old one — that's how you see, across time, how you first reasoned and how it later changed).
