@@ -36,6 +36,10 @@ EXIT_REASONS = {"price_target", "thesis_broken", "swap", "anxiety", None}
 CAPTURES = {"user", "inferred", "skipped"}
 MATURITIES = {"inferred", "testable", "draft"}
 RULE_SOURCES = {"user_chosen", "imported"}
+# #36 進場情緒/信心(inference-first,選填;缺欄=None 合法,legacy thesis 不破)。
+# 現在只累積、不上卡(同 source_type #38 薄版)——樣本夠了才做「FOMO 進場勝率 vs composed」分組。
+EMOTIONS = {"fomo", "composed", "forced", "planned", None}
+CONFIDENCES = {"high", "medium", "low", None}
 # metric_key → problem_key 對映(問題帳對位;無對位的問題手填 problem_key,不經這張表)
 PKEY = {"max_pos_pct": "oversize", "avgdown_count": "avgdown_breach",
         "ai_pct": "concentration", "max_sector_pct": "concentration", "top3_pct": "concentration"}
@@ -132,6 +136,11 @@ def cmd_append_theses(args):
         else:
             if t.get("maturity") not in MATURITIES:
                 errs.append(f"[{i}] {tk} maturity 必須是 {sorted(MATURITIES)}")
+            # #36:emotion/confidence 選填(inference-first),但填了就得在 enum 內(擋填錯值靜默存髒)
+            if t.get("emotion") not in EMOTIONS:
+                errs.append(f"[{i}] {tk} emotion 必須是 {sorted(k for k in EMOTIONS if k)}+null(選填)")
+            if t.get("confidence") not in CONFIDENCES:
+                errs.append(f"[{i}] {tk} confidence 必須是 {sorted(k for k in CONFIDENCES if k)}+null(選填)")
     if errs:
         _die("append-theses 拒收(0 筆落盤,修完重跑):\n" + "\n".join(errs))
 

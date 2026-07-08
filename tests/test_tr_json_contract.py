@@ -236,6 +236,27 @@ def main():
            and all(x["session_date"] == st["date_end"] for x in rows),
            "append-theses 合法混排落 2 行;thesis_id/narrative_id/session_date 由 CLI 生成")
 
+        # #36:emotion/confidence 選填但填了要在 enum 內——happy path 落盤保留;壞值整批拒收
+        tj.write_text(json.dumps([{"ticker": "AMD", "cycle_id": "AMD#2024-02-01#1", "why": "w",
+                                   "maturity": "inferred", "emotion": "fomo", "emotion_inferred": True,
+                                   "confidence": "low", "confidence_inferred": True}]), encoding="utf-8")
+        r6b = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
+                              "--session-date", st["date_end"]],
+                             env=env, capture_output=True, text=True, timeout=60)
+        amd = [json.loads(x) for x in theses_file.read_text(encoding="utf-8").strip().splitlines()
+               if json.loads(x).get("ticker") == "AMD"]
+        ok(r6b.returncode == 0 and amd and amd[0]["emotion"] == "fomo"
+           and amd[0]["confidence"] == "low" and amd[0]["emotion_inferred"] is True,
+           "#36 append-theses 保留合法 emotion/confidence + _inferred 旗標", r6b.stderr[-200:])
+        tj.write_text(json.dumps([{"ticker": "MU", "cycle_id": "MU#2024-02-01#1", "why": "w",
+                                   "maturity": "inferred", "emotion": "excited"}]), encoding="utf-8")
+        r6c = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
+                              "--session-date", st["date_end"]],
+                             env=env, capture_output=True, text=True, timeout=60)
+        ok(r6c.returncode != 0 and "emotion" in r6c.stderr
+           and "MU#" not in theses_file.read_text(encoding="utf-8"),
+           "#36 append-theses 壞 emotion 值整批拒收(0 筆落盤,擋填錯值靜默存髒)", r6c.stderr[-200:])
+
         # append-rules:PKEY 對映 + rule_id/status/created 生成
         rj = pathlib.Path(tmp) / "rules.json"
         rj.write_text(json.dumps([{"text": "AI 暴險封頂 70%", "metric_key": "ai_pct",
