@@ -69,6 +69,9 @@ DRIVER_FALLBACK = {
 }
 _DRIVER_MAP = dict(DRIVER_FALLBACK)
 _DM_SKIPPED = 0                                    # 上次載入跳過的壞 entry 數(給 main 顯示)
+# 上次 load() 的計數(給 main 顯示,對齊 _DM_SKIPPED 範式,#50):輸入層每個靜默丟棄面都留痕,
+# 卡面數字少了幾筆要看得見,不然「你的數字」跟券商 app 對不上時用戶不可察覺。
+_LOAD_STATS = {}
 def driver(t): return _DRIVER_MAP.get(t, ("未分類", 0))
 def load_driver_map(path):
     """載入 Claude 生成的 {ticker: [sector, thematic]} JSON 覆寫 fallback。讓冷門股也有正確 driver。
@@ -97,28 +100,39 @@ def load_driver_map(path):
 
 # ─────────────────────────── 1. 解析 ───────────────────────────
 def load(paths):
+    global _LOAD_STATS
     rows = []
     seen = set()        # 多份對帳單(完整歷史 + 最新增量)重疊期去重 → 合併到最新日期
+    # #50:輸入層四個靜默丟棄面全部計數,進 meta 行讓用戶看得見資料被動過。
+    # skip_dup 特別重要——它含「同日同價多筆被合併」(#14 已知限制),不計數 = 少算了也不知道。
+    stats = dict(loaded=0, skip_non_trade=0, skip_non_bs=0, skip_no_sym=0,
+                 skip_parse=0, skip_zero=0, skip_dup=0)
     for p in paths:
         with open(p, newline="", encoding="utf-8-sig") as f:
             for r in csv.DictReader(f):
                 if (r.get("RecordType") or "").strip() != "Trade":
+                    stats["skip_non_trade"] += 1
                     continue
                 act = (r.get("Action") or "").strip().upper()
                 if act not in ("BUY", "SELL"):
+                    stats["skip_non_bs"] += 1
                     continue
                 sym = (r.get("Symbol") or "").strip()
                 if not sym:
+                    stats["skip_no_sym"] += 1
                     continue
                 try:
                     qty = abs(float(r["Quantity"])); px = float(r["Price"])
                 except (ValueError, KeyError):
+                    stats["skip_parse"] += 1
                     continue
                 if px <= 0 or qty <= 0:   # 濾掉 split/free-share/journal 等 price=0 的偽交易
+                    stats["skip_zero"] += 1
                     continue
                 d = dt.date.fromisoformat(r["TradeDate"].strip())
                 rec = (sym, act.lower(), round(qty, 2), round(px, 4), d)
-                if rec in seen:           # 完全相同的交易 = 重疊期重複,跳過
+                if rec in seen:           # 完全相同的交易 = 重疊期重複(或同日同價多筆,#14),跳過
+                    stats["skip_dup"] += 1
                     continue
                 seen.add(rec)
                 # 多市場欄位(#51/#129 PR-2a):可選 Market/Currency 欄,缺 = 美股 USD(向後相容)。
@@ -126,8 +140,21 @@ def load(paths):
                 rows.append(dict(ticker=sym, side=act.lower(), qty=qty, price=px, date=d,
                                  market=(r.get("Market") or "US").strip() or "US",
                                  currency=(r.get("Currency") or "USD").strip().upper() or "USD"))
+    stats["loaded"] = len(rows)
+    _LOAD_STATS = stats
     rows.sort(key=lambda x: x["date"])
     return rows
+
+
+def _load_skip_note():
+    """#50:把 load() 的靜默丟棄計數組成人話短語(進 meta 行)。全零 → 空字串(不吵)。"""
+    s = _LOAD_STATS
+    if not s:
+        return ""
+    labels = [("skip_non_trade", "非Trade"), ("skip_dup", "重複"), ("skip_parse", "無法解析"),
+              ("skip_zero", "零值濾除"), ("skip_non_bs", "非買賣"), ("skip_no_sym", "無代號")]
+    parts = [f"{name} {s[k]}" for k, name in labels if s.get(k)]
+    return f"（跳過:{' / '.join(parts)}）" if parts else ""
 
 # ───────────────────── 2. FIFO round-trip 配對 ─────────────────────
 def round_trips(rows):
@@ -1681,7 +1708,10 @@ def main():
     paths = sys.argv[1:] or [DEFAULT_CSV]
     rows = load(paths)
     if not rows:                                          # 空 / 全過濾 CSV → 別在下游 rows[0] crash(#41 F),給人話
-        print("沒有可解析的交易:CSV 為空,或沒有任何 BUY/SELL 的 Trade 列。"
+        note = _load_skip_note()                           # #50:全滅時把丟棄計數也印出,別讓用戶對著 0 筆猜原因
+        hint = ("——大量列因 RecordType≠'Trade' 被跳過,請確認 Step 0 標準化有把成交列填成 RecordType=Trade"
+                if _LOAD_STATS.get("skip_non_trade") else "")
+        print(f"沒有可解析的交易{note}:CSV 為空,或沒有任何 BUY/SELL 的 Trade 列{hint}。"
               "請確認欄位 Symbol / Action / Quantity / Price / TradeDate 都在。", file=sys.stderr)
         sys.exit(1)
     master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
@@ -1767,7 +1797,7 @@ def main():
     # JSON 模式(SKILL Step 3 走這條):stdout 純 JSON 給 Claude 寫敘事卡;meta 走 stderr 不污染
     if os.environ.get("TR_JSON"):
         import json
-        meta = (f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
+        meta = (f"# 載入 {len(rows)} 筆交易{_load_skip_note()}（{rows[0]['date']} ~ {rows[-1]['date']}），"
                 f"{len(rts)} round-trip,持倉 {len(held)}｜yfinance: {'OK' if not yf_err else yf_err}"
                 f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔{dm_skip}{split_note}"
                 + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
@@ -1778,7 +1808,7 @@ def main():
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
-        print(f"# 載入 {len(rows)} 筆交易（{rows[0]['date']} ~ {rows[-1]['date']}），"
+        print(f"# 載入 {len(rows)} 筆交易{_load_skip_note()}（{rows[0]['date']} ~ {rows[-1]['date']}），"
               f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
         print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
               f"｜driver map: {n_dm} 檔{dm_skip}{split_note}" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))

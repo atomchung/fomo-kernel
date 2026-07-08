@@ -127,6 +127,49 @@ def test_enqueue_dedup_and_due_schedule():
     assert item["shares_before"] == 10, "減倉比例要靠 shares_before,capture 問句用"
 
 
+def test_revisit_id_includes_cycle_id():
+    """#143:revisit_id 必須含 cycle_id 段,否則「同 ticker 同日同股數的不同輪次」撞成同一 id,
+    第二筆被去重誤殺 → 出場追蹤永久漏一筆(直接傷 #32 的賣飛對帳)。"""
+    a = {"ticker": "NVDA", "cycle_id": "NVDA#2026-01-05#1", "exit_date": "2026-03-20", "shares_sold": 100}
+    b = {"ticker": "NVDA", "cycle_id": "NVDA#2026-02-10#2", "exit_date": "2026-03-20", "shares_sold": 100}
+    assert rv._revisit_id(a) == "NVDA#2026-01-05#1#2026-03-20#100", "新 id = cycle_id#exit_date#shares"
+    assert rv._revisit_id(a) != rv._revisit_id(b), "不同輪次(同 ticker/日/股數)必須是不同 id"
+    # legacy 3 段:同 ticker/date/shares 的兩輪會撞在一起(這正是舊 bug);只用於認存量舊條目,不用來新排。
+    assert rv._revisit_id_legacy(a) == rv._revisit_id_legacy(b) == "NVDA#2026-03-20#100"
+
+
+def test_enqueue_legacy_id_migration_compat():
+    """#143 遷移:存量 revisit.jsonl 用舊 3 段 id。改格式後 enqueue 不可把舊出場當「新出場」重排,
+    否則同一筆會以新舊兩種 id 各排一次 → 佇列虛胖、對帳重複。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [
+        _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 120.5),      # cycle NVDA#2026-05-01#1,exit 06-15,10 股
+    ])
+    # 模擬遷移前就以舊 3 段 id 排入的存量條目。舊 _revisit_id 用 f"{shares_sold}",shares 是 float →
+    # 真實舊 id 是 「…#10.0」(非 #10);_revisit_id_legacy 用同一個 f-string 重現,兩者天然對得上。
+    lg.append_events(q, [{"type": "revisit", "revisit_id": "NVDA#2026-06-15#10.0",
+                          "ticker": "NVDA", "cycle_id": "NVDA#2026-05-01#1",
+                          "exit_date": "2026-06-15", "shares_sold": 10.0,
+                          "due": {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"},
+                          "swaps": [], "idle_cash": True}])
+    new, dup = rv.enqueue_from_ledger(led, q)
+    assert (len(new), dup) == (0, 1), f"舊 3 段 id 的存量出場應被認出、不重排,實得 new={new} dup={dup}"
+
+
+def test_enqueue_fresh_uses_new_five_segment_id():
+    """乾淨佇列首排 → 用新 5 段 id(含 cycle_id),與 legacy 3 段可區分。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [
+        _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
+    ])
+    new, dup = rv.enqueue_from_ledger(led, q)
+    assert (len(new), dup) == (1, 0)
+    assert new[0]["revisit_id"] == "NVDA#2026-05-01#1#2026-06-15#10.0", \
+        f"新排入應用 5 段 id(cycle_id + exit_date + shares 浮點),實得 {new[0]['revisit_id']}"
+
+
 def test_scan_due_progression_and_resolution():
     """30 到期未答 → 只出 30(不跳 60);答完 30 → 60 到期才出 60;全答 → 不再出。"""
     led, q = _mk_paths()

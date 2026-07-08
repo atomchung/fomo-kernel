@@ -119,6 +119,45 @@ def test_load_dedup_keeps_same_spec_different_date():
     assert sorted(r["date"].isoformat() for r in rows) == ["2024-01-01", "2024-02-01", "2024-03-01"]
 
 
+def test_load_stats_surfaces_silent_skips():
+    """#50:load() 每個靜默丟棄面都要計數,卡面 meta 才誠實(少算了幾筆看得見,不然跟券商 app 對不上也不知道)。
+    一份混料 CSV:1 收 / 1 完全重複 / 1 非Trade / 1 零價 / 1 解析失敗 → 各歸各的桶。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"        # 收
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"        # 完全相同 → skip_dup
+        "DIV,5,1.00,BUY,2024-02-02,Dividend\n"         # 非 Trade → skip_non_trade
+        "FREE,10,0.00,BUY,2024-02-01,Trade\n"          # 零價偽交易 → skip_zero
+        "BAD,x,100,BUY,2024-03-01,Trade\n"             # qty 解析失敗 → skip_parse
+    )
+    try:
+        tr.load([p])
+    finally:
+        os.unlink(p)
+    s = tr._LOAD_STATS
+    assert s["loaded"] == 1, f"只有 1 筆真交易,實得 {s['loaded']}"
+    assert (s["skip_dup"], s["skip_non_trade"], s["skip_zero"], s["skip_parse"]) == (1, 1, 1, 1), \
+        f"各跳過桶計數錯:{s}"
+    note = tr._load_skip_note()
+    for frag in ("重複 1", "非Trade 1", "零值濾除 1", "無法解析 1"):
+        assert frag in note, f"meta 跳過提示缺「{frag}」:{note!r}"
+
+
+def test_load_skip_note_silent_when_clean():
+    """全乾淨 CSV → skip note 為空(不無病呻吟,只有真丟資料才吵)。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"
+        "NVDA,10,120.00,SELL,2024-02-02,Trade\n"
+    )
+    try:
+        tr.load([p])
+    finally:
+        os.unlink(p)
+    assert tr._LOAD_STATS["loaded"] == 2
+    assert tr._load_skip_note() == "", f"乾淨 CSV 不該有跳過提示,實得 {tr._load_skip_note()!r}"
+
+
 # ─────────────────────── B. round_trips():FIFO 配對 ───────────────────────
 
 def test_round_trips_fifo_partial():

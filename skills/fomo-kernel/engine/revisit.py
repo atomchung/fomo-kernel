@@ -132,6 +132,15 @@ def infer_swaps(events, exit_item, window_days=SWAP_WINDOW_DAYS):
 # ─────────────────────────── 佇列 ───────────────────────────
 
 def _revisit_id(x):
+    # #143:cycle_id(含 ticker+開倉日+序號)天然區分「同 ticker 同日同股數的不同輪次」——
+    # 舊 key ticker#exit_date#shares_sold 會把同日兩個 round-trip 算成同一個 id,第二筆被去重誤殺,
+    # 出場追蹤永久漏一筆(直接傷 #32 的 30/60/90 賣飛對帳)。detect_exits 早就算好 cycle_id,用它。
+    return f"{x['cycle_id']}#{x['exit_date']}#{x['shares_sold']}"
+
+
+def _revisit_id_legacy(x):
+    # #143 遷移相容:#143 前存量 revisit.jsonl 用 3 段格式。enqueue 時同時比對舊 key,
+    # 讓已排入的舊出場不被當「新出場」重排(舊 id 讀取相容,不改寫、不重排)。
     return f"{x['ticker']}#{x['exit_date']}#{x['shares_sold']}"
 
 
@@ -172,7 +181,10 @@ def enqueue_from_ledger(ledger_path, queue_path):
     dup = 0
     for x in detect_exits(events):
         rid = _revisit_id(x)
-        if rid in revisits:
+        # #143:新 id 去重,同時認舊 3 段 legacy id → 存量 queue 的舊出場不重排。
+        # 新排入一律存新 id(見下方 revisits[rid]=item),故本輪內兩個不同輪次不會互相誤殺:
+        # 各自的 5 段 rid 相異,legacy key 只會命中「遷移前就存在」的真舊條目。
+        if rid in revisits or _revisit_id_legacy(x) in revisits:
             dup += 1
             continue
         d0 = dt.date.fromisoformat(x["exit_date"])
