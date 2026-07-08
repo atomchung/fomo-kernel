@@ -1783,6 +1783,13 @@ def main():
         data_integrity["fx_gaps"] = fx_gaps                # 混幣但缺匯率:聚合按原幣近似(因子=1),卡面必須明示
     if cur_conflicts:
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
+    # #92:有 driver 標籤但 SECTOR_BENCH 查無板塊 ETF 對照 → 該檔超額被全歸「選股」、賽道效應漏記。
+    # 原本只在 α 面板(需 SPY + ≥60 交易日對齊 + coverage<0.995 那行 if)才揭露 → 併入永遠顯示的
+    # data_integrity,與「未分類 driver」同語意(板塊歸因不可靠)的第二個揭露缺口,不再只靠自律。
+    _sp = ab.get("excess_split") if isinstance(ab, dict) else None
+    _unproxied = (_sp or {}).get("unproxied") or []
+    if _unproxied:
+        data_integrity["unproxied_sectors"] = list(_unproxied)
     currency_meta = {
         "currencies": currencies,
         "mixed": mixed_ccy,
@@ -1852,6 +1859,11 @@ def main():
             more = f" 等 {len(unclassified)} 檔" if len(unclassified) > 8 else ""
             notes.append(f"{', '.join(unclassified[:8])}{more} 未分類 driver——分散維可能偏樂觀,"
                          f"可補 driver map(見 SKILL Step 0.5)讓假分散抓得準")
+        if data_integrity.get("unproxied_sectors"):        # #92:板塊歸因不可靠的第二種(有標籤但查無 ETF)
+            up = data_integrity["unproxied_sectors"]
+            more = f" 等 {len(up)} 檔" if len(up) > 8 else ""
+            notes.append(f"{', '.join(up[:8])}{more} 有 driver 標籤但無板塊 ETF 對照——"
+                         f"賽道/選股拆帳把這些歸入『選股』,押對賽道的功勞可能被誤記成選股能力")
         if notes:
             print("\n" + "─"*60)
             print("  ⓘ 資料完整性(不影響上面的洞,只是提醒數字有多硬):")

@@ -210,6 +210,20 @@ def test_excess_split_unmapped_ticker_goes_to_selection():
     assert abs(sp["allocation"]) < 1e-9, f"mimic=SPY → 配置恆 0,實得 {sp['allocation']}"
     assert abs(sp["selection"] - sp["excess"]) < 1e-9
     assert sp["unproxied"] == ["ZZZZ"] and sp["coverage"] < 0.01, f"覆蓋要誠實:{sp}"
+    # #92:unproxied 是 data_integrity["unproxied_sectors"] 的來源(併入永遠顯示的揭露入口,不再只在 α 面板)
+
+
+def test_sector_labeled_but_unmapped_is_unproxied_not_unclassified():
+    """#92:有 driver 標籤但 SECTOR_BENCH 查無對照的檔 = 板塊歸因不可靠的第二種——它不是「未分類」
+    (有標籤,躲過 unclassified_drivers),但拆帳靜默按 SPY 計、賽道功勞被誤記成選股 → 必須也揭露。
+    重現 issue #92 的實測案例(Claude 生成合理標籤『電力』,SECTOR_BENCH 未收錄)。"""
+    tr._DRIVER_MAP["FAKE_POWER_CO"] = ("電力", 0)
+    try:
+        assert tr.driver("FAKE_POWER_CO")[0] == "電力", "有標籤 → 不會進 unclassified_drivers(躲過既有揭露)"
+        assert "電力" not in tr.SECTOR_BENCH, "前提:此標籤確實不在封閉對照表(bare『電力』≠『資料中心電力』)"
+        assert tr._sector_proxy("FAKE_POWER_CO") is None, "查無 ETF → 靜默降級按 SPY 計(#92 的洞)"
+    finally:
+        del tr._DRIVER_MAP["FAKE_POWER_CO"]
 
 
 def test_excess_split_broad_etf_is_allocation():
