@@ -132,7 +132,21 @@ def infer_swaps(events, exit_item, window_days=SWAP_WINDOW_DAYS):
 # ─────────────────────────── 佇列 ───────────────────────────
 
 def _revisit_id(x):
-    return f"{x['ticker']}#{x['exit_date']}#{x['shares_sold']}"
+    # #143:cycle_id(含 ticker+開倉日+序號)天然區分「同 ticker 同日同股數的不同輪次」——
+    # 舊 key ticker#exit_date#shares_sold 會把同日兩個 round-trip 算成同一個 id,第二筆被去重誤殺,
+    # 出場追蹤永久漏一筆(直接傷 #32 的 30/60/90 賣飛對帳)。detect_exits 早就算好 cycle_id,用它。
+    return f"{x['cycle_id']}#{x['exit_date']}#{x['shares_sold']}"
+
+
+def _canonical_id(item):
+    """把佇列既有條目正規化成「新格式 revisit_id」,作為 enqueue 去重 key(#143 遷移)。
+    存量 legacy 條目的 revisit_id 是舊 3 段(cycle_id 分不出同日同股數的不同輪次),但它們都存了
+    cycle_id 欄(detect_exits 必產、enqueue **x 必存)→ 用 cycle_id 重建新 id,遷移時仍能逐輪次辨識。
+    ⚠️ 別退化成「舊 3 段字串 membership」:那會把整個「同 ticker/日/股數」碰撞家族一起誤判 dup,
+    只要存量有一筆舊 id,同日的第二輪永遠補不回來(triad/Codex 抓到的反例)。"""
+    if item.get("cycle_id") and item.get("exit_date") is not None and item.get("shares_sold") is not None:
+        return _revisit_id(item)
+    return item.get("revisit_id")            # 極端防禦:壞條目真缺 cycle_id → 退回自身 id,至少不 KeyError
 
 
 def load_queue(path):
@@ -168,11 +182,14 @@ def enqueue_from_ledger(ledger_path, queue_path):
     「為什麼賣」只有出場當週問得到,已在佇列的出場不重報,所以 new 非空 = 本週有新出場要問。"""
     events, _ = lg.load_ledger(ledger_path)
     revisits, _, _ = load_queue(queue_path)
+    # #143:去重 key 一律用「新格式正規 id」。既有條目(含存量 legacy)先用其 cycle_id 重建 →
+    # 同日同股數的不同輪次分得開,遷移時舊出場不重排、真第二輪也不被連坐誤殺。
+    seen_ids = {_canonical_id(it) for it in revisits.values()}
     new = []
     dup = 0
     for x in detect_exits(events):
         rid = _revisit_id(x)
-        if rid in revisits:
+        if rid in seen_ids:
             dup += 1
             continue
         d0 = dt.date.fromisoformat(x["exit_date"])
@@ -181,7 +198,7 @@ def enqueue_from_ledger(ledger_path, queue_path):
                     due={cp: (d0 + dt.timedelta(days=int(cp))).isoformat() for cp in CHECKPOINTS},
                     swaps=swaps, idle_cash=not swaps)
         new.append(item)
-        revisits[rid] = item
+        seen_ids.add(rid)                     # 同一輪內去重(detect_exits 若回同 exit 兩次)
     if new:
         lg.append_events(queue_path, new)
     return new, dup
