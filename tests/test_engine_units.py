@@ -158,6 +158,23 @@ def test_load_skip_note_silent_when_clean():
     assert tr._load_skip_note() == "", f"乾淨 CSV 不該有跳過提示,實得 {tr._load_skip_note()!r}"
 
 
+def test_load_bad_date_counted_not_crash():
+    """#50/triad(Codex 反例):壞/缺 TradeDate 不可硬 crash 整份復盤,應歸 skip_parse 桶
+    ——一列日期爛掉不連累全 CSV(這正是 load() 誠實化要擋的靜默/爆炸邊界)。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "OK,1,10,BUY,2024-01-01,Trade\n"
+        "BADDATE,1,10,BUY,not-a-date,Trade\n"      # 壞日期 → skip_parse(不拋例外)
+        "NODATE,1,10,BUY,,Trade\n"                 # 空日期 → skip_parse
+    )
+    try:
+        rows = tr.load([p])                         # 不可拋例外
+    finally:
+        os.unlink(p)
+    assert len(rows) == 1 and tr._LOAD_STATS["loaded"] == 1, f"只有 OK 有效,實得 {tr._LOAD_STATS}"
+    assert tr._LOAD_STATS["skip_parse"] == 2, f"壞日期+空日期都歸 skip_parse,實得 {tr._LOAD_STATS['skip_parse']}"
+
+
 # ─────────────────────── B. round_trips():FIFO 配對 ───────────────────────
 
 def test_round_trips_fifo_partial():

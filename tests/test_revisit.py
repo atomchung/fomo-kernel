@@ -134,8 +134,11 @@ def test_revisit_id_includes_cycle_id():
     b = {"ticker": "NVDA", "cycle_id": "NVDA#2026-02-10#2", "exit_date": "2026-03-20", "shares_sold": 100}
     assert rv._revisit_id(a) == "NVDA#2026-01-05#1#2026-03-20#100", "新 id = cycle_id#exit_date#shares"
     assert rv._revisit_id(a) != rv._revisit_id(b), "不同輪次(同 ticker/日/股數)必須是不同 id"
-    # legacy 3 段:同 ticker/date/shares 的兩輪會撞在一起(這正是舊 bug);只用於認存量舊條目,不用來新排。
-    assert rv._revisit_id_legacy(a) == rv._revisit_id_legacy(b) == "NVDA#2026-03-20#100"
+    # 遷移:_canonical_id 用既有條目的 cycle_id 重建新 id → 存量 legacy 條目(3 段 revisit_id)也能逐輪次辨識
+    legacy_item = {"revisit_id": "NVDA#2026-03-20#100", "ticker": "NVDA",
+                   "cycle_id": "NVDA#2026-01-05#1", "exit_date": "2026-03-20", "shares_sold": 100}
+    assert rv._canonical_id(legacy_item) == "NVDA#2026-01-05#1#2026-03-20#100", \
+        "存量 legacy 條目用它自己的 cycle_id 重建成新 id(不靠會碰撞的 3 段字串)"
 
 
 def test_enqueue_legacy_id_migration_compat():
@@ -168,6 +171,29 @@ def test_enqueue_fresh_uses_new_five_segment_id():
     assert (len(new), dup) == (1, 0)
     assert new[0]["revisit_id"] == "NVDA#2026-05-01#1#2026-06-15#10.0", \
         f"新排入應用 5 段 id(cycle_id + exit_date + shares 浮點),實得 {new[0]['revisit_id']}"
+
+
+def test_enqueue_migration_keeps_same_day_second_round():
+    """#143 遷移邊界(triad/Codex 反例):存量有一筆 legacy id,同日同股數的第二輪(不同 cycle)
+    不可被「legacy 碰撞家族」連坐誤判 dup。只用 3 段字串 membership 會漏掉第二輪;用 cycle_id 重建才分得開。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [
+        _tr("2026-01-01", "NVDA", "buy", 10, 100.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 110.0),      # cycle1 NVDA#2026-01-01#1 → exit 06-15,10 股
+        _tr("2026-06-15", "NVDA", "buy", 10, 111.0),       # 同日清倉後重建 → cycle2 NVDA#2026-06-15#2
+        _tr("2026-06-15", "NVDA", "sell", 10, 112.0),      # cycle2 → exit 06-15,10 股(與 cycle1 同日同股數)
+    ])
+    # 存量:只有 cycle1 以舊 3 段 id 排入(cycle2 尚未追蹤)
+    lg.append_events(q, [{"type": "revisit", "revisit_id": "NVDA#2026-06-15#10.0",
+                          "ticker": "NVDA", "cycle_id": "NVDA#2026-01-01#1",
+                          "exit_date": "2026-06-15", "shares_sold": 10.0,
+                          "due": {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"},
+                          "swaps": [], "idle_cash": True}])
+    new, dup = rv.enqueue_from_ledger(led, q)
+    ids = sorted(n["revisit_id"] for n in new)
+    assert ids == ["NVDA#2026-06-15#2#2026-06-15#10.0"], \
+        f"cycle1 應認 dup、cycle2 應新排(不被碰撞家族連坐),實得 new ids={ids} dup={dup}"
+    assert dup == 1, f"cycle1(存量已排)應計 1 dup,實得 {dup}"
 
 
 def test_scan_due_progression_and_resolution():

@@ -123,13 +123,15 @@ def load(paths):
                     continue
                 try:
                     qty = abs(float(r["Quantity"])); px = float(r["Price"])
+                    # TradeDate 解析納入同一 try(triad/Codex):壞/缺日期 → 這列歸 skip_parse,
+                    # 不讓「一列日期爛掉」拋 ValueError 炸掉整份復盤(違反 #50 的可觀測誠實)。
+                    d = dt.date.fromisoformat((r.get("TradeDate") or "").strip())
                 except (ValueError, KeyError):
                     stats["skip_parse"] += 1
                     continue
                 if px <= 0 or qty <= 0:   # 濾掉 split/free-share/journal 等 price=0 的偽交易
                     stats["skip_zero"] += 1
                     continue
-                d = dt.date.fromisoformat(r["TradeDate"].strip())
                 rec = (sym, act.lower(), round(qty, 2), round(px, 4), d)
                 if rec in seen:           # 完全相同的交易 = 重疊期重複(或同日同價多筆,#14),跳過
                     stats["skip_dup"] += 1
