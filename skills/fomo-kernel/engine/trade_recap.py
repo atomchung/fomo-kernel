@@ -102,12 +102,16 @@ def load_driver_map(path):
 def load(paths):
     global _LOAD_STATS
     rows = []
-    seen = set()        # 多份對帳單(完整歷史 + 最新增量)重疊期去重 → 合併到最新日期
-    # #50:輸入層四個靜默丟棄面全部計數,進 meta 行讓用戶看得見資料被動過。
-    # skip_dup 特別重要——它含「同日同價多筆被合併」(#14 已知限制),不計數 = 少算了也不知道。
+    seen = set()        # 跨檔(完整歷史 + 最新增量)重疊期去重 → 合併到最新日期
+    # #50:輸入層靜默丟棄面全部計數,進 meta 行讓用戶看得見資料被動過。
+    # #14 後 skip_dup 只計「真跨檔重疊」(同檔同日同價的獨立成交已靠 occ 序號保留,不再併殺)。
     stats = dict(loaded=0, skip_non_trade=0, skip_non_bs=0, skip_no_sym=0,
                  skip_parse=0, skip_zero=0, skip_dup=0)
     for p in paths:
+        # #14:per-檔「同鍵出現序號」。同一份對帳單裡不會把同一筆成交列兩次,所以同檔同日同價的
+        # 兩筆 = 兩筆獨立成交(大單被拆成同價多筆 / 同日分批),各給遞增 occ → 是不同 rec、都保留。
+        # 跨檔重疊時,增量檔的同一筆 occ 從 0 起算 → 與完整檔的 occ 0 撞上 seen → 去重。兩者兼得。
+        occ = defaultdict(int)
         with open(p, newline="", encoding="utf-8-sig") as f:
             for r in csv.DictReader(f):
                 if (r.get("RecordType") or "").strip() != "Trade":
@@ -132,8 +136,10 @@ def load(paths):
                 if px <= 0 or qty <= 0:   # 濾掉 split/free-share/journal 等 price=0 的偽交易
                     stats["skip_zero"] += 1
                     continue
-                rec = (sym, act.lower(), round(qty, 2), round(px, 4), d)
-                if rec in seen:           # 完全相同的交易 = 重疊期重複(或同日同價多筆,#14),跳過
+                key = (sym, act.lower(), round(qty, 2), round(px, 4), d)
+                k = occ[key]; occ[key] += 1   # #14:同檔內第 k 筆同鍵成交,序號進 dedup key → 獨立成交不互殺
+                rec = key + (k,)
+                if rec in seen:           # 跨檔完全相同(同序號)= 重疊期重複,跳過
                     stats["skip_dup"] += 1
                     continue
                 seen.add(rec)

@@ -57,14 +57,15 @@ def _write_csv(text):
 
 # ─────────────────────── A. load():CSV 解析地基 ───────────────────────
 
-def test_load_dedup_and_filters():
-    """load() 是整條管線的地基,任一濾規則改壞 → 所有上層 metric 連帶歪掉:
-    重疊期去重 / sell qty 取絕對值 + Action 大小寫不敏感 / price<=0 偽交易濾除 /
-    非 Trade 列濾除。"""
+def test_load_within_file_keeps_fills_and_filters():
+    """#14:同一份對帳單裡「同日同價的兩筆」= 兩筆獨立成交(大單被拆成同價多筆 / 同日分批進場)——
+    券商不會把同一筆成交在同一份檔裡列兩次,所以同檔重複列不是「重疊」,必須都保留。
+    (跨檔重疊去重見 test_load_dedup_cross_file_overlap;這兩條互為正反面。)
+    順帶守其餘濾規則:sell 取絕對值 + Action 大小寫不敏感 / price<=0 偽交易濾除 / 非 Trade 列濾除。"""
     p = _write_csv(
         "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
         "NVDA,150,50.00,BUY,2024-01-12,Trade\n"
-        "NVDA,150,50.00,BUY,2024-01-12,Trade\n"      # 完全相同 → 去重
+        "NVDA,150,50.00,BUY,2024-01-12,Trade\n"      # #14:同檔同日同價 → 兩筆獨立成交,都保留(舊行為誤砍成 1)
         "AMD,-50,160.00,sell,2024-01-22,Trade\n"     # 小寫 sell + 負數量
         "FREE,10,0.00,BUY,2024-02-01,Trade\n"        # price=0 split/free-share → 濾掉
         "DIV,5,1.00,BUY,2024-02-02,Dividend\n"       # 非 Trade → 濾掉
@@ -73,12 +74,36 @@ def test_load_dedup_and_filters():
         rows = tr.load([p])
     finally:
         os.unlink(p)
-    assert len(rows) == 2, f"去重+濾偽交易後應剩 2 筆,實得 {len(rows)}"
     nvda = [r for r in rows if r["ticker"] == "NVDA"]
     amd = [r for r in rows if r["ticker"] == "AMD"]
-    assert len(nvda) == 1, "完全相同的 NVDA 交易應被去重成 1 筆"
+    assert len(nvda) == 2, f"同檔同日同價的兩筆獨立成交應都保留(#14),實得 {len(nvda)}"
+    assert len(rows) == 3, f"2 NVDA + 1 AMD(FREE/DIV 濾掉),實得 {len(rows)}"
     assert amd and amd[0]["side"] == "sell" and amd[0]["qty"] == 50.0, "sell 大小寫不敏感 + qty 取絕對值"
     assert all(r["ticker"] not in ("FREE", "DIV") for r in rows), "price=0 / 非 Trade 應被濾除"
+    assert tr._LOAD_STATS["skip_dup"] == 0, "#14:同檔不再併殺 → skip_dup 只計真跨檔重疊,此處應 0"
+
+
+def test_load_dedup_cross_file_overlap():
+    """#14:去重的真正對象 = 跨對帳單重疊期的同一筆(完整歷史 + 增量檔各出現一次)→ 只算 1。
+    各檔內獨有的、以及同檔同日同價的獨立成交,不受影響。這是「放心丟全歷史」建議(#52)成立的機制。"""
+    full = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"      # 與 incr 重疊的那筆
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"      # 同檔同日同價第二筆(獨立成交,保留)
+        "AMD,5,90.00,BUY,2024-01-05,Trade\n"
+    )
+    incr = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"      # 與 full 第一筆重疊 → 去重(occ 0 撞 occ 0)
+        "ORCL,3,180.00,BUY,2024-01-20,Trade\n"       # 增量新交易
+    )
+    try:
+        rows = tr.load([full, incr])
+    finally:
+        os.unlink(full); os.unlink(incr)
+    assert sorted(r["ticker"] for r in rows) == ["AMD", "NVDA", "NVDA", "ORCL"], \
+        f"跨檔重疊去 1、其餘全留(含同檔第二筆),實得 {sorted(r['ticker'] for r in rows)}"
+    assert tr._LOAD_STATS["skip_dup"] == 1, f"只有 incr 的重疊筆算 dup,實得 {tr._LOAD_STATS['skip_dup']}"
 
 
 def test_load_sorts_by_date():
@@ -103,7 +128,7 @@ def test_load_sorts_by_date():
 def test_load_dedup_keeps_same_spec_different_date():
     """#64/#14:dedup 鍵必須含日期 —— 同(ticker, action, qty, price)但不同日,是 3 筆獨立交易
     (例:每月固定日期定期定額買同股數同價位),不是重疊對帳單造成的重複列,不該被去重。
-    跟 test_load_dedup_and_filters 的『完全相同(含同日)才去重』互為正反面。"""
+    跟 test_load_dedup_cross_file_overlap 的『跨檔同一筆才去重』互為正反面。"""
     p = _write_csv(
         "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
         "DCA,10,50.00,BUY,2024-01-01,Trade\n"
@@ -121,21 +146,24 @@ def test_load_dedup_keeps_same_spec_different_date():
 
 def test_load_stats_surfaces_silent_skips():
     """#50:load() 每個靜默丟棄面都要計數,卡面 meta 才誠實(少算了幾筆看得見,不然跟券商 app 對不上也不知道)。
-    一份混料 CSV:1 收 / 1 完全重複 / 1 非Trade / 1 零價 / 1 解析失敗 → 各歸各的桶。"""
-    p = _write_csv(
+    混料兩檔:非Trade / 零價 / 解析失敗(檔內)+ 跨檔重疊(dup,#14 後同檔重複不再算 dup)→ 各歸各的桶。"""
+    a = _write_csv(
         "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
         "NVDA,10,100.00,BUY,2024-01-02,Trade\n"        # 收
-        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"        # 完全相同 → skip_dup
         "DIV,5,1.00,BUY,2024-02-02,Dividend\n"         # 非 Trade → skip_non_trade
         "FREE,10,0.00,BUY,2024-02-01,Trade\n"          # 零價偽交易 → skip_zero
         "BAD,x,100,BUY,2024-03-01,Trade\n"             # qty 解析失敗 → skip_parse
     )
+    b = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-02,Trade\n"        # 與 a 跨檔重疊 → skip_dup
+    )
     try:
-        tr.load([p])
+        tr.load([a, b])
     finally:
-        os.unlink(p)
+        os.unlink(a); os.unlink(b)
     s = tr._LOAD_STATS
-    assert s["loaded"] == 1, f"只有 1 筆真交易,實得 {s['loaded']}"
+    assert s["loaded"] == 1, f"只有 1 筆真交易(NVDA,跨檔重疊去 1),實得 {s['loaded']}"
     assert (s["skip_dup"], s["skip_non_trade"], s["skip_zero"], s["skip_parse"]) == (1, 1, 1, 1), \
         f"各跳過桶計數錯:{s}"
     note = tr._load_skip_note()
