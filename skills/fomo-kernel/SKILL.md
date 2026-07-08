@@ -196,6 +196,7 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 - 每條標來源 `(推測自:規律加碼+長抱)`,讓用戶一眼看出是猜的、好校正。
 - **maturity = `inferred`**,全部**直接落盤、零提問**。
 - **順猜想法來源(#38 薄版,同樣零提問)**:每筆 thesis 帶 `source_type`(`kol` | `research` | `self` | `other`)+ `source_name` + `source_confidence`。**對話或歷史上下文有明確訊號才標 `kol`/`research`**(用戶這次或先前提過「股癌說」「看了某篇研究」→ `source_name` 填來源名);毫無訊號 → `self` + `source_confidence:"candidate"`(誠實標猜的,別編一個 KOL 出來)。用戶親口確認過才升 `confirmed`。這欄現在只累積、不上卡——等樣本夠了(#38 完整版)才做「自己研究 vs 跟單」勝率分組;**但欄位不可回補,從今天開始收**。
+- **順猜進場情緒/信心(#36 薄版,同樣零提問、選填)**:每筆 thesis 順帶猜 `emotion`(`fomo` | `composed` | `forced` | `planned`)+ `confidence`(`high` | `medium` | `low`),各配 `_inferred:true`(AI 猜的、未經用戶確認)。**猜法**:emotion 結合行為訊號 + 進場時機(市場大漲後才追買 / 同賽道已重押還加 = `fomo` 候選;規律定投 / 事件前布局 = `planned`;深虧狂加碼 = `forced`;其餘 = `composed`),confidence 從 why 的語氣推(「基於 Q2 財報」等具體依據 = `high`;「我覺得/賭一把」= `low`;之間 = `medium`)。**若 Step 2 那一問用戶親口透露了情緒/把握(如答「就是怕錯過」)→ 對應欄升 `_inferred:false`**。跟 source_type 一樣**現在只累積、不上卡**(#36 完整版才做「FOMO 進場勝率 vs composed」分組)——**欄位不可回補,從今天開始收**;真的一點訊號都猜不出就整欄留空(null),別硬填。
 
 **只在一種情況問用戶一句**(抓大放小,別審問):
 - **行為矛盾、金額最大的那 1 檔**(疑似凹單 / 深虧還加碼)—— 機械分不出「逢低 vs 凹單」,差別只在 why(算不出)。問一句(同樣走 AskUserQuestion,三個選項直接給他點):「{ticker} 加碼 N 次還虧 X%,我猜是不想認賠(凹單)—— 對 / 有新理由(逢低)/ 跳過」。
@@ -337,6 +338,7 @@ python3 engine/coach.py append-theses /tmp/theses.json --session-date <state.dat
    "maturity":"inferred",
    "stop":"", "target_size":"20%",
    "source_type":"self", "source_name":null, "source_confidence":"candidate",
+   "emotion":"composed", "emotion_inferred":true, "confidence":"high", "confidence_inferred":true,
    "revises":null},
   {"event":"exit_narrative","ticker":"NVDA","cycle_id":"NVDA#2024-01-12#1",
    "revisit_id":"NVDA#2026-07-01#40.0",
@@ -345,7 +347,7 @@ python3 engine/coach.py append-theses /tmp/theses.json --session-date <state.dat
 ]
 ```
 
-欄位語意——thesis 行:`horizon` 週|季|年(這個判斷是多長的事,#136 五要素 D1);`maturity` `inferred`(AI 猜,預設)|`testable`(用戶確認過)|`draft`(投機跟風沒 thesis);`source_type` kol|research|self|other(#38 薄版;`source_name` 只在 kol/research 填,`source_confidence` candidate|confirmed);更新既有 thesis 用 `revises` 指回舊 `thesis_id`,不蓋舊的。exit_narrative 行:`revisit_id` 照抄 enqueue-from-ledger 輸出 `new[]` 的 key(對答案用);`exit_reason` price_target|thesis_broken|swap|anxiety|null(跳過);`capture` user(親答)|inferred(僅 swap 可猜)|skipped(跳過,消重用);`note` 存用戶 Other 補的原話;**絕不帶 why/triggers**。
+欄位語意——thesis 行:`horizon` 週|季|年(這個判斷是多長的事,#136 五要素 D1);`maturity` `inferred`(AI 猜,預設)|`testable`(用戶確認過)|`draft`(投機跟風沒 thesis);`source_type` kol|research|self|other(#38 薄版;`source_name` 只在 kol/research 填,`source_confidence` candidate|confirmed);`emotion` fomo|composed|forced|planned + `confidence` high|medium|low(#36,**選填**,inference-first,各配 `_inferred` 旗標;**現在只累積、不上卡**,同 source_type——樣本夠了才做「FOMO 進場勝率 vs composed」分組,但欄位不可回補、從今天開始收);更新既有 thesis 用 `revises` 指回舊 `thesis_id`,不蓋舊的。exit_narrative 行:`revisit_id` 照抄 enqueue-from-ledger 輸出 `new[]` 的 key(對答案用);`exit_reason` price_target|thesis_broken|swap|anxiety|null(跳過);`capture` user(親答)|inferred(僅 swap 可猜)|skipped(跳過,消重用);`note` 存用戶 Other 補的原話;**絕不帶 why/triggers**。
 > `theses.jsonl` 是 append-only 動機庫:**只追加、不改不刪**。清倉**不刪** thesis(留著當歷史);下次同 ticker 重建倉 = 新 `cycle_id` = 新 thesis。`exit_narrative` 事件(賣出理由)也住這個檔——買入的 why 和賣出的 why 同一本帳,30/60/90 對答案按 `revisit_id` 撈。Step 2.5 對帳讀每筆 active thesis 的 trigger 檢查觸發 + horizon 時間軸矛盾。**隱私同 log:純本機、不外傳、不回作者。**
 
 **收尾 part 3 · 個人 profile(只第一次建,當復盤對照基準)**:`~/.trade-coach/profile.md` 不存在 → 第一次從交易行為**猜** 3 條個人原則寫進去(同 inference-first:不逼填,用戶可改):持有風格(長抱 / 短打)、集中度傾向、紀律缺口(出場 / 加碼)。例:`1. 長期持有型(中位 X 天)　2. 易重押單一賽道(AI X%)　3. 弱點在出場擇時(賣完常續漲)`。之後每週對帳順帶一句「這批交易符合你定的原則嗎」,用戶要改直接改檔。
