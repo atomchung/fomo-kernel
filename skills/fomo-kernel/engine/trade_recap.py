@@ -1260,14 +1260,28 @@ def _pct(v, unit="%", bold=False):
     style = ("bold " if bold else "") + ("green" if v >= 0 else "red")
     return Text(s, style=style)
 
+# ── headline 選卡的唯一事實源(#63)──────────────────────────────────────────
+# render / build_state / build_card_data 一律走這裡,不各自複製 tier 權重與排序 →
+# 測試斷言 _pick_headline() 就是斷言引擎真正的選卡:tier 權重翻轉、severity 錨動,一定紅。
+HEADLINE_TIER_W = {1: 1.0, 2: 0.7}   # tier1(出場/sizing/攤平)壓 tier2(分散/持有/風格)
+
+def _rank_holes(dims):
+    """triggered 維按 severity × tier 權重(高→低)= 頭號洞優先序。空 = 無 triggered。"""
+    return sorted((d for d in dims if d.get("triggered")),
+                  key=lambda d: d.get("severity", 0) * HEADLINE_TIER_W.get(d.get("tier", 2), 0.7),
+                  reverse=True)
+
+def _pick_headline(dims):
+    """頭號洞 = 排序後第一個;無 triggered → None。"""
+    ranked = _rank_holes(dims)
+    return ranked[0] if ranked else None
+
 def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None):
     """把復盤卡渲染成一張 Rich Panel（cyan 邊框，ANSI color，中英對齊）。
     架構：一張外框大 Panel，內部按段用 Rule(───) 分節；五維行為診斷用 bar chart 取代內部加權公式。"""
     if not _HAS_RICH:
         _no_rich_notice(); return
-    TW = {1: 1.0, 2: 0.7}
-    trig = [d for d in dims if d["triggered"]]
-    trig.sort(key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
+    trig = _rank_holes(dims)                                # #63:單一事實源,不再複製 tier 權重
     master = (_LENS or {}).get("philosophy", "交易哲學鏡片")
     parts = []
 
@@ -1372,9 +1386,9 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
     dim_tbl.add_column(width=11, no_wrap=True)           # 維度名（夠塞「部位 sizing」）
     dim_tbl.add_column(width=14, no_wrap=True)           # bar
     dim_tbl.add_column(overflow="fold")                  # 描述
-    for d in sorted(dims, key=lambda d: d["severity"]*TW[d["tier"]], reverse=True):
+    for d in sorted(dims, key=lambda d: d["severity"]*HEADLINE_TIER_W[d["tier"]], reverse=True):
         triggered = d["triggered"]
-        sev_w = d["severity"] * TW[d["tier"]]
+        sev_w = d["severity"] * HEADLINE_TIER_W[d["tier"]]
         filled = max(0, min(14, int(round(sev_w * 14))))
         bar = "█" * filled + "░" * (14 - filled)
         if not triggered:
@@ -1548,7 +1562,6 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
       - metrics 永遠同時帶 sizing/攤平 兩個指標:對帳時要查「上次承諾那一維」的數字,
         不是查這次新 headline(否則第二張卡只是重新初診,不是復盤)。
     """
-    TW = {1: 1.0, 2: 0.7}                                   # 與 render() 同權重,headline 才一致
     dd = {d["dim"]: d for d in dims}
     d_size = dd.get("部位 sizing", {})
     d_avg = dd.get("加碼攤平", {})
@@ -1556,11 +1569,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     ab = ab if isinstance(ab, dict) else {}
     has_ab = not ab.get("note")                             # ab 帶 note = 無 pandas/價格/樣本 → 無 α/β
     credible = bool(ab.get("credible"))                     # v2(#80):統計顯著(≥1 年 + |t|≥1.96)才算,檔數閘退役
-    # headline dim:沿用 render() 的選法 —— triggered 中 severity×tier 權重最高那一個
-    trig = sorted((d for d in dims if d.get("triggered")),
-                  key=lambda d: d.get("severity", 0) * TW.get(d.get("tier", 2), 0.7),
-                  reverse=True)
-    headline = trig[0] if trig else None
+    headline = _pick_headline(dims)                         # #63:與 render/build_card_data 同一事實源
     headline_dim = headline["dim"] if headline else None
     # headline_metric:sizing→max_pos_pct、攤平→avgdown_count、其餘維→該維 severity
     HKEY = {"部位 sizing": ("max_pos_pct", d_size.get("max_pct")),
@@ -1658,9 +1667,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
     - candidate_rules:2-3 條候選規矩(Step 3 讓用戶挑/改一條,別只給第一條;#29 已讓 prescribe 能產多條)
     - dims_raw 5 維給結構化資料,讓 Claude「一句人話帶過其餘維」(SKILL L158-159)
     """
-    TW = {1: 1.0, 2: 0.7}
-    trig = sorted([d for d in dims if d["triggered"]],
-                  key=lambda d: d["severity"] * TW[d["tier"]], reverse=True)
+    trig = _rank_holes(dims)                                # #63:單一事實源(同 render / build_state)
 
     # top 1-2 漏洞:結構化,含 lens 規矩/引言(融入敘事用,別當結語)
     top_holes = []
@@ -1669,7 +1676,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         top_holes.append({
             "dim": d["dim"],
             "severity": round(d["severity"], 2),
-            "tier_weight": TW[d["tier"]],
+            "tier_weight": HEADLINE_TIER_W[d["tier"]],
             "number_line": number_line(d),                  # 數字白話(可直接用)
             "lens_rule": rule,                              # 鏡片這維的規矩
             "lens_quote": quote,                            # ⚠️ 融入敘事用,別當結語(SKILL L192)

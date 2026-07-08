@@ -23,7 +23,6 @@ MOCK = os.path.join(SKILL, "mock")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
 
-TIER_W = {1: 1.0, 2: 0.7}        # 與 engine render() 的排序權重一致
 _SKIP = "__skip__"               # 標準庫 runner 用的 skip 哨兵(pytest 下會被當 pass)
 
 
@@ -44,10 +43,24 @@ def _dims(style):
 
 
 def _top_hole(dims):
-    """複製 engine render() 的選卡邏輯:triggered 中按 severity × tier 權重取第一。"""
-    trig = sorted((d for d in dims if d["triggered"]),
-                  key=lambda d: d["severity"] * TIER_W[d["tier"]], reverse=True)
-    return trig[0]["dim"] if trig else None
+    """#63:直接呼叫引擎的**單一事實源** _pick_headline(不再自帶 tier 權重/選卡副本)——
+    這樣斷言的是引擎真正的選卡,engine 的 tier 權重翻轉、severity 錨動都會讓這裡紅。"""
+    h = tr._pick_headline(dims)
+    return h["dim"] if h else None
+
+
+def test_headline_tier_weight_ordering():
+    """#63 合成排序單元:鎖住 tier 權重語意(不靠特定 persona 的資料湊巧)。
+    tier1 sev 0.5 → 0.5×1.0=0.50 壓過 tier2 sev 0.6 → 0.6×0.7=0.42;M1 突變(權重翻成
+    {1:0.7,2:1.0})→ tier2 勝(0.60 vs 0.35)→ 這條紅。反向再驗排序真的在算、不是永遠 tier1。"""
+    t1_low = [{"dim": "sizing", "tier": 1, "triggered": True, "severity": 0.5},
+              {"dim": "分散", "tier": 2, "triggered": True, "severity": 0.6}]
+    assert tr._pick_headline(t1_low)["dim"] == "sizing", "tier1 sev0.5(0.50)應壓過 tier2 sev0.6(0.42)"
+    t2_high = [{"dim": "sizing", "tier": 1, "triggered": True, "severity": 0.5},
+               {"dim": "分散", "tier": 2, "triggered": True, "severity": 0.8}]
+    assert tr._pick_headline(t2_high)["dim"] == "分散", "tier2 sev0.8(0.56)應壓過 tier1 sev0.5(0.50)"
+    assert tr._pick_headline([{"dim": "x", "tier": 1, "triggered": False, "severity": 1.0}]) is None, \
+        "無 triggered → 無頭號洞(不能拿沒觸發的維當洞)"
 
 
 # ─────────────────────────── 主測試(離線、確定性)───────────────────────────
@@ -65,10 +78,14 @@ def test_fundamental_top_hole_is_exit_discipline():
     assert s["avg"]["count"] == 0
 
 
-def test_momentum_top_hole_is_sizing_or_concentration():
-    """動能衝衝衝 → 頭號洞 = 梭哈(部位 sizing)或假分散(同一 driver)。"""
+def test_momentum_top_hole_is_sizing():
+    """動能衝衝衝 → 頭號洞 = 梭哈(部位 sizing)。
+    #63:釘死精確值(不再『sizing 或 分散』二選一)——sizing sev=1.0×tier1 壓過 分散 sev×tier2,
+    這個排序結果就是產品核心決策,tier 權重被翻轉必須讓這裡紅(M1 突變:momentum 會變『分散』)。"""
     s = _dims("momentum")
-    assert _top_hole(s["dims"]) in ("部位 sizing", "分散")
+    assert _top_hole(s["dims"]) == "部位 sizing"
+    # #63 severity 錨:sizing severity 錨在滿格附近(M7 突變把除數 0.30→3.0 → sev 1.0→0.14,這條會紅)
+    assert s["size"]["severity"] >= 0.9, f"梭哈 severity 應接近滿格,實得 {s['size']['severity']}"
     # 假分散:100% 同一 driver(thematic 旗標,與股價無關)
     assert s["div"]["ai_pct"] == 1.0
     assert s["div"]["triggered"]
@@ -111,7 +128,7 @@ def test_ai_holder_top_hole_is_diversify():
     assert s["div"]["ai_pct"] == 1.0 and s["div"]["triggered"]   # AI 暴險 100%
     # 龍頭重倉是「次要洞」:sizing 有 triggered 但分數低於分散(max_pct 控在 0.41 臨界下)
     assert s["size"]["triggered"] and s["size"]["max_pct"] < 0.41
-    assert s["size"]["severity"] * TIER_W[1] < s["div"]["severity"] * TIER_W[2]
+    assert s["size"]["severity"] * tr.HEADLINE_TIER_W[1] < s["div"]["severity"] * tr.HEADLINE_TIER_W[2]
     # 長抱:中位持有遠超短線,且有 >=3 筆已實現 round trip(否則 engine 標 insufficient、不出 commitment)
     assert len(s["rts"]) >= 3
     assert s["hold"]["median_hold"] > 200 and not s["hold"]["triggered"]
@@ -177,7 +194,7 @@ def test_personas_have_distinct_headlines():
     assert holes["oldecon"] is None              # 乾淨基準,無洞
     assert holes["swing"] == "持有時間"
     assert holes["day_trader"] == "持有時間"
-    assert holes["momentum"] in ("部位 sizing", "分散")
+    assert holes["momentum"] == "部位 sizing"    # #63:釘死精確值,不再二選一
 
 
 def test_pyramid_top_hole_is_sizing_not_avgdown():
