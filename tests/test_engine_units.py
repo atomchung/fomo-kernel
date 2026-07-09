@@ -27,6 +27,7 @@ SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
 MOCK = os.path.join(SKILL, "mock")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
+import horizon as hz  # noqa: E402  # #148 item5:horizon 時間軸矛盾(純狀態側,閾值下沉)
 
 _SKIP = "__skip__"        # 與 test_sample_styles 一致的 skip 哨兵(本檔暫無 network 測試)
 
@@ -681,6 +682,58 @@ def test_pnl_by_currency_buckets():
     assert _approx(b["TWD"]["realized"], 900.0)              # 10×(990-900)
     assert _approx(b["USD"]["realized"], 500.0)
     assert _approx(b["USD"]["unrealized"], 200.0)            # 20×210 − 4000;NOPX 缺價不硬編
+
+
+# ─────────────── horizon 時間軸矛盾(#148 item5:SKILL prose 閾值下沉,horizon.py)───────────────
+
+def test_horizon_exit_side_thresholds():
+    """清倉太快:年<90 / 季<21 觸 exit_too_fast;邊界(恰 90/21)不觸;週快清=正常。"""
+    assert hz.horizon_contradiction("年", 89, exited=True) == "exit_too_fast"
+    assert hz.horizon_contradiction("年", 90, exited=True) is None       # 邊界:strict <
+    assert hz.horizon_contradiction("季", 20, exited=True) == "exit_too_fast"
+    assert hz.horizon_contradiction("季", 21, exited=True) is None
+    assert hz.horizon_contradiction("週", 3, exited=True) is None        # 週快清=正常,不標
+
+
+def test_horizon_held_side_thresholds():
+    """抱太久:週>60 / 季>180 觸 held_too_long;邊界(恰 60/180)不觸;年長抱=正常。"""
+    assert hz.horizon_contradiction("週", 61, exited=False) == "held_too_long"
+    assert hz.horizon_contradiction("週", 60, exited=False) is None      # 邊界:strict >
+    assert hz.horizon_contradiction("季", 181, exited=False) == "held_too_long"
+    assert hz.horizon_contradiction("季", 180, exited=False) is None
+    assert hz.horizon_contradiction("年", 999, exited=False) is None     # 年長抱=正常,不標
+
+
+def test_horizon_null_and_bad_horizon_skip():
+    """horizon 缺欄 / null / 非三值 → 一律 None(靜默跳過,不回補)。"""
+    assert hz.horizon_contradiction(None, 5, exited=True) is None
+    assert hz.horizon_contradiction("", 5, exited=True) is None
+    assert hz.horizon_contradiction("month", 999, exited=False) is None
+
+
+def test_horizon_scan_computes_days_from_cycle_id():
+    """scan 從 cycle_id 內嵌日算 holding_days,exit_date 有無決定 exited 路徑。"""
+    theses = [
+        {"cycle_id": "NVDA#2026-06-01#1", "horizon": "年", "ticker": "NVDA",
+         "exit_date": "2026-07-01", "maturity": "inferred"},          # 清倉 30 天<90 → 太快
+        {"cycle_id": "MSFT#2025-06-01#1", "horizon": "季", "ticker": "MSFT"},  # 續抱 >180 → 太久
+    ]
+    m = hz.scan(theses, as_of="2026-07-01")
+    by = {x["cycle_id"]: x for x in m}
+    assert by["NVDA#2026-06-01#1"]["kind"] == "exit_too_fast"
+    assert by["NVDA#2026-06-01#1"]["holding_days"] == 30 and by["NVDA#2026-06-01#1"]["exited"]
+    assert by["MSFT#2025-06-01#1"]["kind"] == "held_too_long"          # 2025-06-01→2026-07-01 ≈395d>180
+    assert not by["MSFT#2025-06-01#1"]["exited"]
+
+
+def test_horizon_scan_skips_unknown_and_missing():
+    """#unknown / 無 horizon / 非三值 horizon → 不進 markers(無從算或不判)。"""
+    theses = [
+        {"cycle_id": "AMD#unknown", "horizon": "年", "ticker": "AMD"},         # 無日期
+        {"cycle_id": "F#2026-06-01#1", "ticker": "F"},                        # 無 horizon
+        {"cycle_id": "T#2026-06-25#1", "horizon": "週", "exit_date": "2026-07-01"},  # 週清倉=正常
+    ]
+    assert hz.scan(theses, as_of="2026-07-01") == []
 
 
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
