@@ -11,6 +11,17 @@
 - **`skills/fomo-kernel/SKILL.md` 是行為契約的唯一權威**。如果你改的 engine 邏輯會影響使用者看到的行為(例如 `[ASK]` 的判定條件、卡片欄位、四步流程順序),**同一個 commit 裡要同步更新 SKILL.md**(必要時也更新 `AGENTS.md` 的摘要),不要讓兩者 drift。
 - `AGENTS.md` 只放「路由 + 鐵律摘要」,細節仍指回 `SKILL.md`——不要把完整流程複製進 `AGENTS.md`。
 
+## 誠實揭露的判定住在 engine,不住在 SKILL prose(#82,owner 2026-07-09 拍板)
+
+「卡面該交代哪些誠實缺口」(α 不可信 / 未實現缺價 / 板塊歸因不全 / 未分類 driver / 賣超 / 混幣)由 engine 的 `build_honesty_ledger()` 聚合成 `honesty_ledger` 欄位(只收觸發項,空 list = 無缺口)。三條鐵律,改動別違反:
+
+- **判定進 engine、文案留 Claude**:engine 只決定「該講什麼」(哪些 key 觸發),「怎麼講」照 card-spec 說話原則由 Claude 融入敘事——engine **不給死文案**(死文案 = card-spec 罵的呆板揭露)。要加新的誠實缺口:改 `build_honesty_ledger` 加一個 key + card-spec 加一行講法,**別在 SKILL.md 加「X 非空 → 補一句」的散落 prose**(那正是 #82 前的病:判定散在 SKILL/card-spec 多處靠自律,JSON 模式還漏了整套聚合)。
+- **guardrail 內部化,不上卡**:`honesty_ledger` 是 SKILL Step 3 出卡前 gate 的**內部**核對源(每個 key 卡面有沒有講到),**它本身不列成表、不輸出給用戶**——用戶只看到乾淨敘事卡、誠實句融進去。別把 checklist 印上卡(違反 card-spec「卡是故事不是 dashboard」)。
+- **SKILL 主檔不長 guardrail prose**:揭露判定的單一事實源是 engine,不是每次載入 ~25k 的 SKILL.md(#149)。新增揭露點時 SKILL 主檔行數不該增長——這是「避免 guardrail 冗長」的機制,不靠自律記得精簡。
+
+例外:`show_widget` 有沒有試成功是**執行層事實**(engine 標不到環境能否渲染),留 SKILL Step 3 self-check 第 5 項的 prose guardrail。
+事實鏈路(改一處連動全鏈):`build_honesty_ledger()` ↔ SKILL Step 1 欄位 + Step 3 gate ↔ card-spec 「誠實點照 ledger 講」段 ↔ EVALS B6/B14/B15/B16 ↔ eval-design A-5 ↔ `test_tr_json_contract.py` 的 `HL_KEYS`。
+
 ## 測試(改 engine/ 前後必跑)
 
 ```bash

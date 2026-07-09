@@ -36,6 +36,7 @@ TR_JSON_KEYS = {
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
+    "honesty_ledger",                                   # #82:卡面必講的誠實點清單(觸發項聚合;空=無缺口)
 }
 STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
@@ -135,6 +136,23 @@ def main():
         ok(cov["priced_n"] == 0 and len(cov["unpriced"]) == cov["held_n"] > 0,
            "強制離線 shim 下,全部持倉都抓不到現價 → unrealized_coverage 如實反映全未覆蓋",
            repr(cov))
+
+        # ── honesty_ledger 契約(#82:JSON 模式補上人話卡本有的「該揭露清單」聚合)──
+        hl = card["honesty_ledger"]
+        ok(isinstance(hl, list), "honesty_ledger 是列表", repr(hl)[:120])
+        ok(all({"key", "status", "data"} <= set(e.keys()) for e in hl),
+           "honesty_ledger 每項 = {key,status,data}", repr(hl)[:150])
+        HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
+                   "unrealized_coverage", "orphan_sells", "currency_mix"}
+        ok(all(e["key"] in HL_KEYS for e in hl),
+           "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
+        hl_keys = {e["key"] for e in hl}
+        # 只收『觸發的』誠實缺口:離線 shim 全持倉無現價 → unrealized_coverage 必在(與 overview 聚合一致);
+        # 單幣 mock → currency_mix 不觸發(空缺口不進 ledger,證明不是無條件塞滿)
+        ok("unrealized_coverage" in hl_keys,
+           "離線未覆蓋 → ledger 觸發 unrealized_coverage", repr(sorted(hl_keys)))
+        ok("currency_mix" not in hl_keys,
+           "單幣 mock → currency_mix 不進 ledger(觸發式,非無條件)", repr(sorted(hl_keys)))
 
         # ── 2. state 契約 ──
         st = json.loads(state_path.read_text(encoding="utf-8"))
