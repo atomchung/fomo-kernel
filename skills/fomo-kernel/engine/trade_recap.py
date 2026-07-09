@@ -1653,6 +1653,59 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
+def build_honesty_ledger(overview, ab, data_integrity, currency_meta):
+    """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
+
+    只收『觸發的』揭露項 → 空 list = 這張卡沒有誠實缺口。判定條件對齊預設人話卡的
+    資料完整性 notes(main() 的 if 鏈),補上 JSON 模式(Claude 寫卡)本來缺的那套聚合——
+    病根就是「該揭露什麼」在 JSON 模式被留給 Claude 自律,人話卡模式 engine 卻自己做了。
+    每項 {key, status, data}:key=哪類誠實點、status=哪種缺陷、data=Claude 寫人話要的數字。
+    engine 只判定『該講什麼』,文案『怎麼講』留 Claude(card-spec 說話原則);ledger 不上卡,
+    是 SKILL Step 3 出卡前 gate 的對照源(每項卡面沒交代到 → 不出卡)。
+    不含 market_context(無數據只是整行不出、非會誤導的缺口),不含 widget 呈現(執行層事實,engine 標不到)。
+    """
+    L = []
+    di = data_integrity or {}
+    # α 可信度:統計不顯著/樣本不足 → 卡面 α 必帶不確定性語氣,不能用能力語氣(gate 非 None 即觸發)
+    if isinstance(ab, dict):
+        stat = ab.get("alpha_stat") or {}
+        gate = stat.get("gate")
+        if gate:
+            data = {"need": gate.get("need")}
+            for k in ("t", "ci95", "n_days"):
+                if stat.get(k) is not None:
+                    data[k] = stat[k]
+            L.append({"key": "alpha_credibility", "status": gate.get("reason"), "data": data})
+    # 板塊歸因不全:有 driver 但查無板塊 ETF → 超額被全歸選股、押賽道功勞漏記(#92)
+    if di.get("unproxied_sectors"):
+        sp = (ab.get("excess_split") if isinstance(ab, dict) else None) or {}
+        L.append({"key": "sector_attribution", "status": "partial",
+                  "data": {"coverage": sp.get("coverage"), "unproxied": list(di["unproxied_sectors"])}})
+    # 未分類 driver:分散維可能偏樂觀(假分散抓不準)
+    if di.get("unclassified_drivers"):
+        L.append({"key": "unclassified_drivers", "status": "present",
+                  "data": {"tickers": list(di["unclassified_drivers"])}})
+    # 未實現非全覆蓋:部分持倉沒抓到現價,帳面看似完整實則漏算(#82 原症)
+    cov = (overview or {}).get("unrealized_coverage") or {}
+    if cov.get("unpriced"):
+        L.append({"key": "unrealized_coverage", "status": "partial",
+                  "data": {"priced_n": cov.get("priced_n"), "held_n": cov.get("held_n"),
+                           "unpriced": list(cov["unpriced"])}})
+    # 賣超:賣量 > 已知買量,該檔盈虧已被忽略(對帳單沒涵蓋最早建倉)
+    if di.get("orphan_sells"):
+        L.append({"key": "orphan_sells", "status": "present",
+                  "data": {"tickers": sorted(di["orphan_sells"])}})
+    # 幣別:混幣聚合換 USD / 缺匯率近似 / 同檔多幣別衝突 → 金額幣別要標清楚
+    cm = currency_meta or {}
+    if cm.get("mixed") or di.get("fx_gaps") or di.get("currency_conflicts"):
+        st = "conflict" if di.get("currency_conflicts") else ("fx_gap" if di.get("fx_gaps") else "mixed")
+        L.append({"key": "currency_mix", "status": st,
+                  "data": {"currencies": cm.get("currencies"),
+                           "aggregate_currency": cm.get("aggregate_currency"),
+                           "fx_gaps": di.get("fx_gaps")}})
+    return L
+
+
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
@@ -1716,6 +1769,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "dims_raw": dims,                                   # 5 維 raw,Claude 用「一句人話」帶過其餘維
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
         "currency_meta": currency_meta,                     # #51/#129 PR-2a:聚合幣別/fx/分幣桶;None=單幣 USD 舊行為
+        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
     }
 
 # ─────────────────────────── main ───────────────────────────

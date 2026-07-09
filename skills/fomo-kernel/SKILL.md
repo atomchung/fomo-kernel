@@ -126,8 +126,9 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`thesis_questions`**:per-ticker 持股假設問句 — **這是給 Step 2 對話用的,絕不准印在卡上**(SKILL 鐵律:確認在出卡之前)。
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
-- **`overview.unrealized_coverage`**:未實現損益只加總抓得到現價的持倉。`unpriced` 非空 → 卡上必補一句「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」,別讓沒抓到價的持倉讓數字看起來完整卻其實漏算(#82)。
+- **`overview.unrealized_coverage`**:未實現只加總抓得到現價的持倉(`priced_n`/`held_n`/`unpriced`)——讀這欄拿數字,**該不該揭露交給 `honesty_ledger` 統管**(不用自己記何時補)。
 - **`currency_meta`**:聚合幣別與匯率(💱 Display currency 段的資料源)——`aggregate_currency`(overview / what_if / `ticker_diagnosis` 金額等聚合數字的幣別)、`mixed`、`fx`(兌 USD)、`pnl_by_currency`(原幣分桶)、`fx_error`/`alpha_beta_note`。台股/混幣組合寫卡前**先讀這欄**,金額才不會標錯幣;混幣時單檔原幣金額用 `pnl_by_currency` 對照、或由你按 `fx` 反換算。
+- **`honesty_ledger`**(#82:誠實點的單一事實源):engine 已聚合好這張卡**必須交代**的誠實缺口清單(空 list = 無缺口),每項 `{key, status, data}`,涵蓋 α 不可信 / 板塊歸因不全 / 未實現缺價 / 未分類 driver / 賣超 / 混幣。**engine 判定「該講什麼」,你只管照 card-spec 的講法融入敘事「怎麼講」**;出卡前逐項核對(Step 3 gate)——取代了散在各欄位「自己記得哪些該揭露」的自律。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。
   **per-market(混市場組合必讀,#129)**:`alpha_beta_breakdown.scope` 非 null = 組合跨市場,α/β 已按市場分算(US→SPY、TW→台股加權指數),**頂層數字僅含 `scope` 那個市場的部位**——卡上 α/β 段要**兩行並列**(每市場一行,各含資金佔比、各對各的大盤、各自的顯著性語氣),讀 `by_market`;**絕不把兩個市場的 α 加總或平均**(不合成總 α)。台股部位的拆帳 `coverage=0`(無板塊對照、按大盤計)→ 只講「贏/輸台股大盤 X pp」,不拆賽道/選股;`by_market` 內某市場帶 `note`(如 `^TWII` 沒抓到價)→ 該行誠實寫「對照基準抓不到價,本期不判」。單一市場組合 `scope=null`,一切照舊。
 - **結構化 state(`TR_STATE_OUT`)**:給對帳用的薄 JSON,讀這幾個欄位 ——
@@ -257,6 +258,8 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 1. **engine 用 `TR_JSON=1` 跑過了嗎?** 拿到的是 `build_card_data()` 結構化 JSON,不是預設那張人話卡。
 2. **Step 2 對話完成了嗎?** — `thesis_questions` 至少對「金額最大 + 行為矛盾」的 1 檔問過 + 拿到答案;主要動機鏡片(對應 headline_dim 的)問過 1 句。沒問完就出卡 = 退化成「engine + 套版」,失去 SKILL 的價值。
 3. **你打算自己用敘事寫卡,不是照搬 JSON 欄位?** 把 JSON 當資料源,自己組句子,不要列 `〔X〕內容` 的 dashboard 拼接。
+4. **`honesty_ledger` 每項都在卡面交代到了嗎?**(#82) 非空清單裡每個誠實缺口,卡面敘事都要有對應人話(講法見 card-spec);漏一項 → 補上再出。**ledger 本身不上卡、不列成表**,它只是你出卡前的核對源。
+5. **圖形環境試過 `show_widget` 了嗎?**(engine 標不到的執行層事實)沒實際呼叫過就別直接寫文字卡當唯一交付——先試渲染,失敗才降級文字(判斷見 card-spec 呈現方式段)。
 
 **三項都過了,才讀 [card-spec.md](card-spec.md),照裡面的規格出卡**——卡的結構、禁止清單、private/public 兩種卡與 redact 規則、敘事鐵律、處方層全在那份檔裡,這裡不重複。
 **Step 2 還沒問完,不要提前打開它**:在那之前,你唯一的目標是把動機問完、拿到答案。

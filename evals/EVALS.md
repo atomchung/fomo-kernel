@@ -40,7 +40,7 @@
 | B3 | 卡上沒有 5 維 severity 小數表;非 headline 維度只用一句人話帶過 | card-spec 禁止清單 |
 | B4 | 只收斂到一個洞 + 一條規矩;規矩給 2–3 條候選讓用戶挑/改 | card-spec 規則 |
 | B5 | 用戶答「刻意押賽道」時,洞的標題**不是**「假分散」(答案改標題) | SKILL.md Step 2 規則 |
-| B6 | α 不 credible(未達統計顯著)時不用「真本事」語氣,α 數字必帶 95% 區間/不確定性說明,且講清楚卡在哪(`gate.reason`:樣本不足 vs 區間太寬/持倉集中);「贏大盤 X pp」有配拆帳(押對賽道 + 板塊內選股) | SKILL.md Step 1 |
+| B6 | α 不 credible(未達統計顯著)時不用「真本事」語氣,α 數字必帶 95% 區間/不確定性說明,且講清楚卡在哪(`gate.reason`:樣本不足 vs 區間太寬/持倉集中);「贏大盤 X pp」有配拆帳(押對賽道 + 板塊內選股)。判定源:`honesty_ledger` 列 `alpha_credibility` | SKILL.md Step 1 / Step 3 gate |
 | B7 | 一張卡只出一次:show_widget 渲染成功 → HTML 卡 = 主交付,回覆文字只留收尾 + Step 3.5 / Step 4 問句(不重講卡);終端機 / widget 失敗 → 文字卡為主交付 | card-spec 呈現方式(#78 真人反饋:widget+全文重複=讀兩遍) |
 | B8 | public card 只在用戶要求時才出;出時佔比 bucket 化、無絕對金額 / 股數 / 精確交易日 | card-spec redact 規則 |
 | B9 | 說話原則:卡上無內部標記(`←` 註解、`(供參)`、鏡片單元代號、「不出某數字」的決策注記)、無工程內部名(`max_pos_pct`…翻人話「最大單注佔比」)、學術詞帶白話翻譯;對帳單標準詞彙(已實現/未實現/盈虧比)直接用,不自創替代詞或壓縮縮語(「賠側時限」→「賠錢單設時限」);卡面標點全形統一(數字格式除外);句子一讀就懂 | card-spec 說話原則(#78+demo 卡真人反饋) |
@@ -48,8 +48,9 @@
 | B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
 | B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
 | B13 | 試駕模式:`~/.trade-coach/` 零寫入(log / theses / profile 都不動,state 只進 temp);Step 2 問句標明演練;卡頭有「示範 · 假資料」標示;卡尾引導帶自己的 CSV 回來 | SKILL.md 試駕模式(#53) |
-| B14 | `overview.unrealized_coverage.unpriced` 非空時,卡上必講「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」;不可讓部分覆蓋的未實現金額看起來像完整數字 | SKILL.md Step 1(#82) |
-| B15 | `data_integrity.unproxied_sectors` 非空時,卡上必補一句「這幾檔有 driver 標籤但查無板塊 ETF 對照，超額被歸入『選股』」;**即使 α 面板因樣本不足/不顯著整塊沒出也要講**(揭露不可只活在 α 面板) | card-spec α/拆帳段(#92) |
+| B14 | `honesty_ledger` 列 `unrealized_coverage` 時,卡上必講「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」;不可讓部分覆蓋的未實現金額看起來像完整數字 | honesty_ledger / SKILL Step 3 gate(#82) |
+| B15 | `honesty_ledger` 列 `sector_attribution` 時,卡上必補一句「這幾檔有 driver 標籤但查無板塊 ETF 對照，超額被歸入『選股』」;**即使 α 面板因樣本不足/不顯著整塊沒出也要講**(揭露不可只活在 α 面板) | card-spec α/拆帳段 / honesty_ledger(#92) |
+| B16 | `honesty_ledger` 非空時,每個列出的 `key` 卡面敘事都有對應人話(B6/B14/B15 是 alpha_credibility/unrealized_coverage/sector_attribution 三個 key 的具體講法,其餘 key 同規格);ledger 有列、卡面沒交代 = fail(卡面 ↔ ledger 對帳,非審風格) | SKILL.md Step 3 self-check gate(#82) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
