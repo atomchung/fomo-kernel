@@ -736,6 +736,34 @@ def test_horizon_scan_skips_unknown_and_missing():
     assert hz.scan(theses, as_of="2026-07-01") == []
 
 
+# ─────────────── #162:realized(FIFO) + unrealized 必須同成本基礎,加總=經濟真值 ───────────────
+
+def test_total_pnl_equals_economic_truth_after_partial_sell():
+    """攤平後部分賣出:總損益必須=賣回+市值−投入(混用 avg cost 曾多報 $500,#162)。"""
+    rows = [_R("X", "buy", 10, 100.0, "2026-01-05"), _R("X", "buy", 10, 200.0, "2026-02-05"),
+            _R("X", "sell", 10, 180.0, "2026-03-05")]
+    rts, open_lots = tr.round_trips(rows)
+    held = tr.fifo_held(open_lots)
+    ov = tr.overview_stats(rts, None, held=held, last_px={"X": 180.0})
+    assert _approx(ov["realized"], 800.0)          # FIFO:賣的配最早 $100 批
+    assert _approx(ov["unrealized"], -200.0)       # 剩餘=$200 批 10 股,非 avg $150 的 +300
+    assert _approx(ov["total_pnl"], 600.0)         # 經濟真值:1800+1800−3000
+    assert _approx(held["X"][1], 2000.0)           # FIFO 剩餘成本,非 avg 的 1500
+
+
+def test_fifo_held_full_exit_and_aggregation():
+    """清倉 ticker 不進 held;多 lot 剩餘聚合;無部分賣出時與 positions() 等價(兩套僅部分賣出分岔)。"""
+    rows = [_R("X", "buy", 10, 100.0, "2026-01-05"), _R("X", "buy", 10, 200.0, "2026-02-05"),
+            _R("X", "sell", 20, 180.0, "2026-03-05"), _R("X", "buy", 5, 50.0, "2026-04-01"),
+            _R("X", "buy", 5, 70.0, "2026-05-01")]
+    _, open_lots = tr.round_trips(rows)
+    held = tr.fifo_held(open_lots)
+    sh, cost = held["X"]
+    assert _approx(sh, 10.0) and _approx(cost, 600.0)   # 5×50+5×70;清倉段不殘留
+    held_avg, _ = tr.positions(rows)
+    assert _approx(held_avg["X"][0], sh) and _approx(held_avg["X"][1], cost)  # 全賣後重建 → 兩套一致
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():

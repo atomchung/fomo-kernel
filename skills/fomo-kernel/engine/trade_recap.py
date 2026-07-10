@@ -186,6 +186,19 @@ def round_trips(rows):
                     lots[t].popleft()
     return rts, lots
 
+def fifo_held(open_lots):
+    """FIFO 剩餘 lots → {ticker: (shares, cost_total)}。
+    #162:realized 走 FIFO 配對,未實現的剩餘成本必須同一基礎,realized+unrealized
+    加總才等於經濟真值(混用 avg cost 在「攤平後部分賣出」時加總會偏離,方向不定)。
+    positions() 的 avg cost 語意保留給 avgdown 偵測(行為層:買價 vs 平均持倉成本)
+    與 ledger 對帳(用戶宣告錨點=券商 app 的均價視圖),兩者都不與 realized 相加。"""
+    held = {}
+    for t, lots in open_lots.items():
+        sh = sum(l[0] for l in lots)
+        if sh > 1e-6:
+            held[t] = (sh, sum(l[0] * l[1] for l in lots))
+    return held
+
 # ───────────────────── 3. 持倉重建（成本基礎）─────────────────────
 def positions(rows):
     pos = defaultdict(lambda: [0.0, 0.0])   # ticker -> [shares, cost_total]
@@ -1788,7 +1801,8 @@ def main():
     n_dm = load_driver_map(dm) if dm else 0
     n_adj = adjust_for_splits(rows, fetch_splits({r["ticker"] for r in rows}))  # 分割調整,對齊今日價
     rts, open_lots = round_trips(rows)
-    held, avg_down = positions(rows)
+    _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
+    held = fifo_held(open_lots)        # #162:未實現改 FIFO 剩餘,與 realized 同基礎,加總=真值
     tickers = {r["ticker"] for r in rts} | set(held.keys())
     start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
     t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
