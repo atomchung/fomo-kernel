@@ -219,7 +219,7 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
   - `kind:"full"`(清倉):「{ticker} 你 {exit_date} 在 {exit_price} 全部出清。當時賣的理由是——**到價了**(當初設的目標走完)/ **看錯了**(thesis 的失效條件發生)/ **換更好的**(把錢挪去 {swaps 的 ticker,無 swap 則寫「別的標的」})/ **想落袋**(怕回吐、想鎖住獲利)」+ 可跳過。
   - `kind:"reduce"`(減倉 ≥50%):同四分法但措辭對齊「還留著一半」的事實——「**到了減碼點**(計畫內的部位調整)/ **信心動搖**(thesis 部分失效,先降風險)/ **換更好的**(騰資金去 {…})/ **想落袋**(鎖住一部分,怕回吐)」。落盤的 `exit_reason` 仍用同一組值(`price_target`/`thesis_broken`/`swap`/`anxiety`)——風控降倉、再平衡這類「都不是」→ 用戶點 Other 寫原話,`exit_reason` 落 `null` + `note` 存他的話。
   - 前二=紀律,後一=焦慮訊號——但**問的當下不說教**,這是 capture 不是審判,定性留給 30/60/90 對答案。
-  - **時間軸自相矛盾必帶(#136;門檻要 deterministic,別憑感覺)**:該 cycle 的 active thesis 的 `horizon` 非空,且持有時長觸線——**說`年`、持有 <90 天清倉;說`季`、持有 <21 天清倉**(說`週`的快走正常,不問;數字是初版契約,dogfood 後可調)→ 問句補一句鏡子:「你當初說這是{horizon}的事,{實際持有天數}就走——是判斷變了,還是心態動了?」(thesis `inferred` 時措辭改「我當時猜這是{horizon}的事」)。**`horizon` 缺欄或 `null`(legacy thesis / 猜不出判斷的 fallback)→ 這句靜默跳過,不得回頭從舊 why 腦補一個 horizon 出來。**這正是 horizon 欄存在的理由:沒有時間軸,理由無法對帳。
+  - **時間軸自相矛盾必帶(#136)**:對 `horizon.py scan` 標 `exit_too_fast` 的該 cycle(門檻 deterministic 住 engine——見 Step 2.5 重建段的 scan;你不再自己算天數 / 比閾值)→ 問句補一句鏡子:「你當初說這是{horizon}的事,{marker 的 `holding_days`}天就走——是判斷變了,還是心態動了?」(thesis `inferred` 時措辭改「我當時猜這是{horizon}的事」)。engine 已對 `horizon` 缺欄 / `null` 自動跳過——別回頭從舊 why 腦補一個 horizon 出來。這正是 horizon 欄存在的理由:沒有時間軸,理由無法對帳。
 - **賣出動機只有一種情況可以猜**:`swaps` 非空 → 猜 `swap`(標 `capture:"inferred"`,對答案時措辭用「我當時猜你是換標的」)。其餘(到價 vs 落袋、證偽 vs 恐慌)全是內心狀態、機械分不出——**用戶沒答就落 `exit_reason: null` + `capture:"skipped"`,絕不編**(有 swap 交易事實撐的才敢猜,沒有事實的猜測=替用戶編賣出動機,比不記還糟)。
 - **落盤**:跟 thesis 一起在收尾 part 2 統一 append 進 `theses.jsonl`(格式見該段 exit_narrative 範例),`exit_reason` ∈ `price_target` | `thesis_broken` | `swap` | `anxiety` | `null`,`note` 存他用 Other 補的原話(若有)。
 
@@ -230,6 +230,7 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 - cycle 已清倉(該 `cycle_id` 不在 engine `holdings.positions`)→ 該 thesis 標 closed、不進對帳(歷史保留)。
 - **`event:"exit_narrative"` 的行不是 thesis revision**——跳過、不進 active 重建;它是出場敘事(Step 2(d) 落的「當時為什麼賣」),只在出場追蹤對答案時按 `revisit_id` 撈。
 - 結果 = 每個 active cycle 恰一筆有效 thesis。
+- **重建完跑 `python3 engine/horizon.py scan <active_theses.json> --as-of <date_end>`** 取時間軸觸線標記:active_theses 每筆帶 `cycle_id` + `horizon`,清倉的那筆另帶 `exit_date`(= 該 cycle 在 `recent_exits` 的出場日)。engine 回 `exit_too_fast`(清倉太快)/ `held_too_long`(抱太久),各帶 `holding_days`。**門檻(deterministic)住 engine,你不再自己算持有天數、不眼球比閾值;`horizon` 缺欄 / `null` / 非三值 engine 自動跳過**。這批標記供 Step 2(d) 賣出 capture(`exit_too_fast`)與下面 trigger 檢查(`held_too_long`)共用——同一次 scan,別各算一遍。
 
 出新卡先回看上次:
 1. **承諾 metric**:上次 `commitment.metric_key` 舊值 → 這次 engine state 新值(「上次說壓到 20%,當時 51% → 現在 48%:在降、沒達標」)。
@@ -239,7 +240,7 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
      - **`testable`(你確認過的)** → 才用定論:`exit_trigger` 觸發 = 🔴「你定的『{exit}』發生了 —— thesis broken,該走」。
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
-   - **順帶看 horizon 反向矛盾(只對這三類 ticker,零額外掃描;門檻同樣 deterministic)**:thesis 的 `horizon` 非空且持有時長觸線——**說`週`、已持有 >60 天;說`季`、已持有 >180 天**(說`年`的長抱正常,不問;`horizon` 缺欄/`null` → 靜默跳過,不回補)→ 一句鏡子:「當初說是{horizon}的事,現在持有 {天數}——是判斷升級成長線了(順手改 horizon),還是不想認賠變長抱?」措辭同樣依 maturity 分(`inferred` 用「我猜」)。**這題受消重鐵律管**:答完立刻把結論落盤(revises——改 horizon,或 why 標凹單定性)→ 矛盾要嘛消失、要嘛已定性,**同一 cycle 不重問**;**跳過也視同答過**(本 cycle 不再追,別把鏡子變成每週催告);只有行為又顯著變了(定性凹單後又加碼)才照消重鐵律的例外重開。
+   - **順帶看 horizon 反向矛盾(只對這三類 ticker,零額外掃描)**:對 `horizon.py scan` 標 `held_too_long` 的 cycle(門檻 deterministic 住 engine,同一次 scan 的輸出;engine 已對 `horizon` 缺欄 / `null` 自動跳過)→ 一句鏡子:「當初說是{horizon}的事,現在持有 {marker 的 `holding_days`}天——是判斷升級成長線了(順手改 horizon),還是不想認賠變長抱?」措辭同樣依 maturity 分(`inferred` 用「我猜」)。**這題受消重鐵律管**:答完立刻把結論落盤(revises——改 horizon,或 why 標凹單定性)→ 矛盾要嘛消失、要嘛已定性,**同一 cycle 不重問**;**跳過也視同答過**(本 cycle 不再追,別把鏡子變成每週催告);只有行為又顯著變了(定性凹單後又加碼)才照消重鐵律的例外重開。
 3. **出場追蹤(#32/#33,開場 `revisit.py scan` 的 `due` 非空才有這段;空 = 靜默跳過,不催)**:
    - **問之前先撈當時的賣出理由**:比對 `theses.jsonl` 的 `event:"exit_narrative"`(同 `revisit_id`)。**有記錄且 `exit_reason` 非空 → 問句必須引用他自己的話對答案**(#136 閉環,這比泛用問句锋利十倍),按 `exit_reason` 客製:`thesis_broken`→「你賣時說是**看錯了**——{orig_ret:+pp} 之後,當時說的失效條件真的發生了嗎?」;`price_target`→「你賣時說**到價了**——它之後又走了 {orig_ret:+pp},是目標定低,還是紀律就該這樣?」;`anxiety`→「你賣時說**想落袋**(怕回吐)——回頭看,那個回吐{發生了嗎}?」;`swap`→ 直接用下面的 swap framing;`capture:"inferred"`(當時是猜的)→ 措辭改「我當時猜你是{理由}」。**無記錄或 `exit_reason` 為空**(舊出場/當時跳過)→ 泛用問句如下。
    - 每筆 due 用 AskUserQuestion 問一題:「{ticker} 你 {exit_date} 在 {exit_price} 賣掉,現在 {現價}(賣後 {orig_ret:+pp})。當時賣的理由現在看——**還成立**(賣早也是紀律)/ **部分對,要調**/ **看錯了**(真錯,進教訓)?」三選項對應 `still_valid / modified / falsified`,可跳過(下次 due 再問)。
