@@ -1,0 +1,17 @@
+# 乾淨基準 case(oldecon:跨 6 sector 真分散、不梭哈、不攤平 → 揚長卡)。
+# 照不出洞時卡片該講「你守住了什麼」——驗 checker 對好卡不誤判(no false positive)。
+name: clean
+csv: mock/sample_oldecon.csv
+driver_map: mock/sample_oldecon.driver_map.json
+persona: honest                    # 沒洞可洗,答什麼都行;取誠實者腳本
+run_mode: headless                 # 無敏感決策分歧,fallback 路徑即可跑
+
+card:
+  invariants: all                  # 好卡應零違規(對照 washer 的洗白風險)
+state:
+  check: all
+
+pending:
+  - id: no-fabricated-hole
+    assert: 沒硬湊一個洞;揚長卡語氣,無「最大的洞」硬安在乾淨交易上
+    why: 敘事語氣層,留 judge_narrative.py

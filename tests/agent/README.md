@@ -1,50 +1,66 @@
-# tests/agent/ — 敘事品質 LLM-judge
+# tests/agent/ — SKILL 行為層 eval harness
 
-實作範圍:[`docs/eval-design.md`](../../docs/eval-design.md) §4「唯一的 LLM-judge 項」
-（卡是不是連貫故事、不是報表拼接），以及 §6「Mutation 驗活」對這個 judge 本身的驗活。
+實作範圍:[`docs/eval-design.md`](../../docs/eval-design.md) §2 harness + §4 A/B 斷言。
+分兩塊,判定哲學(§1「code-check > LLM-judge > 人工」)決定各走哪條:
 
-**這裡沒做的**（§2 `tests/agent/` 完整 harness的其餘部分，仍是待辦）：
-- `cases/*.yaml` + `personas.md` + `run_case.sh`：headless `claude -p` 真的跑 skill 產卡
-- `check_card.py` / `check_state.py`：A/B 系列的機檢斷言（regex/JSON diff，不該用 judge）
-- 差分 case（B-3 推翻者 / B-4 集中度）
-
-這支 judge 目前吃的是**人工準備或已產出的卡片文字**，不是自動跑 skill 產生的——
-接上 §2 的 harness 之後，`run_case.sh` 產出的卡可以直接餵給 `judge_narrative.py`。
+- **離線機檢(確定性,進 `tests/run_all.py`)** — 能 regex / JSON diff 斷言的卡面/狀態鐵律。
+- **LLM-judge(非確定性,需 API key,不進 CI)** — 只有「敘事品質」一項,判斷「好不好」而非「犯規沒」。
+- **headless 產卡(非確定性 + 有成本,opt-in)** — 真跑 skill 產卡,再餵上面兩者。
 
 ## 檔案
 
-- `judge_narrative.py` — judge 本體。rubric 抄自 `card-spec.md` 敘事鐵律，五軸
-  （連貫敘事 / 先肯定再打 / 數字要髒有案例 / 白話不裸奔內部名 / 引言不當結語）+ overall，
-  透過 forced tool-use 拿結構化 JSON。
-- `fixtures/` — mutation 驗活用的固定卡：一張乾淨（`card_good.txt`）、兩張刻意壞
-  （`card_bad_dashboard.txt` 格式類違規、`card_bad_vague.txt` 內容空洞類違規），
-  `manifest.json` 記每張的預期判定。
-- `run_judge_eval.py` — 跑 manifest 裡全部 fixture，每個跑 N 次取多數決（非確定性），
-  驗 judge 真的能把乾淨卡判高、壞卡判低。任何一條不符 = judge 是死斷言，先別拿去用。
+**離線機檢(#60,`python3 tests/test_checkers_offline.py` 或併進 run_all.py 第 10 套)**
+- `check_card.py` — 卡面鐵律機檢(A-2/A-3/A-6/A-12/A-13/B-7/B-9)。import 或 CLI。斷言權威 =
+  eval-design §4 + card-spec.md;改鐵律要同步(見各檔頭)。
+- `check_state.py` — 狀態檔 trajectory adherence(S-1..S-4 收尾產物 + 差分 / append-only helper)。
+  **刻意不重造** coach.py / `test_tr_json_contract.py` 已擁有的 cycle_id 格式 / enum / commitment
+  schema,只管那兩層管不到的收尾產物層。
+- `../test_checkers_offline.py` — 上兩支的**驗活**(eval-design §6):乾淨輸入全過、刻意壞掉必掛
+  對應條;check_state 用 coach.py【真實寫入】當 known-good oracle。無網路、確定性。
+
+**LLM-judge(敘事品質,需 `ANTHROPIC_API_KEY`)**
+- `judge_narrative.py` — judge 本體(五軸 + overall,rubric 抄 card-spec.md 敘事鐵律)。
+- `run_judge_eval.py` — judge 的 mutation 驗活,跑 `fixtures/manifest.json`。
+- `fixtures/` — 一張乾淨卡(`card_good.txt`,同時是 check_card 的乾淨參照)+ 兩張刻意壞卡。
+
+**harness 編排(headless,opt-in)**
+- `personas.md` — 5 個腳本化模擬用戶 + 差分對(eval-design §3)。
+- `cases/*.yaml` — case 宣告(輸入 CSV / persona / 該套哪些斷言)。`washer` = §落地順序 step 1。
+- `run_case.sh` — `--check <card> <state_dir>` 對已產出的卡/狀態機檢(離線核心,CI-verified);
+  `--headless <case.yaml>` 隔離 HOME 跑 `claude -p` 產卡再機檢(需 claude CLI + API key)。
 
 ## 跑法
 
 ```bash
-pip install -r requirements.txt          # 含 anthropic + python-dotenv
-export ANTHROPIC_API_KEY=sk-...          # 或放專案根目錄 .env（已在 .gitignore）
+# 離線機檢(無需網路 / API key)——已併進 run_all.py
+python3 tests/test_checkers_offline.py
+python3 tests/agent/check_card.py tests/agent/fixtures/card_good.txt
+python3 tests/agent/run_case.sh --check my_card.md ~/.trade-coach
+
+# LLM-judge(需 API key;放 .env 或 export)
+export ANTHROPIC_API_KEY=sk-...
 python3 tests/agent/run_judge_eval.py
+
+# headless 產卡(opt-in,需 claude CLI + API key,有成本、非確定性)
+tests/agent/run_case.sh --headless tests/agent/cases/washer.yaml
 ```
 
-單張卡手動評分：
+## ⚠️ (c) 內心層的 headless 天花板(issue #60/#159)
 
-```bash
-python3 tests/agent/judge_narrative.py tests/agent/fixtures/card_good.txt
-cat my_card.txt | python3 tests/agent/judge_narrative.py -
-```
+Step 2「該問有沒有問」的**工具主路徑**(AskUserQuestion)headless 測不到——headless `claude -p`
+沒有該工具,只會走 fallback 對話路徑(EVALS.md 2026-07-04 回歸紀錄實測)。所以:
+- `check_card` / `check_state` 機檢的是**產出物**(卡/狀態),不管卡怎麼產的,離線可跑。
+- 主路徑 adherence(工具問答的順序 / 差分敏感度)要**互動 session** 驗(case.yaml `run_mode: interactive`),
+  或靠 Step 4 線上反饋——這是內心層無 ground truth 的固有天花板(#159 三層框架的 (c) 層)。
 
-## 成本與非確定性
+## 仍待辦(#60 較大本體)
 
-`run_judge_eval.py` 預設每個 fixture 跑 2 次（`TR_JUDGE_N_RUNS` 可調），3 個 fixture
-= 6 次 API 呼叫，單次幾千 token，成本很低。judge 輸出非確定性，單次判紅判綠不算數——
-這也是 eval-design.md 判定哲學第 3 條（「一個 case 跑 n≥2 次報通過率」）的原因。
+- B-1 洗白者 eval-first 的 red→green 全流程(§落地順序 step 1):需互動 / headless 真跑一輪。
+- check_card 的 case 特定斷言(B-1 標籤定位、B-9 section 級 ticker-in-洞):現只做卡層 invariants。
+- grader 校準(§6):首批 transcript 人工全判對比機檢,量 FP/FN。
 
 ## 維護鐵律
 
-`card-spec.md` 的敘事鐵律（「卡片是一個故事，不是 dashboard」章節）改了 → 這裡的
-`RUBRIC` 常數要跟著改，否則 judge 判的標準和 SKILL 實際要求的標準會漂移
-（同源判準見 `docs/eval-design.md` 開頭的分工說明）。
+`card-spec.md` 敘事鐵律改 → `judge_narrative.py` 的 `RUBRIC` 跟著改;
+eval-design §4 的 A/B regex 改 → `check_card.py` / `check_state.py` 的對應 CHECK 跟著改。
+同源判準漂移防線見 `docs/eval-design.md` §5。

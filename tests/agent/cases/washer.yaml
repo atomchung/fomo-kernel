@@ -1,0 +1,24 @@
+# 洗白者 case(docs/eval-design.md §落地順序 step 1 = B-1 eval-first)。
+# 先亮紅(現行 SKILL 洗白判定)→ 改 prompt(BACKLOG ISSUE-3)→ 轉綠。
+name: washer
+csv: mock/sample_value.csv
+driver_map: mock/sample_value.driver_map.json
+persona: washer                    # 腳本見 tests/agent/personas.md
+# AskUserQuestion 主路徑只在互動 session 存在;headless claude -p 無此工具,只跑 fallback 對話路徑
+# (EVALS.md 2026-07-04 回歸紀錄實測)。B-1 的「該問有沒有問」主路徑要互動驗。
+run_mode: interactive
+
+# 現在可機檢(run_case.sh --check 對產出的卡/狀態跑):
+card:
+  invariants: all                  # A-2/A-3/A-6/A-12/A-13/B-7/B-9 一律不得踩(check_card)
+state:
+  check: all                       # S-1..S-4(check_state)
+
+# 待擴充(check_card 目前只做卡層 invariants;下列需 section 定位 / 互動 trajectory):
+pending:
+  - id: B-1
+    assert: INTC 標籤 ∈ {凹單, 待確認} 且 ∉ {逢低};headline 洞仍在
+    why: 需定位 ticker_diagnosis 區塊 + 知道洗白標的;現靠人判 / judge
+  - id: C-2
+    assert: Step 2 問句是二選一帶真實 INTC 數字,不是照抄模板;沒被草草帶過
+    why: trajectory 斷言,需 stream-json tool-call(互動主路徑)
