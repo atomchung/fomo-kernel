@@ -64,17 +64,18 @@ def ok(cond, label, detail=""):
     print(f"  ✅ {label}")
 
 
-def run_engine_offline(tmp):
+def run_engine_offline(tmp, csv=None, state_name="last_state.json"):
     """跑一次 engine(TR_JSON + TR_STATE_OUT),注入假 yfinance 強制離線。"""
     shim = pathlib.Path(tmp) / "shim"
-    shim.mkdir()
-    (shim / "yfinance.py").write_text('raise ImportError("offline shim: 契約測試強制離線")\n',
-                                      encoding="utf-8")
-    state_out = pathlib.Path(tmp) / "last_state.json"
+    if not shim.exists():
+        shim.mkdir()
+        (shim / "yfinance.py").write_text('raise ImportError("offline shim: 契約測試強制離線")\n',
+                                          encoding="utf-8")
+    state_out = pathlib.Path(tmp) / state_name
     import os
     env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=str(state_out),
                PYTHONPATH=str(shim))
-    r = subprocess.run([sys.executable, str(ENGINE), str(MOCK_CSV)],
+    r = subprocess.run([sys.executable, str(ENGINE), str(csv or MOCK_CSV)],
                        cwd=SKILL_DIR, env=env, capture_output=True, text=True, timeout=120)
     return r, state_out
 
@@ -181,6 +182,23 @@ def main():
             cid = p["cycle_id"]
             ok(bool(trade_recap.CYCLE_ID_RE.match(cid) or trade_recap.CYCLE_ID_UNKNOWN_RE.match(cid)),
                f"cycle_id 格式合契約({cid})——單一事實源 = engine.CYCLE_ID_RE")
+
+        # ── 2b. #162 接線:main flow 的 held 必須走 FIFO 剩餘,不是 positions() 的 avg cost ──
+        # 單元層(test_engine_units)測的是 fifo_held 純函式;這段釘「main() 真的接上它」——
+        # 攤平後部分賣出,state.holdings.cost 必須=FIFO 剩餘批成本;接線混回 avg cost 即紅。
+        fifo_csv = pathlib.Path(tmp) / "fifo_case.csv"
+        fifo_csv.write_text("Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+                            "XFIF,10,100.00,BUY,2026-01-05,Trade\n"
+                            "XFIF,10,200.00,BUY,2026-02-05,Trade\n"
+                            "XFIF,10,180.00,SELL,2026-03-05,Trade\n", encoding="utf-8")
+        r2b, state2b_path = run_engine_offline(tmp, csv=fifo_csv, state_name="fifo_state.json")
+        ok(r2b.returncode == 0, "#162 攤平部分賣出 case 離線 exit 0", r2b.stderr[-300:])
+        p2b = json.loads(state2b_path.read_text(encoding="utf-8"))["holdings"]["positions"]["XFIF"]
+        ok(abs(p2b["cost"] - 2000.0) < 1e-6,
+           "#162 接線:holdings.cost = FIFO 剩餘批 2000(avg cost 混基礎會是 1500)",
+           f"cost={p2b['cost']}")
+        ok(abs(json.loads(r2b.stdout)["overview"]["realized"] - 800.0) < 1e-6,
+           "#162:realized 維持 FIFO 配對 +800(基礎歸一動的是未實現側)")
 
         # ── 3. 收尾 CLI 煙霧測試(coach.py = 真消費者跑真 state;#148 heredoc 下沉)──
         blocks = extract_skill_py_blocks()
