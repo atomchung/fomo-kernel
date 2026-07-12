@@ -197,48 +197,67 @@ def load_cash_flows(paths):
     return flows
 
 
-def cash_position(cash_flows, held_mv, anchor=None, prev_end=None):
-    """帳戶現金地基（#171 PR-1）。
-    - cash_balance：有現金餘額錨點 → 錨點 + 其後現金流（正確，對付 is_complete=False 的不完整 CSV）；
-      無錨點 → 全期 Σamount 並標不可信（假設開戶現金 0，CSV 漏一筆 deposit 就偏，honesty_ledger 揭露）。
-    - cash_weight = 現金 /（持倉市值 + 現金）；分母 ≤0 → None。
-    - recent_net_deposit = 本期（prev_end 後）外部淨流入（deposit − withdrawal），給「這筆錢該不該部署」判讀。
-    幣別：假設 cash_flows.amount 已在聚合幣別（混幣換算由 main 接線層負責）。"""
-    if isinstance(prev_end, str):
-        prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
-    a_date = None
+def _cash_balance_one_ccy(flows, anchor, prev_end):
+    """單一幣別的現金餘額（原幣）。回 (balance, source, reliable)。
+    有錨點 → 錨點餘額 + 其後現金流（對付不完整 CSV，reliable）；
+    無 → Σ全部（假設開戶 0，CSV 漏一筆 deposit 就偏，csv_sum/unreliable）。"""
     if anchor and anchor.get("as_of") and anchor.get("amount") is not None:
         a_date = anchor["as_of"]
         if isinstance(a_date, str):
             a_date = dt.date.fromisoformat(a_date)
-        balance = float(anchor["amount"]) + sum(cf["amount"] for cf in cash_flows if cf["date"] > a_date)
-        source, reliable = "anchored", True
-    else:
-        balance = sum(cf["amount"] for cf in cash_flows)
-        source, reliable = "csv_sum", False
-    denom = held_mv + balance
-    # 無錨點的負現金 = csv_sum 假設破裂（買入為主、入金沒記全），weight 是垃圾 → 不報；denom≤0 亦不報。
-    # 有錨點的負現金 = 真融資（margin debit），weight 負有意義（槓桿曝險），照報。
-    if denom <= 1e-9 or (not reliable and balance < 0):
+        bal = float(anchor["amount"]) + sum(cf["amount"] for cf in flows if cf["date"] > a_date)
+        return bal, "anchored", True
+    return sum(cf["amount"] for cf in flows), "csv_sum", False
+
+
+def cash_position(cash_flows, held_mv, anchor=None, prev_end=None, fx=None):
+    """帳戶現金地基（#171 PR-1；多幣別現金桶）。
+    per-currency 各算餘額（錨點+其後現金流 or csv_sum），用 fx 聚合成 USD total——
+    台美各帳戶現金各自錨點（一個 TR_CASH 只表一種幣的舊限制在此解除）。
+    - anchor：單 dict（向後相容，無 currency 欄 → 對應唯一幣別/單桶）或 list[dict]（per-currency，各帶 currency）。
+    - fx：{ccy: usd_per_unit} 多幣別聚合用；None/單幣 → 因子 1.0（原幣即聚合幣）。
+    - cash_balance：聚合 USD；cash_weight = 現金 /（持倉市值 + 現金），分母 ≤0 → None。
+    - recent_net_deposit：本期（prev_end 後）外部淨流入，per-currency 換 USD 加總。
+    - reliable：所有有現金流的幣別都有錨點=True（source=anchored）；部分=partial；全無=csv_sum。
+    - by_currency：{ccy: {balance(原幣), source, reliable}} per-currency 明細（呈現層可展開、可只揭露缺錨點的幣別）。"""
+    if isinstance(prev_end, str):
+        prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
+    fx = fx or {}
+    anchors = [anchor] if isinstance(anchor, dict) else list(anchor or [])
+    currencies = sorted({cf.get("currency", "USD") for cf in cash_flows}) or ["USD"]
+
+    def _anchor_for(c):
+        # 帶 currency 的錨點按幣別配對；無 currency 的錨點只在單一幣別時對應（向後相容舊單桶格式）。
+        for a in anchors:
+            ac = (a.get("currency") or "").strip().upper()
+            if ac == c or (not ac and len(currencies) == 1):
+                return a
+        return None
+
+    by_ccy, total, recent = {}, 0.0, 0.0
+    all_reliable, any_reliable = True, False
+    for c in currencies:
+        flows_c = [cf for cf in cash_flows if cf.get("currency", "USD") == c]
+        bal_c, src_c, rel_c = _cash_balance_one_ccy(flows_c, _anchor_for(c), prev_end)
+        f = fx.get(c, 1.0)
+        by_ccy[c] = dict(balance=round(bal_c, 2), source=src_c, reliable=rel_c)
+        total += bal_c * f
+        recent += f * sum(cf["amount"] for cf in flows_c
+                          if cf["kind"] in ("deposit", "withdrawal")
+                          and (prev_end is None or cf["date"] > prev_end))
+        all_reliable = all_reliable and rel_c
+        any_reliable = any_reliable or rel_c
+    source = "anchored" if all_reliable else ("partial" if any_reliable else "csv_sum")
+    denom = held_mv + total
+    # 不完全可信的負現金 = csv_sum 假設破裂（入金沒記全），weight 垃圾 → None；denom≤0 亦 None。
+    # 全可信（全錨點）的負現金 = 真融資 margin，weight 負有意義，照報。
+    if denom <= 1e-9 or (not all_reliable and total < 0):
         weight = None
     else:
-        weight = balance / denom
-    recent = sum(cf["amount"] for cf in cash_flows
-                 if cf["kind"] in ("deposit", "withdrawal")
-                 and (prev_end is None or cf["date"] > prev_end))
-    return dict(balance=round(balance, 2), weight=weight, source=source,
-                reliable=reliable, recent_net_deposit=round(recent, 2))
-
-
-def _anchor_to_aggregate(anchor, fx, mixed_ccy):
-    """混幣時把現金餘額錨點換到聚合幣（USD）。
-    錨點是 Step 0 從對帳單抓的帳戶現金，獨立於交易 CSV，原幣別記在 anchor.currency。
-    cash_flows 已在 main 換過；錨點是另一路輸入，不在此補換 → TWD 錨點被當 USD 直接加，
-    cash_weight 放大數十倍。單幣時聚合幣＝原幣，錨點原樣返回（純台股 TWD 錨點對 TWD 現金流自洽）。"""
-    if not (anchor and mixed_ccy and anchor.get("amount") is not None):
-        return anchor
-    cur = (anchor.get("currency") or "USD").strip().upper()
-    return dict(anchor, amount=float(anchor["amount"]) * fx.get(cur, 1.0))
+        weight = total / denom
+    return dict(balance=round(total, 2), weight=weight, source=source,
+                reliable=all_reliable, recent_net_deposit=round(recent, 2),
+                by_currency=by_ccy)
 
 
 def _load_skip_note():
@@ -1830,8 +1849,12 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None)
     # 現金無錨點:cash weight 是靠交易流水盲算(假設開戶 $0),可能偏差 → 若上卡必揭露近似、邀用戶補現金餘額(#171)。
     # 只在「有得上卡的 weight 但不可信」時觸發(reliable=False + weight 非 None);weight=None(算不出,不上卡)沒有可誤導的數字,不進 ledger。
     if isinstance(cash, dict) and cash.get("weight") is not None and not cash.get("reliable"):
-        L.append({"key": "cash_reliability", "status": "no_anchor",
-                  "data": {"balance": cash.get("balance"), "source": cash.get("source")}})
+        # partial(部分帳戶給了餘額、部分沒)vs no_anchor(全無錨點);揭露哪些幣別是盲算,邀補那幾個帳戶餘額。
+        missing = sorted(c for c, v in (cash.get("by_currency") or {}).items() if not v.get("reliable"))
+        L.append({"key": "cash_reliability",
+                  "status": "partial" if cash.get("source") == "partial" else "no_anchor",
+                  "data": {"balance": cash.get("balance"), "source": cash.get("source"),
+                           "unanchored_currencies": missing}})
     return L
 
 
@@ -2004,22 +2027,20 @@ def main():
             else ("多幣別組合(單一市場)的 α/β 按該市場大盤計" if mixed_ccy else None)),
     }
 
-    # 帳戶現金地基（#171 PR-1）：現金流 + 現金餘額錨點 → cash_position。
-    # held_mv = 持倉市值（聚合幣別，無現價用成本近似，同 dim_diversify）= cash_weight 分母。
+    # 帳戶現金地基（#171）：現金流 + 現金餘額錨點 → cash_position（多幣別 per-currency 各算再 fx 聚合）。
+    # held_mv = 持倉市值（聚合幣別 USD，無現價用成本近似，同 dim_diversify）= cash_weight 分母。
     import json
-    cash_flows = load_cash_flows(paths)
-    if mixed_ccy:                                        # 混幣：現金流各幣別 → USD（對齊聚合視圖）
-        cash_flows = [dict(cf, amount=cf["amount"] * fx.get(cf["currency"], 1.0)) for cf in cash_flows]
+    cash_flows = load_cash_flows(paths)                 # per-currency（每筆帶 currency）；聚合由 cash_position 內部做
     held_mv = sum((sh * lastpx_u[t]) if lastpx_u.get(t) else c for t, (sh, c) in held_u.items())
-    _ca = os.environ.get("TR_CASH")                     # SKILL Step 0 抓對帳單現金餘額 → JSON {as_of, amount, currency}
+    _ca = os.environ.get("TR_CASH")                     # SKILL Step 0 抓對帳單現金餘額 → 單 {as_of,amount,currency} 或多帳戶 list
     try:
         cash_anchor = json.loads(_ca) if _ca else None
     except (ValueError, TypeError):
         cash_anchor = None
-    # 混幣：錨點餘額也要換到聚合幣（USD），否則 TWD 錨點被當 USD 加 → cash_weight 放大數十倍。
-    cash_anchor = _anchor_to_aggregate(cash_anchor, fx, mixed_ccy)
+    # 多幣別：cash_position 內部 per-currency 各算餘額再用 fx 聚合（台美各帳戶各自錨點）；單幣 fx=None → 因子 1.0。
     cash_data = cash_position(cash_flows, held_mv, anchor=cash_anchor,
-                              prev_end=os.environ.get("TR_PREV_END") or None)
+                              prev_end=os.environ.get("TR_PREV_END") or None,
+                              fx=fx if mixed_ccy else None)
 
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""
     split_note = f"｜分割調整: {n_adj} 筆" if n_adj else ""

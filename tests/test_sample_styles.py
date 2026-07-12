@@ -459,7 +459,8 @@ def test_tw_mixed_combined_exposure_network():
     csv = os.path.join(MOCK, "sample_tw_mixed.csv")
     dm = os.path.join(MOCK, "sample_tw_mixed.driver_map.json")
     env = dict(os.environ, TR_JSON="1", TR_DRIVER_MAP=dm,
-               TR_CASH=_json.dumps({"as_of": "2024-03-15", "amount": 250000, "currency": "TWD"}))
+               TR_CASH=_json.dumps([{"as_of": "2024-03-15", "amount": 250000, "currency": "TWD"},
+                                    {"as_of": "2024-03-15", "amount": 4000, "currency": "USD"}]))
     engine = os.path.join(SKILL, "engine", "trade_recap.py")
     r = subprocess.run([sys.executable, engine, csv], capture_output=True, text=True, env=env)
     if r.returncode != 0 or not r.stdout.strip():
@@ -474,8 +475,11 @@ def test_tw_mixed_combined_exposure_network():
     ab = card["alpha_beta_breakdown"]
     assert ab["scope"] == "TW" and ab["bench"] == "^TWII", ab.get("scope")
     assert {"TW", "US"} <= set(ab["by_market"])
-    # 混幣現金錨點換算聚合幣:250000 TWD ≈ 7-8.5k USD(非當 250000 USD 的 latent gap)
-    assert 6000 < card["cash"]["balance"] < 9000, card["cash"]["balance"]
+    # 多幣別現金桶:台美各帳戶各自錨點 → 聚合 USD(250000 TWD×fx + 4000 USD ≈ 11-12k),都有錨點 reliable
+    cash = card["cash"]
+    assert cash["reliable"] and cash["source"] == "anchored", cash
+    assert 10000 < cash["balance"] < 13000, cash["balance"]
+    assert set(cash["by_currency"]) == {"TWD", "USD"}, cash["by_currency"]
     # AI/半導體 combined 曝險分母含台股(what_if 板塊集中)
     assert "半導體" in (card["what_if"] or {}).get("label", "") and card["what_if"]["pct"] > 0.5
 

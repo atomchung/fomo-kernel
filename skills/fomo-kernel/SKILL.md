@@ -98,7 +98,7 @@ python3 engine/problems.py stats --today <今天> --rules ~/.trade-coach/rules.j
   (snapshot 語意 = 該日**收盤後**狀態,同日交易視為已含在宣告數字內。)
 - **已有帳本、又丟來新快照 → 先 `reconcile`,不要直接 append**:`python3 engine/ledger.py reconcile /tmp/pos.json` 會列宣告 vs 推導的差異——一致 = 對帳通過(卡上可標「帳本已對帳 ✓」);不一致 = 把差異講給用戶聽(「我推 NVDA 40 股,你說 35——中間可能有我沒看到的交易」),他確認後以**他的宣告為準**:`append-snapshot --source reconciled`。這是「數據準確」的機制:每丟一次快照 = 帳本自我修復一次。
 - **交易 CSV**(標準化後)→ 除了餵 `trade_recap.py`,同時記帳:`python3 engine/ledger.py append-trades <標準化CSV>`(自動去重,每週增量匯入、重疊期重複匯入都安全);記完帳接著排出場追蹤:`python3 engine/revisit.py enqueue-from-ledger`(掃清倉/大減倉 → 30/60/90 佇列,去重、重跑安全)。enqueue 完**再跑一次 `revisit.py scan`**,讀輸出的 **`recent_exits`**(出場 ≤14 天、金額大者先)——這是 Step 2(d) 賣出理由 capture 的候選集(#136:「為什麼賣」只有出場後兩週內問得到,不可回補;空 = 該段靜默跳過)。enqueue 輸出的 `new` 只是「本次新排入」的參考訊號,**capture 候選一律以 `recent_exits` 為準**——上週中斷沒問到的、當週超過限額的,窗口內這裡還會再出現。
-- **💵 現金餘額錨點(#171,讓「這筆入金該不該部署」通電)**:交易 CSV 只記部位、記不到帳戶閒置現金——沒有它,`cash_weight` 算不出(引擎降級標不可信,見 Step 1 `honesty_ledger`)。所以 Step 0 順手抓一次**當前現金餘額**:對帳單/持倉頁多半有一行「Cash / 現金 / 可用餘額」——你直接讀出來;讀不到就用 `AskUserQuestion` 問一句「對帳單上的現金餘額大約多少?(想看帳戶層現金比重/入金判讀才需要;略過也能出卡)」。拿到就組 JSON 餵引擎:`TR_CASH='{"as_of":"<對帳單日期>","amount":<數字>,"currency":"USD"}'`(混幣各幣別現金分開;台股用 TWD)——引擎以錨點為準(對付 CSV 非從開戶完整),其後現金流才疊加。**入金判讀(`recent_net_deposit`)要看得到存提款流水**:標準化 CSV 時若來源有 deposit/withdrawal/股息/利息/費用列,連同 `Amount` 欄一起留著(格式見 `mock/sample_noisy_broker.csv`),引擎才算得出本期外部淨流入;來源沒有就只靠錨點給比重,判讀那句靜默跳過。
+- **💵 現金餘額錨點(#171,讓「這筆入金該不該部署」通電)**:交易 CSV 只記部位、記不到帳戶閒置現金——沒有它,`cash_weight` 算不出(引擎降級標不可信,見 Step 1 `honesty_ledger`)。所以 Step 0 順手抓一次**當前現金餘額**:對帳單/持倉頁多半有一行「Cash / 現金 / 可用餘額」——你直接讀出來;讀不到就用 `AskUserQuestion` 問一句「對帳單上的現金餘額大約多少?(想看帳戶層現金比重/入金判讀才需要;略過也能出卡)」。拿到就組 JSON 餵引擎:單一帳戶 `TR_CASH='{"as_of":"<對帳單日期>","amount":<數字>,"currency":"USD"}'`;**台美等多帳戶/多幣別各給一個錨點,用 list**:`TR_CASH='[{"as_of":..,"amount":..,"currency":"USD"},{"as_of":..,"amount":..,"currency":"TWD"}]'`(引擎 per-currency 各算餘額再按匯率聚合;台股帳戶用 TWD)——引擎以錨點為準(對付 CSV 非從開戶完整),其後現金流才疊加。只給部分帳戶的錨點也行:沒給的幣別引擎標盲算,`honesty_ledger` 只揭露缺的那個、邀你補。**入金判讀(`recent_net_deposit`)要看得到存提款流水**:標準化 CSV 時若來源有 deposit/withdrawal/股息/利息/費用列,連同 `Amount` 欄一起留著(格式見 `mock/sample_noisy_broker.csv`),引擎才算得出本期外部淨流入;來源沒有就只靠錨點給比重,判讀那句靜默跳過。
 - **snapshot-only(只有快照、還沒有交易紀錄)**:行為診斷跑不了(那需要交易紀錄——誠實講,別硬掰),但出**開帳體檢卡**:用 `holdings` JSON 的成本權重 + 你的世界知識 driver map 講持倉結構(集中度/賽道/sizing,標明「成本基礎」),AI 猜 thesis(Step 2(c))照走,記憶迴圈當場啟動;`integrity` 非空(oversell/壞行)一律如實帶上卡。收尾邀請:「之後把交易紀錄丟給我,攤平/出場/盈虧比這些行為診斷就會解鎖」。
 - **帳本誠實檢查**:`holdings` 輸出的 `counts.skipped_lines > 0` = 帳本檔有壞行(可能是中斷寫入)——**如實告訴用戶**、別當帳本完整;修復法就是請他丟一張最新持倉截圖走 reconcile(新錨點蓋過可疑歷史)。(`ledger.py` 純標準庫,不需要 venv——跟 `trade_recap.py` 的 ModuleNotFoundError 提示無關。)
 - ⚠️ **過渡期規則**:錨點帶入的持倉 engine 看不到(CSV 無該檔交易),所以 ledger 的 cycle_id 與 engine state 的 cycle_id 可能不同——**theses.jsonl 綁定一律仍照抄 engine state 的 cycle_id**(收尾 part 2 的既有規則,CLI 會驗格式),ledger 的 cycle_id 只供帳本自身追蹤。
@@ -118,7 +118,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 # TR_STATE_OUT → 寫一份薄 state(對帳用),跟 TR_JSON 平行,可同時設
 # TR_PREV_END=<log 最後一筆 date_end> → 對帳模式必帶(#137):問題帳的行為型事件只取其後的
 #   新交易(不會把三個月前的舊攤平每週重複入帳);初診不設 = 全期補齊,問題帳統計冷啟動
-# TR_CASH='{"as_of":..,"amount":..,"currency":..}' → 現金餘額錨點(#171,Step 0 抓的);設了 cash_weight 才可信,不設引擎降級標不可信
+# TR_CASH='{"as_of":..,"amount":..,"currency":..}'(單帳戶)或 '[{..},{..}]'(台美多帳戶各一錨點) → 現金餘額錨點(#171,Step 0 抓的);設了 cash_weight 才可信,不設引擎降級標不可信
 # 都不設 → 印預設人話卡(README quickstart 用)
 # TR_DEBUG=1 → 在預設輸出補回 5 維 severity raw 表(開發/驗證用,絕不上卡)
 ```
@@ -131,7 +131,7 @@ TR_JSON=1 TR_STATE_OUT=~/.trade-coach/last_state.json python3 engine/trade_recap
 - **`alpha_beta_breakdown` / `payoff_attribution` / `ticker_diagnosis`**:完整數字,你拿去組敘事。
 - **`dims_raw`**:5 維行為診斷(每維 severity 0–1)— **別整張攤出來**,用「一句人話」帶過非 headline 的維度(SKILL 鐵律:不放 5 維小數表)。
 - **`overview.unrealized_coverage`**:未實現只加總抓得到現價的持倉(`priced_n`/`held_n`/`unpriced`)——讀這欄拿數字,**該不該揭露交給 `honesty_ledger` 統管**(不用自己記何時補)。
-- **`cash`**(#171 帳戶現金):`{balance, weight, source, reliable, recent_net_deposit}`。`reliable=true`(有 `TR_CASH` 錨點)才把 `weight`(現金佔帳戶比重)+ `recent_net_deposit`(本期外部淨入金,判「這筆錢部署了沒/解不解集中度」)講進卡;`reliable=false`(無錨點)是靠交易流水盲算,`weight` 多半 `null`(算不出就不上卡),該不該揭露一樣交 `honesty_ledger`。講法照 card-spec「現金與入金判讀」段。
+- **`cash`**(#171 帳戶現金):`{balance, weight, source, reliable, recent_net_deposit, by_currency}`。`balance`=聚合 USD、`by_currency`=per-幣別原幣明細。`reliable=true`(所有有現金流的幣別都給了 `TR_CASH` 錨點)才把 `weight`+ `recent_net_deposit`(判「這筆錢部署了沒/解不解集中度」)講進卡;`source=partial`(部分帳戶給了、部分沒)或 `csv_sum`(全無錨點)= 靠流水盲算,`weight` 多半 `null`,該不該揭露交 `honesty_ledger`(`cash_reliability.unanchored_currencies` 標哪個幣別缺)。講法照 card-spec「現金與入金判讀」段。
 - **`currency_meta`**:聚合幣別與匯率(💱 Display currency 段的資料源)——`aggregate_currency`(overview / what_if / `ticker_diagnosis` 金額等聚合數字的幣別)、`mixed`、`fx`(兌 USD)、`pnl_by_currency`(原幣分桶)、`fx_error`/`alpha_beta_note`。台股/混幣組合寫卡前**先讀這欄**,金額才不會標錯幣;混幣時單檔原幣金額用 `pnl_by_currency` 對照、或由你按 `fx` 反換算。
 - **`honesty_ledger`**(#82:誠實點的單一事實源):engine 已聚合好這張卡**必須交代**的誠實缺口清單(空 list = 無缺口),每項 `{key, status, data}`,涵蓋 α 不可信 / 板塊歸因不全 / 未實現缺價 / 未分類 driver / 賣超 / 混幣 / 現金無錨點。**engine 判定「該講什麼」,你只管照 card-spec 的講法融入敘事「怎麼講」**;出卡前逐項核對(Step 3 gate)——取代了散在各欄位「自己記得哪些該揭露」的自律。
 - **alpha/beta**:贏大盤多少、其中多少只是「膽子大(高 beta)」、真本事(Jensen's α)剩多少。`excess_split` 把「贏大盤」機械拆成 **押對賽道(allocation)+ 板塊內選股(selection)**,兩項相加恆等於贏大盤 pp——這兩個數是會計恆等式、不需統計顯著,**永遠可講**;`alpha_stat` 給 α 的 95% 區間 / t 值 / 分級(顯著與否),語氣照它走。

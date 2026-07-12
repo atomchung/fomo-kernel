@@ -160,7 +160,7 @@ def main():
         # ── 1a. #171 呈現層:card.cash 形狀 + 無 TR_CASH 錨點時降級,cash_reliability 觸發式 ──
         ccash = card["cash"]
         ok(isinstance(ccash, dict) and set(ccash.keys()) ==
-           {"balance", "weight", "source", "reliable", "recent_net_deposit"},
+           {"balance", "weight", "source", "reliable", "recent_net_deposit", "by_currency"},
            "card.cash 5 欄位齊(與 state.cash 同源)", repr(ccash)[:120])
         ok(ccash["source"] == "csv_sum" and ccash["reliable"] is False,
            "無 TR_CASH 錨點 → card.cash 降級 csv_sum + reliable=False", repr(ccash))
@@ -199,7 +199,7 @@ def main():
         # ── 2a. #171 現金地基:state.cash 形狀 + 無 TR_CASH 錨點時降級為 csv_sum/不可信 ──
         cash = st["cash"]
         ok(isinstance(cash, dict) and set(cash.keys()) ==
-           {"balance", "weight", "source", "reliable", "recent_net_deposit"},
+           {"balance", "weight", "source", "reliable", "recent_net_deposit", "by_currency"},
            "state.cash 5 欄位齊(balance/weight/source/reliable/recent_net_deposit)", repr(cash)[:120])
         ok(cash["source"] == "csv_sum" and cash["reliable"] is False,
            "無 TR_CASH 錨點 → cash 降級 csv_sum + reliable=False(honesty 據此揭露,不冒充精確)",
