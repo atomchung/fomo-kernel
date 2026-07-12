@@ -851,21 +851,49 @@ def test_cash_position_none_weight_when_unanchored_negative():
     assert cp2["weight"] is not None and cp2["weight"] < 0, cp2["weight"]  # 有錨點負現金=融資,照報負值
 
 
-def test_anchor_to_aggregate_converts_by_currency():
-    """混幣：現金餘額錨點按其原幣別換到聚合幣(USD)。錨點是 Step 0 抓的對帳單現金、獨立於交易 CSV,
-    cash_flows 已換但錨點是另一路輸入 → 不補換則 TWD 錨點被當 USD 加,cash_weight 放大數十倍(latent gap)。"""
+def test_cash_position_multi_currency_anchors():
+    """多幣別現金桶：台美各帳戶各自錨點 → per-currency 各算餘額,fx 聚合成 USD total。
+    reliable 只在所有有現金流的幣別都有錨點時 True;by_currency 給原幣明細。"""
+    flows = [
+        dict(date=dt.date(2024, 1, 10), amount=-100000.0, kind="trade", currency="TWD"),
+        dict(date=dt.date(2024, 1, 15), amount=5000.0, kind="deposit", currency="TWD"),
+        dict(date=dt.date(2024, 1, 12), amount=-2000.0, kind="trade", currency="USD"),
+        dict(date=dt.date(2024, 1, 20), amount=1000.0, kind="deposit", currency="USD"),
+    ]
     fx = {"USD": 1.0, "TWD": 0.03}
-    anc = {"as_of": "2024-03-15", "amount": 250000.0, "currency": "TWD"}
-    out = tr._anchor_to_aggregate(anc, fx, mixed_ccy=True)
-    assert _approx(out["amount"], 7500.0), out["amount"]              # 250000 × 0.03 = 7500 USD
-    assert out["currency"] == "TWD" and out["as_of"] == "2024-03-15"  # 其餘欄位不動
-    assert tr._anchor_to_aggregate(anc, fx, mixed_ccy=False) is anc   # 單幣：聚合幣＝原幣,原樣返回不亂換
-    miss = tr._anchor_to_aggregate(anc, {"USD": 1.0}, mixed_ccy=True) # 缺該幣別匯率 → 因子 1.0 近似(不 crash)
-    assert _approx(miss["amount"], 250000.0), miss["amount"]
-    assert tr._anchor_to_aggregate(None, fx, True) is None            # None-safe
-    assert tr._anchor_to_aggregate({"as_of": "x"}, fx, True) == {"as_of": "x"}  # 無 amount → 原樣
-    usd_anc = {"amount": 5000.0, "currency": "USD"}                   # USD 錨點在混幣時因子 1.0 不變
-    assert _approx(tr._anchor_to_aggregate(usd_anc, fx, True)["amount"], 5000.0)
+    anchors = [{"as_of": "2024-01-16", "amount": 300000.0, "currency": "TWD"},   # 其後無 TWD flow
+               {"as_of": "2024-01-18", "amount": 8000.0, "currency": "USD"}]     # 其後 1/20 deposit 1000
+    cp = tr.cash_position(flows, held_mv=50000.0, anchor=anchors, fx=fx)
+    assert cp["source"] == "anchored" and cp["reliable"] is True
+    assert cp["by_currency"]["TWD"]["balance"] == 300000.0                        # 錨點+其後(無)
+    assert cp["by_currency"]["USD"]["balance"] == 9000.0                          # 8000+1000
+    assert _approx(cp["balance"], 18000.0), cp["balance"]                         # 300000×0.03 + 9000
+    assert _approx(cp["weight"], 18000.0 / 68000.0), cp["weight"]
+
+
+def test_cash_position_partial_anchor_is_unreliable():
+    """部分幣別有錨點(台股給了餘額、美股沒給)→ 缺錨點幣別走 csv_sum,整體 source=partial/reliable=False;
+    by_currency 標明哪個幣別可信,呈現層可只揭露缺的那個。"""
+    flows = [
+        dict(date=dt.date(2024, 1, 10), amount=-100000.0, kind="trade", currency="TWD"),
+        dict(date=dt.date(2024, 1, 12), amount=3000.0, kind="deposit", currency="USD"),
+    ]
+    fx = {"USD": 1.0, "TWD": 0.03}
+    cp = tr.cash_position(flows, held_mv=50000.0, fx=fx,
+                          anchor=[{"as_of": "2024-01-05", "amount": 200000.0, "currency": "TWD"}])  # 只 TWD
+    assert cp["source"] == "partial" and cp["reliable"] is False
+    assert cp["by_currency"]["TWD"]["reliable"] is True                           # TWD 有錨點
+    assert cp["by_currency"]["USD"]["reliable"] is False                          # USD 無 → csv_sum
+    assert _approx(cp["balance"], 6000.0), cp["balance"]                          # (200000-100000)×0.03 + 3000
+
+
+def test_cash_position_single_dict_anchor_backward_compat():
+    """向後相容(#171 舊格式):單 dict 錨點(無 currency)在單一幣別時仍對應該幣別,行為不破;新增 by_currency 欄。"""
+    flows = [dict(date=dt.date(2024, 1, 10), amount=1000.0, kind="deposit", currency="USD")]
+    cp = tr.cash_position(flows, held_mv=10000.0, anchor={"as_of": "2024-01-05", "amount": 5000.0})
+    assert cp["source"] == "anchored" and cp["reliable"] is True
+    assert _approx(cp["balance"], 6000.0), cp["balance"]                          # 5000+1000
+    assert cp["by_currency"]["USD"]["balance"] == 6000.0
 
 
 def test_honesty_ledger_cash_reliability_trigger():
