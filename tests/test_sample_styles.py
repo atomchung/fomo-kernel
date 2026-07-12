@@ -400,6 +400,26 @@ def test_entry_style_chase_vs_dip():
     assert d4["lean"] is None and d4["low_conf"]
 
 
+def test_tw_mixed_markets_currency_offline():
+    """[deterministic] 台股+美股混市場 fixture:load 認得 Market/Currency 欄、driver map 用
+    完整 yahoo ticker(2330.TW/.TWO)當 key。台股報價/α-β 對 ^TWII/combined 依賴走 network smoke。"""
+    tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+    tr.load_driver_map(os.path.join(MOCK, "sample_tw_mixed.driver_map.json"))
+    rows = tr.load([os.path.join(MOCK, "sample_tw_mixed.csv")])
+    assert {r["market"] for r in rows} == {"TW", "US"}
+    cur_map, currencies, conflicts = tr.currency_map(rows)
+    assert currencies == ["TWD", "USD"] and not conflicts
+    assert cur_map["2330.TW"] == "TWD" and cur_map["AAPL"] == "USD"      # per-ticker 幣別對
+    assert tr.driver("2330.TW")[0] == "半導體" and tr.driver("6488.TWO")[0] == "半導體"  # .TW/.TWO 當 key
+    rts, _ = tr.round_trips(rows)
+    held, _ = tr.positions(rows)
+    assert len(rts) == 2                                    # AAPL(部分賣)、6488.TWO(清倉)
+    assert held.get("2330.TW", (0,))[0] == 2000            # 台積電 2000 股大倉(三筆買入累積)
+    flows = tr.load_cash_flows([os.path.join(MOCK, "sample_tw_mixed.csv")])
+    twd_dep = [f for f in flows if f["currency"] == "TWD" and f["kind"] == "deposit"]
+    assert twd_dep and abs(twd_dep[0]["amount"] - 1500000.0) < 1e-3     # TWD 入金各記原幣別
+
+
 # ─────────────────────── 選配:network smoke(β 方向)───────────────────────
 
 def test_beta_direction_network():
@@ -427,6 +447,37 @@ def test_beta_direction_network():
     assert b_mom > 1.5, f"動能 β 應 >1.5(高槓桿),實得 {b_mom:.2f}"
     assert b_fun < 1.0, f"基本面 β 應 <1.0(低波動),實得 {b_fun:.2f}"
     assert b_mom > b_fun
+
+
+def test_tw_mixed_combined_exposure_network():
+    """[network] 台股報價(2330.TW/.TWO)抓得到 + 混市場 combined 口徑正確:最大單點依賴含台股
+    (TSM 不從 engine 世界消失)、α/β 台股對 ^TWII、混幣現金錨點換算聚合幣。TR_TEST_NETWORK=1 才跑。"""
+    if os.environ.get("TR_TEST_NETWORK") != "1":
+        return _SKIP
+    import subprocess
+    import json as _json
+    csv = os.path.join(MOCK, "sample_tw_mixed.csv")
+    dm = os.path.join(MOCK, "sample_tw_mixed.driver_map.json")
+    env = dict(os.environ, TR_JSON="1", TR_DRIVER_MAP=dm,
+               TR_CASH=_json.dumps({"as_of": "2024-03-15", "amount": 250000, "currency": "TWD"}))
+    engine = os.path.join(SKILL, "engine", "trade_recap.py")
+    r = subprocess.run([sys.executable, engine, csv], capture_output=True, text=True, env=env)
+    if r.returncode != 0 or not r.stdout.strip():
+        return _SKIP                                       # 離線/抓不到 → skip,不當紅燈
+    card = _json.loads(r.stdout)
+    cov = card["overview"]["unrealized_coverage"]
+    if cov["priced_n"] < cov["held_n"]:
+        return _SKIP                                       # 台股價抓不齊(假日/延遲)→ skip 不當失敗
+    # combined 最大單點依賴 = 台股 2330.TW(聚合 USD;若只看美股 CSV 它根本不在 engine 世界)
+    assert card["ticker_diagnosis"][0]["ticker"] == "2330.TW", card["ticker_diagnosis"][0]["ticker"]
+    # α/β per-market:頂層 scope=TW(資金佔比最大),對 ^TWII,不合成總 α
+    ab = card["alpha_beta_breakdown"]
+    assert ab["scope"] == "TW" and ab["bench"] == "^TWII", ab.get("scope")
+    assert {"TW", "US"} <= set(ab["by_market"])
+    # 混幣現金錨點換算聚合幣:250000 TWD ≈ 7-8.5k USD(非當 250000 USD 的 latent gap)
+    assert 6000 < card["cash"]["balance"] < 9000, card["cash"]["balance"]
+    # AI/半導體 combined 曝險分母含台股(what_if 板塊集中)
+    assert "半導體" in (card["what_if"] or {}).get("label", "") and card["what_if"]["pct"] > 0.5
 
 
 # ─────────────────────── 標準庫 runner(免 pytest 即可跑)───────────────────────

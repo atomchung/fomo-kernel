@@ -851,6 +851,23 @@ def test_cash_position_none_weight_when_unanchored_negative():
     assert cp2["weight"] is not None and cp2["weight"] < 0, cp2["weight"]  # 有錨點負現金=融資,照報負值
 
 
+def test_anchor_to_aggregate_converts_by_currency():
+    """混幣：現金餘額錨點按其原幣別換到聚合幣(USD)。錨點是 Step 0 抓的對帳單現金、獨立於交易 CSV,
+    cash_flows 已換但錨點是另一路輸入 → 不補換則 TWD 錨點被當 USD 加,cash_weight 放大數十倍(latent gap)。"""
+    fx = {"USD": 1.0, "TWD": 0.03}
+    anc = {"as_of": "2024-03-15", "amount": 250000.0, "currency": "TWD"}
+    out = tr._anchor_to_aggregate(anc, fx, mixed_ccy=True)
+    assert _approx(out["amount"], 7500.0), out["amount"]              # 250000 × 0.03 = 7500 USD
+    assert out["currency"] == "TWD" and out["as_of"] == "2024-03-15"  # 其餘欄位不動
+    assert tr._anchor_to_aggregate(anc, fx, mixed_ccy=False) is anc   # 單幣：聚合幣＝原幣,原樣返回不亂換
+    miss = tr._anchor_to_aggregate(anc, {"USD": 1.0}, mixed_ccy=True) # 缺該幣別匯率 → 因子 1.0 近似(不 crash)
+    assert _approx(miss["amount"], 250000.0), miss["amount"]
+    assert tr._anchor_to_aggregate(None, fx, True) is None            # None-safe
+    assert tr._anchor_to_aggregate({"as_of": "x"}, fx, True) == {"as_of": "x"}  # 無 amount → 原樣
+    usd_anc = {"amount": 5000.0, "currency": "USD"}                   # USD 錨點在混幣時因子 1.0 不變
+    assert _approx(tr._anchor_to_aggregate(usd_anc, fx, True)["amount"], 5000.0)
+
+
 def test_honesty_ledger_cash_reliability_trigger():
     """#171 呈現層:cash_reliability 只在『有可誤導的 weight 但不可信』時進 ledger。
     reliable(錨點)→ 不觸發;weight=None(算不出,不上卡)→ 不觸發(無可誤導數字);
