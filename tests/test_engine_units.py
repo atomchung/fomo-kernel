@@ -851,6 +851,23 @@ def test_cash_position_none_weight_when_unanchored_negative():
     assert cp2["weight"] is not None and cp2["weight"] < 0, cp2["weight"]  # 有錨點負現金=融資,照報負值
 
 
+def test_honesty_ledger_cash_reliability_trigger():
+    """#171 呈現層:cash_reliability 只在『有可誤導的 weight 但不可信』時進 ledger。
+    reliable(錨點)→ 不觸發;weight=None(算不出,不上卡)→ 不觸發(無可誤導數字);
+    csv_sum 正餘額 weight 非 None → 觸發(盲算佔比上卡必揭露近似)。engine 判定,card-spec 講法。"""
+    def fired(cash):
+        hl = tr.build_honesty_ledger(overview={}, ab={}, data_integrity={}, currency_meta={}, cash=cash)
+        return [e for e in hl if e["key"] == "cash_reliability"]
+    assert not fired({"balance": 19284.0, "weight": 0.29, "source": "anchored",
+                      "reliable": True, "recent_net_deposit": 0}), "錨點可信不該揭露"
+    assert not fired({"balance": -27411.5, "weight": None, "source": "csv_sum",
+                      "reliable": False, "recent_net_deposit": 0}), "weight=None 沒上卡不該空吠"
+    hit = fired({"balance": 8000.0, "weight": 0.14, "source": "csv_sum",
+                 "reliable": False, "recent_net_deposit": 0})
+    assert hit and hit[0]["status"] == "no_anchor" and hit[0]["data"]["source"] == "csv_sum", hit
+    assert not fired(None), "無 cash 欄(None)不觸發"
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():
