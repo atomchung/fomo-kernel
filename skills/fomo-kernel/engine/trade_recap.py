@@ -154,6 +154,76 @@ def load(paths):
     return rows
 
 
+def load_cash_flows(paths):
+    """讀出所有影響現金餘額的 row（含買賣 + deposit/withdrawal/dividend/interest/fee）。
+    load() 只留 BUY/SELL 給行為分析；現金餘額要的是**每一筆現金增減**，靠 Amount 欄
+    （券商流水裡 Amount = 現金帳戶實際變動：買=負、賣/存/息=正、費=負，已含手續費淨額）。
+    #171 PR-1（B 路線帳戶級現金地基）。去重骨架同 load()（跨檔重疊期同一筆只算一次）。
+    回傳 [{date, amount, kind, currency}]，依日期排序。"""
+    KIND = {"BUY": "trade", "SELL": "trade", "REINVEST": "trade",
+            "DEPOSIT": "deposit", "WITHDRAWAL": "withdrawal",
+            "DIVIDEND": "dividend", "INTEREST": "interest", "FEE": "fee"}
+    flows = []
+    seen = set()
+    for p in paths:
+        occ = defaultdict(int)
+        with open(p, newline="", encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                raw = (r.get("Amount") or "").strip()
+                if not raw:                          # 無 Amount（如純 split/journal）→ 不影響現金
+                    continue
+                try:
+                    amt = float(raw)
+                    d = dt.date.fromisoformat((r.get("TradeDate") or "").strip())
+                except (ValueError, KeyError):
+                    continue
+                if abs(amt) < 1e-9:
+                    continue
+                act = (r.get("Action") or "").strip().upper()
+                rectype = (r.get("RecordType") or "").strip().upper()
+                # kind：先看 Action，退而看 RecordType（有些券商現金流只填 RecordType）
+                kind = KIND.get(act) or (rectype.lower() if rectype in
+                       ("DEPOSIT", "WITHDRAWAL", "DIVIDEND", "INTEREST", "FEE") else "other")
+                cur = (r.get("Currency") or "USD").strip().upper() or "USD"
+                key = (d, round(amt, 2), kind, cur)
+                k = occ[key]; occ[key] += 1          # 同檔同鍵多筆（如同日兩筆股息）各給序號，不互殺
+                rec = key + (k,)
+                if rec in seen:                       # 跨檔重疊 = 同序號重複，跳過
+                    continue
+                seen.add(rec)
+                flows.append(dict(date=d, amount=amt, kind=kind, currency=cur))
+    flows.sort(key=lambda x: x["date"])
+    return flows
+
+
+def cash_position(cash_flows, held_mv, anchor=None, prev_end=None):
+    """帳戶現金地基（#171 PR-1）。
+    - cash_balance：有現金餘額錨點 → 錨點 + 其後現金流（正確，對付 is_complete=False 的不完整 CSV）；
+      無錨點 → 全期 Σamount 並標不可信（假設開戶現金 0，CSV 漏一筆 deposit 就偏，honesty_ledger 揭露）。
+    - cash_weight = 現金 /（持倉市值 + 現金）；分母 ≤0 → None。
+    - recent_net_deposit = 本期（prev_end 後）外部淨流入（deposit − withdrawal），給「這筆錢該不該部署」判讀。
+    幣別：假設 cash_flows.amount 已在聚合幣別（混幣換算由 main 接線層負責）。"""
+    if isinstance(prev_end, str):
+        prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
+    a_date = None
+    if anchor and anchor.get("as_of") and anchor.get("amount") is not None:
+        a_date = anchor["as_of"]
+        if isinstance(a_date, str):
+            a_date = dt.date.fromisoformat(a_date)
+        balance = float(anchor["amount"]) + sum(cf["amount"] for cf in cash_flows if cf["date"] > a_date)
+        source, reliable = "anchored", True
+    else:
+        balance = sum(cf["amount"] for cf in cash_flows)
+        source, reliable = "csv_sum", False
+    denom = held_mv + balance
+    weight = balance / denom if denom > 1e-9 else None
+    recent = sum(cf["amount"] for cf in cash_flows
+                 if cf["kind"] in ("deposit", "withdrawal")
+                 and (prev_end is None or cf["date"] > prev_end))
+    return dict(balance=round(balance, 2), weight=weight, source=source,
+                reliable=reliable, recent_net_deposit=round(recent, 2))
+
+
 def _load_skip_note():
     """#50:把 load() 的靜默丟棄計數組成人話短語(進 meta 行)。全零 → 空字串(不吵)。"""
     s = _LOAD_STATS
