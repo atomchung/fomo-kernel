@@ -154,6 +154,81 @@ def load(paths):
     return rows
 
 
+def load_cash_flows(paths):
+    """讀出所有影響現金餘額的 row（含買賣 + deposit/withdrawal/dividend/interest/fee）。
+    load() 只留 BUY/SELL 給行為分析；現金餘額要的是**每一筆現金增減**，靠 Amount 欄
+    （券商流水裡 Amount = 現金帳戶實際變動：買=負、賣/存/息=正、費=負，已含手續費淨額）。
+    #171 PR-1（B 路線帳戶級現金地基）。去重骨架同 load()（跨檔重疊期同一筆只算一次）。
+    回傳 [{date, amount, kind, currency}]，依日期排序。"""
+    KIND = {"BUY": "trade", "SELL": "trade", "REINVEST": "trade",
+            "DEPOSIT": "deposit", "WITHDRAWAL": "withdrawal",
+            "DIVIDEND": "dividend", "INTEREST": "interest", "FEE": "fee"}
+    flows = []
+    seen = set()
+    for p in paths:
+        occ = defaultdict(int)
+        with open(p, newline="", encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                raw = (r.get("Amount") or "").strip()
+                if not raw:                          # 無 Amount（如純 split/journal）→ 不影響現金
+                    continue
+                try:
+                    amt = float(raw)
+                    d = dt.date.fromisoformat((r.get("TradeDate") or "").strip())
+                except (ValueError, KeyError):
+                    continue
+                if abs(amt) < 1e-9:
+                    continue
+                act = (r.get("Action") or "").strip().upper()
+                rectype = (r.get("RecordType") or "").strip().upper()
+                # kind：先看 Action，退而看 RecordType（有些券商現金流只填 RecordType）
+                kind = KIND.get(act) or (rectype.lower() if rectype in
+                       ("DEPOSIT", "WITHDRAWAL", "DIVIDEND", "INTEREST", "FEE") else "other")
+                cur = (r.get("Currency") or "USD").strip().upper() or "USD"
+                key = (d, round(amt, 2), kind, cur)
+                k = occ[key]; occ[key] += 1          # 同檔同鍵多筆（如同日兩筆股息）各給序號，不互殺
+                rec = key + (k,)
+                if rec in seen:                       # 跨檔重疊 = 同序號重複，跳過
+                    continue
+                seen.add(rec)
+                flows.append(dict(date=d, amount=amt, kind=kind, currency=cur))
+    flows.sort(key=lambda x: x["date"])
+    return flows
+
+
+def cash_position(cash_flows, held_mv, anchor=None, prev_end=None):
+    """帳戶現金地基（#171 PR-1）。
+    - cash_balance：有現金餘額錨點 → 錨點 + 其後現金流（正確，對付 is_complete=False 的不完整 CSV）；
+      無錨點 → 全期 Σamount 並標不可信（假設開戶現金 0，CSV 漏一筆 deposit 就偏，honesty_ledger 揭露）。
+    - cash_weight = 現金 /（持倉市值 + 現金）；分母 ≤0 → None。
+    - recent_net_deposit = 本期（prev_end 後）外部淨流入（deposit − withdrawal），給「這筆錢該不該部署」判讀。
+    幣別：假設 cash_flows.amount 已在聚合幣別（混幣換算由 main 接線層負責）。"""
+    if isinstance(prev_end, str):
+        prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
+    a_date = None
+    if anchor and anchor.get("as_of") and anchor.get("amount") is not None:
+        a_date = anchor["as_of"]
+        if isinstance(a_date, str):
+            a_date = dt.date.fromisoformat(a_date)
+        balance = float(anchor["amount"]) + sum(cf["amount"] for cf in cash_flows if cf["date"] > a_date)
+        source, reliable = "anchored", True
+    else:
+        balance = sum(cf["amount"] for cf in cash_flows)
+        source, reliable = "csv_sum", False
+    denom = held_mv + balance
+    # 無錨點的負現金 = csv_sum 假設破裂（買入為主、入金沒記全），weight 是垃圾 → 不報；denom≤0 亦不報。
+    # 有錨點的負現金 = 真融資（margin debit），weight 負有意義（槓桿曝險），照報。
+    if denom <= 1e-9 or (not reliable and balance < 0):
+        weight = None
+    else:
+        weight = balance / denom
+    recent = sum(cf["amount"] for cf in cash_flows
+                 if cf["kind"] in ("deposit", "withdrawal")
+                 and (prev_end is None or cf["date"] > prev_end))
+    return dict(balance=round(balance, 2), weight=weight, source=source,
+                reliable=reliable, recent_net_deposit=round(recent, 2))
+
+
 def _load_skip_note():
     """#50:把 load() 的靜默丟棄計數組成人話短語(進 meta 行)。全零 → 空字串(不吵)。"""
     s = _LOAD_STATS
@@ -1565,7 +1640,7 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 
 
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
-                avg_down=None, last_px=None, prev_end=None):
+                avg_down=None, last_px=None, prev_end=None, cash=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1615,7 +1690,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         mk, mv = next(((k, v) for kw, (k, v) in RULE_METRIC.items() if kw in rule), (None, None))
         commitment = {"rule": rule, "metric_key": mk, "metric_value": mv, "goal": "down"}
     # holdings snapshot（目標3 持倉變化）：per-ticker 絕對值 + position cycle（給 thesis 綁 cycle）。
-    # 只存 shares/cost/avg_cost（確定性）；不存 weight（沒現金+即時價算不準，雙審 gemini#4）。
+    # 只存 shares/cost/avg_cost（確定性）；per-position weight 仍不存（需即時價，跨期不穩）。
+    # 帳戶級 cash_weight 改存頂層 cash 欄位（#171 PR-1：有現金錨點才可信，取代原「沒現金算不準」）。
     cyc = current_cycles(rows)                              # 雙審修：與 positions() 同邏輯（不跌負）+ cycle 序號
     holdings = {t: {"shares": round(sh, 4), "cost": round(c, 2),
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
@@ -1661,6 +1737,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "is_complete": False,                           # CSV 無法自證完整（雙審 codex#3）：不宣稱完整持倉真相
             "positions": holdings,
         },
+        "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
         "problem_events": p_events,                         # #137 問題帳:本次規約出的事件(SKILL 收尾 append 進 problems.jsonl)
         "problem_opportunities": p_opps,                    # 各 key 本期有無機會犯(規矩對位的 Opportunity Check)
     }
@@ -1882,6 +1959,21 @@ def main():
             else ("多幣別組合(單一市場)的 α/β 按該市場大盤計" if mixed_ccy else None)),
     }
 
+    # 帳戶現金地基（#171 PR-1）：現金流 + 現金餘額錨點 → cash_position。
+    # held_mv = 持倉市值（聚合幣別，無現價用成本近似，同 dim_diversify）= cash_weight 分母。
+    import json
+    cash_flows = load_cash_flows(paths)
+    if mixed_ccy:                                        # 混幣：現金流各幣別 → USD（對齊聚合視圖）
+        cash_flows = [dict(cf, amount=cf["amount"] * fx.get(cf["currency"], 1.0)) for cf in cash_flows]
+    held_mv = sum((sh * lastpx_u[t]) if lastpx_u.get(t) else c for t, (sh, c) in held_u.items())
+    _ca = os.environ.get("TR_CASH")                     # SKILL Step 0 抓對帳單現金餘額 → JSON {as_of, amount, currency}
+    try:
+        cash_anchor = json.loads(_ca) if _ca else None
+    except (ValueError, TypeError):
+        cash_anchor = None
+    cash_data = cash_position(cash_flows, held_mv, anchor=cash_anchor,
+                              prev_end=os.environ.get("TR_PREV_END") or None)
+
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""
     split_note = f"｜分割調整: {n_adj} 筆" if n_adj else ""
     # JSON 模式(SKILL Step 3 走這條):stdout 純 JSON 給 Claude 寫敘事卡;meta 走 stderr 不污染
@@ -1950,7 +2042,8 @@ def main():
         state = build_state(rows, rts, held, dims, overview, ab, rx,
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
-                            prev_end=os.environ.get("TR_PREV_END") or None)
+                            prev_end=os.environ.get("TR_PREV_END") or None,
+                            cash=cash_data)
         # TR_PREV_END=上次 review 的 date_end(SKILL 對帳模式傳入)→ behavior 型問題事件
         # 只取其後的新交易(weekly 增量);不設 = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

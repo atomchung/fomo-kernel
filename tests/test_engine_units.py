@@ -764,6 +764,93 @@ def test_fifo_held_full_exit_and_aggregation():
     assert _approx(held_avg["X"][0], sh) and _approx(held_avg["X"][1], cost)  # 全賣後重建 → 兩套一致
 
 
+# ─────────────────── 現金地基(#171 PR-1:B 路線帳戶級)───────────────────
+# load() 只留 BUY/SELL 給行為分析;現金餘額要每一筆現金增減(Amount 欄)。這組鎖 load_cash_flows /
+# cash_position 的核心契約:讀全 Amount 列 + kind 分類、錨點 vs csv_sum、weight 分母、入金過濾。
+
+_CASH_CSV = (
+    "Symbol,Quantity,Price,Action,TradeDate,Amount,RecordType\n"
+    "NVDA,10,100.00,BUY,2024-01-10,-1000.00,Trade\n"
+    "NVDA,5,120.00,SELL,2024-02-10,600.00,Trade\n"
+    ",,,Deposit,2024-01-05,5000.00,Other\n"
+    "KO,,,Dividend,2024-01-20,30.00,Dividend\n"
+    ",,,Interest,2024-01-25,-12.50,Interest\n"
+    ",,,Fee,2024-01-28,-5.00,Fee\n"
+    ",,,Withdrawal,2024-02-15,-2000.00,Other\n"
+)
+
+
+def test_cash_flows_reads_all_amount_rows_with_kind():
+    """load_cash_flows 讀所有 Amount≠0 的列(含買賣+存提息費股利),kind 分類正確——
+    對比 load() 只留 BUY/SELL:現金地基要的是每一筆現金增減。"""
+    p = _write_csv(_CASH_CSV)
+    flows = tr.load_cash_flows([p])
+    os.unlink(p)
+    assert len(flows) == 7, f"7 筆現金流(含買賣),實得 {len(flows)}"
+    kinds = sorted(f["kind"] for f in flows)
+    assert kinds == ["deposit", "dividend", "fee", "interest", "trade", "trade", "withdrawal"], kinds
+    assert _approx(sum(f["amount"] for f in flows), 2612.50), sum(f["amount"] for f in flows)
+
+
+def test_cash_flows_dedup_cross_file_overlap():
+    """跨檔重疊期的同一筆現金流只算一次(去重骨架同 load());同檔同鍵多筆各自保留。"""
+    p1 = _write_csv(_CASH_CSV)
+    p2 = _write_csv(_CASH_CSV)          # 完全重疊的第二份 → 不該讓現金翻倍
+    flows = tr.load_cash_flows([p1, p2])
+    os.unlink(p1); os.unlink(p2)
+    assert len(flows) == 7, f"跨檔重疊去重後仍 7 筆,實得 {len(flows)}"
+
+
+def test_cash_position_unanchored_flags_unreliable():
+    """無現金餘額錨點 → csv_sum(假設開戶現金 0)+ reliable=False(CSV 漏 deposit 就偏,honesty 揭露)。"""
+    p = _write_csv(_CASH_CSV); flows = tr.load_cash_flows([p]); os.unlink(p)
+    cp = tr.cash_position(flows, held_mv=10000.0)
+    assert cp["source"] == "csv_sum" and cp["reliable"] is False
+    assert _approx(cp["balance"], 2612.50), cp["balance"]
+
+
+def test_cash_position_anchored_uses_anchor_plus_after():
+    """有錨點 → balance = 錨點餘額 + 錨點日之後的現金流(對付不完整 CSV);reliable=True,weight 正確。"""
+    p = _write_csv(_CASH_CSV); flows = tr.load_cash_flows([p]); os.unlink(p)
+    after = sum(f["amount"] for f in flows if f["date"] > dt.date(2024, 1, 15))
+    cp = tr.cash_position(flows, held_mv=10000.0,
+                          anchor={"as_of": "2024-01-15", "amount": 5000.0})
+    assert cp["source"] == "anchored" and cp["reliable"] is True
+    assert _approx(cp["balance"], 5000.0 + after), (cp["balance"], 5000.0 + after)
+    assert _approx(cp["weight"], cp["balance"] / (10000.0 + cp["balance"])), cp["weight"]
+
+
+def test_cash_position_recent_net_deposit_filters_by_prev_end():
+    """recent_net_deposit = prev_end 後的外部淨流入(deposit−withdrawal;息費股利不是外部本金);
+    prev_end 前的入金不算(給『這筆新入金該不該部署』判讀,只看本期)。"""
+    p = _write_csv(_CASH_CSV); flows = tr.load_cash_flows([p]); os.unlink(p)
+    cp = tr.cash_position(flows, held_mv=10000.0, prev_end="2024-01-15")
+    assert _approx(cp["recent_net_deposit"], -2000.0), cp["recent_net_deposit"]   # 1/5 存款不算,2/15 提款算
+    cp2 = tr.cash_position(flows, held_mv=10000.0)
+    assert _approx(cp2["recent_net_deposit"], 3000.0), cp2["recent_net_deposit"]  # 全期 5000−2000
+
+
+def test_cash_position_none_weight_when_denom_nonpositive():
+    """買入為主 + 無錨點 → csv_sum 可能為負(入金未完整記);持倉市值+現金≤0 → weight=None 降級,不誤報。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,Amount,RecordType\n"
+        "NVDA,100,100.00,BUY,2024-01-10,-10000.00,Trade\n")
+    flows = tr.load_cash_flows([p]); os.unlink(p)
+    cp = tr.cash_position(flows, held_mv=5000.0)          # balance=-10000,denom=5000-10000<0
+    assert cp["weight"] is None, cp["weight"]
+    assert cp["reliable"] is False
+
+
+def test_cash_position_none_weight_when_unanchored_negative():
+    """無錨點 + 負現金(買入為主、入金未記全 → csv_sum 假設破裂):即使 denom>0,weight 也是垃圾 → None。
+    對比:有錨點的負現金 = 真融資(margin),weight 負有意義,照報(不誤殺真槓桿)。"""
+    flows = [dict(date=dt.date(2024, 1, 10), amount=-30000.0, kind="trade", currency="USD")]
+    cp = tr.cash_position(flows, held_mv=50000.0)         # 無錨點,balance=-30000,denom=20000>0
+    assert cp["weight"] is None, cp["weight"]             # 負現金無錨點 → 不報(不是 -1.5 之類垃圾)
+    cp2 = tr.cash_position(flows, held_mv=50000.0, anchor={"as_of": "2024-01-01", "amount": -5000.0})
+    assert cp2["weight"] is not None and cp2["weight"] < 0, cp2["weight"]  # 有錨點負現金=融資,照報負值
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():
