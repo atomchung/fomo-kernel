@@ -475,6 +475,224 @@ def test_thesis_q_generated_for_suspect_positions():
     assert all(d["thesis_q"] is None for d in td3), "疑似定投不問 thesis(別審問)"
 
 
+# ─────────────── H. account_perf(#171 B 路線):daily 鏈式 TWR / cash drag / 帳戶 IRR ───────────────
+# 全合成、確定性:V_t = 持倉(復權價語意)+ 現金(錨點回滾);外部流 = deposit/withdrawal/other。
+
+import perf as pf  # noqa: E402  # 同目錄 engine 已在 sys.path
+
+
+def _lin(a, b):
+    """300 天線性價格路徑 a → b(確定性)。"""
+    n = len(IDX)
+    return [a + (b - a) * i / (n - 1) for i in range(n)]
+
+
+def _row(i, ticker="X", side="buy", qty=10.0, px=100.0):
+    return dict(date=IDX[i].date(), ticker=ticker, side=side, qty=qty, price=px)
+
+
+def _cf(i, amount, kind, ccy="USD"):
+    return dict(date=IDX[i].date(), amount=float(amount), kind=kind, currency=ccy)
+
+
+def _cashd(source, by):
+    """cash_position 輸出的最小替身(account_perf 只讀 source / by_currency)。"""
+    return {"source": source, "reliable": source == "anchored", "by_currency": by}
+
+
+def _anch(balance, reliable=True):
+    return {"balance": float(balance), "source": "anchored" if reliable else "csv_sum",
+            "reliable": reliable}
+
+
+def test_acct_all_in_zero_cash_drag_zero():
+    """全倉零現金:acct == hold,drag 恆等於 0(鏈式歸因的恆等錨)。IRR ≈ TWR 年化。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert abs(a["acct_twr"] - 0.5) < 1e-9, a["acct_twr"]
+    assert abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+    assert abs(a["cash_drag"]) < 1e-12, a["cash_drag"]
+    assert a["avg_cash_weight"] == 0.0, a["avg_cash_weight"]
+    days = (IDX[-1].date() - IDX[0].date()).days
+    expect_irr = 1.5 ** (365.0 / days) - 1
+    assert a["irr_annual"] is not None and abs(a["irr_annual"] - expect_irr) < 1e-4, \
+        (a["irr_annual"], expect_irr)
+
+
+def test_acct_deposit_does_not_distort_twr():
+    """平價路徑 + 中途大額入金:TWR/IRR 全 0(BOD 剝離;錢進來≠賺到)。"""
+    px = _px_frame({"X": [100.0] * len(IDX)})
+    a = pf.account_perf([_row(0)], px,
+                        [_cf(0, -1000, "trade"), _cf(100, 5000, "deposit")],
+                        _cashd("anchored", {"USD": _anch(5000)}), {"X": "USD"})
+    assert abs(a["acct_twr"]) < 1e-9, a["acct_twr"]
+    assert abs(a["hold_twr"]) < 1e-9, a["hold_twr"]
+    assert a["irr_annual"] is not None and abs(a["irr_annual"]) < 1e-6, a["irr_annual"]
+
+
+def test_acct_other_kind_is_external_flow():
+    """拍板四:kind=other(ACH/Transfer)計入外部流——漏計會把入金當「賺的」,此測殺那個突變。"""
+    px = _px_frame({"X": [100.0] * len(IDX)})
+    a = pf.account_perf([_row(0)], px,
+                        [_cf(0, -1000, "trade"), _cf(100, 5000, "other")],
+                        _cashd("anchored", {"USD": _anch(5000)}), {"X": "USD"})
+    assert abs(a["acct_twr"]) < 1e-9, f"other 沒進外部流,入金被算成報酬:{a['acct_twr']}"
+    assert a["irr_annual"] is not None and abs(a["irr_annual"]) < 1e-6, a["irr_annual"]
+
+
+def test_acct_half_cash_dilutes_and_dollar_approx():
+    """持倉 +50% 但一半錢躺現金:acct = +25%,drag = −25pp,機會成本 ≈ 平均現金 × hold_twr。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(1000)}), {"X": "USD"})
+    assert abs(a["acct_twr"] - 0.25) < 0.02, a["acct_twr"]      # 現金權重逐日漂移,約 25%
+    assert a["cash_drag"] < -0.20, a["cash_drag"]
+    assert abs(a["drag_dollar_approx"] - 1000 * a["hold_twr"]) < 1.0, a["drag_dollar_approx"]
+    assert 0.35 < a["avg_cash_weight"] < 0.5, a["avg_cash_weight"]  # 1000/2000 起、1000/2500 終
+
+
+def test_acct_dividend_not_double_counted():
+    """復權價語意:價已含息(平線)+ 股息現金入帳 → 沖銷後 acct/hold 都 = 0(不沖會虛 +5%)。"""
+    px = _px_frame({"X": [100.0] * len(IDX)})
+    a = pf.account_perf([_row(0)], px,
+                        [_cf(0, -1000, "trade"), _cf(150, 50, "dividend")],
+                        _cashd("anchored", {"USD": _anch(50)}), {"X": "USD"})
+    assert abs(a["acct_twr"]) < 1e-9, f"股息被雙計:{a['acct_twr']}"
+    assert abs(a["hold_twr"]) < 1e-9, a["hold_twr"]
+
+
+def test_acct_exit_then_idle_covers_crash():
+    """出場後空倉期照走(#164 縫 A 在帳戶級閉合):出場後股價崩,acct 鎖住出場報酬。"""
+    path = ([100 + 20 * i / 100 for i in range(101)] +          # day 0–100:100 → 120
+            [120 - 60 * i / 199 for i in range(1, 200)])        # day 101–299:崩到 60
+    px = _px_frame({"X": path})
+    a = pf.account_perf([_row(0), _row(100, side="sell", qty=10.0, px=120.0)], px,
+                        [_cf(0, -1000, "trade"), _cf(100, 1200, "trade")],
+                        _cashd("anchored", {"USD": _anch(1200)}), {"X": "USD"})
+    assert abs(a["acct_twr"] - 0.2) < 1e-6, a["acct_twr"]       # 躲掉的跌不會回頭咬
+    assert abs(a["hold_twr"] - 0.2) < 1e-6, a["hold_twr"]       # 持倉柱只涵蓋持倉日
+    assert abs(a["cash_drag"]) < 1e-6, a["cash_drag"]
+
+
+def test_acct_csv_sum_gated_hold_only():
+    """三態 gate:csv_sum(全無錨點)→ 帳戶柱不出、持倉柱照出、note 指路 TR_CASH。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("csv_sum", {"USD": _anch(-1000, reliable=False)}), {"X": "USD"})
+    assert a["acct_twr"] is None and a["irr_annual"] is None and a["cash_drag"] is None, a
+    assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+    assert a["note"] and "csv_sum" in a["note"], a["note"]
+
+
+def test_acct_partial_broken_rollback_gated():
+    """partial 但盲算幣別回滾出負現金 = 假設破裂 → 帳戶柱降 None(不出污染數字)。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    flows = [_cf(0, -1000, "trade"), _cf(50, -10000, "withdrawal", ccy="TWD")]
+    cd = {"source": "partial", "reliable": False,
+          "by_currency": {"USD": _anch(0), "TWD": _anch(-10000, reliable=False)}}
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
+    assert a["acct_twr"] is None and "破裂" in (a["note"] or ""), a
+    assert a["hold_twr"] is not None, a["hold_twr"]
+
+
+def test_acct_partial_ok_discloses_unanchored():
+    """partial 且盲算桶不負 → 帳戶柱照出,basis.unanchored 記缺錨點幣別(honesty 揭露源)。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    flows = [_cf(0, -1000, "trade"), _cf(50, 10000, "deposit", ccy="TWD")]
+    cd = {"source": "partial", "reliable": False,
+          "by_currency": {"USD": _anch(0), "TWD": _anch(10000, reliable=False)}}
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
+    assert a["acct_twr"] is not None, a
+    assert a["basis"]["unanchored"] == ["TWD"], a["basis"]
+
+
+def test_acct_fx_daily_series_captures_currency_gain():
+    """混幣拍板默認:每日 fx 序列 → TWD 現金升值計入帳戶報酬(匯損益不歸零)。"""
+    px = _px_frame({"X": [100.0] * len(IDX)})
+    fxs = pd.DataFrame({"TWD": _lin(0.030, 0.033)}, index=IDX)
+    a = pf.account_perf([_row(0)], px, [_cf(0, -100, "trade")],
+                        _cashd("anchored", {"USD": _anch(0), "TWD": _anch(300000)}),
+                        {"X": "USD"}, fx_spot={"TWD": 0.033, "USD": 1.0}, fx_series=fxs)
+    assert a["acct_twr"] > 0.05, a["acct_twr"]                  # 9000 → 9900 純匯升
+    assert a["basis"]["fx_approx"] is False, a["basis"]
+    assert a["cash_drag"] > 0.05, a["cash_drag"]                # 現金桶貢獻為正(drag 翻號語意)
+
+
+def test_acct_fx_series_missing_falls_back_spot_flagged():
+    """fx 序列缺 → 退回即期常數(匯損益歸零的近似)並標 fx_approx(honesty 揭露源)。"""
+    px = _px_frame({"X": [100.0] * len(IDX)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -100, "trade")],
+                        _cashd("anchored", {"USD": _anch(0), "TWD": _anch(300000)}),
+                        {"X": "USD"}, fx_spot={"TWD": 0.033, "USD": 1.0}, fx_series=None)
+    assert a["acct_twr"] is not None and abs(a["acct_twr"]) < 1e-9, a["acct_twr"]
+    assert a["basis"]["fx_approx"] is True, a["basis"]
+
+
+def test_acct_irr_short_window_gated():
+    """窗 <90 天:年化 IRR 無意義 → None + note(同 #164 gate);TWR(全期,非年化)照出。"""
+    sub = pd.DataFrame({"X": [100.0 + i for i in range(40)]}, index=IDX[:40])
+    a = pf.account_perf([_row(0)], sub, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["irr_annual"] is None and "年化" in (a["note"] or ""), a
+    assert a["acct_twr"] is not None, a
+
+
+def test_acct_negative_equity_days_skipped_not_chained():
+    """深 margin 淨值翻負的日子:因子 ≤0 不入鏈 + skipped 計數(TWR 無法穿越破產點)——
+    硬乘會讓整條鏈翻號(×負數)且永久失真。"""
+    px = _px_frame({"X": [100.0] * 10 + [5.0] * (len(IDX) - 10)})   # day10 崩 95%
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(-950)}), {"X": "USD"})  # 真融資 margin
+    assert a["basis"]["skipped_days"] > 0, a["basis"]
+    assert a["note"] and "未入鏈" in a["note"], a["note"]
+    assert a["acct_twr"] is not None and abs(a["acct_twr"]) < 0.01, a["acct_twr"]  # 崩前平盤段,不被負因子翻爆
+
+
+def test_acct_offline_fail_closed():
+    """px=None(離線)→ {note} 單鍵 fail-closed,不硬湊(同 pnl_curve 慣例)。"""
+    a = pf.account_perf([_row(0)], None, [], _cashd("anchored", {"USD": _anch(0)}), {})
+    assert set(a.keys()) == {"note"} and a["note"], a
+
+
+def test_acct_unpriced_ticker_carried_at_cost():
+    """抓不到價的檔(限流/下市)以成本平線入桶:零報酬、不撕裂桶會計——
+    整檔剔除會讓「錢出了現金桶、資產憑空消失」→ 假 −100% + V 被打凹(第三輪 sweep 實測)。"""
+    px = _px_frame({"X": _lin(100, 150)})               # Y 不在 px → at-cost
+    rows = [_row(0), _row(10, ticker="Y", qty=5.0, px=200.0)]
+    flows = [_cf(0, -1000, "trade"), _cf(10, -1000, "trade")]
+    a = pf.account_perf(rows, px, flows,
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD", "Y": "USD"})
+    assert a["basis"]["at_cost_tickers"] == ["Y"], a["basis"]
+    assert a["hold_twr"] is not None and a["hold_twr"] > 0.2, a["hold_twr"]   # X 的 +50% 沒被 Y 拖成 −100%
+    # 平線=零報酬:Y 的 1000 成本在 V 裡但不產生報酬 → hold 介於 X 純報酬與 0 之間
+    assert a["hold_twr"] < 0.5, a["hold_twr"]
+    # V0 = X 1000 + 現金 1000(day10 買 Y 的錢回滾後 day0–9 還在現金桶)→ V_end = 1500 + Y 平線 1000
+    assert abs(a["acct_twr"] - 0.25) < 1e-9, a["acct_twr"]
+    assert abs(a["cash_drag"]) < 0.02, a["cash_drag"]     # 僅前 10 天的閒置現金,效應微小不失控
+
+    # 變體:Z 在 px.columns 但首個有效價(day20)晚於首筆交易(day10)→ 同樣 at-cost
+    # (yfinance 限流常見形態:列在、頭半段 NaN;買入落在 NaN 段=估不出,整檔平線)
+    pz = _px_frame({"X": _lin(100, 150),
+                    "Z": [float("nan")] * 20 + [200.0] * (len(IDX) - 20)})
+    az = pf.account_perf([_row(0), _row(10, ticker="Z", qty=5.0, px=200.0)], pz,
+                         [_cf(0, -1000, "trade"), _cf(10, -1000, "trade")],
+                         _cashd("anchored", {"USD": _anch(0)}), {"X": "USD", "Z": "USD"})
+    assert az["basis"]["at_cost_tickers"] == ["Z"], az["basis"]
+    assert abs(az["acct_twr"] - 0.25) < 1e-9, az["acct_twr"]
+
+
+def test_acct_no_trade_footprint_gated():
+    """CSV 缺 Amount(交易無現金足跡)→ 現金史回滾必錯,帳戶柱誠實不出;hold 柱照出
+    (它只吃 rows + 價格)。錨點在也救不了——這正是 ai_holder sweep 抓到的 8663% 假暴漲根因。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(100, 5000, "deposit")],
+                        _cashd("anchored", {"USD": _anch(4000)}), {"X": "USD"})
+    assert a["acct_twr"] is None and a["irr_annual"] is None, a
+    assert "Amount" in (a["note"] or ""), a["note"]
+    assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+
+
 # ─────────────────── 標準庫 runner(與 test_engine_units 一致)───────────────────
 
 def _main():

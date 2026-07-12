@@ -438,6 +438,39 @@ def fetch_fx(currencies):
     return fx, err
 
 
+def fetch_fx_series(currencies, start):
+    """非 USD 幣別的每日匯率序列('{CUR}=X' → usd_per_unit DataFrame),帳戶級估值用
+    (#171 拍板默認:混幣 V_t 用每日 fx、含匯率損益)。離線/缺 →(None, err),
+    呼叫端退回即期 fx 常數近似(perf.basis.fx_approx 會標記、honesty 揭露)。"""
+    todo = sorted({c for c in currencies if c != "USD"})
+    if not todo:
+        return None, None
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None, "yfinance 未安裝(fx 序列缺,帳戶級估值退回即期近似)"
+    try:
+        data = yf.download([f"{c}=X" for c in todo], start=start,
+                           progress=False, auto_adjust=True)["Close"]
+        if data is None or data.empty:
+            return None, "fx 序列無資料"
+        if data.ndim == 1:
+            data = data.to_frame(name=f"{todo[0]}=X")
+        cols = {}
+        for c in todo:
+            col = f"{c}=X"
+            if col in data.columns:
+                s = data[col].dropna()
+                if len(s):
+                    cols[c] = 1.0 / s                 # '{CUR}=X' 報 1 USD 兌 CUR → 反轉成 CUR→USD
+        if not cols:
+            return None, "fx 序列全缺"
+        import pandas as pd
+        return pd.DataFrame(cols), None
+    except Exception as e:
+        return None, f"fx 序列下載失敗: {e}"
+
+
 def usd_view(rts, held, last_px, cur_map, fx):
     """聚合前置換算視圖:把 rts 金額欄 / held 成本 / last_px 換到 USD,
     讓 dim_size / dim_diversify / overview_stats / payoff_attribution 零改動地在共同幣別上聚合。
@@ -1408,7 +1441,7 @@ def _pick_headline(dims):
     ranked = _rank_holes(dims)
     return ranked[0] if ranked else None
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None, cash=None):
+def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None, cash=None, acct=None):
     """把復盤卡渲染成一張 Rich Panel（cyan 邊框，ANSI color，中英對齊）。
     架構：一張外框大 Panel，內部按段用 Rule(───) 分節；五維行為診斷用 bar chart 取代內部加權公式。"""
     if not _HAS_RICH:
@@ -1467,6 +1500,18 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
             if rnd:                                            # 本期外部淨流入/出:入金判讀鉤子(該不該部署)
                 ov.append(f"  本期淨{'入' if rnd > 0 else '提'}金 ")
                 ov.append(f"${abs(rnd):,.0f}", style="bold")
+        # 帳戶級績效(#171 B 路線):gate 過了(現金錨點可信)才有 acct_twr;講法中性報「現金效應」,
+        # 正負翻譯(稀釋 vs 擋跌)是 Claude 卡的事(card-spec),人話卡只給數字。
+        if acct and acct.get("acct_twr") is not None:
+            ov.append("\n帳戶級(含現金) ")
+            ov.append_text(_pct(acct["acct_twr"], bold=True))
+            if acct.get("cash_drag") is not None:
+                ov.append(f"   現金效應 {acct['cash_drag']*100:+.1f}pp")
+                if acct.get("avg_cash_weight") is not None:
+                    ov.append(f"（均 {acct['avg_cash_weight']*100:.0f}% 現金）", style="dim")
+            if acct.get("irr_annual") is not None:
+                ov.append("   帳戶年化 IRR ")
+                ov.append_text(_pct(acct["irr_annual"], bold=True))
         parts.append(Padding(ov, (0, 1)))
 
     # 〔做得最好 / 最差的一筆〕
@@ -1796,7 +1841,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
-def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None):
+def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None, acct_perf=None):
     """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
 
     只收『觸發的』揭露項 → 空 list = 這張卡沒有誠實缺口。判定條件對齊預設人話卡的
@@ -1855,11 +1900,25 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None)
                   "status": "partial" if cash.get("source") == "partial" else "no_anchor",
                   "data": {"balance": cash.get("balance"), "source": cash.get("source"),
                            "unanchored_currencies": missing}})
+    # 帳戶級績效地基有洞(#171):帳戶 TWR 有出數、但算在部分錨點 / 缺價檔成本平線 / fx 即期
+    # 近似之上 → 數字可用但地基要交代(哪個幣別盲算、哪些檔平線零報酬、匯損益是近似)。
+    # 沒出數(gate 掉)不觸發——cash_reliability / note 已各自說明,不疊床架屋。
+    if isinstance(acct_perf, dict) and acct_perf.get("acct_twr") is not None:
+        b = acct_perf.get("basis") or {}
+        if b.get("unanchored") or b.get("at_cost_tickers") or b.get("fx_approx"):
+            status = ("partial_anchor" if b.get("unanchored") else
+                      "partial_coverage" if b.get("at_cost_tickers") else "fx_approx")
+            L.append({"key": "acct_perf_basis", "status": status,
+                      "data": {"unanchored": b.get("unanchored"),
+                               "at_cost_tickers": b.get("at_cost_tickers"),
+                               "fx_approx": b.get("fx_approx"),
+                               "cash_source": b.get("cash_source")}})
     return L
 
 
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                    ab, pa, master, data_integrity=None, currency_meta=None, cash=None):
+                    ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
+                    acct_perf=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1922,7 +1981,8 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
         "currency_meta": currency_meta,                     # #51/#129 PR-2a:聚合幣別/fx/分幣桶;None=單幣 USD 舊行為
         "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
-        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
+        "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
+        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
     }
 
 # ─────────────────────────── main ───────────────────────────
@@ -2042,6 +2102,16 @@ def main():
                               prev_end=os.environ.get("TR_PREV_END") or None,
                               fx=fx if mixed_ccy else None)
 
+    # 帳戶級績效(#171 B 路線,拍板 2026-07-12 見該 issue comment):daily 鏈式 TWR + cash drag +
+    # 帳戶 IRR。外部流=deposit/withdrawal/other(對帳口徑);可用性繼承 cash reliable 三態;
+    # 混幣用每日 fx 序列(含匯損益),序列抓不到 → 即期常數近似(perf 標 fx_approx、honesty 揭露)。
+    from perf import account_perf
+    fx_series = None
+    if mixed_ccy and px is not None:
+        fx_series, _fxs_err = fetch_fx_series(currencies, start)
+    acct_perf = account_perf(rows, px, cash_flows, cash_data, cur_map,
+                             fx_spot=fx if mixed_ccy else None, fx_series=fx_series)
+
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""
     split_note = f"｜分割調整: {n_adj} 筆" if n_adj else ""
     # JSON 模式(SKILL Step 3 走這條):stdout 純 JSON 給 Claude 寫敘事卡;meta 走 stderr 不污染
@@ -2054,7 +2124,8 @@ def main():
         print(meta, file=sys.stderr)
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                                ab, pa, master, data_integrity=data_integrity,
-                               currency_meta=currency_meta, cash=cash_data)
+                               currency_meta=currency_meta, cash=cash_data,
+                               acct_perf=acct_perf)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
@@ -2064,7 +2135,8 @@ def main():
               f"｜driver map: {n_dm} 檔{dm_skip}{split_note}" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
               f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
-        render(dims, strength, overview, best, worst, wi, trend, rx, tdiag, cash=cash_data)
+        render(dims, strength, overview, best, worst, wi, trend, rx, tdiag, cash=cash_data,
+               acct=acct_perf)
         print_alpha_beta(ab)
         print_payoff_attr(pa)                             # 盈虧比拆解(誰在撐/拖,反事實)
         d_entry = dim_entry_style(rows, px)               # 【風格】維雛形(不進洞排序,先驗訊號)

@@ -37,6 +37,7 @@ TR_JSON_KEYS = {
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
     "cash",                                             # #171 PR-1 呈現層:帳戶現金上卡(balance/weight/source/reliable/recent_net_deposit;None=未提供)
+    "acct_perf",                                        # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note}=沒算)
     "honesty_ledger",                                   # #82:卡面必講的誠實點清單(觸發項聚合;空=無缺口)
 }
 STATE_KEYS = {
@@ -146,7 +147,8 @@ def main():
         ok(all({"key", "status", "data"} <= set(e.keys()) for e in hl),
            "honesty_ledger 每項 = {key,status,data}", repr(hl)[:150])
         HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
-                   "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability"}
+                   "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability",
+                   "acct_perf_basis"}                  # #171 B 路線:帳戶級數字有出、但地基有洞(partial 錨/缺價排除/fx 近似)
         ok(all(e["key"] in HL_KEYS for e in hl),
            "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
         hl_keys = {e["key"] for e in hl}
@@ -167,6 +169,13 @@ def main():
         # mock 淨買入 → balance<0 → weight=None(算不出,不上卡)→ cash_reliability 不觸發(只在有可誤導 weight 時才進 ledger)
         ok(ccash["weight"] is None and "cash_reliability" not in hl_keys,
            "無錨點且淨買入 → weight=None,cash_reliability 不進 ledger(不冒充也不空吠)", repr(sorted(hl_keys)))
+
+        # ── 1b. #171 B 路線:acct_perf 離線 fail-closed({note} 單鍵),honesty 不觸發 ──
+        ap = card["acct_perf"]
+        ok(isinstance(ap, dict) and set(ap.keys()) == {"note"} and ap["note"],
+           "離線 → acct_perf = {note}(fail-closed,不硬湊帳戶級數字)", repr(ap)[:120])
+        ok("acct_perf_basis" not in hl_keys,
+           "帳戶級沒出數 → acct_perf_basis 不進 ledger(觸發式)", repr(sorted(hl_keys)))
 
         # ── 2. state 契約 ──
         st = json.loads(state_path.read_text(encoding="utf-8"))
