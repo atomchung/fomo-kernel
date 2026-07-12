@@ -230,6 +230,17 @@ def cash_position(cash_flows, held_mv, anchor=None, prev_end=None):
                 reliable=reliable, recent_net_deposit=round(recent, 2))
 
 
+def _anchor_to_aggregate(anchor, fx, mixed_ccy):
+    """混幣時把現金餘額錨點換到聚合幣（USD）。
+    錨點是 Step 0 從對帳單抓的帳戶現金，獨立於交易 CSV，原幣別記在 anchor.currency。
+    cash_flows 已在 main 換過；錨點是另一路輸入，不在此補換 → TWD 錨點被當 USD 直接加，
+    cash_weight 放大數十倍。單幣時聚合幣＝原幣，錨點原樣返回（純台股 TWD 錨點對 TWD 現金流自洽）。"""
+    if not (anchor and mixed_ccy and anchor.get("amount") is not None):
+        return anchor
+    cur = (anchor.get("currency") or "USD").strip().upper()
+    return dict(anchor, amount=float(anchor["amount"]) * fx.get(cur, 1.0))
+
+
 def _load_skip_note():
     """#50:把 load() 的靜默丟棄計數組成人話短語(進 meta 行)。全零 → 空字串(不吵)。"""
     s = _LOAD_STATS
@@ -2005,6 +2016,8 @@ def main():
         cash_anchor = json.loads(_ca) if _ca else None
     except (ValueError, TypeError):
         cash_anchor = None
+    # 混幣：錨點餘額也要換到聚合幣（USD），否則 TWD 錨點被當 USD 加 → cash_weight 放大數十倍。
+    cash_anchor = _anchor_to_aggregate(cash_anchor, fx, mixed_ccy)
     cash_data = cash_position(cash_flows, held_mv, anchor=cash_anchor,
                               prev_end=os.environ.get("TR_PREV_END") or None)
 

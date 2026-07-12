@@ -89,6 +89,8 @@ python3 engine/problems.py stats --today <今天> --rules ~/.trade-coach/rules.j
 
 用戶的 CSV 可能來自任何券商、欄位名各異,甚至是一張對帳單截圖。**不要寫死 parser**——你(Claude)直接讀它,轉成標準欄位存暫存 CSV:`Symbol,Action(BUY|SELL),Quantity,Price,TradeDate(YYYY-MM-DD),RecordType(填 Trade)`。這步用的是用戶自己的 Claude 額度,零後端成本,且天生吃得下所有券商——不必為每家券商寫轉換器。
 
+- **🌏 多市場(#173):非美股一律標 `Market`/`Currency` 兩欄(缺 = 美股 USD,向後相容)**。台股尤其要點:`Symbol` 填**完整 yfinance 代號**——上市掛 `.TW`(台積電 `2330.TW`)、上櫃掛 `.TWO`(如 `5483.TWO`);上市/上櫃是**你的世界知識,引擎不查表**。`Market=TW`、`Currency=TWD`,日期若是民國年(`113/07/10`)先換成西元。港股 `.HK`+`HKD`、日股 `.T`+`JPY` 同理。這樣引擎才抓得到台股報價、α/β 才對得上加權指數(`^TWII`)、combined 最大單點依賴/賽道曝險分母才含台股——**否則台積電從引擎世界消失,最大依賴會誤報成某支美股**(這就是 #173 的病灶)。混幣聚合入 USD、缺匯率時明示「近似」都由引擎處理(見 Step 1 `currency_meta`/`honesty_ledger`),你只負責把格式標對。
+
 **📒 帳本雙輸入(snapshot-anchored;#31 修訂版,設計見 `docs/prd-ledger.md`)**:用戶丟的可能不是交易流水,而是**持倉截圖/持倉頁**——多數人拿不出完整交易紀錄,這是常態不是錯誤。兩種輸入進同一本帳(`~/.trade-coach/ledger.jsonl`,append-only、純本機、不外傳):
 
 - **持倉快照** → 你讀圖/表轉成 positions JSON(`[{"ticker","shares","avg_cost"?,"market"?,"currency"?}]`,**均價不知道就留空,別編**),存暫存檔後:
