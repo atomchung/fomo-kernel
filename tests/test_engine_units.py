@@ -841,6 +841,16 @@ def test_cash_position_none_weight_when_denom_nonpositive():
     assert cp["reliable"] is False
 
 
+def test_cash_position_none_weight_when_unanchored_negative():
+    """無錨點 + 負現金(買入為主、入金未記全 → csv_sum 假設破裂):即使 denom>0,weight 也是垃圾 → None。
+    對比:有錨點的負現金 = 真融資(margin),weight 負有意義,照報(不誤殺真槓桿)。"""
+    flows = [dict(date=dt.date(2024, 1, 10), amount=-30000.0, kind="trade", currency="USD")]
+    cp = tr.cash_position(flows, held_mv=50000.0)         # 無錨點,balance=-30000,denom=20000>0
+    assert cp["weight"] is None, cp["weight"]             # 負現金無錨點 → 不報(不是 -1.5 之類垃圾)
+    cp2 = tr.cash_position(flows, held_mv=50000.0, anchor={"as_of": "2024-01-01", "amount": -5000.0})
+    assert cp2["weight"] is not None and cp2["weight"] < 0, cp2["weight"]  # 有錨點負現金=融資,照報負值
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():

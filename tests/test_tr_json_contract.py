@@ -43,6 +43,7 @@ STATE_KEYS = {
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "rule", "insufficient_data", "holdings",
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
+    "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
 # SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾 CLI 另存 metrics_snapshot 全量快照
@@ -182,6 +183,15 @@ def main():
             cid = p["cycle_id"]
             ok(bool(trade_recap.CYCLE_ID_RE.match(cid) or trade_recap.CYCLE_ID_UNKNOWN_RE.match(cid)),
                f"cycle_id 格式合契約({cid})——單一事實源 = engine.CYCLE_ID_RE")
+
+        # ── 2a. #171 現金地基:state.cash 形狀 + 無 TR_CASH 錨點時降級為 csv_sum/不可信 ──
+        cash = st["cash"]
+        ok(isinstance(cash, dict) and set(cash.keys()) ==
+           {"balance", "weight", "source", "reliable", "recent_net_deposit"},
+           "state.cash 5 欄位齊(balance/weight/source/reliable/recent_net_deposit)", repr(cash)[:120])
+        ok(cash["source"] == "csv_sum" and cash["reliable"] is False,
+           "無 TR_CASH 錨點 → cash 降級 csv_sum + reliable=False(honesty 據此揭露,不冒充精確)",
+           repr(cash))
 
         # ── 2b. #162 接線:main flow 的 held 必須走 FIFO 剩餘,不是 positions() 的 avg cost ──
         # 單元層(test_engine_units)測的是 fifo_held 純函式;這段釘「main() 真的接上它」——
