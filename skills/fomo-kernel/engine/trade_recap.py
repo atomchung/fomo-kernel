@@ -41,6 +41,7 @@ CYCLE_ID_UNKNOWN_RE = re.compile(r"^[^#\s]+#unknown$")
 SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
+RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股息零頭/1 股尾倉),不計入分散度/what-if/per-ticker 診斷/未分類計數(#172,owner 2026-07-12 拍板;相對佔比自適應帳戶規模,非絕對股數/金額)
 
 # ── ticker → (sector, thematic?)  thematic=1 代表同屬一個跨產業主題(如 AI capex)= VY B2 的「driver」──
 # 這張表只是「常見股 fallback」。主路徑:SKILL 指引 Claude 對『實際持倉』用世界知識生成 driver map
@@ -880,6 +881,19 @@ def dim_size(rows, held, last_px):
     return dict(dim="部位 sizing", tier=1, triggered=max_pct > 0.25,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
                 avg_pct=statistics.mean(others) if others else 0.0, weights=weights)
+
+def meaningful_tickers(held, last_px, floor=RESIDUAL_POS_TH):
+    """回傳「非殘倉」的 ticker set:市值佔全持倉 ≥ floor(預設 0.1%)。市值缺價用成本近似。
+    殘倉(股息零頭/賣到剩 1 股的尾倉)不該灌 n_holdings/分散度/what-if/per-ticker 診斷/未分類計數(#172)。
+    **只給診斷用,不動 overview/P&L**:重倉崩 99% 的部位市值雖小、在此不進集中度診斷,但它的未實現虧損仍留在總覽(不藏虧損)。
+    相對佔比自適應帳戶規模(owner 排除絕對股數/金額門檻)。全零市值(理論邊界)→ 全保留,不誤殺。"""
+    vals = {}
+    for t, (sh, cost) in (held or {}).items():
+        px = (last_px or {}).get(t); vals[t] = sh * px if px else cost
+    tot = sum(vals.values())
+    if tot <= 1e-9:
+        return set(vals)
+    return {t for t, v in vals.items() if v / tot >= floor}
 
 def dim_diversify(held, last_px):
     vals = {}
@@ -1915,8 +1929,12 @@ def main():
         decision_rts_u = [r for r in rts_u if driver(r["ticker"])[0] not in BENCH_SELF]
     else:
         rts_u, held_u, lastpx_u, decision_rts_u = rts, held, last_px, decision_rts
+    # 殘倉過濾(#172):市值<0.1% 的部位不進分散度/what-if/per-ticker 診斷/未分類計數;
+    # overview(P&L)/dim_size(單筆過重本就只看大倉)/n_held(對帳全量)不動 → 不藏虧損、對帳一致。
+    keep_dx = meaningful_tickers(held_u, lastpx_u)
+    held_dx = {t: v for t, v in held_u.items() if t in keep_dx}
     d_size = dim_size(rows, held_u, lastpx_u)
-    d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held_u, lastpx_u)
+    d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held_dx, lastpx_u)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held_u, lastpx_u, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
@@ -1930,17 +1948,18 @@ def main():
     overview = overview_stats(decision_rts_u, ab, held_u, lastpx_u)   # 已實現 + 未實現都報(聚合幣別上)
     pa = payoff_attribution(decision_rts_u)                # 盈虧比拆解:重點交易的貢獻度(聚合幣別上)
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆(ret%,無因次 → 原幣)
-    wi = what_if(held_u, lastpx_u)                         # 可量化的 what-if(聚合幣別上)
+    wi = what_if(held_dx, lastpx_u)                        # 可量化的 what-if(聚合幣別上,#172 殘倉不計)
     trend = time_trend(decision_rts, avg_down)             # (engine 保留,卡片暫不顯示)
     rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
     # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
     # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
-    tdiag = ticker_diagnosis(rts_u, adds_class, held_u, lastpx_u)
+    tdiag = ticker_diagnosis(rts_u, adds_class, held_dx, lastpx_u)   # #172 殘倉不列 per-ticker 診斷
 
     # 資料完整性(賣超 / 未分類 driver)— 影響數據可信度,JSON 與人話卡共用同一份
     orphans = orphan_sells(rows)
-    unclassified = sorted(t for t in held if driver(t)[0] == "未分類")
+    # 未分類 driver 計數排除殘倉(#172):核能小倉 LEU 之類 <0.1% 的未分類尾倉不該冒充「連歸類都做不到」的誠實缺口
+    unclassified = sorted(t for t in held if t in keep_dx and driver(t)[0] == "未分類")
     data_integrity = {
         "orphan_sells": {t: round(q, 2) for t, q in sorted(orphans.items())},
         "unclassified_drivers": unclassified,

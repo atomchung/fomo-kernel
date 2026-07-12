@@ -868,6 +868,44 @@ def test_honesty_ledger_cash_reliability_trigger():
     assert not fired(None), "無 cash 欄(None)不觸發"
 
 
+def test_meaningful_tickers_mv_basis():
+    """殘倉過濾(#172):市值佔全持倉 <0.1% 的部位不進診斷集合;市值優先、缺價用成本近似。"""
+    held = {"NVDA": (100.0, 50000.0),      # 99% → 保留
+            "AAPL": (0.02, 30.0),          # 市值 0.02*180=3.6,<0.1% → 殘倉
+            "KO":   (5.0, 500.0)}          # ~1% → 保留
+    last_px = {"NVDA": 500.0, "AAPL": 180.0, "KO": 60.0}
+    keep = tr.meaningful_tickers(held, last_px)
+    assert keep == {"NVDA", "KO"}, keep
+    # 無現價 → 用成本當市值近似(離線也能濾)
+    keep_offline = tr.meaningful_tickers(held, {})
+    assert "AAPL" not in keep_offline and "NVDA" in keep_offline, keep_offline
+
+
+def test_meaningful_tickers_excludes_crashed_by_mv_not_cost():
+    """關鍵:用市值不用成本(#172 owner 拍板)——重倉後崩 99% 的部位市值極小 → 不進集中度診斷。
+    安全性靠『overview 不套此過濾』保證(見 main:overview_stats 吃全量 held_u),虧損不因此消失。"""
+    held = {"BIG": (100.0, 90000.0),       # 當初重壓 $90k,現崩到剩 $5(市值 5)
+            "GOOD": (10.0, 5000.0)}        # 現值 $6000
+    keep = tr.meaningful_tickers(held, {"BIG": 0.05, "GOOD": 600.0})   # BIG 市值 5/(5+6000)=0.08% <0.1%
+    assert keep == {"GOOD"}, keep          # 市值基準把崩掉的重倉排除出診斷(overview 吃全量 held → 虧損仍在)
+
+
+def test_dim_diversify_excludes_residual_from_n():
+    """#172 驗收:造一個 0.05% 殘倉,確認它不進 n_holdings(dim_diversify.n)/集中度分母。"""
+    held = {f"BIG{i}": (10.0, 10000.0) for i in range(5)}   # 5 檔各 ~20%
+    held["DUST"] = (1.0, 5.0)                                # 市值 1*5=5,佔比 5/(5*60k...)
+    last_px = {**{f"BIG{i}": 1000.0 for i in range(5)}, "DUST": 5.0}
+    # main 已在呼叫前過濾;dim_diversify 收到去殘 held → n 不含 DUST
+    keep = tr.meaningful_tickers(held, last_px)
+    d = tr.dim_diversify({t: v for t, v in held.items() if t in keep}, last_px)
+    assert d["n"] == 5 and "DUST" not in keep, (d["n"], keep)
+
+
+def test_meaningful_tickers_zero_mv_keeps_all():
+    """全零市值(理論邊界)不判殘,全保留,不除零。"""
+    assert tr.meaningful_tickers({"X": (1.0, 0.0)}, {"X": 0.0}) == {"X"}
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():
