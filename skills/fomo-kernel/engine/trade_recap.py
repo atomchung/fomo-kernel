@@ -1364,7 +1364,7 @@ def _pick_headline(dims):
     ranked = _rank_holes(dims)
     return ranked[0] if ranked else None
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None):
+def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, trend=None, rx=None, tdiag=None, cash=None):
     """把復盤卡渲染成一張 Rich Panel（cyan 邊框，ANSI color，中英對齊）。
     架構：一張外框大 Panel，內部按段用 Rule(───) 分節；五維行為診斷用 bar chart 取代內部加權公式。"""
     if not _HAS_RICH:
@@ -1414,6 +1414,15 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, t
                     ov.append(" (區間寬,分不出本事還是運氣 → 見下方)", style="dim")
         elif ab and ab.get("note"):
             ov.append(f"\nα/β:{ab['note']}", style="dim")
+        # 帳戶現金(#171):只在有現金餘額錨點(reliable)時報 weight/入金;無錨點靠 csv_sum 盲算不上卡,交 honesty 揭露
+        if cash and cash.get("reliable") and cash.get("weight") is not None:
+            ov.append("\n帳戶現金 ")
+            ov.append(f"${cash['balance']:,.0f}", style="bold")
+            ov.append(f"（佔帳戶 {cash['weight']*100:.0f}%）")
+            rnd = cash.get("recent_net_deposit") or 0
+            if rnd:                                            # 本期外部淨流入/出:入金判讀鉤子(該不該部署)
+                ov.append(f"  本期淨{'入' if rnd > 0 else '提'}金 ")
+                ov.append(f"${abs(rnd):,.0f}", style="bold")
         parts.append(Padding(ov, (0, 1)))
 
     # 〔做得最好 / 最差的一筆〕
@@ -1743,7 +1752,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
-def build_honesty_ledger(overview, ab, data_integrity, currency_meta):
+def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None):
     """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
 
     只收『觸發的』揭露項 → 空 list = 這張卡沒有誠實缺口。判定條件對齊預設人話卡的
@@ -1793,11 +1802,16 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta):
                   "data": {"currencies": cm.get("currencies"),
                            "aggregate_currency": cm.get("aggregate_currency"),
                            "fx_gaps": di.get("fx_gaps")}})
+    # 現金無錨點:cash weight 是靠交易流水盲算(假設開戶 $0),可能偏差 → 若上卡必揭露近似、邀用戶補現金餘額(#171)。
+    # 只在「有得上卡的 weight 但不可信」時觸發(reliable=False + weight 非 None);weight=None(算不出,不上卡)沒有可誤導的數字,不進 ledger。
+    if isinstance(cash, dict) and cash.get("weight") is not None and not cash.get("reliable"):
+        L.append({"key": "cash_reliability", "status": "no_anchor",
+                  "data": {"balance": cash.get("balance"), "source": cash.get("source")}})
     return L
 
 
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
-                    ab, pa, master, data_integrity=None, currency_meta=None):
+                    ab, pa, master, data_integrity=None, currency_meta=None, cash=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1859,7 +1873,8 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "dims_raw": dims,                                   # 5 維 raw,Claude 用「一句人話」帶過其餘維
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
         "currency_meta": currency_meta,                     # #51/#129 PR-2a:聚合幣別/fx/分幣桶;None=單幣 USD 舊行為
-        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
+        "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
+        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
     }
 
 # ─────────────────────────── main ───────────────────────────
@@ -1986,7 +2001,7 @@ def main():
         print(meta, file=sys.stderr)
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                                ab, pa, master, data_integrity=data_integrity,
-                               currency_meta=currency_meta)
+                               currency_meta=currency_meta, cash=cash_data)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
@@ -1996,7 +2011,7 @@ def main():
               f"｜driver map: {n_dm} 檔{dm_skip}{split_note}" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
               f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
-        render(dims, strength, overview, best, worst, wi, trend, rx, tdiag)
+        render(dims, strength, overview, best, worst, wi, trend, rx, tdiag, cash=cash_data)
         print_alpha_beta(ab)
         print_payoff_attr(pa)                             # 盈虧比拆解(誰在撐/拖,反事實)
         d_entry = dim_entry_style(rows, px)               # 【風格】維雛形(不進洞排序,先驗訊號)

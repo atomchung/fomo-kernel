@@ -51,6 +51,7 @@
 | B14 | `honesty_ledger` 列 `unrealized_coverage` 時,卡上必講「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」;不可讓部分覆蓋的未實現金額看起來像完整數字 | honesty_ledger / SKILL Step 3 gate(#82) |
 | B15 | `honesty_ledger` 列 `sector_attribution` 時,卡上必補一句「這幾檔有 driver 標籤但查無板塊 ETF 對照，超額被歸入『選股』」;**即使 α 面板因樣本不足/不顯著整塊沒出也要講**(揭露不可只活在 α 面板) | card-spec α/拆帳段 / honesty_ledger(#92) |
 | B16 | `honesty_ledger` 非空時,每個列出的 `key` 卡面敘事都有對應人話(B6/B14/B15 是 alpha_credibility/unrealized_coverage/sector_attribution 三個 key 的具體講法,其餘 key 同規格);ledger 有列、卡面沒交代 = fail(卡面 ↔ ledger 對帳,非審風格) | SKILL.md Step 3 self-check gate(#82) |
+| B17 | 現金(#171,讀 `card.cash`):`reliable=true` 才把現金講進卡(現金佔帳戶 % + `recent_net_deposit` 非 0 時的入金判讀「加深還是解集中度」),用對帳單語言不裸奔 `cash_weight`;`reliable=false`(`honesty_ledger` 列 `cash_reliability`)**不准把盲算佔比當真數字**,只誠實帶一句「現金我只能盲估、給我對帳單餘額才算得準」。無錨點且淨買入(weight=null)= 卡上不冒現金數字也不空吠 | card-spec 現金與入金判讀 / honesty_ledger(#171) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
