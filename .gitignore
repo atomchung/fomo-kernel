@@ -9,3 +9,8 @@ skills/fomo-kernel/dist/
 # 隱私鐵律:任何真實交易資料永不入 git。只有 mock 假資料例外。
 *.csv
 !skills/fomo-kernel/mock/*.csv
+
+# #180 隱私防呆:本機帳本/教練記憶絕不進 git(正常住 ~/.trade-coach/ 於 repo 外,但主流程已把
+# ledger.jsonl 當預設輸入讀)——延續 *.csv 只留 mock 例外的隱私鐵律精神
+ledger.jsonl
+.trade-coach/

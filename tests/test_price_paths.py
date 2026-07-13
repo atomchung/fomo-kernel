@@ -693,6 +693,99 @@ def test_acct_no_trade_footprint_gated():
     assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
 
 
+def test_acct_big_residual_gated_unlock_invite():
+    """#180 大缺口 gate:殘差大到污染每天淨值(相對帳戶規模)→ 帳戶柱不出、hold 柱照出、
+    note 給解鎖邀請。比照 broken_ccys 降 None 家族:算不出就不硬給、導向補齊。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    resid = [{"currency": "USD", "start": "2024-01-02", "end": "2024-06-01",
+              "prev_balance": 0.0, "next_balance": 500000.0,
+              "flows_sum": 0.0, "residual": 500000.0}]          # 殘差 50 萬 >> 帳戶規模(~1500)
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"},
+                        cash_residuals=resid)
+    assert a["acct_twr"] is None and a["irr_annual"] is None, a
+    assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+    assert a["note"] and "解鎖" in a["note"], a["note"]
+
+
+def test_acct_small_residual_not_gated():
+    """小殘差(相對帳戶規模 < 閾值)→ 帳戶柱照出(不為小缺口撤整個帳戶視圖);殘差揭露走 honesty。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    resid = [{"currency": "USD", "start": "2024-01-02", "end": "2024-06-01",
+              "prev_balance": 1000.0, "next_balance": 1050.0,
+              "flows_sum": 0.0, "residual": 50.0}]              # $50 對 ~$1500 帳戶 < 10%
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"},
+                        cash_residuals=resid)
+    assert a["acct_twr"] is not None, ("小缺口不該撤數字", a)
+
+
+# ─────────────── H2. cash_reconcile_residuals(#180 多錨點對帳殘差純函式)───────────────
+def _snap(as_of, **cash):
+    return {"as_of": as_of, "cash": cash}
+
+
+def _flow(d, amt, kind="trade", ccy="USD"):
+    return dict(date=dt.date.fromisoformat(d), amount=float(amt), kind=kind, currency=ccy)
+
+
+def test_residuals_reconciled_no_bark():
+    """殘差=0(金流記全)→ 空清單。最重要的假陽性防線:記全的帳不能被誤報成漏記。"""
+    snaps = [_snap("2026-06-01", USD=10000), _snap("2026-06-30", USD=40000)]
+    flows = [_flow("2026-06-05", -2000), _flow("2026-06-10", 1000),
+             _flow("2026-06-15", 31000, "deposit")]
+    assert pf.cash_reconcile_residuals(snaps, flows) == []
+
+
+def test_residuals_missing_deposit_quantified():
+    """漏記入金 → 殘差 == 漏記額(#180 核心:漏記金額可精確量化)。"""
+    snaps = [_snap("2026-06-01", USD=10000), _snap("2026-06-30", USD=40000)]
+    flows = [_flow("2026-06-05", -2000), _flow("2026-06-10", 1000)]
+    out = pf.cash_reconcile_residuals(snaps, flows)
+    assert len(out) == 1 and abs(out[0]["residual"] - 31000) < 1e-9, out
+
+
+def test_residuals_single_anchor_silent():
+    """單錨點無相鄰對 → 空清單(不吠)。"""
+    assert pf.cash_reconcile_residuals([_snap("2026-06-01", USD=10000)], []) == []
+
+
+def test_residuals_missing_withdrawal_negative_abs():
+    """漏記提款 → 負殘差;|殘差| 比較(殺『去掉 abs』突變:負殘差不能漏報)。"""
+    snaps = [_snap("2026-06-01", USD=40000), _snap("2026-06-30", USD=8000)]
+    out = pf.cash_reconcile_residuals(snaps, [])
+    assert len(out) == 1 and abs(out[0]["residual"] + 32000) < 1e-9, out
+
+
+def test_residuals_adjacent_only_not_all_pairs():
+    """三錨點漏一筆 → 只報中段一筆(殺『相鄰改全對 → 同筆重複歸因報多筆』突變)。"""
+    snaps = [_snap("2026-06-01", USD=10000), _snap("2026-06-30", USD=40000),
+             _snap("2026-07-31", USD=40000)]
+    out = pf.cash_reconcile_residuals(snaps, [])
+    assert len(out) == 1 and out[0]["start"] == "2026-06-01", out
+
+
+def test_residuals_absent_currency_not_zero():
+    """缺席幣別≠0:TWD 只在第二個 snapshot 宣告 → 無相鄰對、不誤報(殺『缺席=0』突變)。"""
+    snaps = [_snap("2026-06-01", USD=8200), _snap("2026-06-30", USD=8200, TWD=120000)]
+    assert pf.cash_reconcile_residuals(snaps, []) == []
+
+
+def test_residuals_gross_threshold_not_net():
+    """閾值分母用 Σ|flow| 非淨流:大額入金+提款(淨$0)撐高閾值,$500 尾差在雜訊內不吠
+    (殺『用淨流當分母 → 閾值趨零爆假殘差』突變:淨流版閾值=$50 會誤吠)。"""
+    snaps = [_snap("2026-06-01", USD=10000), _snap("2026-06-30", USD=10500)]  # 殘差 500
+    flows = [_flow("2026-06-10", 50000, "deposit"), _flow("2026-06-20", -50000, "withdrawal")]
+    assert pf.cash_reconcile_residuals(snaps, flows) == []
+
+
+def test_residuals_tie_break_latest_declaration():
+    """同 as_of 多筆 → 取檔案序較後(較新宣告),對齊 ledger.latest_anchor;此例後者對得上 → 不吠。"""
+    snaps = [_snap("2026-06-01", USD=10000), _snap("2026-06-01", USD=12000),
+             _snap("2026-06-30", USD=12000)]
+    assert pf.cash_reconcile_residuals(snaps, []) == []
+
+
 # ─────────────────── 標準庫 runner(與 test_engine_units 一致)───────────────────
 
 def _main():

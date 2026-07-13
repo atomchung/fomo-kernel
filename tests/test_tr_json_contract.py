@@ -67,8 +67,11 @@ def ok(cond, label, detail=""):
     print(f"  ✅ {label}")
 
 
-def run_engine_offline(tmp, csv=None, state_name="last_state.json"):
-    """跑一次 engine(TR_JSON + TR_STATE_OUT),注入假 yfinance 強制離線。"""
+def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None):
+    """跑一次 engine(TR_JSON + TR_STATE_OUT),注入假 yfinance 強制離線。
+    TR_LEDGER 預設釘 os.devnull(#180 隱私防線:不釘會讀 ~/.trade-coach/ledger.jsonl 真帳本,
+    owner 機一旦累積對不上的 cash snapshot → data_integrity 多鍵 → 契約在本機紅、CI 綠的鬼故事;
+    測殘差時顯式傳 ledger=fixture 路徑)。"""
     shim = pathlib.Path(tmp) / "shim"
     if not shim.exists():
         shim.mkdir()
@@ -77,7 +80,7 @@ def run_engine_offline(tmp, csv=None, state_name="last_state.json"):
     state_out = pathlib.Path(tmp) / state_name
     import os
     env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=str(state_out),
-               PYTHONPATH=str(shim))
+               PYTHONPATH=str(shim), TR_LEDGER=(ledger or os.devnull))
     r = subprocess.run([sys.executable, str(ENGINE), str(csv or MOCK_CSV)],
                        cwd=SKILL_DIR, env=env, capture_output=True, text=True, timeout=120)
     return r, state_out
@@ -176,6 +179,33 @@ def main():
            "離線 → acct_perf = {note}(fail-closed,不硬湊帳戶級數字)", repr(ap)[:120])
         ok("acct_perf_basis" not in hl_keys,
            "帳戶級沒出數 → acct_perf_basis 不進 ledger(觸發式)", repr(sorted(hl_keys)))
+
+        # ── 1c. #180 多錨點對帳殘差:TR_LEDGER fixture(兩矛盾 cash snapshot)→ 殘差進
+        #        data_integrity + honesty cash_reliability(status=residual,擴傘非新 key)。
+        #        無 ledger 不觸發已由 1a(cash_reliability not in hl_keys)+ 隱私釘 devnull 反證。──
+        fix_led = pathlib.Path(tmp) / "resid_ledger.jsonl"
+        fix_led.write_text(
+            '{"type":"snapshot","as_of":"2000-01-01","source":"user_declared","positions":[],"cash":{"USD":0}}\n'
+            '{"type":"snapshot","as_of":"2030-01-01","source":"user_declared","positions":[],"cash":{"USD":999999}}\n',
+            encoding="utf-8")
+        r2, _ = run_engine_offline(tmp, state_name="resid_state.json", ledger=str(fix_led))
+        card2 = json.loads(r2.stdout)
+        di2 = card2["data_integrity"]
+        ok(isinstance(di2.get("cash_residuals"), list) and di2["cash_residuals"],
+           "TR_LEDGER 兩矛盾 snapshot → data_integrity.cash_residuals 非空(#180)",
+           repr(di2.get("cash_residuals"))[:150])
+        res0 = di2["cash_residuals"][0]
+        ok(set(res0.keys()) == {"currency", "start", "end", "prev_balance",
+                                "next_balance", "flows_sum", "residual"},
+           "cash_residuals 元素 7 欄位齊", repr(res0))
+        ok(abs(res0["residual"]) > abs(res0["flows_sum"]),
+           "殘差量化漏記金流(|residual| 遠大於已記金流)", repr(res0))
+        hl2 = {e["key"]: e for e in card2["honesty_ledger"]}
+        ok("residuals" in (hl2.get("cash_reliability") or {}).get("data", {}),
+           "殘差 → honesty cash_reliability.data 帶 residuals(#180 擴傘,不新增 key)",
+           repr(hl2.get("cash_reliability"))[:150])
+        ok(all(e["key"] in HL_KEYS for e in card2["honesty_ledger"]),
+           "殘差揭露沿用 cash_reliability key、不越出 HL_KEYS(擴傘非新 key)", repr(list(hl2)))
 
         # ── 2. state 契約 ──
         st = json.loads(state_path.read_text(encoding="utf-8"))

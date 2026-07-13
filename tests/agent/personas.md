@@ -14,6 +14,9 @@
 | **跳過者** skipper | `sample_momentum.csv`(梭哈型) | 一律跳過不答(SKIP) | 不追問、卡照出(機械洞版)、commitment=null | B-5、A-10 |
 | **推翻者** overrider | `sample_pyramid.csv`(往獲利倉加碼) | 答「這是計畫內的定期定額,不是攤平」(推翻 engine 預設的「別加碼」) | commitment 存最終版 + 差分敏感度 | B-3(狀態差分)、A-10 |
 | **回頭客** returner | 第一週 `sample_ai_holder.csv` → 第二週同標的新 CSV | 第二週帶新 CSV 回來 | 對帳而非重新初診;同維洞說「還沒過關」 | B-6、A-7(append) |
+| **對帳者** reconciler | `sample_noisy_broker.csv`(有現金流水)+ fixture ledger(兩張時間不同、故意對不上的 `--cash` snapshot,經 `TR_LEDGER` 注入) | 想看帳戶整體報酬(觸發帳戶級);不主動交代那筆漏記的入金 | 殘差揭露**中性**(不斷言漏入金)+ 大缺口→帳戶報酬不出、出「補入金日期即解鎖」、**持倉柱照給**(#180 opt-in 進階層) | B20 |
+
+> **對帳者的 setup 特殊**:它需要一個 fixture ledger(≥2 個對不上的 `--cash` snapshot)經 `TR_LEDGER` 注入,不是純 CSV+答題——engine 層已由 `test_price_paths`(殘差純函式+gate)/ `test_tr_json_contract`(TR_LEDGER fixture 契約)確定性覆蓋;此 persona 待 `run_case.sh` 支援 `TR_LEDGER` 注入後接上 agent-level 驗收(#180 的已知 agent-level 缺口,不靜默略過)。
 
 ## 差分對(產品靈魂,最低成本)
 

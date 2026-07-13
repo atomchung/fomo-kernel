@@ -1891,15 +1891,24 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                   "data": {"currencies": cm.get("currencies"),
                            "aggregate_currency": cm.get("aggregate_currency"),
                            "fx_gaps": di.get("fx_gaps")}})
-    # 現金無錨點:cash weight 是靠交易流水盲算(假設開戶 $0),可能偏差 → 若上卡必揭露近似、邀用戶補現金餘額(#171)。
-    # 只在「有得上卡的 weight 但不可信」時觸發(reliable=False + weight 非 None);weight=None(算不出,不上卡)沒有可誤導的數字,不進 ledger。
-    if isinstance(cash, dict) and cash.get("weight") is not None and not cash.get("reliable"):
-        # partial(部分帳戶給了餘額、部分沒)vs no_anchor(全無錨點);揭露哪些幣別是盲算,邀補那幾個帳戶餘額。
-        missing = sorted(c for c, v in (cash.get("by_currency") or {}).items() if not v.get("reliable"))
-        L.append({"key": "cash_reliability",
-                  "status": "partial" if cash.get("source") == "partial" else "no_anchor",
-                  "data": {"balance": cash.get("balance"), "source": cash.get("source"),
-                           "unanchored_currencies": missing}})
+    # 現金可信度(#171 無/部分錨點盲算 + #180 多錨點對帳殘差):兩種缺陷對用戶都是「現金這塊多準」的
+    # 同一段話,共用 cash_reliability key(#82:key=敘事段落非誠實點)。
+    #   ① 盲算:weight 非 None 但 reliable=False(假設開戶 $0,可能偏差)→ 邀補現金餘額。weight=None
+    #      (算不出、不上卡)沒有可誤導的數字,不進 ledger。
+    #   ② 殘差:有錨點但錨點間現金史對不上(data_integrity.cash_residuals)→ 錨點可信時也要揭露,
+    #      故不綁 acct_twr 出不出數(有別於 acct_perf_basis)。殘差細節進 data.residuals 讓 Claude 講。
+    di_residuals = di.get("cash_residuals")
+    cash_blind = isinstance(cash, dict) and cash.get("weight") is not None and not cash.get("reliable")
+    if cash_blind or di_residuals:
+        cd = cash if isinstance(cash, dict) else {}
+        missing = sorted(c for c, v in (cd.get("by_currency") or {}).items() if not v.get("reliable"))
+        status = ("partial" if cash_blind and cd.get("source") == "partial"
+                  else "no_anchor" if cash_blind else "residual")
+        data = {"balance": cd.get("balance"), "source": cd.get("source"),
+                "unanchored_currencies": missing}
+        if di_residuals:
+            data["residuals"] = di_residuals
+        L.append({"key": "cash_reliability", "status": status, "data": data})
     # 帳戶級績效地基有洞(#171):帳戶 TWR 有出數、但算在部分錨點 / 缺價檔成本平線 / fx 即期
     # 近似之上 → 數字可用但地基要交代(哪個幣別盲算、哪些檔平線零報酬、匯損益是近似)。
     # 沒出數(gate 掉)不觸發——cash_reliability / note 已各自說明,不疊床架屋。
@@ -2105,12 +2114,25 @@ def main():
     # 帳戶級績效(#171 B 路線,拍板 2026-07-12 見該 issue comment):daily 鏈式 TWR + cash drag +
     # 帳戶 IRR。外部流=deposit/withdrawal/other(對帳口徑);可用性繼承 cash reliable 三態;
     # 混幣用每日 fx 序列(含匯損益),序列抓不到 → 即期常數近似(perf 標 fx_approx、honesty 揭露)。
-    from perf import account_perf
+    from perf import account_perf, cash_reconcile_residuals
+    # #180 多錨點對帳殘差:讀 ledger 累積的 cash snapshot(多錨點)→ 逐段 rollforward 殘差 →
+    # data_integrity(永遠記,觸發式);殘差大到污染每天淨值 → account_perf 內部 gate 掉帳戶柱。
+    # 隱私:TR_LEDGER 預設本機真帳本,測試/試駕須釘到空/dev/null——「不落盤 ≠ 不讀盤」:不釘會
+    # 把真餘額洩進示範卡、或在 owner 機讀到真 ledger 汙染契約測試(見 SKILL Step 0 / 契約測試)。
+    from ledger import load_ledger, DEFAULT_LEDGER
+    _levents, _ = load_ledger(os.environ.get("TR_LEDGER") or DEFAULT_LEDGER)
+    _cash_snaps = [{"as_of": e["as_of"], "cash": e["cash"]}
+                   for e in _levents if e.get("type") == "snapshot" and e.get("cash")]
+    cash_residuals = cash_reconcile_residuals(_cash_snaps, cash_flows,
+                                              fx=fx if mixed_ccy else None)
+    if cash_residuals:
+        data_integrity["cash_residuals"] = cash_residuals
     fx_series = None
     if mixed_ccy and px is not None:
         fx_series, _fxs_err = fetch_fx_series(currencies, start)
     acct_perf = account_perf(rows, px, cash_flows, cash_data, cur_map,
-                             fx_spot=fx if mixed_ccy else None, fx_series=fx_series)
+                             fx_spot=fx if mixed_ccy else None, fx_series=fx_series,
+                             cash_residuals=cash_residuals)
 
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""
     split_note = f"｜分割調整: {n_adj} 筆" if n_adj else ""
