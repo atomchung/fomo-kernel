@@ -32,6 +32,7 @@ DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades
 
 N_FWD = 30          # 賣出後 N 交易日看續漲（tunable）
 MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交易跨度短於此 → insufficient(§4.4, #21.4)
+CURVE_MAX_POINTS = 52  # pnl_curve 逐日序列長於此 → 降成週頻(W-FRI),卡片 sparkline 不需要逐日精度
 
 # cycle_id 契約(單一事實源,#61):SKILL 對帳、theses.jsonl 綁定、測試斷言都以這兩條為準。
 # 正常 = 3 段「ticker#開倉日#序號」;CSV 缺期初持倉算不出開倉 → 2 段「ticker#unknown」。
@@ -659,6 +660,38 @@ def _aligned(port, bench_px):
     import pandas as pd
     df = pd.DataFrame({"p": port, "s": bench_px.pct_change()}).dropna()
     return df[df["p"].abs() < 0.5]
+
+def pnl_curve(rows, data, market=None):
+    """E2c:投組期間累積報酬曲線(mark-to-market,非已實現)——卡片畫 sparkline 用,不影響 α/β 判定。
+    重用 `_port_daily_returns` 已算好的逐日投組報酬,cumprod 成一條「這次復盤怎麼走到這個數字」的線,
+    起點錨定 cum_ret=0(復盤期間起算),終點對齊卡面已有的「帳面總損益」那個點——一個點延伸成一張圖。
+    只算單一市場(混市場逐日 FX 換算複雜度先不做);呼叫端未傳 scope market 時直接降級交待,
+    不做隱性猜測。data=None/樣本不足 → {'note':...} fail-closed 降級,不是死文案(講不講由 card-spec 決定)。
+    序列長於 CURVE_MAX_POINTS 天 → 週頻(W-FRI)降採樣,但強制保留最後一天,終點才對得上帳面數字。"""
+    try:
+        import pandas as pd
+    except ImportError:
+        return {"note": "無 pandas"}
+    if data is None or not len(list(getattr(data, "columns", []))):
+        return {"note": "無價格"}
+    if market is not None:
+        rows = [r for r in rows if r.get("market", "US") == market]
+    if not rows:
+        return {"note": "無交易"}
+    px = data.ffill()
+    port = _port_daily_returns(rows, px).dropna()
+    if len(port) < 2:
+        return {"note": "樣本不足"}
+    cum = (1.0 + port).cumprod() - 1.0
+    if len(cum) > CURVE_MAX_POINTS:
+        weekly = cum.resample("W-FRI").last().dropna()
+        if weekly.index[-1] != cum.index[-1]:
+            weekly[cum.index[-1]] = cum.iloc[-1]      # 強制含終點,別讓週頻降採樣漂掉「帳面總損益」對應的那一天
+        cum = weekly
+    anchor_date = (port.index[0] - pd.Timedelta(days=1)).date().isoformat()
+    points = [{"date": anchor_date, "cum_ret": 0.0}]
+    points += [{"date": d.date().isoformat(), "cum_ret": round(float(v), 4)} for d, v in cum.items()]
+    return {"points": points}
 
 def _regress(port, bench_px, rf_annual):
     """對單一 benchmark 回歸 → β / Jensen α + 標準誤/t/95% 區間。
@@ -1927,7 +1960,7 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
 
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
-                    acct_perf=None):
+                    acct_perf=None, pnl_curve_data=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1992,6 +2025,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
         "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
         "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
+        "pnl_curve": pnl_curve_data or {"note": "無資料"},   # #166:累積損益曲線,卡片畫 sparkline 用(一個點→一張圖);{'note':...} = 誠實降級,不硬畫
     }
 
 # ─────────────────────────── main ───────────────────────────
@@ -2048,6 +2082,12 @@ def main():
         mkt_weights[t_market.get(t, "US")] += sh * pxv if pxv else c
     ab = dim_alpha_beta(rows, px, market_weights=dict(mkt_weights))
     if isinstance(ab, dict): ab["credible"] = alpha_credible(ab)   # α 能力語氣閘 v2(#80):統計顯著才算,檔數閘退役(混市場=scope 市場的顯著性)
+    # 累積損益曲線(卡片 sparkline,#166):單一市場才算;多市場沿用 α/β 已選好的 scope,
+    # 混市場又沒選出 scope(樣本不足)就誠實不畫,別隱性猜哪個市場該代表。
+    markets_present = sorted(set(t_market.values()))
+    curve_market = (ab.get("scope") if isinstance(ab, dict) else None) or (
+        markets_present[0] if len(markets_present) == 1 else None)
+    pc = pnl_curve(rows, px, market=curve_market) if curve_market else {"note": "混市場尚未支援"}
     overview = overview_stats(decision_rts_u, ab, held_u, lastpx_u)   # 已實現 + 未實現都報(聚合幣別上)
     pa = payoff_attribution(decision_rts_u)                # 盈虧比拆解:重點交易的貢獻度(聚合幣別上)
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆(ret%,無因次 → 原幣)
@@ -2147,7 +2187,7 @@ def main():
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                                ab, pa, master, data_integrity=data_integrity,
                                currency_meta=currency_meta, cash=cash_data,
-                               acct_perf=acct_perf)
+                               acct_perf=acct_perf, pnl_curve_data=pc)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)

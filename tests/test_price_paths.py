@@ -393,6 +393,82 @@ def test_sector_proxy_market_aware():
         tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
 
 
+# ─────────────── B4. pnl_curve:累積損益曲線(卡片 sparkline,#166)───────────────
+
+def _small_idx(n):
+    return pd.bdate_range("2024-03-04", periods=n)   # 確定性,跟主 IDX(2024-01-02起)不重疊,好辨識
+
+
+def test_pnl_curve_anchors_zero_and_matches_cumulative():
+    """起點錨定 cum_ret=0、終點精確等於逐日報酬複利到底的值 —— 一個點延伸成一張圖的基本恆等式。"""
+    idx = _small_idx(6)
+    rets = [0.01, -0.02, 0.03, 0.0, 0.015]
+    aaa = _prices_from_returns(100.0, rets)
+    px = pd.DataFrame({"AAA": aaa}, index=idx)
+    rows = [dict(ticker="AAA", side="buy", qty=10, price=100.0, date=idx[0].date())]
+    pc = tr.pnl_curve(rows, px)
+    assert "points" in pc, f"應正常算出曲線,實得 {pc}"
+    pts = pc["points"]
+    assert pts[0]["cum_ret"] == 0.0, f"起點必須錨定 0,實得 {pts[0]}"
+    expected_total = 1.0
+    for r in rets:
+        expected_total *= (1 + r)
+    expected_total -= 1.0
+    assert abs(pts[-1]["cum_ret"] - round(expected_total, 4)) < 1e-9, \
+        f"終點應精確等於複利到底的累積報酬 {expected_total},實得 {pts[-1]}"
+    assert pts[-1]["date"] == idx[-1].date().isoformat(), "終點日期應對齊價格序列最後一天"
+    dates = [p["date"] for p in pts]
+    assert dates == sorted(dates), "點位必須按時間遞增,不能亂序"
+
+
+def test_pnl_curve_no_price_degrades_honestly():
+    rows = [dict(ticker="AAA", side="buy", qty=10, price=100.0, date=dt.date(2024, 3, 4))]
+    assert tr.pnl_curve(rows, None) == {"note": "無價格"}, "無價格資料 → 誠實降級,不能硬畫"
+
+
+def test_pnl_curve_single_day_insufficient_degrades():
+    """只有一個交易日重疊 → 算不出任何一天的報酬,誠實降級,不能硬湊一個假點。"""
+    idx = _small_idx(1)
+    px = pd.DataFrame({"AAA": [100.0]}, index=idx)
+    rows = [dict(ticker="AAA", side="buy", qty=10, price=100.0, date=idx[0].date())]
+    pc = tr.pnl_curve(rows, px)
+    assert pc.get("note") == "樣本不足", f"應誠實降級,實得 {pc}"
+
+
+def test_pnl_curve_market_filter_scopes_to_one_market():
+    """market= 過濾:別的市場的交易不該汙染這條曲線(混市場逐日 FX 換算先不支援)。"""
+    idx = _small_idx(4)
+    aaa = _prices_from_returns(100.0, [0.10, 0.0, 0.0])     # US:+10% 第一天後打平
+    bbb = _prices_from_returns(50.0, [-0.10, 0.0, 0.0])     # TW:-10% 第一天後打平
+    px = pd.DataFrame({"AAA": aaa, "BBB": bbb}, index=idx)
+    rows = [dict(ticker="AAA", side="buy", qty=10, price=100.0, date=idx[0].date(), market="US"),
+            dict(ticker="BBB", side="buy", qty=10, price=50.0, date=idx[0].date(), market="TW")]
+    pc_us = tr.pnl_curve(rows, px, market="US")
+    pc_tw = tr.pnl_curve(rows, px, market="TW")
+    assert pc_us["points"][-1]["cum_ret"] > 0, f"US 子集應只看到 AAA 的漲,實得 {pc_us}"
+    assert pc_tw["points"][-1]["cum_ret"] < 0, f"TW 子集應只看到 BBB 的跌,實得 {pc_tw}"
+
+
+def test_pnl_curve_long_series_weekly_resamples_but_keeps_endpoint():
+    """跨 CURVE_MAX_POINTS 天的復盤期間 → 降成週頻,但終點必須是真正最後一天(對齊卡面總損益)。"""
+    idx = pd.bdate_range("2023-01-02", periods=300)
+    rets = _spy_returns()          # 299 個確定性日報酬(週期循環,非退化)
+    aaa = _prices_from_returns(100.0, rets)
+    px = pd.DataFrame({"AAA": aaa}, index=idx)
+    rows = [dict(ticker="AAA", side="buy", qty=10, price=100.0, date=idx[0].date())]
+    pc = tr.pnl_curve(rows, px)
+    pts = pc["points"]
+    assert len(pts) < 100, f"跨 300 天應有效降採樣,實得 {len(pts)} 點"
+    assert pts[-1]["date"] == idx[-1].date().isoformat(), \
+        f"週頻降採樣仍必須保留真正最後一天,不能漂到最近的週五,實得 {pts[-1]}"
+    expected_total = 1.0
+    for r in rets:
+        expected_total *= (1 + r)
+    expected_total -= 1.0
+    assert abs(pts[-1]["cum_ret"] - round(expected_total, 4)) < 1e-9, \
+        f"終點值應精確等於全期累積報酬,實得 {pts[-1]}"
+
+
 # ─────────────── C. prescribe:α 分支(卡面「怎麼優化」主文案)───────────────
 
 def _ab(excess, alloc, sel, credible, t=0.8, alpha_ann=0.01):

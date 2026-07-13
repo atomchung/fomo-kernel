@@ -28,6 +28,11 @@
   · 內容鐵律(見 card-spec.md):收斂到「一個洞 + 一條規矩」;每句要有數字+實例;
     先肯定再打;金額 > 筆數勝率;α 一律 vs SPY,板塊 ETF 只做歸因;
     不放 5 維 severity 表(舊版型曾示範過,已按 card-spec 禁令移除)。
+  · pnl_curve sparkline(#166,一個點延伸成一張圖):「帳面總損益」格底下的 <svg class="spark">
+    是 engine `pnl_curve.points` 畫出來的累積損益曲線,單色細線(依終點正負套
+    pos/neg,不逐點染色、不填色塊)——別因為它是圖表就想加第二種顏色,規範同全卡:
+    語義色只准用在數字本身的延伸,不准開新的紅綠色塊面板。`pnl_curve.note` 非空
+    (無價格/樣本不足/混市場)時整個 <svg> 不畫,`.m` tile 退回原本純數字版型。
   · 規矩區兩態:出卡當下用 <ol> 列 2-3 條候選(Step 3.5 才讓用戶挑);
     用戶選完(或對帳卡)改用 .picked(選中那條)+ .alt(沒選的一句帶過)。
 
@@ -81,6 +86,10 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .m .lbl{font-size:12px;color:var(--text-secondary);margin:0}
 .rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25}
 .rc .m .sub{font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4}
+.rc .m .spark{display:block;width:100%;height:22px;margin:8px 0 0}
+.rc .m .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.rc .m .spark.pos path{stroke:var(--text-success)}
+.rc .m .spark.neg path{stroke:var(--text-danger)}
 .rc .pos{color:var(--text-success)}.rc .neg{color:var(--text-danger)}
 .rc .story{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0}
 .rc h2{font-size:15px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
@@ -157,7 +166,11 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 
   <div class="sec">
     <div class="grid4">
-      <div class="m"><p class="lbl">帳面總損益</p><p class="val pos">+$143,197</p><p class="sub">已實現 +$18,960 · 未實現 +$124,237</p></div>
+      <div class="m"><p class="lbl">帳面總損益</p><p class="val pos">+$143,197</p><p class="sub">已實現 +$18,960 · 未實現 +$124,237</p>
+        <svg class="spark pos" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0,25 L12,23 L24,24 L36,17 L48,19 L60,11 L72,13 L84,7 L96,9 L108,4 L120,2"/>
+        </svg>
+      </div>
       <div class="m"><p class="lbl">主動買賣盈虧比</p><p class="val">2.9</p><p class="sub">平均賺 $2,851 vs 賠 $1,000</p></div>
       <div class="m"><p class="lbl">贏大盤</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · 漲跌是大盤 2 倍</p></div>
       <div class="m"><p class="lbl">真本事 α(年化)</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo 資料,α 失真僅示意</p></div>
