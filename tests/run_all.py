@@ -5,7 +5,7 @@
 零依賴(只用標準庫,免裝 pytest);全程離線、確定性(不碰 yfinance,不需網路)。
 subprocess 依序跑 SUITES 列的全部套件,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
 
-十一套測試的分工:
+十二套測試的分工:
   1. 機械層純函式單元    tests/test_engine_units.py
   2. TR_JSON/state 契約  tests/test_tr_json_contract.py(#61:SKILL 消費介面紅綠燈,強制離線)
   3. 價格路徑合成單元    tests/test_price_paths.py(#62:賣太早/β/α/處方的離線確定性覆蓋)
@@ -19,6 +19,8 @@ subprocess 依序跑 SUITES 列的全部套件,任一非零退出 → 整體 exi
                           headless 產卡那段非確定性 + 有成本,不進 CI,見 docs/eval-design.md §7)
  11. 本機資料控制 CLI   tests/test_coach_data_cli.py(#165:data-status/export/reset,--root 隔離、
                           dry-run 不動檔案、裸執行拒收)
+ 12. 收尾 session idempotency  tests/test_coach_session_idempotency.py(#166:close/append-theses/
+                          append-rules/save-card/problems append 各自 session 級去重+fail closed)
 
 跑法:
   python3 tests/run_all.py
@@ -42,6 +44,7 @@ SUITES = [
     ("狀態迴圈端到端", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
     ("卡面/狀態 checker 驗活", "tests/test_checkers_offline.py"),
     ("本機資料控制 CLI", "tests/test_coach_data_cli.py"),
+    ("收尾 session idempotency", "tests/test_coach_session_idempotency.py"),
 ]
 
 

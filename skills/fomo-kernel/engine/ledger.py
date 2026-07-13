@@ -31,9 +31,11 @@ CLI(SKILL 消費;JSON 走 stdout、人話訊息走 stderr,對齊 TR_JSON 模式)
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
+import tempfile
 from collections import defaultdict
 
 SCHEMA_V = 1
@@ -332,6 +334,29 @@ def dedupe_against(events, new_trades):
         seen.add(rec)
         fresh.append(ev)
     return fresh, dup
+
+
+# ───────────────────── 共用工具(#166:coach.py/problems.py 收尾原子化)─────────────────────
+
+def atomic_write_text(path, text):
+    """原子寫入:tmp→replace,不留半寫髒狀態(抽自 trade_recap.py TR_STATE_OUT 既有寫法)。"""
+    outdir = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(outdir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=outdir, suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def session_id_from_state(state, nonce=""):
+    """從 engine state 內容算穩定 session 身分(#166):同一份 state 重新算永遠得到同一個
+    id,跨 Claude Code 對話中斷恢復免費,不用額外持久化 pending marker。別用 time.time()
+    ——每次呼叫都不同,同一 session 的重試會被誤判成新 session(coach.py 改動前,
+    append-theses/append-rules 的 sid 就是踩這個坑)。nonce 是逃生艙口:同日兩個內容
+    恰巧相同、但邏輯上是不同 session 時,呼叫端可明確指定不同 nonce 拆開。"""
+    canonical = json.dumps(state, ensure_ascii=False, sort_keys=True)
+    digest = hashlib.sha256((canonical + "\x00" + nonce).encode("utf-8")).hexdigest()[:12]
+    return f"{state.get('date_end')}__{digest}"
 
 
 # ─────────────────────────── CLI ───────────────────────────
