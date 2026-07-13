@@ -28,6 +28,7 @@ MOCK = os.path.join(SKILL, "mock")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
 import horizon as hz  # noqa: E402  # #148 item5:horizon 時間軸矛盾(純狀態側,閾值下沉)
+import perf as pf  # noqa: E402  # #171 B 路線:XIRR solver(純函式;#164 已部署 XIRR 未來共用)
 
 _SKIP = "__skip__"        # 與 test_sample_styles 一致的 skip 哨兵(本檔暫無 network 測試)
 
@@ -949,6 +950,53 @@ def test_dim_diversify_excludes_residual_from_n():
 def test_meaningful_tickers_zero_mv_keeps_all():
     """全零市值(理論邊界)不判殘,全保留,不除零。"""
     assert tr.meaningful_tickers({"X": (1.0, 0.0)}, {"X": 0.0}) == {"X"}
+
+
+# ─────────────────── XIRR solver(#171/#164 共用;投資人視角:投入負/取回正)───────────────────
+
+_D0 = dt.date(2024, 1, 1)
+
+
+def test_xirr_one_year_double():
+    """一年翻倍 = 年化 +100%(定義錨)。"""
+    r = pf.xirr([(_D0, -10000.0), (_D0 + dt.timedelta(days=365), 20000.0)])
+    assert r is not None and abs(r - 1.0) < 1e-6, r
+
+
+def test_xirr_one_year_ten_pct():
+    r = pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=365), 1100.0)])
+    assert r is not None and abs(r - 0.10) < 1e-6, r
+
+
+def test_xirr_flat_zero():
+    r = pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=365), 1000.0)])
+    assert r is not None and abs(r) < 1e-9, r
+
+
+def test_xirr_negative_return():
+    """虧一半 = 年化 −50%(負根也要解得出,r ∈ (−0.999, 10))。"""
+    r = pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=365), 500.0)])
+    assert r is not None and abs(r + 0.5) < 1e-6, r
+
+
+def test_xirr_staged_deposits_closed_form():
+    """兩期投入的封閉解:1000·x² + 1000·x = 2500(x=1+r)→ x=(−1+√11)/2 → r≈15.831%。"""
+    r = pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=365), -1000.0),
+                 (_D0 + dt.timedelta(days=730), 2500.0)])
+    expect = (-1 + 11 ** 0.5) / 2 - 1
+    assert r is not None and abs(r - expect) < 1e-6, (r, expect)
+
+
+def test_xirr_all_same_sign_none():
+    """全同號金流無根 → None 誠實跳過,不硬掰。"""
+    assert pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=100), -500.0)]) is None
+    assert pf.xirr([(_D0, 1000.0), (_D0 + dt.timedelta(days=100), 500.0)]) is None
+
+
+def test_xirr_degenerate_inputs_none():
+    assert pf.xirr([]) is None
+    assert pf.xirr([(_D0, -1000.0)]) is None
+    assert pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=30), 0.0)]) is None  # 零流被濾 → 只剩單筆
 
 
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
