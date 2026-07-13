@@ -19,13 +19,23 @@ CLI(JSON stdout / 訊息 stderr,同 ledger 慣例;全部 append-only、重跑安
       # rules.jsonl append。metric_key → problem_key 對映內建(PKEY),rule_id 生成。
   python3 coach.py save-card CARD.md --date D [--cards-dir P]
       # 卡片落盤:cards/<date>.md;同日重跑檔名遞增 <date>-2.md,不蓋舊卡(append-only 精神)。
+  python3 coach.py data-status [--root P]
+      # 列出 ~/.trade-coach/ 下每個已知檔案的存在/大小/筆數(#165:單一命令看到完整持久化足跡,
+      # 不印交易內容本身)。root 預設 ~/.trade-coach,測試/檢視別的路徑用 --root 覆寫。
+  python3 coach.py data-export --out BACKUP.zip [--root P]
+      # 把現有檔案打包成 zip 備份;stderr 明確標示內含敏感交易衍生資料。
+  python3 coach.py data-reset (--dry-run | --confirm) [--root P]
+      # 清空 ~/.trade-coach/。--dry-run 只列會刪什麼,--confirm 才真的刪(不可復原,兩者擇一,
+      # 沒帶旗標一律拒收,不給「裸執行就刪除」的預設)。
 """
 import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
+import zipfile
 
 # 與 trade_recap.CYCLE_ID_RE 同一條契約(#61)。coach 刻意不 import trade_recap(保持純標準庫、
 # 免 pandas 依賴——同 ledger.py 慣例);pattern 同步由 tests/test_tr_json_contract.py 機械鎖定。
@@ -205,6 +215,99 @@ def cmd_save_card(args):
     print(json.dumps({"path": path}, ensure_ascii=False))
 
 
+# ─────────────── data-status / data-export / data-reset(#165)───────────────
+# 單一事實源:別的地方(README/SKILL.md)要講「本機存了什麼」,一律指來跑這裡,
+# 不要另外維護一份會 drift 的散文清單(同 #82 的判定進 code、文案別四處抄的教訓)。
+DATA_FILES = [
+    ("last_state.json", "json", "上次引擎算出的薄狀態(對帳用;每次跑覆蓋,非 append-only)"),
+    ("log.jsonl", "jsonl", "每次復盤的規矩承諾 + metric 快照"),
+    ("theses.jsonl", "jsonl", "每筆持倉的持股假設與出場敘事"),
+    ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
+    ("rules.jsonl", "jsonl", "累積的規矩庫"),
+    ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
+    ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
+    ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),
+    ("cards", "dir", "每次復盤的完整私人卡(含絕對金額/ticker/佔比)"),
+]
+
+
+def _coach_root(args):
+    return os.path.expanduser(args.root) if args.root else os.path.expanduser("~/.trade-coach")
+
+
+def _scan_root(root):
+    """回傳 DATA_FILES 每個路徑的現況——只算大小/筆數,不讀交易內容本身。"""
+    out = []
+    for name, kind, desc in DATA_FILES:
+        path = os.path.join(root, name)
+        entry = {"name": name, "path": path, "kind": kind, "desc": desc,
+                 "exists": os.path.exists(path)}
+        if entry["exists"]:
+            if kind == "dir":
+                files = sorted(f for f in os.listdir(path)
+                               if os.path.isfile(os.path.join(path, f)))
+                entry["count"] = len(files)
+                entry["size_bytes"] = sum(os.path.getsize(os.path.join(path, f)) for f in files)
+            else:
+                entry["size_bytes"] = os.path.getsize(path)
+                if kind == "jsonl":
+                    with open(path, encoding="utf-8") as f:
+                        entry["lines"] = sum(1 for _ in f)
+        out.append(entry)
+    return out
+
+
+def cmd_data_status(args):
+    root = _coach_root(args)
+    scan = _scan_root(root)
+    present = [e for e in scan if e["exists"]]
+    print(json.dumps({"root": root, "files": scan, "present_count": len(present)},
+                     ensure_ascii=False, indent=2))
+
+
+def cmd_data_export(args):
+    root = _coach_root(args)
+    scan = _scan_root(root)
+    present = [e for e in scan if e["exists"]]
+    if not present:
+        _die(f"{root} 下沒有任何資料可匯出(可能是第一次使用,或 --root 指錯路徑)")
+    with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for e in present:
+            if e["kind"] == "dir":
+                for f in sorted(os.listdir(e["path"])):
+                    fp = os.path.join(e["path"], f)
+                    if os.path.isfile(fp):
+                        zf.write(fp, arcname=os.path.join(e["name"], f))
+            else:
+                zf.write(e["path"], arcname=e["name"])
+    print(f"⚠️  匯出檔含敏感交易衍生資料(部位金額/ticker/規矩承諾),請比照對帳單妥善保存:{args.out}",
+         file=sys.stderr)
+    print(json.dumps({"out": args.out, "included": [e["name"] for e in present]},
+                     ensure_ascii=False))
+
+
+def cmd_data_reset(args):
+    root = _coach_root(args)
+    scan = _scan_root(root)
+    present = [e for e in scan if e["exists"]]
+    if not present:
+        print(json.dumps({"root": root, "deleted": [], "note": "沒有資料可清"}, ensure_ascii=False))
+        return
+    if args.dry_run:
+        print(json.dumps({"root": root, "would_delete": [e["path"] for e in present],
+                          "note": "dry-run,尚未刪除任何東西;確認後加 --confirm 重跑才會真的刪"},
+                         ensure_ascii=False))
+        return
+    deleted = []
+    for e in present:
+        if e["kind"] == "dir":
+            shutil.rmtree(e["path"])
+        else:
+            os.remove(e["path"])
+        deleted.append(e["path"])
+    print(json.dumps({"root": root, "deleted": deleted}, ensure_ascii=False))
+
+
 # ─────────────────────────── main ───────────────────────────
 
 def main(argv=None):
@@ -235,6 +338,22 @@ def main(argv=None):
     s.add_argument("--date", required=True, help="state.date_end")
     s.add_argument("--cards-dir", default=None)
     s.set_defaults(fn=cmd_save_card)
+
+    ds = sub.add_parser("data-status", help="列出本機保存了哪些資料(路徑/大小/筆數,不印交易內容)")
+    ds.add_argument("--root", default=None, help="覆寫 ~/.trade-coach/ 路徑(預設值本身)")
+    ds.set_defaults(fn=cmd_data_status)
+
+    de = sub.add_parser("data-export", help="把現有資料打包成 zip 備份")
+    de.add_argument("--out", required=True, help="輸出 zip 路徑")
+    de.add_argument("--root", default=None)
+    de.set_defaults(fn=cmd_data_export)
+
+    dr = sub.add_parser("data-reset", help="清空本機資料(dry-run 預覽或 confirm 實際刪除,兩者擇一)")
+    dr_grp = dr.add_mutually_exclusive_group(required=True)
+    dr_grp.add_argument("--dry-run", action="store_true", help="只列出會刪除什麼,不動手")
+    dr_grp.add_argument("--confirm", action="store_true", help="實際刪除,不可復原")
+    dr.add_argument("--root", default=None)
+    dr.set_defaults(fn=cmd_data_reset)
 
     args = ap.parse_args(argv)
     args.fn(args)

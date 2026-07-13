@@ -16,7 +16,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 
 用戶沒資料或想先體驗 → 用 AskUserQuestion 給兩選項:「**提供我的 CSV** / **先用內建假資料試駕一遍**」。選試駕 → 拿 `mock/mock_trades.csv` 走完整四步流程,但:
 
-1. **狀態一律不落盤**:`TR_STATE_OUT` 指到臨時目錄(如 `mktemp -d` 下);`~/.trade-coach/` 的 log.jsonl / theses.jsonl / profile.md / ledger.jsonl / revisit.jsonl / cards/ **一個字都不寫**——假資料的承諾進了教練記憶,下次真復盤的對帳基準就是髒的。收尾改成一句講解:「真實使用時,這條規矩會存進你本機的教練記憶,下週回來先對帳」。
+1. **狀態一律不落盤**:`TR_STATE_OUT` 指到臨時目錄(如 `mktemp -d` 下);`coach.py`/`ledger.py`/`revisit.py`/`problems.py` 的 `--state`/`--log`/`--theses`/`--rules`/`--cards-dir`/`--ledger`/`--queue`/`--book` 全部覆寫指到同一個臨時目錄。`~/.trade-coach/` 的 log.jsonl / theses.jsonl / profile.md / rules.jsonl / problems.jsonl / ledger.jsonl / revisit.jsonl / cards/ **一個字都不寫**——假資料的承諾進了教練記憶,下次真復盤的對帳基準就是髒的。收尾改成一句講解:「真實使用時,這條規矩會存進你本機的教練記憶,下週回來先對帳」。試駕結束想親自確認沒弄髒正式狀態 → `python3 engine/coach.py data-status` 是單一事實源(#165),列出 `~/.trade-coach/` 下每個檔案的存在/大小/筆數,跑前跑後比對就知道有沒有意外落盤。
 2. **Step 2 照問,但標明是演練**:動機問題照走 AskUserQuestion——試駕就是要讓他體驗「我的答案會改變卡」這個差異化;但問句裡標明「示範資料,隨便選一個,看卡怎麼跟著變」,不逼他為不是他的交易編動機(#53 的尷尬就消了)。
 3. **卡標示範**:卡頭標「示範 · 假資料,非真實成績」;α/β 附一句「示範資料失真,別當真」——失真警告是**呈現層(你)的責任**,引擎對任何輸入一致、沒有 demo 分支(#89)。
 
@@ -29,6 +29,7 @@ description: 用一面交易哲學鏡片(預設「存活紀律派」,可換),把
 - **誠實邊界(隱私話術別過度承諾)**:資料**不上傳後端、不落地儲存到別處、作者永遠拿不到**;但你(Claude)為了復盤**必須讀** CSV/JSON,交易內容自然進你的 context —— 這跟用戶平常用 Claude 一樣,不是「完全不經過任何伺服器」。README / 卡上的隱私話術照這個精度寫,別講成「絕對不離開你的電腦」。
 - 要回給作者的只有一件事:**「這張卡有沒有用」的文字反饋**(用戶自願)——不含任何交易明細。
 - 用戶沒給資料時,**請他提供或走試駕模式**(內建假資料、不落盤);絕不要主動去翻他機器上的真實對帳單。
+- 用戶問「我電腦上到底存了什麼/怎麼備份/怎麼砍掉重來」(#165)→ 指到 `python3 engine/coach.py data-status`(列存在/大小/筆數,不印交易內容)/ `data-export --out FILE.zip`(打包備份)/ `data-reset --dry-run`(先預覽)再 `--confirm`(真的刪);別自己用 `rm -rf` 或手動列檔案湊答案,這三個命令是唯一事實源。
 
 ## 🌐 Output language (apply every time)
 
