@@ -44,7 +44,7 @@ def offline_shim(tmp):
 def run_engine(csv_paths, state_out, pythonpath=None):
     """跑 engine,設 TR_STATE_OUT 取結構化 state。回傳 state dict。
     pythonpath 給假 yfinance shim 用,強制離線(#64:本機裝了 yfinance 時,舊版會真的連網、隨行情漂)。"""
-    env = dict(os.environ, TR_STATE_OUT=state_out)
+    env = dict(os.environ, TR_STATE_OUT=state_out, TR_LEDGER=os.devnull)  # #180 隱私:別讀本機真 ledger
     if pythonpath:
         env["PYTHONPATH"] = pythonpath
     r = subprocess.run([sys.executable, ENGINE, *csv_paths],

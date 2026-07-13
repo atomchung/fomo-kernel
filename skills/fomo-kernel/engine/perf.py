@@ -46,6 +46,7 @@ from collections import defaultdict
 EPS = 1e-6
 MIN_IRR_DAYS = 90          # 同 #164:年化窗 <90 天標「太短,年化無意義」不出數
 _EXT_KINDS = ("deposit", "withdrawal", "other")   # 對帳口徑的外部金流(拍板四)
+RESIDUAL_TAINT_TH = 0.10   # #180:殘差(換 USD)佔帳戶規模超此比例 → 大缺口,帳戶柱算不出、出解鎖邀請
 
 
 # ───────────────────────── XIRR solver(#164 / #171 共用) ─────────────────────────
@@ -91,6 +92,72 @@ def xirr(cashflows, lo=-0.999, hi=10.0, grid=240):
     return (a + b) / 2.0
 
 
+# ───────────────────── 多錨點對帳殘差(#180) ─────────────────────
+def cash_reconcile_residuals(snapshots, cash_flows, fx=None, abs_floor=50.0, pct=0.01):
+    """多錨點對帳殘差(#180):ledger 累積的現金 snapshot 相鄰兩兩對帳,量化漏記金流。
+
+    snapshots = [{"as_of": date|str, "cash": {ccy: balance}}]——從 ledger snapshot events
+    抽(含 cash 欄者);cash_flows = load_cash_flows 輸出 [{date, amount, kind, currency}]。
+    回 [{currency, start, end, prev_balance, next_balance, flows_sum, residual}](只收超閾值),
+    依 (currency, start) 穩定排序。<2 錨點 → []（單錨點無殘差可算,不吠)。
+
+    四條語意契約(#180 owner + adversarial review 拍板,改動別違反):
+    1. 只相鄰配對(A→B、B→C,絕不 A→C):全對錨點會把同一筆漏記在多段重複歸因,殘差不可
+       加、用戶看到假的多筆。
+    2. 閾值分母用 Σ|flow|(絕對值和,非淨流):淨流會被「大額入金+提款」自我抵銷
+       (+1e4−9.9e3 淨$100 → 1% 閾值變$1 → rounding 爆假殘差);Σ|flow| 反映該段現金活動量級。
+    3. 缺席幣別≠0:snapshot A 只宣告 {USD}、B 宣告 {USD,TWD} → TWD 在 A 缺席 ≠ 餘額 0;
+       per-currency explode,各幣別只在「都宣告了該幣別的相鄰錨點對」之間算殘差。
+    4. 同 as_of 多筆 tie-break 對齊 ledger.latest_anchor(檔案序較後=較新宣告):以 dict 覆蓋
+       實現(snapshots 按檔案序、後寫覆蓋前寫),不與帳本推導的錨點語意分岔。
+
+    殘差 = bal_next − (bal_prev + Σ_{prev < date ≤ next} flow)。**中性數字**:零金流卻餘額變動
+    可能是漏記利息/費用/入金任一種 → residual 只是量,下游文案禁斷言「漏入金」。
+    abs_floor 是 aggregate(USD)語意,per-currency 用 fx({ccy: usd_per_unit})換算成原幣門檻
+    (缺 fx → 原值近似);pct×Σ|flow| 是相對門檻,取兩者大者(小額利息尾差不吠)。
+    純標準庫、確定性(對齊檔頭「狀態側零依賴」)。
+    """
+    snaps = snapshots or []
+    flows = cash_flows or []
+    if len(snaps) < 2:
+        return []
+    fx = fx or {}
+
+    # per-currency explode:{ccy: {as_of: balance}}。dict 後寫覆蓋前寫 = 同 as_of 取檔案序較後(契約4)。
+    per_ccy = defaultdict(dict)
+    for snap in snaps:
+        as_of = snap.get("as_of")
+        if isinstance(as_of, str):
+            as_of = dt.date.fromisoformat(as_of)
+        for ccy, bal in (snap.get("cash") or {}).items():
+            if bal is None:
+                continue
+            per_ccy[ccy][as_of] = float(bal)
+
+    out = []
+    for ccy, amap in per_ccy.items():
+        dates = sorted(amap)                      # as_of 升序;缺席該幣別的 snapshot 自然不在(契約3)
+        if len(dates) < 2:
+            continue                              # 該幣別 <2 錨點,無相鄰對可算
+        ccy_flows = [cf for cf in flows if cf.get("currency", "USD") == ccy]
+        floor = abs_floor / fx[ccy] if fx.get(ccy) else abs_floor   # $50 USD → 該幣別等值門檻
+        for i in range(1, len(dates)):            # 只相鄰(契約1)
+            t0, t1 = dates[i - 1], dates[i]
+            seg = [cf["amount"] for cf in ccy_flows if t0 < cf["date"] <= t1]
+            flows_sum = sum(seg)
+            gross = sum(abs(a) for a in seg)      # Σ|flow|(契約2)
+            residual = amap[t1] - (amap[t0] + flows_sum)
+            if abs(residual) > max(floor, pct * gross):
+                out.append({"currency": ccy,
+                            "start": t0.isoformat(), "end": t1.isoformat(),
+                            "prev_balance": round(amap[t0], 2),
+                            "next_balance": round(amap[t1], 2),
+                            "flows_sum": round(flows_sum, 2),
+                            "residual": round(residual, 2)})
+    out.sort(key=lambda r: (r["currency"], r["start"]))
+    return out
+
+
 # ───────────────────────── 帳戶級 V_t 序列 + 三數字 ─────────────────────────
 def _fx_getter(currencies, px_index, fx_series, fx_spot):
     """回 (fx_at(ccy, i), fx_approx):每交易日的 usd_per_unit。優先 fx_series(每日,含匯損益,
@@ -122,7 +189,7 @@ def _fx_getter(currencies, px_index, fx_series, fx_spot):
 
 
 def account_perf(rows, px, cash_flows, cash_data, cur_map,
-                 fx_spot=None, fx_series=None):
+                 fx_spot=None, fx_series=None, cash_residuals=None):
     """帳戶級績效三數字(#171):acct_twr / cash_drag / irr_annual(+持倉柱 hold_twr 當 drag
     參照)。輸出 dict 固定鍵(值可 None),算不了 → {"note": ...} fail-closed(同 pnl_curve)。
     rows/cash_flows/cash_data/cur_map = 引擎 load / load_cash_flows / cash_position /
@@ -291,6 +358,19 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
         out["note"] = (f"無錨點幣別 {'/'.join(broken_ccys)} 的現金回滾出現負值(入金沒記全,"
                        f"假設破裂)——帳戶級 TWR/IRR 不出;補該幣別錨點即解鎖")
         return out
+    # #180 大缺口 gate:殘差大到會實質污染每天淨值(相對帳戶規模)→ 帳戶柱算不出、出「解鎖邀請」,
+    # 持倉柱 hold_twr 已在 out 照給。判定用相對量綱(殘差換 USD / 帳戶總值峰值),對齊 #172 相對哲學。
+    # 中性文案:殘差成因可能漏記入金/提款/股息,不斷言是哪種(#180 契約)。
+    if cash_residuals:
+        acct_scale = max((abs(v) for v in V), default=0.0) or 1.0
+        blocking = [r for r in cash_residuals
+                    if abs(r["residual"]) * fx_at(r["currency"], n - 1) / acct_scale > RESIDUAL_TAINT_TH]
+        if blocking:
+            seg = max(blocking, key=lambda r: abs(r["residual"]))
+            out["note"] = (f"現金史 {seg['start']}~{seg['end']} 有 {abs(seg['residual']):.0f} "
+                           f"{seg['currency']} 對不上(可能漏記入金/提款/股息)——帳戶級報酬需補齊該段"
+                           f"才算得準,先看持倉柱;更新現金部位(補該筆金流日期)即解鎖")
+            return out
 
     acct_twr = acct_f - 1.0 if n_acct else None
     out["acct_twr"] = acct_twr

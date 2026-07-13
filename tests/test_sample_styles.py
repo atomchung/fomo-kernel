@@ -458,7 +458,7 @@ def test_tw_mixed_combined_exposure_network():
     import json as _json
     csv = os.path.join(MOCK, "sample_tw_mixed.csv")
     dm = os.path.join(MOCK, "sample_tw_mixed.driver_map.json")
-    env = dict(os.environ, TR_JSON="1", TR_DRIVER_MAP=dm,
+    env = dict(os.environ, TR_JSON="1", TR_DRIVER_MAP=dm, TR_LEDGER=os.devnull,  # #180 隱私:別讀本機真 ledger
                TR_CASH=_json.dumps([{"as_of": "2024-03-15", "amount": 250000, "currency": "TWD"},
                                     {"as_of": "2024-03-15", "amount": 4000, "currency": "USD"}]))
     engine = os.path.join(SKILL, "engine", "trade_recap.py")
