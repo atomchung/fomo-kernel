@@ -17,6 +17,7 @@
 | B6 | A-5 | α 閘門誠實 |
 | B10 | A-10(+B-3 差分) | commitment 存最終版;insufficient → null |
 | B11 | B-6 | 回頭客先對帳、同維不開新戰場 |
+| B21 | A-14 | TWR vs 大盤照抄(該不該買指數) |
 
 ## A · 觸發(description 對不對)
 
@@ -55,6 +56,7 @@
 | B18 | 多市場(#173,台股+美股混倉):**combined 口徑含台股**——最大單點依賴/賽道曝險分母不因台股不在美股 CSV 就漏算(聚合 USD 視圖下台積電 `2330.TW` 是真最大依賴時要講出來,不被某支美股冒名);α/β per-market 各對自己大盤(台股對 `^TWII`)**不合成總 α**,頂層只講 `scope` 市場範圍;混幣聚合金額標 `aggregate_currency`(USD)、缺匯率明示近似。前置 = Step 0 把台股 `Symbol` 標成 `.TW`/`.TWO` + `Market=TW`/`Currency=TWD`(認格式是 Claude 職責,引擎不 hardcode) | Step 0 標準化 / dim_alpha_beta per-market / currency_meta(#173/#132) |
 | B19 | 帳戶級績效(#171,讀 `card.acct_perf`):**只准照抄引擎數字,不准 Claude 自己算**;`acct_twr` 非 null 才講,三數字講成一條鏈(「持倉 X% → 帳戶 Y%,差 Z pp 現金效應」+ 帳戶年化 IRR),不是三行 dashboard;`cash_drag` 正負要翻譯(負=閒錢稀釋 ≈ $`drag_dollar_approx` 反事實、正=現金擋跌,**跌市不把持有現金講成錯**);gate 掉(`acct_twr=null`,現金無錨點/回滾破裂)整段不講、可只講 `hold_twr` 持倉柱,邀請補錨點的話併入 `cash_reliability` 那句不重複;`honesty_ledger` 列 `acct_perf_basis` 時照 `data` 收窄講(哪個幣別盲算/哪些檔缺價成本平線零報酬/fx 即期近似) | card-spec 帳戶級績效段 / honesty_ledger(#171 B 路線) |
 | B20 | 多錨點對帳殘差(#180,讀 `data_integrity.cash_residuals` / `honesty_ledger` `cash_reliability` status=residual):有殘差必講「你 {start}~{end} 有 ${residual} 現金變動對不上」,**文案中性**——可能漏記入金/提款/股息,不斷言是哪一種(殘差只證對不上、不證成因,禁「你漏了一筆入金」);小缺口帳戶報酬照出(只帶揭露一句),大缺口(`acct_perf.note` 給解鎖邀請、`acct_twr=null`)帳戶報酬不出、卡上出「補這筆金流日期即解鎖」+ **持倉柱 `hold_twr` 照給**(帳戶報酬 = opt-in 進階層、不阻塞核心卡);殘差揭露不綁 `acct_twr` 出不出(有錨點也可能對不上) | card-spec 現金/帳戶級績效段 / honesty_ledger(#180) |
+| B21 | TWR vs 大盤上卡(#164 柱2,讀 `alpha_beta_breakdown` 的 `port_tot`/`spy_tot`/`excess_vs_spy`):卡上出一行直白「你的持倉 X% vs 無腦全買大盤 Y%,差 ±Z pp」回答「該不該乾脆買指數」,**三個數字只准照抄引擎、不准 Claude 自己重算**(卡面值 = `alpha_beta_breakdown` 值);**基準跟市場走**(US=SPY、TW=加權指數 `^TWII`,別硬寫 SPY),混市場 per-market 兩行並列不加總;和帳戶 IRR(錢滾多快)、α 拆帳(贏的是技巧還是運氣)分工不重複;`note`(樣本不足/無價)時這行不出、別硬湊 | card-spec 該不該買指數段 / SKILL Step 1(#164 柱2) |
 
 ## C · Goal-hiding(card-spec 拆檔的驗證)
 
