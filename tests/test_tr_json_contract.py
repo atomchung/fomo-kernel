@@ -39,7 +39,7 @@ TR_JSON_KEYS = {
     "cash",                                             # #171 PR-1 呈現層:帳戶現金上卡(balance/weight/source/reliable/recent_net_deposit;None=未提供)
     "acct_perf",                                        # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note}=沒算)
     "honesty_ledger",                                   # #82:卡面必講的誠實點清單(觸發項聚合;空=無缺口)
-    "pnl_curve",                                        # #166:累積損益曲線(卡片 sparkline 用);{'note':...}=誠實降級
+    "pnl_curve",                                        # #167:累積損益曲線(卡片 sparkline 用);{'note':...}=誠實降級
 }
 STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
@@ -208,7 +208,7 @@ def main():
         ok(all(e["key"] in HL_KEYS for e in card2["honesty_ledger"]),
            "殘差揭露沿用 cash_reliability key、不越出 HL_KEYS(擴傘非新 key)", repr(list(hl2)))
 
-        # ── pnl_curve 契約(#166)──強制離線 shim 下無價格,必須誠實降級成 note,不可假造點位
+        # ── pnl_curve 契約(#167)──強制離線 shim 下無價格,必須誠實降級成 note,不可假造點位
         pc = card["pnl_curve"]
         ok(isinstance(pc, dict), "pnl_curve 是 dict", repr(pc)[:120])
         ok("note" in pc and "無價格" in pc["note"],
