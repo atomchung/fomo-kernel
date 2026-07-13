@@ -27,7 +27,7 @@ cd skills/fomo-kernel && python3 engine/trade_recap.py   # runs the built-in moc
 
 ## What it looks like
 
-Running the built-in mock, the **illustrative card** looks like this (below is the simplified quick-view; the actual engine output is a full-color terminal card that also includes a what-if drawdown stress test, 5-dimension behavior bars, and a return-attribution section — the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Translated below to show the shape — the engine currently renders in Traditional Chinese:*
+Running the built-in mock, the **illustrative card** looks like this (below is the simplified quick-view; the actual engine output is a full-color terminal card that also includes a what-if drawdown stress test, 5-dimension behavior bars, and a return-attribution section — the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Both the text below and the card image further down are English translations to show the shape — the engine currently renders in Traditional Chinese, so what you'll actually get looks like the "跑出來長什麼樣" section of the [Traditional Chinese README](README.zh-TW.md) instead:*
 
 ```text
 Review card · Master lens · mock sample
@@ -52,9 +52,9 @@ Per-position diagnosis (sorted by size; small lots not nitpicked):
  >  Lens principle: a cheap one-time probe is allowed — it doesn't count as completing long-term validation of trust
 ```
 
-The same card, rendered as a dark visual card:
+The same card, rendered as a dark visual card (translated, same as above — the real thing renders in Chinese):
 
-![fomo-kernel review card demo](docs/demo-card.png)
+![fomo-kernel review card demo](docs/demo-card-en.png)
 
 > In real use, the engine also flags positions that are "large + being averaged down while underwater" and asks you, *before* the card is issued, "is this a dip-buy or refusing to cut a loser?" — the motive a machine can't tell apart, settled by your one sentence, is what lets the card reach a verdict.
 > ⚠️ The mock's α numbers are distorted (too concentrated, too narrow a cross-section) — don't take them literally; real α needs a genuinely diversified book.
