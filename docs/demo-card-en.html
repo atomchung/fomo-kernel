@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#0d1117; padding:28px;
+    font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .card { width:680px; background:#161b22; border:1px solid #30363d; border-radius:14px; overflow:hidden; }
+  .head { padding:20px 24px 16px; border-bottom:1px solid #21262d; }
+  .tag { font-size:11px; letter-spacing:.12em; color:#6e7681; text-transform:uppercase; font-family:"SF Mono",monospace; }
+  .lede { font-size:17px; color:#e6edf3; line-height:1.5; margin-top:8px; font-weight:500; }
+  .lede b { color:#3fb950; }
+  .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#21262d; }
+  .m { background:#161b22; padding:14px 16px; }
+  .m .l { font-size:11px; color:#8b949e; margin-bottom:5px; }
+  .m .v { font-size:19px; color:#e6edf3; font-weight:600; }
+  .m .s { font-size:10.5px; color:#6e7681; margin-top:3px; }
+  .attr { padding:15px 24px; border-top:1px solid #21262d; background:#0f1420; }
+  .attr-t { font-size:11px; letter-spacing:.04em; color:#6e7681; margin-bottom:10px; }
+  .attr-bar { display:flex; gap:8px; }
+  .attr-bar span { flex:1; padding:9px 13px; border-radius:7px; font-size:12px; line-height:1.4; }
+  .attr-bar .track { background:#1a2233; color:#8b949e; border:1px solid #24314a; }
+  .attr-bar .pick { background:#11271a; color:#7ee787; border:1px solid #1f5c33; }
+  .attr-bar b { display:block; font-size:15.5px; margin-top:3px; color:#e6edf3; }
+  .attr-note { font-size:11.5px; color:#6e7681; margin-top:9px; font-style:italic; }
+  .sec { padding:16px 24px; border-top:1px solid #21262d; }
+  .sec-t { font-size:11px; letter-spacing:.06em; color:#6e7681; margin-bottom:12px; }
+  .row { display:flex; align-items:baseline; gap:10px; padding:6px 0; font-size:13.5px; }
+  .row .tk { font-family:"SF Mono",monospace; color:#e6edf3; width:54px; }
+  .row .amt { width:74px; font-weight:600; }
+  .row .lab { color:#8b949e; font-size:12.5px; }
+  .pos { color:#3fb950; } .neg { color:#f85149; } .warn { color:#d29922; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:7px; vertical-align:1px; }
+  .verdict { padding:18px 24px; border-top:1px solid #21262d; }
+  .v-good { font-size:13.5px; color:#7ee787; margin-bottom:14px; line-height:1.5; }
+  .v-hole { font-size:15px; color:#e6edf3; font-weight:600; margin-bottom:6px; }
+  .v-hole-d { font-size:13px; color:#8b949e; line-height:1.55; margin-bottom:16px; }
+  .rule { background:#11271a; border:1px solid #238636; border-radius:9px; padding:13px 15px; }
+  .rule .rl { font-size:10.5px; letter-spacing:.08em; color:#3fb950; margin-bottom:5px; font-family:"SF Mono",monospace; }
+  .rule .rt { font-size:14px; color:#e6edf3; font-weight:500; line-height:1.5; }
+  .quote { font-size:12.5px; color:#6e7681; font-style:italic; margin-top:13px; padding-top:12px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <div class="tag">Review card · Master lens · mock sample</div>
+    <div class="lede">On paper you're up <b>+$138k</b>, but almost all of it is "held and never sold"; your active trades are what need discipline, not luck.</div>
+  </div>
+
+  <div class="metrics">
+    <div class="m"><div class="l">Total P&amp;L</div><div class="v">+$138,058</div><div class="s">realized $19k · unrealized $119k</div></div>
+    <div class="m"><div class="l">Active win/loss ratio</div><div class="v pos">2.9</div><div class="s">avg win $2,851 vs avg loss $1,000</div></div>
+    <div class="m"><div class="l">Beat the market</div><div class="v">+247pp</div><div class="s">β 2.04 (2× the market's swings)</div></div>
+    <div class="m"><div class="l">AI exposure</div><div class="v warn">98%</div><div class="s">30% drawdown = −$50k</div></div>
+  </div>
+
+  <div class="attr">
+    <div class="attr-t">Splitting the +247pp market-beat · luck vs skill (what ChatGPT can't compute)</div>
+    <div class="attr-bar">
+      <span class="track">Right sector · direction/luck<b>+67pp</b></span>
+      <span class="pick">Stock picking within sector · skill<b>+181pp</b></span>
+    </div>
+    <div class="attr-note">The α interval is still wide — statistically can't yet tell skill from luck. Don't take the demo literally; a genuinely diversified book is what makes this reliable.</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-t">Per-position diagnosis · sorted by size, small lots not nitpicked</div>
+    <div class="row"><span class="tk">PLTR</span><span class="amt pos">+$74,058</span><span class="lab"><span class="dot" style="background:#3fb950"></span>likely DCA (buys up and down, not averaging a loser) &nbsp;·&nbsp; <span class="warn">too heavy 50%</span></span></div>
+    <div class="row"><span class="tk">NVDA</span><span class="amt pos">+$56,412</span><span class="lab"><span class="dot" style="background:#3fb950"></span>likely DCA &nbsp;·&nbsp; <span class="warn">too heavy 46%</span></span></div>
+    <div class="row"><span class="tk">ORCL</span><span class="amt pos">+$1,658</span><span class="lab"><span class="dot" style="background:#3fb950"></span>disciplined hold: +22%</span></div>
+    <div class="row"><span class="tk">AMD</span><span class="amt neg">−$1,000</span><span class="lab"><span class="dot" style="background:#6e7681"></span>roughly neutral</span></div>
+  </div>
+
+  <div class="verdict">
+    <div class="v-good">✓ What you did right: you averaged down twice, but both times stayed within your position cap — no ticker got averaged into an oversized position.</div>
+    <div class="v-hole">Biggest leak: position sizing</div>
+    <div class="v-hole-d">Largest single lot PLTR is 50%, the rest average 17% — sizing has no rule, just gut feel in the moment. One drawdown, and your biggest position hits you first.</div>
+    <div class="rule">
+      <div class="rl">Change only this next time · actionable now + checkable next time</div>
+      <div class="rt">Hard-cap any single position at 20% — trim if it goes over. That forces you to ask, before adding next time, "would this push it past my cap?"</div>
+    </div>
+    <div class="quote">▸ Lens principle: a cheap one-time probe is allowed — it doesn't count as completing long-term validation of trust; a small win shouldn't auto-upgrade into an oversized position.</div>
+  </div>
+</div>
+</body>
+</html>

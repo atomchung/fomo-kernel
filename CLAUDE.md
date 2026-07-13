@@ -65,7 +65,7 @@ fix(engine): candidate_rules 補 3 維規矩生成 + 分散維度門檻對齊 (#
 | 事實 | 住在哪些檔案 |
 |---|---|
 | 行為契約 | engine ↔ `skills/fomo-kernel/SKILL.md`(權威)↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
-| demo 卡示意數字 | README 文字卡 ↔ `docs/demo-card.html`(改後重截 `demo-card.png`) |
+| demo 卡示意數字 | README.zh-TW 文字卡 ↔ `docs/demo-card.html`(改後重截 `demo-card.png`)〔中文〕;README.md 文字卡 ↔ `docs/demo-card-en.html`(改後重截 `demo-card-en.png`)〔英文,#165 後新增,數字須與中文版一致,只譯文字〕 |
 | README 雙語 | **分檔**:`README.md`(英文,GitHub 首頁預設、對外主入口)↔ `README.zh-TW.md`(繁中完整版),兩檔頂部語言連結互指;改主要內容**兩檔同步**,尤其別讓英文主入口 drift 落後中文 |
 
 引用**產品假設**(誰是用戶、當前卡點是什麼)做優先級決策時,帶上判定日期;判定已隔數週或出現矛盾訊號,先跟 maintainer 對帳再據以行動——過時結論被跨 session 複讀的案例見 #112。
