@@ -2025,7 +2025,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
         "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
         "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
-        "pnl_curve": pnl_curve_data or {"note": "無資料"},   # #166:累積損益曲線,卡片畫 sparkline 用(一個點→一張圖);{'note':...} = 誠實降級,不硬畫
+        "pnl_curve": pnl_curve_data or {"note": "無資料"},   # #167:累積損益曲線,卡片畫 sparkline 用(一個點→一張圖);{'note':...} = 誠實降級,不硬畫
     }
 
 # ─────────────────────────── main ───────────────────────────
@@ -2082,7 +2082,7 @@ def main():
         mkt_weights[t_market.get(t, "US")] += sh * pxv if pxv else c
     ab = dim_alpha_beta(rows, px, market_weights=dict(mkt_weights))
     if isinstance(ab, dict): ab["credible"] = alpha_credible(ab)   # α 能力語氣閘 v2(#80):統計顯著才算,檔數閘退役(混市場=scope 市場的顯著性)
-    # 累積損益曲線(卡片 sparkline,#166):單一市場才算;多市場沿用 α/β 已選好的 scope,
+    # 累積損益曲線(卡片 sparkline,#167):單一市場才算;多市場沿用 α/β 已選好的 scope,
     # 混市場又沒選出 scope(樣本不足)就誠實不畫,別隱性猜哪個市場該代表。
     markets_present = sorted(set(t_market.values()))
     curve_market = (ab.get("scope") if isinstance(ab, dict) else None) or (

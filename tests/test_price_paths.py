@@ -393,7 +393,7 @@ def test_sector_proxy_market_aware():
         tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
 
 
-# ─────────────── B4. pnl_curve:累積損益曲線(卡片 sparkline,#166)───────────────
+# ─────────────── B4. pnl_curve:累積損益曲線(卡片 sparkline,#167)───────────────
 
 def _small_idx(n):
     return pd.bdate_range("2024-03-04", periods=n)   # 確定性,跟主 IDX(2024-01-02起)不重疊,好辨識
