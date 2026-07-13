@@ -79,14 +79,14 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
 
 ## 🔒 Privacy: no backend upload, the author can't see it
 
-- The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing written to any memory**.
+- The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing sent to the author**. For weekly reconciliation it does save review-derived state **locally** under `~/.trade-coach/` (never sent anywhere) — see the next section for exactly what that is and how to inspect, export, or wipe it.
 - The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
 - `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
 - Precisely: the only thing that reads your trades is **the Claude you're already using** — it has to read the CSV to review it for you, exactly like any other time you use Claude. That's a different thing from handing your statement to a SaaS that stores it, that you can't see into, that the author can query. (So it's not "never touches any server" — it's "not persisted, not sent to the author, not through a third party.")
 
 ## 📁 Where your coach memory lives / how to maintain it
 
-On your second visit, the card first reconciles "did you keep last time's rule?" — backed by three **local-only** files (all under `~/.trade-coach/`, never sent anywhere, never to the author):
+On your second visit, the card first reconciles "did you keep last time's rule?" — backed by several **local-only** files under `~/.trade-coach/` (never sent anywhere, never to the author). The four behind that reconciliation:
 
 ```bash
 cat ~/.trade-coach/log.jsonl       # one line per review (thin metrics + the rule you committed to); empty = first time
@@ -95,11 +95,20 @@ cat ~/.trade-coach/profile.md      # your trading goals + 3 personal principles 
 cat ~/.trade-coach/last_state.json # the thin state the engine last computed (per-position shares/cost, for reconciliation; overwritten each run)
 ```
 
+The engine keeps a handful of other derived files there too (a trade ledger, an exit-tracking queue, a problem/rule log, your saved review cards) — rather than trusting a prose list to stay complete, the CLI below is the single source of truth for exactly what's on disk right now:
+
+```bash
+python3 skills/fomo-kernel/engine/coach.py data-status               # every known path: exists? size? line count? (never prints your trade content)
+python3 skills/fomo-kernel/engine/coach.py data-export --out backup.zip   # bundle everything that exists into one zip (contains sensitive trade-derived data — treat it like a brokerage statement)
+python3 skills/fomo-kernel/engine/coach.py data-reset --dry-run      # preview what a reset would delete
+python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually delete it all (not reversible)
+```
+
 - **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
 - **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
-- **Switch philosophy lens / reset the reconciliation baseline** → delete or rename `~/.trade-coach/` (deleting makes next time a fresh first visit).
+- **Switch philosophy lens / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
 - **Wrote a thesis wrong** → edit `theses.jsonl`; it's append-only, so a correction = append a new event (don't overwrite the old one — that's how you see, across time, how you first reasoned and how it later changed).
-- **Privacy, self-verifiable**: coach memory is just these files under `~/.trade-coach/`, all on your machine; there isn't a single row on the author's side.
+- **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
 - **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
 
 > 💡 **Want to share with a community?** By default the card is the full private version only. Tell me "give me the shareable version" and it outputs a **de-sensitized** plain-text version (hides amounts / share counts / exact ratios, keeps only the behavior pattern + relative performance β / beat-the-market pp) — ready to paste to X / Threads.
