@@ -20,6 +20,7 @@ snapshot-anchored ledger 的行為契約(Phase B PR-1;設計 docs/prd-ledger.md,
 跑法:
   python3 tests/test_ledger.py
 """
+import datetime as dt
 import json
 import os
 import subprocess
@@ -213,7 +214,7 @@ def test_csv_filter_parity_with_trade_recap():
     recap_rows = tr.load([p])
     recap_keys = sorted((r["ticker"], r["side"], round(r["qty"], 2), round(r["price"], 4),
                          r["date"].isoformat()) for r in recap_rows)
-    led_events, _ = lg.trades_from_csv(p)
+    led_events, _, _ = lg.trades_from_csv(p, today=dt.date(2026, 7, 2))
     led_fresh, _ = lg.dedupe_against([], led_events)
     led_keys = sorted(lg._trade_key(ev) for ev in led_fresh)
     assert led_keys == recap_keys, (
@@ -270,12 +271,39 @@ def test_trades_from_csv_filters_and_counts():
         "AAPL,BUY,3,200.0,2026-07-02,Dividend,,\n"       # 非 Trade → bad
         "NOK,HOLD,3,10.0,2026-07-02,Trade,,\n",          # 非 BUY/SELL → bad
         ".csv")
-    evs, skipped = lg.trades_from_csv(p)
+    evs, skipped, future_dated = lg.trades_from_csv(p, today=dt.date(2026, 7, 2))
     assert len(evs) == 2 and skipped == 3, f"收 2 跳 3,得 {len(evs)}/{skipped}"
+    assert future_dated == 0, "這批日期都在過去,不該誤觸未來日期防線"
     tw = next(e for e in evs if e["ticker"] == "2330.TW")
     assert tw["market"] == "TW" and tw["currency"] == "TWD"
     us = next(e for e in evs if e["ticker"] == "NVDA")
     assert us["market"] == "US" and us["currency"] == "USD"
+
+
+def test_trades_from_csv_rejects_future_dated_trades():
+    """#169:格式合法但日期在未來的交易(疑似 Step 0 MM/DD↔DD/MM 誤判)——拒收不寫進帳,
+    獨立計數(不跟格式錯誤的 skipped 混在一起),零假陽性(沒有交易真的會晚於「今天」成交)。"""
+    p = _tmpfile(
+        "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
+        "NVDA,BUY,10,170.5,2026-07-01,Trade\n"          # 過去,正常收
+        "PLTR,BUY,5,140.0,2026-07-10,Trade\n"           # 就是「今天」,不算未來,正常收
+        "ORCL,BUY,3,120.0,2026-10-07,Trade\n",          # 晚於今天 → 疑似 07/10 誤判成 10/07,拒收
+        ".csv")
+    evs, skipped, future_dated = lg.trades_from_csv(p, today=dt.date(2026, 7, 10))
+    assert len(evs) == 2 and future_dated == 1 and skipped == 0, \
+        f"應收 2(含當天)、擋 1 筆未來日期、0 筆格式錯,得 evs={len(evs)}/future={future_dated}/skipped={skipped}"
+    assert {e["ticker"] for e in evs} == {"NVDA", "PLTR"}, "ORCL(未來日期)不該出現在收下的事件裡"
+
+
+def test_trades_from_csv_today_defaults_to_real_today():
+    """不傳 today 時預設用真實今天——用一個保證早於任何測試執行時刻的固定過去日期驗證預設值有生效,
+    不寫死成某個未來會失效的日期常數。"""
+    p = _tmpfile(
+        "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
+        "NVDA,BUY,10,170.5,2020-01-01,Trade\n",
+        ".csv")
+    evs, skipped, future_dated = lg.trades_from_csv(p)
+    assert len(evs) == 1 and future_dated == 0, "2020 年的交易對任何現實中的『今天』都不是未來"
 
 
 def test_load_ledger_skips_bad_lines():
@@ -335,6 +363,32 @@ def test_cli_append_snapshot_source_reconciled():
     assert _approx(out["holdings"]["NVDA"]["shares"], 35)
     events, _ = lg.load_ledger(led)
     assert events[0]["cash"] == {"USD": 9000}, "cash 欄要落盤(閒置 cash 偵測的料,#33)"
+
+
+def test_cli_append_trades_rejects_future_dated():
+    """#169 CLI 層 wiring:append-trades 對未來日期的交易要拒收、獨立計數、不寫進帳——
+    只測純函式不夠,SKILL 實際呼叫的是這條 CLI 路徑。用 2020/2099 這種年份級的過去/未來
+    (而非相對「今天」的日期),測試不管在哪一天跑都不會誤判,不需要幫 CLI 加一個沒人用得到的
+    --today 覆寫旗標。"""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    csv_path = os.path.join(d, "trades.csv")
+    with open(csv_path, "w", encoding="utf-8") as f:
+        f.write("Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
+                "NVDA,BUY,10,170.5,2020-01-01,Trade\n"
+                "PLTR,BUY,5,140.0,2099-01-01,Trade\n")
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "append-trades", csv_path],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["appended"] == 1 and out["skipped_future_dated"] == 1 and out["skipped_bad"] == 0, \
+        f"應收 1(2020)、擋 1(2099)未來日期,得 {out}"
+    assert "PLTR" not in out["holdings_after"], "未來日期那筆(PLTR)不該進 holdings"
+    assert "future-dated" in r.stderr and "2099" not in r.stderr, \
+        "stderr 要提示未來日期筆數,不需要逐筆印出可能敏感的細節"
+    events, _ = lg.load_ledger(led)
+    assert all(e.get("ticker") != "PLTR" for e in events), "PLTR 不該被寫進 ledger.jsonl(拒收非只是不算數)"
 
 
 # ─────────────────────────── runner ───────────────────────────

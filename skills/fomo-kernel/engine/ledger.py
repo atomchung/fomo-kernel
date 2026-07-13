@@ -251,10 +251,17 @@ def reconcile(events, declared_positions):
 
 # ─────────────────────────── 交易匯入 ───────────────────────────
 
-def trades_from_csv(path):
+def trades_from_csv(path, today=None):
     """標準欄位 CSV(Symbol/Action/Quantity/Price/TradeDate[/Market/Currency/Fee])→ trade 事件。
-    過濾語意對齊 trade_recap.load()(RecordType=Trade、BUY/SELL、qty/px>0),但跳過要計數。"""
-    out, skipped = [], 0
+    過濾語意對齊 trade_recap.load()(RecordType=Trade、BUY/SELL、qty/px>0),但跳過要計數。
+
+    #169:TradeDate 只驗格式合法(fromisoformat 不報錯)不夠——Step 0 把「格式合法但值錯」的日期
+    (如把美式 MM/DD 誤判成 DD/MM)寫進來,append-only 帳本就永久帶著一筆看似正常、實則日期
+    錯的交易,且沒有任何計數器提示(#50 只擋得住格式本身不合法的情形)。未來日期是唯一能零假陽性
+    偵測的子情形(沒有交易會晚於今天成交)——擋在這裡不寫進帳,獨立計數,不跟既有格式錯誤的
+    `skipped` 混在一起(那是另一種失敗模式,別把兩種訊號合成一種讓人分不清）。"""
+    today = today or dt.date.today()
+    out, skipped, future_dated = [], 0, 0
     with open(path, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             if (r.get("RecordType") or "").strip() != "Trade":
@@ -275,6 +282,9 @@ def trades_from_csv(path):
             if qty <= 0 or px <= 0:
                 skipped += 1
                 continue
+            if d > today:
+                future_dated += 1
+                continue
             ev = {"type": "trade", "date": d.isoformat(), "ticker": sym,
                   "action": act.lower(), "qty": round(qty, 4), "price": round(px, 6),
                   "market": (r.get("Market") or "US").strip() or "US",
@@ -287,7 +297,7 @@ def trades_from_csv(path):
                 except ValueError:
                     pass
             out.append(ev)
-    return out, skipped
+    return out, skipped, future_dated
 
 
 def _trade_key(ev):
@@ -388,11 +398,17 @@ def main(argv=None):
         return 0
 
     if a.cmd == "append-trades":
-        new_trades, bad = trades_from_csv(a.std_csv)
+        new_trades, bad, future_dated = trades_from_csv(a.std_csv)
         fresh, dup = dedupe_against(events, new_trades)
         append_events(a.ledger, fresh)
-        print(f"appended {len(fresh)} trades(dup skipped {dup}, bad rows {bad})", file=sys.stderr)
+        if future_dated:                                  # #169:獨立示警,別跟 bad rows 混在一起
+            print(f"⚠️  {future_dated} 筆交易的 TradeDate 晚於今天,疑似 Step 0 日期轉換錯誤"
+                 f"(如 MM/DD 誤判成 DD/MM),已拒收不寫進帳——回頭核對原始對帳單的這幾筆日期",
+                 file=sys.stderr)
+        print(f"appended {len(fresh)} trades(dup skipped {dup}, bad rows {bad}, "
+             f"future-dated skipped {future_dated})", file=sys.stderr)
         _emit({"appended": len(fresh), "skipped_dup": dup, "skipped_bad": bad,
+               "skipped_future_dated": future_dated,
                "holdings_after": derive_holdings(events + fresh)["holdings"]})
         return 0
 
