@@ -114,8 +114,8 @@ def test_enqueue_dedup_and_due_schedule():
         _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
         _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
     ])
-    new1, dup1 = rv.enqueue_from_ledger(led, q)
-    new2, dup2 = rv.enqueue_from_ledger(led, q)          # 重跑 → 全去重
+    new1, dup1 = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 15))
+    new2, dup2 = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 15))   # 重跑 → 全去重
     assert (len(new1), len(new2)) == (1, 0), f"enqueue 去重錯:{(new1, new2)}"
     assert (dup1, dup2) == (0, 1), f"dup 計數錯:{(dup1, dup2)}"
     # new = 賣出理由 capture 的訊號源(#136):首跑要帶完整事件,重跑不重報
@@ -123,6 +123,7 @@ def test_enqueue_dedup_and_due_schedule():
     revisits, _, _ = rv.load_queue(q)
     item = list(revisits.values())[0]
     assert item["due"] == {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"}
+    assert item["enqueued_at"] == "2026-06-15", "#170:每筆蓋 enqueued_at(= 開始追蹤日)"
     assert item["idle_cash"] is True
     assert item["shares_before"] == 10, "減倉比例要靠 shares_before,capture 問句用"
 
@@ -156,7 +157,7 @@ def test_enqueue_legacy_id_migration_compat():
                           "exit_date": "2026-06-15", "shares_sold": 10.0,
                           "due": {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"},
                           "swaps": [], "idle_cash": True}])
-    new, dup = rv.enqueue_from_ledger(led, q)
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 16))
     assert (len(new), dup) == (0, 1), f"舊 3 段 id 的存量出場應被認出、不重排,實得 new={new} dup={dup}"
 
 
@@ -167,7 +168,7 @@ def test_enqueue_fresh_uses_new_five_segment_id():
         _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
         _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
     ])
-    new, dup = rv.enqueue_from_ledger(led, q)
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 16))
     assert (len(new), dup) == (1, 0)
     assert new[0]["revisit_id"] == "NVDA#2026-05-01#1#2026-06-15#10.0", \
         f"新排入應用 5 段 id(cycle_id + exit_date + shares 浮點),實得 {new[0]['revisit_id']}"
@@ -189,7 +190,7 @@ def test_enqueue_migration_keeps_same_day_second_round():
                           "exit_date": "2026-06-15", "shares_sold": 10.0,
                           "due": {"30": "2026-07-15", "60": "2026-08-14", "90": "2026-09-13"},
                           "swaps": [], "idle_cash": True}])
-    new, dup = rv.enqueue_from_ledger(led, q)
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 16))
     ids = sorted(n["revisit_id"] for n in new)
     assert ids == ["NVDA#2026-06-15#2#2026-06-15#10.0"], \
         f"cycle1 應認 dup、cycle2 應新排(不被碰撞家族連坐),實得 new ids={ids} dup={dup}"
@@ -203,7 +204,7 @@ def test_scan_due_progression_and_resolution():
         _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
         _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
     ])
-    rv.enqueue_from_ledger(led, q)
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 15))    # 出場當日排入 → 30/60/90 全在未來,非 backfill
     revisits, resolutions, _ = rv.load_queue(q)
     rid = list(revisits)[0]
     # 90 天後才 scan,但 30 還沒答 → 只出 30
@@ -221,6 +222,86 @@ def test_scan_due_progression_and_resolution():
     assert rv.scan_due(revisits, resolutions, dt.date(2027, 1, 1)) == [], "三關全答 → 靜默"
     # 未到期 → 不催(zero-event 誠實)
     assert rv.scan_due(revisits, {}, dt.date(2026, 7, 1)) == []
+
+
+# ─────────────── C2. 冷啟動兩層:due 不灌爆 + 歷史 backlog(#170)───────────────
+
+def _hist_ledger(led, n=8, base=dt.date(2024, 1, 15)):
+    """n 檔季度性 買進→45 天後清倉,全落在 2024–2025(對 2026 啟用日 = 純歷史存量)。"""
+    evs = []
+    for i in range(n):
+        buy = base + dt.timedelta(days=i * 90)
+        sell = buy + dt.timedelta(days=45)
+        evs += [_tr(buy.isoformat(), f"T{i}", "buy", 10, 100.0),
+                _tr(sell.isoformat(), f"T{i}", "sell", 10, 110.0 + i)]   # 出場金額 T7 > … > T0
+    lg.append_events(led, evs)
+
+
+def test_cold_start_flood_suppressed_into_backlog():
+    """既有歷史使用者第一次 enqueue:2.5 年舊出場的 30/60/90 全在啟用日之前 →
+    due 一筆都不灌(不把復盤變審問),全數落 backlog。這是 #170 的核心迴歸。"""
+    led, q = _mk_paths()
+    _hist_ledger(led, n=8)
+    enq = dt.date(2026, 7, 14)
+    new, _ = rv.enqueue_from_ledger(led, q, today=enq)
+    assert len(new) == 8 and all(n["enqueued_at"] == "2026-07-14" for n in new)
+    revisits, resolutions, _ = rv.load_queue(q)
+    assert rv.scan_due(revisits, resolutions, enq) == [], "啟用前歷史出場不該灌 due(#170 病灶)"
+    backlog, summary, total = rv.scan_backlog(revisits, resolutions)
+    assert total == 8 and summary["count"] == 8, "8 筆歷史存量全進 backlog 統計"
+    assert summary["full"] == 8 and summary["reduce"] == 0
+    assert len(backlog) == 5, "backlog engine 收斂到 top-5(抓大放小),真數看 backlog_total"
+    assert backlog[0]["ticker"] == "T7", "金額大者先(T7 出場價最高)"
+
+
+def test_partial_backfill_surfaces_later_checkpoints():
+    """啟用當下已過 30 但未過 60/90 的出場:30 不催(啟用前窗),60 到期才正常浮現(不是被跳過的 30);
+    且它非『完全歷史』→ 不進 backlog。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [_tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+                           _tr("2026-05-30", "NVDA", "sell", 10, 130.0)])  # due30=06-29/60=07-29/90=08-28
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 14))              # 30 已過、60/90 未過
+    revisits, resolutions, _ = rv.load_queue(q)
+    assert rv.scan_due(revisits, resolutions, dt.date(2026, 7, 14)) == [], "30 是啟用前窗、60 未到 → 靜默"
+    due = rv.scan_due(revisits, resolutions, dt.date(2026, 7, 29))
+    assert [d["checkpoint"] for d in due] == ["60"], f"應浮現 60 而非被跳過的 30,實得 {due}"
+    _, summary, total = rv.scan_backlog(revisits, resolutions)
+    assert total == 0 and summary["count"] == 0, "部分 backfill(90 未過)不算歷史存量,不進 backlog"
+
+
+def test_backlog_summary_hindsight_honest_coverage():
+    """選項 4 賣飛傾向要現價:有價的才算進分母,覆蓋率(priced)誠實列;缺價不猜(avg=None)。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [_tr("2024-01-01", "UP", "buy", 10, 100.0),
+                           _tr("2024-02-10", "UP", "sell", 10, 100.0),     # 賣後漲(150 → +50%)
+                           _tr("2024-03-01", "DOWN", "buy", 10, 100.0),
+                           _tr("2024-04-10", "DOWN", "sell", 10, 100.0)])  # 賣後跌(不給價)
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 14))
+    revisits, resolutions, _ = rv.load_queue(q)
+    _, s1, _ = rv.scan_backlog(revisits, resolutions, prices={"UP": 150.0})
+    assert s1["count"] == 2 and s1["priced"] == 1, "只有 UP 有現價 → 分母 1,不硬湊"
+    assert s1["sold_before_rise"] == 1 and _approx(s1["avg_hindsight_pp"], 0.5, 1e-9)
+    _, s2, _ = rv.scan_backlog(revisits, resolutions, prices={})
+    assert s2["priced"] == 0 and s2["avg_hindsight_pp"] is None, "全缺價 → 不算賣飛傾向,不猜"
+
+
+def test_backlog_excludes_resolved_and_ranks_by_amount():
+    """backlog 金額大者先;複核過(落 resolution)的退出 backlog,summary.count 同步 -1(答完不再纏)。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [_tr("2024-01-01", "AAA", "buy", 10, 100.0),
+                           _tr("2024-02-10", "AAA", "sell", 10, 110.0),    # notional 1100
+                           _tr("2024-03-01", "BBB", "buy", 5, 200.0),
+                           _tr("2024-04-10", "BBB", "sell", 5, 300.0)])    # notional 1500 > AAA
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 14))
+    revisits, resolutions, _ = rv.load_queue(q)
+    backlog0, _, total0 = rv.scan_backlog(revisits, resolutions)
+    assert total0 == 2 and backlog0[0]["ticker"] == "BBB", "金額大者(BBB 1500)先"
+    lg.append_events(q, [{"type": "resolution", "revisit_id": backlog0[0]["revisit_id"],
+                          "checkpoint": "90", "status": "still_valid", "date": "2026-07-14"}])
+    revisits, resolutions, _ = rv.load_queue(q)
+    backlog1, summary1, total1 = rv.scan_backlog(revisits, resolutions)
+    assert total1 == 1 and summary1["count"] == 1
+    assert [b["ticker"] for b in backlog1] == ["AAA"], "複核過的 BBB 退出 backlog"
 
 
 # ─────────────── D. swap framing 對比數學(#33 核心)───────────────
@@ -272,12 +353,13 @@ def test_cli_roundtrip():
     ])
     ex = os.path.join(ENGINE, "revisit.py")
     r1 = subprocess.run([sys.executable, ex, "--queue", q, "enqueue-from-ledger",
-                         "--ledger", led], capture_output=True, text=True)
+                         "--ledger", led, "--today", "2026-06-16"], capture_output=True, text=True)
     out1 = json.loads(r1.stdout)
     assert r1.returncode == 0 and out1["enqueued"] == 1, r1.stderr
     assert out1["new"][0]["ticker"] == "NVDA", "new = 本週新出場清單(SKILL 賣出 capture 訊號)"
+    assert out1["new"][0]["enqueued_at"] == "2026-06-16", "#170:CLI 也蓋 enqueued_at"
     r1b = subprocess.run([sys.executable, ex, "--queue", q, "enqueue-from-ledger",
-                          "--ledger", led], capture_output=True, text=True)
+                          "--ledger", led, "--today", "2026-06-16"], capture_output=True, text=True)
     assert json.loads(r1b.stdout)["new"] == [], "重跑 new 必空,否則同一出場每週重問"
     r2 = subprocess.run([sys.executable, ex, "--queue", q, "scan", "--today", "2026-07-16",
                          "--prices", '{"NVDA": 160.0}'], capture_output=True, text=True)
@@ -285,6 +367,8 @@ def test_cli_roundtrip():
     assert len(out["due"]) == 1 and out["due"][0]["checkpoint"] == "30"
     assert _approx(out["due"][0]["compare"]["orig_ret"], 160.0 / 120.5 - 1, 1e-6)
     assert out["recent_exits"] == [], "出場 31 天,超過 capture 鮮度窗 → 不再列為候選"
+    assert out["backlog"] == [] and out["backlog_total"] == 0, \
+        "#170:出場當日排入(enqueued_at 06-16),90 關在未來 → 非歷史存量,不進 backlog"
     r2b = subprocess.run([sys.executable, ex, "--queue", q, "scan", "--today", "2026-06-20"],
                          capture_output=True, text=True)
     recent = json.loads(r2b.stdout)["recent_exits"]
