@@ -7,18 +7,24 @@ trade_recap.py 維持純函式(CSV → JSON),所有讀寫 ~/.trade-coach/ 的收
 (同 ledger/revisit/problems 的狀態側慣例)。SKILL 層只負責「跟人對話拿到內容」,
 格式驗證 / gate 規則 / id 生成 / append 全在本模組——LLM 每週手抄腳本的變異從此陣亡。
 
-CLI(JSON stdout / 訊息 stderr,同 ledger 慣例;全部 append-only、重跑安全=多跑多 append,由 SKILL 序列執行保證單次):
-  python3 coach.py close --rule TEXT --metric KEY [--state P] [--log P]
+CLI(JSON stdout / 訊息 stderr,同 ledger 慣例;#166:close/append-theses/append-rules/save-card
+四個收尾指令各自 session 級 idempotent——session_id 從 --state 內容雜湊算出(非 time.time(),
+同一份 state 重算永遠同一個 id),同 session 重試 = no-op,同 session 但內容不同 = fail closed
+不寫入。同日兩個「內容恰巧相同但邏輯上不同」的 session 用 --session-nonce 明確拆開。
+跨指令(例如 close 成功但 append-theses 失敗)不保證整批回滾——這是刻意的取捨,見 issue #166):
+  python3 coach.py close --rule TEXT --metric KEY [--state P] [--log P] [--session-nonce N]
       # log.jsonl append。gate 規則(#56):--rule SKIP 一律不存 commitment;
       # insufficient_data 只擋 engine 機械預設,不擋用戶親選(親選補 baseline_note)。
       # --metric 必須存在於 state.metrics,否則 exit 2(擋填錯 key 靜默存 None)。
-  python3 coach.py append-theses THESES.json --session-date D [--theses P]
+  python3 coach.py append-theses THESES.json --session-date D [--theses P] [--state P] [--session-nonce N]
       # theses.jsonl append。thesis 行驗 cycle_id 3 段格式(#41 的坑:2 段 → 對帳永不匹配);
-      # exit_narrative 行驗必填欄。id 生成(session 戳防同日撞 id)在這裡,LLM 不再手拼。
-  python3 coach.py append-rules RULES.json --created D [--rules P]
+      # exit_narrative 行驗必填欄。id 由 session_id fingerprint 生成,同 session 重試 id 不變。
+      # --state 檔不存在時退化成無 session 級保護(僅供孤立呼叫,正常 SKILL 流程不會觸發)。
+  python3 coach.py append-rules RULES.json --created D [--rules P] [--state P] [--session-nonce N]
       # rules.jsonl append。metric_key → problem_key 對映內建(PKEY),rule_id 生成。
-  python3 coach.py save-card CARD.md --date D [--cards-dir P]
-      # 卡片落盤:cards/<date>.md;同日重跑檔名遞增 <date>-2.md,不蓋舊卡(append-only 精神)。
+  python3 coach.py save-card CARD.md --date D [--cards-dir P] [--state P] [--session-nonce N]
+      # 卡片落盤:cards/<date>.md;frontmatter 注入 session_id。同 session 重試 = no-op(不
+      # 產生新檔);真正不同的第二個 session 才遞增 <date>-2.md,不蓋舊卡。
   python3 coach.py data-status [--root P]
       # 列出 ~/.trade-coach/ 下每個已知檔案的存在/大小/筆數(#165:單一命令看到完整持久化足跡,
       # 不印交易內容本身)。root 預設 ~/.trade-coach,測試/檢視別的路徑用 --root 覆寫。
@@ -29,6 +35,7 @@ CLI(JSON stdout / 訊息 stderr,同 ledger 慣例;全部 append-only、重跑安
       # 沒帶旗標一律拒收,不給「裸執行就刪除」的預設)。
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -36,6 +43,10 @@ import shutil
 import sys
 import time
 import zipfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import ledger as lg  # noqa: E402  # 共用 atomic_write_text / session_id_from_state(#166)
 
 # 與 trade_recap.CYCLE_ID_RE 同一條契約(#61)。coach 刻意不 import trade_recap(保持純標準庫、
 # 免 pandas 依賴——同 ledger.py 慣例);pattern 同步由 tests/test_tr_json_contract.py 機械鎖定。
@@ -79,12 +90,66 @@ def _append_lines(path, rows):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+# ─────────────────── session 級 idempotency 共用工具(#166)───────────────────
+
+def _read_jsonl_rows(path):
+    """容錯讀 JSONL:壞行跳過,不 crash(同 problems.py load_book 慣例)。"""
+    rows = []
+    if not os.path.exists(path):
+        return rows
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    return rows
+
+
+def _canonical(obj):
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True)
+
+
+def _strip_session_id(obj):
+    d = dict(obj)
+    d.pop("session_id", None)
+    return d
+
+
+def _strip_generated(obj, *extra_keys):
+    """比對用:除了 session_id,也拿掉 CLI 自己生成的 id 欄位(thesis_id/narrative_id/rule_id)。
+    這些 id 目前由陣列位置(#166 review 抓到:位置一變,id 就變)生成,不是使用者提交的內容,
+    納入比對會把「同一份邏輯內容、陣列順序恰巧不同」誤判成衝突——見 cmd_append_theses/rules。"""
+    d = dict(obj)
+    d.pop("session_id", None)
+    for k in extra_keys:
+        d.pop(k, None)
+    return d
+
+
+def _optional_session_id(args):
+    """append-theses/append-rules/save-card 用:--state 檔存在才算 session_id;不存在不算
+    錯誤,退化成不做 session 級去重/衝突偵測(僅供孤立呼叫,正常 SKILL 六步流程裡 Step 1
+    早就寫出 last_state.json,不會走到這條退化路徑)。"""
+    state_path = args.state or os.path.expanduser("~/.trade-coach/last_state.json")
+    if not os.path.exists(state_path):
+        print(f"warning: state 檔不存在({state_path}),本次不做 session 級去重/衝突偵測",
+              file=sys.stderr)
+        return None
+    st = _load_json(state_path, "state")
+    return lg.session_id_from_state(st, args.session_nonce or "")
+
+
 # ─────────────────────────── close(log append)───────────────────────────
 
 def cmd_close(args):
     state_path = args.state or os.path.expanduser("~/.trade-coach/last_state.json")
     log_path = args.log or os.path.expanduser("~/.trade-coach/log.jsonl")
     st = _load_json(state_path, "state")
+    session_id = lg.session_id_from_state(st, args.session_nonce or "")
 
     dflt = st.get("commitment") or {}
     skip = (args.rule == "SKIP")                      # 用戶明確「這週不承諾」(#56):不硬塞錨點
@@ -109,7 +174,16 @@ def cmd_close(args):
             commitment["baseline_note"] = "short-sample baseline"  # 下次對帳看方向,不判達標
     entry = {"date_end": st["date_end"], "headline_dim": st["headline_dim"],
              "commitment": commitment,
-             "metrics_snapshot": dict(st["metrics"])}
+             "metrics_snapshot": dict(st["metrics"]),
+             "session_id": session_id}
+
+    existing = [r for r in _read_jsonl_rows(log_path) if r.get("session_id") == session_id]
+    if existing:
+        if _canonical(_strip_session_id(existing[-1])) == _canonical(_strip_session_id(entry)):
+            print(json.dumps(existing[-1], ensure_ascii=False))    # 同 session 重試:no-op
+            return
+        _die(f"close 拒收:session {session_id} 已存在內容不同的紀錄(這次跟上次收尾內容不一致)。"
+             f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
     _append_lines(log_path, [entry])
     print(json.dumps(entry, ensure_ascii=False))
 
@@ -127,7 +201,6 @@ def cmd_append_theses(args):
         _die("theses JSON 必須是陣列(可為空 [])")
 
     errs = []
-    sid = int(time.time())                            # session 戳:防同日多次 review 撞 id
     for i, t in enumerate(rows):
         tk, cid = t.get("ticker"), t.get("cycle_id")
         if not tk:
@@ -154,13 +227,42 @@ def cmd_append_theses(args):
     if errs:
         _die("append-theses 拒收(0 筆落盤,修完重跑):\n" + "\n".join(errs))
 
+    session_id = _optional_session_id(args)
+    # id 尾碼:有 session_id 就用其 fingerprint(同 session 重試 id 不變);沒有(孤立呼叫、
+    # state 檔不存在)才退回舊的 time.time() 尾碼,只影響那條退化路徑本身的 id 唯一性。
+    sid = session_id.split("__")[1] if session_id else str(int(time.time()))
     for i, t in enumerate(rows):
         t["session_date"] = args.session_date
+        if session_id:
+            t["session_id"] = session_id
         if t.get("event") == "exit_narrative":        # 出場敘事:不進 active thesis 重建
             t.setdefault("narrative_id", f"exit-{t['ticker']}-{args.session_date}-{sid}-{i}")
         else:
             t.setdefault("status", "active")
             t["thesis_id"] = f"{t['ticker']}-{args.session_date}-{sid}-{i}"
+
+    if session_id:
+        existing = [r for r in _read_jsonl_rows(theses_path) if r.get("session_id") == session_id]
+        if existing:
+            existing_content = {_canonical(_strip_generated(r, "thesis_id", "narrative_id"))
+                                 for r in existing}
+            new_content = [_canonical(_strip_generated(t, "thesis_id", "narrative_id"))
+                           for t in rows]
+            new_content_set = set(new_content)
+            if existing_content == new_content_set:
+                print(json.dumps({"appended": 0, "note": "no-op:同 session 已存在相同內容"},
+                                 ensure_ascii=False))
+                return
+            if existing_content <= new_content_set:      # 既有內容全在這次提交裡 → 合法追加
+                delta = [t for t, c in zip(rows, new_content) if c not in existing_content]
+                _append_lines(theses_path, delta)
+                print(json.dumps({"appended": len(delta),
+                                  "note": "同 session 追加:只補新增的部分,已存在的照舊"},
+                                 ensure_ascii=False))
+                return
+            _die(f"append-theses 拒收:session {session_id} 已存在內容不同的紀錄"
+                 f"(不是單純追加——有既有內容在這次提交中消失或變了)。"
+                 f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
     _append_lines(theses_path, rows)
     print(json.dumps({"appended": len(rows)}, ensure_ascii=False))
 
@@ -182,18 +284,75 @@ def cmd_append_rules(args):
     if errs:
         _die("append-rules 拒收(0 筆落盤,修完重跑):\n" + "\n".join(errs))
 
-    sid = int(time.time())
+    session_id = _optional_session_id(args)
+    sid = session_id.split("__")[1] if session_id else str(int(time.time()))
     for i, r in enumerate(rows):
         if "problem_key" not in r:                    # 對映內建;metric 無對位 → None(人話清單陳列)
             r["problem_key"] = PKEY.get(r.get("metric_key"))
         r.setdefault("status", "tracking")
         r.setdefault("created", args.created)
         r.setdefault("rule_id", f"rule-{sid}-{i}")
+        if session_id:
+            r["session_id"] = session_id
+
+    if session_id:
+        existing = [x for x in _read_jsonl_rows(rules_path) if x.get("session_id") == session_id]
+        if existing:
+            existing_content = {_canonical(_strip_generated(x, "rule_id")) for x in existing}
+            new_content = [_canonical(_strip_generated(x, "rule_id")) for x in rows]
+            new_content_set = set(new_content)
+            if existing_content == new_content_set:
+                print(json.dumps({"appended": 0, "note": "no-op:同 session 已存在相同內容"},
+                                 ensure_ascii=False))
+                return
+            if existing_content <= new_content_set:      # 既有內容全在這次提交裡 → 合法追加
+                delta = [x for x, c in zip(rows, new_content) if c not in existing_content]
+                _append_lines(rules_path, delta)
+                print(json.dumps({"appended": len(delta),
+                                  "note": "同 session 追加:只補新增的部分,已存在的照舊"},
+                                 ensure_ascii=False))
+                return
+            _die(f"append-rules 拒收:session {session_id} 已存在內容不同的紀錄"
+                 f"(不是單純追加——有既有內容在這次提交中消失或變了)。"
+                 f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
     _append_lines(rules_path, rows)
     print(json.dumps({"appended": len(rows)}, ensure_ascii=False))
 
 
 # ─────────────────────── save-card(卡片落盤)───────────────────────
+
+_FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+
+def _inject_session_id(text, session_id):
+    """權威性插入/覆寫卡片 frontmatter 的 session_id 欄位(不管呼叫端有沒有帶,由 CLI 蓋掉)。"""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:                                          # 理論上不該發生(卡片一律含 frontmatter)
+        return f"---\nsession_id: {session_id}\n---\n{text}"
+    lines = [ln for ln in m.group(1).splitlines() if not ln.startswith("session_id:")]
+    lines.append(f"session_id: {session_id}")
+    return "---\n" + "\n".join(lines) + "\n---\n" + text[m.end():]
+
+
+def _card_session_id(text):
+    """從卡片文字的 frontmatter 讀 session_id;找不到回 None。"""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return None
+    for line in m.group(1).splitlines():
+        if line.startswith("session_id:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def _strip_card_session_id(text):
+    """比對內容用:拿掉 session_id 那一行,其餘 frontmatter + 卡體逐字比較。"""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return text
+    lines = [ln for ln in m.group(1).splitlines() if not ln.startswith("session_id:")]
+    return "---\n" + "\n".join(lines) + "\n---\n" + text[m.end():]
+
 
 def cmd_save_card(args):
     cards_dir = args.cards_dir or os.path.expanduser("~/.trade-coach/cards")
@@ -204,14 +363,32 @@ def cmd_save_card(args):
         _die(f"卡片檔不存在:{args.file}")
     if not text.strip():
         _die("卡片檔是空的,拒收(避免落一張空卡)")
+
+    session_id = _optional_session_id(args)
+    if session_id:
+        text = _inject_session_id(text, session_id)
+
     os.makedirs(cards_dir, exist_ok=True)
+
+    if session_id:
+        for p in sorted(glob.glob(os.path.join(cards_dir, f"{args.date}*.md"))):
+            with open(p, encoding="utf-8") as f:
+                old_text = f.read()
+            if _card_session_id(old_text) != session_id:
+                continue
+            if _strip_card_session_id(old_text) == _strip_card_session_id(text):
+                print(json.dumps({"path": p, "note": "no-op:同 session 已存在相同內容"},
+                                 ensure_ascii=False))                # 同 session 重試:no-op
+                return
+            _die(f"save-card 拒收:session {session_id} 已存在內容不同的卡片({p})。"
+                 f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
+
     path = os.path.join(cards_dir, f"{args.date}.md")
     n = 2
-    while os.path.exists(path):                       # 同日重跑 → 遞增,不蓋舊卡
+    while os.path.exists(path):          # 同日真正不同的第二個 session → 遞增,不蓋舊卡
         path = os.path.join(cards_dir, f"{args.date}-{n}.md")
         n += 1
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    lg.atomic_write_text(path, text)
     print(json.dumps({"path": path}, ensure_ascii=False))
 
 
@@ -319,24 +496,32 @@ def main(argv=None):
     c.add_argument("--metric", default="", help="規矩對應的 metric key(必須在 state.metrics)")
     c.add_argument("--state", default=None)
     c.add_argument("--log", default=None)
+    c.add_argument("--session-nonce", default=None,
+                   help="逃生艙口:同一份 state 內容但邏輯上是不同 session 時,帶不同值明確拆開")
     c.set_defaults(fn=cmd_close)
 
     t = sub.add_parser("append-theses", help="theses.jsonl append(格式驗證 + id 生成)")
     t.add_argument("file", help="theses 陣列 JSON 檔(thesis 行與 exit_narrative 行混排)")
     t.add_argument("--session-date", required=True, help="本次 review 日(= engine state 的 date_end)")
     t.add_argument("--theses", default=None)
+    t.add_argument("--state", default=None, help="算 session_id 用;檔不存在則退化成無 session 級保護")
+    t.add_argument("--session-nonce", default=None)
     t.set_defaults(fn=cmd_append_theses)
 
     r = sub.add_parser("append-rules", help="rules.jsonl append(problem_key 對映 + rule_id 生成)")
     r.add_argument("file", help="rules 陣列 JSON 檔")
     r.add_argument("--created", required=True, help="建立日(= date_end)")
     r.add_argument("--rules", default=None)
+    r.add_argument("--state", default=None, help="算 session_id 用;檔不存在則退化成無 session 級保護")
+    r.add_argument("--session-nonce", default=None)
     r.set_defaults(fn=cmd_append_rules)
 
     s = sub.add_parser("save-card", help="卡片落盤(同日遞增檔名,不蓋舊)")
     s.add_argument("file", help="卡全文 markdown 檔(含 frontmatter)")
     s.add_argument("--date", required=True, help="state.date_end")
     s.add_argument("--cards-dir", default=None)
+    s.add_argument("--state", default=None, help="算 session_id 用;檔不存在則退化成無 session 級保護")
+    s.add_argument("--session-nonce", default=None)
     s.set_defaults(fn=cmd_save_card)
 
     ds = sub.add_parser("data-status", help="列出本機保存了哪些資料(路徑/大小/筆數,不印交易內容)")

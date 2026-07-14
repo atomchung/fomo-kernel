@@ -299,7 +299,8 @@ def main():
            "commitment.metric_value 從 state.metrics 反查成功")
         ok(set(entry["metrics_snapshot"].keys()) == set(st["metrics"].keys()),
            "metrics_snapshot = state.metrics 全量快照(開場變化摘要的資料源,#129 PR-4)")
-        r2 = subprocess.run([sys.executable, COACH, "close", "--rule", "SKIP"],
+        r2 = subprocess.run([sys.executable, COACH, "close", "--rule", "SKIP",
+                             "--session-nonce", "r2"],   # #166:跟 r1 不同 session,別誤判 conflict
                             env=env, capture_output=True, text=True, timeout=60)
         ok(r2.returncode == 0 and json.loads(r2.stdout)["commitment"] is None,
            "close --rule SKIP → commitment null、metrics 照存(#56 這週不承諾)", r2.stdout[:200])
@@ -345,7 +346,7 @@ def main():
                                    "maturity": "inferred", "emotion": "fomo", "emotion_inferred": True,
                                    "confidence": "low", "confidence_inferred": True}]), encoding="utf-8")
         r6b = subprocess.run([sys.executable, COACH, "append-theses", str(tj),
-                              "--session-date", st["date_end"]],
+                              "--session-date", st["date_end"], "--session-nonce", "r6b"],
                              env=env, capture_output=True, text=True, timeout=60)
         amd = [json.loads(x) for x in theses_file.read_text(encoding="utf-8").strip().splitlines()
                if json.loads(x).get("ticker") == "AMD"]
@@ -375,16 +376,24 @@ def main():
            and rrow["rule_id"].startswith("rule-"),
            "append-rules metric_key→problem_key 對映 + rule_id/status/created 由 CLI 生成")
 
-        # save-card:同日重跑遞增檔名,不蓋舊卡
+        # save-card(#166):同 session 重試 = no-op(不產生新檔);真正不同的第二個 session
+        # (帶 --session-nonce)才遞增檔名,不蓋舊卡
         cf = pathlib.Path(tmp) / "card.md"
         cf.write_text("---\ndate: d\n---\n卡", encoding="utf-8")
-        for _ in range(2):
-            r8 = subprocess.run([sys.executable, COACH, "save-card", str(cf),
-                                 "--date", "2026-07-07"],
-                                env=env, capture_output=True, text=True, timeout=60)
-        cards = sorted(p.name for p in (home / ".trade-coach" / "cards").glob("*.md"))
-        ok(r8.returncode == 0 and cards == ["2026-07-07-2.md", "2026-07-07.md"],
-           "save-card 同日重跑檔名遞增,不蓋舊卡", str(cards))
+        r8a = subprocess.run([sys.executable, COACH, "save-card", str(cf), "--date", "2026-07-07"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        r8b = subprocess.run([sys.executable, COACH, "save-card", str(cf), "--date", "2026-07-07"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        cards1 = sorted(p.name for p in (home / ".trade-coach" / "cards").glob("*.md"))
+        ok(r8a.returncode == 0 and r8b.returncode == 0 and cards1 == ["2026-07-07.md"]
+           and json.loads(r8a.stdout)["path"] == json.loads(r8b.stdout)["path"],
+           "save-card 同 session 重試 = no-op,不產生新檔(#166)", str(cards1))
+        r8c = subprocess.run([sys.executable, COACH, "save-card", str(cf), "--date", "2026-07-07",
+                              "--session-nonce", "second-review"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        cards2 = sorted(p.name for p in (home / ".trade-coach" / "cards").glob("*.md"))
+        ok(r8c.returncode == 0 and cards2 == ["2026-07-07-2.md", "2026-07-07.md"],
+           "save-card 真正不同的第二個 session 才遞增檔名,不蓋舊卡(#166)", str(cards2))
 
     print(f"\n✅ TR_JSON / state 契約測試全過({PASS} 項)")
     return 0
