@@ -119,6 +119,17 @@ def _strip_session_id(obj):
     return d
 
 
+def _strip_generated(obj, *extra_keys):
+    """比對用:除了 session_id,也拿掉 CLI 自己生成的 id 欄位(thesis_id/narrative_id/rule_id)。
+    這些 id 目前由陣列位置(#166 review 抓到:位置一變,id 就變)生成,不是使用者提交的內容,
+    納入比對會把「同一份邏輯內容、陣列順序恰巧不同」誤判成衝突——見 cmd_append_theses/rules。"""
+    d = dict(obj)
+    d.pop("session_id", None)
+    for k in extra_keys:
+        d.pop(k, None)
+    return d
+
+
 def _optional_session_id(args):
     """append-theses/append-rules/save-card 用:--state 檔存在才算 session_id;不存在不算
     錯誤,退化成不做 session 級去重/衝突偵測(僅供孤立呼叫,正常 SKILL 六步流程裡 Step 1
@@ -233,13 +244,24 @@ def cmd_append_theses(args):
     if session_id:
         existing = [r for r in _read_jsonl_rows(theses_path) if r.get("session_id") == session_id]
         if existing:
-            existing_sorted = sorted(_canonical(_strip_session_id(r)) for r in existing)
-            new_sorted = sorted(_canonical(_strip_session_id(r)) for r in rows)
-            if existing_sorted == new_sorted:
+            existing_content = {_canonical(_strip_generated(r, "thesis_id", "narrative_id"))
+                                 for r in existing}
+            new_content = [_canonical(_strip_generated(t, "thesis_id", "narrative_id"))
+                           for t in rows]
+            new_content_set = set(new_content)
+            if existing_content == new_content_set:
                 print(json.dumps({"appended": 0, "note": "no-op:同 session 已存在相同內容"},
                                  ensure_ascii=False))
                 return
-            _die(f"append-theses 拒收:session {session_id} 已存在內容不同的紀錄。"
+            if existing_content <= new_content_set:      # 既有內容全在這次提交裡 → 合法追加
+                delta = [t for t, c in zip(rows, new_content) if c not in existing_content]
+                _append_lines(theses_path, delta)
+                print(json.dumps({"appended": len(delta),
+                                  "note": "同 session 追加:只補新增的部分,已存在的照舊"},
+                                 ensure_ascii=False))
+                return
+            _die(f"append-theses 拒收:session {session_id} 已存在內容不同的紀錄"
+                 f"(不是單純追加——有既有內容在這次提交中消失或變了)。"
                  f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
     _append_lines(theses_path, rows)
     print(json.dumps({"appended": len(rows)}, ensure_ascii=False))
@@ -276,13 +298,22 @@ def cmd_append_rules(args):
     if session_id:
         existing = [x for x in _read_jsonl_rows(rules_path) if x.get("session_id") == session_id]
         if existing:
-            existing_sorted = sorted(_canonical(_strip_session_id(x)) for x in existing)
-            new_sorted = sorted(_canonical(_strip_session_id(x)) for x in rows)
-            if existing_sorted == new_sorted:
+            existing_content = {_canonical(_strip_generated(x, "rule_id")) for x in existing}
+            new_content = [_canonical(_strip_generated(x, "rule_id")) for x in rows]
+            new_content_set = set(new_content)
+            if existing_content == new_content_set:
                 print(json.dumps({"appended": 0, "note": "no-op:同 session 已存在相同內容"},
                                  ensure_ascii=False))
                 return
-            _die(f"append-rules 拒收:session {session_id} 已存在內容不同的紀錄。"
+            if existing_content <= new_content_set:      # 既有內容全在這次提交裡 → 合法追加
+                delta = [x for x, c in zip(rows, new_content) if c not in existing_content]
+                _append_lines(rules_path, delta)
+                print(json.dumps({"appended": len(delta),
+                                  "note": "同 session 追加:只補新增的部分,已存在的照舊"},
+                                 ensure_ascii=False))
+                return
+            _die(f"append-rules 拒收:session {session_id} 已存在內容不同的紀錄"
+                 f"(不是單純追加——有既有內容在這次提交中消失或變了)。"
                  f"若這確實是新的一次 review,帶 --session-nonce 明確拆開。")
     _append_lines(rules_path, rows)
     print(json.dumps({"appended": len(rows)}, ensure_ascii=False))

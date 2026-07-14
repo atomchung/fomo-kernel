@@ -312,6 +312,104 @@ def test_7_legacy_rows_without_session_id_still_readable():
         assert "session_id" in rows[1] and rows[0].get("session_id") is None
 
 
+# ─────────────── code review 抓到的迴歸測試(ultrareview,merge 前補上)───────────────
+
+def test_8_reordered_same_session_content_is_no_op():
+    """thesis_id/rule_id 是用陣列位置生成——review 抓到:同 session 重試若陣列順序恰巧不同
+    (例如 LLM 重新序列化順序不同),舊邏輯會把生成的 id 也納入比對,誤判成內容衝突。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        st = _write_state(p["state"])
+        theses_json = os.path.join(tmp, "theses.json")
+        with open(theses_json, "w", encoding="utf-8") as f:
+            json.dump([{"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1", "why": "w1",
+                        "maturity": "inferred"},
+                       {"ticker": "AMD", "cycle_id": "AMD#2024-02-01#1", "why": "w2",
+                        "maturity": "inferred"}], f)
+        r1 = _run(COACH, "append-theses", theses_json, "--session-date", st["date_end"],
+                  "--theses", p["theses"], "--state", p["state"])
+        assert r1.returncode == 0, r1.stderr
+
+        reordered_json = os.path.join(tmp, "theses_reordered.json")
+        with open(reordered_json, "w", encoding="utf-8") as f:
+            json.dump([{"ticker": "AMD", "cycle_id": "AMD#2024-02-01#1", "why": "w2",
+                        "maturity": "inferred"},
+                       {"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1", "why": "w1",
+                        "maturity": "inferred"}], f)
+        r2 = _run(COACH, "append-theses", reordered_json, "--session-date", st["date_end"],
+                  "--theses", p["theses"], "--state", p["state"])
+        assert r2.returncode == 0, \
+            f"陣列順序不同不該被誤判成內容衝突:{r2.stderr}"
+        with open(p["theses"], encoding="utf-8") as f:
+            assert len(f.readlines()) == 2, "重跑(順序不同)後仍只有 2 行,不該重複也不該拒收"
+
+
+def test_9_incremental_append_within_session_does_not_duplicate():
+    """review 抓到更嚴重的一種:同一個 session 內合法追加第 3 筆(例如同一次復盤中途補一筆
+    忘記的 thesis),舊邏輯把它當成『整批不相等』拒收,若照錯誤訊息建議帶 --session-nonce
+    硬推,前 2 筆會用新 id 重新寫入,產生 #166 原本要根除的重複紀錄。修復後應該只補新增的
+    delta,不重寫、不重複既有的部分。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        st = _write_state(p["state"])
+        first_json = os.path.join(tmp, "theses1.json")
+        with open(first_json, "w", encoding="utf-8") as f:
+            json.dump([{"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1", "why": "w1",
+                        "maturity": "inferred"},
+                       {"ticker": "AMD", "cycle_id": "AMD#2024-02-01#1", "why": "w2",
+                        "maturity": "inferred"}], f)
+        r1 = _run(COACH, "append-theses", first_json, "--session-date", st["date_end"],
+                  "--theses", p["theses"], "--state", p["state"])
+        assert r1.returncode == 0, r1.stderr
+
+        second_json = os.path.join(tmp, "theses2.json")
+        with open(second_json, "w", encoding="utf-8") as f:
+            json.dump([{"ticker": "NVDA", "cycle_id": "NVDA#2024-01-12#1", "why": "w1",
+                        "maturity": "inferred"},
+                       {"ticker": "AMD", "cycle_id": "AMD#2024-02-01#1", "why": "w2",
+                        "maturity": "inferred"},
+                       {"ticker": "MU", "cycle_id": "MU#2024-03-01#1", "why": "w3",
+                        "maturity": "inferred"}], f)
+        r2 = _run(COACH, "append-theses", second_json, "--session-date", st["date_end"],
+                  "--theses", p["theses"], "--state", p["state"])
+        assert r2.returncode == 0, f"同 session 合法追加不該被拒收:{r2.stderr}"
+        with open(p["theses"], encoding="utf-8") as f:
+            rows = [json.loads(x) for x in f.read().splitlines()]
+        assert len(rows) == 3, f"應該只補 1 筆 MU,不重寫 NVDA/AMD:{len(rows)} 行"
+        tickers = sorted(r["ticker"] for r in rows)
+        assert tickers == ["AMD", "MU", "NVDA"], "NVDA/AMD 不該因為追加動作而變成兩筆"
+
+
+def test_10_problems_mark_conflict_does_not_discard_new_events():
+    """review 抓到:mark 衝突原本會連坐擋下同一次呼叫裡『本來就合法、不衝突』的新事件——
+    events 與 mark 是兩個獨立事實,不該因為 mark 衝突就讓合法的新事件也遺失。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        st = _write_state(p["state"])
+        sid = lg.session_id_from_state(st)
+        mark1 = json.dumps({"week": st["date_end"], "opportunities": {"avgdown_breach": True}})
+        r1 = _run(PROBLEMS, "--book", p["problems"], "append", _events_payload(tmp),
+                  "--mark", mark1, "--session-id", sid)
+        assert r1.returncode == 0, r1.stderr
+
+        new_event_json = os.path.join(tmp, "new_event.json")
+        with open(new_event_json, "w", encoding="utf-8") as f:
+            json.dump([{"key": "oversize", "kind": "state", "week": st["date_end"],
+                        "ticker": "NVDA", "amount": None, "note": None}], f)
+        mark_conflict = json.dumps({"week": st["date_end"],
+                                    "opportunities": {"avgdown_breach": False}})  # 跟 r1 不同
+        r2 = _run(PROBLEMS, "--book", p["problems"], "append", new_event_json,
+                  "--mark", mark_conflict, "--session-id", sid)
+        assert r2.returncode != 0, "mark 衝突仍應回報失敗"
+
+        with open(p["problems"], encoding="utf-8") as f:
+            rows = [json.loads(x) for x in f.read().splitlines()]
+        events = [r for r in rows if r.get("type") == "event"]
+        tickers = {e.get("ticker") for e in events}
+        assert "NVDA" in tickers, \
+            "mark 衝突不該連坐吞掉這次呼叫裡本來就合法、不衝突的新事件(NVDA oversize)"
+
+
 # ─────────────────────────── runner ───────────────────────────
 
 def _main():

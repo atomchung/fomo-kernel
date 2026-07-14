@@ -323,7 +323,7 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
 
 **規矩承諾:用戶主動選,你不准代選(#56)。** 挑規矩的互動走 **Step 3.5**(AskUserQuestion:候選各一 + 「這週不承諾」,Other 可改寫)。**用戶沒點選之前,任何規矩都不准寫進 log** —— 承諾是下週對帳的錨點,錨不是他自己下的,對帳時他只會一頭霧水、迴圈失效。選「這週不承諾」→ 收尾 CLI `--rule SKIP`(照存本週 metrics 供趨勢對帳,但 commitment 為空、下週不拿規矩對他)。
 
-**收尾(出完卡 + Step 3.5 用戶挑完規矩 + Step 4 收完反饋,append 一行)**:
+**收尾(出完卡 + Step 3.5 用戶挑完規矩 + Step 4 收完反饋,append 一行)**:**#166:同一次 session 重試是 no-op(不會重複 append),內容真的不同才會被拒收**——正常情況你不用處理,萬一拒收,stderr 會提示帶 `--session-nonce`(同一份 state 但邏輯上是不同 review 時才用):
 ```bash
 # commitment 存【用戶在 Step 3.5 親選的那條】(#56)——不是引擎機械預設、更不是你代選
 # (Step 2 動機問完常推翻引擎預設:engine 給「虧損別加碼」,用戶答「計畫內定投」→ 他改挑集中度那條)。
@@ -333,7 +333,7 @@ python3 engine/coach.py close --rule "AI 暴險封頂 70%:要加 AI 新倉先問
 ```
 
 **收尾 part 2 · 把本週建立 / 更新的 thesis append 到 `theses.jsonl`(append-only)**:
-thesis 是對話 articulate 出來的(engine 不碰)。把本週「新建倉 / 缺 thesis / trigger 觸發後更新」的 thesis 與 Step 2(d) 的賣出敘事寫成**一個陣列**存暫存 JSON(如 `/tmp/theses.json`,空週傳 `[]` 也行),交給 CLI 落盤——cycle_id 格式、必填欄驗證、`thesis_id`/`narrative_id` 生成、`session_date` 注入全在 CLI 內(#148),格式不合**整批拒收(0 筆落盤)**,照 stderr 修完重跑:
+thesis 是對話 articulate 出來的(engine 不碰)。把本週「新建倉 / 缺 thesis / trigger 觸發後更新」的 thesis 與 Step 2(d) 的賣出敘事寫成**一個陣列**存暫存 JSON(如 `/tmp/theses.json`,空週傳 `[]` 也行),交給 CLI 落盤——cycle_id 格式、必填欄驗證、`thesis_id`/`narrative_id` 生成、`session_date` 注入全在 CLI 內(#148),格式不合**整批拒收(0 筆落盤)**,照 stderr 修完重跑。**#166:同一次 session 重試是 no-op;同 session 內合法追加(例如同一次復盤中途補一筆)只會補新增的部分,不會重寫已存在的;內容真的衝突才拒收**,同樣不用手動處理:
 
 ```bash
 python3 engine/coach.py append-theses /tmp/theses.json --session-date <state.date_end>
@@ -377,6 +377,8 @@ feedback: <Step 4 用戶那句反饋;null>
 <卡全文照貼>
 ```
 
+`session_id` 不用你自己填——CLI 落盤時會權威性地插入/覆寫這個欄位(#166,同 session idempotency 判斷用),上面範本不用列。
+
 卡全文(含 frontmatter)寫進暫存檔後交 CLI 落盤——同日重跑的檔名遞增(`<date>-2.md`,**不蓋舊卡**)由 CLI 管(#148),別自己算檔名。**#166:重試同一次 session 是 no-op(不產生新檔),只有真正不同的第二個 session 才遞增**,CLI 內部靠 `--state` 算的 session_id 判斷,你不用手動處理:
 
 ```bash
@@ -414,11 +416,16 @@ r = subprocess.run([sys.executable, "engine/problems.py", "append", tmp,
                     "--session-id", sid], capture_output=True, text=True)
 os.unlink(tmp)
 print((r.stdout or r.stderr).strip())
+if r.returncode != 0:
+    print(f"# ⚠️ problems.py append 失敗(exit {r.returncode})——本週診斷(mark)沒有記錄成功,"
+          "見上面訊息;新的問題事件本身(如果有)已經照樣落盤,不受影響(#166)。"
+          "不要把上面那行訊息當成一般狀態訊息略過往下走。", file=sys.stderr)
 PY
 
 # (b) 規矩庫沉澱(只有「新規矩 / 修訂 / 靜音」才 append;同一條繼續守 = 不寫,庫裡已有):
 # 寫成陣列存暫存 JSON 後交 CLI(#148)——metric_key→problem_key 對映、rule_id 生成、status/created
-# 預設都在 CLI 內。行格式:
+# 預設都在 CLI 內。#166:同 session 重試 no-op、同 session 合法追加只補新增部分、內容真的
+# 衝突才拒收(拒收時 stderr 會提示 --session-nonce)。行格式:
 #   {"text":"<Step 3.5 選定的規矩人話>","metric_key":"ai_pct","source":"user_chosen","revises":null}
 #   · source ∈ user_chosen | imported(冷啟動匯入,見下)
 #   · 破戒定性答「定得不合理」→ 填舊 rule_id 進 revises + 改後文字;「這條別追了」→ 補一筆 status:"muted" + revises 舊 id

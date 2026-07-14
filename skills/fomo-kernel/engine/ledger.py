@@ -353,7 +353,14 @@ def session_id_from_state(state, nonce=""):
     id,跨 Claude Code 對話中斷恢復免費,不用額外持久化 pending marker。別用 time.time()
     ——每次呼叫都不同,同一 session 的重試會被誤判成新 session(coach.py 改動前,
     append-theses/append-rules 的 sid 就是踩這個坑)。nonce 是逃生艙口:同日兩個內容
-    恰巧相同、但邏輯上是不同 session 時,呼叫端可明確指定不同 nonce 拆開。"""
+    恰巧相同、但邏輯上是不同 session 時,呼叫端可明確指定不同 nonce 拆開。
+
+    已知限制(刻意不做,不在 #166 範圍內):state 內容包含即時抓的市場數據(alpha_ann/beta/
+    payoff/cash 等,由 trade_recap.py 當次執行抓現價/匯率算出)。若中斷恢復時選擇整個
+    重跑一次引擎(而非直接重讀既有的 last_state.json),重新抓到的現價大概率不同 byte,
+    這裡算出的 session_id 就會跟著變、原本該被判定為「同 session」的收尾會被當成新 session。
+    這條路徑對「Step 1 已寫出 last_state.json、之後只是繼續讀既有檔案」的正常 SKILL 流程
+    沒有影響,只在使用者/Claude 選擇從頭重跑整個引擎當恢復手段時才會出現。"""
     canonical = json.dumps(state, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha256((canonical + "\x00" + nonce).encode("utf-8")).hexdigest()[:12]
     return f"{state.get('date_end')}__{digest}"

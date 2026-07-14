@@ -91,6 +91,16 @@ def append_book(book_path, new_events, mark=None, session_id=None):
     session_id(#166,選填):非去重鍵(_event_id 不讀這個欄位),只附加在新寫入的 event/mark
     row 供事後追蹤。同 week 已有 mark、且 opportunities 內容跟這次不同 → 拋 ValueError(不再
     靜默丟棄衝突內容);內容完全相同的重跑維持既有 no-op 行為(不報錯,呼叫端不用特別處理)。
+
+    events 與 mark 是兩個獨立事實,mark 衝突不連坐擋下這次呼叫裡本來就合法、不衝突的新事件——
+    events 一律先寫入(#166 review 抓到的坑:先前版本讓 mark 衝突連 events 一起被丟棄,逼使用者
+    在解決 mark 衝突前重新提交本來就沒問題的事件)。mark 衝突改在事件寫完後才拋出,呼叫端仍會
+    看到非 0 exit,但新事件已經安全落盤,不會遺失。
+
+    已知限制(刻意不做):mark 衝突沒有像 coach.py 四個收尾指令那樣的 --session-nonce 逃生
+    艙口——這裡的衝突鍵是 mark['week'],不是 session_id,兩者是不同軸線;真的撞到這個情況目前
+    只能手動編輯 problems.jsonl。留給未來需要時再設計「同週兩個合法 review」的語意,不在這次
+    範圍內展開。
     """
     events, marks, _ = load_book(book_path)
     seen = {_event_id(e) for e in events}
@@ -105,7 +115,9 @@ def append_book(book_path, new_events, mark=None, session_id=None):
             continue
         seen.add(_event_id(row))
         out.append(row)
+
     n_mark = 0
+    mark_conflict = None
     if mark and mark.get("week"):
         want_opps = mark.get("opportunities") or {}
         existing = marks_by_week.get(mark["week"])
@@ -116,13 +128,16 @@ def append_book(book_path, new_events, mark=None, session_id=None):
             out.append(row)
             n_mark = 1
         elif (existing.get("opportunities") or {}) != want_opps:
-            raise ValueError(
+            mark_conflict = (
                 f"review_mark week={mark['week']} 已存在內容不同的紀錄"
                 f"(既有 opportunities={existing.get('opportunities')},這次={want_opps})——"
                 f"不再靜默丟棄衝突內容(#166)")
         # existing 存在且 opportunities 相同 → 既有行為:no-op,不 append 也不報錯
+
     if out:
         lg.append_events(book_path, out)
+    if mark_conflict:
+        raise ValueError(mark_conflict)
     return len(out) - n_mark, n_mark
 
 
