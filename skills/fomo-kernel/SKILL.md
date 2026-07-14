@@ -71,7 +71,7 @@ cat ~/.trade-coach/log.jsonl    2>/dev/null   # 每行一次 review session(薄 
 cat ~/.trade-coach/theses.jsonl 2>/dev/null   # 每行一筆 thesis 或 exit_narrative event(append-only);持股+出場動機庫
 cat ~/.trade-coach/profile.md   2>/dev/null   # 你的交易目標 + 3 條個人原則(復盤對照基準);空 = 第一次幫你建
 python3 engine/ledger.py holdings 2>/dev/null # 帳本推導的當前持倉(snapshot 錨點+交易疊加);讀不到=還沒開帳
-python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期的 30/60/90 revisit(#32);空 due=本週不問
+python3 engine/revisit.py scan 2>/dev/null    # 出場追蹤:到期 due(#32)+ 啟用前歷史 backlog(#170);都空=本週不問
 python3 engine/problems.py stats --today <今天> --rules ~/.trade-coach/rules.jsonl 2>/dev/null  # 問題帳(#137):top 1–3 + 規矩對位;空=還沒開帳
 ```
 
@@ -249,12 +249,13 @@ python3 engine/market_context.py --start <窗口起> --end <state.date_end>
      - **`inferred`(AI 猜的)** → **只能用問句,絕不說「該走」**:🟡「我**猜**的失效條件『{exit}』似乎發生了 —— 這符合你當初買的邏輯嗎?符合 → 考慮出場;不符 → 順手改成你真正的 exit」。`inferred` 一律帶 `[⚠️ AI 猜測待校正]` 標。
    - `review_trigger` 觸發 → 提示重看,不催賣。
    - **順帶看 horizon 反向矛盾(只對這三類 ticker,零額外掃描)**:對 `horizon.py scan` 標 `held_too_long` 的 cycle(門檻 deterministic 住 engine,同一次 scan 的輸出;engine 已對 `horizon` 缺欄 / `null` 自動跳過)→ 一句鏡子:「當初說是{horizon}的事,現在持有 {marker 的 `holding_days`}天——是判斷升級成長線了(順手改 horizon),還是不想認賠變長抱?」措辭同樣依 maturity 分(`inferred` 用「我猜」)。**這題受消重鐵律管**:答完立刻把結論落盤(revises——改 horizon,或 why 標凹單定性)→ 矛盾要嘛消失、要嘛已定性,**同一 cycle 不重問**;**跳過也視同答過**(本 cycle 不再追,別把鏡子變成每週催告);只有行為又顯著變了(定性凹單後又加碼)才照消重鐵律的例外重開。
-3. **出場追蹤(#32/#33,開場 `revisit.py scan` 的 `due` 非空才有這段;空 = 靜默跳過,不催)**:
+3. **出場追蹤(#32/#33/#170,開場 `revisit.py scan`;`due`(到期複核)或 `backlog`(啟用前歷史)非空才有這段;都空 = 靜默跳過,不催)**:
    - **問之前先撈當時的賣出理由**:比對 `theses.jsonl` 的 `event:"exit_narrative"`(同 `revisit_id`)。**有記錄且 `exit_reason` 非空 → 問句必須引用他自己的話對答案**(#136 閉環,這比泛用問句锋利十倍),按 `exit_reason` 客製:`thesis_broken`→「你賣時說是**看錯了**——{orig_ret:+pp} 之後,當時說的失效條件真的發生了嗎?」;`price_target`→「你賣時說**到價了**——它之後又走了 {orig_ret:+pp},是目標定低,還是紀律就該這樣?」;`anxiety`→「你賣時說**想落袋**(怕回吐)——回頭看,那個回吐{發生了嗎}?」;`swap`→ 直接用下面的 swap framing;`capture:"inferred"`(當時是猜的)→ 措辭改「我當時猜你是{理由}」。**無記錄或 `exit_reason` 為空**(舊出場/當時跳過)→ 泛用問句如下。
    - 每筆 due 用 AskUserQuestion 問一題:「{ticker} 你 {exit_date} 在 {exit_price} 賣掉,現在 {現價}(賣後 {orig_ret:+pp})。當時賣的理由現在看——**還成立**(賣早也是紀律)/ **部分對,要調**/ **看錯了**(真錯,進教訓)?」三選項對應 `still_valid / modified / falsified`,可跳過(下次 due 再問)。
    - **swap framing 必講(#33 鐵律)**:`compare.swap_net_pp` 非 null → 賣飛必對位換入——「賣飛 +X pp,但你換進 {swap ticker} 同期 {swap_ret:+pp} → swap 淨 {net:+pp}」;**只有換入輸給原標的才算真錯,別只算賣早多少**。`idle_cash=true` → 「賣後 cash 閒置,機會成本 = 原標的續漲 X pp」。`needs_prices` 非空 → 把缺的 ticker 現價補進 `--prices` 再算(用 engine state 的 last_px,都缺就標「本週缺價,不判」)。
    - 用戶答完立刻落盤:`python3 engine/revisit.py resolve <revisit_id> <30|60|90> <status> --note "<他的一句話>"`;`falsified` 的當下把那句話帶進卡的教訓段(這就是 mistakes log 的最小形)。
-   - 卡上的「出場追蹤」小節**只在有 due 時出現**,一筆一行,不攤成報表。
+   - **歷史 backlog(#170,冷啟動兩層下半;`backlog_summary.count > 0` 才有)**:既有歷史使用者第一次補建帳本時,啟用前就全部過期的舊出場**不灌 due、不逐筆逼問**(否則一次噴近百筆 = 把復盤變審問);engine 收在 `backlog`(金額大者先、已收斂 top-5,真數看 `backlog_total`)+ `backlog_summary`(彙總)。**① 先一句模式鏡子**:用 `count`/`full`/`reduce`/`top_tickers`/`span` 講行為模式(「你這 {span} 間 {count} 次出場、{full} 次直接清倉」);`priced ≥ 1` 才把賣飛傾向帶上(「有現價的 {priced} 筆裡 {sold_before_rise} 筆賣完續漲、平均 {avg_hindsight_pp:+pp} → 系統性賣太早?」),`priced` 小就誠實「多數歷史標的沒現價,只回頭看得到 {priced} 筆」——**不硬湊分母**。**② 再抓大放小**:`backlog` 每次復盤選擇性帶最大 **1–2 筆**問(或用戶說「複習歷史出場」才展開),答完 `revisit.py resolve <revisit_id> 90 <status> --note` 落盤 → 退出 backlog。**歷史是復盤依據、但不是每週審問**:不主動催、一次消化一點。
+   - 卡上的「出場追蹤」小節**只在有 due 或 `backlog_summary.count > 0` 時出現**:due 一筆一行、backlog 先彙總一句再抓大放小帶 1–2 筆,都不攤成報表。
 4. **問題帳對位(#137,開場 `problems.py stats` 的輸出;還沒開帳 = 整段跳過)**:
    - `rules_check` 有 `verdict:"broke"` 的規矩 → **破戒定性問句**(AskUserQuestion 一鍵,這是規矩層唯一的主觀判斷入口):「『{規矩人話}』這次破了({事件證據})——**守不住**(記一筆,繼續追)/ **這條定得不合理**(該修的是規矩不是你)/ **這次是例外**(有正當理由)?」三個出口:守不住 = 事件照記(預設);定得不合理 = 當場請他改一句 → 收尾寫 `revises` 進 rules.jsonl(演變線,同 thesis);例外 = 把他的理由寫進該事件的 `note`(事件仍在帳上,呈現時帶語境)。**一次最多問 2 條**(broke 的照 top 排序);同一規矩連續多週 broke,只在第一次和趨勢惡化時問,其餘一行帶過——別把定性變成每週審判。
    - `held_streak ≥ 2` 的規矩 → **靜默**(注意力調度:連兩期守住就退出卡面,再犯自動回來;這不是畢業,統計一直在跑)。`verdict:"skipped"`(本期沒機會犯)→ 不提也不算守住。
