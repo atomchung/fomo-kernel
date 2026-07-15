@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Skill v2 orchestration / ETF / recovery tests (offline, standard library only)."""
 import hashlib
+import datetime as dt
 import json
 import os
 import pathlib
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
 import instruments  # noqa: E402
 import review as review_engine  # noqa: E402
+import thesis as thesis_engine  # noqa: E402
 import trade_recap as tr  # noqa: E402
 from check_card import check_card  # noqa: E402
 
@@ -41,7 +43,9 @@ def _artifacts(tmp):
         "holdings": {"as_of": "2026-07-14", "derived_from": "trades_csv", "is_complete": False,
                      "positions": {"PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
                                                 "cycle_start": "2026-01-01",
-                                                "cycle_id": "PLTR#2026-01-01#1"}}},
+                                                "cycle_id": "PLTR#2026-01-01#1",
+                                                "add_count": 3,
+                                                "decision_cursor": "PLTR#2026-01-01#1#add#3"}}},
         "currency_meta": {"aggregate_currency": "USD", "mixed": False},
         "portfolio_structure": {"schema_version": 1, "allocation_weight": 0.58,
                                 "concentrated_etf_weight": 0, "allocation_etfs": [
@@ -514,6 +518,106 @@ def test_custom_exit_reason_requires_the_users_words():
         assert False, "other without a note must not create an empty confirmed memory"
     except review_engine.ReviewError as exc:
         assert "requires a short note" in str(exc)
+
+
+def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
+    rows = [
+        {"ticker": "A", "side": "buy", "qty": 1, "price": 10, "date": dt.date(2026, 1, 1)},
+        {"ticker": "A", "side": "buy", "qty": 1, "price": 9, "date": dt.date(2026, 1, 2)},
+        {"ticker": "B", "side": "buy", "qty": 1, "price": 20, "date": dt.date(2026, 1, 3)},
+        {"ticker": "A", "side": "buy", "qty": 1, "price": 8, "date": dt.date(2026, 1, 4)},
+    ]
+    cursors = tr.current_cycle_add_cursors(rows)
+    assert cursors["A"]["decision_cursor"] == "A#2026-01-01#1#add#2"
+    assert cursors["B"]["decision_cursor"] is None, \
+        "another ticker's entry cannot advance A's or B's add-decision cursor"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card_path, state_path = _artifacts(tmp)
+        first = _run("prepare", "--root", root, "--card-json", card_path,
+                     "--state-json", state_path)
+        first_plan = json.loads(first.stdout)["review_plan"]
+        first_question = next(q for q in first_plan["question_queue"] if q["kind"] == "add_thesis")
+        answers = pathlib.Path(tmp) / "cursor-answers.json"
+        narrative = pathlib.Path(tmp) / "cursor-narrative.json"
+        answers.write_text(json.dumps(_answers(first_plan, commitment="candidate_0")), encoding="utf-8")
+        narrative.write_text(json.dumps(_narrative()), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", first_plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+
+        # Canonical bundles remain authoritative even when compatibility
+        # projections disappear before repair.
+        (root / "theses.jsonl").unlink()
+        (root / "thesis_decisions.jsonl").unlink()
+        same = _run("prepare", "--root", root, "--card-json", card_path,
+                    "--state-json", state_path, "--session-nonce", "same-cursor")
+        same_plan = json.loads(same.stdout)["review_plan"]
+        assert not any(q["kind"] == "add_thesis" for q in same_plan["question_queue"])
+        active = same_plan["state_snapshot"]["active_theses"][0]
+        assert active["decision_cursor"] == "PLTR#2026-01-01#1#add#3"
+        assert active["thesis_id"].startswith("thesis-") and active["last_event_id"].startswith("thesis-decision-")
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        position = state["holdings"]["positions"]["PLTR"]
+        position["add_count"] = 4
+        position["decision_cursor"] = "PLTR#2026-01-01#1#add#4"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        changed = _run("prepare", "--root", root, "--card-json", card_path,
+                       "--state-json", state_path, "--session-nonce", "new-cursor")
+        changed_plan = json.loads(changed.stdout)["review_plan"]
+        changed_question = next(q for q in changed_plan["question_queue"] if q["kind"] == "add_thesis")
+        assert changed_question["decision_cursor"].endswith("#add#4")
+        assert changed_question["id"] != first_question["id"]
+
+
+def test_stable_thesis_identity_does_not_depend_on_update_order():
+    plan = {"session_id": "2026-07-14__stable", "engine_state": {"date_end": "2026-07-14"},
+            "state_snapshot": {"thesis_states": []}}
+    updates = [
+        {"ticker": "A", "cycle_id": "A#2026-01-01#1", "why": "a", "exit_trigger": "x",
+         "maturity": "inferred"},
+        {"ticker": "B", "cycle_id": "B#2026-01-02#1", "why": "b", "exit_trigger": "y",
+         "maturity": "inferred"},
+    ]
+    forward = {row["cycle_id"]: row for row in review_engine._assign_thesis_ids(plan, updates)}
+    reverse = {row["cycle_id"]: row for row in review_engine._assign_thesis_ids(plan, list(reversed(updates)))}
+    for cycle_id in forward:
+        assert forward[cycle_id]["thesis_id"] == reverse[cycle_id]["thesis_id"]
+        assert forward[cycle_id]["event_id"] == reverse[cycle_id]["event_id"]
+
+    cycle_id = "A#2026-01-01#1"
+    first = {**forward[cycle_id], "why": "first", "event_id": "event-first"}
+    decision = {"event": "thesis_decision", "cycle_id": cycle_id, "ticker": "A",
+                "event_id": "event-decision", "revises": "event-first",
+                "decision": "new_evidence", "decision_cursor": f"{cycle_id}#add#2",
+                "review_date": "2026-07-14"}
+    revision = {**first, "why": "revised", "event_id": "event-revision",
+                "revises": "event-decision"}
+    folded = thesis_engine.reconstruct_states([revision, first], [decision])[0]
+    assert folded["why"] == "revised" and folded["last_event_id"] == "event-revision"
+    assert folded["decision_cursor"].endswith("#add#2"), \
+        "revises links, not same-day session digest order, must define the event chain"
+
+
+def test_fold_preserves_legacy_thesis_and_explicit_full_exit_outcome():
+    cycle_id = "OLD#2025-01-01#1"
+    base = {"ticker": "OLD", "cycle_id": cycle_id, "why": "legacy claim",
+            "exit_trigger": "claim fails", "maturity": "testable", "status": "active",
+            "session_date": "2025-01-01"}
+    decision = {"event": "thesis_decision", "cycle_id": cycle_id, "ticker": "OLD",
+                "decision": "new_evidence", "decision_cursor": f"{cycle_id}#add#2",
+                "review_date": "2025-02-01"}
+    closed = {"event": "exit_narrative", "cycle_id": cycle_id, "ticker": "OLD",
+              "exit_kind": "full", "exit_reason": None, "capture": "skipped",
+              "recorded_at": "2025-03-01"}
+    state = thesis_engine.reconstruct_states([base, closed], [decision])[0]
+    assert state["thesis_id"].startswith("thesis-") and state["event_id"].startswith("legacy-thesis-")
+    assert state["decision_cursor"].endswith("#add#2")
+    assert state["position_status"] == "closed" and state["status"] == "closed"
+    assert state["final_outcome"]["side_state"] == "skipped", \
+        "a skipped explanation still preserves the deterministic cycle-close outcome"
 
 
 def test_english_is_same_contract_with_localized_questions_and_card():

@@ -197,6 +197,44 @@ def _captured_revisit_ids(root):
     return captured
 
 
+def _thesis_event_history(root):
+    """Load canonical thesis events first and retain pre-v2 legacy-only rows.
+
+    Projection files remain supported, but deleting one cannot erase continuity
+    while its canonical session bundle still exists.
+    """
+    legacy_theses = _jsonl(os.path.join(root, "theses.jsonl"))
+    legacy_decisions = _jsonl(os.path.join(root, "thesis_decisions.jsonl"))
+    canonical_sessions = set()
+    bundles = []
+    base = os.path.join(root, "sessions")
+    if os.path.isdir(base):
+        for session_id in sorted(os.listdir(base)):
+            path = os.path.join(base, session_id, "bundle.json")
+            if not os.path.isfile(path):
+                continue
+            try:
+                bundle = session.read_json(path)
+            except (OSError, ValueError):
+                continue
+            plan = bundle.get("review_plan") or {}
+            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                continue
+            canonical_sessions.add(session_id)
+            date = str((bundle.get("engine_state") or {}).get("date_end") or "")
+            bundles.append(((date, session_id), bundle))
+
+    thesis_rows = [row for row in legacy_theses
+                   if row.get("session_id") not in canonical_sessions]
+    decision_rows = [row for row in legacy_decisions
+                     if row.get("session_id") not in canonical_sessions]
+    for _key, bundle in sorted(bundles, key=lambda item: item[0]):
+        thesis_rows.extend(bundle.get("thesis_updates") or [])
+        thesis_rows.extend(bundle.get("exit_narratives") or [])
+        decision_rows.extend(bundle.get("thesis_decisions") or [])
+    return thesis_rows, decision_rows
+
+
 def _prepare_exit_capture(root, state, persist):
     """Enqueue ledger exits and return fresh, not-yet-captured candidates."""
     if not persist:
@@ -359,19 +397,27 @@ def _ticker_importance(card, state, ticker):
         return 0.0, "unknown"
 
 
-def _question_queue(card, state, active, previous_state, language, recent_exits=None):
+def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None):
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
-    current_adds = (state.get("metrics") or {}).get("avgdown_count") or 0
-    previous_adds = ((previous_state or {}).get("metrics") or {}).get("avgdown_count") or 0
-    add_behavior_changed = current_adds > previous_adds
-    candidates = [_exit_question(item, language, card) for item in (recent_exits or [])]
+    del previous_state  # retained in the call contract for older adapters
+    thesis_states = thesis_states or active
+    candidates = []
+    for item in recent_exits or []:
+        question = _exit_question(item, language, card)
+        prior = thesis_states.get(item.get("cycle_id")) or {}
+        question["prior_thesis_id"] = prior.get("thesis_id")
+        question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
+        candidates.append(question)
     for index, item in enumerate(card.get("thesis_questions") or []):
         ticker = item.get("ticker")
         pos = by_ticker.get(ticker) or {}
         cycle_id = pos.get("cycle_id")
         old = active.get(cycle_id)
-        if old and old.get("maturity") == "testable" and not add_behavior_changed:
+        decision_cursor = pos.get("decision_cursor")
+        if old and decision_cursor and old.get("decision_cursor") == decision_cursor:
+            continue
+        if old and not decision_cursor and old.get("maturity") == "testable":
             continue
         if str(language).lower().startswith("en"):
             question = (f"For {ticker}, was the add based on new evidence, a pre-planned tranche, "
@@ -380,11 +426,15 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             question = (item.get("question") or
                         f"{ticker} 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？")
         importance, basis = _ticker_importance(card, state, ticker)
+        cursor_key = decision_cursor or f"{cycle_id}|legacy|{index}"
+        question_digest = hashlib.sha256(cursor_key.encode("utf-8")).hexdigest()[:12]
         candidates.append({
-            "id": f"add_{index}_{ticker}", "kind": "add_thesis", "ticker": ticker,
+            "id": f"add_{question_digest}", "kind": "add_thesis", "ticker": ticker,
             "cycle_id": cycle_id, "required": True, "question": question,
             "options": _add_options(language),
             "prior_thesis_id": (old or {}).get("thesis_id"),
+            "prior_event_id": (old or {}).get("last_event_id") or (old or {}).get("event_id"),
+            "decision_cursor": decision_cursor,
             "_importance": importance, "_importance_basis": basis, "_tie": 1,
         })
     if not candidates:
@@ -433,9 +483,13 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                 recent_exits=None, ledger_ingest=None, revisit_ingest=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
-    thesis_rows = _jsonl(os.path.join(root, "theses.jsonl"))
-    active_rows = thesis.reconstruct_active(thesis_rows, cycle_ids)
+    thesis_rows, decision_rows = _thesis_event_history(root)
+    thesis_states = thesis.reconstruct_states(thesis_rows, decision_rows, cycle_ids)
+    active_rows = [row for row in thesis_states
+                   if row.get("cycle_id") in set(cycle_ids) and row.get("position_status") != "closed"]
+    closed_rows = [row for row in thesis_states if row.get("position_status") == "closed"]
     active = {row.get("cycle_id"): row for row in active_rows}
+    by_cycle = {row.get("cycle_id"): row for row in thesis_states}
     missing = [{"ticker": ticker, "cycle_id": row.get("cycle_id")}
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
@@ -454,10 +508,12 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
                   "ledger_ingest": ledger_ingest},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
-                           "active_theses": active_rows, "due_revisits": [],
+                           "active_theses": active_rows, "closed_theses": closed_rows,
+                           "thesis_states": thesis_states, "due_revisits": [],
                            "recent_exits": list(recent_exits or []),
                            "revisit_ingest": revisit_ingest},
-        "question_queue": _question_queue(card, state, active, previous, language, recent_exits),
+        "question_queue": _question_queue(card, state, active, previous, language,
+                                          recent_exits, by_cycle),
         "missing_thesis_positions": missing,
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
@@ -538,15 +594,37 @@ def _validate_thesis_completeness(plan, answers):
 
 
 def _assign_thesis_ids(plan, updates):
-    suffix = plan["session_id"].split("__")[-1]
     date = (plan.get("engine_state") or {}).get("date_end")
+    prior_rows = ((plan.get("state_snapshot") or {}).get("thesis_states") or [])
+    prior_by_cycle = {row.get("cycle_id"): row for row in prior_rows if row.get("cycle_id")}
     rows = []
-    for index, update in enumerate(updates):
+    for update in updates:
         row = dict(update)
-        row.setdefault("status", "active")
+        prior = prior_by_cycle.get(row.get("cycle_id")) or {}
+        thesis_id = prior.get("thesis_id") or thesis.stable_thesis_id(row.get("cycle_id"))
+        if row.get("thesis_id") and row["thesis_id"] != thesis_id:
+            raise ReviewError(f"thesis update changes stable identity for cycle: {row.get('cycle_id')}")
+        row["schema_version"] = 2
+        row["thesis_id"] = thesis_id
+        row["status"] = "open" if not prior else row.get("status") or "modified"
+        if row["status"] == "active":
+            row["status"] = "open"
+        if row["status"] not in thesis.THESIS_STATUSES:
+            raise ReviewError(f"invalid thesis status for cycle: {row.get('cycle_id')}")
+        row["position_status"] = "open"
         row["session_date"] = date
         row["session_id"] = plan["session_id"]
-        row.setdefault("thesis_id", f"{row['ticker']}-{date}-{suffix}-{index}")
+        revises = prior.get("last_event_id") or prior.get("event_id")
+        if row.get("revises") and row["revises"] != revises:
+            raise ReviewError(f"thesis update has stale revises link for cycle: {row.get('cycle_id')}")
+        if revises:
+            row["revises"] = revises
+        identity_payload = dict(row)
+        supplied_event_id = identity_payload.pop("event_id", None)
+        event_id = thesis.stable_event_id("thesis-update", identity_payload)
+        if supplied_event_id and supplied_event_id != event_id:
+            raise ReviewError(f"thesis update has invalid event_id for cycle: {row.get('cycle_id')}")
+        row["event_id"] = event_id
         rows.append(row)
     return rows
 
@@ -554,6 +632,9 @@ def _assign_thesis_ids(plan, updates):
 def _build_exit_narratives(plan, answers):
     amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
     events = []
+    thesis_states = {row.get("cycle_id"): row for row in
+                     ((plan.get("state_snapshot") or {}).get("thesis_states") or [])
+                     if row.get("cycle_id")}
     for question in plan.get("question_queue") or []:
         if question.get("kind") != "revisit":
             continue
@@ -571,7 +652,7 @@ def _build_exit_narratives(plan, answers):
         if choice == "skip":
             note = None
         event = {
-            "event": "exit_narrative", "schema_version": 1,
+            "event": "exit_narrative", "schema_version": 2,
             "session_id": plan.get("session_id"), "revisit_id": question.get("revisit_id"),
             "cycle_id": question.get("cycle_id"), "ticker": question.get("ticker"),
             "exit_date": question.get("exit_date"), "exit_kind": question.get("exit_kind"),
@@ -582,6 +663,10 @@ def _build_exit_narratives(plan, answers):
             "note": note, "capture": "skipped" if choice == "skip" else "confirmed",
             "recorded_at": (plan.get("engine_state") or {}).get("date_end"),
         }
+        prior = thesis_states.get(question.get("cycle_id")) or {}
+        if prior.get("thesis_id"):
+            event["thesis_id"] = prior["thesis_id"]
+            event["revises"] = prior.get("last_event_id") or prior.get("event_id")
         raw_id = f"{plan.get('session_id')}|{question.get('revisit_id')}|{choice}|{note or ''}"
         event["event_id"] = "exit-" + hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:16]
         events.append(event)
@@ -619,8 +704,8 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     if answers.get("session_id") != plan.get("session_id"):
         raise ReviewError("answers.session_id does not match Review Plan")
     thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
-    updates = _validate_thesis_completeness(plan, answers)
-    decisions = thesis.build_decision_events(plan, answers)
+    updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
+    decisions = thesis.build_decision_events(plan, answers, updates)
     exit_narratives = _build_exit_narratives(plan, answers)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every triggered honesty key must be covered by an agent-authored
@@ -642,7 +727,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
         "engine_card": plan["engine_card"],
         "answers": answers,
         "narrative": narrative,
-        "thesis_updates": _assign_thesis_ids(plan, updates),
+        "thesis_updates": updates,
         "thesis_decisions": decisions,
         "exit_narratives": exit_narratives,
         "commitment": commitment,
