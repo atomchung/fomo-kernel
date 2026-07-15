@@ -22,3 +22,7 @@ Schemas:
 - Canonical bundle: `schemas/session-bundle.schema.json`
 
 ETF policy: broad-market, regional, bond, and commodity ETFs are diversified allocations. Sector, thematic, and leveraged ETFs remain concentrated risk. Treat an unknown ticker conservatively as equity. Missing expense ratio or tracking error belongs in the honesty ledger and must never be filled with zero.
+
+Symbols: write the complete yfinance symbol so the engine can price every position. Taiwan listed stocks take `.TW` (for example `2330.TW`) and OTC stocks take `.TWO` (for example `6488.TWO`); listed-versus-OTC is the agent's world knowledge — the engine has no symbol table and a bare `2330` silently disappears from pricing, alpha, and concentration. Convert ROC-calendar dates (for example 114/07/01) to ISO before handing the CSV over, and add `Market / Currency` columns for non-US instruments.
+
+Cash anchor: statements usually carry a cash balance row — read it instead of asking. Pass it to prepare as `--cash '{"currency":"USD","amount":8200,"as_of":"<date>"}'`; use a JSON list with one anchor per account for multi-currency accounts (for example one TWD and one USD anchor). Only ask the user one short question when no balance appears anywhere. Without an anchor the engine degrades gracefully (`cash.reliable=false`) and the card shows the holdings pillar plus an unlock invitation instead of account-level return — never guess a balance to force the unlock.

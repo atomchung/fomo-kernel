@@ -2,7 +2,7 @@
 
 A card is a story, not a dashboard.
 
-The private card follows this order when data exists: mirror, primary account numbers, one strength, largest leak, qualitative motive or thesis, ETF structure, honesty boundaries, and one rule. Omit unavailable sections instead of filling them with generic prose.
+The private card follows this order when data exists: mirror, primary account numbers, one strength, largest leak, qualitative motive or thesis, ETF structure, and one rule. Honesty sentences are not a section: each triggered ledger key renders inside the section it qualifies, using the agent-authored wording from `narrative.honesty`. Omit unavailable sections instead of filling them with generic prose.
 
 Agent narrative may not contain digits. The renderer obtains every amount, percentage, date, ticker, and metric from engine card and state artifacts. This deliberately strict boundary prevents the engine and prose from becoming competing numeric truth sources.
 

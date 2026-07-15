@@ -24,6 +24,8 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 
 After an interruption, use `review.py resume`; do not refetch live prices. If a projection fails, use `review.py repair-projections`. An existing canonical session is not data loss.
 
+Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <review_plan.state_root>` to every later command of that session.
+
 ## Non-negotiable boundaries
 
 1. Numbers, rankings, cycle IDs, metrics, and ETF exemptions come from code. The agent must not calculate, invent, or alter them.

@@ -25,7 +25,7 @@ python3 engine/review.py prepare <CSV...> --language en
 
 The agent must understand and normalize broker data locally into:
 `Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate / RecordType(Trade)`.
-Add `Market / Currency` for non-US instruments when available. Do not ask the user to normalize the file.
+Add `Market / Currency` for non-US instruments when available. Do not ask the user to normalize the file. Symbol and cash-anchor rules (Taiwan `.TW`/`.TWO` suffixes, ROC dates, `--cash`) live in `references/data-contract.md`.
 
 `prepare` creates a Review Plan; it does not create a conclusion card. Read only the flow selected by `review_plan.flow_path`:
 
@@ -74,6 +74,7 @@ python3 engine/review.py repair-projections
 
 - Validate `answers.json` against `schemas/answers.schema.json`.
 - Validate `narrative.json` against `schemas/narrative.schema.json`; it may contain qualitative prose only and no digits.
+- Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer weaves each sentence into the section it qualifies.
 - Add one `thesis_updates` entry for every missing-thesis `cycle_id`. Default to `maturity:"inferred"` and state the inference source; never present it as user-confirmed.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
@@ -95,4 +96,4 @@ If the user has no data but wants to see the experience:
 python3 engine/review.py prepare --test-drive --language en
 ```
 
-Test drive follows the same lifecycle with `persist:false`. It must not project into the user's coach memory, and every conversation and card must be visibly labeled as demo data.
+Test drive follows the same lifecycle with `persist:false`. It runs in an isolated root directory: read `review_plan.state_root` from the prepare output and pass it as `--root <state_root>` to every later `preview`, `finalize`, and `resume` call, or they will not find the session. It must not project into the user's coach memory, and every conversation and card must be visibly labeled as demo data.

@@ -198,7 +198,7 @@ skills/fomo-kernel/
   card-spec.md              ← Step 3 卡規格(禁止清單 / redact / 敘事鐵律;Step 2 問完才讀)
   engine/trade_recap.py     ← 機械層:5 維 + 標的層主從分類 + 歸因(純函式,無真實路徑)
   rubric/
-    vincent-yu.md           ← 預設鏡片的原則蒸餾(逐條標出處;可換成別的大師)
+    vincent-yu.md           ← 預設鏡片的原則蒸餾(意譯摘要,各檔附來源清單;可換成別的大師)
     vincent-yu.lens.json    ← 鏡片的「可換大師層」:規矩/引言/動機問句(換大師 = 換這檔)
   behavior-diagnosis.md     ← 診斷哲學:對事不對人、行為多標籤(why 的設計記錄)
   card-template.html        ← 復盤卡 HTML 版型範例
@@ -207,6 +207,6 @@ skills/fomo-kernel/
 
 ## 免責
 
-預設鏡片來自一位投資人公開文章的原則蒸餾(來源逐條標在 `rubric/` 裡),屬引用非轉載、非經本人背書;鏡片可換,之後會補多位。
+預設鏡片來自一位投資人公開文章的原則蒸餾(現行為意譯摘要,各鏡片檔內附來源清單,非逐字引述),非轉載、非經本人背書;鏡片可換,之後會補多位。
 本工具定位 **research / coaching support**,所有輸出僅為交易行為回顧與紀律建議,**不構成投資建議、不涉及任何標的買賣推薦**;最終投資決策與結果由使用者自負。
-程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的鏡片內容屬原則引用,出處逐條標註,不隨 MIT 轉授權。
+程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的鏡片內容屬意譯的原則蒸餾,各檔附來源清單,不隨 MIT 轉授權。

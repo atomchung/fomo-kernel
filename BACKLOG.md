@@ -1,6 +1,10 @@
 # fomo-kernel backlog
 
-Last refreshed: 2026-07-14. The target is a promotion-ready release on 2026-07-19.
+Last refreshed: 2026-07-15. The target is a promotion-ready release on 2026-07-19.
+
+## North star (owner correction 2026-07-05, #112 — do not regress this)
+
+The vision is an agent, but the next action is still one card striking one real person. **The constraint is card quality — whether the card is useful enough and at a publishable standard — not distribution or finding users.** The card has always been tested and always been shown to people; the real bottleneck is that the card is not yet good enough. The promotion release below is a vehicle for validating card quality, not a distribution goal in itself. Do not let the big vision steal the small thing that needs validating now.
 
 ## P0 for the promotion release
 

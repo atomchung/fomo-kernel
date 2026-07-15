@@ -61,7 +61,9 @@ When a field is unavailable, omit it or use renderer-owned honesty copy. Never i
 
 ## Honesty ledger
 
-`build_honesty_ledger()` determines which caveats must appear. The renderer integrates them into the relevant narrative section rather than printing the ledger as a checklist.
+`build_honesty_ledger()` determines which caveats must appear; the agent writes how each one is said (#82: conditions in the engine, wording with the agent). The Review Plan exposes the triggered keys as `card_plan.required_honesty_keys`; the agent supplies one qualitative, digit-free sentence per key in `narrative.honesty`, and preview fails when any key is missing or extra. The renderer weaves each sentence into the section it qualifies — alpha and attribution caveats beside the performance numbers, cash caveats beside the account line, ETF metadata gaps in the ETF section — never as a standalone checklist section. Fixed copy strings exist only as a fallback for re-rendering bundles committed before this contract.
+
+Per-key wording guidance: `alpha_credibility` names the sample or interval limit without calling skill durable; `sector_attribution` says part of the allocation-versus-selection split is unattributed; `unclassified_drivers` says concentration may be understated; `unrealized_coverage` says unrealized P&L is incomplete; `orphan_sells` says some realized P&L was excluded for lacking a known entry; `currency_mix` says aggregate figures cross currencies; `cash_reliability` says cash lacks a complete anchor and what unlocks it; `acct_perf_basis` says account performance rests on partial cost or FX approximations; `etf_metadata` says missing expense-ratio or tracking-error data was not treated as zero.
 
 Examples include:
 
@@ -79,7 +81,7 @@ The card must state the limitation neutrally and narrowly. It must not guess the
 ## Performance framing
 
 - Compare the held portfolio with the appropriate market benchmark only when engine output supports the comparison.
-- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha.
+- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha. (Per-market renderer lines are deferred to #193; do not hand-write them from `by_market` in the meantime.)
 - Treat account TWR, holding TWR, cash drag, and IRR as different questions. Use only engine-provided values and copy.
 - Interpret positive cash drag as protection in a falling market and negative cash drag as diluted participation; do not treat cash as inherently wrong.
 - Use alpha capability language only when the engine marks it credible. Otherwise show the interval and uncertainty.

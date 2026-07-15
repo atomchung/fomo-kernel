@@ -200,7 +200,7 @@ skills/fomo-kernel/
   card-spec.md              ← Step 3 card spec (blocklist / redact / narrative rules; read only after Step 2 questions)
   engine/trade_recap.py     ← mechanical layer: 5-dim + per-position DCA/loser classifier + attribution (pure functions, no real paths)
   rubric/
-    vincent-yu.md           ← the default lens's principle distillation (each cited to source; swappable for another master)
+    vincent-yu.md           ← the default lens's principle distillation (paraphrased, with per-lens source lists; swappable for another master)
     vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
   behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
   card-template.html        ← review-card HTML layout example
@@ -209,6 +209,6 @@ skills/fomo-kernel/
 
 ## Disclaimer
 
-The default lens is a principle distillation from one investor's public writing (sources cited line-by-line in `rubric/`) — quoted, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
+The default lens is a principle distillation from one investor's public writing — paraphrased summaries with per-lens source lists in `rubric/`, not verbatim quotation, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
 This tool is positioned as **research / coaching support**; all output is trade-behavior review and discipline suggestions only — **not investment advice, and no buy/sell recommendation on any instrument**; final investment decisions and outcomes are your own.
-The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is principle quotation with sources cited line-by-line, and is not relicensed under MIT.
+The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is paraphrased principle distillation with per-lens source lists, and is not relicensed under MIT.
