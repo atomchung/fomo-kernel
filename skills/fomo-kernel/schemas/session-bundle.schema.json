@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/session-bundle.schema.json",
+  "title": "Fomo Kernel Canonical Session Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "session_id", "route", "language", "review_plan", "engine_state",
+    "engine_card", "answers", "narrative", "thesis_updates", "thesis_decisions",
+    "commitment", "observations"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "session_id": {"type": "string"},
+    "route": {"enum": ["first_review", "weekly_review", "snapshot_review", "test_drive"]},
+    "language": {"enum": ["zh-TW", "en"]},
+    "review_plan": {"$ref": "review-plan.schema.json"},
+    "engine_state": {"type": "object"},
+    "engine_card": {"type": "object"},
+    "answers": {"$ref": "answers.schema.json"},
+    "narrative": {"$ref": "narrative.schema.json"},
+    "thesis_updates": {"type": "array", "items": {"type": "object"}},
+    "thesis_decisions": {"type": "array", "items": {"type": "object"}},
+    "commitment": {"type": ["object", "null"]},
+    "observations": {"type": "array"}
+  }
+}

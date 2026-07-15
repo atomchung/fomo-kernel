@@ -1,77 +1,79 @@
-# CLAUDE.md — 開發者 / 維護者指引
+# CLAUDE.md — Maintainer guide
 
-> 這份給**改這個 repo 程式碼的你**看。使用者跑這個 skill 時的行為契約在 [AGENTS.md](AGENTS.md)(給非 Claude Code 的 agent,如 Codex,執行時看;Claude Code 自己會自動載入 SKILL.md,不需要 AGENTS.md);兩者角色不同,**不要互相搬內容**——AGENTS.md 講「怎麼用這個 skill」,這份講「怎麼改這個 codebase」。
+> This file is for contributors changing the repository. Runtime behavior is defined by [skills/fomo-kernel/SKILL.md](skills/fomo-kernel/SKILL.md); [AGENTS.md](AGENTS.md) is only a thin cross-agent router. Do not duplicate the complete runtime contract here.
 
-## 這個 repo 是什麼(維護者角度)
+## Repository role
 
-`fomo-kernel`(對外 `/fomo-kernel` skill)的**公開** git repo(GitHub `atomchung/fomo-kernel`),會被外部使用者 clone/安裝。核心是 `skills/fomo-kernel/engine/` 的純 Python 確定性引擎,`skills/fomo-kernel/SKILL.md` 定義 Claude Code 執行時的四步流程,`AGENTS.md` 是給非 Claude Code agent 的路由指南。
+`fomo-kernel` is a public repository that external users can clone and install. The deterministic Python engine lives in `skills/fomo-kernel/engine/`. `SKILL.md` defines runtime orchestration, and `AGENTS.md` routes agents that do not automatically discover skills.
 
-## 改動前必讀:契約同步
+## Contract synchronization
 
-- **`skills/fomo-kernel/SKILL.md` 是行為契約的唯一權威**。如果你改的 engine 邏輯會影響使用者看到的行為(例如 `[ASK]` 的判定條件、卡片欄位、四步流程順序),**同一個 commit 裡要同步更新 SKILL.md**(必要時也更新 `AGENTS.md` 的摘要),不要讓兩者 drift。
-- `AGENTS.md` 只放「路由 + 鐵律摘要」,細節仍指回 `SKILL.md`——不要把完整流程複製進 `AGENTS.md`。
+- Treat `skills/fomo-kernel/SKILL.md` as the runtime contract entry point. If engine behavior changes what a user sees, update the relevant flow, reference, schema, renderer contract, and the thin summary when necessary in the same change.
+- Keep `AGENTS.md` limited to routing and non-negotiable boundaries.
+- Keep developer documentation and skill instructions in English. Follow [docs/language-policy.md](docs/language-policy.md) for the GTM and localization exceptions.
 
-## 誠實揭露的判定住在 engine,不住在 SKILL prose(#82,owner 2026-07-09 拍板)
+## Honesty decisions belong in code
 
-「卡面該交代哪些誠實缺口」(α 不可信 / 未實現缺價 / 板塊歸因不全 / 未分類 driver / 賣超 / 混幣)由 engine 的 `build_honesty_ledger()` 聚合成 `honesty_ledger` 欄位(只收觸發項,空 list = 無缺口)。三條鐵律,改動別違反:
+`build_honesty_ledger()` decides which limitations a card must disclose, including alpha credibility, missing live prices, incomplete sector attribution, unknown drivers, orphan sells, currency mixing, cash reliability, and ETF metadata gaps.
 
-- **判定進 engine、文案留 Claude**:engine 只決定「該講什麼」(哪些 key 觸發),「怎麼講」照 card-spec 說話原則由 Claude 融入敘事——engine **不給死文案**(死文案 = card-spec 罵的呆板揭露)。要加新的誠實缺口:改 `build_honesty_ledger` 加一個 key + card-spec 加一行講法,**別在 SKILL.md 加「X 非空 → 補一句」的散落 prose**(那正是 #82 前的病:判定散在 SKILL/card-spec 多處靠自律,JSON 模式還漏了整套聚合)。
-- **guardrail 內部化,不上卡**:`honesty_ledger` 是 SKILL Step 3 出卡前 gate 的**內部**核對源(每個 key 卡面有沒有講到),**它本身不列成表、不輸出給用戶**——用戶只看到乾淨敘事卡、誠實句融進去。別把 checklist 印上卡(違反 card-spec「卡是故事不是 dashboard」)。
-- **SKILL 主檔不長 guardrail prose**:揭露判定的單一事實源是 engine,不是每次載入 ~25k 的 SKILL.md(#149)。新增揭露點時 SKILL 主檔行數不該增長——這是「避免 guardrail 冗長」的機制,不靠自律記得精簡。
+- Put disclosure conditions in the engine. Put locale-specific wording in renderer copy. Do not scatter new `if field exists, add a sentence` instructions through `SKILL.md`.
+- Treat the ledger as an internal rendering gate, not a checklist printed on the card. The card should remain a coherent story.
+- Keep `SKILL.md` thin. New honesty keys should not make the entry-point prompt grow.
 
-例外:`show_widget` 有沒有試成功是**執行層事實**(engine 標不到環境能否渲染),留 SKILL Step 3 self-check 第 5 項的 prose guardrail。
-事實鏈路(改一處連動全鏈):`build_honesty_ledger()` ↔ SKILL Step 1 欄位 + Step 3 gate ↔ card-spec 「誠實點照 ledger 講」段 ↔ EVALS B6/B14/B15/B16 ↔ eval-design A-5 ↔ `test_tr_json_contract.py` 的 `HL_KEYS`。
+The synchronization chain is: `build_honesty_ledger()` ↔ renderer and copy ↔ card policy ↔ eval design ↔ contract tests.
 
-## 測試(改 engine/ 前後必跑)
+## Tests
+
+Run before and after changing the engine or runtime contract:
 
 ```bash
-python3 tests/run_all.py                       # 一鍵跑全部十二套測試,離線、確定性、免裝 pytest
-TR_TEST_NETWORK=1 python3 tests/run_all.py     # 額外加跑 β 方向 + 市場背景 network smoke
+python3 tests/run_all.py
+TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional beta-direction and market-context network smoke
 ```
 
-十二套分工:機械層純函式單元(`tests/test_engine_units.py`)、TR_JSON/state 契約(`tests/test_tr_json_contract.py`)、價格路徑合成單元(`tests/test_price_paths.py`)、snapshot-anchored 帳本(`tests/test_ledger.py`)、出場追蹤+swap(`tests/test_revisit.py`)、市場背景(`tests/test_market_context.py`)、問題帳(`tests/test_problems.py`)、三風格端到端(`tests/test_sample_styles.py`)、狀態迴圈端到端(`skills/fomo-kernel/engine/test_state_loop.py`)、卡面/狀態 checker 驗活(`tests/test_checkers_offline.py`)、本機資料控制 CLI(`tests/test_coach_data_cli.py`)、收尾 session idempotency(`tests/test_coach_session_idempotency.py`,#166)。**改 engine 輸出格式、last_px 邏輯或排序邏輯後,這十二套沒全過就不要 commit。**
+The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, and documentation language boundaries.
 
-## `.claude/` hooks(committed 的 agent 護欄)
+Do not commit after changing engine output, price handling, sorting, or orchestration unless the complete offline suite passes.
 
-這個 repo committed 了 Claude Code hooks(`.claude/settings.json` + `.claude/hooks/`),把上面「測試沒全過就不要 commit」從自律變成機制:`pre_commit_test_gate.sh` 是 `PreToolUse:Bash` gate,當 `skills/fomo-kernel/engine/` 或 `tests/` 有未提交改動時跑 `tests/run_all.py`,紅了就 deny 掉 commit。
+## Claude Code hooks
 
-⚠️ **改或加任何 hook 前必讀**:實測目前這版 Claude Code **忽略 hook 的 `if:` filter**——matcher(如 `Bash`)會對**每一個**符合的 tool call 觸發,不是只有 `if` 指定的那種。所以**一律在腳本裡自己讀 stdin `tool_input.command` 判斷、非目標指令立即 `exit 0`,永遠別依賴 `if:`**。少了這道自我過濾,commit-gate 會在 engine dirty 時對每個 Bash 指令各跑一次整套測試(~11.5s)。照 `pre_commit_test_gate.sh` 開頭的 self-filter 範式抄。
+Committed hooks in `.claude/` enforce the test gate. Hook `if:` filters have been observed to be unreliable in the supported Claude Code setup. Every hook script must inspect `tool_input.command` from stdin and exit immediately for unrelated commands. Follow the self-filtering pattern in `pre_commit_test_gate.sh`.
 
-## 隱私鐵律的技術防線(不要弱化)
+## Privacy boundary
 
-`.gitignore` 已經用 `*.csv` + `!skills/fomo-kernel/mock/*.csv` 擋住真實交易資料進 git,只留 mock 假資料例外。這是機制防線,不是靠自律——**任何改動都不要移除或繞過這條規則**,包括新增測試 fixture 時也只能用 mock 資料。
+`.gitignore` blocks real CSV files and allows only fixtures under `skills/fomo-kernel/mock/`. Do not weaken or bypass this mechanism. Never include real trade records in commits, tests, or documentation examples.
 
-## Commit / PR 慣例(從既有 git log 觀察到的模式)
+## Commit and PR conventions
 
-`<type>(<scope>): <description> (closes #NN) (#PR)` 或 `<type>: <description>`。例:
+Follow the existing history:
+
+```text
+<type>(<scope>): <description> (closes #NN) (#PR)
+<type>: <description>
 ```
-fix(engine): last_px covers all fetched tickers, not just round-trips (closes #79) (#83)
-fix(engine): candidate_rules 補 3 維規矩生成 + 分散維度門檻對齊 (#100)
-```
-這個 repo 走**issue → PR → close issue** 的正規流程,延續這個格式,不要另創一套。開 PR/issue 前**先 `gh issue list` / `git log --grep` 查一下有沒有已經修過**——這個 repo 修 bug 的節奏很快,容易撞到已經處理過的東西。
 
-## 並行開發慣例(多 session / 多 agent 同時動這個 repo 是常態)
+Check `gh issue list`, `gh pr list`, and `git log --grep` before opening work so you do not duplicate an active or completed fix.
 
-- **認領再修**:動手修某個 issue 前,先 assign 自己或在 issue 下留言認領;開修復 PR 前 `gh pr list` 查同一 issue / 同一函式區域有沒有 open PR。前例:同一個 bug 被獨立診斷兩次(#87/#95,互不引用),`render()` 被兩個 PR 並行大改產生 4 個規格 regression(#23/#24)。
-- **開新 branch 先 fetch、從最新 `origin/main` 開**;merge 完手上的 PR 後再 `gh pr list` 一次,查剛冒出的新 PR、以及與剛 merge 內容的**語意重疊**(git 只擋文字衝突,不擋語意衝突)。
-- **修 bug 不只修發現的那個實例**:同一根因常住在多處,動手前先 grep fixtures / docs / tests 掃其他實例,PR body 寫「掃過的範圍與結果」。前例:拆股 fixture 的同款定價 bug 分三批被動發現(#93 → #98 → #108)。
-- **批次 merge(一次合 ≥2 個 PR)前做一輪 zoom-out**,不只逐 diff 看正確性:①同主題 issue 第二次出現=同一設計缺陷的第二個症狀,先問「這條線該不該存在」再修單點 ②文檔/測試出現「繞過/避開/先…再跑」措辭=系統在教人繞過自己 ③ engine 靠檔名/環境變數等隱性訊號做行為分支=違反 data-agnostic(#89 前例)。含 engine 改動時,對全部 mock persona CSV 跑一輪產卡並核對數字——#93/#94/#95 三個正確性 bug 全是這樣現形的,任何 diff review 都看不到。
-- **批次 merge 收尾**:這一輪產生的 agent worktree / 本地 branch,PR 全 merge 後,驗證 commit 已可從 main 達到、且 `git worktree list` 確認沒有其他 session 在用,才清掉。
+When multiple sessions are active:
 
-## 鏡像檔案對照表(同一份事實住在多處,改一處要連動)
+- Claim the issue before editing and check for overlapping PRs.
+- Fetch before creating a branch from the latest `origin/main`.
+- Search fixtures, documentation, and tests for other instances of the same root cause.
+- Before merging several PRs, review semantic overlap as well as textual conflicts. If the engine changed, generate cards for all mock personas and verify the output.
+- Remove worktrees and local branches only after confirming the merged commit is reachable from main and no other session uses them.
 
-漏同步的 drift 反覆發生過(#68、#96、cycle_id 對帳失效),改下列任何一處,照表連動其餘:
+## Mirrored surfaces
 
-| 事實 | 住在哪些檔案 |
+| Fact | Surfaces that must stay synchronized |
 |---|---|
-| 行為契約 | engine ↔ `skills/fomo-kernel/SKILL.md`(權威)↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
-| demo 卡示意數字 | README.zh-TW 文字卡 ↔ `docs/demo-card.html`(改後重截 `demo-card.png`)〔中文〕;README.md 文字卡 ↔ `docs/demo-card-en.html`(改後重截 `demo-card-en.png`)〔英文,#165 後新增,數字須與中文版一致,只譯文字〕 |
-| README 雙語 | **分檔**:`README.md`(英文,GitHub 首頁預設、對外主入口)↔ `README.zh-TW.md`(繁中完整版),兩檔頂部語言連結互指;改主要內容**兩檔同步**,尤其別讓英文主入口 drift 落後中文 |
+| Runtime behavior | engine ↔ `SKILL.md` and routed flows/references ↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
+| Demo card values | English README ↔ English demo HTML/image; Traditional Chinese README ↔ Traditional Chinese demo HTML/image. Values must match; only wording differs. |
+| GTM documentation | `README.md` is the English default; `README.zh-TW.md` is the complete Traditional Chinese counterpart. Keep language links and substantive product claims synchronized. |
 
-引用**產品假設**(誰是用戶、當前卡點是什麼)做優先級決策時,帶上判定日期;判定已隔數週或出現矛盾訊號,先跟 maintainer 對帳再據以行動——過時結論被跨 session 複讀的案例見 #112。
+Date product assumptions when using them for prioritization. Reconfirm assumptions that are several weeks old or contradicted by new evidence.
 
-## 公開 repo 的品質門檻
+## Public-repository quality bar
 
-這個 repo 會被外部使用者 clone 使用,合併標準比純內部工具高:
-- 不要在任何 commit、測試 fixture、文件範例裡混入真實交易明細(只用 mock)
-- README/AGENTS.md 面向外部讀者,改動措辭要考慮「沒有這段對話上下文的人看得懂嗎」
+- Use only synthetic mock data.
+- Write public documentation for readers who do not have the conversation context.
+- Preserve deterministic, fail-closed behavior at workflow and persistence boundaries.

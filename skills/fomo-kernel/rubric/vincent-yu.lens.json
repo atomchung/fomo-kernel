@@ -1,72 +1,17 @@
 {
-  "philosophy": "存活紀律派",
-  "master": "Vincent Yu(余鎮文)",
-  "source": "公開文章原則蒸餾(rubric/vincent-yu.md),引用非轉載、非經本人背書",
-  "_note": "這是「鏡片層」。engine 只算『洞是什麼』(普世行為金融),這個檔決定『這套哲學怎麼說這個洞、引哪句、問什麼動機』。對外顯示一律用 `philosophy`(v1 去名);`master`/`source` 留作內部 provenance,engine 不再印人名。換大師/哲學 = 換這個檔,engine 不動。新增 stance/lean 供 compare_lenses 算多哲學分歧;axis(universal/style,見 docs/v2c-lens-selection.md §11)待 v2a【風格】維落地後補(進場維屬【風格】,其餘 6 維【普世】)。",
-
-  "master_intro": {
-    "one_line": "這套尺的核心:活下來,比賺最多更重要。它不看你『看對幾次』,看你『會不會被一次打死』。",
-    "pillars": [
-      "存活優先——不爆倉才有複利,控制回撤 > 追求最大報酬",
-      "部位學 > 分析——績效是『勝率 × 賠率 × 頻率』,不是看對幾次",
-      "可證偽——下注前先寫好『什麼證據出現我就認錯退出』",
-      "預期差——好價格 = 市場共識和你理解的未來之間的落差,不是『便宜』",
-      "情境動作化——研究要導出『如果 A 就做 X』,不是搬資訊"
-    ],
-    "why_it_matters": "這把尺偏『存活與紀律』。如果你是純動能/當沖/套利,有些條目對你是『提問』不是『判錯』——它照的是你有沒有為『萬一錯了』準備,不是逼你變成價值投資者。"
-  },
-
-  "strength_intro": "先說你做對的一件事(不是客套,是讓你聽得進下面那刀):",
-
+  "philosophy": "Survival discipline",
+  "master": "Vincent Yu",
+  "source": "Distilled from eighteen public Substack articles and two alignment reviews. All card language is paraphrase unless a verified quotation is explicitly marked.",
+  "_note": "Default runtime lens. It separates universal survival and calibration principles from style-specific questions about expectations and valuation frames.",
+  "master_intro": {"one_line": "Survive first, scale conviction with evidence, and turn research into explicit if-then actions.", "pillars": ["Control drawdown", "Match size to evidence", "Seek falsifiers", "Identify expectation gaps", "Convert research into action"], "why_it_matters": "This lens makes the decision process falsifiable and protects the ability to keep participating."},
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "rubric_unit": "B1 賠率 / A1 信念是光譜上的 sizing",
-      "stance": "aligned", "lean": "risk-capped",
-      "rule": "下單前先決定『這筆最多佔幾 %、為什麼是這個數而不是兩倍』。",
-      "quote": "門檻和部位必須一起調。門檻低,只能配小部位。門檻高,才配得起大部位。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。這個 size 是『算過最壞情況能承受』,還是『就是很看好、直接重壓』?"
-    },
-    "加碼攤平": {
-      "rubric_unit": "C2 雙紅線 / A2 試探≠加碼",
-      "stance": "conditional", "lean": "evidence",
-      "rule": "往下加碼前必須寫出『一個進場時不知道的新證據』;寫不出 → 不加。",
-      "quote": "可以低成本試探一次,不代表已完成長期信任的驗證;小成功不該自動升級成重倉。",
-      "motive_q": "{tickers} 你在虧損裡一路往下加。這是『你知道了一個進場時不知道的新利多』,還是『不想認賠、想攤低成本等回本』?"
-    },
-    "出場紀律": {
-      "rubric_unit": "D1 時間軸 / G1 焦慮驅動",
-      "stance": "conditional", "lean": "thesis",
-      "rule": "賣出前先寫一句『我賣的理由是 thesis 破了,還是手癢/想換現金?』",
-      "quote": "在清醒時先把出場規則寫好,把判斷從『當下』移到『事前』。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些賣出是『thesis 到價了』,還是『賺了怕回吐、落袋為安』?"
-    },
-    "分散": {
-      "rubric_unit": "B2 driver 不同才算分散",
-      "stance": "conditional", "lean": "drivers",
-      "rule": "加新倉前先問『它跟我最大那塊是不是同一個 driver?』是 → 不加。",
-      "quote": "分散不是檔數多,是讓持有的標的來自不同的 underlying drivers。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。你當初『覺得這樣算分散』,還是『根本沒把它們當同一個賭注』?"
-    },
-    "持有時間": {
-      "rubric_unit": "D1 先定時間軸",
-      "stance": "aligned", "lean": "preset-frame",
-      "rule": "每筆進場先標『短線/波段/長線』,出場只准用同框架的理由。",
-      "quote": "先想清楚你的時間軸,讓所有後續分析匹配它。",
-      "motive_q": "{incon_tickers} 你同一檔又當沖又長抱。是『有意切兩套策略』,還是『套牢了就改口說自己是長期投資』?"
-    },
-    "alpha/beta": {
-      "rubric_unit": "E2 拆解你承擔什麼風險",
-      "stance": "aligned", "lean": "decompose",
-      "rule": "每季只認 alpha,別把『大盤＋槓桿』給你的,當成自己的能力。",
-      "quote": "優秀的投資人要能 decompose risk——知道自己承擔的是總經、產業、個股還是政策風險,以及報酬值不值得。",
-      "motive_q": "你贏大盤 {excess}pp,但 β={beta}。這些報酬你算『自己選股的本事』,還是『敢押高波動換來的』?"
-    },
-    "進場": {
-      "rubric_unit": "G1 焦慮驅動 / A4 從價格倒推預期｜待 engine B.9（【風格】維）",
-      "stance": "conditional", "lean": "gap",
-      "rule": "進場前先寫一句『我的觸發條件是 X、市場已隱含什麼預期』;追到伸展高點又說不出預期差 → 不進。",
-      "quote": "焦慮很容易偽裝成上進。你以為在追求進步,其實在逃離『我好像輸了』的感覺。",
-      "motive_q": "{entry_ticker} 你買在近 20 日高點、當天還大漲。是你的框架觸發(說得出市場隱含什麼預期、你認為錯在哪),還是它在噴、你怕錯過?"
-    }
+    "position_sizing": {"rubric_unit": "Scale size with evidence and survival risk", "stance": "aligned", "lean": "risk-capped", "rule": "Before entry, set the maximum portfolio percentage and explain why the evidence supports that size rather than twice as much.", "quote": "Conviction is a sizing spectrum constrained by the need to survive. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. Which independent evidence supports this size, and what loss would threaten continued participation?"},
+    "averaging_down": {"rubric_unit": "Require new evidence before adding", "stance": "conditional", "lean": "evidence", "rule": "Before adding to a loss, write one material fact that was unknown at entry; if none exists, do not add.", "quote": "An add should reflect updated evidence, not the arithmetic desire to lower cost. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What material evidence was new after entry, and how did it change the thesis?"},
+    "exit_discipline": {"rubric_unit": "Precommit falsifiers while calm", "stance": "conditional", "lean": "thesis", "rule": "Before entry, write the thesis falsifier and the if-then exit action; use it before emotion rewrites the decision.", "quote": "High-cost decisions should be moved from the stressed moment into a precommitted process. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which exits followed a written falsifier, and which were driven by restlessness or the need for cash?"},
+    "diversification": {"rubric_unit": "Diversify underlying drivers", "stance": "conditional", "lean": "drivers", "rule": "Before adding a position, ask whether it shares the same underlying driver as the largest exposure; if yes, treat it as the same bet.", "quote": "Diversification is about distinct drivers, not the number of tickers. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Which holdings have genuinely independent drivers?"},
+    "holding_period": {"rubric_unit": "Match evidence and exit logic to the preset horizon", "stance": "aligned", "lean": "preset-frame", "rule": "Label the horizon before entry and allow exit reasons only from the same analytical frame unless new evidence explicitly changes it.", "quote": "The variables used to judge a trade should match its intended horizon. (paraphrase)", "motive_q": "For {incon_tickers}, did new evidence change the analytical frame, or did the label change after the outcome?"},
+    "alpha_beta": {"rubric_unit": "Decompose return before claiming edge", "stance": "aligned", "lean": "decompose", "rule": "Each review period, separate market, sector, leverage, and instrument-specific return before calling the result alpha.", "quote": "External attribution is more reliable than a memorable self-story. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. What return remains after market, sector, and leverage exposure are removed?"},
+    "entry_style": {"rubric_unit": "State the expectation gap and falsifier", "stance": "conditional", "lean": "gap", "rule": "Before entry, state what expectation the market embeds, what you believe instead, and what evidence would prove you wrong.", "quote": "Research becomes actionable when it identifies an expectation gap and an if-then response. (paraphrase)", "motive_q": "For {entry_ticker}, what market expectation was wrong, and what would falsify your variant view?"}
   }
 }

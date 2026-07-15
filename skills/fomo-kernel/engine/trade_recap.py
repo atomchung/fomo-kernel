@@ -9,6 +9,7 @@ fomo-kernel · trade-recap engine v0.2
 """
 import csv, os, re, sys, statistics, datetime as dt
 from collections import defaultdict, deque
+import instruments as instrument_policy
 try:
     from rich.console import Console, Group
     from rich.panel import Panel
@@ -970,13 +971,20 @@ def dim_size(rows, held, last_px):
         vals[t] = sh * px if px else cost
     tot = sum(vals.values()) or 1
     weights = {t: v / tot for t, v in vals.items()}
-    max_t = max(weights, key=weights.get) if weights else None
-    max_pct = weights.get(max_t, 0)
+    # 配置型 ETF 是一籃子資產,不拿「單一公司部位上限」誤殺。產業/主題/槓桿 ETF
+    # 仍是集中風險;未知 ticker 保守視為 equity,不會因猜測而取得豁免。
+    risk_weights = {t: w for t, w in weights.items()
+                    if not instrument_policy.is_diversified_allocation(t)}
+    max_t = max(risk_weights, key=risk_weights.get) if risk_weights else None
+    max_pct = risk_weights.get(max_t, 0)
     sev = min(max((max_pct - 0.20) / 0.30, 0), 1)
-    others = [w for t, w in weights.items() if t != max_t]      # 「其餘平均」要排除最大那檔,否則 mean(全部)=1/檔數、跟集中度無關,還會跟「最大佔 X%」自相矛盾
+    others = [w for t, w in risk_weights.items() if t != max_t]  # 「其餘平均」排除最大風險部位;配置型 ETF 不混入單一標的基準
     return dict(dim="部位 sizing", tier=1, triggered=max_pct > 0.25,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
-                avg_pct=statistics.mean(others) if others else 0.0, weights=weights)
+                avg_pct=statistics.mean(others) if others else 0.0, weights=weights,
+                risk_weights=risk_weights,
+                allocation_etfs={t: w for t, w in weights.items()
+                                 if instrument_policy.is_diversified_allocation(t)})
 
 def meaningful_tickers(held, last_px, floor=RESIDUAL_POS_TH):
     """回傳「非殘倉」的 ticker set:市值佔全持倉 ≥ floor(預設 0.1%)。市值缺價用成本近似。
@@ -997,18 +1005,23 @@ def dim_diversify(held, last_px):
         px = (last_px or {}).get(t); vals[t] = sh * px if px else cost
     tot = sum(vals.values()) or 1
     w = {t: v / tot for t, v in vals.items()}
+    risk_w = {t: wt for t, wt in w.items()
+              if not instrument_policy.is_diversified_allocation(t)}
     sec = defaultdict(float); ai = 0.0
-    for t, wt in w.items():
+    for t, wt in risk_w.items():
         s, is_ai = driver(t); sec[s] += wt; ai += wt * is_ai
     classified_sec = {s: v for s, v in sec.items() if s != "未分類"}   # 排除未分類桶,避免 driver_map 沒建好冒充集中度訊號(對齊 what_if() 既有作法)
     max_sec = max(classified_sec, key=classified_sec.get) if classified_sec else None
     max_sec_pct = classified_sec.get(max_sec, 0)
-    top3 = sum(sorted(w.values(), reverse=True)[:3])
+    top3 = sum(sorted(risk_w.values(), reverse=True)[:3])
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
-    trig = (len(w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > 0.60 or ai > 0.60
+    trig = (len(risk_w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > 0.60 or ai > 0.60
     return dict(dim="分散", tier=2, triggered=trig, severity=sev, n=len(w),
+                n_risk=len(risk_w),
                 max_sector=max_sec, max_sector_pct=max_sec_pct, ai_pct=ai,
-                top3=top3, sectors=dict(sec))
+                top3=top3, sectors=dict(sec),
+                allocation_etfs={t: wt for t, wt in w.items()
+                                 if instrument_policy.is_diversified_allocation(t)})
 
 def dim_hold(rts):
     # B.4 修(2026-06-13)：改判「同一檔內的時間框架一致性」，不再用整組合 IQR。
@@ -1103,6 +1116,11 @@ def dim_entry_style(rows, data, lookback=ENTRY_LOOKBACK):
 # ── 鏡片層(可換大師):洞的「規矩 + 引言」來自 lens 檔,engine 不 hardcode VY ──
 _LENS = None
 DEFAULT_LENS = os.path.join(os.path.dirname(__file__), "..", "rubric", "vincent-yu.lens.json")
+LENS_DIM_ID = {
+ "出場紀律": "exit_discipline", "部位 sizing": "position_sizing",
+ "分散": "diversification", "持有時間": "holding_period",
+ "加碼攤平": "averaging_down", "alpha/beta": "alpha_beta", "進場": "entry_style",
+}
 def load_lens(path=DEFAULT_LENS):
     """載入鏡片檔(規矩/引言/找動機問句)。換大師 = 換這個檔,engine 不動。"""
     global _LENS
@@ -1126,8 +1144,9 @@ CARD_LIB_FALLBACK = {
 }
 def card_for(dim):
     """(rule, quote):優先用 lens 檔(可換大師),載入失敗用 fallback。"""
-    if _LENS and dim in _LENS.get("dims", {}):
-        d = _LENS["dims"][dim]; m = _LENS.get("philosophy", "鏡片")
+    lens_dim = LENS_DIM_ID.get(dim, dim)
+    if _LENS and lens_dim in _LENS.get("dims", {}):
+        d = _LENS["dims"][lens_dim]; m = _LENS.get("philosophy", "lens")
         return d.get("rule", ""), f"{d.get('quote', '')}（{m}）"
     return CARD_LIB_FALLBACK.get(dim, ("", ""))
 
@@ -1267,14 +1286,18 @@ def what_if(held, last_px, threshold=0.25):
     mv = {t: sh * last_px[t] for t, (sh, c) in held.items() if t in last_px}
     tot = sum(mv.values())
     if tot <= 0: return None
+    risk_mv = {t: v for t, v in mv.items()
+               if not instrument_policy.is_diversified_allocation(t)}
+    if not risk_mv:
+        return None
 
     # 候選 1:AI thematic 全集(跨 sector)
-    ai_mv = sum(v for t, v in mv.items() if driver(t)[1] == 1)
+    ai_mv = sum(v for t, v in risk_mv.items() if driver(t)[1] == 1)
     ai_pct = ai_mv / tot
 
     # 候選 2:最大 sector(排除「未分類」,避免 driver map 沒載入時誤觸發)
     sector_mv = defaultdict(float)
-    for t, v in mv.items():
+    for t, v in risk_mv.items():
         sec = driver(t)[0]
         if sec != "未分類":
             sector_mv[sec] += v
@@ -1285,7 +1308,7 @@ def what_if(held, last_px, threshold=0.25):
         max_sec, max_sec_mv, max_sec_pct = None, 0.0, 0.0
 
     # 候選 3:最大個股
-    max_t, max_t_mv = max(mv.items(), key=lambda x: x[1])
+    max_t, max_t_mv = max(risk_mv.items(), key=lambda x: x[1])
     max_t_pct = max_t_mv / tot
 
     # 候選清單(只收 ≥ threshold 的;label/mval/pct)
@@ -1771,7 +1794,8 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 
 
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
-                avg_down=None, last_px=None, prev_end=None, cash=None):
+                avg_down=None, last_px=None, prev_end=None, cash=None,
+                portfolio_structure=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1785,6 +1809,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     d_size = dd.get("部位 sizing", {})
     d_avg = dd.get("加碼攤平", {})
     d_div = dd.get("分散", {})
+    d_exit = dd.get("出場紀律", {})
+    d_hold = dd.get("持有時間", {})
     ab = ab if isinstance(ab, dict) else {}
     has_ab = not ab.get("note")                             # ab 帶 note = 無 pandas/價格/樣本 → 無 α/β
     credible = bool(ab.get("credible"))                     # v2(#80):統計顯著(≥1 年 + |t|≥1.96)才算,檔數閘退役
@@ -1837,6 +1863,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     return {
         "schema_version": 2,                               # currency_meta 為 optional 附加欄,舊讀者 .get 不受影響
         "currency_meta": currency_meta,                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶(單幣 USD → 大多為 None)
+        "portfolio_structure": portfolio_structure,        # v2 orchestration P0:ETF 配置/集中語意 + metadata 缺口
         "date_start": rows[0]["date"].isoformat() if rows else None,
         "date_end": rows[-1]["date"].isoformat() if rows else None,
         "n_trades": len(rows),
@@ -1855,6 +1882,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "max_sector_pct": d_div.get("max_sector_pct"),
             "top3_pct": d_div.get("top3"),
             "n_holdings": d_div.get("n"),
+            "exit_severity": d_exit.get("severity"),       # v2 commitment:所有 headline 都有可跨期追蹤錨點
+            "hold_severity": d_hold.get("severity"),
             "beta": ab.get("beta"),
             "alpha_ann": ab.get("alpha_ann"),               # v2(#80):永遠出數;能力語氣由 alpha_credible 管
             "alpha_t": (ab.get("alpha_stat") or {}).get("t"),   # 不確定性一起存,對帳時才知道數字多可信
@@ -1874,7 +1903,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
-def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None, acct_perf=None):
+def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None, acct_perf=None,
+                         portfolio_structure=None):
     """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
 
     只收『觸發的』揭露項 → 空 list = 這張卡沒有誠實缺口。判定條件對齊預設人話卡的
@@ -1955,12 +1985,18 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                                "at_cost_tickers": b.get("at_cost_tickers"),
                                "fx_approx": b.get("fx_approx"),
                                "cash_source": b.get("cash_source")}})
+    # ETF 費用率 / tracking error 沒資料時不猜數字。只要這次有 ETF 且 metadata 不全,
+    # renderer 必須明說「尚未納入」；這是 P0 的誠實邊界,不是要把缺值補成 0。
+    ps = portfolio_structure or {}
+    if ps.get("metadata_gaps"):
+        L.append({"key": "etf_metadata", "status": "partial",
+                  "data": {"gaps": list(ps["metadata_gaps"])}})
     return L
 
 
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
-                    acct_perf=None, pnl_curve_data=None):
+                    acct_perf=None, pnl_curve_data=None, portfolio_structure=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -2022,9 +2058,11 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "dims_raw": dims,                                   # 5 維 raw,Claude 用「一句人話」帶過其餘維
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
         "currency_meta": currency_meta,                     # #51/#129 PR-2a:聚合幣別/fx/分幣桶;None=單幣 USD 舊行為
+        "portfolio_structure": portfolio_structure,         # ETF P0:配置型豁免、集中 ETF 仍計風險、metadata 誠實缺口
         "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
         "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
-        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
+        "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf,
+                                                portfolio_structure),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
         "pnl_curve": pnl_curve_data or {"note": "無資料"},   # #167:累積損益曲線,卡片畫 sparkline 用(一個點→一張圖);{'note':...} = 誠實降級,不硬畫
     }
 
@@ -2042,6 +2080,9 @@ def main():
     master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
     dm = os.environ.get("TR_DRIVER_MAP")                  # Claude 生成的 driver map(冷門股分類)
     n_dm = load_driver_map(dm) if dm else 0
+    im_result = instrument_policy.load_from_env()          # 本機 ETF/instrument 覆寫;未知標的不猜 ETF
+    if im_result.get("error"):
+        print(f"⚠️  instrument map 載入失敗: {im_result['error']} — 改用保守 fallback", file=sys.stderr)
     n_adj = adjust_for_splits(rows, fetch_splits({r["ticker"] for r in rows}))  # 分割調整,對齊今日價
     rts, open_lots = round_trips(rows)
     _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
@@ -2055,7 +2096,9 @@ def main():
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
-    decision_rts = [r for r in rts if driver(r["ticker"])[0] not in BENCH_SELF]   # 再平衡/現金管理,非選股決策(=配置類,同 BENCH_SELF)
+    decision_rts = [r for r in rts
+                    if driver(r["ticker"])[0] not in BENCH_SELF
+                    and not instrument_policy.is_diversified_allocation(r["ticker"])]  # 配置 ETF 再平衡/現金管理,非選股決策
     # 多市場幣別(#51/#129 PR-2a):跨 ticker 聚合必須在共同幣別(USD)上做,否則台股 985 元 + 美股 985 美元
     # 直接相加 = 靜默算錯。單一幣別組合(含純台股)聚合自洽 → 不抓匯率、路徑零變化。
     cur_map, currencies, cur_conflicts = currency_map(rows)
@@ -2063,7 +2106,9 @@ def main():
     fx, fx_err = fetch_fx(currencies) if mixed_ccy else ({"USD": 1.0}, None)
     if mixed_ccy:
         rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
-        decision_rts_u = [r for r in rts_u if driver(r["ticker"])[0] not in BENCH_SELF]
+        decision_rts_u = [r for r in rts_u
+                          if driver(r["ticker"])[0] not in BENCH_SELF
+                          and not instrument_policy.is_diversified_allocation(r["ticker"])]
     else:
         rts_u, held_u, lastpx_u, decision_rts_u = rts, held, last_px, decision_rts
     # 殘倉過濾(#172):市值<0.1% 的部位不進分散度/what-if/per-ticker 診斷/未分類計數;
@@ -2072,6 +2117,7 @@ def main():
     held_dx = {t: v for t, v in held_u.items() if t in keep_dx}
     d_size = dim_size(rows, held_u, lastpx_u)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held_dx, lastpx_u)
+    portfolio_structure = instrument_policy.portfolio_analysis(d_size.get("weights"))
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held_u, lastpx_u, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
@@ -2187,7 +2233,8 @@ def main():
         card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                                ab, pa, master, data_integrity=data_integrity,
                                currency_meta=currency_meta, cash=cash_data,
-                               acct_perf=acct_perf, pnl_curve_data=pc)
+                               acct_perf=acct_perf, pnl_curve_data=pc,
+                               portfolio_structure=portfolio_structure)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
@@ -2245,7 +2292,7 @@ def main():
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
                             prev_end=os.environ.get("TR_PREV_END") or None,
-                            cash=cash_data)
+                            cash=cash_data, portfolio_structure=portfolio_structure)
         # TR_PREV_END=上次 review 的 date_end(SKILL 對帳模式傳入)→ behavior 型問題事件
         # 只取其後的新交易(weekly 增量);不設 = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

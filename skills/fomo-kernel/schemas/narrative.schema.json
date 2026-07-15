@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/narrative.schema.json",
+  "title": "Fomo Kernel Prose-only Narrative",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["headline", "mirror"],
+  "properties": {
+    "headline": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "mirror": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "counterfactual": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "rule_rationale": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "strength": {"type": "string", "minLength": 1, "pattern": "^\\D+$"}
+  }
+}

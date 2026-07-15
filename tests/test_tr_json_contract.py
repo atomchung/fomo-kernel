@@ -37,6 +37,7 @@ TR_JSON_KEYS = {
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
     "cash",                                             # #171 PR-1 呈現層:帳戶現金上卡(balance/weight/source/reliable/recent_net_deposit;None=未提供)
+    "portfolio_structure",                              # skill v2 ETF P0:allocation vs concentrated ETF + metadata gaps
     "acct_perf",                                        # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note}=沒算)
     "honesty_ledger",                                   # #82:卡面必講的誠實點清單(觸發項聚合;空=無缺口)
     "pnl_curve",                                        # #167:累積損益曲線(卡片 sparkline 用);{'note':...}=誠實降級
@@ -46,6 +47,7 @@ STATE_KEYS = {
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "rule", "insufficient_data", "holdings",
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
+    "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
@@ -53,6 +55,7 @@ STATE_KEYS = {
 STATE_METRIC_KEYS = {
     "max_pos_pct", "max_pos_ticker", "avgdown_count", "avgdown_breach",
     "payoff", "ai_pct", "max_sector_pct", "top3_pct", "n_holdings",
+    "exit_severity", "hold_severity",                   # skill v2:所有 headline 都有 commitment metric
     "beta", "alpha_ann", "alpha_t", "alpha_credible",   # alpha v2(#80):α 永遠出數,t 一起存
 }
 
@@ -152,7 +155,7 @@ def main():
            "honesty_ledger 每項 = {key,status,data}", repr(hl)[:150])
         HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
                    "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability",
-                   "acct_perf_basis"}                  # #171 B 路線:帳戶級數字有出、但地基有洞(partial 錨/缺價排除/fx 近似)
+                   "acct_perf_basis", "etf_metadata"} # skill v2:ETF metadata 缺值不可猜零
         ok(all(e["key"] in HL_KEYS for e in hl),
            "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
         hl_keys = {e["key"] for e in hl}
@@ -270,7 +273,7 @@ def main():
 
         # ── 3. 收尾 CLI 煙霧測試(coach.py = 真消費者跑真 state;#148 heredoc 下沉)──
         blocks = extract_skill_py_blocks()
-        ok(len(blocks) == 1, "SKILL.md 只剩 part 5a 一段 heredoc(part 1/2/4/5b 已 CLI 化,別長回來)",
+        ok(len(blocks) == 0, "SKILL.md 是薄入口,不再內嵌任何收尾 heredoc(review.py/session.py 為權威)",
            f"抽到 {len(blocks)} 段")
         ok(coach.CYCLE_ID_RE.pattern == trade_recap.CYCLE_ID_RE.pattern
            and coach.CYCLE_ID_UNKNOWN_RE.pattern == trade_recap.CYCLE_ID_UNKNOWN_RE.pattern,

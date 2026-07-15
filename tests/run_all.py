@@ -1,30 +1,13 @@
 #!/usr/bin/env python3
-"""
-一鍵跑 fomo-kernel 的全部測試 —— 之後每次迭代引擎/規格,跑這一條就知道有沒有改壞。
+"""Run every offline deterministic fomo-kernel regression suite.
 
-零依賴(只用標準庫,免裝 pytest);全程離線、確定性(不碰 yfinance,不需網路)。
-subprocess 依序跑 SUITES 列的全部套件,任一非零退出 → 整體 exit 1(給 CI / pre-push 當紅綠燈)。
+The runner uses only the Python standard library and does not require pytest.
+It executes every entry in ``SUITES`` sequentially and returns a non-zero exit
+code if any suite fails, making it suitable for CI and local commit gates.
 
-十二套測試的分工:
-  1. 機械層純函式單元    tests/test_engine_units.py
-  2. TR_JSON/state 契約  tests/test_tr_json_contract.py(#61:SKILL 消費介面紅綠燈,強制離線)
-  3. 價格路徑合成單元    tests/test_price_paths.py(#62:賣太早/β/α/處方的離線確定性覆蓋)
-  4. snapshot-anchored 帳本  tests/test_ledger.py(#31 修訂版/#129 PR-1:雙輸入推導/reconcile/去重)
-  5. 出場追蹤+swap       tests/test_revisit.py(#32/#33/#129 PR-3:30/60/90 佇列/swap framing)
-  6. 市場背景            tests/test_market_context.py(#37:窗口/YTD 錨點、VIX 水平值、離線退化)
-  7. 問題帳              tests/test_problems.py(#137:事件規約/統計排序/規矩三分對位)
-  8. 三風格端到端        tests/test_sample_styles.py
-  9. 狀態迴圈端到端      skills/fomo-kernel/engine/test_state_loop.py
- 10. 卡面/狀態 checker 驗活  tests/test_checkers_offline.py(#60:check_card/check_state 離線確定性核心;
-                          headless 產卡那段非確定性 + 有成本,不進 CI,見 docs/eval-design.md §7)
- 11. 本機資料控制 CLI   tests/test_coach_data_cli.py(#165:data-status/export/reset,--root 隔離、
-                          dry-run 不動檔案、裸執行拒收)
- 12. 收尾 session idempotency  tests/test_coach_session_idempotency.py(#166:close/append-theses/
-                          append-rules/save-card/problems append 各自 session 級去重+fail closed)
-
-跑法:
+Usage:
   python3 tests/run_all.py
-  TR_TEST_NETWORK=1 python3 tests/run_all.py   # 額外跑 sample_styles 的 β 方向 network smoke
+  TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional network smoke coverage
 """
 import os
 import subprocess
@@ -33,18 +16,20 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SUITES = [
-    ("機械層純函式單元", "tests/test_engine_units.py"),
-    ("TR_JSON/state 契約", "tests/test_tr_json_contract.py"),
-    ("價格路徑合成單元", "tests/test_price_paths.py"),
-    ("snapshot-anchored 帳本", "tests/test_ledger.py"),
-    ("出場追蹤+swap", "tests/test_revisit.py"),
-    ("市場背景", "tests/test_market_context.py"),
-    ("問題帳", "tests/test_problems.py"),
-    ("三風格端到端", "tests/test_sample_styles.py"),
-    ("狀態迴圈端到端", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
-    ("卡面/狀態 checker 驗活", "tests/test_checkers_offline.py"),
-    ("本機資料控制 CLI", "tests/test_coach_data_cli.py"),
-    ("收尾 session idempotency", "tests/test_coach_session_idempotency.py"),
+    ("Engine unit tests", "tests/test_engine_units.py"),
+    ("TR_JSON and state contract", "tests/test_tr_json_contract.py"),
+    ("Synthetic price paths", "tests/test_price_paths.py"),
+    ("Snapshot-anchored ledger", "tests/test_ledger.py"),
+    ("Exit revisit and swap", "tests/test_revisit.py"),
+    ("Market context", "tests/test_market_context.py"),
+    ("Problem ledger", "tests/test_problems.py"),
+    ("Persona end-to-end", "tests/test_sample_styles.py"),
+    ("State-loop end-to-end", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
+    ("Card and state checker probes", "tests/test_checkers_offline.py"),
+    ("Local data-control CLI", "tests/test_coach_data_cli.py"),
+    ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
+    ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
+    ("Documentation language boundary", "tests/test_doc_language.py"),
 ]
 
 
@@ -52,23 +37,24 @@ def main():
     results = []
     for label, rel in SUITES:
         path = os.path.join(ROOT, rel)
-        print(f"\n{'='*64}\n▶ {label}  ({rel})\n{'='*64}", flush=True)
-        if not os.path.exists(path):                      # 檔案被搬走也算紅燈,不靜默跳過
-            print(f"❌ 找不到測試檔:{path}")
+        print(f"\n{'=' * 64}\n> {label}  ({rel})\n{'=' * 64}", flush=True)
+        if not os.path.exists(path):
+            print(f"FAIL: missing test file: {path}")
             results.append((label, rel, 127))
             continue
-        r = subprocess.run([sys.executable, path], cwd=ROOT)
-        results.append((label, rel, r.returncode))
+        result = subprocess.run([sys.executable, path], cwd=ROOT)
+        results.append((label, rel, result.returncode))
 
-    print(f"\n{'='*64}\n  總結\n{'='*64}")
-    failed = sum(1 for *_, rc in results if rc != 0)
-    for label, rel, rc in results:
-        print(f"  {'✅ PASS' if rc == 0 else '❌ FAIL'}  {label}  ({rel})")
+    print(f"\n{'=' * 64}\n  Summary\n{'=' * 64}")
+    failed = sum(1 for *_, return_code in results if return_code != 0)
+    for label, rel, return_code in results:
+        status = "PASS" if return_code == 0 else "FAIL"
+        print(f"  {status:4}  {label}  ({rel})")
     print()
     if failed:
-        print(f"❌ {failed}/{len(results)} 套測試失敗 —— 有東西被改壞了,先別 merge/push。")
+        print(f"FAIL: {failed}/{len(results)} suites failed. Do not merge or push.")
     else:
-        print(f"✅ 全部 {len(results)} 套測試通過。")
+        print(f"PASS: all {len(results)} suites passed.")
     return 1 if failed else 0
 
 

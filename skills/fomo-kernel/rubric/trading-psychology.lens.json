@@ -1,72 +1,17 @@
 {
-  "philosophy": "交易心理",
-  "master": "交易心理",
-  "source": "原則蒸餾自 Steenbarger 交易心理著作(The Daily Trading Coach / Trading Psychology 2.0),引用非轉載、非經本人背書。⚠️ 引言為意譯,尚未對原書逐句校對,上線前需 verbatim 對齊審查。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 trading-psychology.md。刻意全 stance=aligned、不掛 lean:此派不在『該怎麼交易』上 fork(他背書普世層),價值在 meta——記錄/復盤/揚長。所以 compare_lenses 會顯示他低分歧,這是正確的(不是每個大師都製造岔路)。他的單鏡 motive_q 是『這是不是一個你記錄過的情緒 pattern』。",
-
-  "master_intro": {
-    "one_line": "交易心理派的核心:盯你控制得了的『流程』,不是單筆盈虧;先找出你做得最好的、刻意放大它。它不跟別派爭『該買強還買弱』,它問你『你有沒有把自己的 pattern 記下來、改掉』。",
-    "pillars": [
-      "流程 > 損益:設流程目標(可控),不是單筆賺賠目標",
-      "先找出你做得最好的,刻意放大它(build on strengths)",
-      "把情緒連到思路:每筆記 trigger / 想法 / 結果 / 情緒,找 pattern",
-      "復盤頻率跟記錄頻率一樣重要(日內 24h / 週找 pattern / 月深掘 / 季總檢)",
-      "單筆結果脫鉤:任何事都可能發生,別用一筆定義自己"
-    ],
-    "why_it_matters": "這把尺不在哲學上跟別派對撞——它背書所有人都該守的普世紀律。它的價值是 meta:把你的盲點變成『可被記錄、可被矯正的 pattern』。所以它不會跟你爭該怎麼交易,它逼你回答:這個錯,你記下來了嗎、改了嗎?"
-  },
-
-  "strength_intro": "先放大你做對的那件事(這派核心:find what you do best, and expand on it):",
-
+  "philosophy": "Trading psychology",
+  "master": "Trading psychology",
+  "source": "Distilled from public Brett Steenbarger books and articles. All card language below is paraphrase unless a primary-source quotation is added and verified.",
+  "_note": "Runtime process lens. Every stance is aligned and intentionally has no lean; it diagnoses observable patterns rather than prescribing a trading doctrine.",
+  "master_intro": {"one_line": "Turn recurring emotional triggers into observable patterns, controllable process goals, and one rehearsable rule.", "pillars": ["Use process goals", "Build on demonstrated strengths", "Record triggers and outcomes", "Review at multiple horizons", "Separate identity from one result"], "why_it_matters": "This lens asks whether repeated decisions are driven by a stable process or by an emotional trigger."},
+  "strength_intro": "One process strength worth preserving:",
   "dims": {
-    "部位 sizing": {
-      "stance": "aligned",
-      "rubric_unit": "size 由流程決定,不被情緒放大",
-      "rule": "size 要一致、能被你寫好的流程解釋;別讓單筆 size 跟著興奮或不甘漂移。",
-      "quote": "成功來自一致的流程,不是單筆的英雄主義。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。這個 size 是你寫好的流程算出來的,還是當下情緒(興奮 / 不甘)放大的?"
-    },
-    "加碼攤平": {
-      "stance": "aligned",
-      "rubric_unit": "加碼是計畫,還是情緒 pattern?",
-      "rule": "加碼前回看:這是交易計畫的一部分,還是情緒反應?把 trigger / 想法 / 結果記下來,週末看 pattern。",
-      "quote": "把情緒反應變成可觀察的 pattern,你才改得動它。",
-      "motive_q": "{tickers} 你往下加。這是你計畫裡寫好的動作,還是一個你反覆出現的情緒 pattern(不甘認賠)?你記錄它了嗎?"
-    },
-    "出場紀律": {
-      "stance": "aligned",
-      "rubric_unit": "賣太早常是可矯正的情緒 pattern",
-      "rule": "若你常賣太早,把每次的 trigger / 想法 / 結果記下、找出觸發點,改一條具體規則,下週驗它。",
-      "quote": "持續在小幅獲利後就出場,通常是一個可被記錄、可被矯正的情緒 pattern,不是性格。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來續漲。這是不是一個重複出現的 pattern?你有沒有記下『每次想賣的當下在想什麼』?"
-    },
-    "分散": {
-      "stance": "aligned",
-      "rubric_unit": "持倉結構是流程,還是情緒累積?",
-      "rule": "回看你的持倉:是一套流程決定的,還是隨盤面情緒東買西買累積成的?",
-      "quote": "好的交易日誌會讓你看見:很多『決策』其實是情緒。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 同一個 driver。這個集中是你流程選出來的,還是『哪個熱就追哪個』情緒累積的?"
-    },
-    "持有時間": {
-      "stance": "aligned",
-      "rubric_unit": "持有期是計畫,還是套牢後合理化",
-      "rule": "進場前先寫下計畫持有框架;事後對照實際——落差本身就是要記錄的 pattern。",
-      "quote": "進步來自把『計畫』和『實際』並排看,然後縮小落差。",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。這是計畫好的兩套策略,還是套牢後改口的合理化?你進場時寫下框架了嗎?"
-    },
-    "alpha/beta": {
-      "stance": "aligned",
-      "rubric_unit": "用真實帳本校準自我認知",
-      "rule": "用真實帳本(不是記憶)定期回看:你的優勢到底在哪一類交易?把它放大、把弱項流程化或外包。",
-      "quote": "找出你做得最好的,然後刻意去放大它。",
-      "motive_q": "你贏大盤 {excess}pp(β={beta})。你有沒有用真實帳本拆過——你的錢到底是哪一類交易賺的?那一類,你能不能刻意多做?"
-    },
-    "進場": {
-      "stance": "aligned",
-      "rubric_unit": "進場是寫好的 setup,還是情緒衝動｜待 engine B.9",
-      "rule": "進場前先有一個寫好的 setup(觸發條件);事後記下『當下情緒』,週末檢查衝動進場的比例。",
-      "quote": "最好的交易者不是沒有情緒,而是知道情緒何時在替他們做決定。",
-      "motive_q": "{entry_ticker} 這筆進場,你有沒有一個事前寫好的 setup?還是看盤面在動、情緒上來就進?你記下當下的情緒了嗎?"
-    }
+    "position_sizing": {"rubric_unit": "Observe the trigger behind oversizing", "stance": "aligned", "rule": "Record the trigger, thought, emotion, planned risk, and actual size whenever position size exceeds the process rule.", "quote": "A repeated sizing error becomes trainable when its trigger and response are observable. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. What emotional or situational trigger preceded that size decision?"},
+    "averaging_down": {"rubric_unit": "Observe the trigger behind adding to losses", "stance": "aligned", "rule": "Before any add to a loss, label the trigger and write the new evidence; if the action is relief-seeking, do not add.", "quote": "A process journal converts an urge into a pattern that can be rehearsed differently. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. Was the action prompted by new evidence or by a need to reduce regret and recover the loss?"},
+    "exit_discipline": {"rubric_unit": "Compare planned and emotional exits", "stance": "aligned", "rule": "Tag each exit as rule-based or emotion-driven and review the pattern weekly rather than judging one isolated outcome.", "quote": "The goal is consistent execution, not proving that every single exit was right. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which recurring trigger causes early exits: fear of giving back gains, boredom, or a valid rule?"},
+    "diversification": {"rubric_unit": "Identify emotional clustering", "stance": "aligned", "rule": "Record whether correlated positions came from independent plans or from repeated reassurance around one familiar story.", "quote": "Several positions can express one emotional need even when their tickers differ. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Did each position come from an independent setup or repeated comfort with one theme?"},
+    "holding_period": {"rubric_unit": "Separate planned horizon from coping behavior", "stance": "aligned", "rule": "Write the intended horizon before entry and tag every later change with the evidence and emotional state that caused it.", "quote": "A horizon change is useful data when the reason is recorded rather than rationalized. (paraphrase)", "motive_q": "For {incon_tickers}, what trigger and evidence caused the horizon to change?"},
+    "alpha_beta": {"rubric_unit": "Use attribution for calibration, not identity", "stance": "aligned", "rule": "Decompose returns and record process quality separately so one favorable outcome does not become proof of personal skill.", "quote": "A good outcome and a good decision are related but not identical. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. Which repeatable process behavior, if any, deserves credit?"},
+    "entry_style": {"rubric_unit": "Observe the emotional trigger before entry", "stance": "aligned", "rule": "Before entry, record the setup, trigger, emotion, intended horizon, and invalidation condition.", "quote": "The entry becomes coachable when the setup and the internal trigger are both visible. (paraphrase)", "motive_q": "For {entry_ticker}, what part of the decision came from the setup and what part came from urgency, excitement, or fear of missing out?"}
   }
 }

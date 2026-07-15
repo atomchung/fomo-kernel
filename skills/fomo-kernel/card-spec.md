@@ -1,136 +1,99 @@
-# 復盤卡規格(Step 3 專用)
+# Review card content specification
 
-> 只在「Step 2 對話確認全部完成、🚦 self-check 五項都過」之後才讀這份檔。
-> 讀到這裡代表你手上已經有:engine 的 `TR_JSON=1` 結構化 JSON + 用戶剛確認的持股假設與動機答案。
->
-> 維護者注意(#68,不是給執行 agent 的):這份檔的鐵律 = eval 判準的事實源。動 🚫 清單 / 敘事鐵律 / redact 規則,同步 `docs/eval-design.md`(自動化 spec,§5)與 `evals/EVALS.md`(手動驗收)。
+> Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
 
-## Contents
-- 出卡前提(定論卡,不留問號)
-- 🚫 卡上禁止出現的東西
-- 兩種卡:private review / public card(redact 規則)
-- 呈現方式(一張卡只出一次:widget 成功 → HTML 主交付;終端 / 失敗 → 文字卡)
-- 文字規格(區塊模板)
-- 卡片是一個故事,不是 dashboard(敘事鐵律)
-- 數字鐵律(金額>勝率 / α 基準 / 廢話零容忍)
-- 處方層(揚長 / 外包短板 / 砍損耗)
-- 規則(落地 / 先肯定再打 / if-then / 一個洞一條規矩)
+## Purpose
 
-**等 Step 2 的確認都回來,才出這張卡。** 卡上的標籤是**定論**:用戶確認凹單的標凹單、確認逢低的標逢低,不留「凹單僥倖/待確認」這種問號(那是 Step 2 沒問完就出卡)。結合「引擎 `build_card_data` JSON + 用戶剛確認的持股假設與動機」,出**一張**卡。
+Produce one conclusion card after all required motive questions are answered. The card should connect the user's own numbers to one behavioral leak, one qualitative thesis interpretation, and one user-chosen next-time rule.
 
-**說話原則(通用,一條測試取代逐條文案禁令)**:講給「**看得懂自己券商對帳單的人**」聽——每句寫完自問:他讀一遍能懂嗎?
-- **對帳單上有的詞,直接用**:已實現/未實現、盈虧比、部位、佔比、停損。這是他的母語,不必翻譯、**更別自創替代詞或壓縮縮語**(把「已實現」改成自造白話 = 幫倒忙;「賠側時限」這種四字內部縮語 = 用戶問「這四字是啥」——寫成「賠錢單設時限」;**「賺側 / 賠側」這種分析框架詞同罪**——說「賺錢的單 / 賠錢的單」「賺的時候 / 賠的時候」)。
-- **對帳單上沒有的詞,不准裸奔**:工程內部名(`max_pos_pct`、`metric_key`、`baseline`)一律翻人話(「最大單注佔比」,對映表見 SKILL.md Step 3.5);學術詞(α / β / 處置效應 / 夏普)出現時 ±2 句內給白話翻譯(「贏大盤靠的是敢壓,不是會選股」)。
-- **句子直說行為和數字**:「你越跌越買,把 DRAM 買成了 42% 最大倉」。讀兩遍才懂的修辭(對仗 / 轉折 / 雙關)重寫。
-- **卡面標點全形統一**(，。：；（）——),數字格式除外($1,300 的千分位、0.72 的小數點、-43%、2024-03-01)——全形半形混用,真人一眼就挑出來。此條只管**卡面輸出**,repo 文檔不在內。
-- 判準只有一個:對帳單讀者**讀一遍就懂 → 過**;會讓他停下來問「這是什麼意思?」→ 改。
+The target reader understands a brokerage statement. Use standard account language directly: realized and unrealized P&L, payoff ratio, position, weight, and stop. Translate internal field names and explain academic terms in plain language.
 
-其餘每句都要**有數據 + 有案例**:
+## Required properties
 
-**🚫 卡上禁止出現的東西(engine 已把這些移出渲染,別自己加回來)**:
-- ❌ `〔X〕內容` 標籤拼接(SKILL 鐵律:連貫敘事,不准 dashboard)
-- ❌ 5 維 severity 小數表(`.64 🔴`)— 用「一句人話」帶過非 headline 維度
-- ❌ `thesis_questions` 任何一條 — 那是 Step 2 對話用的,卡上只有用戶答完的定論
-- ❌ 鏡片 `lens_quote` 當每漏洞段尾結語 — 融進敘事或徹底不用
-- ❌ 把你寫的規矩當定論硬塞 — 從 `candidate_rules` 給 2-3 條候選讓用戶挑/改(引擎只給一條時就用那條)
-- ❌ `(引擎產出)` 或任何內部分工標記
-- ❌ 工程內部名 / 未翻譯學術詞(`max_pos_pct`、`baseline`、裸 α/β…)— 見上方**說話原則**(真人反饋:「追蹤 max_pos_pct,本週基線 42%」= 拗口 + 看不懂)
+- Lead with account impact, not trade count or win rate.
+- Name one real strength before the largest leak.
+- Ground the largest leak in an engine-owned number and a concrete transaction when available.
+- Include qualitative motive or thesis interpretation only after the user answers required questions.
+- Surface every triggered honesty-ledger limitation in natural prose.
+- End with at most one user-chosen if-then rule. Skipping is valid.
+- Keep the writing coherent. A card is a story, not several dashboards pasted together.
 
-**先分兩種卡(社群分發的命)**:
-- **private review(你自己看)** —— 完整:金額、股數、ticker、持倉佔比、損益。寫進回覆 + 落 `~/.trade-coach/`。
-- **public card(可分享,redact)** —— **預設不自動出,用戶說要才給**。隱藏絕對金額 / 股數 / 完整持倉清單,只留**可傳播又不洩資產**的:行為 pattern、最大的洞、下次規矩、績效用**相對值**(β、贏大盤 pp、盈虧比,不放 $)。給一個能直接貼 X / Thread 的純文字版。
-  - redact 規則(防 portfolio reconstruction —— 精確佔比 + ticker + 連續多週可聯立反推總資產):
-    - 絕對金額、股數 → **砍**。
-    - 佔比 → **不給精確 %,改 bucket**:`>30%` / `20–30%` / `<10%`,或只給排序「最大持倉」;損益轉「賺 / 虧約 X 成」。
-    - 日期 → 模糊成「近幾週」,不給精確交易日(連續精確日期 + 佔比 = 可反解股數)。
-    - ticker → 預設保留(行為才有意義);要更隱私 → 全匿名(`某 AI 核心倉`)。
-    - 正名:沒現金 + 即時價時,佔比只能叫「**CSV 內成本占比**」,不是「資產權重」。
+## Prohibited content
 
-**呈現方式:一張卡只出一次——widget 渲染成功就以 HTML 卡為主交付,回覆文字絕不重講一遍。**
-- **圖形介面(`show_widget` 可用且回傳成功)**:HTML 卡 = 主交付,版型照 [`card-template.html`](card-template.html)。設計規範(2026-07-04 triad UI review 定版):flat、**大區塊一律中性底(surface + 邊框),語義色只准在 icon / 區塊小標 / 關鍵字 / 損益數字**(綠紅藍黃色底同卡 = 多色告警面板,被真人打過);tag 用 outline 不用色底膠囊;明暗雙模式、Tabler outline icon、**無 emoji**、字重 400/500。**出完 widget,回覆文字只留三件事:一句收尾(資料狀態 + 存檔位置)、Step 3.5 規矩收斂問句、Step 4 反饋問句**——把卡的內容用文字再敘述一遍 = 逼用戶讀兩遍(真人反饋)。
-- **純終端機或 show_widget 失敗**:markdown 文字卡 = 主交付,直接寫在回覆裡。(實測缺陷:`show_widget` 只在圖形介面 claude.ai / 桌面 app / IDE webview 渲染;終端機用戶會**整張看不到** → 只出 show_widget = 用戶以為 skill 壞了。)
-- **卡片結構**(文字 / HTML 同):總覽(含市場背景一行,有數據才出)→ 做對的 → 標的層 → 最大的洞(數字 / 實例 / 動機 / 萬一)→ 報酬歸因 → 問題帳(有帳才出)→ 下次只改 + 引言。
-- **不放機械層 5 維小數表**(`.64 🔴` 用戶看不懂、就是另一份報表)。要提其他維度,**一句人話**帶過:「加碼 / sizing / 持有你都守得不錯,只有 X 要處理」。
-- **累積損益曲線(`pnl_curve`,#167)只在 HTML widget 畫,文字卡不畫**:`points` 非空才在「這次成績」metric 區(帳面總損益那格)底下加一條 sparkline(SVG polyline 即可),讓「怎麼走到這個數字」一眼可見(穩步墊高 vs 一次跳空 vs 坐雲霄飛車回原點,是三種不同的行為診斷)。**單色細線**(依終點正負套 `--text-success`/`--text-danger`,或乾脆 `--text-muted`),**不填色塊、不逐點染色**——這是延伸現有損益數字的顏色用法,不是開一片新的紅綠色塊(觸犯「多色告警面板」鐵律,見上方 widget 設計規範)。`pnl_curve.note` 非空(無價格/樣本不足/混市場尚未支援)→ 靜默不畫這條線,**別把 `note` 轉成一句話補在卡上**(那是給你判斷「畫不畫」的旗標,不是誠實缺口,不歸 `honesty_ledger` 管)。
+- Raw five-dimension severity tables.
+- Raw `thesis_questions` or unanswered questions.
+- Internal labels such as `max_pos_pct`, `metric_key`, `baseline`, or implementation notes.
+- Agent-computed numbers or rewritten engine facts.
+- Several recommendations or action items.
+- Buy or sell advice for a security.
+- Shaming or personality judgments.
+- A rule selected by the agent on the user's behalf.
 
-下面的文字規格定義**卡上要有哪些區塊、每句怎麼寫**——內容鐵律照搬:
+## Private and public cards
 
-```
-復盤卡 · 用 {philosophy} 的尺照你的交易
+The private card may include account amounts, dates, tickers, position weights, transaction examples, thesis evidence, and the qualitative agent narrative.
 
-〔這次成績〕{已實現損益 $ · 盈虧比(平均賺 vs 平均賠) · β · α}          ← 看金額不看筆數勝率
-〔市場那週〕{SPY 週{±%} · QQQ 週{±%} · VIX 收 {X}(前週 {Y})}          ← #37 語境一行:market_context 有數據才出,離線整行不出、部分缺(missing)只寫抓到的;
-                                                                        它是講故事的背景(「你砍在 SPY −4% 的恐慌週」),不是診斷維度
-〔這把尺是什麼〕{lens.master_intro.one_line}                          ← 一句話帶過,不展開
+The public card is a separately rendered structured view. It excludes:
 
-✅ 你做對的:{引擎 strength,已含具體案例,原樣保留}
-📊 最賺 / 最虧 · 已賣出 round-trip(買→賣){best ticker +% · +$X} / {worst ticker −% · −$X}   ← %和$都要;X=|pnl| 絕對值,賺標 +、虧標 −(best.pnl 已正 / worst.pnl 已負,別重複套負號)
+- absolute amounts and share counts
+- exact dates
+- tickers and full holdings
+- exact position weights
+- session IDs
+- evidence text and agent-authored free prose
 
-〔盈虧比拆解 · 誰在撐、誰在拖〕(引擎 payoff_attribution,每次都出)
-   撐盤:{top carriers 標的 + 佔總賺%}  ·  拖累:{top draggers 標的 + 佔總賠%}
-   → 拿掉最大拖累 {ticker}（淨 ${drag}）→ 盈虧比 {payoff} 變 {cf_payoff}
-   ← 別只報「盈虧比 0.8」這個總數;指名是哪一兩檔(常是凹單)把它拖翻,該動哪一刀就清楚了
+Do not create the public card by applying regular-expression redaction to the private card. Independent rendering prevents portfolio reconstruction and accidental disclosure.
 
-🔴 最大的洞:{一句白話結論,人話}
-   ▫ 看數字:{用戶自己的數字}
-   ▫ 看實例:{指名一筆具體交易當例子}                                 ← 最重要那句一定要有案例
-   ▫ 看動機:{用戶剛在 Step 2 確認的 why}
-   ▫ what if:{引擎算的具體情境,給數字讓他自己想——不准「會一起倒」這種空話}
+## Numeric truth
 
-〔問題帳〕{N 條問題追蹤中,本週挑最嚴重的 1–3 條}                       ← #137:problems.py stats 的 top;還沒開帳整段不出
-   🔴 {惡化中的:人話 + 本週證據 + 「12 週第 4 次,前月 3 次 → 近月 1 次」的趨勢;有綁規矩帶守/破}
-   🟡 {超線但在收斂的:一行,不轟}
-   🟢 {在變好的:一行正向回饋——「持續變得越來越好」要被看見才有效}
-   其餘 {M} 類本週無事,靜默統計中
-   ← headline 洞若與 top1 同源,這裡一行帶過別重複展開;規矩守/破的深挖在 Step 2.5 已做,卡上只留定論
+The renderer is the only bridge from engine facts to displayed numbers. Agent narrative contains no digits so it cannot become a competing truth source.
 
-▸ 下次只改這一件:{candidate_rules 的具體 if-then,2–3 條候選讓他挑/改一條}
-▸ {philosophy}:「{lens 的 quote 原話}」
-```
+Important display priorities:
 
-> 卡上列的是**候選**;出完卡立刻走 SKILL.md **Step 3.5** 用 AskUserQuestion 讓用戶挑一條(或改寫),選中那條才落盤成 `commitment`——這是下次對帳的記憶入口,漏掉 = 下週對不了帳。
+1. Realized and unrealized P&L, with coverage limitations when triggered.
+2. Payoff ratio and average gain/loss, rather than win-count framing.
+3. Portfolio versus benchmark and the alpha interval when available.
+4. Reliable cash position and account-level performance when the engine allows it.
+5. Largest realized drag and its engine-computed counterfactual.
+6. ETF portfolio structure and explicit metadata gaps.
 
-**卡片是一個故事,不是 dashboard**(真人交易者 review 後的鐵律):
-- **連貫敘事,不准標籤拼接**。`〔這次成績〕A｜B｜C` 這種一塊塊的格式,交易者讀起來「像幾份報告硬湊」。用完整句子把數字織成一段他自己的故事。
-- **卡上不放給作者看的註解**。`〔這次成績 · 看金額不看勝率〕`、`(供參)`、`機械層 5 維`、上面模板裡的 `←` 註解箭頭——這種內部理由 / 設計標記一律不上卡,卡上只有用戶的數字和話,理由你心裡有就好。**「為什麼不出某數字」的決策注記同罪**(真人反饋:「(demo 資料,歸因失真,不出。)」→「這是啥」)——要嘛靜默不出,要嘛用用戶語言講一句(「示範資料跟大盤比會失真,故不列」),別把自己的取捨思路印上卡。
-- **先承認他的本事,再打**。直接打會被頂回來(「抱也是我的決策」「不交易哪來部位」)。先講他做對的(選股、抱住賺 6 倍),他才沒法用「你否定我交易價值」嘴硬——尤其當 realized P&L 是負的,那是他嘴硬不了的鐵證,對準那裡。
-- **數字要「髒」**。最戳人的是「你每筆平均賺 $81、賠 $105」「虧損加碼 138 次」這種甩臉上的具體數字,不是形容詞。
-- **不講散戶聽不懂的話**。「α 只有 5%」交易者會回「我又不是基金經理」。翻成他在乎的:「你贏大盤是因為敢壓+槓桿,不是會做價差」。詞彙取捨照**說話原則**:對帳單詞彙(已實現/未實現…)直接用,別自創替代。
-- **洞標題直說行為**(說話原則的標題應用;真人反饋:「DRAM 的 42% 不是你決定的,是價格跌出來的」提醒對但句子繞):「你越跌越買,把 DRAM 買成了 42% 最大倉」。
-- **鏡片引言別當結語**。結尾突然冒「鏡片原則:…」像老師訓話,交易者「差點關掉」。要嘛融進敘事,要嘛不用。
-- **規矩是機械的,不是自我喊話**。「動手前問自己…」沒用(沒人下單時覺得自己會賠)。要給「不靠當下忍住」的機制:「虧損部位一律不加碼,想加先整筆賣掉隔天重買」。
+When a field is unavailable, omit it or use renderer-owned honesty copy. Never infer a value and never treat missing data as zero.
 
-**誠實點照 `honesty_ledger` 講(#82)**:engine 已把這張卡必講的誠實缺口聚合成 `honesty_ledger`(空=無缺口)——**它決定「講不講」,下面各段決定「怎麼講」**:每個列出的 `key` 融入對應敘事(`alpha_credibility`/`sector_attribution` → α 段、`unrealized_coverage`/`currency_mix`/`cash_reliability` → 金額/現金段、`acct_perf_basis` → 帳戶級績效段、`unclassified_drivers`/`orphan_sells` → 總覽或標的層一句),**不列成獨立區塊、不上卡**。出卡前逐項核對(SKILL Step 3 gate),漏項不出卡。
+## Honesty ledger
 
-**金額 > 筆數勝率**:總覽絕不放「勝 X/負 Y、勝率 %」當主數字——**「6 勝 2 負」這種勝負筆數也算勝率敘事,不進 metric 格、不當句子主詞**(真人反饋:「勝率不重要,關鍵就是賠錢」)。放**已實現 + 未實現損益(兩個都要,只報一個失真)、盈虧比(平均賺 vs 平均賠)**;敘事聚焦**賠側**:平均一筆賠多少、最大拖累是哪檔、佔總賠幾成——錢是賠錢單決定的。**未實現若非全覆蓋要明講**(`honesty_ledger` 列 `unrealized_coverage` 時):補一句「未實現僅反映 priced_n/held_n 檔持倉,缺現價:…」,別讓沒抓到價的持倉靜默漏算成看起來完整的數字。**金額的幣別先讀 `currency_meta` 再落筆**(#51):`aggregate_currency` = 總覽/佔比類金額的幣別;混幣組合(`mixed=true`)單檔原幣數字用 `pnl_by_currency` 對照;display currency 換算與離線匯率規則照 SKILL.md「💱 Display currency」段,這裡不重複。
-**現金與入金判讀(#171,讀 `card.cash`)**:交易工具通常看不到帳戶閒置現金,這個 skill 看得到——但只在 `reliable=true`(用戶給了現金餘額錨點)才把它講進去,別拿盲算數字唬人:
-- `reliable=true`:總覽帶一句帳戶現金——「持倉之外還壓著 $X 現金,佔帳戶 Y%」,用**對帳單語言**(現金 / 佔帳戶,不是 `cash_weight`)。這一句的價值是把「部位佔比」升級成「資產佔比」——集中度那個洞若之前只能叫「CSV 內成本占比」,有了現金錨點就能講真的帳戶權重。
-- `recent_net_deposit` 非 0 且 `reliable=true`:講**這筆錢的去向與集中度效應**,這是用戶最痛的一問——「這個月淨入金 $Z:你把它加進最重的那檔(加深集中),還是分散進新部位/留現金(解集中)?」用他實際的加碼行為對照,別空問。為 0 或看不到流水 → 這句靜默跳過,別硬掰。
-- `reliable=false`(`honesty_ledger` 列 `cash_reliability`):現金是靠交易流水盲算(假設開戶 $0),**不准把那個佔比當真數字講**;誠實帶一句邀請即可——「你的現金餘額我只能從流水盲估、可能差很多;下次把對帳單上的現金餘額給我,就能算準帳戶層比重和入金判讀」。這句同時兌現揭露 + 把功能的下一步交回用戶手上。
-- `status=partial`(台美多帳戶只給了一部分錨點,`unanchored_currencies` 標缺的幣別):講法收窄到缺的那個帳戶,別把已可信的那半也講成不準——「你的美股帳戶現金我算得準,台股帳戶餘額還沒給、只能盲估;補上那個就完整了」。
-- `status=residual`(#180,`data.residuals`:有錨點、但錨點間現金史對不上)：不是盲算、是**帳本有洞**——照 `residuals` 講「你 {start}~{end} 有 ${residual} 現金變動我對不上」,**中性**:可能漏記入金/提款/股息,別斷言是哪一種。這是「準確性隨每週對帳遞增」的機制(每補一張餘額截圖多驗一段)。帳戶報酬照出時(小缺口)只帶這一句揭露;大缺口(帳戶報酬 gate 掉)見帳戶級績效段的解鎖邀請。
-**帳戶級績效(#171,讀 `card.acct_perf`;只准照抄引擎數字,不准自己算)**:`acct_twr` 非 null 才有這段。三個數字答三個不同的問題,講成一條敘事鏈,不是三行 dashboard:
-- **鏈式歸因**:「這期你的持倉賺 X%(`hold_twr`),帳戶整體 +Y%(`acct_twr`)——差的 Z pp 是現金效應(`cash_drag`),平均 W%(`avg_cash_weight`)的錢躺著」。`cash_drag` 的正負要翻譯,別裸奔術語:**負 = 閒錢稀釋了報酬**(「拖了 |Z| pp ≈ $N」,$N 用 `drag_dollar_approx`,記得標它是「閒錢若跟著持倉跑」的反事實估算);**正 = 現金這期幫你擋了跌**——跌市時別把持有現金講成錯。帳戶柱涵蓋空倉期(空倉=100% 現金照走),持倉柱只涵蓋有倉的日子——兩者窗不同是特性不是 bug,躲跌/踏空自動反映在帳戶柱。
-- **帳戶年化 IRR(`irr_annual`)**:答「你的錢實際滾多快」(金額加權,含出入金時機)。與 per-market「贏/輸大盤」並列時分工講清楚:大盤對比答「該不該乾脆買指數」(持倉子組合、照 α 段既有講法),帳戶 IRR 答「錢的實際年化」;`note` 說窗太短就不出、別硬年化。
-- **gate 語意**:`acct_twr=null`(`note` 有寫)→ 這段整段不講,可只講 `hold_twr` 持倉柱。`note` 分兩種:①現金無錨點/回滾破裂 → 邀請補 `TR_CASH` 的話術併入 `cash_reliability` 那句講一次,別重複;②**大缺口解鎖邀請**(#180,現金史某段對不上、帳戶報酬需補齊該段)→ 照 `note` 講成邀請:「想看帳戶整體報酬?你 {某段} 有 $N 進帳我對不上,補這筆的日期(更新現金部位)就解鎖——先看你的持倉報酬 +Y%」。不是叫他放棄,是把下一步交回他手上(帳戶報酬 = opt-in 進階層,核心卡照出)。
-- `honesty_ledger` 列 `acct_perf_basis` 時(數字有出但地基有洞):照 `data` 收窄講——`unanchored` 標哪個幣別的現金是盲算(「台股帳戶餘額沒給,帳戶級數字把它當盲估算進去」)、`at_cost_tickers` 標哪些檔抓不到價、以成本平線計(「X 抓不到價,帳戶級把它當零報酬擺著,它的漲跌沒算進來」)、`fx_approx`=匯率用即期近似(全期匯損益沒真算)。
-**該不該乾脆買指數(#164 柱2,讀 `alpha_beta_breakdown` 的 `port_tot`/`spy_tot`/`excess_vs_spy`,engine 算好只准照抄、不准心算)**:α 拆解之前,先給最直白的一行——「你的持倉這段 {port_tot},無腦全買大盤 {spy_tot} → {贏/輸} {excess_vs_spy} pp」,答用戶心裡那句「我到底該不該自己選、還是乾脆買指數」(和帳戶 IRR「錢滾多快」、下段 α「贏的是技巧還是運氣」分工,別三者混講)。**基準跟市場走**:US 寫 SPY、TW 寫「加權指數」(別硬寫 SPY);混市場照 per-market 兩行並列(讀 `by_market`,各對各的大盤,絕不加總或平均)。這行的份量全押在「數字等於引擎」——**自己湊一個就毀了可信度**;`alpha_beta_breakdown` 帶 `note`(樣本不足/無價)時這行乾脆不出,別硬湊。贏別吹過頭(有多少只是 β / 押對賽道,下段會拆)、輸就直說(這正是處方「把選股外包給指數」的入口)。
-**α 永遠出數,語氣看統計**:alpha 一律 vs 通用大盤(SPY),**卡上 α 必帶 95% 區間**;`alpha_credible=true`(≥1 年且 |t|≥1.96)才用能力語氣,不顯著就說「區間 −Y%~+Z%,分不出本事還是運氣」+ 講清楚卡在哪(`gate.reason`:樣本不足 vs 區間太寬/持倉集中)——**別再用「不出數」表達誠實,數字+不確定性才是誠實**。**贏大盤必配拆帳**:engine 已把「贏大盤」機械拆成「押對賽道(allocation)」+「板塊內選股(selection)」(`excess_split`,兩項相加=贏大盤,會計恆等不需顯著性)——引用拆帳數字,別自己心算;`coverage<1` 補一句哪幾檔無板塊對照。**`honesty_ledger` 列 `sector_attribution` 時 → 這句必補,即使 α 面板因樣本不足/不顯著整塊沒出**(#92:有 driver 標籤但查無板塊 ETF 的檔,超額被靜默全歸「選股」、押對賽道的功勞被誤記——這揭露不可只活在 α 面板,它是永遠顯示的 data_integrity 一員,同「未分類 driver」)。**絕不拿板塊 ETF 當 α 基準**,板塊只當拆帳對照。這個「賽道 vs 選股」的分離才是用戶要的準確認知。
-**廢話零容忍**:像「偏存活紀律、有些是提問不是判你錯」這種學究句一律刪。每行不是數字就是實例,沒有形容詞填充。
+`build_honesty_ledger()` determines which caveats must appear. The renderer integrates them into the relevant narrative section rather than printing the ledger as a checklist.
 
-**處方層(從「你哪裡爛」進到「下一步換什麼做法」)**:診斷讓人知道問題,處方讓人回來——留存的鉤子在「下一步怎麼做」。engine 的 `prescribe()` 已從歸因 + 診斷算出三類,照著說人話:
-- **揚長**:放大用戶證明有 edge 的決策(歸因正貢獻那層)。多數工具只會避短;這個 skill 因為算得出歸因,能告訴用戶「你強在哪、去放大它」。
-- **外包短板**:某決策層是負貢獻(如選股 -99pp)→ 建議把那個決策外包(交給指數),不是叫他「學會」。**流程建議,非標的建議**:是「少做某個決策」,絕不碰「買哪支」(IP/法律邊界)。
-- **砍損耗**:純扣分行為(虧損加碼、梭哈)→ 機械規則砍掉,可驗。
-- 處方的力量來自**歸因精確**:ChatGPT 沒有那個 -99pp,不敢叫人「別選股」;這個 skill 敢。越具體反直覺,越證明不是套話。**因人而異**:同把尺,「方向強/選股弱」→外包選股;「選股強/紀律弱」→守紀律別稀釋選股。
+Examples include:
 
-**規則:**
-- **每句都要能落地到一筆真實交易**。「出場不手軟」這種黑話不准單獨出現,一定要接「(例:MRVL 賺 47% 賣完只動 -3%)」。最重要的那句洞,必須指名一筆具體交易,否則用戶看不懂、也不信。
-- **先給「你做對的」再給洞(不可省)**。看自己虧損 = ego 受傷會直接關掉;先肯定一個**真實**優點(引擎已附案例),降防衛,才聽得進那一刀。reframe:結帳學費,不是審判。
-- **if-then 規矩由你(Claude)幫他寫具體,不要丟抽象句**(「AI 幫人寫規矩」):
-  - 抽象(❌):「注意分散」「加碼前想清楚」——用戶下次還是不知道怎麼做。
-  - 具體(✅):用他的數字寫成「下次引擎能驗」的:「把 AI 部位從 95% 砍到 70% 以下」/「為 MU(37%)掛一個跌破 $X 就減半的條件單」/「往下加碼前在卡上寫一行新證據,寫不出就不加」。
-  - **給 2–3 條候選讓他挑一條 / 改一條**,別逼他接受你寫的。用戶說不出具體規矩,但能從選項裡認出「對,就是這個」——這就是 AI 幫人寫規矩。
-  - **挑的動作必須由用戶完成(#56)**:用 `AskUserQuestion` 給選項(候選各一 + 可 Other 改寫 + 「這週不承諾」),**他點了哪條,收尾才存哪條**;你代選 = 下週對帳的錨點不是他下的,對帳直接失效。細節見 SKILL.md 收尾段。
-- **永遠只收斂到一個洞 + 一條規矩**。第二份十維報告 = 失敗。
-- 引言用 `rubric/vincent-yu.lens.json` 裡**那個洞對應 dim 的 `quote`**;**換鏡片/哲學 = 換 lens 檔,這步不動**。
+- alpha interval is not statistically credible
+- unrealized P&L covers only part of the open portfolio
+- some drivers lack a sector benchmark
+- some instruments are unclassified
+- orphan sells imply incomplete transaction history
+- currency conversion is approximate
+- cash balances or account performance are not fully anchored
+- ETF expense ratio or tracking error is missing
+
+The card must state the limitation neutrally and narrowly. It must not guess the cause of an unexplained residual.
+
+## Performance framing
+
+- Compare the held portfolio with the appropriate market benchmark only when engine output supports the comparison.
+- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha.
+- Treat account TWR, holding TWR, cash drag, and IRR as different questions. Use only engine-provided values and copy.
+- Interpret positive cash drag as protection in a falling market and negative cash drag as diluted participation; do not treat cash as inherently wrong.
+- Use alpha capability language only when the engine marks it credible. Otherwise show the interval and uncertainty.
+
+## Prescription boundary
+
+The product coaches process rather than selecting securities. A prescription may:
+
+- amplify a demonstrated strength
+- outsource a decision layer that consistently destroys value
+- remove a measurable behavioral leak with a mechanical rule
+
+It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule.
+
+## Rendering
+
+`card_renderer.py` produces canonical Markdown and dependency-free HTML from the same structured content. Deliver those artifacts rather than rewriting the card in the chat. HTML may add a small P&L sparkline when `pnl_curve.points` is available; missing or unsupported curve data should not create a new user-facing caveat unless the honesty ledger requires one.

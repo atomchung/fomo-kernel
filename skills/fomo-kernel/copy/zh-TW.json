@@ -1,0 +1,51 @@
+{
+  "language": "zh-TW",
+  "title": "交易復盤卡",
+  "private_badge": "私人完整版，只留在本機",
+  "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
+  "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
+  "sections": {
+    "numbers": "這期的帳",
+    "trades": "最賺與最虧的已實現交易",
+    "strength": "你做對的一件事",
+    "hole": "最大的行為漏洞",
+    "motive": "這次加碼的 thesis 判斷",
+    "etf": "ETF 與組合結構",
+    "honesty": "資料邊界",
+    "rule": "下次只改這一件"
+  },
+  "dimensions": {
+    "exit_discipline": "出場紀律",
+    "position_sizing": "部位 sizing",
+    "diversification": "分散",
+    "holding_period": "持有時間",
+    "averaging_down": "加碼攤平",
+    "alpha_beta": "大盤與選股歸因",
+    "entry_style": "進場風格"
+  },
+  "rules": {
+    "exit_discipline": "出場前先寫下 thesis 已完成或失效的事實；只因害怕回吐，不賣。",
+    "position_sizing": "下單前先檢查單一風險部位上限；超過上限，不新增。",
+    "diversification": "新增部位前先看是否仍是同一個 driver；同一注已過重，不新增。",
+    "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
+    "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。"
+  },
+  "add_choices": {
+    "planned_tranche": "事先規劃的分批",
+    "new_evidence": "有新的可驗證證據",
+    "valuation_change": "估值或賠率變了",
+    "price_only": "只有價格下跌／想攤低成本",
+    "skip": "先跳過"
+  },
+  "honesty": {
+    "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
+    "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
+    "unclassified_drivers": "部分標的尚未分類，組合集中度可能被低估。",
+    "unrealized_coverage": "部分持倉缺現價，未實現損益不是完整帳面。",
+    "orphan_sells": "有賣出缺少已知建倉，相關已實現損益未納入。",
+    "currency_mix": "組合含多幣別；聚合數字使用共同幣別，部分匯率可能為近似。",
+    "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
+    "acct_perf_basis": "帳戶績效有部分成本或匯率近似，需保留不確定性。",
+    "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
+  }
+}

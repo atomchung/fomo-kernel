@@ -1,72 +1,17 @@
 {
-  "philosophy": "深度價值 · 逆勢 · 先看下檔",
+  "philosophy": "Deep value, contrarian entry, and downside first",
   "master": "Michael Burry",
-  "source": "原則蒸餾自 Michael Burry 公開訪談 / 致投資人信與 virattt/ai-hedge-fund 的 michael_burry agent prompt（MIT，以 FCF yield/EV-EBIT/資產負債表/內部人買入/逆勢情緒編碼此哲學）。引用非轉載、非經本人背書。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 michael-burry.md。stance/lean 供 compare_lenses。與『安全邊際』最大差異在【進場】：安全邊際是 weakness（買弱/便宜），此派是 contrarian（買『被全市場罵、像被車輾過』但帳上硬的），多一層『逆勢 + 硬催化劑』。引言已對 verbatim 校對（英文原句見 michael-burry.md），少數標【意譯】。",
-
-  "master_intro": {
-    "one_line": "這套尺的核心：用硬數字找『被全市場唾棄、但帳上撐得住』的便宜貨，先把下檔鎖死，再等市場認錯。它不問你『漲勢強不強』，問你『最壞會虧多少、為什麼這價格是錯的』。",
-    "pillars": [
-      "100% 以安全邊際為本——先保護下檔，避免本金永久損失",
-      "逆勢：新聞一片罵聲可以是你的朋友，只要基本面是硬的",
-      "先看下檔：避開高槓桿的資產負債表，最壞情況先算清楚",
-      "要硬催化劑：內部人買入、買回庫藏股、賣資產——光便宜不夠",
-      "用硬數字說話：FCF yield、EV/EBIT、淨現金，不靠故事"
-    ],
-    "why_it_matters": "這把尺偏『逆勢深度價值 + 下檔優先』。如果你是動能/成長客，有些條對你是反的——它會把你『追強勢』讀成『買在情緒最高、安全邊際最薄』。它照的是你買的東西夠不夠便宜、下檔有沒有鎖死、有沒有人罵到錯殺，不是逼你變成放空者。"
-  },
-
-  "strength_intro": "先說你做對的一件事（這派先認你買在無人問津、下檔算清楚的那一筆）：",
-
+  "source": "Distilled from public Scion letters and Michael Burry interviews. All card language below is paraphrase unless a primary-source quotation is added and verified.",
+  "_note": "Runtime lens. Cheapness must be paired with hard downside analysis and a catalyst.",
+  "master_intro": {"one_line": "Start with downside, buy unpopular value only when hard fundamentals and a catalyst support repricing.", "pillars": ["Protect against permanent loss", "Use contrarian sentiment as a setup, not proof", "Calculate downside first", "Require a catalyst", "Prefer hard measures over narrative"], "why_it_matters": "This lens tests whether a contrarian position is analytically cheap or merely unpopular."},
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "rubric_unit": "size 由『下檔/安全邊際』決定，不由上檔想像",
-      "stance": "conditional", "lean": "downside-first",
-      "rule": "部位大小先由『最壞情況我虧多少、安全邊際多厚』決定；安全邊際薄的，再誘人也只給小 size。",
-      "quote": "我所有的選股，100% 建立在安全邊際這個概念上。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。這個 size 是『你算過最壞情況、下檔被安全邊際鎖死』，還是『被上檔想像沖昏頭、根本沒算最壞會虧多少』？"
-    },
-    "加碼攤平": {
-      "rubric_unit": "帳上硬 + 安全邊際更厚才加；資產負債表壞了就不碰",
-      "stance": "conditional", "lean": "margin-of-safety",
-      "rule": "往下加碼只有在『資產負債表仍硬、價格更低＝安全邊際更厚』時才做；只要槓桿/基本面變差，價格再低也不加。",
-      "quote": "先聚焦下檔——避開有槓桿的資產負債表。【意譯】",
-      "motive_q": "{tickers} 你在虧損裡往下加。是『帳上現金/負債依舊硬、跌出更厚的安全邊際』，還是『基本面其實在惡化、你只是想攤平等回本』？"
-    },
-    "出場紀律": {
-      "rubric_unit": "賣在『被擦亮、價值兌現』時，不靠手感",
-      "stance": "conditional", "lean": "value-realized",
-      "rule": "賣出＝『便宜被市場認回來了（價值兌現/催化劑實現）』，不是因為帳面終於翻紅就落袋。",
-      "quote": "我買進那些像被車輾過的冷門公司，等它們被擦亮一點後再賣。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些是『折價已經補回、價值兌現了』，還是『被罵到便宜時敢買、剛翻紅就怕了提早賣』？"
-    },
-    "分散": {
-      "rubric_unit": "集中在少數算得清、下檔硬的深度價值點子",
-      "stance": "inverted", "lean": "few-deep",
-      "rule": "別為了分散去持你沒算清楚下檔的標的；寧可少數每一檔都用硬數字算過、下檔鎖死的深度價值機會。",
-      "quote": "我偏好看具體、個別的機會，把每一個都研究到底。【意譯】",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。這派不嫌你集中——反問：其餘那些部位，每一檔的下檔你都用硬數字算過了，還是只是『為了分散』隨手放的？"
-    },
-    "持有時間": {
-      "rubric_unit": "抱到市場認錯/催化劑兌現，可以早、可以久",
-      "stance": "conditional", "lean": "until-repriced",
-      "rule": "持有期由『折價補回 / 催化劑兌現』決定，不由心情；對的時候你常會早，要忍得住孤獨抱到市場認回來。",
-      "quote": "我可能會早，但我不會錯。【意譯：'I may be early, but I'm not wrong.'】",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。是『催化劑/折價的判斷變了所以調整』，還是『被軋到受不了就改口、或便宜時根本沒打算抱到兌現』？"
-    },
-    "alpha/beta": {
-      "rubric_unit": "alpha 來自買在無人敢買的便宜，不是押波動",
-      "stance": "aligned", "lean": "decompose",
-      "rule": "每季分清：你贏大盤，是『買在被錯殺的便宜、市場認錯』，還是『剛好押對高波動的方向』？",
-      "quote": "便宜是逆勢者的朋友；真正的報酬來自買在別人恐慌時。【意譯】",
-      "motive_q": "你贏大盤 {excess}pp，但 β={beta}。這派問：這是『你在無人問津時用硬數字買到的折價』，還是『追在情緒高點、敢押波動換來的』？"
-    },
-    "進場": {
-      "rubric_unit": "逆勢 + 硬數字便宜 + 硬催化劑才進；追情緒高點＝反向｜待 engine B.9",
-      "stance": "inverted", "lean": "contrarian",
-      "rule": "進場找『新聞一片罵聲、但 FCF yield/EV-EBIT/資產負債表都硬』且有硬催化劑的標的；追在大漲、人人看好的伸展高點＝這派眼中的反向訊號。",
-      "quote": "媒體上的厭惡，只要基本面紮實，反而可以是你的朋友。",
-      "motive_q": "{entry_ticker} 你買在近 20 日高點、當天還大漲、人人看好。逆勢派反問：這是『被錯殺、無人敢買的便宜』，還是『情緒最高、安全邊際最薄的時候，你跟著追進去』？"
-    }
+    "position_sizing": {"rubric_unit": "Size from downside before upside", "stance": "conditional", "lean": "downside-first", "rule": "Size only after quantifying asset coverage, leverage, liquidity, and the permanent-loss scenario.", "quote": "The downside calculation comes before the upside narrative. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. What hard downside case and balance-sheet evidence justify that size?"},
+    "averaging_down": {"rubric_unit": "Add only when the margin of safety survives", "stance": "conditional", "lean": "margin-of-safety", "rule": "Add only after updating hard fundamentals, downside, and catalyst probability; a lower market price is not enough.", "quote": "Cheap can become cheaper when the fundamental downside was misread. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What new hard evidence preserved the margin of safety and catalyst?"},
+    "exit_discipline": {"rubric_unit": "Exit when value is realized or the hard thesis breaks", "stance": "conditional", "lean": "value-realized", "rule": "Exit when the catalyst occurs, the value gap closes, or hard data invalidates asset value and downside protection.", "quote": "The position ends when value is realized or the evidence changes. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which exits followed value realization, and which lacked an updated hard-value case?"},
+    "diversification": {"rubric_unit": "Hold a few deeply researched ideas", "stance": "inverted", "lean": "few-deep", "rule": "Own few positions only when each has deep hard-data research and an independent catalyst; avoid shallow concentration.", "quote": "Concentration is earned by depth of work, not by confidence alone. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Which positions have distinct hard-value evidence and catalysts?"},
+    "holding_period": {"rubric_unit": "Hold until repricing or invalidation", "stance": "conditional", "lean": "until-repriced", "rule": "Set the horizon from a concrete catalyst and repricing path; do not wait indefinitely for the market to agree.", "quote": "Contrarian patience needs a catalyst and an invalidation point. (paraphrase)", "motive_q": "For {incon_tickers}, did the repricing catalyst move, or did the horizon extend only because the trade stayed underwater?"},
+    "alpha_beta": {"rubric_unit": "Separate idiosyncratic repricing from factor beta", "stance": "aligned", "lean": "decompose", "rule": "Decompose market and value-factor exposure before crediting hard fundamental research.", "quote": "A value rally can lift weak and strong theses together. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. What came from thesis-specific repricing rather than a value-factor move?"},
+    "entry_style": {"rubric_unit": "Enter against sentiment only with hard evidence", "stance": "inverted", "lean": "contrarian", "rule": "Before entry, record the unpopular consensus, hard valuation evidence, downside, catalyst, and falsifier.", "quote": "Being early or contrarian is useful only when the hard thesis is right. (paraphrase)", "motive_q": "For {entry_ticker}, what hard evidence and catalyst justified going against consensus?"}
   }
 }

@@ -1,72 +1,17 @@
 {
-  "philosophy": "動能紀律",
-  "master": "動能紀律(O'Neil · Minervini · Livermore · PTJ)",
-  "source": "公開著作原則蒸餾(How to Make Money in Stocks · Think & Trade Like a Champion · Reminiscences of a Stock Operator · Market Wizards),引用非轉載、非經本人背書。⚠️ 引言尚未對原書逐句 verbatim 校對,上線前需對齊審查(同 VY 流程)。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊 → 換檔、engine 不動。canonical 原文 momentum-discipline.md。『進場』待 engine B.9。stance/lean 供 compare_lenses 算分歧。",
-
-  "master_intro": {
-    "one_line": "動能紀律的核心:趨勢是你的老闆,停損是不能談判的合約。它不問你『看得多準』,只問你『虧的時候有沒有照規則砍、贏的時候有沒有讓它跑』。",
-    "pillars": [
-      "順勢——市場永遠是對的,別跟盤對賭你的『意見』",
-      "只買強——讓標的先證明自己(突破/創高),別接刀抄底",
-      "鐵停損——7–8% 寫在進場前,觸價就走、不在當下重想理由",
-      "絕不攤平輸家,只金字塔加碼贏家(losers average losers)",
-      "大賺小賠的算術——截斷虧損、讓利潤奔跑,優勢來自紀律不是預測"
-    ],
-    "why_it_matters": "這把尺偏『順勢 + 機械紀律』。如果你是價值/逆勢派,有些條對你是反的——它會把你的『逢低承接』讀成『接刀』、把『往下攤平』判成破戒。它照的是你有沒有截斷虧損、讓利潤奔跑,不是逼你變成趨勢交易者。"
-  },
-
-  "strength_intro": "先講你做對的一件事(動能派的紀律是逼出來的,先認你守住的那條):",
-
+  "philosophy": "Momentum discipline",
+  "master": "Momentum discipline",
+  "source": "Composite process lens based on public O'Neil, Minervini, Livermore, and Paul Tudor Jones material. All card language below is paraphrase pending primary-source verification.",
+  "_note": "Runtime composite lens. It represents trend following with mechanical risk control, not one person's complete philosophy.",
+  "master_intro": {"one_line": "Buy demonstrated strength, define risk before entry, cut losses mechanically, and add only to winners.", "pillars": ["Follow price evidence", "Buy strength", "Predefine stops", "Never average down", "Keep losses small and let winners run"], "why_it_matters": "This lens treats arguing with a broken trend as the central process failure."},
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "stance": "aligned", "lean": "risk-capped",
-      "rubric_unit": "SZ1 size 由停損距離反推(R-based) / SZ2 風險優先於報酬",
-      "rule": "下單前先定停損價,size = 可承受虧損 ÷ (進場價 − 停損價)。不是『多看好下多大』,是『虧到停損只賠 1R』回推股數。",
-      "quote": "我隨時在想的是會虧多少,不是會賺多少;先防守,再進攻。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。你這筆的停損價在哪?這個 size 是『虧到停損只賠 1R』算出來的,還是『就是很看好、直接重壓』?"
-    },
-    "加碼攤平": {
-      "stance": "unconditional", "lean": "never",
-      "rubric_unit": "AV1 絕不攤平輸家(無後門) / AV2 只金字塔加碼贏家",
-      "rule": "虧損部位一律不加碼——沒有『除非有新證據』的後門:價格在跌,就是市場告訴你看錯了。加碼只往上(突破確認)、且越加越小。",
-      "quote": "Losers average losers.(輸家才會往下攤平。)",
-      "motive_q": "{tickers} 你在虧損裡一路往下加。動能派這裡沒有『除非』——往下加=不認賠。你是『真的看到突破訊號才往上加』,還是『想攤低成本等回本』?"
-    },
-    "出場紀律": {
-      "stance": "unconditional", "lean": "stop",
-      "rubric_unit": "EX1 7–8% 鐵停損無例外 / EX2 讓贏家跑",
-      "rule": "進場同時掛 7–8% 停損,觸價就走、不重想理由;贏家只要趨勢沒破(沒跌破關鍵均線)就抱住,別因怕回吐落袋。",
-      "quote": "截斷虧損、讓利潤奔跑;真正賺大錢的是坐著不動,不是進進出出。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲——這是動能派最痛的事。那些賣出是『趨勢真的破了(跌破均線/停損)』,還是『賺了怕回吐、手癢』?"
-    },
-    "分散": {
-      "stance": "inverted", "lean": "concentrate",
-      "rubric_unit": "DV1 集中強勢股,用停損控風險(不用分散)",
-      "rule": "動能派不靠檔數分散控風險,靠停損。同一個 driver 的幾檔,停損會一起被觸發 = 等於一個部位。問題不是『不夠分散』,是『會不會一起停損』。",
-      "quote": "把資金集中在少數最強的標的、緊盯停損;過度分散是給看不懂自己持倉的人。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。動能派的問題不是你不夠分散——是這幾檔的停損會不會同一天一起跳?你當初有沒有把它們當『同一個部位』?"
-    },
-    "持有時間": {
-      "stance": "conditional", "lean": "trend",
-      "rubric_unit": "HD1 持有期由趨勢決定,不由預設標籤",
-      "rule": "別預設『我是長線/短線』。趨勢還在(沒跌破關鍵均線/停損)就抱,破了就走——時間框架是趨勢給的結果,不是你進場前貼的標籤。",
-      "quote": "錢是坐著等出來的,不是靠頻繁進出;趨勢沒結束前,別自作聰明跳下車。",
-      "motive_q": "{incon_tickers} 你同一檔又當沖又長抱。對動能派,持有期該由趨勢決定:這是『趨勢還在所以續抱』,還是『套牢了改口說自己長期投資』?"
-    },
-    "alpha/beta": {
-      "stance": "aligned", "lean": "decompose",
-      "rubric_unit": "PS1 市場永遠是對的 / 站對趨勢 vs 選股",
-      "rule": "每季分清:你贏大盤,是『站對趨勢/賽道(順勢紅利)』,還是『選股 + 守紀律』?別把『敢追強勢題材』當成選股本事。",
-      "quote": "The market is never wrong; opinions often are.(市場永遠是對的,意見常常是錯的。)",
-      "motive_q": "你贏大盤 {excess}pp,但 β={beta}。動能派會問:這是『你站對了趨勢』還是『你會選股 + 守紀律』?站對賽道很好——但別跟選股本事搞混。"
-    },
-    "進場": {
-      "stance": "inverted", "lean": "strength",
-      "rubric_unit": "EN1 只買強別接刀 / EN2 進場是事前定好的觸發(pivot)｜待 engine B.9",
-      "rule": "只在標的證明強勢(突破/創高/站上關鍵均線)時進場,且進場點事前定好(突破 X 才進);別在下跌中因『夠便宜了』去接刀。",
-      "quote": "你的目標不是買在最便宜,是買在『對的時間』——讓股票先向你證明它的強,再投入。",
-      "motive_q": "{entry_ticker} 你買在近 20 日的高點上緣 / 或下跌中承接。動能派只買強:你進場時它在突破創高,還是在跌、你覺得便宜?這個進場點是你事前畫好的觸發,還是看它動了才追?"
-    }
+    "position_sizing": {"rubric_unit": "Size from predefined stop risk", "stance": "aligned", "lean": "risk-capped", "rule": "Calculate size from the entry-to-stop distance so one failed trade cannot exceed the risk budget.", "quote": "Position size follows the loss allowed at the stop. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. What predefined stop and account-risk limit produced that size?"},
+    "averaging_down": {"rubric_unit": "Never average down a loser", "stance": "unconditional", "lean": "never", "rule": "Never add below cost to repair a losing trade; add only after price confirms the thesis and total risk remains capped.", "quote": "Add to demonstrated winners, not to positions that are proving you wrong. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. Why was capital added before price reconfirmed the setup?"},
+    "exit_discipline": {"rubric_unit": "Execute the predefined stop", "stance": "unconditional", "lean": "stop", "rule": "Write the stop before entry and execute it without moving it farther away after the loss begins.", "quote": "Small losses are a business expense; uncontrolled losses are a process failure. (paraphrase)", "motive_q": "When the setup failed, did you execute the original stop or rewrite it to avoid taking the loss?"},
+    "diversification": {"rubric_unit": "Concentrate in the strongest valid setups", "stance": "inverted", "lean": "concentrate", "rule": "Hold only the strongest setups whose risks are independently capped; do not add weak names for cosmetic diversification.", "quote": "A few strong setups are preferable to many mediocre ones. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Are all positions among the strongest valid setups, or are weaker names diluting focus?"},
+    "holding_period": {"rubric_unit": "Hold while the trend remains valid", "stance": "conditional", "lean": "trend", "rule": "Let winners run while price and trend rules remain valid; exit when the predefined trend condition breaks.", "quote": "The trend, not a calendar label, determines the holding period. (paraphrase)", "motive_q": "For {incon_tickers}, did the trend rule change, or did you relabel the trade after it stopped working?"},
+    "alpha_beta": {"rubric_unit": "Separate execution edge from market beta", "stance": "aligned", "lean": "decompose", "rule": "Decompose market regime and high-beta exposure before crediting entry and exit discipline.", "quote": "A strong tape can make poor execution look skilled. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. What return came from disciplined execution rather than the market regime?"},
+    "entry_style": {"rubric_unit": "Enter on demonstrated strength", "stance": "inverted", "lean": "strength", "rule": "Enter only after price confirms the setup, with a predefined stop and no need to predict the bottom.", "quote": "Let price prove the setup before committing capital. (paraphrase)", "motive_q": "For {entry_ticker}, what price confirmation and stop defined the entry rather than fear of missing out?"}
   }
 }
