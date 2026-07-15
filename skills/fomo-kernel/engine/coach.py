@@ -405,7 +405,7 @@ DATA_FILES = [
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
     ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),
-    ("cards", "dir", "每次復盤的完整私人卡(含絕對金額/ticker/佔比)"),
+    ("cards", "dir", "每次復盤的完整復盤卡(含絕對金額/ticker/佔比)"),
     ("sessions", "tree", "v2 canonical session bundles(private/public cards + manifest)"),
     ("projections", "dir", "canonical bundle 投影到舊資料檔的修復紀錄"),
     (".pending", "tree", "尚未 finalize 的可恢復 review plan/answers/preview"),

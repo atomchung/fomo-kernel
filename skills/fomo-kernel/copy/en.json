@@ -1,9 +1,9 @@
 {
   "language": "en",
-  "title": "Trade Review Card",
-  "private_badge": "Private full version; stored locally only",
+  "title": "Review Card",
+  "private_badge": "Review card; stored locally only",
   "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
-  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the private card.",
+  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
   "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
   "sections": {
     "numbers": "The account for this review",
@@ -11,6 +11,7 @@
     "strength": "One thing you did well",
     "hole": "The biggest behavioral leak",
     "motive": "The thesis behind the add",
+    "exit_capture": "Exit reasons recorded this review",
     "etf": "ETF and portfolio structure",
     "rule": "Change only this next time"
   },
@@ -36,6 +37,24 @@
     "valuation_change": "The valuation or odds changed",
     "price_only": "Only the price fell / lower the cost basis",
     "skip": "Skip for now"
+  },
+  "exit_choices": {
+    "full": {
+      "price_target": "The target was reached",
+      "thesis_broken": "The original thesis failed",
+      "swap": "Reallocated to a better opportunity",
+      "anxiety": "Locked in the gain",
+      "other": "Another reason",
+      "skip": "Skip for now"
+    },
+    "reduce": {
+      "price_target": "The planned reduction point was reached",
+      "thesis_broken": "Confidence weakened",
+      "swap": "Reallocated to a better opportunity",
+      "anxiety": "Locked in part of the gain",
+      "other": "Another reason",
+      "skip": "Skip for now"
+    }
   },
   "honesty": {
     "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",

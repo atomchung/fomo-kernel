@@ -215,7 +215,9 @@ def project_legacy(root, bundle, private_md):
     reports = [_append_session_rows(os.path.join(root, "log.jsonl"), session_id, [log_row])]
 
     thesis_updates = list(bundle.get("thesis_updates") or [])
-    reports.append(_append_session_rows(os.path.join(root, "theses.jsonl"), session_id, thesis_updates))
+    exit_narratives = list(bundle.get("exit_narratives") or [])
+    reports.append(_append_session_rows(os.path.join(root, "theses.jsonl"), session_id,
+                                        thesis_updates + exit_narratives))
     reports.append(_append_session_rows(os.path.join(root, "thesis_decisions.jsonl"), session_id,
                                         list(bundle.get("thesis_decisions") or [])))
 

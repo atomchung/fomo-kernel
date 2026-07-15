@@ -25,7 +25,8 @@
         "paths": {"type": "array", "items": {"type": "string"}},
         "kind": {"enum": ["trades_csv", "positions_snapshot"]},
         "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "engine_meta": {"type": "string"}
+        "engine_meta": {"type": "string"},
+        "ledger_ingest": {"type": ["object", "null"]}
       },
       "additionalProperties": false
     },
@@ -56,7 +57,15 @@
               "additionalProperties": false
             }
           },
-          "prior_thesis_id": {"type": ["string", "null"]}
+          "prior_thesis_id": {"type": ["string", "null"]},
+          "revisit_id": {"type": ["string", "null"]},
+          "exit_kind": {"enum": ["full", "reduce", null]},
+          "exit_date": {"type": ["string", "null"]},
+          "exit_price": {"type": ["number", "null"]},
+          "shares_sold": {"type": ["number", "null"]},
+          "shares_before": {"type": ["number", "null"]},
+          "currency": {"type": ["string", "null"]},
+          "exit_notional": {"type": ["number", "null"]}
         },
         "additionalProperties": false
       }

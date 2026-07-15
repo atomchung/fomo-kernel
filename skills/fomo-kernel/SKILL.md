@@ -13,7 +13,7 @@ Turn trading data into one focused review card: the largest behavioral leak, the
 2. Do not provide buy or sell recommendations. Review behavior, motives, thesis evolution, and process rules.
 3. Obtain an answer for every `required:true` item in `question_queue` before preview.
 4. A card has exactly one final commitment at most. The user may choose a candidate, provide a custom rule, or skip.
-5. Keep trade data and derived state local. Show the private card by default; use only the public card for sharing.
+5. Keep trade data and derived state local. Show the review card (`card-private.*`) by default; use only `card-public.md` as a share-safe artifact. The product does not publish or upload it.
 6. Treat `sessions/<session_id>/bundle.json` as the canonical completed result. Never hand-edit projections as if they were authoritative.
 
 ## Canonical entry point
@@ -46,7 +46,7 @@ Then read the shared rules:
 1. `prepare`: run the engine, reconstruct active theses, deduplicate questions, and return a Review Plan.
 2. Agent work: make only permitted qualitative judgments, ask every required question, create inferred theses for uncovered positions, and write a narrative with no digits.
 3. `preview`: validate answers, evidence, theses, and narrative; then render private and public previews.
-4. Show the private preview. Ask the user to choose a candidate rule, provide a custom rule, or skip.
+4. Show the review-card preview. Ask the user to choose a candidate rule, provide a custom rule, or skip.
 5. `finalize`: validate the final commitment, atomically commit the canonical session bundle, then rebuild compatibility projections.
 
 ```bash
@@ -77,6 +77,7 @@ python3 engine/review.py repair-projections
 - Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer weaves each sentence into the section it qualifies.
 - Add one `thesis_updates` entry for every missing-thesis `cycle_id`. Default to `maturity:"inferred"` and state the inference source; never present it as user-confirmed.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.
+- `prepare` ranks eligible motive and recent-exit questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question; `skip` is an explicit answer and must deduplicate that exit later.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
 
 ## Language and sharing
@@ -85,8 +86,8 @@ python3 engine/review.py repair-projections
 
 Each completed session produces:
 
-- `card-private.md` and `card-private.html`: complete local review artifacts.
-- `card-public.md`: a separately rendered shareable view without amounts, dates, tickers, exact weights, session IDs, or agent-authored free text.
+- `card-private.md` and `card-private.html`: the complete local review card, using the localized review-card name from copy assets.
+- `card-public.md`: a separately rendered share-safe artifact without amounts, dates, tickers, exact weights, session IDs, or agent-authored free text. It is not uploaded or published.
 
 ## Test drive
 

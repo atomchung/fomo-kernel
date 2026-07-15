@@ -14,6 +14,7 @@ All commands emit JSON on stdout.  Human-readable diagnostics go to stderr.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ import tempfile
 
 import card_renderer
 import ledger
+import revisit
 import session
 import thesis
 
@@ -38,6 +40,8 @@ DIM_METRIC = {
     "holding_period": "hold_severity",
     "averaging_down": "avgdown_count",
 }
+QUESTION_LIMIT = 3
+EXIT_DECISIONS = {"price_target", "thesis_broken", "swap", "anxiety", "other", "skip"}
 
 
 class ReviewError(ValueError):
@@ -116,6 +120,99 @@ def _previous_state(root):
         return None
 
 
+def _review_date(state):
+    try:
+        return dt.date.fromisoformat(str((state or {}).get("date_end")))
+    except (TypeError, ValueError):
+        return dt.date.today()
+
+
+def _ingest_trades(root, paths):
+    """Validate all normalized CSVs, then append their trade facts once.
+
+    Validation completes before the first write so a bad file cannot leave a
+    partially ingested multi-file review.  Overlapping weekly files remain safe:
+    each later batch deduplicates against both the existing ledger and earlier
+    batches from this prepare call.
+    """
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    existing, skipped_lines = ledger.load_ledger(ledger_path)
+    batches = []
+    skipped_bad = skipped_future = 0
+    for path in paths or []:
+        trades, bad, future = ledger.trades_from_csv(path)
+        batches.append(trades)
+        skipped_bad += bad
+        skipped_future += future
+    if skipped_bad or skipped_future:
+        raise ReviewError(
+            "ledger ingestion rejected normalized input before writing: "
+            f"{skipped_bad} invalid/non-trade row(s), {skipped_future} future-dated row(s)"
+        )
+
+    virtual = list(existing)
+    fresh_all = []
+    skipped_dup = 0
+    for batch in batches:
+        fresh, dup = ledger.dedupe_against(virtual, batch)
+        fresh_all.extend(fresh)
+        virtual.extend(fresh)
+        skipped_dup += dup
+    if fresh_all:
+        ledger.append_events(ledger_path, fresh_all)
+    return {
+        "path": ledger_path,
+        "appended": len(fresh_all),
+        "skipped_dup": skipped_dup,
+        "skipped_bad": skipped_bad,
+        "skipped_future_dated": skipped_future,
+        "skipped_ledger_lines": skipped_lines,
+    }
+
+
+def _captured_revisit_ids(root):
+    """Read capture identity from canonical sessions plus legacy compatibility rows."""
+    captured = {
+        row.get("revisit_id") for row in _jsonl(os.path.join(root, "theses.jsonl"))
+        if row.get("event") == "exit_narrative" and row.get("revisit_id")
+    }
+    sessions = os.path.join(root, "sessions")
+    if not os.path.isdir(sessions):
+        return captured
+    for session_id in sorted(os.listdir(sessions)):
+        bundle_path = os.path.join(sessions, session_id, "bundle.json")
+        if not os.path.isfile(bundle_path):
+            continue
+        try:
+            bundle = session.read_json(bundle_path)
+        except (OSError, ValueError):
+            continue
+        plan = bundle.get("review_plan") or {}
+        if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+            continue
+        captured.update(
+            row.get("revisit_id") for row in bundle.get("exit_narratives") or []
+            if row.get("revisit_id")
+        )
+    return captured
+
+
+def _prepare_exit_capture(root, state, persist):
+    """Enqueue ledger exits and return fresh, not-yet-captured candidates."""
+    if not persist:
+        return [], {"enqueued": 0, "skipped_dup": 0, "skipped_queue_lines": 0}
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    queue_path = os.path.join(root, "revisit.jsonl")
+    as_of = _review_date(state)
+    new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
+    revisits, _resolutions, skipped = revisit.load_queue(queue_path)
+    captured = _captured_revisit_ids(root)
+    recent = [row for row in revisit.scan_recent_exits(revisits, as_of)
+              if row.get("revisit_id") not in captured]
+    return recent, {"enqueued": len(new), "skipped_dup": dup,
+                    "skipped_queue_lines": skipped, "path": queue_path}
+
+
 def _run_engine(paths, root, args):
     os.makedirs(root, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fomo-review-") as tmp:
@@ -182,13 +279,93 @@ def _generic_options(language):
     ]
 
 
-def _question_queue(card, state, active, previous_state, language):
+def _exit_options(language, exit_kind):
+    copy = card_renderer.load_copy(language)
+    labels = (copy.get("exit_choices") or {}).get(exit_kind) or {}
+    en = copy["language"] == "en"
+    descriptions = {
+        "price_target": ("原先設定的目標或減碼條件已經完成。",
+                         "A target or planned reduction condition was reached."),
+        "thesis_broken": ("原本判斷失效，或信心因新事實而下降。",
+                          "New facts broke or weakened the original thesis."),
+        "swap": ("資金改放到另一個標的或用途。",
+                 "Capital was reallocated to another position or use."),
+        "anxiety": ("主要是怕回吐，所以先鎖住全部或部分成果。",
+                    "The main motive was protecting gains from a possible reversal."),
+        "other": ("以上都不符合，用自己的話留下一句。",
+                  "None of these fit; save a short explanation in your own words."),
+        "skip": ("保存為已略過，同一筆之後不再追問。",
+                 "Save this as skipped so the same exit is not asked again."),
+    }
+    return [{"value": key, "label": labels[key],
+             "description": descriptions[key][1 if en else 0]}
+            for key in ("price_target", "thesis_broken", "swap", "anxiety", "other", "skip")]
+
+
+def _format_notional(value, currency):
+    value = float(value or 0)
+    rendered = f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
+    return f"{currency or 'USD'} {rendered}"
+
+
+def _exit_importance(item, card):
+    """Compare exit amounts in the engine's aggregate currency when FX is available."""
+    notional = revisit._notional(item)
+    meta = (card or {}).get("currency_meta") or {}
+    currency = str(item.get("currency") or "USD").upper()
+    aggregate = str(meta.get("aggregate_currency") or currency).upper()
+    if not meta.get("mixed") or currency == aggregate:
+        return abs(notional)
+    factor = (meta.get("fx") or {}).get(currency)
+    try:
+        return abs(notional * float(factor)) if factor is not None else abs(notional)
+    except (TypeError, ValueError):
+        return abs(notional)
+
+
+def _exit_question(item, language, card=None):
+    ticker = item.get("ticker") or "position"
+    kind = item.get("kind") or "full"
+    notional = revisit._notional(item)
+    amount = _format_notional(notional, item.get("currency"))
+    if str(language).lower().startswith("en"):
+        action = "fully exited" if kind == "full" else "substantially reduced"
+        question = (f"{ticker} was {action} on {item.get('exit_date')} for about {amount}. "
+                    "What mainly drove that decision?")
+    else:
+        action = "全部出清" if kind == "full" else "大幅減倉"
+        question = (f"{ticker} 在 {item.get('exit_date')} {action}，出場金額約 {amount}。"
+                    "當時主要是什麼理由？")
+    digest = hashlib.sha256(str(item.get("revisit_id")).encode("utf-8")).hexdigest()[:12]
+    return {
+        "id": f"exit_{digest}", "kind": "revisit", "ticker": ticker,
+        "cycle_id": item.get("cycle_id"), "required": True, "question": question,
+        "options": _exit_options(language, kind), "revisit_id": item.get("revisit_id"),
+        "exit_kind": kind, "exit_date": item.get("exit_date"),
+        "exit_price": item.get("exit_price"), "shares_sold": item.get("shares_sold"),
+        "shares_before": item.get("shares_before"), "currency": item.get("currency") or "USD",
+        "exit_notional": notional, "_importance": _exit_importance(item, card), "_tie": 0,
+    }
+
+
+def _ticker_importance(card, state, ticker):
+    for row in card.get("ticker_diagnosis") or []:
+        if row.get("ticker") == ticker and row.get("impact") is not None:
+            return abs(float(row["impact"])), "pnl_impact"
+    pos = (_active_positions(state).get(ticker) or {})
+    try:
+        return abs(float(pos.get("cost") or 0)), "position_cost"
+    except (TypeError, ValueError):
+        return 0.0, "unknown"
+
+
+def _question_queue(card, state, active, previous_state, language, recent_exits=None):
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     current_adds = (state.get("metrics") or {}).get("avgdown_count") or 0
     previous_adds = ((previous_state or {}).get("metrics") or {}).get("avgdown_count") or 0
     add_behavior_changed = current_adds > previous_adds
-    queue = []
+    candidates = [_exit_question(item, language, card) for item in (recent_exits or [])]
     for index, item in enumerate(card.get("thesis_questions") or []):
         ticker = item.get("ticker")
         pos = by_ticker.get(ticker) or {}
@@ -202,19 +379,29 @@ def _question_queue(card, state, active, previous_state, language):
         else:
             question = (item.get("question") or
                         f"{ticker} 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？")
-        queue.append({
+        importance, basis = _ticker_importance(card, state, ticker)
+        candidates.append({
             "id": f"add_{index}_{ticker}", "kind": "add_thesis", "ticker": ticker,
             "cycle_id": cycle_id, "required": True, "question": question,
             "options": _add_options(language),
             "prior_thesis_id": (old or {}).get("thesis_id"),
+            "_importance": importance, "_importance_basis": basis, "_tie": 1,
         })
-    if not queue:
+    if not candidates:
         top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")
         top_label = card_renderer.localized_dimension(top, language)
         question = (f"What mainly drove the behavior behind {top_label}?" if str(language).lower().startswith("en")
                     else f"這次「{top}」背後，主要是事先規劃、情緒反應，還是外部限制？")
-        queue.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
-                      "question": question, "options": _generic_options(language)})
+        candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
+                           "question": question, "options": _generic_options(language),
+                           "_importance": 0.0, "_tie": 2})
+    candidates.sort(key=lambda row: (-float(row.get("_importance") or 0),
+                                     int(row.get("_tie") or 0), str(row.get("id"))))
+    queue = candidates[:QUESTION_LIMIT]
+    for row in queue:
+        row.pop("_importance", None)
+        row.pop("_importance_basis", None)
+        row.pop("_tie", None)
     return queue
 
 
@@ -242,7 +429,8 @@ def _candidate_rules(card, state, language):
     return candidates
 
 
-def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist):
+def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
+                recent_exits=None, ledger_ingest=None, revisit_ingest=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
     thesis_rows = _jsonl(os.path.join(root, "theses.jsonl"))
@@ -263,12 +451,16 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "state_root": root,
         "input": {"paths": [os.path.abspath(p) for p in paths],
                   "kind": "positions_snapshot" if route == "snapshot_review" else "trades_csv",
-                  "fingerprint": fingerprint, "engine_meta": engine_meta},
+                  "fingerprint": fingerprint, "engine_meta": engine_meta,
+                  "ledger_ingest": ledger_ingest},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
-                           "active_theses": active_rows, "due_revisits": []},
-        "question_queue": _question_queue(card, state, active, previous, language),
+                           "active_theses": active_rows, "due_revisits": [],
+                           "recent_exits": list(recent_exits or []),
+                           "revisit_ingest": revisit_ingest},
+        "question_queue": _question_queue(card, state, active, previous, language, recent_exits),
         "missing_thesis_positions": missing,
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
+                      "question_limit": QUESTION_LIMIT,
                       "required_honesty_keys": [x.get("key") for x in card.get("honesty_ledger") or []]},
         "engine_card": card,
         "engine_state": state,
@@ -312,8 +504,12 @@ def cmd_prepare(args):
         return
     if prepared is None:
         card, state, engine_meta = _run_engine(paths, root, args)
+    ledger_ingest = None
+    if persist and route != "snapshot_review" and paths:
+        ledger_ingest = _ingest_trades(root, paths)
+    recent_exits, revisit_ingest = _prepare_exit_capture(root, state, persist)
     plan = _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint,
-                       args.session_nonce or "", persist)
+                       args.session_nonce or "", persist, recent_exits, ledger_ingest, revisit_ingest)
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
@@ -355,6 +551,43 @@ def _assign_thesis_ids(plan, updates):
     return rows
 
 
+def _build_exit_narratives(plan, answers):
+    amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "revisit":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        if choice not in EXIT_DECISIONS:
+            raise ReviewError(f"unsupported exit decision: {choice}")
+        if answer.get("evidence_delta") is not None:
+            raise ReviewError(f"{question['id']}: evidence_delta is not valid for an exit reason")
+        note = " ".join(str(answer.get("note") or "").split()) or None
+        if choice == "other" and not note:
+            raise ReviewError(f"{question['id']}: other requires a short note")
+        if note and len(note) > 500:
+            raise ReviewError(f"{question['id']}: note must be at most 500 characters")
+        if choice == "skip":
+            note = None
+        event = {
+            "event": "exit_narrative", "schema_version": 1,
+            "session_id": plan.get("session_id"), "revisit_id": question.get("revisit_id"),
+            "cycle_id": question.get("cycle_id"), "ticker": question.get("ticker"),
+            "exit_date": question.get("exit_date"), "exit_kind": question.get("exit_kind"),
+            "exit_price": question.get("exit_price"), "shares_sold": question.get("shares_sold"),
+            "shares_before": question.get("shares_before"), "currency": question.get("currency"),
+            "exit_notional": question.get("exit_notional"),
+            "exit_reason": choice if choice not in {"other", "skip"} else None,
+            "note": note, "capture": "skipped" if choice == "skip" else "confirmed",
+            "recorded_at": (plan.get("engine_state") or {}).get("date_end"),
+        }
+        raw_id = f"{plan.get('session_id')}|{question.get('revisit_id')}|{choice}|{note or ''}"
+        event["event_id"] = "exit-" + hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:16]
+        events.append(event)
+    return events
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
@@ -388,6 +621,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
     updates = _validate_thesis_completeness(plan, answers)
     decisions = thesis.build_decision_events(plan, answers)
+    exit_narratives = _build_exit_narratives(plan, answers)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every triggered honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the engine did not trigger.
@@ -410,6 +644,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
         "narrative": narrative,
         "thesis_updates": _assign_thesis_ids(plan, updates),
         "thesis_decisions": decisions,
+        "exit_narratives": exit_narratives,
         "commitment": commitment,
         "observations": list(answers.get("observations") or []),
     }
@@ -437,7 +672,7 @@ def cmd_preview(args):
     _emit({"status": "previewed", "session_id": args.session_id,
            "private_card": private_md, "public_card": public_md,
            "candidate_rules": (plan.get("card_plan") or {}).get("candidate_rules") or [],
-           "paths": paths, "next_action": "show the private preview; ask the user to choose one rule or skip; then finalize"})
+           "paths": paths, "next_action": "show the review-card preview; ask the user to choose one rule or skip; then finalize"})
 
 
 def cmd_finalize(args):

@@ -1,9 +1,9 @@
 {
   "language": "zh-TW",
-  "title": "交易復盤卡",
-  "private_badge": "私人完整版，只留在本機",
+  "title": "復盤卡",
+  "private_badge": "復盤卡，只留在本機",
   "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
-  "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在私人卡。",
+  "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
   "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
   "sections": {
     "numbers": "這期的帳",
@@ -11,6 +11,7 @@
     "strength": "你做對的一件事",
     "hole": "最大的行為漏洞",
     "motive": "這次加碼的 thesis 判斷",
+    "exit_capture": "這次記下的出場理由",
     "etf": "ETF 與組合結構",
     "rule": "下次只改這一件"
   },
@@ -36,6 +37,24 @@
     "valuation_change": "估值或賠率變了",
     "price_only": "只有價格下跌／想攤低成本",
     "skip": "先跳過"
+  },
+  "exit_choices": {
+    "full": {
+      "price_target": "到價了",
+      "thesis_broken": "原本判斷失效",
+      "swap": "換到更好的標的",
+      "anxiety": "想先落袋",
+      "other": "其他理由",
+      "skip": "先不回答"
+    },
+    "reduce": {
+      "price_target": "到了減碼點",
+      "thesis_broken": "信心動搖",
+      "swap": "換到更好的標的",
+      "anxiety": "想先落袋一部分",
+      "other": "其他理由",
+      "skip": "先不回答"
+    }
   },
   "honesty": {
     "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
