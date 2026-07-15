@@ -58,6 +58,8 @@
             }
           },
           "prior_thesis_id": {"type": ["string", "null"]},
+          "prior_event_id": {"type": ["string", "null"]},
+          "decision_cursor": {"type": ["string", "null"]},
           "revisit_id": {"type": ["string", "null"]},
           "exit_kind": {"enum": ["full", "reduce", null]},
           "exit_date": {"type": ["string", "null"]},

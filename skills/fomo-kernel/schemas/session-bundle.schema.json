@@ -19,9 +19,49 @@
     "engine_card": {"type": "object"},
     "answers": {"$ref": "answers.schema.json"},
     "narrative": {"$ref": "narrative.schema.json"},
-    "thesis_updates": {"type": "array", "items": {"type": "object"}},
-    "thesis_decisions": {"type": "array", "items": {"type": "object"}},
-    "exit_narratives": {"type": "array", "items": {"type": "object"}},
+    "thesis_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "schema_version": {"type": "integer"},
+          "thesis_id": {"type": "string"},
+          "event_id": {"type": "string"},
+          "revises": {"type": ["string", "null"]},
+          "cycle_id": {"type": "string"},
+          "status": {"enum": ["active", "open", "still", "modified", "falsified", "closed"]},
+          "position_status": {"enum": ["open", "closed"]}
+        }
+      }
+    },
+    "thesis_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "schema_version": {"type": "integer"},
+          "thesis_id": {"type": "string"},
+          "event_id": {"type": "string"},
+          "revises": {"type": ["string", "null"]},
+          "cycle_id": {"type": "string"},
+          "decision_cursor": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "exit_narratives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "schema_version": {"type": "integer"},
+          "thesis_id": {"type": "string"},
+          "event_id": {"type": "string"},
+          "revises": {"type": ["string", "null"]},
+          "cycle_id": {"type": "string"},
+          "exit_kind": {"enum": ["full", "reduce"]}
+        }
+      }
+    },
     "commitment": {"type": ["object", "null"]},
     "observations": {"type": "array"}
   }
