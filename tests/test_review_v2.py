@@ -360,6 +360,8 @@ def test_reconciliation_opens_the_card_with_prior_commitment():
         "#151: the card must open against last time's commitment with verbatim then/now values"
     en = card_renderer._reconciliation_lines(bundle, "en")
     assert en and "Last time you committed" in en[0] and "51%" in en[0]
+    assert "max_pos_pct" not in zh[0] and "max_pos_pct" not in en[0], \
+        "A-12: internal metric keys never appear on the card"
     assert card_renderer._reconciliation_lines({"review_plan": {}}, "en") == [], \
         "first review has no prior commitment and no reconciliation line"
 

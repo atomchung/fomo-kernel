@@ -327,11 +327,12 @@ def _reconciliation_lines(bundle, language):
     if language == "en":
         line = f"Last time you committed: \"{prior['rule']}\""
         if then_v is not None and now_v is not None:
-            line += f" — {key} was {_metric_display(key, then_v)} then, {_metric_display(key, now_v)} now"
+            # A-12: never print internal metric keys on the card — values only.
+            line += f" — the tracked number was {_metric_display(key, then_v)} then, {_metric_display(key, now_v)} now"
         return [line + "."]
     line = f"上次你承諾：「{prior['rule']}」"
     if then_v is not None and now_v is not None:
-        line += f"——{key} 當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
+        line += f"——追蹤的數字當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
     return [line + "。"]
 
 

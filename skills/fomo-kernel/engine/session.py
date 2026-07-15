@@ -170,6 +170,7 @@ def _append_session_rows(path, session_id, new_rows):
     if same and not old_set.issubset(new_set):
         raise SessionError(f"legacy projection conflict: {path} / {session_id}")
     delta = [row for row in new_rows if canonical(row) not in old_set]
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     prefix = ""
     if os.path.exists(path) and os.path.getsize(path) > 0:
         with open(path, "rb") as f:
@@ -270,7 +271,7 @@ def repair_projections(root):
             bundle = read_json(os.path.join(path, "bundle.json"))
             plan = bundle.get("review_plan") or {}
             if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-                skipped.append({"session_id": session_id, "reason": "persist:false"})
+                skipped.append({"session_id": session_id, "reason": "test_drive or persist:false"})
                 continue
             with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
                 reports.append(project_legacy(root, bundle, f.read()))
