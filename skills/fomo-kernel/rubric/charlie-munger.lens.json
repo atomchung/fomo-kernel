@@ -1,72 +1,21 @@
 {
-  "philosophy": "優質生意 · 能力圈 · 坐著不動",
+  "philosophy": "Quality businesses, circle of competence, and patience",
   "master": "Charlie Munger",
-  "source": "原則蒸餾自 Charlie Munger 公開談話（Poor Charlie's Almanack / Daily Journal 年會問答）與 virattt/ai-hedge-fund 的 charlie_munger agent prompt（MIT，以護城河35%/管理25%/可預測性25%/估值15% 的權重編碼此哲學）。引用非轉載、非經本人背書。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 charlie-munger.md。stance/lean 供 compare_lenses。此派 sizing/分散 與『集中信念』同向（皆 inverted），但理由不同（Munger=生意夠好且在能力圈，非宏觀方向）；與『安全邊際』最大反轉在【進場】：安全邊際買『便宜』，此派買『合理價的絕世好生意』，圈外再便宜也不碰。引言已對 verbatim 校對（英文原句逐條見 charlie-munger.md），少數標【意譯】。",
-
+  "source": "Distilled from public Munger talks and Q&A. All card language below is paraphrase unless a primary-source quotation is added and verified.",
+  "_note": "Runtime lens. Concentration is justified by business quality and competence, not merely conviction.",
   "master_intro": {
-    "one_line": "這套尺的核心：用合理價買絕世好生意，然後坐著不動。它不問你『買得夠不夠便宜』，問你『這是不是你真懂的好生意——是的話，你為什麼還一直動它』。",
-    "pillars": [
-      "合理價的好生意 > 便宜價的平庸生意——別為了撿便宜買爛東西",
-      "能力圈：只在你真懂的範圍下注，圈外再誘人也說『不』",
-      "護城河優先：高 ROIC、有訂價權、低資本需求、誠信的管理層",
-      "反過來想（via negativa）：避免愚蠢，比追求聰明更賺",
-      "坐著不動：一生真正的好機會沒幾個，抓到了就別手癢亂動"
-    ],
-    "why_it_matters": "這把尺偏『優質 + 集中 + 不動』。如果你是高頻/動能客，它有些條對你是反的——它會把你的『勤奮進出』讀成『手癢的損耗』。它照的是你買的是不是能力圈內的好生意、抓到之後忍不忍得住不動，不是逼你變成 buy-and-hold 信徒。"
+    "one_line": "Buy a wonderful business at a fair price inside your circle of competence, then allow it to compound.",
+    "pillars": ["Prefer quality at a fair price", "Stay inside a real circle of competence", "Require a durable moat", "Avoid stupidity before seeking brilliance", "Act rarely and wait patiently"],
+    "why_it_matters": "This lens reads unnecessary activity as friction and asks whether quality, competence, and patience justify the position."
   },
-
-  "strength_intro": "先說你做對的一件事（這派先認你抱住好生意、忍住沒動的那一筆）：",
-
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "rubric_unit": "能力圈內的好生意就該重壓 / 平庸生意不配大 size",
-      "stance": "inverted", "lean": "big",
-      "rule": "把資金集中到你能力圈內、真正夠好的少數生意；對它們別小家子氣，對平庸的別給 size。",
-      "quote": "聰明人在勝算在握、機會出現時就下重注；其餘時間按兵不動。就這麼簡單。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。這派問：如果這真是你能力圈內的絕世好生意，這個 size 算重壓嗎？那些平庸的部位，又為什麼還佔著資金？"
-    },
-    "加碼攤平": {
-      "rubric_unit": "只在好生意+合理價加；不為了攤平爛生意而加",
-      "stance": "conditional", "lean": "quality",
-      "rule": "往下加碼只有在『這仍是絕世好生意、現在價格更合理』時才做；若生意本身平庸，價格再跌也不加。",
-      "quote": "一門平庸的生意，你用再便宜的價格一直加，通常只會把錯誤放大。【意譯】",
-      "motive_q": "{tickers} 你在虧損裡往下加。是『這仍是你認證過的好生意、只是更便宜了』，還是『生意本身普通、你只是想攤低成本等回本』？"
-    },
-    "出場紀律": {
-      "rubric_unit": "坐著不動；賣掉一門複利的好生意才是最貴的錯",
-      "stance": "conditional", "lean": "do-nothing",
-      "rule": "賣出前先問『這門好生意的護城河壞了嗎』；護城河還在，就坐著不動，別因為漲了或手癢就賣。",
-      "quote": "大錢不在買進賣出，而在等待。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些是『護城河真的壞了』，還是『手癢、想實現獲利，把一門還在複利的好生意提早賣掉』？"
-    },
-    "分散": {
-      "rubric_unit": "diworsification：別為了分散而稀釋到平庸生意",
-      "stance": "inverted", "lean": "concentrate",
-      "rule": "別為了『看起來分散』去持你不夠懂或不夠好的生意；寧可少數絕世好生意，也不要一堆平庸的。",
-      "quote": "過度分散是一種瘋狂。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。這派不嫌你不夠分散——反問：其餘那些『為了分散』的部位，每一檔都是能力圈內的好生意，還是只是湊數的平庸貨？"
-    },
-    "持有時間": {
-      "rubric_unit": "好生意的最佳持有期接近永遠",
-      "stance": "conditional", "lean": "forever",
-      "rule": "持有期由『護城河還在不在』決定，不由標籤；護城河沒壞，最佳持有期就是接近永遠。",
-      "quote": "屁股坐定的投資法：你付更少佣金、聽更少廢話，稅制還多給你幾個百分點。",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。是『護城河的判斷變了所以調整』，還是『一開始想長抱、套牢或漲多了就改口』？"
-    },
-    "alpha/beta": {
-      "rubric_unit": "報酬要來自生意複利，不是槓桿/波動",
-      "stance": "aligned", "lean": "decompose",
-      "rule": "每季分清：你贏大盤，是『好生意本身在複利』，還是『靠 β、靠押高波動』撐出來的？",
-      "quote": "長期而言，一檔股票的報酬很難超過它背後生意賺到的報酬。【意譯】",
-      "motive_q": "你贏大盤 {excess}pp，但 β={beta}。這派問：這是『你選的生意本身在複利』，還是『敢押高波動換來的，跟生意品質無關』？"
-    },
-    "進場": {
-      "rubric_unit": "能力圈內、合理價買好生意；圈外再便宜也不碰｜待 engine B.9",
-      "stance": "conditional", "lean": "quality-in-circle",
-      "rule": "進場前過兩關：① 它在我的能力圈內嗎？② 它是合理價的好生意嗎（不必最便宜，但要夠好）？圈外的，再便宜也說『不』。",
-      "quote": "忘掉用好價格買普通生意吧；要用合理的價格買絕世好生意。",
-      "motive_q": "{entry_ticker} 你買在近 20 日高點、當天還大漲。是『它在你能力圈內、是合理價的好生意』，還是『超出你真懂的範圍、只是它在噴你怕錯過』？"
-    }
+    "position_sizing": {"rubric_unit": "Bet meaningfully when quality and competence align", "stance": "inverted", "lean": "big", "rule": "Concentrate only in the few high-quality businesses you can explain and evaluate; give mediocre ideas no meaningful size.", "quote": "Act decisively when the odds and your competence genuinely align. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. What demonstrates both exceptional business quality and a real circle of competence?"},
+    "averaging_down": {"rubric_unit": "Add only to quality at a fairer price", "stance": "conditional", "lean": "quality", "rule": "Add only when the business remains exceptional, the moat is intact, and the price is more reasonable; do not average down a mediocre business.", "quote": "A lower price does not improve the economics of a poor business. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What new evidence shows that business quality and the moat remain intact?"},
+    "exit_discipline": {"rubric_unit": "Do not interrupt compounding without a broken thesis", "stance": "conditional", "lean": "do-nothing", "rule": "Before selling, identify whether the moat or management quality broke; if neither changed, avoid activity for its own sake.", "quote": "The large reward often comes from waiting, not repeated trading. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which businesses lost their moat, and which did you sell merely to realize a gain?"},
+    "diversification": {"rubric_unit": "Do not dilute quality for cosmetic diversification", "stance": "inverted", "lean": "concentrate", "rule": "Do not add businesses you do not understand merely to increase ticker count; diversify only when each holding meets the quality bar.", "quote": "Excess diversification can replace a few understood businesses with many mediocre ones. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Which holdings are present only to look diversified rather than because they clear the quality bar?"},
+    "holding_period": {"rubric_unit": "Let an intact moat compound", "stance": "conditional", "lean": "forever", "rule": "Let holding period follow moat durability, not a changing label; an exceptional business may deserve a very long horizon.", "quote": "A durable compounder should not be interrupted without a business reason. (paraphrase)", "motive_q": "For {incon_tickers}, did the moat assessment change, or did the time horizon change after price moved?"},
+    "alpha_beta": {"rubric_unit": "Return should come from business compounding", "stance": "aligned", "lean": "decompose", "rule": "Separate business compounding from market beta, leverage, and multiple expansion before claiming selection skill.", "quote": "Long-run investment return is constrained by the economics of the underlying business. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. How much came from business compounding rather than market exposure?"},
+    "entry_style": {"rubric_unit": "Require quality, competence, and a fair price", "stance": "conditional", "lean": "quality-in-circle", "rule": "Before entry, pass three gates: circle of competence, exceptional business quality, and a fair price.", "quote": "Prefer a wonderful business at a fair price to a fair business at a wonderful price. (paraphrase)", "motive_q": "For {entry_ticker}, was the entry grounded in an understood high-quality business at a fair price, or in price excitement outside your competence?"}
   }
 }

@@ -1,72 +1,21 @@
 {
-  "philosophy": "破壞式創新 · 五年尺度 · 抱過波動",
-  "master": "Cathie Wood（ARK）",
-  "source": "原則蒸餾自 Cathie Wood / ARK Invest 公開訪談與研究及 virattt/ai-hedge-fund 的 cathie_wood agent prompt（MIT，以破壞潛力/創新驅動成長/大 TAM/多年尺度/容忍波動編碼此哲學）。引用非轉載、非經本人背書。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 cathie-wood.md。stance/lean 供 compare_lenses。此派帶進兩個強反轉：① 加碼=inverted『add-on-conviction』（越跌越買、信念不變——與 Taleb 的 unconditional/no-average-down 形成庫內最大對立）；② alpha/beta=inverted『embrace-vol』（高波動是創新 alpha 的代價，不是該砍的洞——與所有 decompose 派相反）。引言已對 verbatim 校對（英文原句見 cathie-wood.md），少數標【意譯】。",
-
+  "philosophy": "Disruptive innovation and a five-year horizon",
+  "master": "Cathie Wood / ARK",
+  "source": "Distilled from public ARK material. All card language below is paraphrase unless a primary-source quotation is added and verified.",
+  "_note": "Runtime lens. It permits evidence-driven adding but never treats a lower price by itself as stronger conviction.",
   "master_intro": {
-    "one_line": "這套尺的核心：押注會改寫世界運作方式的破壞式創新，用五年以上的尺度抱住、接受路上的劇烈波動。它不問你『現在貴不貴、波動大不大』，問你『這是不是真正的破壞式創新，你的五年信念還在嗎』。",
-    "pillars": [
-      "只投破壞式創新：能改變世界運作方式的技術平台",
-      "指數級成長 + 大 TAM：要的是加速度，不是穩態績效",
-      "五年以上尺度：突破要時間，別用一季的價格判生死",
-      "接受高波動：高報酬的代價就是劇烈震盪，別被它嚇下車",
-      "信念隨證據強化：基本面/估值上修、價格反而下跌＝加碼良機"
-    ],
-    "why_it_matters": "這把尺偏『高信念創新成長 + 抱過波動』。如果你是價值/存活紀律派，它有些條對你是反的——它會把你的『停損、控制回撤』讀成『在創新拐點被洗下車』。它照的是你押的是不是真破壞式創新、五年信念在不在、扛不扛得住波動，不是逼你追每一個熱門題材。"
+    "one_line": "Judge disruptive innovation on a multi-year thesis, not one quarter of volatility.",
+    "pillars": ["Require a disruptive platform", "Look for exponential adoption and a large market", "Use a five-year horizon", "Accept thesis-consistent volatility", "Add only when evidence and valuation improve"],
+    "why_it_matters": "This lens distinguishes volatility from thesis failure while still requiring explicit evidence for conviction."
   },
-
-  "strength_intro": "先說你做對的一件事（這派先認你押對破壞式創新、又抱得住波動的那一筆）：",
-
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "rubric_unit": "高信念的創新贏家就該重壓，溫吞部位是浪費",
-      "stance": "inverted", "lean": "big",
-      "rule": "把資金集中到你最高信念的破壞式創新標的；對它們別小家子氣，對沒有破壞性的別給 size。",
-      "quote": "我們經營的是高信念、集中的投資組合。【意譯】",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。這派問：如果這真是你最高信念的破壞式創新，這個 size 算重壓嗎？那些沒有破壞性的部位，又為什麼還佔著資金？"
-    },
-    "加碼攤平": {
-      "rubric_unit": "創新論點沒變、價格更低＝加碼良機（越跌越買）",
-      "stance": "inverted", "lean": "add-on-conviction",
-      "rule": "只要五年創新論點沒被推翻，價格大跌反而是加碼良機；信念該隨『基本面上修、價格下跌』而升級，不是縮手。",
-      "quote": "我們的預期反而調高了，而價格卻跌了——這正是加碼的時候。",
-      "motive_q": "{tickers} 你在虧損裡一路往下加。這派不把它當凹單——只問：你是『五年創新論點沒變、跌出更好的進場』，還是『論點其實已經被推翻、你只是不想認賠』？"
-    },
-    "出場紀律": {
-      "rubric_unit": "賣＝創新論點破了 / 換到更高信念，不因波動就跑",
-      "stance": "conditional", "lean": "thesis-5yr",
-      "rule": "賣出＝『五年創新論點被推翻』或『換到信念更高的標的』；別因為短期回吐或波動就把贏家賣掉。",
-      "quote": "不要跟破壞式創新作對。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些是『創新論點到頭、或換到更強的標的』，還是『被波動嚇到、賺一點就落袋，把長線贏家提早賣了』？"
-    },
-    "分散": {
-      "rubric_unit": "集中在少數破壞式平台；分散是跨創新主題不是為了求穩",
-      "stance": "inverted", "lean": "concentrate-innovation",
-      "rule": "別為了『看起來分散』去持沒有破壞性的標的；集中在少數高信念創新平台，要分也只跨不同的創新主題。",
-      "quote": "與其分散到一堆平庸標的，不如集中在你最相信的創新平台。【意譯】",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。這派不嫌你集中在創新——反問：其餘那些部位，是『不同的破壞式創新主題』，還是只是『為了分散』湊上去、其實沒有破壞性的？"
-    },
-    "持有時間": {
-      "rubric_unit": "五年以上尺度，突破要時間",
-      "stance": "conditional", "lean": "5yr-horizon",
-      "rule": "持有期以五年以上為尺度；破壞式創新的回報要時間發酵，別用一季的價格決定去留。",
-      "quote": "我們以五年以上的投資時間軸來思考突破。",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。是『創新論點的判斷變了所以調整』，還是『本來想長抱五年、一波回檔就改口下車』？"
-    },
-    "alpha/beta": {
-      "rubric_unit": "高波動是創新 alpha 的代價，不是該砍的洞",
-      "stance": "inverted", "lean": "embrace-vol",
-      "rule": "別把『波動大、回撤深』當成做錯；只要押的是真創新，高 β / 大震盪是高報酬的入場費——看五年的創新兌現，不看這一季的平滑。",
-      "quote": "我們願意承受更高的波動，去換取創新帶來的高報酬。",
-      "motive_q": "你贏大盤 {excess}pp，但 β={beta}。這派反問：這個高 β 是『你押對破壞式創新、願意付的波動代價』，還是『其實沒有創新論點、只是追高波動的熱門題材』？"
-    },
-    "進場": {
-      "rubric_unit": "創新論點強 + 大 TAM 才進；不為近期價格/波動卻步｜待 engine B.9",
-      "stance": "conditional", "lean": "innovation-thesis",
-      "rule": "進場看『破壞式創新論點強不強、TAM 夠不夠大』；論點成立就進，不因近期大漲或大跌、波動高低而改變決定。",
-      "quote": "尋找那些利用破壞式創新、擁有指數級成長潛力與龐大 TAM 的公司。",
-      "motive_q": "{entry_ticker} 你買在近 20 日高點、當天還大漲。是『破壞式創新論點與 TAM 撐得起這個價』，還是『沒有創新論點、只是看它在噴、你怕錯過』？"
-    }
+    "position_sizing": {"rubric_unit": "High-conviction innovation may deserve meaningful size", "stance": "inverted", "lean": "big", "rule": "Size meaningful positions only when the disruptive platform, adoption path, and valuation case are explicit.", "quote": "Conviction should reflect the strength of a multi-year innovation thesis. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. Which independent evidence makes this a high-conviction innovation thesis rather than a popular story?"},
+    "averaging_down": {"rubric_unit": "Add when conviction evidence improves", "stance": "inverted", "lean": "add-on-conviction", "rule": "Add only when new evidence strengthens the five-year thesis and the expected return improves; price decline alone is insufficient.", "quote": "Lower prices matter only when the long-term estimate remains supported or improves. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What new evidence improved the adoption, market-size, or valuation thesis?"},
+    "exit_discipline": {"rubric_unit": "Exit on thesis failure or a superior thesis", "stance": "conditional", "lean": "thesis-5yr", "rule": "Exit when the innovation thesis breaks, the five-year return case compresses, or a clearly stronger thesis replaces it.", "quote": "Short-term volatility is not the same as a broken long-term thesis. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which exits reflected a broken five-year thesis, and which reacted only to volatility?"},
+    "diversification": {"rubric_unit": "Concentrate in a few disruptive platforms", "stance": "inverted", "lean": "concentrate-innovation", "rule": "Concentrate only when each platform has a distinct adoption thesis; multiple tickers tied to one innovation driver are one bet.", "quote": "A focused innovation portfolio still needs distinct thesis drivers. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Are these independent innovation platforms or repeated exposure to one narrative?"},
+    "holding_period": {"rubric_unit": "Use a five-year evaluation horizon", "stance": "conditional", "lean": "5yr-horizon", "rule": "Set five-year milestones at entry and judge progress against them instead of relabeling the horizon after a price move.", "quote": "Breakthrough adoption should be measured over years, not one quarter. (paraphrase)", "motive_q": "For {incon_tickers}, did a five-year milestone change, or did the holding label change because the position moved against you?"},
+    "alpha_beta": {"rubric_unit": "Separate innovation alpha from high-volatility beta", "stance": "inverted", "lean": "embrace-vol", "rule": "Accept volatility only when it accompanies measurable thesis progress; decompose returns before calling volatility innovation alpha.", "quote": "Volatility can be a cost of innovation exposure, but it is not proof of innovation. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. How much came from thesis progress versus high-growth beta?"},
+    "entry_style": {"rubric_unit": "Require an explicit innovation thesis", "stance": "conditional", "lean": "innovation-thesis", "rule": "Before entry, state the disruptive platform, adoption curve, addressable market, five-year milestone, and falsifier.", "quote": "A large market is useful only when the company has a credible path to disrupt it. (paraphrase)", "motive_q": "For {entry_ticker}, what specific innovation milestone justified entry beyond price momentum or fear of missing out?"}
   }
 }

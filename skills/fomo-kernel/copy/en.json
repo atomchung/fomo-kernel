@@ -1,0 +1,51 @@
+{
+  "language": "en",
+  "title": "Trade Review Card",
+  "private_badge": "Private full version; stored locally only",
+  "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
+  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the private card.",
+  "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
+  "sections": {
+    "numbers": "The account for this review",
+    "trades": "Best and worst realized trades",
+    "strength": "One thing you did well",
+    "hole": "The biggest behavioral leak",
+    "motive": "The thesis behind the add",
+    "etf": "ETF and portfolio structure",
+    "rule": "Change only this next time"
+  },
+  "dimensions": {
+    "exit_discipline": "exit discipline",
+    "position_sizing": "position sizing",
+    "diversification": "portfolio diversification",
+    "holding_period": "holding-horizon consistency",
+    "averaging_down": "averaging-down discipline",
+    "alpha_beta": "benchmark attribution",
+    "entry_style": "entry style"
+  },
+  "rules": {
+    "exit_discipline": "Before exiting, name the fact that completed or broke the thesis. Fear of giving back gains is not enough.",
+    "position_sizing": "Check the single-risk-position cap before placing the order. If it is already over the cap, do not add.",
+    "diversification": "Before adding a position, check whether it is still the same underlying driver. If that bet is already too large, do not add.",
+    "holding_period": "Label the trade as short-term, swing, or long-term at entry. Exit only for a reason from the same horizon.",
+    "averaging_down": "Before averaging down, write one piece of evidence you did not know at entry. If you cannot, do not add."
+  },
+  "add_choices": {
+    "planned_tranche": "A pre-planned tranche",
+    "new_evidence": "New testable evidence",
+    "valuation_change": "The valuation or odds changed",
+    "price_only": "Only the price fell / lower the cost basis",
+    "skip": "Skip for now"
+  },
+  "honesty": {
+    "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",
+    "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
+    "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
+    "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
+    "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
+    "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
+    "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
+    "acct_perf_basis": "Account performance uses partial cost or FX approximations and remains uncertain.",
+    "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero."
+  }
+}

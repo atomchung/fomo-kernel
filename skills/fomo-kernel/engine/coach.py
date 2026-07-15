@@ -399,12 +399,16 @@ DATA_FILES = [
     ("last_state.json", "json", "上次引擎算出的薄狀態(對帳用;每次跑覆蓋,非 append-only)"),
     ("log.jsonl", "jsonl", "每次復盤的規矩承諾 + metric 快照"),
     ("theses.jsonl", "jsonl", "每筆持倉的持股假設與出場敘事"),
+    ("thesis_decisions.jsonl", "jsonl", "每次加碼的 thesis 決策與 evidence delta"),
     ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
     ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),
     ("cards", "dir", "每次復盤的完整私人卡(含絕對金額/ticker/佔比)"),
+    ("sessions", "tree", "v2 canonical session bundles(private/public cards + manifest)"),
+    ("projections", "dir", "canonical bundle 投影到舊資料檔的修復紀錄"),
+    (".pending", "tree", "尚未 finalize 的可恢復 review plan/answers/preview"),
 ]
 
 
@@ -420,11 +424,14 @@ def _scan_root(root):
         entry = {"name": name, "path": path, "kind": kind, "desc": desc,
                  "exists": os.path.exists(path)}
         if entry["exists"]:
-            if kind == "dir":
-                files = sorted(f for f in os.listdir(path)
-                               if os.path.isfile(os.path.join(path, f)))
+            if kind in {"dir", "tree"}:
+                if kind == "tree":
+                    files = sorted(os.path.join(dp, f) for dp, _, fs in os.walk(path) for f in fs)
+                else:
+                    files = sorted(os.path.join(path, f) for f in os.listdir(path)
+                                   if os.path.isfile(os.path.join(path, f)))
                 entry["count"] = len(files)
-                entry["size_bytes"] = sum(os.path.getsize(os.path.join(path, f)) for f in files)
+                entry["size_bytes"] = sum(os.path.getsize(f) for f in files)
             else:
                 entry["size_bytes"] = os.path.getsize(path)
                 if kind == "jsonl":
@@ -450,11 +457,12 @@ def cmd_data_export(args):
         _die(f"{root} 下沒有任何資料可匯出(可能是第一次使用,或 --root 指錯路徑)")
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as zf:
         for e in present:
-            if e["kind"] == "dir":
-                for f in sorted(os.listdir(e["path"])):
-                    fp = os.path.join(e["path"], f)
-                    if os.path.isfile(fp):
-                        zf.write(fp, arcname=os.path.join(e["name"], f))
+            if e["kind"] in {"dir", "tree"}:
+                for dp, _, files in os.walk(e["path"]):
+                    for f in sorted(files):
+                        fp = os.path.join(dp, f)
+                        rel = os.path.relpath(fp, e["path"])
+                        zf.write(fp, arcname=os.path.join(e["name"], rel))
             else:
                 zf.write(e["path"], arcname=e["name"])
     print(f"⚠️  匯出檔含敏感交易衍生資料(部位金額/ticker/規矩承諾),請比照對帳單妥善保存:{args.out}",
@@ -477,7 +485,7 @@ def cmd_data_reset(args):
         return
     deleted = []
     for e in present:
-        if e["kind"] == "dir":
+        if e["kind"] in {"dir", "tree"}:
             shutil.rmtree(e["path"])
         else:
             os.remove(e["path"])

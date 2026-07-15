@@ -1,0 +1,44 @@
+{
+  "skill_name": "fomo-kernel",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this brokerage CSV. I added to one position after it was underwater. Do not give investment advice; help me distinguish genuinely new thesis evidence from reluctance to realize a loss, and finish with one card.",
+      "expected_output": "The agent runs prepare, asks every required motive question before preview, records an evidence-gated thesis decision, shows one private preview, lets the user choose one rule, and finalizes one canonical session.",
+      "files": ["mock/sample_value.csv"],
+      "expectations": [
+        "The agent uses engine/review.py prepare rather than manually reproducing the long workflow.",
+        "No verdict card appears before every required question has an answer.",
+        "Choosing new_evidence requires evidence_delta.claim and evidence_delta.source.",
+        "All displayed numbers come from engine artifacts and the final card has one commitment at most.",
+        "Finalize produces an immutable session bundle and private/public card artifacts."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "My core allocation is SPY and bond ETFs, with a smaller QQQ and individual-stock sleeve. Review the trades without treating broad-market ETFs as single-stock concentration, but keep thematic ETF concentration visible.",
+      "expected_output": "The review applies the deterministic ETF policy: diversified allocation ETFs are excluded from single-name concentration while sector, thematic, and leveraged ETFs remain concentration risk; metadata gaps are disclosed rather than guessed.",
+      "files": ["mock/mock_trades.csv"],
+      "expectations": [
+        "Broad-market, regional, bond, and commodity ETFs may receive only the explicit allocation exemption.",
+        "Sector, thematic, and leveraged ETFs remain in sizing, top-three risk, and stress diagnostics.",
+        "Unknown tickers do not receive an ETF exemption.",
+        "Missing expense-ratio or tracking-error metadata is disclosed and never treated as zero.",
+        "The output reviews behavior and process without recommending a security to buy or sell."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run this review in English for a friend overseas. Keep my full card private, but also prepare a version I can post publicly without exposing my portfolio size, dates, holdings, or exact weights.",
+      "expected_output": "The same engine facts are rendered through English copy into a full local private card and a separately rendered public card with strict redaction.",
+      "files": ["mock/sample_fundamental.csv"],
+      "expectations": [
+        "The Review Plan, questions, selected rule, and private card are in English.",
+        "English mode uses the same engine card/state schemas and analysis policy as zh-TW.",
+        "The public card contains no amounts, dates, tickers, exact weights, session id, or agent free text.",
+        "The private card preserves engine-derived P&L, payoff, best/worst trades, top hole, honesty disclosures, and one rule.",
+        "Only the public card is offered for posting; the private artifact remains local."
+      ]
+    }
+  ]
+}

@@ -30,6 +30,11 @@ import json
 import os
 
 LENS_DIR = os.path.join(os.path.dirname(__file__), "..", "rubric")
+DIMENSION_ID_BY_LEGACY_LABEL = {
+    "出場紀律": "exit_discipline", "部位 sizing": "position_sizing",
+    "分散": "diversification", "持有時間": "holding_period",
+    "加碼攤平": "averaging_down", "alpha/beta": "alpha_beta", "進場": "entry_style",
+}
 
 STANCE_J = {"inverted": -1.0, "conditional": 0.5, "aligned": 0.0, "unconditional": 1.0}
 # aligned = 0.0(中立基線):普世/meta 派(如交易心理)不該被當「最對立」,它沒在 fork。
@@ -73,7 +78,7 @@ def compare_lenses(dims, lenses):
     每項記下最對立的一對 master(a, b)。只計 triggered 的洞。"""
     rows = []
     for d in dims:
-        key = d["dim"]
+        key = d.get("dim_id") or DIMENSION_ID_BY_LEGACY_LABEL.get(d["dim"], d["dim"])
         if not d.get("triggered"):
             continue
         present = [L for L in lenses if key in L.get("dims", {})]

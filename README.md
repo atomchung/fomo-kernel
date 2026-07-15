@@ -2,12 +2,12 @@
 
 **English** · [繁體中文](README.zh-TW.md)
 
-> A [Claude Code](https://claude.com/claude-code) skill that reviews your real trades through **one master's lens** (a swappable distillation of a trading philosophy) and hands you back **a single card** —
+> A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It reviews your real trades through **one master's lens** and hands you back **a single card** —
 > the one thing you did right + your biggest leak (in your own numbers) + one rule to keep next time + one line from the master.
 
 Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it forces you to change exactly one thing next time.**
 
-> 📝 **Note on language.** This README is in English, but the skill's runtime output, the master lens, `SKILL.md`, and `AGENTS.md` are currently in Traditional Chinese — FOMO Kernel is Chinese-first today. This page covers setup and concepts so you can decide whether to install; the card you'll actually get renders in Chinese.
+> 📝 **Language.** The same review contract renders in Traditional Chinese or English (`--language zh-TW|en`). Translation changes the questions and card copy, not the engine facts or analysis policy.
 
 ## Quick start
 
@@ -18,16 +18,17 @@ Not another stats report. It does what a report can't: **first it computes the b
 ```
 The card's value is in step ② — the engine flags a suspicious position and asks *"averaging down on conviction, or refusing to cut a loser?"*; your one-sentence answer is what turns the raw diagnosis into a verdict. **You can't see that layer from the engine's raw output alone.** Install steps under [Install](#install).
 
-**Want zero-install, just to see what the engine computes** (the *raw diagnosis* from the mechanical layer — not yet the finished card):
+**Want zero-install, just to see the stable flow start:**
 ```bash
 git clone https://github.com/atomchung/fomo-kernel && cd fomo-kernel
 pip install -r requirements.txt      # if it errors with externally-managed-environment → see the venv steps under Install
-cd skills/fomo-kernel && python3 engine/trade_recap.py   # runs the built-in mock, prints the raw diagnosis
+cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --language en
+# emits a resumable Review Plan; required motive questions come before preview/finalize
 ```
 
 ## What it looks like
 
-Running the built-in mock, the **illustrative card** looks like this (below is the simplified quick-view; the actual engine output is a full-color terminal card that also includes a what-if drawdown stress test, 5-dimension behavior bars, and a return-attribution section — the finished verdict card is what Claude converges on *after* asking about motive in Step ②). *Both the text below and the card image further down are English translations to show the shape — the engine currently renders in Traditional Chinese, so what you'll actually get looks like the "跑出來長什麼樣" section of the [Traditional Chinese README](README.zh-TW.md) instead:*
+Running the built-in mock, the **illustrative card** looks like this (below is a simplified quick-view; the finished private card is rendered only after the required motive questions and one-rule choice):
 
 ```text
 Review card · Master lens · mock sample
@@ -82,11 +83,17 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
 - The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing sent to the author**. For weekly reconciliation it does save review-derived state **locally** under `~/.trade-coach/` (never sent anywhere) — see the next section for exactly what that is and how to inspect, export, or wipe it.
 - The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
 - `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
-- Precisely: the only thing that reads your trades is **the Claude you're already using** — it has to read the CSV to review it for you, exactly like any other time you use Claude. That's a different thing from handing your statement to a SaaS that stores it, that you can't see into, that the author can query. (So it's not "never touches any server" — it's "not persisted, not sent to the author, not through a third party.")
+- Precisely: the local Python engine reads the normalized CSV, and the coding agent you invoke may read the source statement to map broker columns. Nothing is sent to the author. This differs from handing a statement to a SaaS whose retained data you cannot inspect.
 
 ## 📁 Where your coach memory lives / how to maintain it
 
-On your second visit, the card first reconciles "did you keep last time's rule?" — backed by several **local-only** files under `~/.trade-coach/` (never sent anywhere, never to the author). The four behind that reconciliation:
+On your second visit, the card first reconciles "did you keep last time's rule?" The canonical record is one immutable directory per review:
+
+```bash
+ls ~/.trade-coach/sessions/       # bundle + state + answers + cards + hash manifest
+```
+
+Legacy tools remain compatible through rebuildable projections:
 
 ```bash
 cat ~/.trade-coach/log.jsonl       # one line per review (thin metrics + the rule you committed to); empty = first time
@@ -107,15 +114,15 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually 
 - **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
 - **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
 - **Switch philosophy lens / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
-- **Wrote a thesis wrong** → edit `theses.jsonl`; it's append-only, so a correction = append a new event (don't overwrite the old one — that's how you see, across time, how you first reasoned and how it later changed).
+- **Wrote a thesis wrong** → correct it in the next review; the new event points to the earlier thesis. Do not hand-edit `theses.jsonl`: it is now a rebuildable projection of canonical sessions.
 - **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
 - **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
 
-> 💡 **Want to share with a community?** By default the card is the full private version only. Tell me "give me the shareable version" and it outputs a **de-sensitized** plain-text version (hides amounts / share counts / exact ratios, keeps only the behavior pattern + relative performance β / beat-the-market pp) — ready to paste to X / Threads.
+> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered view that removes amounts, dates, tickers, exact weights, and agent free text. The private card remains the default response; ask for the public card when you want to post it.
 
 ## Install
 
-**Prerequisite: this is a skill for [Claude Code](https://claude.com/claude-code)** — Anthropic's terminal / desktop AI tool (needs a Claude subscription). If you haven't used it, spend 5 minutes to [install and log in](https://docs.claude.com/en/docs/claude-code/setup) first, then come back for the three steps below.
+**Prerequisite:** Python 3.11+. Claude Code users can install the slash-command skill below; Codex, Cursor, and other agents can use the repo directly through `AGENTS.md` and `engine/review.py` without a Claude subscription.
 
 Needs Python 3.11+. **On recent macOS (Homebrew / system Python) a bare `pip install` is blocked by PEP 668** (`externally-managed-environment`); use a venv:
 ```bash
@@ -139,19 +146,21 @@ Inside Claude Code:
 ```
 Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`, plus optional `Market / Currency` for non-US stocks — e.g. `2330.TW / TW / TWD`; omitted = US/USD); you don't hand-clean anything.
 
-> 🏷️ For **obscure tickers** the engine's sector table doesn't recognize, Claude **auto-generates a driver map** for you to confirm (each tagged `[sector, theme]`), so the "diversification" dimension doesn't count same-theme names as real diversification — you don't do this by hand, and don't let it fall back to the `driver map: 0 tickers` case (diversification goes off). Details in SKILL Step 0.5.
+> 🏷️ For **obscure tickers**, the agent may propose a local driver map for sector/theme exposure. For obscure ETFs it may also propose an instrument map, but the code grants an allocation exemption only to explicit broad-market, regional, bond, or commodity classifications; unknowns remain concentrated by default.
 
-**What happens**: ① the engine runs the diagnosis → ② Claude asks you 1–3 thesis/motive questions in dialogue (dip-buy or averaging a loser?) → ③ with your answers, it issues one verdict card. Card layout is in [`card-template.html`](skills/fomo-kernel/card-template.html) (a full four-layer HTML example).
+**What happens**: ① `prepare` runs the deterministic diagnosis and builds a question queue → ② the agent asks those thesis/motive questions → ③ `preview` validates the answers and renders a card → ④ you choose one rule and `finalize` commits the session atomically.
 
 ## Using it from other coding agents
 
-You don't need Claude Code's skill system — the core engine is plain Python and depends on no agent machinery:
+You don't need Claude Code's skill system. Codex, Cursor, and other agents use the same orchestration contract:
 
 ```bash
-cd skills/fomo-kernel && python3 engine/trade_recap.py ~/Downloads/my.csv
+cd skills/fomo-kernel
+python3 engine/review.py prepare ~/Downloads/my.csv --language en
+# follow review_plan.flow_path, answer question_queue, then call preview and finalize
 ```
 
-If you use Codex / Cursor or another coding agent, point it at [`AGENTS.md`](AGENTS.md) and have it follow along — that file is the routing guide for non-Claude-Code agents, telling it how to run the engine, ask about motive, and issue the card.
+Point the agent at [`AGENTS.md`](AGENTS.md). `SKILL.md` is now a thin entry; mode-specific flows, JSON schemas, deterministic validators, and renderers hold the detailed contract.
 
 ## Style samples (runnable — see how different styles surface different leaks)
 
@@ -179,11 +188,19 @@ python3 engine/trade_recap.py                          # no args = mock_trades.c
 
 ```
 skills/fomo-kernel/
-  SKILL.md                  ← the skill itself (four-step flow: format → engine → pre-card confirm → verdict card)
+  SKILL.md                  ← thin public entry and invariants
+  flows/                    ← first / weekly / snapshot / test-drive contracts
+  references/               ← agent boundaries, thesis, card, and recovery policies
+  schemas/                  ← Review Plan / answers / narrative / canonical bundle
+  copy/                     ← Traditional Chinese and English product copy
+  engine/review.py          ← prepare / preview / finalize / resume orchestration
+  engine/session.py         ← atomic canonical bundle + legacy projections
+  engine/card_renderer.py   ← deterministic private/public Markdown + HTML
+  engine/instruments.py     ← ETF allocation-vs-concentration policy
   card-spec.md              ← Step 3 card spec (blocklist / redact / narrative rules; read only after Step 2 questions)
   engine/trade_recap.py     ← mechanical layer: 5-dim + per-position DCA/loser classifier + attribution (pure functions, no real paths)
   rubric/
-    vincent-yu.md           ← the default lens's principle distillation (each cited to source; swappable for another master)
+    vincent-yu.md           ← the default lens's principle distillation (paraphrased, with per-lens source lists; swappable for another master)
     vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
   behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
   card-template.html        ← review-card HTML layout example
@@ -192,6 +209,6 @@ skills/fomo-kernel/
 
 ## Disclaimer
 
-The default lens is a principle distillation from one investor's public writing (sources cited line-by-line in `rubric/`) — quoted, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
+The default lens is a principle distillation from one investor's public writing — paraphrased summaries with per-lens source lists in `rubric/`, not verbatim quotation, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
 This tool is positioned as **research / coaching support**; all output is trade-behavior review and discipline suggestions only — **not investment advice, and no buy/sell recommendation on any instrument**; final investment decisions and outcomes are your own.
-The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is principle quotation with sources cited line-by-line, and is not relicensed under MIT.
+The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is paraphrased principle distillation with per-lens source lists, and is not relicensed under MIT.

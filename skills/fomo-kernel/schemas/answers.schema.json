@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/answers.schema.json",
+  "title": "Fomo Kernel Review Answers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "answers", "thesis_updates"],
+  "properties": {
+    "session_id": {"type": "string"},
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_id", "choice"],
+        "properties": {
+          "question_id": {"type": "string"},
+          "choice": {"type": "string"},
+          "note": {"type": ["string", "null"]},
+          "evidence_delta": {
+            "type": ["object", "null"],
+            "properties": {
+              "claim": {"type": "string"},
+              "source": {"type": "string"},
+              "observed_at": {"type": ["string", "null"]},
+              "falsifier": {"type": ["string", "null"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "commitment": {
+      "type": "object",
+      "required": ["choice"],
+      "properties": {
+        "choice": {"type": "string"},
+        "rule": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "goal": {"enum": ["down", "up", "hold"]},
+        "dim": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "thesis_updates": {"type": "array", "items": {"type": "object"}},
+    "observations": {"type": "array", "items": {"type": "string"}}
+  }
+}

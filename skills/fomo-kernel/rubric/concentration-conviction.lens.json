@@ -1,72 +1,17 @@
 {
-  "philosophy": "集中信念",
-  "master": "集中信念",
-  "source": "原則蒸餾自 Druckenmiller / Soros 公開訪談與演講,引用非轉載、非經本人背書。⚠️ 引言為意譯,尚未對原始訪談逐句校對,上線前需 verbatim 對齊審查。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 concentration-conviction.md。stance/lean 供 compare_lenses。此派與 VY 最大反轉在 sizing/分散(VY:別梭哈、雙紅線;此派:高信念就該重壓,小注是浪費資本)。",
-
-  "master_intro": {
-    "one_line": "集中信念派的核心:看準了,就把蛋放一個籃子、然後死盯著它。它不問你『有沒有分散』,問你『這真是你最高信念的賭注嗎——是的話,為什麼下這麼小』。",
-    "pillars": [
-      "高信念才下注,沒信念就空手——別把資本浪費在一堆低信念標的",
-      "看準了就重壓:集中在你最有把握的 1–3 個 idea",
-      "重點不是你對或錯,是對的時候賺多大、錯的時候虧多小",
-      "集中反而降低風險,因為大部位逼你全神貫注、錯了快砍",
-      "top-down:先抓宏觀/流動性的大方向,再選工具"
-    ],
-    "why_it_matters": "這把尺偏『高信念集中 + 錯了快砍』。如果你是分散派/被動派,它有些條對你是反的——它會把你的『適度分散』讀成『稀釋信念』。它照的是你敢不敢在真有把握時下重注、又能不能在錯時果斷退場,不是逼你變成宏觀投機者。"
-  },
-
-  "strength_intro": "先講你做對的一件事(集中派先認你敢於表態的那一注):",
-
+  "philosophy": "Concentration and conviction",
+  "master": "Concentration and conviction",
+  "source": "Distilled from public Druckenmiller and Soros material. All card language below is paraphrase pending primary-source verification.",
+  "_note": "Runtime lens. It treats weak conviction as a reason to hold cash and strong, evidenced conviction as a reason for meaningful size.",
+  "master_intro": {"one_line": "Hold cash until evidence supports a rare, asymmetric, high-conviction opportunity.", "pillars": ["Avoid low-conviction allocation", "Concentrate in the best evidence", "Prioritize payoff asymmetry", "Watch large positions closely", "Start with macro and liquidity"], "why_it_matters": "This lens asks whether position size actually matches the quality and asymmetry of the evidence."},
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "stance": "inverted", "lean": "big",
-      "rubric_unit": "高信念重壓 / 小注是浪費資本",
-      "rule": "把資金集中到你最高信念的 1–3 個 idea;說不出強烈理由的部位,砍掉、別稀釋。",
-      "quote": "看準了,就把蛋放一個籃子,然後死盯著那個籃子。",
-      "motive_q": "{max_ticker} 才佔你 {max_pct}%。集中派反問:如果這真是你最高信念的 idea,為什麼不是兩倍?那些低信念的部位,又為什麼還在稀釋你?"
-    },
-    "加碼攤平": {
-      "stance": "conditional", "lean": "evidence",
-      "rubric_unit": "加碼=信念升級;錯了快砍、不凹",
-      "rule": "往下加只有在『宏觀/論點變更強(信念該升級)』時才做;若只是價格跌,錯了就果斷砍,別攤。",
-      "quote": "重點不是你對或錯,是對的時候賺多大、錯的時候虧多小。",
-      "motive_q": "{tickers} 你在虧損裡往下加。是『你的核心論點變得更強、值得升級信念倉』,還是『只是不認賠』?集中派錯了會砍,不會凹。"
-    },
-    "出場紀律": {
-      "stance": "conditional", "lean": "thesis",
-      "rubric_unit": "論點破了就走、贏家讓它跑",
-      "rule": "賣出 = 你下注的宏觀/個股論點被推翻;論點還在、就讓贏家繼續跑,別因怕回吐就獲利了結。",
-      "quote": "當宏觀圖像改變,我會毫不猶豫地反向;戀棧一個壞掉的論點最貴。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些賣出是『下注的論點到頭了』,還是『賺了怕回吐、提早下車』?"
-    },
-    "分散": {
-      "stance": "inverted", "lean": "concentrate",
-      "rubric_unit": "集中打敗分散;分散是把資本攤到沒把握的東西",
-      "rule": "別為了『看起來分散』而持有你沒把握的標的;寧可少而精、盯緊它,也不要多而散。",
-      "quote": "把資本攤薄到三、四十個名字上,是怕犯錯的人在做的事;真有把握就該集中。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。集中派不嫌你不夠分散——反而問:其餘那些『為了分散』的部位,你真有把握,還是只是怕集中?"
-    },
-    "持有時間": {
-      "stance": "conditional", "lean": "trend",
-      "rubric_unit": "趨勢/論點在就抱,變了就走",
-      "rule": "持有期由你下注的宏觀趨勢/論點壽命決定,不由預設標籤;趨勢沒結束前別輕易下車。",
-      "quote": "賺大錢靠的是看對大方向後抱得住,不是頻繁進出。",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。是『趨勢還在所以續抱』,還是『套牢了改口說長期』?"
-    },
-    "alpha/beta": {
-      "stance": "aligned", "lean": "decompose",
-      "rubric_unit": "分清宏觀方向紅利 vs 真選股/擇時",
-      "rule": "每季分清:你贏大盤,是『押對了宏觀/流動性方向』,還是『個股選得好』?兩個都好,但別搞混。",
-      "quote": "別把站對了一個大趨勢,誤認成你每一筆都選得準。",
-      "motive_q": "你贏大盤 {excess}pp,但 β={beta}。集中派問:這是『你押對了一個大方向(該認、該重壓)』,還是『分散在一堆中信念上的平均結果』?"
-    },
-    "進場": {
-      "stance": "conditional", "lean": "gap",
-      "rubric_unit": "在不對稱(賠率懸殊)且高信念時才進｜待 engine B.9",
-      "rule": "進場前先問『這筆的賠率對稱嗎、我的信念有多強』;不對稱+高信念才重壓進場,普通機會就放掉。",
-      "quote": "一生能真正看準的大機會沒幾次;機會來時要敢於重壓。",
-      "motive_q": "{entry_ticker} 這筆進場,你的信念有多強、賠率多不對稱?是『難得的高信念大機會』,還是『順手下的中等注』?"
-    }
+    "position_sizing": {"rubric_unit": "Strong conviction should produce meaningful size", "stance": "inverted", "lean": "big", "rule": "Hold cash for weak ideas; use meaningful size only when evidence, asymmetry, and falsifiers support high conviction.", "quote": "When evidence and payoff are exceptional, small sizing can waste the opportunity. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. Which independent evidence and payoff asymmetry justify that conviction level?"},
+    "averaging_down": {"rubric_unit": "Add only on stronger evidence", "stance": "conditional", "lean": "evidence", "rule": "Add only when new independent evidence strengthens the thesis; a lower price and unchanged story are not enough.", "quote": "Conviction should rise because evidence improves, not because the position is losing. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What did you learn after entry that materially increased conviction?"},
+    "exit_discipline": {"rubric_unit": "Exit quickly when the thesis changes", "stance": "conditional", "lean": "thesis", "rule": "Write the thesis and falsifier before entry, monitor large positions closely, and exit when the thesis changes.", "quote": "A large position requires fast recognition when the reason for owning it is no longer true. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which exits followed a broken thesis, and which reflected discomfort with a large gain?"},
+    "diversification": {"rubric_unit": "Concentrate rather than allocate to weak ideas", "stance": "inverted", "lean": "concentrate", "rule": "Do not add low-conviction positions for appearance; concentrate only in distinct, well-evidenced theses.", "quote": "Cash is preferable to a portfolio filled with second-best ideas. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. Which are truly distinct high-conviction theses, and which dilute the best idea?"},
+    "holding_period": {"rubric_unit": "Hold while the thesis and trend remain intact", "stance": "conditional", "lean": "trend", "rule": "Let the thesis and its expected catalyst determine the horizon; do not relabel a failed trade as a long-term holding.", "quote": "The horizon follows the thesis, not the need to avoid admitting error. (paraphrase)", "motive_q": "For {incon_tickers}, did the thesis horizon change, or did the label change after the trade moved against you?"},
+    "alpha_beta": {"rubric_unit": "Separate thesis alpha from macro beta", "stance": "aligned", "lean": "decompose", "rule": "Decompose market, sector, liquidity, and thesis-specific return before attributing performance to conviction.", "quote": "A correct macro wind does not by itself prove instrument-selection skill. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. Which part came from the thesis rather than the shared macro driver?"},
+    "entry_style": {"rubric_unit": "Enter where evidence and expectations diverge", "stance": "conditional", "lean": "gap", "rule": "Before entry, state what the market expects, what you believe instead, the catalyst, and the falsifier.", "quote": "Conviction needs a specific expectation gap, not a strong feeling. (paraphrase)", "motive_q": "For {entry_ticker}, what expectation gap and catalyst justified entry beyond recent price strength?"}
   }
 }

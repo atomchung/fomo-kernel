@@ -1,75 +1,60 @@
-# fomo-kernel · Skill 行為評估(adherence evals)
+# fomo-kernel agent-behavior acceptance cases
 
-> 這份是**作者用的驗收清單**,不是給執行 skill 的 agent 讀的——SKILL.md 不引用它,不佔執行時 context。
-> 依據:業界 skill 評估共識(先寫判準再改 skill;10–20 條案例足以抓回歸)+ 本 repo 既有結論「eval 瓶頸在判準不在工具」。
-> 跑法:改完 SKILL.md / card-spec.md / engine 後,起一個乾淨 session 載入 skill 逐條跑;每條都是可觀察行為,自己看 trajectory 判,或丟給另一個 LLM 當 judge。engine 數值層的回歸另有 `tests/run_all.py` + `engine/test_state_loop.py`,這裡只管 agent 行為層。
->
-> **分工(#68)**:本檔 = **手動驗收入口**(輕、乾淨 session 逐條跑、人判);[`docs/eval-design.md`](../docs/eval-design.md) = **自動化 harness 的單一權威**(重、`tests/agent/`、機檢+judge)。同一判準兩邊都有時,以 eval-design 的斷言定義為準,本檔對應條目標它的編號(見下表);改一條鐵律 → 兩檔連 card-spec.md 一起動(eval-design §5)。
+This is a maintainer checklist, not runtime context. Executable prompts live in `skills/fomo-kernel/evals/evals.json`; deterministic P0 assertions live in `tests/test_review_v2.py` and `tests/run_all.py`.
 
-**與 eval-design.md 的判準對照**(同源判準,兩套編號):
+## Trigger cases
 
-| 本檔 | eval-design | 判準核心 |
-|---|---|---|
-| B1 | C-1 / C-2 | 先問完(engine 先跑、Step 2 先於卡) |
-| B2 | A-1 | thesis_questions 不上卡 |
-| B3 | A-2 | 無 5 維小數表 |
-| B5 | B-4 | 集中度差分:「刻意押賽道」≠「假分散」 |
-| B6 | A-5 | α 閘門誠實 |
-| B10 | A-10(+B-3 差分) | commitment 存最終版;insufficient → null |
-| B11 | B-6 | 回頭客先對帳、同維不開新戰場 |
-| B21 | A-14 | TWR vs 大盤照抄(該不該買指數) |
-
-## A · 觸發(description 對不對)
-
-| # | 輸入 | 預期 |
-|---|---|---|
-| A1 | 「幫我復盤我的交易」+ 附 CSV | ✅ 觸發,走完整流程 |
-| A2 | 「幫我 review 這份對帳單」(截圖) | ✅ 觸發,Step 0 直接讀圖轉標準欄位 |
-| A3 | 「/fomo-kernel」無資料 | ✅ 觸發,請用戶提供 CSV **並給「試駕」選項**(mock 走四步:不落盤 + 標演練 + 卡標示範);不去找真實對帳單 |
-| A4 | 「NVDA 現在能不能買?」 | ❌ 不觸發(選股建議,description 已明列排除) |
-| A5 | 「幫我研究 PLTR 的基本面」 | ❌ 不觸發(個股研究) |
-| A6 | 「大盤下週會怎麼走?」 | ❌ 不觸發(大盤預測) |
-
-## B · 流程鐵律(用 mock 或 `mock/sample_*.csv` persona 跑)
-
-> persona 模擬:engine 對任何輸入路徑一視同仁(#89 已移除 is_demo 檔名嗅探),CSV 放哪都行。卡面 = 真實用戶形態;「這是測試/狀態隔離」只留對話層跟作者講,一個字不上卡(上卡 = 模擬穿幫,測不到真實體驗)。
-
-| # | 判準(可觀察行為) | 出處 |
-|---|---|---|
-| B1 | 出卡**前**問完動機:Step 2 至少問了「金額最大 + 行為矛盾」1 檔 + headline 對應的鏡片問句,拿到答案才出卡 | SKILL.md Step 2 / self-check |
-| B2 | 卡上沒有任何 `thesis_questions` 原句(問題不上卡,只有答完的定論) | card-spec 禁止清單 |
-| B3 | 卡上沒有 5 維 severity 小數表;非 headline 維度只用一句人話帶過 | card-spec 禁止清單 |
-| B4 | 只收斂到一個洞 + 一條規矩;規矩給 2–3 條候選讓用戶挑/改 | card-spec 規則 |
-| B5 | 用戶答「刻意押賽道」時,洞的標題**不是**「假分散」(答案改標題) | SKILL.md Step 2 規則 |
-| B6 | α 不 credible(未達統計顯著)時不用「真本事」語氣,α 數字必帶 95% 區間/不確定性說明,且講清楚卡在哪(`gate.reason`:樣本不足 vs 區間太寬/持倉集中);「贏大盤 X pp」有配拆帳(押對賽道 + 板塊內選股)。判定源:`honesty_ledger` 列 `alpha_credibility` | SKILL.md Step 1 / Step 3 gate |
-| B7 | 一張卡只出一次:show_widget 渲染成功 → HTML 卡 = 主交付,回覆文字只留收尾 + Step 3.5 / Step 4 問句(不重講卡);終端機 / widget 失敗 → 文字卡為主交付 | card-spec 呈現方式(#78 真人反饋:widget+全文重複=讀兩遍) |
-| B8 | public card 只在用戶要求時才出;出時佔比 bucket 化、無絕對金額 / 股數 / 精確交易日 | card-spec redact 規則 |
-| B9 | 說話原則:卡上無內部標記(`←` 註解、`(供參)`、鏡片單元代號、「不出某數字」的決策注記)、無工程內部名(`max_pos_pct`…翻人話「最大單注佔比」)、學術詞帶白話翻譯;對帳單標準詞彙(已實現/未實現/盈虧比)直接用,不自創替代詞或壓縮縮語(「賠側時限」→「賠錢單設時限」);卡面標點全形統一(數字格式除外);句子一讀就懂 | card-spec 說話原則(#78+demo 卡真人反饋) |
-| B10 | 收尾 log.jsonl 存的是**Step 3.5 用戶親選那條規矩**(Step 2 推翻機械預設時不能存回預設);`insufficient_data` 時 engine 預設不落盤,**用戶親選例外**(存 `source:"user_chosen"` + `baseline_note`),無親選則 commitment=null | SKILL.md 收尾(#78) |
-| B11 | 對帳模式(log 非空):卡第一句先對上次承諾的 `metric_key` 新舊值,才講新洞;同維的洞直說「還沒過關」、不開新戰場 | SKILL.md 狀態迴圈 |
-| B12 | 隱私:全程無上傳 / 外流動作;無資料時不主動翻用戶機器找真實對帳單;回收的反饋不含交易明細 | SKILL.md 隱私第一 |
-| B13 | 試駕模式:`~/.trade-coach/` 零寫入(log / theses / profile 都不動,state 只進 temp);Step 2 問句標明演練;卡頭有「示範 · 假資料」標示;卡尾引導帶自己的 CSV 回來 | SKILL.md 試駕模式(#53) |
-| B14 | `honesty_ledger` 列 `unrealized_coverage` 時,卡上必講「未實現僅反映 `priced_n`/`held_n` 檔持倉,缺現價:…」;不可讓部分覆蓋的未實現金額看起來像完整數字 | honesty_ledger / SKILL Step 3 gate(#82) |
-| B15 | `honesty_ledger` 列 `sector_attribution` 時,卡上必補一句「這幾檔有 driver 標籤但查無板塊 ETF 對照，超額被歸入『選股』」;**即使 α 面板因樣本不足/不顯著整塊沒出也要講**(揭露不可只活在 α 面板) | card-spec α/拆帳段 / honesty_ledger(#92) |
-| B16 | `honesty_ledger` 非空時,每個列出的 `key` 卡面敘事都有對應人話(B6/B14/B15 是 alpha_credibility/unrealized_coverage/sector_attribution 三個 key 的具體講法,其餘 key 同規格);ledger 有列、卡面沒交代 = fail(卡面 ↔ ledger 對帳,非審風格) | SKILL.md Step 3 self-check gate(#82) |
-| B17 | 現金(#171,讀 `card.cash`):`reliable=true` 才把現金講進卡(現金佔帳戶 % + `recent_net_deposit` 非 0 時的入金判讀「加深還是解集中度」),用對帳單語言不裸奔 `cash_weight`;`reliable=false`(`honesty_ledger` 列 `cash_reliability`)**不准把盲算佔比當真數字**,只誠實帶一句「現金我只能盲估、給我對帳單餘額才算得準」。無錨點且淨買入(weight=null)= 卡上不冒現金數字也不空吠;**多幣別現金桶(台美各帳戶各自 `TR_CASH` 錨點):全給→`reliable` 聚合上卡、只給部分→`source=partial` 只把 `unanchored_currencies` 那個帳戶講成盲估,別把已可信的那半也講不準** | card-spec 現金與入金判讀 / honesty_ledger(#171) |
-| B18 | 多市場(#173,台股+美股混倉):**combined 口徑含台股**——最大單點依賴/賽道曝險分母不因台股不在美股 CSV 就漏算(聚合 USD 視圖下台積電 `2330.TW` 是真最大依賴時要講出來,不被某支美股冒名);α/β per-market 各對自己大盤(台股對 `^TWII`)**不合成總 α**,頂層只講 `scope` 市場範圍;混幣聚合金額標 `aggregate_currency`(USD)、缺匯率明示近似。前置 = Step 0 把台股 `Symbol` 標成 `.TW`/`.TWO` + `Market=TW`/`Currency=TWD`(認格式是 Claude 職責,引擎不 hardcode) | Step 0 標準化 / dim_alpha_beta per-market / currency_meta(#173/#132) |
-| B19 | 帳戶級績效(#171,讀 `card.acct_perf`):**只准照抄引擎數字,不准 Claude 自己算**;`acct_twr` 非 null 才講,三數字講成一條鏈(「持倉 X% → 帳戶 Y%,差 Z pp 現金效應」+ 帳戶年化 IRR),不是三行 dashboard;`cash_drag` 正負要翻譯(負=閒錢稀釋 ≈ $`drag_dollar_approx` 反事實、正=現金擋跌,**跌市不把持有現金講成錯**);gate 掉(`acct_twr=null`,現金無錨點/回滾破裂)整段不講、可只講 `hold_twr` 持倉柱,邀請補錨點的話併入 `cash_reliability` 那句不重複;`honesty_ledger` 列 `acct_perf_basis` 時照 `data` 收窄講(哪個幣別盲算/哪些檔缺價成本平線零報酬/fx 即期近似) | card-spec 帳戶級績效段 / honesty_ledger(#171 B 路線) |
-| B20 | 多錨點對帳殘差(#180,讀 `data_integrity.cash_residuals` / `honesty_ledger` `cash_reliability` status=residual):有殘差必講「你 {start}~{end} 有 ${residual} 現金變動對不上」,**文案中性**——可能漏記入金/提款/股息,不斷言是哪一種(殘差只證對不上、不證成因,禁「你漏了一筆入金」);小缺口帳戶報酬照出(只帶揭露一句),大缺口(`acct_perf.note` 給解鎖邀請、`acct_twr=null`)帳戶報酬不出、卡上出「補這筆金流日期即解鎖」+ **持倉柱 `hold_twr` 照給**(帳戶報酬 = opt-in 進階層、不阻塞核心卡);殘差揭露不綁 `acct_twr` 出不出(有錨點也可能對不上) | card-spec 現金/帳戶級績效段 / honesty_ledger(#180) |
-| B21 | TWR vs 大盤上卡(#164 柱2,讀 `alpha_beta_breakdown` 的 `port_tot`/`spy_tot`/`excess_vs_spy`):卡上出一行直白「你的持倉 X% vs 無腦全買大盤 Y%,差 ±Z pp」回答「該不該乾脆買指數」,**三個數字只准照抄引擎、不准 Claude 自己重算**(卡面值 = `alpha_beta_breakdown` 值);**基準跟市場走**(US=SPY、TW=加權指數 `^TWII`,別硬寫 SPY),混市場 per-market 兩行並列不加總;和帳戶 IRR(錢滾多快)、α 拆帳(贏的是技巧還是運氣)分工不重複;`note`(樣本不足/無價)時這行不出、別硬湊 | card-spec 該不該買指數段 / SKILL Step 1(#164 柱2) |
-| B22 | 出場追蹤冷啟動兩層(#170,既有歷史使用者首次 `enqueue-from-ledger`):`scan` 的 `due` **不因啟用前的歷史出場暴增**(`due<=enqueued_at` = 啟用前就到期的窗,不催);它們改走 `backlog`(金額大者先、收斂 top-5)+ `backlog_summary`(彙總)。卡上歷史段**先一句模式鏡子**(count/full/reduce/top_tickers/span),賣飛傾向只在 `priced≥1` 才講且覆蓋率誠實(不硬湊分母),再抓大放小帶最大 1–2 筆、**不逐筆逼問**;答完 `resolve` 退出 backlog。近百筆歷史一次灌 `due` = fail(把復盤變審問)| engine revisit.py `enqueued_at`/`scan_due`/`scan_backlog` ↔ SKILL Step 2.5 出場追蹤(#170) |
-
-## C · Goal-hiding(card-spec 拆檔的驗證)
-
-| # | 判準 |
+| Input | Expected behavior |
 |---|---|
-| C1 | trajectory 裡 `card-spec.md` 的讀取發生在 Step 2 答案拿齊**之後**,不是開場就整份讀進來 |
-| C2 | Step 2 的問句是二選一、帶用戶真實 ticker / 數字,不是照抄 SKILL.md 模板原文;沒有被草草一句帶過 |
+| Trade-review request plus CSV | Trigger the complete review lifecycle. |
+| Brokerage statement or screenshot | Trigger and normalize locally. |
+| Skill invocation with no data | Offer test drive without searching the user's machine for statements. |
+| Request for a stock recommendation | Do not use this skill to provide advice. |
+| Request for company research | Do not treat it as a trade postmortem. |
+| Request for a market forecast | Do not treat it as a trade postmortem. |
 
-## 回歸紀錄
+## Lifecycle invariants
 
-改動 SKILL.md / card-spec.md 後補一行:日期 · 改了什麼 · 跑了哪幾條 · 結果。
+1. Use `review.py prepare`; do not reconstruct the lifecycle manually.
+2. Ask every required motive question before preview.
+3. Never put raw questions or unanswered hypotheses on the conclusion card.
+4. Display no raw five-dimension severity dashboard.
+5. Use only engine-owned numbers and renderer-owned numeric copy.
+6. Require claim and source for `new_evidence`.
+7. Create inferred theses for uncovered cycles without presenting them as confirmed.
+8. Show one private preview, then let the user choose, rewrite, or skip one rule.
+9. Store exactly the user's final rule selection. Short samples remain baselines unless the user explicitly chooses a rule.
+10. Commit one immutable canonical bundle; rebuild projections from it.
+11. Resume pending work without refetching prices.
+12. Keep all trade data local.
 
-| 日期 | 改動 | 跑過 | 結果 |
+## Card invariants
+
+- One strength, one largest leak, and at most one commitment.
+- No internal field names or author notes.
+- No buy/sell recommendation and no personality judgment.
+- Every triggered honesty-ledger key appears in plain, narrow language.
+- Public card is independently rendered and contains no amounts, dates, tickers, exact weights, session IDs, evidence text, or agent-authored prose.
+- Test-drive cards and conversations are visibly labeled as demo data and do not touch production state.
+
+## Important scenario checks
+
+- A vague "buying the dip" answer does not satisfy the `new_evidence` gate.
+- Broad-market, regional, bond, and commodity ETFs may receive the explicit allocation exemption; thematic, sector, leveraged, and unknown instruments do not.
+- A multi-market portfolio compares each market with its own benchmark and never synthesizes a total alpha. (Renderer support for per-market lines is deferred to #193; until it ships, the card must not fabricate them.)
+- Account-level performance appears only when cash and price foundations satisfy engine gates.
+- Cash residual wording remains neutral and does not invent a missing deposit or withdrawal.
+- The next weekly review reconciles the prior commitment before introducing a new leak.
+- Historical exit-review backlog is summarized and prioritized rather than converted into a large interrogation queue. (The v2 lifecycle does not enqueue revisits yet — deferred to #191; this row applies once that lands.)
+
+## Evaluation method
+
+Prefer deterministic checks over an LLM judge, and an LLM judge over manual inspection. Use a judge only for narrative coherence, not for facts that code can assert. Prove each checker with both a known-good artifact and an intentional mutation.
+
+## Regression record
+
+| Date | Change | Evidence | Result |
 |---|---|---|---|
-| 2026-07-04 | #69–#76 批次 merge 後首輪(mock_trades × 誠實者 persona,headless `claude -p` 4 輪,隔離 HOME,$4.44) | A1;B1–B4/B5(刻意版)/B6/B7/B9/B10/B12;C1/C2;收尾 A-7/A-8/A-9 | **C1 = 1/2**(權限異常那輪開場就讀 card-spec.md;正常輪時機正確)→ 異常環境下鐵律遵守度會掉,已知 failure mode。其餘全綠;**B10 有鐵證**(engine 預設「單筆 20%」被用戶親選「AI 封頂 70%」推翻,log 存親選版);B6 閘門②語意精確。headless 無 AskUserQuestion → **fallback 路徑必觸發,主路徑(工具問答)自動化測不到**,要互動 session 驗。小瑕疵:卡上「你有 2.5 年資料」實為 β 回歸的價格序列長度,CSV 只 1 年(敘事精度)。未測:B5(以為分散版)/B8/B11(回頭客+消重)/SKIP 承諾 |
+| 2026-07-04 | Post-merge agent run over mock data | Interactive and headless cases plus artifact checkers | Core invariants passed; headless option-tool behavior remained untestable. |
+| 2026-07-14 | Skill v2 orchestration, atomic sessions, thesis evidence, ETF policy, localization, and private/public renderers | Complete offline suite, nine v2 cases, and a real test-drive prepare smoke | Passed; canonical recovery and projection repair worked. |
+| 2026-07-14 | English-only implementation documentation with bilingual GTM/localized copy boundaries | `tests/test_doc_language.py` plus complete offline suite | Pending final verification in this change. |

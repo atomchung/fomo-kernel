@@ -1,48 +1,43 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fomo-kernel · 復盤卡版型</title>
+<title>fomo-kernel · review card template</title>
 <!--
   ====================================================================
-  fomo-kernel · 完整版復盤卡 版型參考 (card-template.html)
+  fomo-kernel · full review-card layout reference (card-template.html)
   --------------------------------------------------------------------
-  這是 SKILL.md Step 3「出一張卡」的 HTML 版型。runtime 時 Claude 用
-  visualize MCP 的 show_widget 即時產出:把下面標示 "WIDGET FRAGMENT"
-  的那段(<style> + <div class="rc">…</div>)餵進 show_widget 即可——
-  host 會自動提供 CSS 變數(明暗模式)與 Tabler icon 字型。
+  This is the HTML layout for SKILL.md Step 3, "render one card." At runtime,
+  send the section marked WIDGET FRAGMENT (<style> + <div class="rc">...</div>)
+  to the widget renderer. The host provides light/dark CSS variables and the
+  Tabler icon font.
 
-  · 資料來源:engine/trade_recap.py 跑 mock/mock_trades.csv 的真實輸出。
-  · 換成真人 CSV:把數字 / 標籤 / 敘事換掉,版型結構不動。
-  · 設計規範(2026-07-04 triad UI review 後定版):
-    - flat、明暗雙模式、Tabler outline icon、無 emoji、字重只用 400/500。
-    - 大區塊一律中性底(--surface-1 + 0.5px --border),絕不用語義色當
-      版面底色——綠/紅/藍/黃同卡即「多色告警面板」,這是上一版被打的主因。
-      語義色只准出現在:icon、區塊小標(htag/rt)、關鍵字、損益數字。
-    - tag 一律 outline(透明底 + 邊框),不用色底膠囊。
-    - h1 20px 是全卡唯一最大字;metric 數字 19px 退一級;不用負 letter-spacing。
-    - 進度條中性灰,只有警示那條用 --text-warning;藍色會像連結/CTA,不用。
-    - CSS 變數用 host 真名:--surface-* / --text-* / --border / --radius /
-      --font-{sans,voice,mono}。舊的 --color-background-* 名已廢棄。
-  · 內容鐵律(見 card-spec.md):收斂到「一個洞 + 一條規矩」;每句要有數字+實例;
-    先肯定再打;金額 > 筆數勝率;α 一律 vs SPY,板塊 ETF 只做歸因;
-    不放 5 維 severity 表(舊版型曾示範過,已按 card-spec 禁令移除)。
-  · pnl_curve sparkline(#167,一個點延伸成一張圖):「帳面總損益」格底下的 <svg class="spark">
-    是 engine `pnl_curve.points` 畫出來的累積損益曲線,單色細線(依終點正負套
-    pos/neg,不逐點染色、不填色塊)——別因為它是圖表就想加第二種顏色,規範同全卡:
-    語義色只准用在數字本身的延伸,不准開新的紅綠色塊面板。`pnl_curve.note` 非空
-    (無價格/樣本不足/混市場)時整個 <svg> 不畫,`.m` tile 退回原本純數字版型。
-  · 規矩區兩態:出卡當下用 <ol> 列 2-3 條候選(Step 3.5 才讓用戶挑);
-    用戶選完(或對帳卡)改用 .picked(選中那條)+ .alt(沒選的一句帶過)。
+  - Data source: actual output from engine/trade_recap.py on mock/mock_trades.csv.
+  - For a real CSV, replace values, labels, and narrative without changing layout.
+  - Design rules finalized after the 2026-07-04 UI review:
+    - flat, light/dark compatible, Tabler outline icons, no emoji, weights 400/500;
+    - neutral section surfaces only; semantic colors belong only on icons,
+      section labels, keywords, and P&L values;
+    - outlined tags, a single 20px maximum heading, and neutral progress bars;
+    - use host variables --surface-*, --text-*, --border, --radius, and
+      --font-{sans,voice,mono}; legacy --color-background-* names are obsolete.
+  - Content rules: converge on one leak and one rule; ground every sentence in
+    numbers and examples; lead with a strength; prioritize money over count or
+    win rate; compare alpha with SPY and use sector ETFs for attribution only;
+    never add the deprecated five-dimension severity table.
+  - The pnl_curve sparkline uses engine `pnl_curve.points`. Use one thin line,
+    colored only by the final sign. Omit the SVG when `pnl_curve.note` is nonempty.
+  - The rule section has two states: show two or three candidates before the user
+    chooses; after selection, show `.picked` plus one short `.alt` note.
 
-  下面 <head> 內標示 "PREVIEW SHIM" 的區塊只為了讓本檔能用瀏覽器直接打開預覽,
-  它「不是」widget fragment 的一部分;餵進 show_widget 時不要帶。
-  shim 的 dark 值已對齊 host 階層:surface-0(頁面)最暗 → surface-2(卡)最亮。
+  PREVIEW SHIM exists only so this file opens directly in a browser. Exclude it
+  from the widget fragment. Its dark values follow surface-0 (page) through
+  surface-2 (card).
   ====================================================================
 -->
 
-<!-- vvvvv PREVIEW SHIM — 僅供瀏覽器獨立預覽,勿餵進 show_widget vvvvv -->
+<!-- vvvvv PREVIEW SHIM — browser preview only; exclude from the widget vvvvv -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.34.1/dist/tabler-icons.min.css">
 <style>
 :root{
@@ -69,7 +64,7 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 <body>
 <div class="page">
 
-<!-- vvvvv WIDGET FRAGMENT — 這段(含 <style>)就是餵進 show_widget 的內容 vvvvv -->
+<!-- vvvvv WIDGET FRAGMENT — send this section, including <style>, to the renderer vvvvv -->
 <style>
 .rc{font-family:var(--font-sans);color:var(--text-primary);background:var(--surface-2);border:0.5px solid var(--border);border-radius:12px;overflow:hidden;line-height:1.6}
 .rc .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -152,127 +147,127 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .foot{font-size:11px;color:var(--text-muted);line-height:1.6;background:var(--surface-1)}
 </style>
 <div class="rc">
-  <h2 class="sr-only">交易復盤卡:帳面損益 +143,197,做對的是出場節奏一致;最大的洞是部位押太重(PLTR 49%、NVDA 48%)且 100% 集中在 AI 同一個 driver;下次只改一件——虧損部位一律不加碼。</h2>
+  <h2 class="sr-only">Trade review card: total P&amp;L +143,197. Strength: consistent exit rhythm. Largest leak: PLTR 49% and NVDA 48%, with 100% exposure to one AI driver. Next rule: never add to a losing position.</h2>
 
   <div class="sec">
-    <p class="eyebrow"><i class="ti ti-aperture" aria-hidden="true"></i>復盤卡 · 用存活紀律派的尺照你的交易</p>
-    <h1>你大賺小賠、會跑——但身家都壓在同一個賭注上</h1>
-    <p class="lens">這把尺的核心:活下來,比賺最多更重要。它不看你「看對幾次」,看你「會不會被一次打死」。</p>
+    <p class="eyebrow"><i class="ti ti-aperture" aria-hidden="true"></i>Review card · survival-discipline lens</p>
+    <h1>You let winners run and cut losses, but the portfolio is one concentrated bet</h1>
+    <p class="lens">This lens prioritizes survival over maximum return. It asks whether one loss can remove your ability to continue.</p>
     <div class="meta">
       <span><i class="ti ti-calendar" style="font-size:13px;vertical-align:-2px" aria-hidden="true"></i> 2024-01-12 ~ 12-03</span>
-      <span>19 筆交易</span><span>8 個 round-trip</span><span>現持倉 4 檔</span>
+      <span>19 trades</span><span>8 round trips</span><span>4 open positions</span>
     </div>
   </div>
 
   <div class="sec">
     <div class="grid4">
-      <div class="m"><p class="lbl">帳面總損益</p><p class="val pos">+$143,197</p><p class="sub">已實現 +$18,960 · 未實現 +$124,237</p>
+      <div class="m"><p class="lbl">Total P&amp;L</p><p class="val pos">+$143,197</p><p class="sub">Realized +$18,960 · unrealized +$124,237</p>
         <svg class="spark pos" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0,25 L12,23 L24,24 L36,17 L48,19 L60,11 L72,13 L84,7 L96,9 L108,4 L120,2"/>
         </svg>
       </div>
-      <div class="m"><p class="lbl">主動買賣盈虧比</p><p class="val">2.9</p><p class="sub">平均賺 $2,851 vs 賠 $1,000</p></div>
-      <div class="m"><p class="lbl">贏大盤</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · 漲跌是大盤 2 倍</p></div>
-      <div class="m"><p class="lbl">真本事 α(年化)</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo 資料,α 失真僅示意</p></div>
+      <div class="m"><p class="lbl">Active payoff ratio</p><p class="val">2.9</p><p class="sub">Average win $2,851 vs loss $1,000</p></div>
+      <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market movement</p></div>
+      <div class="m"><p class="lbl">Annualized alpha</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo only; alpha is unreliable</p></div>
     </div>
-    <p class="story">帳面賺 14.3 萬很漂亮,但 87% 是還沒落袋的浮盈,真正賣掉的只有 1.9 萬。盈虧比 2.9 說明你大賺小賠、跑得掉——可是贏大盤的 261pp 裡,β 高到 2.05,多半是膽子大、敢壓,不是會做價差。</p>
+    <p class="story">The $143k total looks strong, but 87% is unrealized and only $19k has been realized. A 2.9 payoff ratio shows large wins and smaller losses, while beta of 2.05 explains much of the 261pp excess as risk exposure rather than pure selection skill.</p>
   </div>
 
   <div class="sec">
     <div class="good-bar">
       <i class="ti ti-circle-check" aria-hidden="true"></i>
-      <p><b>你做對的:</b>進出有一致的節奏——中位持有 162 天,不是隨機亂買亂賣。該抱的抱得住(NVDA 賺 162% 沒亂加、ORCL 賺 60% 沒亂加),這是你聽得進下面那刀的本錢。</p>
+      <p><b>What you did well:</b>the entry and exit rhythm is consistent. Median holding time is 162 days, and you held NVDA to +162% and ORCL to +60% without adding impulsively.</p>
     </div>
   </div>
 
   <div class="sec">
-    <h2><i class="ti ti-coins" aria-hidden="true"></i>標的層 · 按金額排序,只盯影響大的</h2>
+    <h2><i class="ti ti-coins" aria-hidden="true"></i>Instrument impact · ranked by money</h2>
     <div class="trow">
       <div class="ttop"><span class="tk">PLTR</span><span class="tamt pos">+$73,207</span>
-        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>押太重 49%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>賺 606%(加 2 次還算節制)</span></div></div>
+        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>oversized 49%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>+606% with two controlled adds</span></div></div>
       <div class="track"><div class="fill fill-hot" style="width:100%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">NVDA</span><span class="tamt pos">+$60,556</span>
-        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>押太重 48%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>紀律持有 162%、沒亂加</span></div></div>
+        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>oversized 48%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>held +162% without impulsive adds</span></div></div>
       <div class="track"><div class="fill" style="width:83%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">TSLA</span><span class="tamt pos">+$3,750</span>
-        <div class="ttags"><span class="tag">大致中性</span></div></div>
+        <div class="ttags"><span class="tag">roughly neutral</span></div></div>
       <div class="track"><div class="fill" style="width:5%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">ORCL</span><span class="tamt pos">+$2,974</span>
-        <div class="ttags"><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>紀律持有 60%、沒亂加</span></div></div>
+        <div class="ttags"><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>held +60% without impulsive adds</span></div></div>
       <div class="track"><div class="fill" style="width:4%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">ARM</span><span class="tamt pos">+$2,450</span>
-        <div class="ttags"><span class="tag">大致中性</span></div></div>
+        <div class="ttags"><span class="tag">roughly neutral</span></div></div>
       <div class="track"><div class="fill" style="width:3%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">MU</span><span class="tamt pos">+$1,260</span>
-        <div class="ttags"><span class="tag">大致中性</span></div></div>
+        <div class="ttags"><span class="tag">roughly neutral</span></div></div>
       <div class="track"><div class="fill" style="width:2%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">AMD</span><span class="tamt neg">−$1,000</span>
-        <div class="ttags"><span class="tag">大致中性</span></div></div>
+        <div class="ttags"><span class="tag">roughly neutral</span></div></div>
       <div class="track"><div class="fill" style="width:2%"></div></div>
     </div>
-    <p class="cap">單筆最賺 NVDA +104%(50→102,抱 207 天)· 最虧 AMD −12%(160→140,抱 175 天)</p>
+    <p class="cap">Best round trip: NVDA +104% ($50→$102, 207 days) · worst: AMD −12% ($160→$140, 175 days)</p>
   </div>
 
   <div class="sec">
     <div class="hole">
-      <p class="htag"><i class="ti ti-alert-hexagon" aria-hidden="true"></i>最大的洞</p>
-      <h2>押太重,而且 100% 押在同一個賭注</h2>
-      <p class="lead">兩檔(PLTR 49% + NVDA 48%)就佔了組合 97%,而且 4 檔 100% 都是 AI——這不是 4 個賭注,是同一個賭注下了 4 次。賺的時候很爽,但「分散」是假的。</p>
-      <div class="hrow"><span class="k">看數字</span><span class="v"><span class="mono">PLTR 49% · NVDA 48% · top3 98% · AI 暴險 100%</span></span></div>
-      <div class="hrow"><span class="k">看實例</span><span class="v">PLTR 從 <span class="mono">$24</span> 一路往下加到 <span class="mono">$15</span>,虧損中加碼 2 次都加到部位 >25%</span></div>
-      <div class="hrow"><span class="k">看動機</span><span class="v">你出卡前確認過:「不是算過最壞情況能扛,是看對了一路加、捨不得減」——這就是下面那條規矩要擋的事。</span></div>
-      <div class="hrow"><span class="k">萬一</span><span class="v">AI 暴險市值 <span class="mono">$170,793</span>。回檔 30%(一般修正)→ 帳面 <span class="mono">−$51,238</span>;回檔 50%(2022 級熊市)→ <span class="mono">−$85,397</span>。撐得住嗎?</span></div>
+      <p class="htag"><i class="ti ti-alert-hexagon" aria-hidden="true"></i>Largest leak</p>
+      <h2>Oversized, with 100% exposed to one underlying bet</h2>
+      <p class="lead">PLTR 49% plus NVDA 48% is 97% of the portfolio, and all four holdings share an AI driver. This is one bet expressed four times, not four independent bets.</p>
+      <div class="hrow"><span class="k">Numbers</span><span class="v"><span class="mono">PLTR 49% · NVDA 48% · top 3 98% · AI exposure 100%</span></span></div>
+      <div class="hrow"><span class="k">Example</span><span class="v">PLTR was added from <span class="mono">$24</span> down to <span class="mono">$15</span>; both losing adds pushed the position above 25%.</span></div>
+      <div class="hrow"><span class="k">Motive</span><span class="v">You confirmed before rendering: “I did not calculate survivable downside; I kept adding because the thesis looked right and I did not want to reduce.”</span></div>
+      <div class="hrow"><span class="k">Stress</span><span class="v">AI exposure is <span class="mono">$170,793</span>. A 30% correction implies <span class="mono">−$51,238</span>; a 50% bear market implies <span class="mono">−$85,397</span>. Can the process survive it?</span></div>
     </div>
   </div>
 
   <div class="sec">
-    <h2><i class="ti ti-arrows-split-2" aria-hidden="true"></i>報酬歸因 · 押對賽道,還是會選股?</h2>
-    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--text-secondary)">贏大盤(你 +321% vs SPY +60%)</span></p>
-    <div class="arow"><span class="al">選股力 vs 科技股 QQQ <span style="color:var(--text-muted)">(中性對照)</span></span><span class="av pos">+243pp</span></div>
+    <h2><i class="ti ti-arrows-split-2" aria-hidden="true"></i>Return attribution · theme exposure or selection skill?</h2>
+    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--text-secondary)">above market (+321% vs SPY +60%)</span></p>
+    <div class="arow"><span class="al">Selection vs QQQ <span style="color:var(--text-muted)">(neutral comparison)</span></span><span class="av pos">+243pp</span></div>
     <div class="abar"><div style="width:100%"></div></div>
-    <div class="arow" style="margin-top:12px"><span class="al">選股力 vs 半導體 SOXX <span style="color:var(--text-muted)">(事後最強)</span></span><span class="av pos">+96pp</span></div>
+    <div class="arow" style="margin-top:12px"><span class="al">Selection vs SOXX <span style="color:var(--text-muted)">(strongest hindsight comparison)</span></span><span class="av pos">+96pp</span></div>
     <div class="abar"><div style="width:40%"></div></div>
-    <p class="story" style="margin-top:14px">換對照結論就翻——選股贏中性的 QQQ、輸給事後最強的 SOXX。誠實說:資料還判不出你「會不會選股」。而 β 2.05 代表贏的這一塊很大部分來自「敢壓 + 押對 AI 賽道」,不全是價差本事。</p>
+    <p class="story" style="margin-top:14px">The conclusion changes with the comparator: selection beats neutral QQQ but trails the strongest hindsight benchmark, SOXX. The data cannot yet establish selection skill, and beta 2.05 shows that much of the gain came from concentration in the right theme.</p>
   </div>
 
   <div class="sec">
-    <h2><i class="ti ti-route" aria-hidden="true"></i>怎麼優化 · 放大強的、砍掉純損耗</h2>
+    <h2><i class="ti ti-route" aria-hidden="true"></i>Improve · preserve strengths and remove pure process loss</h2>
     <div class="rx">
       <div class="ic ic-test"><i class="ti ti-flask" aria-hidden="true"></i></div>
-      <div><p class="kind">揚長(假設,待驗證)</p><p class="desc">贏大盤主要靠押對賽道——但這還只是「假設你有方向判斷力」,押對 AI 也可能只是站到風口。壓測它:寫下你「下一個看好的賽道」、記時間,對了兩三次才叫 edge。</p></div>
+      <div><p class="kind">Test a possible strength</p><p class="desc">Theme selection may explain the excess return, but one correct AI exposure can be luck. Record the next theme thesis and timestamp it; repeated correct calls are needed before treating it as an edge.</p></div>
     </div>
     <div class="rx">
       <div class="ic ic-amp"><i class="ti ti-trending-up" aria-hidden="true"></i></div>
-      <div><p class="kind">揚長</p><p class="desc">你選股連最嚴苛的 SOXX 都贏,這是真 edge——別讓押太重 / 紀律問題稀釋掉它。</p></div>
+      <div><p class="kind">Preserve a strength</p><p class="desc">The selection result beat even SOXX in this sample. Preserve the research process while preventing concentration and discipline leaks from dominating it.</p></div>
     </div>
     <div class="rx">
       <div class="ic ic-cut"><i class="ti ti-scissors" aria-hidden="true"></i></div>
-      <div><p class="kind">砍損耗</p><p class="desc">虧損中加碼是純扣分動作,該最先砍。</p></div>
+      <div><p class="kind">Remove process loss</p><p class="desc">Adding to a loss without new evidence is the first behavior to remove.</p></div>
     </div>
   </div>
 
   <div class="sec">
     <div class="rule">
-      <p class="rt"><i class="ti ti-target" aria-hidden="true"></i>下次只改這一件(可立即執行、引擎能驗)</p>
-      <p class="rmain">虧損部位一律不加碼。<b>真想加,先整筆賣掉、隔天重買</b>——逼你重新面對「現在還會買它嗎」。</p>
-      <p class="quote">可以低成本試探一次,不代表已完成長期信任的驗證;小成功不該自動升級成重倉。<span class="who">— 存活紀律派</span></p>
+      <p class="rt"><i class="ti ti-target" aria-hidden="true"></i>Change only this next time · immediately actionable and engine-verifiable</p>
+      <p class="rmain">Never add to a losing position without new evidence. <b>If you still want more, write the new evidence first</b> and ask whether you would initiate the full position today.</p>
+      <p class="quote">A low-cost probe does not establish long-term trust; a small success should not automatically become a large position. <span class="who">— Survival discipline lens, paraphrase</span></p>
     </div>
   </div>
 
   <div class="sec foot">
-    本卡為交易行為回顧,不構成投資建議;鏡片來自一位投資人公開文章原則蒸餾,引用非轉載、非經本人背書。資料全程留在你本機。· 上方為 mock 示意資料,α/β 因樣本不足而失真。
+    This card reviews trading behavior and is not investment advice. The lens distills public principles and is not endorsed by the source. Data remains local. Values above are mock data; alpha and beta are unreliable because the sample is small.
   </div>
 </div>
 <!-- ^^^^^ WIDGET FRAGMENT end ^^^^^ -->

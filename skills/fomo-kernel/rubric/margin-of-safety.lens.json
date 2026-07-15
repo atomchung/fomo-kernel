@@ -1,72 +1,17 @@
 {
-  "philosophy": "安全邊際",
-  "master": "安全邊際",
-  "source": "原則蒸餾自 Graham–Klarman 價值投資傳統(Margin of Safety / The Intelligent Investor),引用非轉載、非經本人背書。⚠️ 引言為意譯,尚未對原書逐句校對,上線前需 verbatim 對齊審查。",
-  "_note": "鏡片層。dim keys 與 vincent-yu.lens.json 對齊。canonical 原文 margin-of-safety.md。stance/lean 供 compare_lenses。此派與動能派在『進場』最大反轉:動能只買強(lean strength)、此派買折價(lean weakness)——兩者 stance 都 inverted 但方向相反,是 2-D stance 的關鍵案例。",
-
-  "master_intro": {
-    "one_line": "安全邊際派的核心:第一條,別虧錢;第二條,別忘了第一條。它不問你『漲不漲』,問你『就算你看錯,這個折價夠不夠保護你』。",
-    "pillars": [
-      "首要目標是不虧錢——保本優先於追報酬",
-      "只在『夠便宜』(顯著折價於內在價值)時買,折價就是你的安全邊際",
-      "沒有好球就持現金,不為了進場而進場(耐心)",
-      "算內在價值、要求安全邊際,而不是預測價格",
-      "風險是『永久損失』,不是帳面波動"
-    ],
-    "why_it_matters": "這把尺偏『保本 + 折價』。如果你是動能/成長派,它有些條對你是反的——它會把你的『追突破』讀成『沒有安全邊際的投機』。它照的是你買得夠不夠便宜、有沒有為看錯留緩衝,不是逼你只買低 PE。"
-  },
-
-  "strength_intro": "先講你做對的一件事(安全邊際派先認你守住的那條保本線):",
-
+  "philosophy": "Margin of safety",
+  "master": "Margin of safety",
+  "source": "Distilled from the Graham-Klarman value tradition. All card language below is paraphrase unless a primary-source quotation is added and verified.",
+  "_note": "Runtime lens. It seeks verified discount and permanent-loss protection rather than price strength.",
+  "master_intro": {"one_line": "Protect capital by demanding a meaningful discount to a defensible estimate of intrinsic value.", "pillars": ["Protect capital first", "Demand a margin of safety", "Hold cash when opportunity is weak", "Estimate rather than predict", "Define risk as permanent loss"], "why_it_matters": "This lens asks whether downside support and valuation evidence existed before capital was committed."},
+  "strength_intro": "One thing you did well through this lens:",
   "dims": {
-    "部位 sizing": {
-      "stance": "aligned", "lean": "risk-capped",
-      "rubric_unit": "保本優先,單筆別大到會永久傷害本金",
-      "rule": "單筆 size 以『就算永久損失也不傷筋動骨』為上限;愈不確定、size 愈小。",
-      "quote": "投資的首要目標,是不要虧錢。",
-      "motive_q": "{max_ticker} 佔你 {max_pct}%。萬一這筆永久損失一半,你的本金撐得住嗎?這個 size 是『算過最壞情況』,還是『很看好就壓上去』?"
-    },
-    "加碼攤平": {
-      "stance": "conditional", "lean": "discount",
-      "rubric_unit": "折價變厚才加;內在價值下修就認錯",
-      "rule": "往下加只在『折價擴大、安全邊際變厚,且內在價值沒變』時才做;若內在價值也下修 → 認錯、不加。",
-      "quote": "便宜買進、保留安全邊際,是你抵禦判斷錯誤的唯一保險。",
-      "motive_q": "{tickers} 你在虧損裡往下加。是『價格跌了但內在價值沒變、折價變更厚(安全邊際變大)』,還是『內在價值其實也壞了、你只是想拉低成本』?"
-    },
-    "出場紀律": {
-      "stance": "conditional", "lean": "intrinsic",
-      "rubric_unit": "到內在價值才賣,不被波動洗出去",
-      "rule": "賣出條件 = 價格回到你算的內在價值,或論點/基本面被推翻——不是價格波動或恐慌。",
-      "quote": "價格是你付出的,價值是你得到的;到價才走。",
-      "motive_q": "你賣掉賺錢的有 {winner_early}% 後來繼續漲。那些賣出是『到了你算的內在價值』,還是『漲一點就怕回吐、提早跑』?"
-    },
-    "分散": {
-      "stance": "conditional", "lean": "moderate",
-      "rubric_unit": "適度分散 + 持現金等好球",
-      "rule": "適度分散到幾個彼此獨立的折價機會;沒有夠便宜的標的時,持現金也是部位,別硬湊。",
-      "quote": "現金是一種選擇權——在別人恐慌時,它讓你能出手。",
-      "motive_q": "你 {n} 檔有 {ai_pct}% 是同一個 driver。安全邊際派問:這幾檔的折價/安全邊際是各自獨立的,還是同一個故事崩了會一起歸零?你手上有留現金等更好的球嗎?"
-    },
-    "持有時間": {
-      "stance": "conditional", "lean": "until-value",
-      "rubric_unit": "耐心持有到價值實現",
-      "rule": "持有期 = 直到價值被市場認回來;只要安全邊際還在,短期波動不該逼你下車。",
-      "quote": "價值投資要的是耐心:市場短期是投票機,長期是體重計。",
-      "motive_q": "{incon_tickers} 你同一檔又短又長。是『耐心等價值實現』,還是『套牢了才改口說自己長期持有』?"
-    },
-    "alpha/beta": {
-      "stance": "aligned", "lean": "decompose",
-      "rubric_unit": "報酬來自折價收斂,還是大盤?",
-      "rule": "每季分清:你贏大盤,是『買到真折價、價值收斂』,還是『大盤把所有東西一起推高』?",
-      "quote": "市場上漲時人人都是天才;退潮才知道誰在裸泳。",
-      "motive_q": "你贏大盤 {excess}pp,但 β={beta}。安全邊際派問:這是『你買到了真折價』,還是『高 β、大盤順風把你一起抬上去』?"
-    },
-    "進場": {
-      "stance": "inverted", "lean": "weakness",
-      "rubric_unit": "逢折價承接是策略,不是接刀(前提:算過內在價值)｜待 engine B.9",
-      "rule": "只在『價格顯著低於你算的內在價值』時買——折價就是進場理由;但前提是你真的算過價值、確認有安全邊際,不是『跌很多就以為便宜』。",
-      "quote": "最好的投資機會,往往出現在別人恐慌拋售、好公司被錯殺的時候。",
-      "motive_q": "{entry_ticker} 你逢低承接。對安全邊際派這不是接刀,是策略——但前提是:你算過內在價值、確認有顯著折價了嗎,還是只是『跌這麼多應該很便宜』的感覺?"
-    }
+    "position_sizing": {"rubric_unit": "Cap permanent-loss risk", "stance": "aligned", "lean": "risk-capped", "rule": "Size from estimated permanent-loss downside and uncertainty, not only upside potential.", "quote": "Capital protection comes before return maximization. (paraphrase)", "motive_q": "{max_ticker} is {max_pct}% of the portfolio. What permanent-loss scenario was used to cap the position?"},
+    "averaging_down": {"rubric_unit": "Add only when the verified discount widens", "stance": "conditional", "lean": "discount", "rule": "Add only after re-estimating intrinsic value and confirming that the margin of safety widened for reasons unrelated to thesis deterioration.", "quote": "A lower price helps only if value and downside support remain intact. (paraphrase)", "motive_q": "You added to {tickers} while it was losing. What new valuation work showed a wider margin of safety rather than a damaged asset?"},
+    "exit_discipline": {"rubric_unit": "Exit when value is realized or the estimate breaks", "stance": "conditional", "lean": "intrinsic", "rule": "Exit when price reaches defensible value, intrinsic value falls, or the original margin-of-safety calculation is invalidated.", "quote": "The sale decision follows value and downside, not the emotional need to lock in a result. (paraphrase)", "motive_q": "Of the profitable exits, {winner_early}% later rose. Which exits reflected value realization, and which lacked an updated value estimate?"},
+    "diversification": {"rubric_unit": "Use moderate diversification against estimation error", "stance": "conditional", "lean": "moderate", "rule": "Diversify enough to survive valuation error while avoiding positions with no adequate margin of safety.", "quote": "Diversification can protect against analytical error, but it cannot make an overpriced asset safe. (paraphrase)", "motive_q": "You hold {n} instruments and {ai_pct}% shares one driver. How many independent valuation errors could damage the portfolio at once?"},
+    "holding_period": {"rubric_unit": "Hold until value is realized or invalidated", "stance": "conditional", "lean": "until-value", "rule": "Set the horizon from the value-realization path and catalyst; do not turn missing realization into an indefinite hold.", "quote": "Patience needs a valuation thesis and a path for value to matter. (paraphrase)", "motive_q": "For {incon_tickers}, did the value-realization path change, or did the horizon change only because the price stayed below cost?"},
+    "alpha_beta": {"rubric_unit": "Separate value realization from market beta", "stance": "aligned", "lean": "decompose", "rule": "Decompose market and factor exposure before attributing return to the margin-of-safety analysis.", "quote": "A rising market can obscure whether the valuation thesis added value. (paraphrase)", "motive_q": "You beat the benchmark by {excess}pp with beta {beta}. What return came from closing the value gap rather than broad factor exposure?"},
+    "entry_style": {"rubric_unit": "Prefer verified discount over price strength", "stance": "inverted", "lean": "weakness", "rule": "Enter only after estimating intrinsic value, downside, and a meaningful margin of safety; weakness alone is not enough.", "quote": "Price is attractive only in relation to defensible value. (paraphrase)", "motive_q": "For {entry_ticker}, what valuation gap and downside support justified entry rather than simply buying weakness?"}
   }
 }

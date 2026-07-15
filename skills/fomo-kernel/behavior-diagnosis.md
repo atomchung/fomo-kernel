@@ -1,112 +1,58 @@
-# 行為特徵多標籤診斷(對事不對人)
+# Behavior diagnosis: evaluate actions, not identities
 
-> 給建議的架構:**不給交易者貼類型標籤,直接對「行為特徵」多標籤診斷**——每個標籤獨立、可疊加、可驗,只對壞的下處方。
-> 一句話:照「每一筆/每個標的的行為」,不照「這個人是哪種交易者」。
+> Design decision from 2026-06-14: do not force users into a single trader type. A person's positions often combine several styles, and hard classification creates avoidable false diagnoses.
 
----
+## Core model
 
-## 為什麼是這個架構(2026-06-14 決策記錄)
+Diagnose behavior in three layers:
 
-原本想做「交易者分型」(v0 草案,已棄):先把人歸到一個類型(當沖/波段/價值…),再評好壞。**經 codex/gemini 從交易者視角 review,否決了,轉成「對事不對人」**:
+1. **Universal loss mechanisms**: actions that are usually harmful regardless of style, such as revenge trading, uncontrolled averaging down, unbounded sizing, or high turnover without compensating edge.
+2. **Context-dependent behaviors**: actions whose meaning depends on a declared strategy, such as buying weakness, buying strength, pyramiding, concentration, or long holding periods.
+3. **Instrument-level contradictions**: several tags may apply to the same position. Explain the causal chain rather than assigning one identity to the whole user.
 
-- **gemini**:散戶是「風格縫合怪」(賺錢變當沖、套牢變長期價值),靜態中位數硬分型 → 大量錯判 → 給錯藥。**判決:過度工程化,放棄對人分型,改做行為特徵多標籤,優先攻「跨型純損耗」(它估佔散戶虧損 ~80%)。**
-- **session 實證(更硬的理由)**:回顧整個 fomo-kernel 的開發,照出的每一個真洞(假分散 92%、winner_early、攤平 142 次、β 1.72、押對賽道 vs 選股)**全是「對事」算出來的,從沒用過「先分型」**。分型是一個我們從沒走過、也不需要的中間層。
-- **「同一訊號不同型意義相反」(分型的唯一賣點)用「對事」也能解**:追高在動能是策略、價值是破戒——不必先給人貼標籤,只要看「這一筆追高、在這個標的、後來怎樣」。脈絡從「人的類型」降到「標的的行為模式」,更準,且沒有「分型錯就全錯」的單點風險。
+Examples:
 
-> 保留:搜到的風格知識(當沖/波段/動能/價值/題材,來源見文末)**不丟**——但降級成「解讀單一標的行為的脈絡詞彙」,不拿來給人貼標籤。
+- Repeated losing-position adds can create an oversized position. The useful conclusion is the action chain, not "you are a value investor."
+- Several AI tickers can still be one concentrated driver exposure.
+- A short-term framework that silently turns into a long-term hold after a loss is a time-horizon contradiction.
 
----
+## Evidence before labels
 
-## 三層診斷
+Ask for motive only where the engine identifies a high-cost contradiction. Do not require the user to label every trade before analysis.
 
-### 第一層 · 跨型純損耗(優先,無脈絡爭議,佔虧損大宗)
+For a losing-position add, distinguish:
 
-不管什麼風格都是壞的,直接標籤 + 砍。引擎現在就在算其中幾個:
+- a pre-existing tranche plan
+- genuinely new evidence
+- a valuation-only change
+- price-only averaging
+- unresolved or skipped classification
 
-| 標籤 | 定義 | 引擎現況 |
-|---|---|---|
-| `avg_down_breach` | 虧損加碼到破部位上限(凹單) | ✅ dim_avgdown breach |
-| `oversize` | 單筆梭哈(>25–30%) | ✅ dim_size |
-| `revenge_trade` | 連敗後 / 短時間內報復性加碼同標的 | ❌ 待加 |
-| `overtrading` | 高頻進出且淨輸大盤(Barber-Odean) | ⚠️ 部分(頻率 + α/β) |
+Do not accept self-description as proof. A `new_evidence` classification needs a concrete claim and source that changed a falsifiable part of the thesis.
 
-### 第二層 · 標的層脈絡行為(需脈絡才能判好壞,多標籤)
+## Style as context
 
-對「**單一標的**」診斷,不是對整個人。同一個行為,看它在這個標的、這段持有裡是計劃內還是失控:
+Style is useful when it changes how a signal should be interpreted:
 
-| 標籤 | 好(該保留) | 壞(該下處方) |
-|---|---|---|
-| 加碼模式 | 一次計劃內分批建倉 | 同一 ticker 反覆逆勢加碼到深虧(`loss_spiral`) |
-| 出場模式 | 紀律止盈 / 短線快進快出 | 賺錢部位賣太早且續漲(`winner_cut_early`,**僅當持有框架是中長線才算壞**) |
-| 進場模式 | 追強後順勢獲利(`ride_momentum`) | 追高後套牢(`chase_top`) |
-| 持有一致性 | 同檔框架一致 | 同檔又當沖又長抱(套牢就改口叫長期投資) |
+- Buying near a range high can be disciplined for momentum and inconsistent for a value strategy.
+- Buying near a range low can be disciplined for value and dangerous for momentum.
+- Concentration can be intentional only when the user can state the thesis, downside, falsifier, and sizing logic.
 
-→ 多標籤:一個人可以「NVDA: 紀律持有 ✓ + EOSE: 逆勢凹單 ✗」,分開標,不壓成一型。
+The engine should expose observations and confidence. The agent asks a focused question when the same signal has opposite meanings under plausible frameworks.
 
-### 第三層 · 風格知識當「脈絡參考」(不貼人標籤)
+## Output rule
 
-用持有期 / 進場時機,判斷「**這個標的的操作**是哪種風格式」(動能式 / 價值式…),據此調整第二層的好壞判準:
-- 動能式操作 → 追高不全罰(策略)、賣太早不全罰(快進快出);但「追高後套牢不停損」仍是壞。
-- 價值式操作 → 逆勢買入不罰;但「無限攤平 + 套牢叫長期投資」是壞。
-- **輸出絕不說「你是 X 型交易者」**,只說「你在 EOSE 上的操作像在凹單」。
+The final card still converges on one largest behavioral leak and one rule. Multi-label diagnosis improves the explanation; it does not justify a longer checklist.
 
----
+Use plain behavior language:
 
-## 輸出形態(多標籤,取代「一張卡只有一個洞」?)
+- Prefer "you kept adding as the position lost money and it became the largest holding."
+- Avoid identity labels such as "you are an emotional value trap investor."
 
-```
-你的交易行為標籤(對事不對人):
-  [純損耗] 虧損加碼破線 ×6（EOSE / ONDS / …）        ← 最該先砍
-  [純損耗] 單筆梭哈 MU 37%
-  [標的]  NVDA: 長線紀律持有 ✓（賺 X% 抱住沒亂動）
-  [標的]  EOSE: 逆勢凹單到 -62%、176 天不認 ✗
-```
+## Implementation direction
 
-> 設計張力待解:多標籤 vs 收斂鐵律(一張卡一個洞)。傾向——**全標籤算給看(讓人看見全貌),但「下次只改」仍只挑 1 個**(最高損耗 + 可驗)。多標籤是診斷,單一動作是處方。
-
----
-
-## 處方對應(每個壞標籤 → 可驗規則)
-
-| 壞標籤 | 機械處方 | 下次驗 |
-|---|---|---|
-| `avg_down_breach` / `loss_spiral` | 虧損部位不加碼,想加先賣掉隔天重買 | 破線次數 |
-| `oversize` | 單筆上限定死 X% | 最大佔比 |
-| `revenge_trade` | 連敗 N 次強制冷靜期 | 連敗後加碼次數 |
-| `chase_top` | 追高進場後必設停損 | 追高未停損次數 |
-
----
-
-## 跟現有引擎的關係(不推翻,是確認方向 + 補強)
-
-引擎現在的 5 維(sizing / 攤平 / 出場 / 分散 / 持有)**本來就是「對事」**——轉 B 不是重寫,是三件補強:
-1. 把「跨型純損耗」提到優先級最高(攤平 breach / 梭哈已有,補 revenge / overtrading)。
-2. 把診斷從「組合層」下沉到「**單一標的層**」(現在 winner_early/攤平是全組合算,要能分到每個 ticker)。
-3. `style-fit.md` 的風格分類從「給人分型」降級成「解讀標的脈絡的詞彙」。
-
----
-
-## 下一步實作
-
-1. ✅ 標的層診斷已做:按金額排序(小倉不糾結)、多標籤、`classify_adds` 主從分類(疑似定投/凹單/待確認,取代純結果判)、`thesis_q`(只對待確認標的問)。
-2. ⏳ 加 `revenge_trade`(連敗後加碼)、強化 `overtrading`。
-3. ⏳ **卡片 HTML 版型優化**(2026-06-14 owner todo):`show_widget` 完整卡視覺醜,之後優化。流程已定:確認在**出卡前對話**(Step 2)、卡是**定論不帶問號**(Step 3)。
-4. ⏳ Stage 0 真人測(最大未驗風險,從頭到尾沒跑過)。
-
-## issues(之後討論,owner 判定不關鍵)
-
-- **賣後機會成本要「去大盤超額」**:扣同期 SPY,否則牛市裡什麼都像賣早(codex/gemini 都強調)。owner 2026-06-14 判定**不關鍵、記著之後做**。
-
-## 交易意圖標記:不做「進場每筆標」(2026-06-14 owner 駁回 over-engineering)
-
-codex/gemini 提「進場標 #定投/#攤平救倉」當更根本解,但 **owner 對:每筆標成本太高、違反低摩擦鐵律**(skill 最早的設計鐵律就是輸入低摩擦)。正解**不是進場每筆標**,是三層降本:
-1. **主從分類器自動分大部分**:`classify_adds` 已把 owner 7 檔自動判 6 檔定投,機械先扛。
-2. **只對「待確認」的少數標的問**:owner 的 case 只有 MSTR 1 檔要問,不是每筆、不是每檔。
-3. **問一次存本機、下次同標的復用**(待實作):用戶答過 MSTR=攤平救倉,存起來(留本機、符合隱私),下次復盤同標的不重問。
-→ 成本 = 「對極少數可疑標的、事後問一次」,不是「進場每筆標」。摩擦幾乎為零。
-
----
-
-## 來源
-- 風格分類(時間框架/策略):day/swing/position/scalp + momentum/value — [Equiti](https://www.equiti.com/sc-en/education/trading-strategies/compare-trading-styles-day-swing-and-position-trading/)、[ATAS](https://atas.net/blog/types-of-traders/)
-- 行為金融病:過度自信→過度交易(最活躍 11.4% vs 最不活躍 18.5%)、處置效應(賣贏抱輸) — [Barber & Odean](https://faculty.haas.berkeley.edu/odean/papers%20current%20versions/individual_investor_performance_final.pdf)、[Disposition effect](https://en.wikipedia.org/wiki/Disposition_effect)
+- Keep stable numeric detection in `engine/trade_recap.py`.
+- Keep motive and evidence validation in the v2 review lifecycle.
+- Keep instrument-level tags additive rather than mutually exclusive.
+- Add new universal loss detectors only when they can be measured and tied to a testable rule.
+- Treat style detection as a confidence-bearing observation, not a permanent user profile.
