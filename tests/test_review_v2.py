@@ -467,12 +467,14 @@ def test_exit_capture_validates_before_ledger_write_and_test_drive_never_ingests
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         card, state = _artifacts(tmp)
-        future = _trade_csv(tmp, future=True)
-        rejected = _run("prepare", future, "--root", root, "--card-json", card, "--state-json", state)
-        assert rejected.returncode == 2 and "before writing" in json.loads(rejected.stdout)["error"]
-        assert not (root / "ledger.jsonl").exists() and not (root / "revisit.jsonl").exists()
-
         valid = _trade_csv(tmp)
+        future = _trade_csv(tmp, future=True)
+        rejected = _run("prepare", valid, future, "--root", root,
+                        "--card-json", card, "--state-json", state)
+        assert rejected.returncode == 2 and "before writing" in json.loads(rejected.stdout)["error"]
+        assert not (root / "ledger.jsonl").exists() and not (root / "revisit.jsonl").exists(), \
+            "a later invalid file must reject the whole batch before the earlier valid file is written"
+
         demo_root = pathlib.Path(tmp) / "demo"
         demo = _run("prepare", valid, "--test-drive", "--root", demo_root,
                     "--card-json", card, "--state-json", state)
@@ -520,6 +522,16 @@ def test_ingestion_tolerates_cash_flow_rows_in_the_same_csv():
         assert run2.returncode == 0, run2.stdout + run2.stderr
         ingest2 = json.loads(run2.stdout)["review_plan"]["input"]["ledger_ingest"]
         assert ingest2["skipped_non_trade"] == 6 and ingest2["appended"] > 0, ingest2
+
+        # Keep mixed-market brokerage input on the same persist path too. This
+        # fixture carries TWD cash rows and protects against a US-only fix.
+        tw_fixture = ROOT / "skills" / "fomo-kernel" / "mock" / "sample_tw_mixed.csv"
+        tw_root = pathlib.Path(tmp) / "coach-tw-fixture"
+        run3 = _run("prepare", tw_fixture, "--root", tw_root,
+                    "--card-json", card, "--state-json", state)
+        assert run3.returncode == 0, run3.stdout + run3.stderr
+        ingest3 = json.loads(run3.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest3["skipped_non_trade"] == 4 and ingest3["appended"] > 0, ingest3
 
 
 def test_exit_capture_english_copy_uses_review_card_language():
