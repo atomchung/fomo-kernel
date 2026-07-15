@@ -3,6 +3,7 @@
   "title": "交易復盤卡",
   "private_badge": "私人完整版，只留在本機",
   "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
+  "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在私人卡。",
   "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
   "sections": {
     "numbers": "這期的帳",
@@ -11,7 +12,6 @@
     "hole": "最大的行為漏洞",
     "motive": "這次加碼的 thesis 判斷",
     "etf": "ETF 與組合結構",
-    "honesty": "資料邊界",
     "rule": "下次只改這一件"
   },
   "dimensions": {

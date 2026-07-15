@@ -10,6 +10,11 @@
     "mirror": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
     "counterfactual": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
     "rule_rationale": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
-    "strength": {"type": "string", "minLength": 1, "pattern": "^\\D+$"}
+    "strength": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "honesty": {
+      "type": "object",
+      "description": "One qualitative sentence per triggered honesty-ledger key; preview fails unless every required_honesty_keys entry is covered (#82: conditions live in the engine, wording stays with the agent).",
+      "additionalProperties": {"type": "string", "minLength": 1, "pattern": "^\\D+$"}
+    }
   }
 }

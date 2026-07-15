@@ -20,7 +20,7 @@ class RenderError(ValueError):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COPY_DIR = os.path.join(os.path.dirname(HERE), "copy")
-ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength"}
+ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty"}
 DIMENSION_ID_BY_LEGACY_LABEL = {
     "出場紀律": "exit_discipline",
     "部位 sizing": "position_sizing",
@@ -45,6 +45,15 @@ def validate_narrative(narrative):
     if extra:
         raise RenderError("unknown narrative fields: " + ", ".join(sorted(extra)))
     for key, value in narrative.items():
+        if key == "honesty":
+            if not isinstance(value, dict):
+                raise RenderError("narrative.honesty must be an object of ledger-key -> sentence")
+            for hkey, hval in value.items():
+                if not isinstance(hval, str) or not hval.strip():
+                    raise RenderError(f"narrative.honesty.{hkey} must be a non-empty string")
+                if re.search(r"\d", hval):
+                    raise RenderError(f"narrative.honesty.{hkey} contains digits; numeric claims must come from engine output")
+            continue
         if not isinstance(value, str) or not value.strip():
             raise RenderError(f"narrative.{key} must be a non-empty string")
         if re.search(r"\d", value):
@@ -130,16 +139,23 @@ def _best_strength(card, language):
     return f"The cleanest part of this review was {localized_dimension(dim, language)}."
 
 
-def _honesty_lines(card, copy):
-    messages = copy.get("honesty") or {}
-    seen = set()
-    lines = []
+def _honesty_lines(bundle, copy):
+    """Sentence per triggered honesty key, agent-authored first (#82).
+
+    The agent writes the wording in narrative.honesty (gated at preview so every
+    triggered key is covered); fixed copy strings remain only as a fallback for
+    re-rendering bundles committed before this contract. Returns a dict so the
+    renderer can weave each sentence into its related section instead of
+    printing the ledger as a checklist."""
+    card = bundle.get("engine_card") or {}
+    authored = (bundle.get("narrative") or {}).get("honesty") or {}
+    fallback = copy.get("honesty") or {}
+    lines = {}
     for entry in card.get("honesty_ledger") or []:
         key = entry.get("key")
-        if key in seen:
+        if key in lines:
             continue
-        seen.add(key)
-        lines.append(messages.get(key) or key)
+        lines[key] = authored.get(key) or fallback.get(key) or key
     return lines
 
 
@@ -181,8 +197,14 @@ def _decision_lines(bundle, copy):
     return lines
 
 
-def _performance_lines(card, language):
-    """Render important existing product facts without giving the agent a calculator."""
+def _performance_lines(card, language, honesty=None):
+    """Render important existing product facts without giving the agent a calculator.
+
+    `honesty` is the mutable dict from _honesty_lines: sentences are popped and
+    placed right after the numbers they qualify, and whatever remains is appended
+    at the end so a triggered disclosure can never be dropped — even when the
+    panel it qualifies (for example a gated alpha block) is not rendered."""
+    honesty = honesty if honesty is not None else {}
     overview = card.get("overview") or {}
     currency = _currency(card)
     en = language == "en"
@@ -217,6 +239,43 @@ def _performance_lines(card, language):
                 lines.append(f"風險調整後 alpha 年化 {float(stat['alpha_ann']) * 100:+.0f}%，"
                              f"九十五％區間為 {float(low) * 100:+.0f}% 到 {float(high) * 100:+.0f}%；"
                              "定論強度以這個區間為準。")
+    for key in ("alpha_credibility", "sector_attribution", "unclassified_drivers"):
+        if key in honesty:
+            lines.append(honesty.pop(key))
+    # #179/#181: the account pillar renders verbatim engine numbers. When the cash
+    # anchor is incomplete the engine gates account-level TWR/IRR (note set) — the
+    # holdings pillar still shows, plus a localized unlock invitation instead of
+    # the engine's internal note text. Cash drag stays a neutral observation, never
+    # a verdict on holding cash.
+    ap = card.get("acct_perf") or {}
+    if ap.get("hold_twr") is not None:
+        window = (ap.get("window") or {}).get("days")
+        if en:
+            lines.append(f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}"
+                         + (f" over the {int(window)}-day window." if window else "."))
+        else:
+            lines.append(f"持倉柱的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
+                         + (f"（{int(window)} 天窗口）。" if window else "。"))
+        if ap.get("acct_twr") is not None:
+            if en:
+                line = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
+                if ap.get("irr_annual") is not None:
+                    line += f"; annualized IRR was {_pct(ap.get('irr_annual'))}"
+                if ap.get("cash_drag") is not None:
+                    line += (f"; the gap versus the holdings pillar, {_pct(ap.get('cash_drag'))}, "
+                             "is explained by holding cash — an observation, not a verdict")
+                lines.append(line + ".")
+            else:
+                line = f"帳戶級時間加權報酬為 {_pct(ap.get('acct_twr'))}"
+                if ap.get("irr_annual") is not None:
+                    line += f"，年化 IRR {_pct(ap.get('irr_annual'))}"
+                if ap.get("cash_drag") is not None:
+                    line += f"；與持倉柱的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
+                lines.append(line + "。")
+        elif ap.get("note"):
+            lines.append("Account-level return stays locked until cash has a complete anchor; "
+                         "the holdings pillar above is unaffected." if en else
+                         "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的持倉柱不受影響。")
     cash = card.get("cash") or {}
     if cash.get("reliable") and cash.get("balance") is not None:
         if en:
@@ -225,6 +284,9 @@ def _performance_lines(card, language):
         else:
             lines.append(f"有餘額錨點的帳戶現金為 {_money(cash.get('balance'), currency)}"
                          + (f"，佔帳戶 {_pct(cash.get('weight'))}。" if cash.get("weight") is not None else "。"))
+    for key in ("cash_reliability", "acct_perf_basis"):
+        if key in honesty:
+            lines.append(honesty.pop(key))
     pa = card.get("payoff_attribution") or {}
     cf = pa.get("counterfactual") or {}
     if cf.get("ticker"):
@@ -235,7 +297,42 @@ def _performance_lines(card, language):
         else:
             lines.append(f"最大已實現拖累是 {cf['ticker']}，淨影響 {_money(cf.get('drag'), currency)}；"
                          f"拿掉它後盈虧比會是 {after}。")
+    for key in [k for k in honesty if k != "etf_metadata"]:
+        lines.append(honesty.pop(key))
     return lines
+
+
+def _metric_display(key, value):
+    if value is None:
+        return "—"
+    if key and key.endswith("_pct"):
+        return _pct(value)
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return f"{value}"
+
+
+def _reconciliation_lines(bundle, language):
+    """#151/#152 loop anchor: open the card against last time's commitment.
+
+    Prints the committed rule plus the metric's then/now values verbatim from
+    engine state — the renderer never computes a delta, and the agent never
+    touches the numbers."""
+    prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
+    if not prior.get("rule"):
+        return []
+    key = prior.get("metric_key")
+    then_v = prior.get("metric_value")
+    now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
+    if language == "en":
+        line = f"Last time you committed: \"{prior['rule']}\""
+        if then_v is not None and now_v is not None:
+            line += f" — {key} was {_metric_display(key, then_v)} then, {_metric_display(key, now_v)} now"
+        return [line + "."]
+    line = f"上次你承諾：「{prior['rule']}」"
+    if then_v is not None and now_v is not None:
+        line += f"——{key} 當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
+    return [line + "。"]
 
 
 def _trade_lines(card, language):
@@ -280,6 +377,9 @@ def render_private(bundle):
     ]
     if bundle.get("route") == "test_drive":
         lines.extend([f"> {copy['demo_badge']}", ""])
+    reconciliation = _reconciliation_lines(bundle, copy["language"])
+    if reconciliation:
+        lines.extend(reconciliation + [""])
     lines.extend([
         narrative["mirror"], "", f"## {sections['numbers']}", "",
         ((f"帳面總損益 {_money(overview.get('total_pnl'), currency)}，其中已實現 "
@@ -290,7 +390,14 @@ def render_private(bundle):
           f"{_money(overview.get('unrealized'), currency)} unrealized.")),
         "",
     ])
-    performance = _performance_lines(card, copy["language"])
+    # #82: honesty sentences are woven into the sections they qualify — never
+    # printed as a standalone checklist section.
+    honesty = _honesty_lines(bundle, copy)
+    etf_lines = _etf_lines(card, copy["language"])
+    etf_honesty = honesty.pop("etf_metadata", None)
+    performance = _performance_lines(card, copy["language"], honesty)
+    if etf_honesty:
+        (etf_lines if etf_lines else performance).append(etf_honesty)
     if performance:
         lines.extend(performance + [""])
     lines.extend([
@@ -311,12 +418,8 @@ def render_private(bundle):
     decisions = _decision_lines(bundle, copy)
     if decisions:
         lines.extend([f"## {sections['motive']}", ""] + [f"- {x}" for x in decisions] + [""])
-    etf_lines = _etf_lines(card, copy["language"])
     if etf_lines:
         lines.extend([f"## {sections['etf']}", ""] + [f"- {x}" for x in etf_lines] + [""])
-    honesty = _honesty_lines(card, copy)
-    if honesty:
-        lines.extend([f"## {sections['honesty']}", ""] + [f"- {x}" for x in honesty] + [""])
 
     rule = commitment.get("rule")
     if rule:
@@ -353,21 +456,30 @@ def render_public(bundle):
     holes = card.get("top_holes") or []
     hole = holes[0] if holes else {}
     raw = hole.get("raw") or {}
-    dim = raw.get("dim")
+    dim_label = (copy.get("dimensions") or {}).get(dimension_id(raw.get("dim"))) if raw.get("dim") else None
     severity = _public_band(hole.get("severity"), copy["language"])
-    rule = (bundle.get("commitment") or {}).get("rule")
+    commitment = bundle.get("commitment") or {}
+    # Candidate rules resolve to fixed copy strings; custom rules (and anything of
+    # unknown origin) render as a generic localized line so user-authored text —
+    # which may carry tickers, amounts, or dates — never reaches the public card.
+    rule = None
+    if commitment:
+        if commitment.get("origin") == "candidate":
+            rule = localized_rule(commitment.get("dim"), language)
+        if not rule:
+            rule = copy.get("public_custom_rule")
     if copy["language"] == "en":
-        mirror = f"This review found {severity} behavioral pressure in {dim or 'the leading diagnostic dimension'}."
+        mirror = f"This review found {severity} behavioral pressure in {dim_label or 'the leading diagnostic dimension'}."
         structure = "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
     else:
-        mirror = f"這次復盤在「{dim or '主要行為維度'}」看見{severity}程度的行為壓力。"
+        mirror = f"這次復盤在「{dim_label or '主要行為維度'}」看見{severity}程度的行為壓力。"
         structure = "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
     lines = [
         "---", "privacy: public", f"language: {copy['language']}", "---", "",
         f"# {copy['title']}", "", f"> {copy['public_badge']}", "", mirror, "",
     ]
     if bundle.get("route") == "test_drive":
-        lines[10:10] = [f"> {copy['demo_badge']}", ""]
+        lines[9:9] = [f"> {copy['demo_badge']}", ""]
     ps = card.get("portfolio_structure") or {}
     if ps.get("allocation_etfs") or ps.get("concentrated_etfs"):
         lines.extend([f"## {copy['sections']['etf']}", "", structure, ""])

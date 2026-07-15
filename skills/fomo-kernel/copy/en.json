@@ -3,6 +3,7 @@
   "title": "Trade Review Card",
   "private_badge": "Private full version; stored locally only",
   "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
+  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the private card.",
   "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
   "sections": {
     "numbers": "The account for this review",
@@ -11,7 +12,6 @@
     "hole": "The biggest behavioral leak",
     "motive": "The thesis behind the add",
     "etf": "ETF and portfolio structure",
-    "honesty": "Evidence boundaries",
     "rule": "Change only this next time"
   },
   "dimensions": {

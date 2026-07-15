@@ -1053,6 +1053,12 @@ def dim_avgdown(avg_down, held, last_px, size_dim):
     # #94:breach 判準改用加碼「當下」的成本權重(positions() 算好放在 weight_then),
     # 不再查 size_dim["weights"]——那是用「今天」市值回推的單一快照,會把今天的重倉/輕倉
     # 誤套到三年前或上週的每一筆歷史加碼決定上,方向可能整個判反(見 issue #94)。
+    # 配置型 ETF 的低價定投是一籃子資產再平衡,不是單一標的凹單——breach/次數全豁免
+    # (與 dim_size 的豁免同語意);產業/主題/槓桿 ETF 照舊計入。
+    exempt = sorted({e["ticker"] for e in avg_down
+                     if instrument_policy.is_diversified_allocation(e.get("ticker"))})
+    avg_down = [e for e in avg_down
+                if not instrument_policy.is_diversified_allocation(e.get("ticker"))]
     cnt = len(avg_down)
     breach = 0
     for e in avg_down:
@@ -1065,7 +1071,8 @@ def dim_avgdown(avg_down, held, last_px, size_dim):
     sev = min(0.5*breach + cnt/600, 0.8)
     tickers = sorted({e["ticker"] for e in avg_down})
     return dict(dim="加碼攤平", tier=1, triggered=(breach >= 1),
-                severity=sev, count=cnt, breach=breach, tickers=tickers)
+                severity=sev, count=cnt, breach=breach, tickers=tickers,
+                allocation_exempt_tickers=exempt)
 
 # ── 【風格】維雛形(v2a,解鎖 v2c 誠實閥)──────────────────────────────────────
 # 與普世維不同:這維不是「洞」,是『風格軸』——各派對它給相反 stance(動能派稱讚追高、
@@ -1429,14 +1436,15 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
             tags.append(f"✗套牢:{cur*100:.0f}% 還抱著沒處理")
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
             tags.append(f"賣後機會成本:{a['win_early']}/{a['win_n']} 筆賣完它還漲(非審判,看你出場規則一致嗎)")
-        if wpct > 0.25:
+        if wpct > 0.25 and not instrument_policy.is_diversified_allocation(t):
             tags.append(f"⚠押太重:佔組合 {wpct*100:.0f}%")
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
             tags.append(f"✓紀律持有:賺 {cur*100:.0f}%")
         if not tags:
             tags.append("— 大致中性")
-        thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問)
-        if cls in ("疑似凹單", "待確認") and n_adds >= 4 and cur is not None:
+        thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問;配置型 ETF 定投也不問)
+        if cls in ("疑似凹單", "待確認") and n_adds >= 4 and cur is not None \
+                and not instrument_policy.is_diversified_allocation(t):
             if cur < 0:
                 thesis_q = (f"虧損中加碼 {n_adds} 次、現在還虧 {cur*100:.0f}%——"
                             f"你還相信當初買它的理由嗎,還是只是不想認賠、想攤低等回本?")
@@ -1739,6 +1747,8 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
         return prev_end is None or d.isoformat() > prev_end
 
     for e in avg_down or []:                               # behavior:破 size 上限的攤平(breach 才是洞)
+        if instrument_policy.is_diversified_allocation(e.get("ticker")):
+            continue                                       # 配置型 ETF 定投不是單一標的凹單,與 dim_avgdown 豁免同語意
         if e.get("weight_then", 0) > AVGDOWN_BREACH_W and _new(e["date"]):
             events.append({"key": "avgdown_breach", "kind": "behavior",
                            "week": e["date"].isoformat(), "ticker": e["ticker"], "amount": None,
