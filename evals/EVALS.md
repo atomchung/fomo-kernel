@@ -45,7 +45,9 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - Account-level performance appears only when cash and price foundations satisfy engine gates.
 - Cash residual wording remains neutral and does not invent a missing deposit or withdrawal.
 - The next weekly review reconciles the prior commitment before introducing a new leak.
-- Historical exit-review backlog is summarized and prioritized rather than converted into a large interrogation queue. (The v2 lifecycle does not enqueue revisits yet — deferred to #191; this row applies once that lands.)
+- A recent exit or large reduction inside the freshness window yields at most three engine-ranked questions (largest exit amount first); an explicit `skip` is durable and the same exit is never asked again, and a confirmed reason appears only on the local review card, never on the public card.
+- A normalized CSV containing cash-flow rows (deposits, dividends, interest, fees, reinvest notices) still prepares: those rows are counted in `ledger_ingest`, and only future-dated rows reject the import.
+- Historical exit-review backlog is summarized and prioritized rather than converted into a large interrogation queue. (Prepare now enqueues exits, but due-revisit and backlog consumption remain deferred to #191; this row applies once that lands.)
 
 ## Evaluation method
 
@@ -58,3 +60,4 @@ Prefer deterministic checks over an LLM judge, and an LLM judge over manual insp
 | 2026-07-04 | Post-merge agent run over mock data | Interactive and headless cases plus artifact checkers | Core invariants passed; headless option-tool behavior remained untestable. |
 | 2026-07-14 | Skill v2 orchestration, atomic sessions, thesis evidence, ETF policy, localization, and private/public renderers | Complete offline suite, nine v2 cases, and a real test-drive prepare smoke | Passed; canonical recovery and projection repair worked. |
 | 2026-07-14 | English-only implementation documentation with bilingual GTM/localized copy boundaries | `tests/test_doc_language.py` plus complete offline suite | Pending final verification in this change. |
+| 2026-07-15 | Recent-exit reason capture: prepare-time trade ingestion, three-question ranked queue, durable skip, review-card-only rendering (#196) | v2 suite exit-capture cases plus cash-flow-row ingestion regression on the noisy-broker fixture | Passed; review found and fixed a fail-closed gate that rejected legitimate cash-flow rows. |

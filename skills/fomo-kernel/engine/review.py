@@ -134,20 +134,26 @@ def _ingest_trades(root, paths):
     partially ingested multi-file review.  Overlapping weekly files remain safe:
     each later batch deduplicates against both the existing ledger and earlier
     batches from this prepare call.
+
+    Only future-dated rows reject the import (#169: the one zero-false-positive
+    corruption signal).  Non-trade rows — deposits, dividends, interest, fees,
+    reinvest notices — legitimately coexist in the same normalized CSV because
+    the engine's cash pipeline consumes them; they are counted and reported,
+    never fatal (#50: visible, not silent).
     """
     ledger_path = os.path.join(root, "ledger.jsonl")
     existing, skipped_lines = ledger.load_ledger(ledger_path)
     batches = []
-    skipped_bad = skipped_future = 0
+    skipped_non_trade = skipped_future = 0
     for path in paths or []:
-        trades, bad, future = ledger.trades_from_csv(path)
+        trades, non_trade, future = ledger.trades_from_csv(path)
         batches.append(trades)
-        skipped_bad += bad
+        skipped_non_trade += non_trade
         skipped_future += future
-    if skipped_bad or skipped_future:
+    if skipped_future:
         raise ReviewError(
             "ledger ingestion rejected normalized input before writing: "
-            f"{skipped_bad} invalid/non-trade row(s), {skipped_future} future-dated row(s)"
+            f"{skipped_future} future-dated row(s)"
         )
 
     virtual = list(existing)
@@ -164,7 +170,7 @@ def _ingest_trades(root, paths):
         "path": ledger_path,
         "appended": len(fresh_all),
         "skipped_dup": skipped_dup,
-        "skipped_bad": skipped_bad,
+        "skipped_non_trade": skipped_non_trade,
         "skipped_future_dated": skipped_future,
         "skipped_ledger_lines": skipped_lines,
     }

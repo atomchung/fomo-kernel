@@ -478,6 +478,46 @@ def test_exit_capture_validates_before_ledger_write_and_test_drive_never_ingests
             "test drive cannot persist real trade facts or exit queues"
 
 
+def test_ingestion_tolerates_cash_flow_rows_in_the_same_csv():
+    """Deposits, dividends, interest, fees, and reinvest notices legitimately share
+    the normalized CSV with trades — load_cash_flows() consumes them for the cash
+    pillar — so persist-mode prepare must count them, not die on them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        csv_path = pathlib.Path(tmp) / "with-cash.csv"
+        csv_path.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency,Amount",
+            ",,0,0,2026-07-01,Deposit,US,USD,5000",
+            "BIG,BUY,10,100,2026-07-01,Trade,US,USD,-1000",
+            "KO,REINVEST,1.2,60,2026-07-02,Trade,US,USD,-72",
+            "KO,,0,0,2026-07-03,Dividend,US,USD,32",
+            ",,0,0,2026-07-05,Interest,US,USD,1.5",
+            "BIG,SELL,10,200,2026-07-10,Trade,US,USD,2000",
+        ]) + "\n", encoding="utf-8")
+        run = _run("prepare", csv_path, "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        ingest = json.loads(run.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest["appended"] == 2 and ingest["skipped_non_trade"] == 4 \
+            and ingest["skipped_future_dated"] == 0, ingest
+        rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert [(r["ticker"], r["action"]) for r in rows] == [("BIG", "buy"), ("BIG", "sell")], \
+            "only BUY/SELL trade facts enter the ledger; cash rows stay with the cash pipeline"
+        assert any(q.get("ticker") == "BIG" and q["kind"] == "revisit"
+                   for q in json.loads(run.stdout)["review_plan"]["question_queue"]), \
+            "the exit detected among cash-flow noise still reaches the question queue"
+
+        # The shipped noisy-broker persona exists to pin broker-noise tolerance:
+        # its Transfer/Dividend/Interest/Fee/REINVEST rows must never kill prepare.
+        fixture = ROOT / "skills" / "fomo-kernel" / "mock" / "sample_noisy_broker.csv"
+        fixture_root = pathlib.Path(tmp) / "coach-fixture"
+        run2 = _run("prepare", fixture, "--root", fixture_root,
+                    "--card-json", card, "--state-json", state)
+        assert run2.returncode == 0, run2.stdout + run2.stderr
+        ingest2 = json.loads(run2.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest2["skipped_non_trade"] == 6 and ingest2["appended"] > 0, ingest2
+
+
 def test_exit_capture_english_copy_uses_review_card_language():
     item = {"revisit_id": "BIG#2026-07-01#1#2026-07-10#10.0", "ticker": "BIG",
             "cycle_id": "BIG#2026-07-01#1", "exit_date": "2026-07-10",
