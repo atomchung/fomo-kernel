@@ -63,9 +63,11 @@ def _jsonl(path):
     return thesis.read_jsonl(path)
 
 
-def _fingerprint(paths, language, route, prepared=None):
+def _fingerprint(paths, language, route, prepared=None, nonce=""):
+    # nonce participates so an explicit --session-nonce starts a genuinely new
+    # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
-    h.update(f"{language}\0{route}\0".encode())
+    h.update(f"{language}\0{route}\0{nonce}\0".encode())
     if prepared:
         h.update(session.canonical(prepared).encode())
     for path in paths or []:
@@ -290,6 +292,10 @@ def cmd_prepare(args):
     paths = list(args.paths or ([] if args.card_json else [str(MOCK_CSV) if args.test_drive else None]))
     if any(p is None for p in paths) or (not paths and not args.card_json):
         raise ReviewError("provide at least one CSV path, or use --test-drive")
+    # Resolve to absolute paths once: the engine subprocess runs with cwd at the
+    # skill directory, so a caller-relative path would otherwise be fingerprinted
+    # from one file and processed from another (or crash mid-run).
+    paths = [os.path.abspath(os.path.expanduser(p)) for p in paths]
     prepared = None
     if args.card_json or args.state_json:
         if not (args.card_json and args.state_json):
@@ -298,7 +304,7 @@ def cmd_prepare(args):
         state = _load_json(args.state_json, "engine state")
         prepared = {"card": card, "state": state}
         engine_meta = "prepared artifacts"
-    fingerprint = _fingerprint(paths, language, route, prepared=prepared)
+    fingerprint = _fingerprint(paths, language, route, prepared=prepared, nonce=args.session_nonce or "")
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"], "review_plan": existing,
@@ -313,8 +319,14 @@ def cmd_prepare(args):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
         return
     session.save_pending(root, plan["session_id"], plan=plan)
+    next_action = "ask every required question, author thesis_updates and prose-only narrative, then run preview"
+    if not persist:
+        # The test drive lives in an isolated root that preview/finalize cannot
+        # discover on their own; without this handoff they report "pending session
+        # not found" against the default root.
+        next_action += f"; test drive is isolated — pass --root {root} to every later command"
     _emit({"status": "prepared", "session_id": plan["session_id"], "review_plan": plan,
-           "next_action": "ask every required question, author thesis_updates and prose-only narrative, then run preview"})
+           "next_action": next_action})
 
 
 def _validate_thesis_completeness(plan, answers):
@@ -351,9 +363,10 @@ def _resolve_commitment(plan, answers):
     candidates = {row["id"]: row for row in (plan.get("card_plan") or {}).get("candidate_rules") or []}
     if selected in candidates:
         chosen = dict(candidates[selected])
+        chosen["origin"] = "candidate"
     elif selected == "custom":
         chosen = {"rule": (choice.get("rule") or "").strip(), "metric_key": choice.get("metric_key"),
-                  "goal": choice.get("goal") or "down", "dim": choice.get("dim")}
+                  "goal": choice.get("goal") or "down", "dim": choice.get("dim"), "origin": "custom"}
         if not chosen["rule"]:
             raise ReviewError("custom commitment requires rule")
     else:
@@ -376,6 +389,14 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     updates = _validate_thesis_completeness(plan, answers)
     decisions = thesis.build_decision_events(plan, answers)
     card_renderer.validate_narrative(narrative)
+    # #82 gate: every triggered honesty key must be covered by an agent-authored
+    # sentence, and no sentence may claim a key the engine did not trigger.
+    required = set((plan.get("card_plan") or {}).get("required_honesty_keys") or [])
+    provided = set((narrative.get("honesty") or {}).keys())
+    if required - provided:
+        raise ReviewError("narrative.honesty is missing required keys: " + ", ".join(sorted(required - provided)))
+    if provided - required:
+        raise ReviewError("narrative.honesty has keys the ledger did not trigger: " + ", ".join(sorted(provided - required)))
     commitment = _resolve_commitment(plan, answers) if require_commitment else None
     return {
         "schema_version": 2,
@@ -471,7 +492,8 @@ def cmd_render(args):
 
 def cmd_repair(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
-    _emit({"status": "repaired", "reports": session.repair_projections(root)})
+    outcome = session.repair_projections(root)
+    _emit({"status": "repaired" if not outcome["errors"] else "partially_repaired", **outcome})
 
 
 def build_parser():

@@ -154,7 +154,11 @@ def _read_jsonl(path):
 
 
 def _append_session_rows(path, session_id, new_rows):
-    """Atomic, idempotent append for one session; conflicting retries fail closed."""
+    """Idempotent per-session append; conflicting retries fail closed.
+
+    Writes only the delta in append mode — never rewrites the file — so rows and
+    partial lines produced by other writers (coach.py appends concurrently) are
+    never reformatted or dropped."""
     if not new_rows:
         return {"path": path, "appended": 0, "status": "empty"}
     existing = _read_jsonl(path)
@@ -166,9 +170,14 @@ def _append_session_rows(path, session_id, new_rows):
     if same and not old_set.issubset(new_set):
         raise SessionError(f"legacy projection conflict: {path} / {session_id}")
     delta = [row for row in new_rows if canonical(row) not in old_set]
-    merged = existing + delta
-    text = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in merged)
-    ledger.atomic_write_text(path, text)
+    prefix = ""
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                prefix = "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(prefix + "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in delta))
     return {"path": path, "appended": len(delta), "status": "projected"}
 
 
@@ -244,15 +253,27 @@ def load_committed(root, session_id):
 
 
 def repair_projections(root):
-    reports = []
+    """Rebuild legacy projections from committed bundles.
+
+    Skips non-persistent sessions (test drive) so demo data never reaches real
+    coach memory, and keeps going past corrupt session directories instead of
+    aborting the whole repair."""
+    reports, skipped, errors = [], [], []
     base = os.path.join(root, "sessions")
     if not os.path.isdir(base):
-        return reports
+        return {"reports": reports, "skipped": skipped, "errors": errors}
     for session_id in sorted(os.listdir(base)):
         path = os.path.join(base, session_id)
         if not os.path.isdir(path) or session_id.startswith("."):
             continue
-        bundle = read_json(os.path.join(path, "bundle.json"))
-        with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
-            reports.append(project_legacy(root, bundle, f.read()))
-    return reports
+        try:
+            bundle = read_json(os.path.join(path, "bundle.json"))
+            plan = bundle.get("review_plan") or {}
+            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                skipped.append({"session_id": session_id, "reason": "persist:false"})
+                continue
+            with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
+                reports.append(project_legacy(root, bundle, f.read()))
+        except (OSError, ValueError) as exc:
+            errors.append({"session_id": session_id, "error": str(exc)})
+    return {"reports": reports, "skipped": skipped, "errors": errors}

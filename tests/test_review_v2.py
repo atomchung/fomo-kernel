@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -118,11 +119,14 @@ def _narrative(language="zh-TW"):
         return {"headline": "A lower price is not automatically a stronger thesis",
                 "mirror": "The add only becomes deliberate when the reason can survive the next review.",
                 "counterfactual": "Without a new fact, the action would have been cost-basis repair.",
-                "rule_rationale": "This rule turns conviction into something falsifiable."}
+                "rule_rationale": "This rule turns conviction into something falsifiable.",
+                "honesty": {"etf_metadata": "The allocation ETF is missing expense-ratio data, "
+                                            "and the gap was disclosed instead of treated as zero."}}
     return {"headline": "價格變低，不等於 thesis 自動變強",
             "mirror": "這次加碼只有在理由能被下次復盤驗證時，才算有意識的決策。",
             "counterfactual": "如果沒有新事實，這個動作就只是修補成本。",
-            "rule_rationale": "這條規矩把信心變成可被推翻的判斷。"}
+            "rule_rationale": "這條規矩把信心變成可被推翻的判斷。",
+            "honesty": {"etf_metadata": "配置型 ETF 缺費用率資料，這裡把缺口講明，而不是把缺值當成零。"}}
 
 
 def test_etf_allocation_exemption_and_focused_etf_risk():
@@ -136,6 +140,21 @@ def test_etf_allocation_exemption_and_focused_etf_risk():
     assert abs(div["top3"] - 0.2) < 1e-9, "allocation ETF must not inflate risk top-three"
     assert tr.what_if({"SPY": (80, 8000), "PLTR": (20, 2000)}, {"SPY": 100, "PLTR": 100}) is None, \
         "allocation ETF must not become the single-risk drawdown scenario"
+
+
+def test_etf_allocation_exemption_covers_avgdown_and_problem_events():
+    import datetime as dt
+    instruments.reset_map()
+    events = [{"ticker": "SPY", "weight_then": 0.6, "date": dt.date(2026, 7, 1), "px": 500.0},
+              {"ticker": "PLTR", "weight_then": 0.3, "date": dt.date(2026, 7, 2), "px": 100.0}]
+    d = tr.dim_avgdown(events, {}, {}, None)
+    assert d["breach"] == 1 and d["count"] == 1 and d["tickers"] == ["PLTR"], \
+        "an allocation-ETF DCA below cost is not single-name averaging down"
+    assert d["allocation_exempt_tickers"] == ["SPY"]
+    problem, _opps = tr.build_problem_events([], [], events, {}, {}, "2026-07-14")
+    breaches = [e for e in problem if e["key"] == "avgdown_breach"]
+    assert [e["ticker"] for e in breaches] == ["PLTR"], \
+        "problem ledger must apply the same allocation-ETF exemption as dim_avgdown"
 
 
 def test_unknown_instrument_never_gets_etf_exemption():
@@ -168,6 +187,19 @@ def test_prepare_is_resumable_without_rerunning_artifacts():
         assert json.loads(again.stdout)["status"] == "resumed"
 
 
+def test_session_nonce_starts_a_distinct_session():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        first = json.loads(_run("prepare", "--root", root, "--card-json", card, "--state-json", state,
+                                "--session-nonce", "alpha").stdout)
+        second = json.loads(_run("prepare", "--root", root, "--card-json", card, "--state-json", state,
+                                 "--session-nonce", "beta").stdout)
+        assert first["status"] == "prepared" and second["status"] == "prepared", \
+            "an explicit nonce must not be swallowed by same-content pending resume"
+        assert first["session_id"] != second["session_id"]
+
+
 def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "demo-root"
@@ -188,6 +220,15 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
         assert "示範資料／演練" in private and "示範資料／演練" in public
         assert not (root / "log.jsonl").exists() and not (root / "theses.jsonl").exists()
 
+        (root / "sessions" / "0000-00-00__corrupt").mkdir(parents=True)  # bundle-less dir must not abort repair
+        repaired = _run("repair-projections", "--root", root)
+        outcome = json.loads(repaired.stdout)
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        assert outcome["skipped"] and outcome["skipped"][0]["session_id"] == plan["session_id"]
+        assert outcome["errors"] and "0000-00-00__corrupt" in outcome["errors"][0]["session_id"]
+        assert not (root / "log.jsonl").exists() and not (root / "last_state.json").exists(), \
+            "repair-projections must never project demo sessions into coach memory"
+
 
 def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
     with tempfile.TemporaryDirectory() as tmp:
@@ -206,6 +247,16 @@ def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
         bad_number = _run("preview", "--root", root, "--session-id", plan["session_id"],
                           "--answers", answers_path, "--narrative", narrative_path)
         assert bad_number.returncode == 2 and "contains digits" in json.loads(bad_number.stdout)["error"]
+        narrative = _narrative(); del narrative["honesty"]      # #82 gate: every triggered key needs a sentence
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        bad_missing = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                           "--answers", answers_path, "--narrative", narrative_path)
+        assert bad_missing.returncode == 2 and "missing required keys: etf_metadata" in json.loads(bad_missing.stdout)["error"]
+        narrative = _narrative(); narrative["honesty"]["alpha_credibility"] = "not triggered by this card"
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        bad_extra = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", answers_path, "--narrative", narrative_path)
+        assert bad_extra.returncode == 2 and "did not trigger" in json.loads(bad_extra.stdout)["error"]
 
 
 def test_preview_finalize_atomic_bundle_redaction_and_retry():
@@ -239,6 +290,9 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         public = (session_dir / "card-public.md").read_text(encoding="utf-8")
         assert "PLTR" in private and "$-300" in private and "session_id" in private
         assert "已實現盈虧比 1.4" in private and "NVDA 20%" in private and "AMD -10%" in private
+        assert "缺費用率資料" in private, "agent-authored honesty sentence must reach the card"
+        assert "資料邊界" not in private and "Evidence boundaries" not in private, \
+            "#82: honesty is woven into sections, never a standalone checklist section"
         assert all(f.passed for f in check_card(private)), "v2 private renderer must satisfy card iron rules"
         assert "PLTR" not in public and "$" not in public and "2026" not in public and "session_id" not in public
         assert (root / "thesis_decisions.jsonl").exists() and (root / "log.jsonl").exists()
@@ -251,6 +305,31 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         assert repaired.returncode == 0 and (root / "thesis_decisions.jsonl").exists()
         assert (session_dir / "bundle.json").read_bytes() == bundle_before, \
             "repair must rebuild projections without mutating canonical bundle"
+
+
+def test_public_card_never_reuses_user_authored_rule_text():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan)
+        answers["commitment"] = {"choice": "custom",
+                                 "rule": "PLTR above 40% or below $80.50: stop adding before 2026-08-01",
+                                 "metric_key": "max_pos_pct", "goal": "down", "dim": "position_sizing"}
+        answers_path = pathlib.Path(tmp) / "answers.json"
+        narrative_path = pathlib.Path(tmp) / "narrative.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers_path, "--narrative", narrative_path)
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        private = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
+        public = pathlib.Path(result["public_card"]).read_text(encoding="utf-8")
+        assert "$80.50" in private, "custom rule text belongs on the private card"
+        for fragment in ("PLTR", "$80.50", "2026-08-01", "40%"):
+            assert fragment not in public, f"custom rule leaked {fragment!r} into the public card"
+        assert "One self-authored process rule" in public
+        assert not re.search(r"[一-鿿]", public), "en public card must not mix CJK labels"
 
 
 def test_english_is_same_contract_with_localized_questions_and_card():
@@ -269,6 +348,38 @@ def test_english_is_same_contract_with_localized_questions_and_card():
         text = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
         assert "Trade Review" not in text or "The account for this review" in text
         assert "Before averaging down" in text and "這期的帳" not in text
+
+
+def test_reconciliation_opens_the_card_with_prior_commitment():
+    import card_renderer
+    bundle = {"review_plan": {"state_snapshot": {"prior_commitment": {
+                  "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct", "metric_value": 0.51}}},
+              "engine_state": {"metrics": {"max_pos_pct": 0.48}}}
+    zh = card_renderer._reconciliation_lines(bundle, "zh-TW")
+    assert zh and "上次你承諾" in zh[0] and "51%" in zh[0] and "48%" in zh[0], \
+        "#151: the card must open against last time's commitment with verbatim then/now values"
+    en = card_renderer._reconciliation_lines(bundle, "en")
+    assert en and "Last time you committed" in en[0] and "51%" in en[0]
+    assert card_renderer._reconciliation_lines({"review_plan": {}}, "en") == [], \
+        "first review has no prior commitment and no reconciliation line"
+
+
+def test_account_performance_pillar_gate_and_full_render():
+    import card_renderer
+    gated = {"acct_perf": {"hold_twr": 0.12, "acct_twr": None, "irr_annual": None,
+                           "cash_drag": None, "note": "gate", "window": {"days": 30}}}
+    lines = card_renderer._performance_lines(gated, "en", {})
+    assert any("Holdings-only time-weighted return was 12%" in x for x in lines)
+    assert any("stays locked until cash has a complete anchor" in x for x in lines), \
+        "#181: gate must render the unlock invitation, not the engine note text"
+    assert not any("錨點" in x for x in lines), "engine's internal zh note must not leak into en cards"
+    full = {"acct_perf": {"hold_twr": 0.12, "acct_twr": 0.10, "irr_annual": 0.15,
+                          "cash_drag": -0.02, "note": None, "window": {"days": 30}}}
+    zh = card_renderer._performance_lines(full, "zh-TW", {})
+    assert any("帳戶級時間加權報酬為 10%" in x and "IRR 15%" in x for x in zh)
+    assert any("不是對錯判定" in x for x in zh), "#179: cash drag stays neutral, never a verdict"
+    assert card_renderer._performance_lines({"acct_perf": {"note": "offline"}}, "en", {}) == [], \
+        "no holdings pillar computed -> no account section"
 
 
 def test_all_json_schemas_parse():
