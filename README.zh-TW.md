@@ -116,7 +116,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # 真的全
 - **隱私自證**:教練記憶就是 `data-status` 列出的那些檔、全在你機器上,作者那邊一行都沒有。
 - **想先看「多週迴圈」長什麼樣**(全程在 temp 目錄跑,**不碰**你正式的 `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`:把內建 mock 按時間切 3 段模擬「初診 → 對帳 → 對帳」,直接看到第二張卡怎麼引用上週承諾、log.jsonl 怎麼一行行長出來。
 
-> 💡 **想分享給社群？** 每個 committed review 都會另外產生 `card-public.md`。它不是遮罩 private card，而是重新渲染，移除金額、日期、ticker、精確權重與 agent 自由文字；回覆仍預設給 private card。
+> 💡 **想分享給社群？** 每個 committed review 都會另外產生 `card-public.md`。它不是遮罩復盤卡，而是重新渲染，移除金額、日期、ticker、精確權重與 agent 自由文字；回覆仍預設給復盤卡。目前只有本機檔案，尚未提供上傳或發布功能。
 
 ## 安裝
 

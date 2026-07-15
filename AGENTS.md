@@ -19,8 +19,8 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 
 4. Read the returned `review_plan.flow_path` and shared references. Ask only questions in `question_queue` with `required:true`. Use a native option UI when available; otherwise present the same options in plain text.
 5. Produce schema-valid answers and a narrative with no digits, then call `preview`. Fix rejected artifacts instead of bypassing the validator.
-6. Show the private preview and ask the user to choose one candidate rule, supply a custom rule, or skip. Write that choice to `answers.commitment` and call `finalize`.
-7. Deliver `sessions/<id>/card-private.md`. Deliver `card-public.md` only when the user asks for a shareable version.
+6. Show the review-card preview (`card-private-preview.md`) and ask the user to choose one candidate rule, supply a custom rule, or skip. Write that choice to `answers.commitment` and call `finalize`.
+7. Deliver the review card at `sessions/<id>/card-private.md`. Deliver `card-public.md` only when the user asks for a share-safe artifact; there is no publishing feature yet.
 
 After an interruption, use `review.py resume`; do not refetch live prices. If a projection fails, use `review.py repair-projections`. An existing canonical session is not data loss.
 

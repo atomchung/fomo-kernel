@@ -17,6 +17,7 @@ SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
 import instruments  # noqa: E402
+import review as review_engine  # noqa: E402
 import trade_recap as tr  # noqa: E402
 from check_card import check_card  # noqa: E402
 
@@ -93,6 +94,58 @@ def _prepare(tmp, root, language="zh-TW"):
                "--card-json", card, "--state-json", state)
     assert run.returncode == 0, run.stdout + run.stderr
     return json.loads(run.stdout)["review_plan"]
+
+
+def _trade_csv(tmp, future=False):
+    path = pathlib.Path(tmp) / ("future.csv" if future else "exits.csv")
+    rows = ["Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency"]
+    if future:
+        rows.append("BIG,BUY,10,100,2099-01-01,Trade,US,USD")
+    else:
+        rows.extend([
+            "OLD,BUY,1,100,2025-01-01,Trade,US,USD",
+            "OLD,SELL,1,110,2025-02-01,Trade,US,USD",
+            "BIG,BUY,10,100,2026-07-01,Trade,US,USD",
+            "MID,BUY,10,100,2026-07-02,Trade,US,USD",
+            "SMALL,BUY,2,100,2026-07-03,Trade,US,USD",
+            "BIG,SELL,10,200,2026-07-10,Trade,US,USD",
+            "MID,SELL,6,150,2026-07-11,Trade,US,USD",
+            "SMALL,SELL,2,200,2026-07-12,Trade,US,USD",
+        ])
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _prepare_with_trades(tmp, root, language="zh-TW", nonce=""):
+    card, state = _artifacts(tmp)
+    csv_path = _trade_csv(tmp)
+    args = ["prepare", csv_path, "--root", root, "--language", language,
+            "--card-json", card, "--state-json", state]
+    if nonce:
+        args.extend(["--session-nonce", nonce])
+    run = _run(*args)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)["review_plan"], csv_path, card, state
+
+
+def _exit_answers(plan, commitment=None):
+    out = _answers(plan, commitment=commitment)
+    answers = []
+    for question in plan["question_queue"]:
+        if question["kind"] == "add_thesis":
+            answers.append({"question_id": question["id"], "choice": "new_evidence",
+                            "evidence_delta": {"claim": "Enterprise demand accelerated",
+                                               "source": "earnings call",
+                                               "falsifier": "renewals weaken"}})
+        elif question["kind"] == "revisit" and question["ticker"] == "BIG":
+            answers.append({"question_id": question["id"], "choice": "other",
+                            "note": "Risk limit for BIG before 2026-08-01"})
+        elif question["kind"] == "revisit":
+            answers.append({"question_id": question["id"], "choice": "skip"})
+        else:
+            answers.append({"question_id": question["id"], "choice": "deliberate_plan"})
+    out["answers"] = answers
+    return out
 
 
 def _answers(plan, evidence=True, commitment=None):
@@ -330,6 +383,177 @@ def test_public_card_never_reuses_user_authored_rule_text():
             assert fragment not in public, f"custom rule leaked {fragment!r} into the public card"
         assert "One self-authored process rule" in public
         assert not re.search(r"[一-鿿]", public), "en public card must not mix CJK labels"
+
+
+def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, csv_path, card_path, state_path = _prepare_with_trades(tmp, root)
+        assert plan["card_plan"]["question_limit"] == 3
+        assert len(plan["question_queue"]) == 3, "one review asks at most three important questions"
+        assert [(q["kind"], q.get("ticker")) for q in plan["question_queue"]] == [
+            ("revisit", "BIG"), ("add_thesis", "PLTR"), ("revisit", "MID")], \
+            "exit notional and position impact must deterministically select the top three"
+        big, _add, mid = plan["question_queue"]
+        assert big["exit_notional"] == 2000 and mid["exit_notional"] == 900
+        assert mid["exit_kind"] == "reduce" and "大幅減倉" in mid["question"]
+        assert "SMALL" not in {q.get("ticker") for q in plan["question_queue"]}, \
+            "lower-impact exits remain queued for a later review inside the freshness window"
+        assert "OLD" not in {q.get("ticker") for q in plan["question_queue"]}, \
+            "historical exits must not flood a cold-start review"
+        ledger_rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert len(ledger_rows) == 8 and not (root / "theses.jsonl").exists(), \
+            "validated trade facts persist at prepare, but answers do not project before finalize"
+
+        resumed = _run("resume", "--root", root, "--session-id", plan["session_id"])
+        resumed_plan = json.loads(resumed.stdout)["plan"]
+        assert resumed_plan["question_queue"] == plan["question_queue"], \
+            "resume returns the exact same ranked questions without re-ingesting"
+        assert len((root / "ledger.jsonl").read_text().splitlines()) == 8
+
+        answers_path = pathlib.Path(tmp) / "exit-answers.json"
+        narrative_path = pathlib.Path(tmp) / "exit-narrative.json"
+        answers_path.write_text(json.dumps(_exit_answers(plan, commitment="candidate_0"), ensure_ascii=False),
+                                encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers_path, "--narrative", narrative_path)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        preview_payload = json.loads(preview.stdout)
+        assert "復盤卡，只留在本機" in preview_payload["private_card"]
+        assert "Risk limit for BIG before 2026-08-01" in preview_payload["private_card"]
+        assert "MID：你把" not in preview_payload["private_card"], "skipped answers stay off the card"
+        for private_fragment in ("BIG", "Risk limit", "2026-08-01"):
+            assert private_fragment not in preview_payload["public_card"]
+
+        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", answers_path, "--narrative", narrative_path)
+        result = json.loads(finalized.stdout)
+        assert finalized.returncode == 0 and not result["projection_error"], finalized.stdout + finalized.stderr
+        bundle_path = pathlib.Path(result["path"]) / "bundle.json"
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        exits = bundle["exit_narratives"]
+        assert [(e["ticker"], e["capture"]) for e in exits] == [("BIG", "confirmed"), ("MID", "skipped")]
+        assert all(e["event_id"].startswith("exit-") for e in exits)
+        projected = [json.loads(line) for line in (root / "theses.jsonl").read_text().splitlines()]
+        assert {e["ticker"] for e in projected if e.get("event") == "exit_narrative"} == {"BIG", "MID"}
+
+        # Canonical session remains the dedup authority even if its compatibility
+        # projection disappeared before repair.
+        (root / "theses.jsonl").unlink()
+        again = _run("prepare", csv_path, "--root", root, "--card-json", card_path,
+                     "--state-json", state_path, "--session-nonce", "next")
+        assert again.returncode == 0, again.stdout + again.stderr
+        next_plan = json.loads(again.stdout)["review_plan"]
+        next_tickers = {q.get("ticker") for q in next_plan["question_queue"]}
+        assert "BIG" not in next_tickers and "MID" not in next_tickers, \
+            "confirmed and skipped exits must both deduplicate from the canonical bundle"
+        assert next_plan["input"]["ledger_ingest"]["appended"] == 0
+        assert next_plan["input"]["ledger_ingest"]["skipped_dup"] == 8
+
+        repaired = _run("repair-projections", "--root", root)
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        repaired_rows = [json.loads(line) for line in (root / "theses.jsonl").read_text().splitlines()]
+        assert {e["ticker"] for e in repaired_rows if e.get("event") == "exit_narrative"} == {"BIG", "MID"}
+        assert json.loads(bundle_path.read_text(encoding="utf-8")) == bundle, \
+            "repair must not mutate the canonical session"
+
+
+def test_exit_capture_validates_before_ledger_write_and_test_drive_never_ingests():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        future = _trade_csv(tmp, future=True)
+        rejected = _run("prepare", future, "--root", root, "--card-json", card, "--state-json", state)
+        assert rejected.returncode == 2 and "before writing" in json.loads(rejected.stdout)["error"]
+        assert not (root / "ledger.jsonl").exists() and not (root / "revisit.jsonl").exists()
+
+        valid = _trade_csv(tmp)
+        demo_root = pathlib.Path(tmp) / "demo"
+        demo = _run("prepare", valid, "--test-drive", "--root", demo_root,
+                    "--card-json", card, "--state-json", state)
+        assert demo.returncode == 0, demo.stdout + demo.stderr
+        assert json.loads(demo.stdout)["review_plan"]["persist"] is False
+        assert not (demo_root / "ledger.jsonl").exists() and not (demo_root / "revisit.jsonl").exists(), \
+            "test drive cannot persist real trade facts or exit queues"
+
+
+def test_ingestion_tolerates_cash_flow_rows_in_the_same_csv():
+    """Deposits, dividends, interest, fees, and reinvest notices legitimately share
+    the normalized CSV with trades — load_cash_flows() consumes them for the cash
+    pillar — so persist-mode prepare must count them, not die on them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        csv_path = pathlib.Path(tmp) / "with-cash.csv"
+        csv_path.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency,Amount",
+            ",,0,0,2026-07-01,Deposit,US,USD,5000",
+            "BIG,BUY,10,100,2026-07-01,Trade,US,USD,-1000",
+            "KO,REINVEST,1.2,60,2026-07-02,Trade,US,USD,-72",
+            "KO,,0,0,2026-07-03,Dividend,US,USD,32",
+            ",,0,0,2026-07-05,Interest,US,USD,1.5",
+            "BIG,SELL,10,200,2026-07-10,Trade,US,USD,2000",
+        ]) + "\n", encoding="utf-8")
+        run = _run("prepare", csv_path, "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        ingest = json.loads(run.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest["appended"] == 2 and ingest["skipped_non_trade"] == 4 \
+            and ingest["skipped_future_dated"] == 0, ingest
+        rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert [(r["ticker"], r["action"]) for r in rows] == [("BIG", "buy"), ("BIG", "sell")], \
+            "only BUY/SELL trade facts enter the ledger; cash rows stay with the cash pipeline"
+        assert any(q.get("ticker") == "BIG" and q["kind"] == "revisit"
+                   for q in json.loads(run.stdout)["review_plan"]["question_queue"]), \
+            "the exit detected among cash-flow noise still reaches the question queue"
+
+        # The shipped noisy-broker persona exists to pin broker-noise tolerance:
+        # its Transfer/Dividend/Interest/Fee/REINVEST rows must never kill prepare.
+        fixture = ROOT / "skills" / "fomo-kernel" / "mock" / "sample_noisy_broker.csv"
+        fixture_root = pathlib.Path(tmp) / "coach-fixture"
+        run2 = _run("prepare", fixture, "--root", fixture_root,
+                    "--card-json", card, "--state-json", state)
+        assert run2.returncode == 0, run2.stdout + run2.stderr
+        ingest2 = json.loads(run2.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest2["skipped_non_trade"] == 6 and ingest2["appended"] > 0, ingest2
+
+
+def test_exit_capture_english_copy_uses_review_card_language():
+    item = {"revisit_id": "BIG#2026-07-01#1#2026-07-10#10.0", "ticker": "BIG",
+            "cycle_id": "BIG#2026-07-01#1", "exit_date": "2026-07-10",
+            "exit_price": 200.0, "shares_sold": 10.0, "shares_before": 10.0,
+            "kind": "full", "currency": "USD"}
+    question = review_engine._exit_question(item, "en")
+    assert "fully exited" in question["question"] and "USD 2,000" in question["question"]
+    assert question["options"][0]["label"] == "The target was reached"
+    assert review_engine._exit_question({**item, "kind": "reduce"}, "en")["options"][0]["label"] == \
+        "The planned reduction point was reached"
+
+
+def test_exit_question_ranking_uses_engine_fx_for_mixed_currency_amounts():
+    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                              "fx": {"TWD": 1 / 30}}}
+    tw = {"exit_price": 1000.0, "shares_sold": 1500.0, "currency": "TWD"}
+    us = {"exit_price": 300.0, "shares_sold": 200.0, "currency": "USD"}
+    assert review_engine._exit_importance(tw, card) == 50000
+    assert review_engine._exit_importance(us, card) == 60000, \
+        "raw TWD notional must not outrank a larger aggregate-currency exit"
+
+
+def test_custom_exit_reason_requires_the_users_words():
+    question = review_engine._exit_question(
+        {"revisit_id": "A#2026-07-01#1#2026-07-10#1.0", "ticker": "A",
+         "cycle_id": "A#2026-07-01#1", "exit_date": "2026-07-10",
+         "exit_price": 100.0, "shares_sold": 1.0, "shares_before": 1.0,
+         "kind": "full", "currency": "USD"}, "en")
+    plan = {"session_id": "session-123", "question_queue": [question],
+            "engine_state": {"date_end": "2026-07-14"}}
+    answers = {"answers": [{"question_id": question["id"], "choice": "other"}]}
+    try:
+        review_engine._build_exit_narratives(plan, answers)
+        assert False, "other without a note must not create an empty confirmed memory"
+    except review_engine.ReviewError as exc:
+        assert "requires a short note" in str(exc)
 
 
 def test_english_is_same_contract_with_localized_questions_and_card():

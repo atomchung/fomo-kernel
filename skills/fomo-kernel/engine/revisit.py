@@ -86,10 +86,12 @@ def detect_exits(events):
         d, t, act, qty, px = n
         if anchor_date is not None and d <= anchor_date:
             continue
-        trades.append((d, t, act, qty, px))
+        trades.append((d, t, act, qty, px,
+                       str(ev.get("market") or "US"),
+                       str(ev.get("currency") or "USD").upper()))
     trades.sort(key=lambda x: x[0])
     exits = []
-    for d, t, act, qty, px in trades:
+    for d, t, act, qty, px, market, currency in trades:
         cur = shares.get(t, 0.0)
         if act == "buy":
             if cur <= lg.EPS:
@@ -108,7 +110,8 @@ def detect_exits(events):
                           "exit_price": round(px, 6),
                           "shares_sold": round(take, 4),
                           "shares_before": round(cur, 4),
-                          "kind": "full" if left <= lg.EPS else "reduce"})
+                          "kind": "full" if left <= lg.EPS else "reduce",
+                          "market": market, "currency": currency})
         shares[t] = left
     return exits
 
@@ -252,6 +255,19 @@ def _notional(item):
         return 0.0
 
 
+def scan_recent_exits(revisits, today, window_days=RECENT_WINDOW_DAYS):
+    """Return fresh exit-reason candidates, largest exit amount first.
+
+    The review orchestrator owns capture dedup against canonical sessions.  This
+    engine helper only owns the deterministic freshness window and amount sort so
+    the CLI and review-v2 path cannot drift apart.
+    """
+    recent = [it for it in (revisits or {}).values()
+              if 0 <= (today - dt.date.fromisoformat(it["exit_date"])).days <= window_days]
+    recent.sort(key=lambda it: (-_notional(it), str(it.get("revisit_id"))))
+    return recent
+
+
 def _is_historical(item):
     """完全歷史存量(#170)= 連最後一關(90)都 backfill(啟用前就全部過期)→ 永不會進 due,歸 backlog。
     部分 backfill(30 過期但 60/90 還在未來)不算歷史:它的 60/90 之後會自然進 due,不搶進 backlog。"""
@@ -389,9 +405,7 @@ def main(argv=None):
         # recent_exits = 賣出理由 capture(#136)的正式候選集:出場 ≤14 天、記憶還新鮮的佇列項。
         # 不能只靠 enqueue 當次的 new——session 中斷或當週限額沒問到的,窗口內下次還要能補問。
         # 金額大者先,SKILL 直接取前 2;「問過沒」由 SKILL 比對 theses.jsonl 的 exit_narrative(engine 不讀動機庫)。
-        recent = [it for it in revisits.values()
-                  if 0 <= (today - dt.date.fromisoformat(it["exit_date"])).days <= RECENT_WINDOW_DAYS]
-        recent.sort(key=lambda it: (-(it["exit_price"] * it["shares_sold"]), it["revisit_id"]))
+        recent = scan_recent_exits(revisits, today)
         backlog, backlog_summary, backlog_total = scan_backlog(revisits, resolutions, prices)
         _emit({"due": due, "recent_exits": recent,
                "backlog": backlog, "backlog_summary": backlog_summary, "backlog_total": backlog_total,

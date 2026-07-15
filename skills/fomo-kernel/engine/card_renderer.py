@@ -197,6 +197,32 @@ def _decision_lines(bundle, copy):
     return lines
 
 
+def _exit_lines(bundle, copy):
+    lines = []
+    for event in bundle.get("exit_narratives") or []:
+        if event.get("capture") == "skipped":
+            continue
+        kind = event.get("exit_kind") or "full"
+        labels = (copy.get("exit_choices") or {}).get(kind) or {}
+        reason = event.get("exit_reason")
+        note = event.get("note")
+        label = labels.get(reason, reason) if reason else note
+        if not label:
+            continue
+        if reason and note:
+            label = f"{label} ({note})"
+        ticker = event.get("ticker") or ("position" if copy.get("language") == "en" else "這筆部位")
+        if copy.get("language") == "en":
+            action = "exit" if kind == "full" else "reduction"
+            lines.append(f"{ticker}: you recorded the {action} reason as “{label}”. "
+                         "This preserves the reason at the time; it does not judge the outcome yet.")
+        else:
+            action = "清倉" if kind == "full" else "減倉"
+            lines.append(f"{ticker}：你把這次{action}記為「{label}」。"
+                         "這裡只保存當時的理由，尚未判斷決策結果。")
+    return lines
+
+
 def _performance_lines(card, language, honesty=None):
     """Render important existing product facts without giving the agent a calculator.
 
@@ -419,6 +445,9 @@ def render_private(bundle):
     decisions = _decision_lines(bundle, copy)
     if decisions:
         lines.extend([f"## {sections['motive']}", ""] + [f"- {x}" for x in decisions] + [""])
+    exits = _exit_lines(bundle, copy)
+    if exits:
+        lines.extend([f"## {sections['exit_capture']}", ""] + [f"- {x}" for x in exits] + [""])
     if etf_lines:
         lines.extend([f"## {sections['etf']}", ""] + [f"- {x}" for x in etf_lines] + [""])
 
