@@ -76,6 +76,7 @@ python3 engine/review.py repair-projections
 - Validate `narrative.json` against `schemas/narrative.schema.json`; it may contain qualitative prose only and no digits.
 - Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer weaves each sentence into the section it qualifies.
 - Add one `thesis_updates` entry for every missing-thesis `cycle_id`. Default to `maturity:"inferred"` and state the inference source; never present it as user-confirmed.
+- Do not invent `thesis_id`, `event_id`, `revises`, or `decision_cursor`. The engine assigns stable identity and links each accepted event to the prior event for that cycle.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.
 - `prepare` ranks eligible motive and recent-exit questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question; `skip` is an explicit answer and must deduplicate that exit later.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.

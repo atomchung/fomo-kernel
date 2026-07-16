@@ -345,6 +345,44 @@ def current_cycles(rows):
             if sh[t] <= 1e-6: start.pop(t, None)    # 清倉 → cycle 結束
     return {t: {"start": start[t], "seq": seq[t]} for t in start}
 
+
+def current_cycle_add_cursors(rows):
+    """Return an engine-owned decision cursor for each open position cycle.
+
+    The cursor advances only when that same cycle receives another buy. It does
+    not depend on the portfolio-wide averaging-down count, so an add in one
+    ticker cannot cause another ticker's thesis question to reappear.
+    """
+    shares = defaultdict(float)
+    seq = defaultdict(int)
+    start = {}
+    add_count = defaultdict(int)
+    for row in rows:
+        ticker = row["ticker"]
+        if row["side"] == "buy":
+            if shares[ticker] <= 1e-6:
+                seq[ticker] += 1
+                start[ticker] = row["date"].isoformat()
+                add_count[ticker] = 0
+            else:
+                add_count[ticker] += 1
+            shares[ticker] += row["qty"]
+        elif row["side"] == "sell" and shares[ticker] > 1e-6:
+            shares[ticker] = max(0.0, shares[ticker] - row["qty"])
+            if shares[ticker] <= 1e-6:
+                start.pop(ticker, None)
+                add_count.pop(ticker, None)
+    out = {}
+    for ticker in sorted(start):
+        cycle_id = f"{ticker}#{start[ticker]}#{seq[ticker]}"
+        count = add_count[ticker]
+        out[ticker] = {
+            "cycle_id": cycle_id,
+            "add_count": count,
+            "decision_cursor": f"{cycle_id}#add#{count}" if count else None,
+        }
+    return out
+
 def orphan_sells(rows):
     """偵測『賣超』:某檔賣量超過已知買量。多半是對帳單沒涵蓋最早的建倉,
     或先賣後買(做空)。只計數+列名,當報告最後的資料完整性提示,不進盈虧/洞的計算。
@@ -1860,12 +1898,15 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 只存 shares/cost/avg_cost（確定性）；per-position weight 仍不存（需即時價，跨期不穩）。
     # 帳戶級 cash_weight 改存頂層 cash 欄位（#171 PR-1：有現金錨點才可信，取代原「沒現金算不準」）。
     cyc = current_cycles(rows)                              # 雙審修：與 positions() 同邏輯（不跌負）+ cycle 序號
+    add_cursors = current_cycle_add_cursors(rows)
     holdings = {t: {"shares": round(sh, 4), "cost": round(c, 2),
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
                     "cycle_start": cyc.get(t, {}).get("start"),
                     # 算不出開倉（CSV 缺期初持倉）→ 標 #unknown，不 fallback 裸 ticker（雙審 codex#4）
                     # ⚠️ 格式契約 = 頂部 CYCLE_ID_RE / CYCLE_ID_UNKNOWN_RE(#61):改這裡必先改常數,契約測試會抓
-                    "cycle_id": f"{t}#{cyc[t]['start']}#{cyc[t]['seq']}" if t in cyc else f"{t}#unknown"}
+                    "cycle_id": f"{t}#{cyc[t]['start']}#{cyc[t]['seq']}" if t in cyc else f"{t}#unknown",
+                    "add_count": (add_cursors.get(t) or {}).get("add_count", 0),
+                    "decision_cursor": (add_cursors.get(t) or {}).get("decision_cursor")}
                 for t, (sh, c) in held.items()}
     p_events, p_opps = build_problem_events(
         dims, rts, avg_down, held, last_px,
