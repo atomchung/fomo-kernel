@@ -16,6 +16,7 @@ import shutil
 import tempfile
 
 import ledger
+import problems
 
 
 class SessionError(ValueError):
@@ -202,7 +203,19 @@ def project_legacy(root, bundle, private_md):
     commitment = bundle.get("commitment")
     state["commitment"] = commitment
     state["rule"] = (commitment or {}).get("rule")
-    ledger.atomic_write_text(os.path.join(root, "last_state.json"), pretty(state))
+    # Replaying an old bundle (repair-projections walks every session) must not
+    # regress a newer reconciliation anchor; equal dates keep idempotent rewrites.
+    last_state_path = os.path.join(root, "last_state.json")
+    last_state_status = "written"
+    try:
+        existing_state = read_json(last_state_path)
+    except (OSError, ValueError):
+        existing_state = None
+    if (isinstance(existing_state, dict)
+            and str(existing_state.get("date_end") or "") > str(state.get("date_end") or "")):
+        last_state_status = "kept_newer"
+    else:
+        ledger.atomic_write_text(last_state_path, pretty(state))
 
     date_end = state.get("date_end")
     log_row = {
@@ -220,6 +233,8 @@ def project_legacy(root, bundle, private_md):
                                         thesis_updates + exit_narratives))
     reports.append(_append_session_rows(os.path.join(root, "thesis_decisions.jsonl"), session_id,
                                         list(bundle.get("thesis_decisions") or [])))
+    reports.append(_append_session_rows(os.path.join(root, "revisit.jsonl"), session_id,
+                                        list(bundle.get("revisit_resolutions") or [])))
 
     rule_rows = []
     if commitment and commitment.get("rule"):
@@ -236,14 +251,23 @@ def project_legacy(root, bundle, private_md):
         })
     reports.append(_append_session_rows(os.path.join(root, "rules.jsonl"), session_id, rule_rows))
 
-    problems = []
-    for event in state.get("problem_events") or []:
-        row = dict(event)
-        row["session_id"] = session_id
-        problems.append(row)
-    reports.append(_append_session_rows(os.path.join(root, "problems.jsonl"), session_id, problems))
+    # The problem book goes through problems.append_book, not _append_session_rows:
+    # it stamps type:"event" (load_book drops untyped rows), dedupes by content so
+    # replays and overlapping sessions stay idempotent, and records the review_mark
+    # that defines the Opportunity Check period boundary (#146). A same-week mark
+    # with different opportunities fails closed (#166) after events are written.
+    problems_path = os.path.join(root, "problems.jsonl")
+    date_end = state.get("date_end")
+    opportunities = state.get("problem_opportunities")
+    mark = ({"week": date_end, "opportunities": opportunities}
+            if date_end and opportunities is not None else None)
+    n_events, n_marks = problems.append_book(
+        problems_path, list(state.get("problem_events") or []), mark, session_id=session_id)
+    reports.append({"path": problems_path, "appended": n_events, "marks": n_marks,
+                    "status": "projected" if (n_events or n_marks) else "no-op"})
     card_report = _project_card(root, bundle, private_md)
-    report = {"schema_version": 1, "session_id": session_id, "rows": reports, "card": card_report}
+    report = {"schema_version": 1, "session_id": session_id, "rows": reports, "card": card_report,
+              "last_state": last_state_status}
     ledger.atomic_write_text(os.path.join(root, "projections", session_id + ".json"), pretty(report))
     return report
 

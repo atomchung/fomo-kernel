@@ -11,6 +11,7 @@ Use when the Review Plan has `route=first_review`.
    - `exit_trigger`: a factual condition that would falsify the thesis, not a stop-loss price
    - `stop`, `target_size`, and `driver`
    - `maturity:"inferred"` plus the inference source; never present it as user-confirmed
+   - Inference-only accumulation fields (never ask extra questions for them; they cannot be backfilled later): `source_type` (`kol`|`research`|`self`|`other`, with `source_name` and `source_confidence:"candidate"` only when the conversation contains a real signal), `emotion` (`fomo`|`composed`|`forced`|`planned`) and `confidence` (`high`|`medium`|`low`), each with `emotion_inferred`/`confidence_inferred` set to true. Leave a field null when no signal supports a guess; upgrade `_inferred` to false or `source_confidence` to `"confirmed"` only when the user volunteers it in an existing answer.
 4. Keep the narrative qualitative. Write `headline` and `mirror`; optionally add `counterfactual`, `strength`, and `rule_rationale`. Cover every `card_plan.required_honesty_keys` entry with one sentence in `narrative.honesty` (wording guidance in `card-spec.md`). Do not include digits.
 5. Run preview. If validation fails, fix the artifact described by the error; do not bypass the gate.
 6. Show the review-card preview and ask the user to choose one candidate rule, provide a custom rule, or skip.

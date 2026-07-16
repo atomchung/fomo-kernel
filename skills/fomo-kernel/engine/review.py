@@ -25,6 +25,7 @@ import tempfile
 
 import card_renderer
 import ledger
+import problems
 import revisit
 import session
 import thesis
@@ -176,15 +177,20 @@ def _ingest_trades(root, paths):
     }
 
 
-def _captured_revisit_ids(root):
-    """Read capture identity from canonical sessions plus legacy compatibility rows."""
-    captured = {
-        row.get("revisit_id") for row in _jsonl(os.path.join(root, "theses.jsonl"))
-        if row.get("event") == "exit_narrative" and row.get("revisit_id")
-    }
+def _exit_narrative_index(root):
+    """Map revisit_id -> latest captured exit narrative (canonical sessions win).
+
+    Legacy `theses.jsonl` rows load first, then canonical bundles override them in
+    session order, so capture identity and the recorded reason stay consistent
+    with `_thesis_event_history` precedence.
+    """
+    index = {}
+    for row in _jsonl(os.path.join(root, "theses.jsonl")):
+        if row.get("event") == "exit_narrative" and row.get("revisit_id"):
+            index[row["revisit_id"]] = row
     sessions = os.path.join(root, "sessions")
     if not os.path.isdir(sessions):
-        return captured
+        return index
     for session_id in sorted(os.listdir(sessions)):
         bundle_path = os.path.join(sessions, session_id, "bundle.json")
         if not os.path.isfile(bundle_path):
@@ -196,11 +202,10 @@ def _captured_revisit_ids(root):
         plan = bundle.get("review_plan") or {}
         if bundle.get("route") == "test_drive" or plan.get("persist") is False:
             continue
-        captured.update(
-            row.get("revisit_id") for row in bundle.get("exit_narratives") or []
-            if row.get("revisit_id")
-        )
-    return captured
+        for row in bundle.get("exit_narratives") or []:
+            if row.get("revisit_id"):
+                index[row["revisit_id"]] = row
+    return index
 
 
 def _thesis_event_history(root):
@@ -242,19 +247,44 @@ def _thesis_event_history(root):
 
 
 def _prepare_exit_capture(root, state, persist):
-    """Enqueue ledger exits and return fresh, not-yet-captured candidates."""
+    """Enqueue ledger exits and return capture, due-checkpoint, and backlog signals.
+
+    Returns (recent, due, backlog, ingest_meta):
+      recent  - fresh exits still inside the capture window and not yet captured
+      due     - 30/60/90 checkpoints that matured after tracking started (#170);
+                each row carries the prior recorded exit reason and an offline
+                swap comparison (missing prices stay honest in needs_prices)
+      backlog - pre-activation historical exits: top items + aggregate summary
+    """
     if not persist:
-        return [], {"enqueued": 0, "skipped_dup": 0, "skipped_queue_lines": 0}
+        return [], [], None, {"enqueued": 0, "skipped_dup": 0, "skipped_queue_lines": 0}
     ledger_path = os.path.join(root, "ledger.jsonl")
     queue_path = os.path.join(root, "revisit.jsonl")
     as_of = _review_date(state)
     new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
-    revisits, _resolutions, skipped = revisit.load_queue(queue_path)
-    captured = _captured_revisit_ids(root)
+    revisits, resolutions, skipped = revisit.load_queue(queue_path)
+    narratives = _exit_narrative_index(root)
     recent = [row for row in revisit.scan_recent_exits(revisits, as_of)
-              if row.get("revisit_id") not in captured]
-    return recent, {"enqueued": len(new), "skipped_dup": dup,
-                    "skipped_queue_lines": skipped, "path": queue_path}
+              if row.get("revisit_id") not in narratives]
+    recent_ids = {row.get("revisit_id") for row in recent}
+    due = []
+    for row in revisit.scan_due(revisits, resolutions, as_of):
+        if row.get("revisit_id") in recent_ids:
+            continue  # capture wins while the exit is still inside its reason window
+        item = row.get("item") or {}
+        prior = narratives.get(row.get("revisit_id")) or {}
+        due.append({
+            "revisit_id": row.get("revisit_id"), "checkpoint": row.get("checkpoint"),
+            "due_date": row.get("due_date"), "item": item,
+            "compare": revisit.compare(item, {}),
+            "prior_exit_reason": prior.get("exit_reason"),
+            "prior_note": prior.get("note"),
+            "prior_capture": prior.get("capture"),
+        })
+    topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=None)
+    backlog = {"top": topn, "summary": summary, "total": total} if total else None
+    return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
+                                  "skipped_queue_lines": skipped, "path": queue_path}
 
 
 def _run_engine(paths, root, args):
@@ -346,6 +376,69 @@ def _exit_options(language, exit_kind):
             for key in ("price_target", "thesis_broken", "swap", "anxiety", "other", "skip")]
 
 
+def _due_options(language):
+    en = str(language).lower().startswith("en")
+    if en:
+        return [
+            {"value": "still_valid", "label": "Still valid",
+             "description": "The reason holds; selling early can still be discipline."},
+            {"value": "modified", "label": "Partly right",
+             "description": "The reason was partly right and needs an adjustment."},
+            {"value": "falsified", "label": "Wrong call",
+             "description": "The reason was wrong; record it as a lesson."},
+            {"value": "skip", "label": "Skip",
+             "description": "Not saved as answered; the same checkpoint returns next review."},
+        ]
+    return [
+        {"value": "still_valid", "label": "還成立", "description": "理由仍成立，賣早也是紀律。"},
+        {"value": "modified", "label": "部分對，要調", "description": "理由部分成立，需要修正。"},
+        {"value": "falsified", "label": "看錯了", "description": "真的判斷錯誤，記進教訓。"},
+        {"value": "skip", "label": "先跳過", "description": "不算已回答，下次復盤同一關會再出現。"},
+    ]
+
+
+def _due_question(row, language, card=None):
+    """One 30/60/90 checkpoint question that replays the user's own recorded reason."""
+    item = row.get("item") or {}
+    ticker = item.get("ticker") or "position"
+    en = str(language).lower().startswith("en")
+    reason = row.get("prior_exit_reason")
+    inferred = row.get("prior_capture") == "inferred"
+    base = (f"{ticker} was sold on {item.get('exit_date')} at {item.get('exit_price')}."
+            if en else f"{ticker} 你在 {item.get('exit_date')} 以 {item.get('exit_price')} 賣出。")
+    recalls_en = {
+        "price_target": "At the time you said the target was reached.",
+        "thesis_broken": "At the time you said the thesis was broken.",
+        "swap": "At the time you said the capital moved to another position.",
+        "anxiety": "At the time you said you wanted to lock in gains.",
+    }
+    recalls_zh = {
+        "price_target": "你當時說是到價了。",
+        "thesis_broken": "你當時說是看錯了。",
+        "swap": "你當時說是換到別的標的。",
+        "anxiety": "你當時說是想落袋、怕回吐。",
+    }
+    recall = (recalls_en if en else recalls_zh).get(reason, "")
+    if recall and inferred:
+        recall = (recall.replace("you said", "I guessed") if en
+                  else recall.replace("你當時說", "我當時猜你"))
+    ask = (f"Looking back after {row.get('checkpoint')} days, does that reason still hold?" if en
+           else f"{row.get('checkpoint')} 天後回頭看，當時的理由現在還成立嗎？")
+    question = " ".join(part for part in (base, recall, ask) if part)
+    digest = hashlib.sha256(f"{row.get('revisit_id')}|{row.get('checkpoint')}".encode("utf-8")).hexdigest()[:12]
+    return {
+        "id": f"due_{digest}", "kind": "due_revisit", "ticker": ticker,
+        "cycle_id": item.get("cycle_id"), "required": True, "question": question,
+        "options": _due_options(language), "revisit_id": row.get("revisit_id"),
+        "checkpoint": row.get("checkpoint"), "due_date": row.get("due_date"),
+        "exit_date": item.get("exit_date"), "exit_price": item.get("exit_price"),
+        "exit_kind": item.get("kind"), "currency": item.get("currency") or "USD",
+        "swaps": item.get("swaps") or [], "compare": row.get("compare"),
+        "prior_exit_reason": reason, "prior_note": row.get("prior_note"),
+        "_importance": _exit_importance(item, card), "_tie": 2,
+    }
+
+
 def _format_notional(value, currency):
     value = float(value or 0)
     rendered = f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
@@ -403,7 +496,8 @@ def _ticker_importance(card, state, ticker):
         return 0.0, "unknown"
 
 
-def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None):
+def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
+                    due_revisits=None):
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     del previous_state  # retained in the call contract for older adapters
@@ -415,6 +509,8 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
         candidates.append(question)
+    for row in due_revisits or []:
+        candidates.append(_due_question(row, language, card))
     for index, item in enumerate(card.get("thesis_questions") or []):
         ticker = item.get("ticker")
         pos = by_ticker.get(ticker) or {}
@@ -485,8 +581,29 @@ def _candidate_rules(card, state, language):
     return candidates
 
 
+def _problem_snapshot(root, state):
+    """Read the problem book and rules, and fold them into review-ready stats.
+
+    Offline and read-only: prepare must be able to show trends and rule verdicts
+    without mutating the book (appending happens at finalize via projections).
+    """
+    events, marks, skipped = problems.load_book(os.path.join(root, "problems.jsonl"))
+    if not events and not marks:
+        return None
+    today = _review_date(state).isoformat()
+    per_key, top = problems.compute_stats(events, today)
+    tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"))
+    rules_check = problems.check_rules(tracking, events, marks)
+    return {"as_of": today, "per_key": per_key, "top": top,
+            "rules_check": rules_check,
+            "muted_rules": [{"rule_id": r.get("rule_id"), "text": r.get("text"),
+                             "problem_key": r.get("problem_key")} for r in muted],
+            "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
-                recent_exits=None, ledger_ingest=None, revisit_ingest=None):
+                recent_exits=None, ledger_ingest=None, revisit_ingest=None,
+                due_revisits=None, exit_backlog=None, problem_stats=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
     thesis_rows, decision_rows = _thesis_event_history(root)
@@ -515,11 +632,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "ledger_ingest": ledger_ingest},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
                            "active_theses": active_rows, "closed_theses": closed_rows,
-                           "thesis_states": thesis_states, "due_revisits": [],
+                           "thesis_states": thesis_states,
+                           "due_revisits": list(due_revisits or []),
                            "recent_exits": list(recent_exits or []),
+                           "exit_backlog": exit_backlog,
+                           "problem_stats": problem_stats,
                            "revisit_ingest": revisit_ingest},
         "question_queue": _question_queue(card, state, active, previous, language,
-                                          recent_exits, by_cycle),
+                                          recent_exits, by_cycle, due_revisits),
         "missing_thesis_positions": missing,
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
@@ -569,9 +689,11 @@ def cmd_prepare(args):
     ledger_ingest = None
     if persist and route != "snapshot_review" and paths:
         ledger_ingest = _ingest_trades(root, paths)
-    recent_exits, revisit_ingest = _prepare_exit_capture(root, state, persist)
+    recent_exits, due_revisits, exit_backlog, revisit_ingest = _prepare_exit_capture(root, state, persist)
+    problem_stats = _problem_snapshot(root, state) if persist else None
     plan = _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint,
-                       args.session_nonce or "", persist, recent_exits, ledger_ingest, revisit_ingest)
+                       args.session_nonce or "", persist, recent_exits, ledger_ingest, revisit_ingest,
+                       due_revisits, exit_backlog, problem_stats)
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
@@ -679,6 +801,42 @@ def _build_exit_narratives(plan, answers):
     return events
 
 
+def _build_revisit_resolutions(plan, answers):
+    """Turn due-checkpoint answers into revisit resolution events.
+
+    `skip` is deliberately NOT saved: the checkpoint stays open and returns at
+    the next review (the capture contract's skip-dedup applies to exit reasons,
+    not to 30/60/90 verdicts — an unanswered verdict is missing data, not a
+    decision).
+    """
+    amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    date = (plan.get("engine_state") or {}).get("date_end")
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "due_revisit":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        if choice == "skip":
+            continue
+        if choice not in revisit.STATUSES:
+            raise ReviewError(f"unsupported revisit resolution: {choice}")
+        if answer.get("evidence_delta") is not None:
+            raise ReviewError(f"{question['id']}: evidence_delta is not valid for a revisit verdict")
+        note = " ".join(str(answer.get("note") or "").split()) or None
+        if note and len(note) > 500:
+            raise ReviewError(f"{question['id']}: note must be at most 500 characters")
+        event = {
+            "type": "resolution", "revisit_id": question.get("revisit_id"),
+            "checkpoint": str(question.get("checkpoint")), "status": choice,
+            "date": date, "session_id": plan.get("session_id"),
+        }
+        if note:
+            event["note"] = note
+        events.append(event)
+    return events
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
@@ -713,6 +871,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
     decisions = thesis.build_decision_events(plan, answers, updates)
     exit_narratives = _build_exit_narratives(plan, answers)
+    revisit_resolutions = _build_revisit_resolutions(plan, answers)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every triggered honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the engine did not trigger.
@@ -736,6 +895,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
         "thesis_updates": updates,
         "thesis_decisions": decisions,
         "exit_narratives": exit_narratives,
+        "revisit_resolutions": revisit_resolutions,
         "commitment": commitment,
         "observations": list(answers.get("observations") or []),
     }
