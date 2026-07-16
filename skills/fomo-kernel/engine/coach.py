@@ -63,7 +63,8 @@ EMOTIONS = {"fomo", "composed", "forced", "planned", None}
 CONFIDENCES = {"high", "medium", "low", None}
 # metric_key → problem_key 對映(問題帳對位;無對位的問題手填 problem_key,不經這張表)
 PKEY = {"max_pos_pct": "oversize", "avgdown_count": "avgdown_breach",
-        "ai_pct": "concentration", "max_sector_pct": "concentration", "top3_pct": "concentration"}
+        "ai_pct": "concentration", "max_sector_pct": "concentration", "top3_pct": "concentration",
+        "exit_severity": "sell_winner_early", "hold_severity": "hold_inconsistency"}
 
 
 def _die(msg, code=2):

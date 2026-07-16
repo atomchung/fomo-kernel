@@ -30,6 +30,8 @@ PKEY = {
     "ai_pct": "concentration",
     "max_sector_pct": "concentration",
     "top3_pct": "concentration",
+    "exit_severity": "sell_winner_early",
+    "hold_severity": "hold_inconsistency",
 }
 
 
@@ -252,7 +254,7 @@ def project_legacy(root, bundle, private_md):
     rule_rows = []
     if commitment and commitment.get("rule"):
         suffix = session_id.split("__")[-1]
-        rule_rows.append({
+        rule_row = {
             "rule_id": f"rule-{suffix}-0",
             "text": commitment["rule"],
             "metric_key": commitment.get("metric_key"),
@@ -261,7 +263,10 @@ def project_legacy(root, bundle, private_md):
             "status": "tracking",
             "created": date_end,
             "session_id": session_id,
-        })
+        }
+        if commitment.get("revises_rule_id"):
+            rule_row["revises"] = commitment["revises_rule_id"]
+        rule_rows.append(rule_row)
     reports.append(_append_session_rows(os.path.join(root, "rules.jsonl"), session_id, rule_rows))
 
     # The problem book goes through problems.append_book, not _append_session_rows:

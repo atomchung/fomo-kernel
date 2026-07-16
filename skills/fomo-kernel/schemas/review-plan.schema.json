@@ -261,6 +261,54 @@
               "string",
               "null"
             ]
+          },
+          "horizon_marker": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "problem_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "breach_week": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "recent_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recent_amount": {
+            "type": "number"
+          },
+          "trend": {
+            "enum": [
+              "better",
+              "flat",
+              "worse",
+              null
+            ]
           }
         },
         "additionalProperties": false
@@ -273,7 +321,18 @@
       }
     },
     "card_plan": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "horizon_ids": {
+          "type": "array",
+          "items": {
+            "enum": ["weeks", "quarters", "years"]
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        }
+      }
     },
     "engine_card": {
       "type": "object"

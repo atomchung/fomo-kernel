@@ -221,27 +221,45 @@ def check_rules(tracking, events, marks):
       broke   = 該期內有綁定 key 的事件
       held    = 無事件,且該期 mark 標「有機會犯」
       skipped = 無事件,也沒機會(零事件不冒充守住)
-    回每條 {rule_id, text, problem_key, verdict(最新期), held_streak(尾端連續 held 期數)}。
+    回每條 {rule_id, text, problem_key, verdict(最新期), held_streak, last_breach}。
+    last_breach 保留最近一次 broke 的精確期別與最多三筆事件證據，供定性問句引用；
+    不可拿四週 recent_events 冒充本次破戒證據。
     held_streak 給呈現層做注意力調度(連 2 次守住退出卡面),不是畢業判定。
     規矩只從 created 之後的期開始對位(review):初診全期補齊的歷史事件是「你過去犯過」
     的統計事實,但規矩生效前的行為不對規矩計破——否則規矩才立(或剛匯入)就滿版 broke。"""
     marks_sorted = sorted(marks, key=lambda m: m["week"])
+
+    def _evidence_amount(event):
+        try:
+            return abs(float(event.get("amount") or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
     out = []
     for r in tracking:
         k = r.get("problem_key")
         created = r.get("created")
         verdicts = []
         prev_week = None
+        last_breach = None
         for m in marks_sorted:
             w = m["week"]
-            if created and w < created:                     # 規矩生效前的期:不對位
+            if created and w <= created:                    # 建立當期是 baseline；下一期才開始對位
                 prev_week = w
                 continue
             in_period = [e for e in events if e["key"] == k
                          and (prev_week is None or e["week"] > prev_week) and e["week"] <= w
-                         and (not created or e["week"] >= created)]
+                         and (not created or e["week"] > created)]
             if in_period:
                 verdicts.append("broke")
+                ranked = sorted(
+                    in_period,
+                    key=lambda event: (-_evidence_amount(event),
+                                       str(event.get("ticker") or ""),
+                                       str(event.get("note") or "")),
+                )
+                last_breach = {"week": w, "event_count": len(in_period),
+                               "events": [dict(event) for event in ranked[:3]]}
             elif (m.get("opportunities") or {}).get(k):
                 verdicts.append("held")
             else:
@@ -256,7 +274,7 @@ def check_rules(tracking, events, marks):
             # skipped 不中斷也不累計(沒機會犯的週,對 streak 是透明的)
         out.append({"rule_id": r["rule_id"], "text": r.get("text"),
                     "problem_key": k, "verdict": verdicts[-1] if verdicts else None,
-                    "held_streak": streak})
+                    "held_streak": streak, "last_breach": last_breach})
     return out
 
 

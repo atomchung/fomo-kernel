@@ -7,7 +7,7 @@ Use when the Review Plan has `route=first_review`.
 3. Create an inferred thesis for every entry in `missing_thesis_positions`. Include at least:
    - `ticker` and the unchanged `cycle_id`
    - `why`: the fact or expectation that may not be priced in, or an honest placeholder such as "averaging down while waiting to recover; confirmation needed"
-   - `horizon`: weeks, quarters, or years; use null when no reasonable inference is possible
+   - `horizon`: the stable id `weeks`, `quarters`, or `years`; use null when no reasonable inference is possible (legacy Chinese values remain readable but must not be newly authored)
    - `exit_trigger`: a factual condition that would falsify the thesis, not a stop-loss price
    - `stop`, `target_size`, and `driver`
    - `maturity:"inferred"` plus the inference source; never present it as user-confirmed

@@ -378,6 +378,236 @@ def _trade_lines(card, language):
     ]
 
 
+def _signed_pct(value, digits=1):
+    return "—" if value is None else f"{float(value) * 100:+.{digits}f}%"
+
+
+def _signed_pp(value, digits=1):
+    return "—" if value is None else f"{float(value) * 100:+.{digits}f} pp"
+
+
+def _market_context_lines(bundle, language):
+    context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+               .get("market_context") or {})
+    benchmarks = context.get("benchmarks") or {}
+    pieces = []
+    for symbol in ("SPY", "QQQ"):
+        row = benchmarks.get(symbol) or {}
+        values = []
+        if row.get("window_ret") is not None:
+            values.append(("window " if language == "en" else "區間") + _signed_pct(row["window_ret"]))
+        if row.get("ytd_ret") is not None:
+            values.append("YTD " + _signed_pct(row["ytd_ret"]))
+        if values:
+            pieces.append(f"{symbol} " + ", ".join(values))
+    vix = benchmarks.get("VIX") or {}
+    if vix.get("last") is not None:
+        vix_piece = f"VIX {float(vix['last']):.1f}"
+        if vix.get("delta") is not None:
+            vix_piece += f" ({float(vix['delta']):+.1f})"
+        pieces.append(vix_piece)
+    if not pieces:
+        return []
+    start, end = context.get("start"), context.get("end")
+    if language == "en":
+        lead = f"Market window {start} to {end}: " if start and end else "Market context: "
+    else:
+        lead = f"市場區間 {start} 到 {end}：" if start and end else "市場背景："
+    return [lead + "; ".join(pieces) + "."]
+
+
+def _horizon_lines(bundle, copy):
+    markers = ((((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                .get("horizon_markers")) or [])
+    labels = copy.get("horizons") or {}
+    en = copy.get("language") == "en"
+    lines = []
+    for marker in markers:
+        ticker = marker.get("ticker") or ("Position" if en else "這筆部位")
+        horizon_label = labels.get(marker.get("horizon"), marker.get("horizon"))
+        days = marker.get("holding_days")
+        inferred = marker.get("maturity") == "inferred"
+        if marker.get("kind") == "exit_too_fast":
+            if en:
+                voice = "inferred" if inferred else "recorded"
+                lines.append(f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it ended after {days} days; "
+                             "this is a timeline mismatch, not a verdict about the motive.")
+            else:
+                voice = "原先推測" if inferred else "已記錄"
+                lines.append(f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，{days} 天後就出場；"
+                             "這是時間軸不一致，不替動機下定論。")
+        elif marker.get("kind") == "held_too_long":
+            if en:
+                voice = "inferred" if inferred else "recorded"
+                lines.append(f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it is still open after {days} days; "
+                             "the horizon has drifted and needs clarification.")
+            else:
+                voice = "原先推測" if inferred else "已記錄"
+                lines.append(f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，持有 {days} 天後仍未結束；"
+                             "時間軸已漂移，仍需釐清。")
+    return lines
+
+
+def _exit_followup_lines(bundle, copy):
+    plan = bundle.get("review_plan") or {}
+    price_as_of = (((bundle.get("engine_state") or {}).get("price_snapshot") or {}).get("as_of"))
+    questions = {(row.get("revisit_id"), str(row.get("checkpoint"))): row
+                 for row in plan.get("question_queue") or [] if row.get("kind") == "due_revisit"}
+    due_labels = copy.get("due_choices") or {}
+    en = copy.get("language") == "en"
+    lines = []
+    for event in bundle.get("revisit_resolutions") or []:
+        question = questions.get((event.get("revisit_id"), str(event.get("checkpoint"))))
+        if not question:
+            continue
+        ticker = question.get("ticker") or ("position" if en else "這筆部位")
+        label = due_labels.get(event.get("status"), event.get("status"))
+        line = (f"{ticker}, {event.get('checkpoint')}-day check: {label}." if en else
+                f"{ticker}，{event.get('checkpoint')} 天複核：{label}。")
+        if event.get("note"):
+            line += (f' Note: "{event["note"]}".' if en else f' 註記：「{event["note"]}」。')
+        compare = question.get("compare") or {}
+        needs = compare.get("needs_prices") or []
+        if needs:
+            missing = ", ".join(needs)
+            when = f" as of {price_as_of}" if en and price_as_of else (f"（截至 {price_as_of}）" if price_as_of else "")
+            line += (f" Current prices are missing for {missing}{when}, so no outcome comparison was made." if en else
+                     f" {missing} 缺現價{when}，本期不判結果。")
+        elif compare.get("swap_net_pp") is not None:
+            swaps = ", ".join(sorted({row.get("ticker") for row in question.get("swaps") or []
+                                      if row.get("ticker")})) or ("the replacement" if en else "換入標的")
+            if en:
+                lead = f" Using prices frozen on {price_as_of}," if price_as_of else ""
+                line += (f"{lead} the original moved {_signed_pct(compare.get('orig_ret'))}; {swaps} moved "
+                         f"{_signed_pct(compare.get('swap_ret'))}; swap net {_signed_pp(compare.get('swap_net_pp'))}.")
+            else:
+                lead = f" 以 {price_as_of} 凍結現價計，" if price_as_of else " "
+                line += (f"{lead}原標的後續 {_signed_pct(compare.get('orig_ret'))}；{swaps}同期 "
+                         f"{_signed_pct(compare.get('swap_ret'))}；swap 淨差 {_signed_pp(compare.get('swap_net_pp'))}。")
+        elif compare.get("idle_cash") and compare.get("orig_ret") is not None:
+            when = f" using prices frozen on {price_as_of}" if en and price_as_of else (f"（以 {price_as_of} 凍結現價計）" if price_as_of else "")
+            line += (f" Proceeds stayed idle while the original moved {_signed_pct(compare.get('orig_ret'))}{when}." if en else
+                     f" 賣後資金閒置，原標的同期 {_signed_pct(compare.get('orig_ret'))}{when}。")
+        lines.append(line)
+    backlog = (((plan.get("state_snapshot") or {}).get("exit_backlog")) or {})
+    summary = backlog.get("summary") or {}
+    if summary.get("count"):
+        top = ", ".join(f"{ticker} ×{count}" for ticker, count in summary.get("top_tickers") or [])
+        span = summary.get("span") or {}
+        if en:
+            line = (f"Historical exit backlog: {summary.get('count')} unresolved exits "
+                    f"({summary.get('full')} full, {summary.get('reduce')} reductions)")
+            if span.get("first") and span.get("last"):
+                line += f" from {span['first']} to {span['last']}"
+            if top:
+                line += f"; most frequent: {top}"
+            line += "."
+        else:
+            line = (f"歷史出場 backlog 尚有 {summary.get('count')} 筆未複核"
+                    f"（清倉 {summary.get('full')}、減倉 {summary.get('reduce')}）")
+            if span.get("first") and span.get("last"):
+                line += f"，期間 {span['first']} 到 {span['last']}"
+            if top:
+                line += f"；最常出現：{top}"
+            line += "。"
+        if summary.get("priced"):
+            if en:
+                line += (f" Across {summary.get('priced')} price-covered exits, the average post-exit move was "
+                         f"{_signed_pp(summary.get('avg_hindsight_pp'))}; "
+                         f"{summary.get('sold_before_rise')} later rose.")
+            else:
+                line += (f" 有現價可回看的 {summary.get('priced')} 筆，出場後平均走勢為 "
+                         f"{_signed_pp(summary.get('avg_hindsight_pp'))}；其中 "
+                         f"{summary.get('sold_before_rise')} 筆後續上漲。")
+        lines.append(line)
+        for item in (backlog.get("items") or [])[:2]:
+            ticker = item.get("ticker") or ("position" if en else "這筆部位")
+            kind = item.get("kind")
+            if en:
+                action = "full exit" if kind == "full" else "reduction"
+                detail = f"Backlog focus: {ticker}, {action} on {item.get('exit_date')}."
+            else:
+                action = "清倉" if kind == "full" else "減倉"
+                detail = f"Backlog 優先回看：{ticker}，{item.get('exit_date')} {action}。"
+            compare = item.get("compare") or {}
+            needs = compare.get("needs_prices") or []
+            if needs:
+                missing = ", ".join(needs)
+                when = f" as of {price_as_of}" if en and price_as_of else (f"（截至 {price_as_of}）" if price_as_of else "")
+                detail += (f" No frozen-price comparison for {missing}{when}." if en else
+                           f" {missing} 缺凍結現價{when}，不判結果。")
+            elif compare.get("swap_net_pp") is not None:
+                if en:
+                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
+                    detail += (f" The original moved {_signed_pct(compare.get('orig_ret'))}{when}; "
+                               f"the replacement moved {_signed_pct(compare.get('swap_ret'))}; "
+                               f"swap net {_signed_pp(compare.get('swap_net_pp'))}.")
+                else:
+                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
+                    detail += (f" 原標的後續 {_signed_pct(compare.get('orig_ret'))}{when}；"
+                               f"換入標的同期 {_signed_pct(compare.get('swap_ret'))}；"
+                               f"swap 淨差 {_signed_pp(compare.get('swap_net_pp'))}。")
+            elif compare.get("idle_cash") and compare.get("orig_ret") is not None:
+                if en:
+                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
+                    detail += (f" Proceeds stayed idle while the original moved "
+                               f"{_signed_pct(compare.get('orig_ret'))}{when}.")
+                else:
+                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
+                    detail += f" 賣後資金閒置，原標的同期 {_signed_pct(compare.get('orig_ret'))}{when}。"
+            elif compare.get("orig_ret") is not None:
+                if en:
+                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
+                    detail += f" The original moved {_signed_pct(compare.get('orig_ret'))}{when}."
+                else:
+                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
+                    detail += f" 原標的後續 {_signed_pct(compare.get('orig_ret'))}{when}。"
+            lines.append(detail)
+    return lines
+
+
+def _problem_lines(bundle, copy):
+    stats = ((((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+             .get("problem_stats")) or {})
+    if not stats:
+        return []
+    en = copy.get("language") == "en"
+    names = copy.get("problem_keys") or {}
+    trends = copy.get("trends") or {}
+    lines = []
+    for key in (stats.get("top") or [])[:3]:
+        row = (stats.get("per_key") or {}).get(key) or {}
+        name = names.get(key, key.replace("_", " "))
+        trend = trends.get(row.get("trend"), row.get("trend"))
+        if en:
+            lines.append(f"{name}: {row.get('recent_count', 0)} events in the recent window versus "
+                         f"{row.get('prev_count', 0)} before ({trend}).")
+        else:
+            lines.append(f"{name}：近期 {row.get('recent_count', 0)} 次，前期 {row.get('prev_count', 0)} 次（{trend}）。")
+    decisions = copy.get("rule_breach_decisions") or {}
+    decided_rules = set()
+    for event in bundle.get("rule_breach_decisions") or []:
+        decided_rules.add(event.get("rule_id"))
+        rule = event.get("rule_text") or event.get("rule_id")
+        label = decisions.get(event.get("decision"), event.get("decision"))
+        if en:
+            line = f'Rule "{rule}": {label}.'
+            if event.get("note"):
+                line += f' Note: "{event["note"]}".'
+        else:
+            line = f"規矩「{rule}」：{label}。"
+            if event.get("note"):
+                line += f' 註記：「{event["note"]}」。'
+        lines.append(line)
+    for rule in stats.get("rules_check") or []:
+        if (rule.get("rule_id") not in decided_rules and rule.get("verdict") == "held"
+                and int(rule.get("held_streak") or 0) == 1):
+            text = rule.get("text") or rule.get("rule_id")
+            lines.append((f'Rule "{text}" was kept in the latest observable period.' if en else
+                          f"規矩「{text}」在最近一個可觀測週期守住了。"))
+    return lines
+
+
 def render_private(bundle):
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
@@ -407,8 +637,12 @@ def render_private(bundle):
     reconciliation = _reconciliation_lines(bundle, copy["language"])
     if reconciliation:
         lines.extend(reconciliation + [""])
+    lines.extend([narrative["mirror"], ""])
+    context_lines = _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy)
+    if context_lines:
+        lines.extend([f"## {sections['context']}", ""] + [f"- {x}" for x in context_lines] + [""])
     lines.extend([
-        narrative["mirror"], "", f"## {sections['numbers']}", "",
+        f"## {sections['numbers']}", "",
         ((f"帳面總損益 {_money(overview.get('total_pnl'), currency)}，其中已實現 "
           f"{_money(overview.get('realized'), currency)}、未實現 {_money(overview.get('unrealized'), currency)}。")
          if copy["language"] != "en" else
@@ -448,8 +682,14 @@ def render_private(bundle):
     exits = _exit_lines(bundle, copy)
     if exits:
         lines.extend([f"## {sections['exit_capture']}", ""] + [f"- {x}" for x in exits] + [""])
+    exit_followup = _exit_followup_lines(bundle, copy)
+    if exit_followup:
+        lines.extend([f"## {sections['exit_followup']}", ""] + [f"- {x}" for x in exit_followup] + [""])
     if etf_lines:
         lines.extend([f"## {sections['etf']}", ""] + [f"- {x}" for x in etf_lines] + [""])
+    problem_lines = _problem_lines(bundle, copy)
+    if problem_lines:
+        lines.extend([f"## {sections['patterns']}", ""] + [f"- {x}" for x in problem_lines] + [""])
 
     rule = commitment.get("rule")
     if rule:

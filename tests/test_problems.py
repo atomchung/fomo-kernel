@@ -164,20 +164,34 @@ def test_check_rules_three_way_and_streak():
     out = pb.check_rules(tracking, events, marks)
     assert out[0]["verdict"] == "held"
     assert out[0]["held_streak"] == 2, "skipped 透明(不中斷不累計):held×2,不是 3 也不是 1"
+    assert out[0]["last_breach"]["week"] == "2026-06-13"
+    assert out[0]["last_breach"]["events"][0]["ticker"] == "PLTR", \
+        "破戒問句必須引用精確期別事件,不可拿四週 recent_events 冒充"
     marks2 = marks + [{"week": "2026-07-11", "opportunities": {"avgdown_breach": True}}]
     events2 = events + [{"type": "event", "key": "avgdown_breach", "week": "2026-07-08"}]
     out2 = pb.check_rules(tracking, events2, marks2)
     assert out2[0]["verdict"] == "broke" and out2[0]["held_streak"] == 0, "破戒中斷 streak"
+    assert out2[0]["last_breach"]["week"] == "2026-07-11"
 
 
 def test_rule_created_lower_bound():
-    """冷啟動全期補齊的歷史事件 = 統計事實,但規矩生效前的行為不對規矩計破(PR #146 review)。"""
-    events = [{"type": "event", "key": "avgdown_breach", "week": "2026-05-10"}]  # 規矩立之前
+    """建立當期是 baseline；舊事件與促成規矩的同日事件都不算規矩生效後破戒。"""
+    events = [
+        {"type": "event", "key": "avgdown_breach", "week": "2026-05-10"},
+        {"type": "event", "key": "avgdown_breach", "week": "2026-06-13"},
+    ]
     marks = [{"week": "2026-06-13", "opportunities": {"avgdown_breach": True}}]
     tracking = [{"rule_id": "r1", "text": "虧損不加碼", "problem_key": "avgdown_breach",
                  "created": "2026-06-13"}]
     out = pb.check_rules(tracking, events, marks)
-    assert out[0]["verdict"] == "held", "歷史事件不讓才立的規矩滿版 broke"
+    assert out[0]["verdict"] is None and out[0]["last_breach"] is None, \
+        "建立當期只立 baseline,不可把促成規矩的同日狀態倒算成破戒"
+    later_marks = marks + [{"week": "2026-06-20", "opportunities": {"avgdown_breach": True}}]
+    later = pb.check_rules(tracking, events, later_marks)
+    assert later[0]["verdict"] == "held" and later[0]["held_streak"] == 1
+    later_events = events + [{"type": "event", "key": "avgdown_breach", "week": "2026-06-18"}]
+    broke = pb.check_rules(tracking, later_events, later_marks)
+    assert broke[0]["verdict"] == "broke" and broke[0]["last_breach"]["week"] == "2026-06-20"
     tracking2 = [dict(tracking[0], created=None)]            # 無 created(legacy)→ 保守沿舊行為
     out2 = pb.check_rules(tracking2, events, marks)
     assert out2[0]["verdict"] == "broke"

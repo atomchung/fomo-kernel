@@ -10,6 +10,7 @@ fomo-kernel · trade-recap engine v0.2
 import csv, os, re, sys, statistics, datetime as dt
 from collections import defaultdict, deque
 import instruments as instrument_policy
+import market_context as market_context_engine
 try:
     from rich.console import Console, Group
     from rich.panel import Panel
@@ -550,7 +551,7 @@ def fetch_prices(tickers, start):
     except ImportError:
         return None, "yfinance 未安裝"
     try:
-        data = yf.download(sorted(set(tickers) | {"SPY", "QQQ", "SOXX"}), start=start,
+        data = yf.download(sorted(set(tickers) | {"SPY", "QQQ", "SOXX", "^VIX"}), start=start,
                            progress=False, auto_adjust=True)["Close"]
     except Exception as e:
         return None, f"yfinance 下載失敗: {e}"
@@ -559,6 +560,45 @@ def fetch_prices(tickers, start):
     if data.ndim == 1:
         data = data.to_frame()
     return data, None
+
+
+def review_window(date_end, previous_end=None):
+    """Freeze the market-context window from engine-owned review dates."""
+    end = dt.date.fromisoformat(str(date_end))
+    if previous_end:
+        try:
+            previous = dt.date.fromisoformat(str(previous_end))
+            if previous <= end:
+                return previous.isoformat(), end.isoformat()
+        except (TypeError, ValueError):
+            pass
+    return (end - dt.timedelta(days=7)).isoformat(), end.isoformat()
+
+
+def shared_price_start(trade_start, context_start, context_end):
+    """Widen the shared fetch enough for both trade analytics and context anchors."""
+    trade_anchor = dt.date.fromisoformat(str(trade_start))
+    context_anchor = dt.date.fromisoformat(str(context_start))
+    end = dt.date.fromisoformat(str(context_end))
+    context_fetch = min(
+        context_anchor - dt.timedelta(days=market_context_engine.FETCH_PAD_DAYS),
+        dt.date(end.year - 1, 12, 15),
+    )
+    return min(trade_anchor, context_fetch).isoformat()
+
+
+def market_context_from_prices(data, error, start, end):
+    """Adapt the shared price frame into market_context's dependency-free contract."""
+    prices = {}
+    if data is not None:
+        for symbol in market_context_engine.SYMBOLS:
+            if symbol not in data.columns:
+                continue
+            series = [(idx.date().isoformat(), float(value))
+                      for idx, value in data[symbol].items() if value == value]
+            if series:
+                prices[symbol] = series
+    return market_context_engine.build_output(prices or None, error, start, end)
 
 def fetch_splits(tickers):
     """抓每檔的分割事件 {ticker: [(date, ratio), ...]}。抓不到/離線 → 回 {}(不調整,降級)。"""
@@ -1843,7 +1883,7 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
-                portfolio_structure=None):
+                portfolio_structure=None, price_snapshot=None, market_context=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1949,6 +1989,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "positions": holdings,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
+        "price_snapshot": price_snapshot,                   # #191 PR B:review-time prices for deterministic exit/swap comparison; frozen in the session plan
+        "market_context": market_context,                   # #191 PR B:SPY/QQQ/VIX review window; renderer consumes without refetching
         "problem_events": p_events,                         # #137 問題帳:本次規約出的事件(SKILL 收尾 append 進 problems.jsonl)
         "problem_opportunities": p_opps,                    # 各 key 本期有無機會犯(規矩對位的 Opportunity Check)
     }
@@ -2139,7 +2181,11 @@ def main():
     _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
     held = fifo_held(open_lots)        # #162:未實現改 FIFO 剩餘,與 realized 同基礎,加總=真值
     tickers = {r["ticker"] for r in rts} | set(held.keys())
-    start = (min((r["entry"] for r in rts), default=rows[0]["date"]) - dt.timedelta(days=10)).isoformat()
+    trade_price_start = (min((r["entry"] for r in rts), default=rows[0]["date"])
+                         - dt.timedelta(days=10)).isoformat()
+    context_start, context_end = review_window(rows[-1]["date"].isoformat(),
+                                                os.environ.get("TR_PREV_END"))
+    start = shared_price_start(trade_price_start, context_start, context_end)
     t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
     bench = {p for p in (_sector_proxy(t, t_market.get(t, "US")) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
     bench |= {MARKET_BENCH.get(m, "SPY") for m in set(t_market.values())}   # 各市場主基準(TW→^TWII)一起抓
@@ -2147,6 +2193,11 @@ def main():
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
+    review_market = market_context_from_prices(px, yf_err, context_start, context_end)
+    price_as_of = (px.index[-1].date().isoformat() if px is not None and len(px.index) else context_end)
+    price_snapshot = {"as_of": price_as_of,
+                      "prices": {ticker: round(value, 6)
+                                 for ticker, value in sorted(last_px.items())}}
     decision_rts = [r for r in rts
                     if driver(r["ticker"])[0] not in BENCH_SELF
                     and not instrument_policy.is_diversified_allocation(r["ticker"])]  # 配置 ETF 再平衡/現金管理,非選股決策
@@ -2343,7 +2394,8 @@ def main():
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
                             prev_end=os.environ.get("TR_PREV_END") or None,
-                            cash=cash_data, portfolio_structure=portfolio_structure)
+                            cash=cash_data, portfolio_structure=portfolio_structure,
+                            price_snapshot=price_snapshot, market_context=review_market)
         # TR_PREV_END=上次 review 的 date_end(SKILL 對帳模式傳入)→ behavior 型問題事件
         # 只取其後的新交易(weekly 增量);不設 = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

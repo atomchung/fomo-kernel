@@ -93,6 +93,6 @@ Do not import:
 
 ## Current implementation
 
-As of 2026-07-14, v2 implements the core review lifecycle, canonical atomic sessions, append-only thesis decisions, prior-commitment reconciliation data, public/private rendering, ETF policy, and projection repair. The snapshot route still needs a complete adapter, and multi-lens selection remains P1.
+As of 2026-07-16, v2 implements the core review lifecycle, canonical atomic sessions, append-only thesis decisions, prior-commitment reconciliation, frozen market/timeline context, exit and problem-ledger follow-up on the private card, public/private rendering, ETF policy, and projection repair. The snapshot route still needs a complete adapter, and multi-lens selection remains P1.
 
 The canonical implementation references are `skills/fomo-kernel/SKILL.md`, its routed flows and references, and `docs/skill-v2-architecture.md`.

@@ -146,6 +146,8 @@ def _exit_answers(plan, commitment=None):
                             "note": "Risk limit for BIG before 2026-08-01"})
         elif question["kind"] == "revisit":
             answers.append({"question_id": question["id"], "choice": "skip"})
+        elif question["kind"] == "rule_breach":
+            answers.append({"question_id": question["id"], "choice": "keep_tracking"})
         else:
             answers.append({"question_id": question["id"], "choice": "deliberate_plan"})
     out["answers"] = answers
@@ -161,7 +163,7 @@ def _answers(plan, evidence=True, commitment=None):
         "session_id": plan["session_id"], "answers": [answer],
         "thesis_updates": [{"ticker": "PLTR", "cycle_id": "PLTR#2026-01-01#1",
                             "why": "Enterprise adoption may still be underpriced",
-                            "horizon": "季", "exit_trigger": "Renewals weaken",
+                            "horizon": "quarters", "exit_trigger": "Renewals weaken",
                             "stop": None, "target_size": "bounded", "driver": "AI software",
                             "maturity": "inferred"}],
         "observations": ["Agent interpretation remains separate from engine facts"],
@@ -739,6 +741,189 @@ def test_account_performance_pillar_gate_and_full_render():
         "no holdings pillar computed -> no account section"
 
 
+def test_horizon_plan_join_ranks_full_exits_and_never_closes_a_reduction():
+    state = {"date_end": "2026-07-14", "holdings": {"positions": {
+        "ACTIVE": {"cycle_id": "ACTIVE#2026-01-01#1", "cost": 5000},
+        "RED": {"cycle_id": "RED#2026-06-20#1", "cost": 2000},
+    }}}
+    theses = [
+        {"cycle_id": "ACTIVE#2026-01-01#1", "ticker": "ACTIVE", "horizon": "weeks",
+         "maturity": "testable", "position_status": "open"},
+        {"cycle_id": "RED#2026-06-20#1", "ticker": "RED", "horizon": "years",
+         "maturity": "testable", "position_status": "open"},
+        {"cycle_id": "EXIT#2026-06-01#1", "ticker": "EXIT", "horizon": "years",
+         "maturity": "inferred", "position_status": "open"},
+    ]
+    recent = [
+        {"cycle_id": "EXIT#2026-06-01#1", "ticker": "EXIT", "kind": "full",
+         "exit_date": "2026-07-01", "exit_price": 100, "shares_sold": 100},
+        {"cycle_id": "RED#2026-06-20#1", "ticker": "RED", "kind": "reduce",
+         "exit_date": "2026-07-01", "exit_price": 100, "shares_sold": 10},
+    ]
+    markers = review_engine._horizon_markers(
+        state, theses, ["ACTIVE#2026-01-01#1", "RED#2026-06-20#1"], recent)
+    by_ticker = {row["ticker"]: row for row in markers}
+    assert by_ticker["EXIT"]["kind"] == "exit_too_fast" and by_ticker["EXIT"]["exited"]
+    assert by_ticker["ACTIVE"]["kind"] == "held_too_long" and not by_ticker["ACTIVE"]["exited"]
+    assert "RED" not in by_ticker, "a reduction must remain active, never masquerade as a full exit"
+
+
+def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
+    import card_renderer
+    with tempfile.TemporaryDirectory() as tmp:
+        card_path, state_path = _artifacts(tmp)
+        card = json.loads(card_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    due = {"id": "due-secret", "kind": "due_revisit", "required": True,
+           "question": "SECRET exited", "options": [], "revisit_id": "SECRET-RID",
+           "checkpoint": "30", "ticker": "SECRET", "swaps": [{"ticker": "SWAPSECRET"}],
+           "compare": {"orig_ret": 0.20, "swap_ret": 0.05, "swap_net_pp": -0.15,
+                       "idle_cash": False, "needs_prices": []}}
+    snapshot = {
+        "market_context": {"start": "2026-07-01", "end": "2026-07-14", "missing": [], "error": None,
+                           "benchmarks": {"SPY": {"window_ret": 0.03, "ytd_ret": 0.11},
+                                          "QQQ": {"window_ret": -0.02, "ytd_ret": 0.07},
+                                          "VIX": {"last": 17.2, "delta": -1.8}}},
+        "horizon_markers": [{"cycle_id": "SECRET#2026-01-01#1", "ticker": "SECRET",
+                             "horizon": "weeks", "holding_days": 194, "kind": "held_too_long",
+                             "exited": False, "maturity": "inferred"}],
+        "exit_backlog": {"total": 4, "items": [{
+            "revisit_id": "FOCUSSECRET-RID", "ticker": "FOCUSSECRET",
+            "exit_date": "2025-06-01", "kind": "full",
+            "compare": {"orig_ret": 0.25, "swap_ret": None, "swap_net_pp": None,
+                        "idle_cash": True, "needs_prices": []}}], "summary": {
+            "count": 4, "full": 3, "reduce": 1, "top_tickers": [["OLDSECRET", 2]],
+            "span": {"first": "2025-01-01", "last": "2025-06-01"}, "priced": 3,
+            "sold_before_rise": 1, "avg_hindsight_pp": -0.03}},
+        "problem_stats": {"top": ["avgdown_breach"], "per_key": {
+            "avgdown_breach": {"recent_count": 3, "prev_count": 1, "trend": "worse"}},
+            "rules_check": [], "muted_rules": []},
+    }
+    state["price_snapshot"] = {"as_of": "2026-07-15", "prices": {}}
+    bundle = {"session_id": "weekly-secret", "route": "weekly_review", "language": "en",
+              "review_plan": {"state_snapshot": snapshot, "question_queue": [due]},
+              "engine_state": state, "engine_card": card, "narrative": _narrative("en"),
+              "commitment": None, "answers": {}, "thesis_updates": [], "thesis_decisions": [],
+              "exit_narratives": [], "observations": [],
+              "revisit_resolutions": [{"type": "resolution", "revisit_id": "SECRET-RID",
+                                        "checkpoint": "30", "status": "falsified",
+                                        "date": "2026-07-14", "session_id": "weekly-secret",
+                                        "note": "SECRET lesson"}]}
+    private = card_renderer.render_private(bundle)
+    public = card_renderer.render_public(bundle)
+    for fragment in ("SPY window +3.0%", "inferred thesis horizon was weeks",
+                     "prices frozen on 2026-07-15", "swap net -15.0 pp",
+                     "Historical exit backlog: 4",
+                     "Across 3 price-covered exits, the average post-exit move was -3.0 pp; 1 later rose",
+                     "Backlog focus: FOCUSSECRET, full exit on 2025-06-01",
+                     "Proceeds stayed idle while the original moved +25.0% using prices frozen on 2026-07-15",
+                     "Averaging-down boundary", "SECRET lesson"):
+        assert fragment in private, fragment
+    for fragment in ("SECRET", "SWAPSECRET", "OLDSECRET", "FOCUSSECRET", "2026-07-01", "+3.0%", "194"):
+        assert fragment not in public, f"private weekly-memory fact leaked: {fragment}"
+
+
+def test_rule_breach_decision_is_durable_deduped_and_revision_supersedes():
+    stats = {"top": ["avgdown_breach"], "per_key": {"avgdown_breach": {
+        "recent_count": 2, "prev_count": 0, "recent_amount": 0, "trend": "worse"}},
+        "rules_check": [{"rule_id": "rule-old", "text": "Never add while underwater",
+                         "problem_key": "avgdown_breach", "verdict": "held", "held_streak": 1,
+                         "last_breach": {"week": "2026-07-14", "event_count": 1, "events": [
+                             {"key": "avgdown_breach", "week": "2026-07-10", "ticker": "PLTR",
+                              "note": "crossed the position boundary"}]}}]}
+    questions = review_engine._rule_breach_questions(stats, {}, "en")
+    assert len(questions) == 1 and questions[0]["evidence"][0]["ticker"] == "PLTR"
+    question = questions[0]
+    assert "The ledger recorded an event against rule" in question["question"]
+    assert "note why it needs revision" in next(
+        option["description"] for option in question["options"] if option["value"] == "revise_rule")
+    manual_stats = json.loads(json.dumps(stats))
+    manual_stats["top"] = ["exit_anxiety"]
+    manual_stats["per_key"] = {"exit_anxiety": manual_stats["per_key"]["avgdown_breach"]}
+    manual_stats["rules_check"][0]["problem_key"] = "exit_anxiety"
+    manual_question = review_engine._rule_breach_questions(manual_stats, {}, "en")[0]
+    assert {option["value"] for option in manual_question["options"]} == {"keep_tracking", "exception"}, \
+        "manual problem keys must not offer a revision that no engine metric can track"
+    try:
+        manual_answer = {"question_id": manual_question["id"], "choice": "revise_rule",
+                         "note": "replace it"}
+        review_engine._build_rule_breach_decisions(
+            {"session_id": "manual", "question_queue": [manual_question],
+             "engine_state": {"date_end": "2026-07-14"}},
+            {"answers": [manual_answer]}, {manual_question["id"]: manual_answer})
+        assert False, "an unoffered manual-key revision must fail closed"
+    except review_engine.ReviewError as exc:
+        assert "unsupported rule breach decision" in str(exc)
+    assert review_engine.session.PKEY["hold_severity"] == "hold_inconsistency"
+    recent_exit = {"revisit_id": "EXIT#2026-07-01#1#2026-07-10#1.0", "ticker": "EXIT",
+                   "cycle_id": "EXIT#2026-07-01#1", "exit_date": "2026-07-10",
+                   "exit_price": 10.0, "shares_sold": 1.0, "shares_before": 1.0,
+                   "kind": "full", "currency": "USD"}
+    queue = review_engine._question_queue(
+        {"thesis_questions": [{"ticker": "PLTR", "question": "why add"}],
+         "ticker_diagnosis": [{"ticker": "PLTR", "impact": 99999}]},
+        {"holdings": {"positions": {"PLTR": {"cycle_id": "PLTR#2026-01-01#1", "cost": 99999}}}},
+        {}, None, "en", [recent_exit], {}, [], stats, {}, [])
+    assert [row["kind"] for row in queue] == ["revisit", "rule_breach", "add_thesis"], \
+        "chosen-rule qualification must survive a larger non-perishable add question"
+    plan = {"session_id": "2026-07-14__breach", "question_queue": [question],
+            "engine_state": {"date_end": "2026-07-14", "metrics": {"avgdown_count": 2}}}
+    missing_note = {"answers": [{"question_id": question["id"], "choice": "revise_rule"}]}
+    try:
+        review_engine._build_rule_breach_decisions(plan, missing_note)
+        assert False, "revise_rule without a revision rationale must fail"
+    except review_engine.ReviewError as exc:
+        assert "requires a short note" in str(exc)
+
+    answers = {"answers": [{"question_id": question["id"], "choice": "revise_rule",
+                            "note": "Require written evidence before adding"}],
+               "commitment": {"choice": "custom", "rule": "Require written evidence before adding",
+                              "metric_key": "avgdown_count", "goal": "down",
+                              "dim": "averaging_down", "revises_rule_id": "rule-old"}}
+    missing_revision_link = json.loads(json.dumps(answers))
+    missing_revision_link["commitment"].pop("revises_rule_id")
+    try:
+        review_engine._resolve_commitment(plan, missing_revision_link)
+        assert False, "revise_rule must not leave the old rule tracking beside an unlinked replacement"
+    except review_engine.ReviewError as exc:
+        assert "one final commitment" in str(exc)
+    skipped_revision = json.loads(json.dumps(answers))
+    skipped_revision["commitment"] = {"choice": "skip", "revises_rule_id": "rule-old"}
+    try:
+        review_engine._resolve_commitment(plan, skipped_revision)
+        assert False, "revise_rule must not finalize with a skipped replacement"
+    except review_engine.ReviewError as exc:
+        assert "replacement commitment" in str(exc)
+    decisions = review_engine._build_rule_breach_decisions(plan, answers)
+    commitment = review_engine._resolve_commitment(plan, answers)
+    assert decisions[0]["decision"] == "revise_rule" and commitment["revises_rule_id"] == "rule-old"
+
+    with tempfile.TemporaryDirectory() as root:
+        rules = pathlib.Path(root) / "rules.jsonl"
+        rules.write_text(json.dumps({"rule_id": "rule-old", "text": "Never add while underwater",
+                                     "problem_key": "avgdown_breach", "status": "tracking"}) + "\n",
+                         encoding="utf-8")
+        bundle = {"session_id": "2026-07-14__breach", "route": "weekly_review", "language": "en",
+                  "review_plan": {"persist": True}, "engine_state": {"date_end": "2026-07-14",
+                  "metrics": {"avgdown_count": 2}, "problem_events": [], "problem_opportunities": {}},
+                  "commitment": commitment, "thesis_updates": [], "thesis_decisions": [],
+                  "exit_narratives": [], "rule_breach_decisions": decisions}
+        review_engine.session.project_legacy(root, bundle, "private card\n")
+        tracking, _muted = review_engine.problems.load_rules(str(rules))
+        assert len(tracking) == 1 and tracking[0].get("revises") == "rule-old"
+
+        session_dir = pathlib.Path(root) / "sessions" / bundle["session_id"]
+        session_dir.mkdir(parents=True)
+        (session_dir / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+        history = review_engine._rule_breach_history(root)
+        assert review_engine._rule_breach_questions(stats, history, "en") == [], \
+            "the same breach period must not be asked again"
+        worsened = json.loads(json.dumps(stats))
+        worsened["per_key"]["avgdown_breach"]["recent_count"] = 3
+        worsened["rules_check"][0]["last_breach"]["week"] = "2026-07-21"
+        assert len(review_engine._rule_breach_questions(worsened, history, "en")) == 1
+
+
 def _prepare_dated(tmp, root, date_end, tag, language="zh-TW"):
     """Prepare with the shared fixtures but a caller-controlled review date."""
     card_path, state_path = _artifacts(tmp)
@@ -767,17 +952,17 @@ def _finalize(tmp, root, plan, answers, tag):
 def _base_thesis_update(extra=None):
     row = {"ticker": "PLTR", "cycle_id": "PLTR#2026-01-01#1",
            "why": "Enterprise adoption may still be underpriced",
-           "horizon": "季", "exit_trigger": "Renewals weaken",
+           "horizon": "quarters", "exit_trigger": "Renewals weaken",
            "stop": None, "target_size": "bounded", "driver": "AI software",
            "maturity": "inferred"}
     row.update(extra or {})
     return row
 
 
-def _answer_queue(plan, choose):
+def _answer_queue(plan, choose, commitment_choice="candidate_0"):
     """Answer every queued question via choose(question) -> answer dict."""
     answers = {"session_id": plan["session_id"], "answers": [], "observations": [],
-               "commitment": {"choice": "candidate_0"}, "thesis_updates": []}
+               "commitment": {"choice": commitment_choice}, "thesis_updates": []}
     if plan["missing_thesis_positions"]:
         answers["thesis_updates"] = [_base_thesis_update()]
     for question in plan["question_queue"]:
@@ -794,6 +979,8 @@ def _week1_choices(question):
         return {"choice": "new_evidence",
                 "evidence_delta": {"claim": "Enterprise demand accelerated",
                                    "source": "earnings call"}}
+    if question["kind"] == "rule_breach":
+        return {"choice": "keep_tracking"}
     return {"choice": "deliberate_plan"}
 
 
@@ -803,7 +990,7 @@ def test_due_revisit_lifecycle_asks_resolves_and_requeues_skips():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         plan1 = _prepare_dated(tmp, root, "2026-07-14", "w1")
         assert plan1["state_snapshot"]["due_revisits"] == []          # fresh exits stay in capture
-        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "w1")
 
         plan2 = _prepare_dated(tmp, root, "2026-08-15", "w2")
         queue2 = plan2["question_queue"]
@@ -855,6 +1042,25 @@ def test_due_revisit_lifecycle_asks_resolves_and_requeues_skips():
         assert len(bundle2["revisit_resolutions"]) == 2
 
 
+def test_due_swap_comparison_uses_frozen_engine_price_snapshot():
+    with tempfile.TemporaryDirectory() as root:
+        item = {"type": "revisit", "revisit_id": "ORIG#2026-01-01#1#2026-07-10#1.0",
+                "ticker": "ORIG", "cycle_id": "ORIG#2026-01-01#1",
+                "exit_date": "2026-07-10", "exit_price": 100.0, "shares_sold": 1.0,
+                "shares_before": 1.0, "kind": "full", "currency": "USD",
+                "due": {"30": "2026-08-09", "60": "2026-09-08", "90": "2026-10-08"},
+                "enqueued_at": "2026-07-14", "idle_cash": False,
+                "swaps": [{"ticker": "SWAP", "date": "2026-07-11", "price": 100.0, "qty": 1.0}]}
+        pathlib.Path(root, "revisit.jsonl").write_text(json.dumps(item) + "\n", encoding="utf-8")
+        state = {"date_end": "2026-08-15", "price_snapshot": {
+            "as_of": "2026-08-15", "prices": {"ORIG": 120.0, "SWAP": 105.0}}}
+        _recent, due, _backlog, _meta = review_engine._prepare_exit_capture(root, state, True)
+        assert len(due) == 1
+        assert due[0]["compare"] == {"orig_ret": 0.2, "swap_ret": 0.05,
+                                      "swap_net_pp": -0.15, "idle_cash": False,
+                                      "needs_prices": []}
+
+
 def test_perishable_capture_outranks_larger_due_checkpoints():
     """#136: a fresh exit's reason window cannot be backfilled, so its capture
     question must survive a week whose matured checkpoints carry bigger amounts.
@@ -884,7 +1090,7 @@ def test_perishable_capture_outranks_larger_due_checkpoints():
             return json.loads(run.stdout)["review_plan"]
 
         plan1 = prepare(early, "2026-05-14", "w1")
-        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "w1")
 
         late = pathlib.Path(tmp) / "late.csv"
         late.write_text("\n".join([
@@ -972,8 +1178,7 @@ def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
 
 
 def test_thesis_updates_reject_out_of_vocabulary_inference_values():
-    """#155/#38: these fields cannot be backfilled, so a misspelled enum value
-    must fail closed instead of fragmenting the store permanently."""
+    """New canonical enum and horizon values fail closed without breaking legacy reads."""
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
         answers = _answer_queue(plan, _week1_choices)
@@ -988,6 +1193,19 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
         assert payload["status"] == "error" and "invalid emotion" in payload["error"]
         assert not (pathlib.Path(root) / "sessions" / plan["session_id"]).exists()
 
+        answers["thesis_updates"] = [_base_thesis_update({"horizon": "季"})]
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+                   "--answers", a_path, "--narrative", n_path)
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error" and "invalid horizon" in payload["error"]
+        assert not (pathlib.Path(root) / "sessions" / plan["session_id"]).exists()
+
+        positions = (plan["engine_state"]["holdings"]["positions"])
+        legacy = [_base_thesis_update({"horizon": "季"})]
+        assert review_engine.thesis.validate_thesis_updates(legacy, positions) == legacy, \
+            "plans prepared before stable IDs must remain retry-compatible"
+
 
 def test_schemas_cover_due_revisit_and_resolutions():
     """Contract-sync pin (CLAUDE.md): the published schemas must describe what
@@ -998,11 +1216,21 @@ def test_schemas_cover_due_revisit_and_resolutions():
     assert "due_revisit" in item["properties"]["kind"]["enum"]
     for key in ("checkpoint", "due_date", "compare", "prior_exit_reason", "prior_note", "swaps"):
         assert key in item["properties"], key
+    assert "rule_breach" in item["properties"]["kind"]["enum"]
+    horizon_ids = plan_schema["properties"]["card_plan"]["properties"]["horizon_ids"]
+    assert set(horizon_ids["items"]["enum"]) == {"weeks", "quarters", "years"}
+    for key in ("rule_id", "rule_text", "problem_key", "breach_week", "evidence",
+                "recent_count", "recent_amount", "trend", "horizon_marker"):
+        assert key in item["properties"], key
     bundle_schema = json.loads((SCHEMAS / "session-bundle.schema.json").read_text(encoding="utf-8"))
     resolutions = bundle_schema["properties"]["revisit_resolutions"]
     assert set(resolutions["items"]["properties"]["status"]["enum"]) == {"still_valid", "modified", "falsified"}
     # Absent-when-empty is the replay-compatibility contract, so it must stay optional.
     assert "revisit_resolutions" not in bundle_schema["required"]
+    breach = bundle_schema["properties"]["rule_breach_decisions"]
+    assert set(breach["items"]["properties"]["decision"]["enum"]) == \
+        {"keep_tracking", "revise_rule", "exception"}
+    assert "rule_breach_decisions" not in bundle_schema["required"]
 
 
 def test_thesis_updates_preserve_inference_only_fields():

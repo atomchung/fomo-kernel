@@ -705,6 +705,14 @@ def test_horizon_held_side_thresholds():
     assert hz.horizon_contradiction("年", 999, exited=False) is None     # 年長抱=正常,不標
 
 
+def test_horizon_locale_neutral_ids_and_legacy_aliases_match():
+    """v2 flow authors English ids; legacy Chinese values must keep identical thresholds."""
+    for new, legacy in (("weeks", "週"), ("quarters", "季"), ("years", "年")):
+        assert hz.normalize_horizon(new) == hz.normalize_horizon(legacy) == new
+    assert hz.horizon_contradiction("years", 89, exited=True) == "exit_too_fast"
+    assert hz.horizon_contradiction("quarters", 181, exited=False) == "held_too_long"
+
+
 def test_horizon_null_and_bad_horizon_skip():
     """horizon 缺欄 / null / 非三值 → 一律 None(靜默跳過,不回補)。"""
     assert hz.horizon_contradiction(None, 5, exited=True) is None

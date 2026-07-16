@@ -49,6 +49,7 @@ STATE_KEYS = {
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
+    "price_snapshot", "market_context",                # #191 PR B:frozen prices + SPY/QQQ/VIX window for private-card reconciliation
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
 # SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾 CLI 另存 metrics_snapshot 全量快照
@@ -225,6 +226,10 @@ def main():
         ok(set(st["metrics"].keys()) == STATE_METRIC_KEYS, "metrics 鍵集合恰等於契約",
            f"diff: {set(st['metrics'].keys()) ^ STATE_METRIC_KEYS}")
         ok(st["insufficient_data"] is False, "mock(19 筆跨 300+ 天)不觸發 insufficient gate")
+        ok(set(st["price_snapshot"]) == {"as_of", "prices"},
+           "price_snapshot freezes one review-time price map", repr(st["price_snapshot"])[:120])
+        ok(set(st["market_context"]) == {"start", "end", "benchmarks", "missing", "error"},
+           "market_context shape stays explicit even offline", repr(st["market_context"])[:160])
         cm = st["commitment"]
         ok(isinstance(cm, dict) and set(cm.keys()) == {"rule", "metric_key", "metric_value", "goal"},
            "commitment = {rule, metric_key, metric_value, goal}", repr(cm)[:120])
@@ -367,16 +372,20 @@ def main():
 
         # append-rules:PKEY 對映 + rule_id/status/created 生成
         rj = pathlib.Path(tmp) / "rules.json"
-        rj.write_text(json.dumps([{"text": "AI 暴險封頂 70%", "metric_key": "ai_pct",
-                                   "source": "user_chosen"}]), encoding="utf-8")
+        rj.write_text(json.dumps([
+            {"text": "AI 暴險封頂 70%", "metric_key": "ai_pct", "source": "user_chosen"},
+            {"text": "持有週期需一致", "metric_key": "hold_severity", "source": "user_chosen"},
+        ]), encoding="utf-8")
         r7 = subprocess.run([sys.executable, COACH, "append-rules", str(rj),
                              "--created", st["date_end"]],
                             env=env, capture_output=True, text=True, timeout=60)
-        rrow = json.loads((home / ".trade-coach" / "rules.jsonl")
-                          .read_text(encoding="utf-8").strip())
-        ok(r7.returncode == 0 and rrow["problem_key"] == "concentration"
-           and rrow["status"] == "tracking" and rrow["created"] == st["date_end"]
-           and rrow["rule_id"].startswith("rule-"),
+        rrows = [json.loads(line) for line in (home / ".trade-coach" / "rules.jsonl")
+                 .read_text(encoding="utf-8").splitlines() if line.strip()]
+        by_metric = {row["metric_key"]: row for row in rrows}
+        ok(r7.returncode == 0 and by_metric["ai_pct"]["problem_key"] == "concentration"
+           and by_metric["hold_severity"]["problem_key"] == "hold_inconsistency"
+           and all(row["status"] == "tracking" and row["created"] == st["date_end"]
+                   and row["rule_id"].startswith("rule-") for row in rrows),
            "append-rules metric_key→problem_key 對映 + rule_id/status/created 由 CLI 生成")
 
         # save-card(#166):同 session 重試 = no-op(不產生新檔);真正不同的第二個 session

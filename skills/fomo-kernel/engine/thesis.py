@@ -342,10 +342,15 @@ def build_decision_events(plan, answers, thesis_updates=None):
     return events
 
 
-def validate_thesis_updates(rows, active_positions):
-    """Validate agent-authored thesis revisions against engine-owned cycle ids."""
+def validate_thesis_updates(rows, active_positions, allowed_horizons=None):
+    """Validate agent-authored thesis revisions against engine-owned cycle ids.
+
+    `allowed_horizons=None` preserves retries for plans prepared before stable
+    locale-neutral IDs were published. New plans pass their explicit vocabulary.
+    """
     active_positions = active_positions or {}
     valid_cycles = {p.get("cycle_id") for p in active_positions.values() if p.get("cycle_id")}
+    horizon_ids = set(allowed_horizons) if allowed_horizons is not None else None
     seen = set()
     for index, row in enumerate(rows or []):
         if not isinstance(row, dict):
@@ -361,6 +366,11 @@ def validate_thesis_updates(rows, active_positions):
         for key in ("ticker", "why", "exit_trigger"):
             if not str(row.get(key) or "").strip():
                 raise ThesisError(f"thesis_updates[{index}] missing {key}")
+        if horizon_ids is not None and row.get("horizon") not in horizon_ids | {None}:
+            allowed = ", ".join(sorted(horizon_ids))
+            raise ThesisError(
+                f"thesis_updates[{index}] has invalid horizon: {row.get('horizon')!r} "
+                f"(allowed: {allowed}, or null)")
         for key, allowed in INFERENCE_ENUMS.items():
             value = row.get(key)
             if value is not None and value not in allowed:

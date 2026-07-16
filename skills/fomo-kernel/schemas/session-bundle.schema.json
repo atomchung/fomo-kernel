@@ -269,6 +269,41 @@
         },
         "additionalProperties": false
       }
+    },
+    "rule_breach_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event",
+          "schema_version",
+          "event_id",
+          "session_id",
+          "rule_id",
+          "problem_key",
+          "breach_week",
+          "decision",
+          "review_date"
+        ],
+        "properties": {
+          "event": {"const": "rule_breach_decision"},
+          "schema_version": {"const": 1},
+          "event_id": {"type": "string"},
+          "session_id": {"type": "string"},
+          "rule_id": {"type": "string"},
+          "rule_text": {"type": ["string", "null"]},
+          "problem_key": {"type": ["string", "null"]},
+          "breach_week": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "object"}},
+          "decision": {"enum": ["keep_tracking", "revise_rule", "exception"]},
+          "note": {"type": ["string", "null"], "maxLength": 500},
+          "review_date": {"type": ["string", "null"]},
+          "recent_count": {"type": ["integer", "null"], "minimum": 0},
+          "recent_amount": {"type": ["number", "null"]},
+          "trend": {"enum": ["better", "flat", "worse", null]}
+        },
+        "additionalProperties": false
+      }
     }
   }
 }

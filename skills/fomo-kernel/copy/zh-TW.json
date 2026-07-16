@@ -6,12 +6,15 @@
   "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
   "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
   "sections": {
+    "context": "市場與時間軸鏡子",
     "numbers": "這期的帳",
     "trades": "最賺與最虧的已實現交易",
     "strength": "你做對的一件事",
     "hole": "最大的行為漏洞",
     "motive": "這次加碼的 thesis 判斷",
     "exit_capture": "這次記下的出場理由",
+    "exit_followup": "出場後對帳",
+    "patterns": "問題帳記得的模式",
     "etf": "ETF 與組合結構",
     "rule": "下次只改這一件"
   },
@@ -72,5 +75,35 @@
     "modified": "部分對，要調",
     "falsified": "看錯了",
     "skip": "先跳過"
+  },
+  "rule_breach_choices": {
+    "keep_tracking": "這次守不住",
+    "revise_rule": "規矩需要修訂",
+    "exception": "這次是正當例外"
+  },
+  "rule_breach_decisions": {
+    "keep_tracking": "這次沒守住，繼續追蹤",
+    "revise_rule": "標記為需要修訂",
+    "exception": "記為正當例外"
+  },
+  "horizons": {
+    "weeks": "週",
+    "quarters": "季",
+    "years": "年"
+  },
+  "problem_keys": {
+    "avgdown_breach": "攤平越過部位界線",
+    "sell_winner_early": "賣出贏家的機會成本",
+    "oversize": "單一部位過重",
+    "concentration": "同一 driver 集中",
+    "hold_inconsistency": "持有時間軸混用",
+    "exit_anxiety": "焦慮驅動出場",
+    "fomo_entry": "FOMO 進場",
+    "horizon_break": "thesis 時間軸破戒"
+  },
+  "trends": {
+    "worse": "惡化",
+    "flat": "持平",
+    "better": "改善"
   }
 }

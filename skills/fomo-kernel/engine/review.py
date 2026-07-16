@@ -24,6 +24,7 @@ import sys
 import tempfile
 
 import card_renderer
+import horizon
 import ledger
 import problems
 import revisit
@@ -42,7 +43,10 @@ DIM_METRIC = {
     "averaging_down": "avgdown_count",
 }
 QUESTION_LIMIT = 3
+HORIZON_MARKER_LIMIT = 2
+RULE_BREACH_LIMIT = 2
 EXIT_DECISIONS = {"price_target", "thesis_broken", "swap", "anxiety", "other", "skip"}
+RULE_BREACH_CHOICES = {"keep_tracking", "revise_rule", "exception"}
 
 
 class ReviewError(ValueError):
@@ -253,14 +257,45 @@ def _thesis_event_history(root):
     return thesis_rows, decision_rows
 
 
+def _rule_breach_history(root):
+    """Return the latest canonical breach decision per rule.
+
+    The history stays in immutable bundles rather than a second mutable ledger.
+    It is used only to enforce the first-breach-or-worsening question cadence.
+    """
+    rows = []
+    base = os.path.join(root, "sessions")
+    if not os.path.isdir(base):
+        return {}
+    for session_id in sorted(os.listdir(base)):
+        path = os.path.join(base, session_id, "bundle.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            bundle = session.read_json(path)
+        except (OSError, ValueError):
+            continue
+        plan = bundle.get("review_plan") or {}
+        if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+            continue
+        date = str((bundle.get("engine_state") or {}).get("date_end") or "")
+        for row in bundle.get("rule_breach_decisions") or []:
+            if row.get("rule_id"):
+                rows.append(((date, session_id), row))
+    latest = {}
+    for _key, row in sorted(rows, key=lambda item: item[0]):
+        latest[row["rule_id"]] = row
+    return latest
+
+
 def _prepare_exit_capture(root, state, persist):
     """Enqueue ledger exits and return capture, due-checkpoint, and backlog signals.
 
     Returns (recent, due, backlog, ingest_meta):
       recent  - fresh exits still inside the capture window and not yet captured
       due     - 30/60/90 checkpoints that matured after tracking started (#170);
-                each row carries the prior recorded exit reason and an offline
-                swap comparison (missing prices stay honest in needs_prices)
+                each row carries the prior recorded exit reason and the frozen
+                engine-price swap comparison (missing prices stay honest)
       backlog - pre-activation historical exits: top items + aggregate summary
     """
     if not persist:
@@ -271,6 +306,15 @@ def _prepare_exit_capture(root, state, persist):
     new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
     revisits, resolutions, skipped = revisit.load_queue(queue_path)
     narratives = _exit_narrative_index(root)
+    raw_prices = ((state.get("price_snapshot") or {}).get("prices") or {})
+    prices = {}
+    for ticker, value in raw_prices.items():
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            prices[str(ticker)] = value
     recent = [row for row in revisit.scan_recent_exits(revisits, as_of)
               if row.get("revisit_id") not in narratives]
     recent_ids = {row.get("revisit_id") for row in recent}
@@ -283,16 +327,13 @@ def _prepare_exit_capture(root, state, persist):
         due.append({
             "revisit_id": row.get("revisit_id"), "checkpoint": row.get("checkpoint"),
             "due_date": row.get("due_date"), "item": item,
-            "compare": revisit.compare(item, {}),
+            "compare": revisit.compare(item, prices),
             "prior_exit_reason": prior.get("exit_reason"),
             "prior_note": prior.get("note"),
             "prior_capture": prior.get("capture"),
         })
-    # Offline prepare has no prices, so per-item compare blobs would be all-None
-    # noise frozen into every bundle; the flow consumes only the aggregate line.
-    # PR B wires the top items once a renderer consumer exists.
-    _topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=None)
-    backlog = {"summary": summary, "total": total} if total else None
+    topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=prices)
+    backlog = {"items": topn[:2], "summary": summary, "total": total} if total else None
     return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
                                   "skipped_queue_lines": skipped, "path": queue_path}
 
@@ -405,6 +446,90 @@ def _due_options(language):
             for key in ("still_valid", "modified", "falsified", "skip")]
 
 
+def _rule_breach_options(language, can_revise=True):
+    copy = card_renderer.load_copy(language)
+    labels = copy.get("rule_breach_choices") or {}
+    en = copy["language"] == "en"
+    descriptions = {
+        "keep_tracking": ("規矩合理，但這次沒有守住；照實記錄並繼續追。",
+                          "The rule still fits, but it was not kept; record it and keep tracking."),
+        "revise_rule": ("規矩本身不合理；在 note 簡述為何要改，收尾時用唯一 commitment 寫替代規矩。",
+                        "The rule itself does not fit; note why it needs revision, then use the one final commitment for the replacement."),
+        "exception": ("這次有正當例外；在 note 留下理由，事件仍保留在帳上。",
+                      "This was a justified exception; record why in the note while keeping the event in history."),
+    }
+    keys = ("keep_tracking", "revise_rule", "exception") if can_revise else ("keep_tracking", "exception")
+    return [{"value": key, "label": labels[key],
+             "description": descriptions[key][1 if en else 0]} for key in keys]
+
+
+def _breach_evidence_text(last_breach, language):
+    events = (last_breach or {}).get("events") or []
+    en = str(language).lower().startswith("en")
+    parts = []
+    for event in events:
+        ticker = event.get("ticker")
+        note = event.get("note")
+        if ticker and note:
+            parts.append(f"{ticker}: {note}")
+        elif ticker or note:
+            parts.append(str(ticker or note))
+    if not parts:
+        return "a recorded event" if en else "帳上有一筆事件"
+    shown = "; ".join(parts)
+    extra = int((last_breach or {}).get("event_count") or 0) - len(events)
+    if extra > 0:
+        shown += (f"; and {extra} more" if en else f"；另有 {extra} 筆")
+    return shown
+
+
+def _rule_breach_questions(problem_stats, history, language):
+    if not problem_stats:
+        return []
+    top_rank = {key: index for index, key in enumerate(problem_stats.get("top") or [])}
+    candidates = []
+    for rule in problem_stats.get("rules_check") or []:
+        breach = rule.get("last_breach") or {}
+        rule_id = rule.get("rule_id")
+        problem_key = rule.get("problem_key")
+        if not rule_id or not breach.get("week"):
+            continue
+        stats = (problem_stats.get("per_key") or {}).get(problem_key) or {}
+        prior = (history or {}).get(rule_id)
+        if prior:
+            if prior.get("breach_week") == breach.get("week"):
+                continue
+            worsened = stats.get("trend") == "worse" and (
+                prior.get("trend") != "worse"
+                or int(stats.get("recent_count") or 0) > int(prior.get("recent_count") or 0)
+                or float(stats.get("recent_amount") or 0) > float(prior.get("recent_amount") or 0)
+            )
+            if not worsened:
+                continue
+        evidence_text = _breach_evidence_text(breach, language)
+        if str(language).lower().startswith("en"):
+            question = (f'The ledger recorded an event against rule "{rule.get("text") or rule_id}" '
+                        f'in the review period ending {breach.get("week")} ({evidence_text}). '
+                        'Which reading is accurate?')
+        else:
+            question = (f'問題帳在 {breach.get("week")} 這期記到一筆和規矩'
+                        f'「{rule.get("text") or rule_id}」相衝的事件（{evidence_text}）。這次該怎麼定性？')
+        digest = hashlib.sha256(f"{rule_id}|{breach.get('week')}".encode("utf-8")).hexdigest()[:12]
+        rank = top_rank.get(problem_key, len(top_rank) + 1)
+        can_revise = problem_key in set(session.PKEY.values())
+        candidates.append({
+            "id": f"rule_breach_{digest}", "kind": "rule_breach", "required": True,
+            "question": question, "options": _rule_breach_options(language, can_revise=can_revise),
+            "rule_id": rule_id, "rule_text": rule.get("text"), "problem_key": problem_key,
+            "breach_week": breach.get("week"), "evidence": list(breach.get("events") or []),
+            "recent_count": int(stats.get("recent_count") or 0),
+            "recent_amount": float(stats.get("recent_amount") or 0), "trend": stats.get("trend"),
+            "_priority": 1, "_importance": float(max(0, len(top_rank) - rank)), "_tie": 3,
+        })
+    candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
+    return candidates[:RULE_BREACH_LIMIT]
+
+
 def _due_question(row, language, card=None):
     """One 30/60/90 checkpoint question that replays the user's own recorded reason.
 
@@ -510,11 +635,13 @@ CAPTURE_LIMIT = 2  # at most two exit-reason captures per session (c6850f0 contr
 
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
-                    due_revisits=None):
+                    due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None):
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     del previous_state  # retained in the call contract for older adapters
     thesis_states = thesis_states or active
+    horizon_by_cycle = {row.get("cycle_id"): row for row in (horizon_markers or [])
+                        if row.get("cycle_id")}
     candidates = []
     # Exit-reason capture is the only perishable question: its 14-day window
     # cannot be backfilled, while a skipped due checkpoint or an unanswered add
@@ -526,7 +653,9 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         prior = thesis_states.get(item.get("cycle_id")) or {}
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
-        question["_perishable"] = 0
+        if item.get("cycle_id") in horizon_by_cycle:
+            question["horizon_marker"] = horizon_by_cycle[item.get("cycle_id")]
+        question["_priority"] = 0
         candidates.append(question)
     for row in due_revisits or []:
         candidates.append(_due_question(row, language, card))
@@ -558,6 +687,7 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             "decision_cursor": decision_cursor,
             "_importance": importance, "_importance_basis": basis, "_tie": 1,
         })
+    candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
     if not candidates:
         top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")
         top_label = card_renderer.localized_dimension(top, language)
@@ -566,7 +696,9 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
                            "question": question, "options": _generic_options(language),
                            "_importance": 0.0, "_tie": 2})
-    candidates.sort(key=lambda row: (int(row.get("_perishable", 1)),
+    # Priority tiers are semantic, then amount/rank resolves within a tier:
+    # perishable exit capture -> unqualified chosen-rule breach -> due/add motive.
+    candidates.sort(key=lambda row: (int(row.get("_priority", 2)),
                                      -float(row.get("_importance") or 0),
                                      int(row.get("_tie") or 0), str(row.get("id"))))
     queue = candidates[:QUESTION_LIMIT]
@@ -574,7 +706,7 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         row.pop("_importance", None)
         row.pop("_importance_basis", None)
         row.pop("_tie", None)
-        row.pop("_perishable", None)
+        row.pop("_priority", None)
     return queue
 
 
@@ -617,6 +749,66 @@ def _problem_snapshot(root, state):
     return payload
 
 
+def _horizon_markers(state, thesis_states, active_cycle_ids, recent_exits):
+    """Join stored theses with engine-owned position/exit dates and rank mirrors.
+
+    Reductions remain active positions. Only a recent full exit receives an
+    `exit_date`; otherwise horizon.scan would silently turn a reduction into a
+    closed thesis. Ranking uses position cost or exit notional and is fixed here,
+    never invented by the renderer.
+    """
+    as_of = state.get("date_end")
+    if not as_of:
+        return []
+    by_cycle = {row.get("cycle_id"): row for row in thesis_states if row.get("cycle_id")}
+    positions = _active_positions(state)
+    costs = {}
+    for row in positions.values():
+        cycle_id = row.get("cycle_id")
+        if not cycle_id:
+            continue
+        try:
+            costs[cycle_id] = abs(float(row.get("cost") or 0))
+        except (TypeError, ValueError):
+            costs[cycle_id] = 0.0
+    scan_rows = []
+    importance = {}
+    source = {}
+    for cycle_id in active_cycle_ids:
+        prior = by_cycle.get(cycle_id)
+        if not prior:
+            continue
+        scan_rows.append({"cycle_id": cycle_id, "ticker": prior.get("ticker"),
+                          "horizon": prior.get("horizon"), "maturity": prior.get("maturity")})
+        importance[cycle_id] = costs.get(cycle_id, 0.0)
+        source[cycle_id] = "active_thesis"
+    for item in recent_exits or []:
+        if item.get("kind") != "full":
+            continue
+        cycle_id = item.get("cycle_id")
+        prior = by_cycle.get(cycle_id)
+        if not prior:
+            continue
+        scan_rows.append({"cycle_id": cycle_id, "ticker": item.get("ticker") or prior.get("ticker"),
+                          "horizon": prior.get("horizon"), "maturity": prior.get("maturity"),
+                          "exit_date": item.get("exit_date")})
+        importance[cycle_id] = abs(revisit._notional(item))
+        source[cycle_id] = "recent_exit"
+    try:
+        markers = horizon.scan(scan_rows, str(as_of))
+    except (TypeError, ValueError):
+        return []
+    for marker in markers:
+        marker["source"] = source.get(marker.get("cycle_id"))
+        marker["_importance"] = importance.get(marker.get("cycle_id"), 0.0)
+    markers.sort(key=lambda marker: (0 if marker.get("kind") == "exit_too_fast" else 1,
+                                     -float(marker.get("_importance") or 0),
+                                     str(marker.get("ticker") or "")))
+    for marker in markers:
+        marker.pop("_importance", None)
+    return markers[:HORIZON_MARKER_LIMIT]
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None, revisit_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None):
@@ -629,6 +821,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     closed_rows = [row for row in thesis_states if row.get("position_status") == "closed"]
     active = {row.get("cycle_id"): row for row in active_rows}
     by_cycle = {row.get("cycle_id"): row for row in thesis_states}
+    horizon_markers = _horizon_markers(state, thesis_states, cycle_ids, recent_exits)
+    rule_history = _rule_breach_history(root)
     missing = [{"ticker": ticker, "cycle_id": row.get("cycle_id")}
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
@@ -659,12 +853,16 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            "recent_exits": list(recent_exits or []),
                            "exit_backlog": exit_backlog,
                            "problem_stats": problem_stats,
+                           "market_context": state.get("market_context"),
+                           "horizon_markers": horizon_markers,
                            "revisit_ingest": revisit_ingest},
         "question_queue": _question_queue(card, state, active, previous, language,
-                                          recent_exits, by_cycle, due_revisits),
+                                          recent_exits, by_cycle, due_revisits,
+                                          problem_stats, rule_history, horizon_markers),
         "missing_thesis_positions": missing,
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
+                      "horizon_ids": ["weeks", "quarters", "years"],
                       "required_honesty_keys": [x.get("key") for x in card.get("honesty_ledger") or []]},
         "engine_card": card,
         "engine_state": state,
@@ -736,7 +934,8 @@ def cmd_prepare(args):
 def _validate_thesis_completeness(plan, answers):
     updates = answers.get("thesis_updates") or []
     positions = _active_positions(plan.get("engine_state") or {})
-    thesis.validate_thesis_updates(updates, positions)
+    allowed_horizons = (plan.get("card_plan") or {}).get("horizon_ids")
+    thesis.validate_thesis_updates(updates, positions, allowed_horizons=allowed_horizons)
     needed = {row.get("cycle_id") for row in plan.get("missing_thesis_positions") or []}
     supplied = {row.get("cycle_id") for row in updates}
     missing = sorted(x for x in needed - supplied if x)
@@ -866,10 +1065,59 @@ def _build_revisit_resolutions(plan, answers, amap=None):
     return events
 
 
+def _build_rule_breach_decisions(plan, answers, amap=None):
+    """Persist the user's qualitative reading without rewriting problem history."""
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "rule_breach":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        offered = {option.get("value") for option in question.get("options") or []}
+        if choice not in RULE_BREACH_CHOICES or choice not in offered:
+            raise ReviewError(f"unsupported rule breach decision: {choice}")
+        note = _clean_note(question["id"], answer, "a rule breach decision")
+        if choice in {"revise_rule", "exception"} and not note:
+            raise ReviewError(f"{question['id']}: {choice} requires a short note")
+        event = {
+            "event": "rule_breach_decision", "schema_version": 1,
+            "session_id": plan.get("session_id"), "rule_id": question.get("rule_id"),
+            "rule_text": question.get("rule_text"), "problem_key": question.get("problem_key"),
+            "breach_week": question.get("breach_week"), "evidence": list(question.get("evidence") or []),
+            "decision": choice, "note": note,
+            "review_date": (plan.get("engine_state") or {}).get("date_end"),
+            "recent_count": question.get("recent_count"),
+            "recent_amount": question.get("recent_amount"), "trend": question.get("trend"),
+        }
+        identity = session.canonical(event)
+        event["event_id"] = "rule-breach-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        events.append(event)
+    return events
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
+    answer_map = {row.get("question_id"): row for row in answers.get("answers") or []
+                  if isinstance(row, dict)}
+    revise_questions = [
+        row for row in plan.get("question_queue") or []
+        if row.get("kind") == "rule_breach"
+        and (answer_map.get(row.get("id")) or {}).get("choice") == "revise_rule"
+    ]
+    if len(revise_questions) > 1:
+        raise ReviewError("one card can revise at most one rule")
+    expected_revision = revise_questions[0] if revise_questions else None
+    revises_rule_id = choice.get("revises_rule_id")
+    if expected_revision and revises_rule_id != expected_revision.get("rule_id"):
+        raise ReviewError("a revise_rule answer requires the one final commitment to revise that rule")
+    if not expected_revision and revises_rule_id:
+        raise ReviewError("revises_rule_id requires a revise_rule answer for that rule")
     if selected == "skip":
+        if expected_revision:
+            raise ReviewError("a revise_rule answer requires a replacement commitment")
         return None
     candidates = {row["id"]: row for row in (plan.get("card_plan") or {}).get("candidate_rules") or []}
     if selected in candidates:
@@ -888,6 +1136,11 @@ def _resolve_commitment(plan, answers):
     chosen.pop("id", None)
     chosen["metric_value"] = metrics.get(chosen["metric_key"])
     chosen["source"] = "user_chosen"
+    if expected_revision:
+        replacement_key = session.PKEY.get(chosen.get("metric_key"))
+        if replacement_key != expected_revision.get("problem_key"):
+            raise ReviewError("replacement commitment must track the same problem_key as the revised rule")
+        chosen["revises_rule_id"] = revises_rule_id
     if (plan.get("engine_state") or {}).get("insufficient_data"):
         chosen["baseline_note"] = "short-sample baseline"
     return chosen
@@ -901,6 +1154,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     decisions = thesis.build_decision_events(plan, answers, updates)
     exit_narratives = _build_exit_narratives(plan, answers, amap)
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
+    rule_breach_decisions = _build_rule_breach_decisions(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every triggered honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the engine did not trigger.
@@ -932,6 +1186,8 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     # the documented-safe finalize retry would fail closed on every old session.
     if revisit_resolutions:
         bundle["revisit_resolutions"] = revisit_resolutions
+    if rule_breach_decisions:
+        bundle["rule_breach_decisions"] = rule_breach_decisions
     return bundle
 
 
