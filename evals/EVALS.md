@@ -45,11 +45,13 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - Account-level performance appears only when cash and price foundations satisfy engine gates.
 - Cash residual wording remains neutral and does not invent a missing deposit or withdrawal.
 - The next weekly review reconciles the prior commitment before introducing a new leak.
-- A recent exit or large reduction inside the freshness window yields at most three engine-ranked questions (largest exit amount first); an explicit `skip` is durable and the same exit is never asked again, and a confirmed reason appears only on the local review card, never on the public card.
+- A recent exit or large reduction inside the freshness window yields capture questions (largest exit amount first, at most two per session); an explicit `skip` is durable and the same exit's reason is never asked again, and a confirmed reason appears only on the local review card, never on the public card. Capture questions outrank every non-perishable question kind because the reason window cannot be backfilled.
 - A confirmed motive question reappears only when that same cycle receives another add (per-cycle decision cursor); activity in a different ticker never re-opens it. The agent never invents `thesis_id`, `event_id`, `revises`, or `decision_cursor` — the engine assigns identity, and a full exit preserves an explicit closed or falsified outcome instead of silently dropping the cycle.
 - Confirmed evidence means "the user confirmed this was part of the decision," never external fact verification: legacy evidence stays `captured` without silent promotion, a missing `observed_at` stays null instead of inheriting the review date, and nothing is auto-promoted to `evaluated`.
 - A normalized CSV containing cash-flow rows (deposits, dividends, interest, fees, reinvest notices) still prepares: those rows are counted in `ledger_ingest`, and only future-dated rows reject the import.
-- Historical exit-review backlog is summarized and prioritized rather than converted into a large interrogation queue. (Prepare now enqueues exits, but due-revisit and backlog consumption remain deferred to #191; this row applies once that lands.)
+- Historical exit-review backlog is summarized and prioritized rather than converted into a large interrogation queue: pre-activation exits never flood the due list, and the plan carries only the aggregate backlog summary.
+- A 30/60/90 checkpoint that matures after tracking started becomes a `due_revisit` question that replays the user's own recorded exit reason from the kind-aware copy table (an inferred capture is replayed as a guess, never as the user's words). A non-skip verdict persists as a queue resolution and that checkpoint never returns; a `skip` verdict is not saved and the same checkpoint returns next review.
+- Problem-book projection round-trips: events recorded at finalize are readable by `load_book` at the next prepare, each persisted review records exactly one Opportunity Check mark per week, and a same-week mark conflict fails closed without blocking the session's card projection.
 
 ## Evaluation method
 

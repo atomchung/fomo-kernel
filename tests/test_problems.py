@@ -104,6 +104,20 @@ def test_append_dedup_rerun_safe():
     assert len(events) == 2 and len(marks) == 1 and skipped == 0
 
 
+def test_append_rejects_rows_load_book_cannot_read_back():
+    # 缺 key/week 的事件 load_book 讀不回,dedupe set 也永遠不含它——
+    # 若照寫,每次 replay 都再 append 一行不可讀的重複(無上限增長)。
+    book, _ = _mk()
+    bad = [{"key": "oversize", "kind": "state", "week": None, "ticker": "X"},
+           {"kind": "behavior", "week": "2026-06-20", "ticker": "Y"}]
+    n1 = pb.append_book(book, bad, None)
+    n2 = pb.append_book(book, bad, None)                     # replay 不得越寫越多
+    assert n1 == (0, 0) and n2 == (0, 0), f"{n1} / {n2}"
+    events, marks, skipped = pb.load_book(book)
+    assert events == [] and marks == [] and skipped == 0
+    assert not os.path.exists(book) or os.path.getsize(book) == 0
+
+
 def test_stats_amount_first_and_trend_weight():
     book, _ = _mk()
     # sell_winner_early:近期 1 次但金額大;avgdown:近期 3 次無金額且惡化

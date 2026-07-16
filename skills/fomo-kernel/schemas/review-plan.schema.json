@@ -5,76 +5,281 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "session_id", "status", "route", "flow_path", "language",
-    "persist", "state_root", "input", "state_snapshot", "question_queue",
-    "missing_thesis_positions", "card_plan", "engine_card", "engine_state"
+    "schema_version",
+    "session_id",
+    "status",
+    "route",
+    "flow_path",
+    "language",
+    "persist",
+    "state_root",
+    "input",
+    "state_snapshot",
+    "question_queue",
+    "missing_thesis_positions",
+    "card_plan",
+    "engine_card",
+    "engine_state"
   ],
   "properties": {
-    "schema_version": {"const": 2},
-    "session_id": {"type": "string", "minLength": 8},
-    "status": {"const": "awaiting_answers"},
-    "route": {"enum": ["first_review", "weekly_review", "snapshot_review", "test_drive"]},
-    "flow_path": {"type": "string"},
-    "language": {"enum": ["zh-TW", "en"]},
-    "persist": {"type": "boolean"},
-    "state_root": {"type": "string"},
+    "schema_version": {
+      "const": 2
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "status": {
+      "const": "awaiting_answers"
+    },
+    "route": {
+      "enum": [
+        "first_review",
+        "weekly_review",
+        "snapshot_review",
+        "test_drive"
+      ]
+    },
+    "flow_path": {
+      "type": "string"
+    },
+    "language": {
+      "enum": [
+        "zh-TW",
+        "en"
+      ]
+    },
+    "persist": {
+      "type": "boolean"
+    },
+    "state_root": {
+      "type": "string"
+    },
     "input": {
       "type": "object",
-      "required": ["paths", "kind", "fingerprint"],
+      "required": [
+        "paths",
+        "kind",
+        "fingerprint"
+      ],
       "properties": {
-        "paths": {"type": "array", "items": {"type": "string"}},
-        "kind": {"enum": ["trades_csv", "positions_snapshot"]},
-        "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "engine_meta": {"type": "string"},
-        "ledger_ingest": {"type": ["object", "null"]}
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "enum": [
+            "trades_csv",
+            "positions_snapshot"
+          ]
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "engine_meta": {
+          "type": "string"
+        },
+        "ledger_ingest": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "state_snapshot": {"type": "object"},
+    "state_snapshot": {
+      "type": "object"
+    },
     "question_queue": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "kind", "required", "question", "options"],
+        "required": [
+          "id",
+          "kind",
+          "required",
+          "question",
+          "options"
+        ],
         "properties": {
-          "id": {"type": "string"},
-          "kind": {"enum": ["add_thesis", "headline_motive", "revisit", "rule_breach"]},
-          "ticker": {"type": ["string", "null"]},
-          "cycle_id": {"type": ["string", "null"]},
-          "required": {"type": "boolean"},
-          "question": {"type": "string", "minLength": 1},
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "add_thesis",
+              "headline_motive",
+              "revisit",
+              "rule_breach",
+              "due_revisit"
+            ]
+          },
+          "ticker": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cycle_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
           "options": {
             "type": "array",
             "minItems": 2,
             "items": {
               "type": "object",
-              "required": ["value", "label", "description"],
+              "required": [
+                "value",
+                "label",
+                "description"
+              ],
               "properties": {
-                "value": {"type": "string"},
-                "label": {"type": "string"},
-                "description": {"type": "string"}
+                "value": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
               },
               "additionalProperties": false
             }
           },
-          "prior_thesis_id": {"type": ["string", "null"]},
-          "prior_event_id": {"type": ["string", "null"]},
-          "decision_cursor": {"type": ["string", "null"]},
-          "revisit_id": {"type": ["string", "null"]},
-          "exit_kind": {"enum": ["full", "reduce", null]},
-          "exit_date": {"type": ["string", "null"]},
-          "exit_price": {"type": ["number", "null"]},
-          "shares_sold": {"type": ["number", "null"]},
-          "shares_before": {"type": ["number", "null"]},
-          "currency": {"type": ["string", "null"]},
-          "exit_notional": {"type": ["number", "null"]}
+          "prior_thesis_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prior_event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revisit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_kind": {
+            "enum": [
+              "full",
+              "reduce",
+              null
+            ]
+          },
+          "exit_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "shares_sold": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "shares_before": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_notional": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "checkpoint": {
+            "enum": [
+              "30",
+              "60",
+              "90"
+            ]
+          },
+          "due_date": {
+            "type": "string"
+          },
+          "swaps": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "compare": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "prior_exit_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prior_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         },
         "additionalProperties": false
       }
     },
-    "missing_thesis_positions": {"type": "array", "items": {"type": "object"}},
-    "card_plan": {"type": "object"},
-    "engine_card": {"type": "object"},
-    "engine_state": {"type": "object"}
+    "missing_thesis_positions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "card_plan": {
+      "type": "object"
+    },
+    "engine_card": {
+      "type": "object"
+    },
+    "engine_state": {
+      "type": "object"
+    }
   }
 }

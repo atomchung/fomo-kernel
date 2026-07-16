@@ -191,6 +191,7 @@ def _exit_narrative_index(root):
     sessions = os.path.join(root, "sessions")
     if not os.path.isdir(sessions):
         return index
+    bundles = []
     for session_id in sorted(os.listdir(sessions)):
         bundle_path = os.path.join(sessions, session_id, "bundle.json")
         if not os.path.isfile(bundle_path):
@@ -202,6 +203,12 @@ def _exit_narrative_index(root):
         plan = bundle.get("review_plan") or {}
         if bundle.get("route") == "test_drive" or plan.get("persist") is False:
             continue
+        date = str((bundle.get("engine_state") or {}).get("date_end") or "")
+        bundles.append(((date, session_id), bundle))
+    # Same override order as _thesis_event_history — (date_end, session_id), not
+    # directory-name order — so the replayed reason is the one continuity treats
+    # as latest even when an undated bundle is present.
+    for _key, bundle in sorted(bundles, key=lambda item: item[0]):
         for row in bundle.get("exit_narratives") or []:
             if row.get("revisit_id"):
                 index[row["revisit_id"]] = row
@@ -281,8 +288,11 @@ def _prepare_exit_capture(root, state, persist):
             "prior_note": prior.get("note"),
             "prior_capture": prior.get("capture"),
         })
-    topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=None)
-    backlog = {"top": topn, "summary": summary, "total": total} if total else None
+    # Offline prepare has no prices, so per-item compare blobs would be all-None
+    # noise frozen into every bundle; the flow consumes only the aggregate line.
+    # PR B wires the top items once a renderer consumer exists.
+    _topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=None)
+    backlog = {"summary": summary, "total": total} if total else None
     return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
                                   "skipped_queue_lines": skipped, "path": queue_path}
 
@@ -368,8 +378,8 @@ def _exit_options(language, exit_kind):
                     "The main motive was protecting gains from a possible reversal."),
         "other": ("以上都不符合，用自己的話留下一句。",
                   "None of these fit; save a short explanation in your own words."),
-        "skip": ("保存為已略過，同一筆之後不再追問。",
-                 "Save this as skipped so the same exit is not asked again."),
+        "skip": ("保存為已略過，之後不再追問這筆的賣出理由。",
+                 "Save this as skipped so this exit's reason is not asked again."),
     }
     return [{"value": key, "label": labels[key],
              "description": descriptions[key][1 if en else 0]}
@@ -377,51 +387,51 @@ def _exit_options(language, exit_kind):
 
 
 def _due_options(language):
-    en = str(language).lower().startswith("en")
-    if en:
-        return [
-            {"value": "still_valid", "label": "Still valid",
-             "description": "The reason holds; selling early can still be discipline."},
-            {"value": "modified", "label": "Partly right",
-             "description": "The reason was partly right and needs an adjustment."},
-            {"value": "falsified", "label": "Wrong call",
-             "description": "The reason was wrong; record it as a lesson."},
-            {"value": "skip", "label": "Skip",
-             "description": "Not saved as answered; the same checkpoint returns next review."},
-        ]
-    return [
-        {"value": "still_valid", "label": "還成立", "description": "理由仍成立，賣早也是紀律。"},
-        {"value": "modified", "label": "部分對，要調", "description": "理由部分成立，需要修正。"},
-        {"value": "falsified", "label": "看錯了", "description": "真的判斷錯誤，記進教訓。"},
-        {"value": "skip", "label": "先跳過", "description": "不算已回答，下次復盤同一關會再出現。"},
-    ]
+    copy = card_renderer.load_copy(language)
+    labels = copy.get("due_choices") or {}
+    en = copy["language"] == "en"
+    descriptions = {
+        "still_valid": ("理由仍成立，賣早也是紀律。",
+                        "The reason holds; selling early can still be discipline."),
+        "modified": ("理由部分成立，需要修正。",
+                     "The reason was partly right and needs an adjustment."),
+        "falsified": ("真的判斷錯誤，記進教訓。",
+                      "The reason was wrong; record it as a lesson."),
+        "skip": ("不算已回答，下次復盤同一關會再出現。",
+                 "Not saved as answered; the same checkpoint returns next review."),
+    }
+    return [{"value": key, "label": labels[key],
+             "description": descriptions[key][1 if en else 0]}
+            for key in ("still_valid", "modified", "falsified", "skip")]
 
 
 def _due_question(row, language, card=None):
-    """One 30/60/90 checkpoint question that replays the user's own recorded reason."""
+    """One 30/60/90 checkpoint question that replays the user's own recorded reason.
+
+    The recalled label comes from the same kind-aware copy table the capture
+    question showed and the card rendered — quoting anything else would put
+    words in the user's mouth (a reduce answered price_target said 到了減碼點,
+    not 到價了). The voice is interpolated, never patched afterwards, so an
+    inferred capture can never read as user-confirmed.
+    """
     item = row.get("item") or {}
     ticker = item.get("ticker") or "position"
-    en = str(language).lower().startswith("en")
+    copy = card_renderer.load_copy(language)
+    en = copy["language"] == "en"
     reason = row.get("prior_exit_reason")
-    inferred = row.get("prior_capture") == "inferred"
+    kind = item.get("kind") or "full"
+    label = ((copy.get("exit_choices") or {}).get(kind) or {}).get(reason) if reason else None
+    voice_guessed = row.get("prior_capture") == "inferred"
     base = (f"{ticker} was sold on {item.get('exit_date')} at {item.get('exit_price')}."
             if en else f"{ticker} 你在 {item.get('exit_date')} 以 {item.get('exit_price')} 賣出。")
-    recalls_en = {
-        "price_target": "At the time you said the target was reached.",
-        "thesis_broken": "At the time you said the thesis was broken.",
-        "swap": "At the time you said the capital moved to another position.",
-        "anxiety": "At the time you said you wanted to lock in gains.",
-    }
-    recalls_zh = {
-        "price_target": "你當時說是到價了。",
-        "thesis_broken": "你當時說是看錯了。",
-        "swap": "你當時說是換到別的標的。",
-        "anxiety": "你當時說是想落袋、怕回吐。",
-    }
-    recall = (recalls_en if en else recalls_zh).get(reason, "")
-    if recall and inferred:
-        recall = (recall.replace("you said", "I guessed") if en
-                  else recall.replace("你當時說", "我當時猜你"))
+    recall = ""
+    if label:
+        if en:
+            lead = "At the time I guessed the reason was" if voice_guessed else "At the time you said"
+            recall = f'{lead} "{label}".'
+        else:
+            lead = "我當時猜你是" if voice_guessed else "你當時說是"
+            recall = f"{lead}「{label}」。"
     ask = (f"Looking back after {row.get('checkpoint')} days, does that reason still hold?" if en
            else f"{row.get('checkpoint')} 天後回頭看，當時的理由現在還成立嗎？")
     question = " ".join(part for part in (base, recall, ask) if part)
@@ -496,6 +506,9 @@ def _ticker_importance(card, state, ticker):
         return 0.0, "unknown"
 
 
+CAPTURE_LIMIT = 2  # at most two exit-reason captures per session (c6850f0 contract)
+
+
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None):
     positions = _active_positions(state)
@@ -503,11 +516,17 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     del previous_state  # retained in the call contract for older adapters
     thesis_states = thesis_states or active
     candidates = []
-    for item in recent_exits or []:
+    # Exit-reason capture is the only perishable question: its 14-day window
+    # cannot be backfilled, while a skipped due checkpoint or an unanswered add
+    # legitimately returns next review. Perishable questions therefore outrank
+    # everything regardless of notional — but take at most CAPTURE_LIMIT slots
+    # so one busy week cannot turn the review into an exit interrogation.
+    for item in (recent_exits or [])[:CAPTURE_LIMIT]:
         question = _exit_question(item, language, card)
         prior = thesis_states.get(item.get("cycle_id")) or {}
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
+        question["_perishable"] = 0
         candidates.append(question)
     for row in due_revisits or []:
         candidates.append(_due_question(row, language, card))
@@ -547,13 +566,15 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
                            "question": question, "options": _generic_options(language),
                            "_importance": 0.0, "_tie": 2})
-    candidates.sort(key=lambda row: (-float(row.get("_importance") or 0),
+    candidates.sort(key=lambda row: (int(row.get("_perishable", 1)),
+                                     -float(row.get("_importance") or 0),
                                      int(row.get("_tie") or 0), str(row.get("id"))))
     queue = candidates[:QUESTION_LIMIT]
     for row in queue:
         row.pop("_importance", None)
         row.pop("_importance_basis", None)
         row.pop("_tie", None)
+        row.pop("_perishable", None)
     return queue
 
 
@@ -582,23 +603,18 @@ def _candidate_rules(card, state, language):
 
 
 def _problem_snapshot(root, state):
-    """Read the problem book and rules, and fold them into review-ready stats.
+    """Fold the problem book and rules into review-ready stats.
 
     Offline and read-only: prepare must be able to show trends and rule verdicts
     without mutating the book (appending happens at finalize via projections).
+    Assembly lives in problems.snapshot so the CLI and this path cannot drift.
     """
-    events, marks, skipped = problems.load_book(os.path.join(root, "problems.jsonl"))
-    if not events and not marks:
+    payload = problems.snapshot(os.path.join(root, "problems.jsonl"),
+                                os.path.join(root, "rules.jsonl"),
+                                today=_review_date(state).isoformat())
+    if not payload["events_n"] and not payload["marks_n"]:
         return None
-    today = _review_date(state).isoformat()
-    per_key, top = problems.compute_stats(events, today)
-    tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"))
-    rules_check = problems.check_rules(tracking, events, marks)
-    return {"as_of": today, "per_key": per_key, "top": top,
-            "rules_check": rules_check,
-            "muted_rules": [{"rule_id": r.get("rule_id"), "text": r.get("text"),
-                             "problem_key": r.get("problem_key")} for r in muted],
-            "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}
+    return payload
 
 
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
@@ -633,7 +649,13 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
-                           "due_revisits": list(due_revisits or []),
+                           # audit summary only — the question payload is the single
+                           # complete source the flow reads, so the two can't diverge
+                           "due_revisits": [{"revisit_id": row.get("revisit_id"),
+                                             "checkpoint": row.get("checkpoint"),
+                                             "due_date": row.get("due_date"),
+                                             "ticker": (row.get("item") or {}).get("ticker")}
+                                            for row in due_revisits or []],
                            "recent_exits": list(recent_exits or []),
                            "exit_backlog": exit_backlog,
                            "problem_stats": problem_stats,
@@ -692,8 +714,10 @@ def cmd_prepare(args):
     recent_exits, due_revisits, exit_backlog, revisit_ingest = _prepare_exit_capture(root, state, persist)
     problem_stats = _problem_snapshot(root, state) if persist else None
     plan = _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint,
-                       args.session_nonce or "", persist, recent_exits, ledger_ingest, revisit_ingest,
-                       due_revisits, exit_backlog, problem_stats)
+                       args.session_nonce or "", persist,
+                       recent_exits=recent_exits, ledger_ingest=ledger_ingest,
+                       revisit_ingest=revisit_ingest, due_revisits=due_revisits,
+                       exit_backlog=exit_backlog, problem_stats=problem_stats)
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
@@ -757,8 +781,20 @@ def _assign_thesis_ids(plan, updates):
     return rows
 
 
-def _build_exit_narratives(plan, answers):
-    amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+def _clean_note(question_id, answer, context):
+    """Shared note contract for narrated answers: evidence_delta is never valid,
+    whitespace collapses, and 500 characters is the cap for every question kind."""
+    if answer.get("evidence_delta") is not None:
+        raise ReviewError(f"{question_id}: evidence_delta is not valid for {context}")
+    note = " ".join(str(answer.get("note") or "").split()) or None
+    if note and len(note) > 500:
+        raise ReviewError(f"{question_id}: note must be at most 500 characters")
+    return note
+
+
+def _build_exit_narratives(plan, answers, amap=None):
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
     events = []
     thesis_states = {row.get("cycle_id"): row for row in
                      ((plan.get("state_snapshot") or {}).get("thesis_states") or [])
@@ -770,13 +806,9 @@ def _build_exit_narratives(plan, answers):
         choice = answer.get("choice")
         if choice not in EXIT_DECISIONS:
             raise ReviewError(f"unsupported exit decision: {choice}")
-        if answer.get("evidence_delta") is not None:
-            raise ReviewError(f"{question['id']}: evidence_delta is not valid for an exit reason")
-        note = " ".join(str(answer.get("note") or "").split()) or None
+        note = _clean_note(question["id"], answer, "an exit reason")
         if choice == "other" and not note:
             raise ReviewError(f"{question['id']}: other requires a short note")
-        if note and len(note) > 500:
-            raise ReviewError(f"{question['id']}: note must be at most 500 characters")
         if choice == "skip":
             note = None
         event = {
@@ -801,7 +833,7 @@ def _build_exit_narratives(plan, answers):
     return events
 
 
-def _build_revisit_resolutions(plan, answers):
+def _build_revisit_resolutions(plan, answers, amap=None):
     """Turn due-checkpoint answers into revisit resolution events.
 
     `skip` is deliberately NOT saved: the checkpoint stays open and returns at
@@ -809,7 +841,8 @@ def _build_revisit_resolutions(plan, answers):
     not to 30/60/90 verdicts — an unanswered verdict is missing data, not a
     decision).
     """
-    amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
     events = []
     date = (plan.get("engine_state") or {}).get("date_end")
     for question in plan.get("question_queue") or []:
@@ -821,11 +854,7 @@ def _build_revisit_resolutions(plan, answers):
             continue
         if choice not in revisit.STATUSES:
             raise ReviewError(f"unsupported revisit resolution: {choice}")
-        if answer.get("evidence_delta") is not None:
-            raise ReviewError(f"{question['id']}: evidence_delta is not valid for a revisit verdict")
-        note = " ".join(str(answer.get("note") or "").split()) or None
-        if note and len(note) > 500:
-            raise ReviewError(f"{question['id']}: note must be at most 500 characters")
+        note = _clean_note(question["id"], answer, "a revisit verdict")
         event = {
             "type": "resolution", "revisit_id": question.get("revisit_id"),
             "checkpoint": str(question.get("checkpoint")), "status": choice,
@@ -867,11 +896,11 @@ def _resolve_commitment(plan, answers):
 def _draft_bundle(plan, answers, narrative, require_commitment):
     if answers.get("session_id") != plan.get("session_id"):
         raise ReviewError("answers.session_id does not match Review Plan")
-    thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
+    amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
     updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
     decisions = thesis.build_decision_events(plan, answers, updates)
-    exit_narratives = _build_exit_narratives(plan, answers)
-    revisit_resolutions = _build_revisit_resolutions(plan, answers)
+    exit_narratives = _build_exit_narratives(plan, answers, amap)
+    revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every triggered honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the engine did not trigger.
@@ -882,7 +911,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     if provided - required:
         raise ReviewError("narrative.honesty has keys the ledger did not trigger: " + ", ".join(sorted(provided - required)))
     commitment = _resolve_commitment(plan, answers) if require_commitment else None
-    return {
+    bundle = {
         "schema_version": 2,
         "session_id": plan["session_id"],
         "route": plan["route"],
@@ -895,10 +924,15 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
         "thesis_updates": updates,
         "thesis_decisions": decisions,
         "exit_narratives": exit_narratives,
-        "revisit_resolutions": revisit_resolutions,
         "commitment": commitment,
         "observations": list(answers.get("observations") or []),
     }
+    # Only present when a due checkpoint was actually answered: sessions committed
+    # before this key existed must re-draft to the identical canonical bundle, or
+    # the documented-safe finalize retry would fail closed on every old session.
+    if revisit_resolutions:
+        bundle["revisit_resolutions"] = revisit_resolutions
+    return bundle
 
 
 def _load_interaction(args, pending):

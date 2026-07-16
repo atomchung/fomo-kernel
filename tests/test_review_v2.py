@@ -396,9 +396,9 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         assert plan["card_plan"]["question_limit"] == 3
         assert len(plan["question_queue"]) == 3, "one review asks at most three important questions"
         assert [(q["kind"], q.get("ticker")) for q in plan["question_queue"]] == [
-            ("revisit", "BIG"), ("add_thesis", "PLTR"), ("revisit", "MID")], \
-            "exit notional and position impact must deterministically select the top three"
-        big, _add, mid = plan["question_queue"]
+            ("revisit", "BIG"), ("revisit", "MID"), ("add_thesis", "PLTR")], \
+            "perishable captures (amount-ranked, max two) lead; the rest rank by impact"
+        big, mid, _add = plan["question_queue"]
         assert big["exit_notional"] == 2000 and mid["exit_notional"] == 900
         assert mid["exit_kind"] == "reduce" and "大幅減倉" in mid["question"]
         assert "SMALL" not in {q.get("ticker") for q in plan["question_queue"]}, \
@@ -811,11 +811,16 @@ def test_due_revisit_lifecycle_asks_resolves_and_requeues_skips():
         assert [q["ticker"] for q in queue2] == ["BIG", "MID", "SMALL"]  # largest exit first
         big = queue2[0]
         assert big["checkpoint"] == "30" and big["prior_exit_reason"] == "price_target"
-        assert "你當時說是到價了" in big["question"]                    # replays the user's own words
+        # Replays the exact kind-aware label the capture showed (full exit -> 到價了).
+        assert "你當時說是「到價了」" in big["question"]
         assert big["compare"]["needs_prices"] == ["BIG"]              # offline stays honest
         assert {o["value"] for o in big["options"]} == {"still_valid", "modified", "falsified", "skip"}
         # PLTR's add question must not reopen: the decision cursor was answered in week 1.
         assert all(q.get("ticker") != "PLTR" for q in queue2)
+        # Audit summary in the snapshot stays lightweight; the payload is the full source.
+        snapshot_rows = plan2["state_snapshot"]["due_revisits"]
+        assert [row["ticker"] for row in snapshot_rows] == ["BIG", "MID", "SMALL"]
+        assert all(set(row) == {"revisit_id", "checkpoint", "due_date", "ticker"} for row in snapshot_rows)
 
         def week2(question):
             if question["ticker"] == "BIG":
@@ -838,6 +843,61 @@ def test_due_revisit_lifecycle_asks_resolves_and_requeues_skips():
         pending = [(q["ticker"], q["checkpoint"]) for q in plan3["question_queue"]
                    if q["kind"] == "due_revisit"]
         assert pending == [("MID", "30")]                             # skip returns; verdicts do not
+
+        # Replay compatibility: week 1 answered no due checkpoint, so its bundle
+        # must not carry the key at all — a pre-upgrade session re-finalized with
+        # this code must re-draft to the identical canonical bundle (no-op retry).
+        bundle1 = json.loads((pathlib.Path(root) / "sessions" / plan1["session_id"] / "bundle.json")
+                             .read_text(encoding="utf-8"))
+        assert "revisit_resolutions" not in bundle1
+        bundle2 = json.loads((pathlib.Path(root) / "sessions" / plan2["session_id"] / "bundle.json")
+                             .read_text(encoding="utf-8"))
+        assert len(bundle2["revisit_resolutions"]) == 2
+
+
+def test_perishable_capture_outranks_larger_due_checkpoints():
+    """#136: a fresh exit's reason window cannot be backfilled, so its capture
+    question must survive a week whose matured checkpoints carry bigger amounts.
+    (All dates sit in the past relative to the wall clock — #169 rejects
+    future-dated trade rows at ingestion.)"""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        early = pathlib.Path(tmp) / "early.csv"
+        early.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "BIG,BUY,10,100,2026-05-01,Trade,US,USD",
+            "MID,BUY,10,100,2026-05-02,Trade,US,USD",
+            "SMALL,BUY,2,100,2026-05-03,Trade,US,USD",
+            "BIG,SELL,10,200,2026-05-10,Trade,US,USD",
+            "MID,SELL,6,150,2026-05-11,Trade,US,USD",
+            "SMALL,SELL,2,200,2026-05-12,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+
+        def prepare(csv_path, date_end, tag):
+            card_path, state_path = _artifacts(tmp)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["date_end"] = date_end
+            dated = pathlib.Path(tmp) / f"state_{tag}.json"
+            dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            run = _run("prepare", csv_path, "--root", root,
+                       "--card-json", card_path, "--state-json", dated)
+            assert run.returncode == 0, run.stdout + run.stderr
+            return json.loads(run.stdout)["review_plan"]
+
+        plan1 = prepare(early, "2026-05-14", "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        late = pathlib.Path(tmp) / "late.csv"
+        late.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "TINY,BUY,3,100,2026-06-08,Trade,US,USD",
+            "TINY,SELL,3,100,2026-06-12,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        queue = prepare(late, "2026-06-15", "w2")["question_queue"]
+        # TINY notional (300) is far below the matured BIG/MID/SMALL checkpoints
+        # (2000/900/400) — the capture must still hold the first slot.
+        assert queue[0]["kind"] == "revisit" and queue[0]["ticker"] == "TINY"
+        assert [q["kind"] for q in queue[1:]] == ["due_revisit", "due_revisit"]
+        assert [q["ticker"] for q in queue[1:]] == ["BIG", "MID"]
 
 
 def test_problem_book_projection_is_readable_marked_and_self_healing():
@@ -901,6 +961,48 @@ def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
         payload = json.loads(run.stdout)
         assert payload["status"] == "committed"                        # canonical bundle is never blocked
         assert payload["recoverable"] and "review_mark" in payload["projection_error"]
+        # A mark conflict is one projection failing — it must not hold the card
+        # or the projection report hostage (they land before the conflict raises).
+        cards = list((pathlib.Path(root) / "cards").glob("*.md"))
+        assert len(cards) == 2, [c.name for c in cards]
+        report = json.loads((pathlib.Path(root) / "projections" / (plan2["session_id"] + ".json"))
+                            .read_text(encoding="utf-8"))
+        problems_rows = [row for row in report["rows"] if row.get("status") == "mark_conflict"]
+        assert problems_rows and "review_mark" in problems_rows[0]["error"]
+
+
+def test_thesis_updates_reject_out_of_vocabulary_inference_values():
+    """#155/#38: these fields cannot be backfilled, so a misspelled enum value
+    must fail closed instead of fragmenting the store permanently."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        answers = _answer_queue(plan, _week1_choices)
+        answers["thesis_updates"] = [_base_thesis_update({"emotion": "FOMO"})]
+        a_path = pathlib.Path(tmp) / "answers_vocab.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path = pathlib.Path(tmp) / "narrative_vocab.json"
+        n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+                   "--answers", a_path, "--narrative", n_path)
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error" and "invalid emotion" in payload["error"]
+        assert not (pathlib.Path(root) / "sessions" / plan["session_id"]).exists()
+
+
+def test_schemas_cover_due_revisit_and_resolutions():
+    """Contract-sync pin (CLAUDE.md): the published schemas must describe what
+    the code emits — a new question kind or bundle key updates them in the same
+    change. (Offline suite has no jsonschema validator; pin the vocabulary.)"""
+    plan_schema = json.loads((SCHEMAS / "review-plan.schema.json").read_text(encoding="utf-8"))
+    item = plan_schema["properties"]["question_queue"]["items"]
+    assert "due_revisit" in item["properties"]["kind"]["enum"]
+    for key in ("checkpoint", "due_date", "compare", "prior_exit_reason", "prior_note", "swaps"):
+        assert key in item["properties"], key
+    bundle_schema = json.loads((SCHEMAS / "session-bundle.schema.json").read_text(encoding="utf-8"))
+    resolutions = bundle_schema["properties"]["revisit_resolutions"]
+    assert set(resolutions["items"]["properties"]["status"]["enum"]) == {"still_valid", "modified", "falsified"}
+    # Absent-when-empty is the replay-compatibility contract, so it must stay optional.
+    assert "revisit_resolutions" not in bundle_schema["required"]
 
 
 def test_thesis_updates_preserve_inference_only_fields():
