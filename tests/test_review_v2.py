@@ -1053,6 +1053,15 @@ def test_repair_projections_never_regresses_a_newer_last_state():
         assert run.returncode == 0, run.stdout + run.stderr
         assert json.loads(last_state.read_text(encoding="utf-8"))["date_end"] == "2026-07-14"
 
+        # A corrupted date_end is NOT "newer": only a valid ISO date may win,
+        # or the documented repair path could never heal the anchor.
+        broken = json.loads(last_state.read_text(encoding="utf-8"))
+        broken["date_end"] = "9999-oops"
+        last_state.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+        run = _run("repair-projections", "--root", root)
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert json.loads(last_state.read_text(encoding="utf-8"))["date_end"] == "2026-07-14"
+
 
 def test_all_json_schemas_parse():
     names = {"review-plan.schema.json", "answers.schema.json", "narrative.schema.json",
