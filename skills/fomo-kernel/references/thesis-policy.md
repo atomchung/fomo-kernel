@@ -19,4 +19,12 @@ Identity and continuity are engine-owned:
 - Each active cycle has its own add-decision cursor. Only another add inside that cycle advances it; a portfolio-wide count must not re-open another ticker's question.
 - A full exit closes the position side. `thesis_broken` records a `falsified` outcome; every other confirmed or skipped full-exit explanation records `closed`, with the explanation state preserved separately. A reduction does not close the thesis.
 
+Evidence provenance follows `captured -> confirmed -> evaluated`:
+
+- `captured` means a legacy or imported event contains a claim and source, but the newer confirmation contract was not present.
+- `confirmed` means the user confirmed that this claim and source were part of the decision. It does not mean the external claim is objectively true.
+- `evaluated` is reserved for a later reconciliation that compares an observation with the claim or falsifier. P0 provenance capture must not promote evidence to this state automatically.
+
+The engine assigns a stable `evidence_id`, preserves the stated source, and keeps `observed_at` null when the user did not provide it. Review time is capture provenance, not a fabricated observation date.
+
 The agent authors thesis content and user-answer payloads, not identities or cursors. `exit_trigger` is a fact that would falsify the thesis; `stop` is a price or sizing action. Keep them distinct.

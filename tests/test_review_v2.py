@@ -598,6 +598,14 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
         final = _run("finalize", "--root", root, "--session-id", first_plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
+        bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json").read_text())
+        evidence_event = bundle["thesis_decisions"][0]
+        assert evidence_event["evidence_id"].startswith("evidence-")
+        assert evidence_event["provenance"] == {
+            "source": "earnings call", "source_state": "confirmed",
+            "captured_at": "2026-07-14", "observed_at": None,
+        }
+        assert evidence_event["evaluation"] == {"state": "pending", "evaluated_at": None}
 
         # Canonical bundles remain authoritative even when compatibility
         # projections disappear before repair.
@@ -610,6 +618,9 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
         active = same_plan["state_snapshot"]["active_theses"][0]
         assert active["decision_cursor"] == "PLTR#2026-01-01#1#add#3"
         assert active["thesis_id"].startswith("thesis-") and active["last_event_id"].startswith("thesis-decision-")
+        assert active["last_evidence"]["source_state"] == "confirmed"
+        assert active["last_evidence"]["observed_at"] is None, \
+            "review time cannot be substituted for a missing observation date"
 
         state = json.loads(state_path.read_text(encoding="utf-8"))
         position = state["holdings"]["positions"]["PLTR"]
@@ -660,6 +671,7 @@ def test_fold_preserves_legacy_thesis_and_explicit_full_exit_outcome():
             "session_date": "2025-01-01"}
     decision = {"event": "thesis_decision", "cycle_id": cycle_id, "ticker": "OLD",
                 "decision": "new_evidence", "decision_cursor": f"{cycle_id}#add#2",
+                "evidence_delta": {"claim": "legacy claim changed", "source": "legacy note"},
                 "review_date": "2025-02-01"}
     closed = {"event": "exit_narrative", "cycle_id": cycle_id, "ticker": "OLD",
               "exit_kind": "full", "exit_reason": None, "capture": "skipped",
@@ -667,6 +679,9 @@ def test_fold_preserves_legacy_thesis_and_explicit_full_exit_outcome():
     state = thesis_engine.reconstruct_states([base, closed], [decision])[0]
     assert state["thesis_id"].startswith("thesis-") and state["event_id"].startswith("legacy-thesis-")
     assert state["decision_cursor"].endswith("#add#2")
+    assert state["last_evidence"]["source_state"] == "captured", \
+        "legacy evidence must not be silently promoted to the newer confirmed contract"
+    assert state["last_evidence"]["captured_at"] == "2025-02-01"
     assert state["position_status"] == "closed" and state["status"] == "closed"
     assert state["final_outcome"]["side_state"] == "skipped", \
         "a skipped explanation still preserves the deterministic cycle-close outcome"

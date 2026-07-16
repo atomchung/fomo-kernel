@@ -44,7 +44,24 @@
           "event_id": {"type": "string"},
           "revises": {"type": ["string", "null"]},
           "cycle_id": {"type": "string"},
-          "decision_cursor": {"type": ["string", "null"]}
+          "decision_cursor": {"type": ["string", "null"]},
+          "evidence_id": {"type": "string"},
+          "provenance": {
+            "type": "object",
+            "properties": {
+              "source": {"type": "string"},
+              "source_state": {"enum": ["captured", "confirmed", "evaluated"]},
+              "captured_at": {"type": ["string", "null"]},
+              "observed_at": {"type": ["string", "null"]}
+            }
+          },
+          "evaluation": {
+            "type": "object",
+            "properties": {
+              "state": {"enum": ["pending", "confirmed", "weakened", "falsified", "insufficient"]},
+              "evaluated_at": {"type": ["string", "null"]}
+            }
+          }
         }
       }
     },

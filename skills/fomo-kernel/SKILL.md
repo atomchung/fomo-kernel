@@ -78,6 +78,7 @@ python3 engine/review.py repair-projections
 - Add one `thesis_updates` entry for every missing-thesis `cycle_id`. Default to `maturity:"inferred"` and state the inference source; never present it as user-confirmed.
 - Do not invent `thesis_id`, `event_id`, `revises`, or `decision_cursor`. The engine assigns stable identity and links each accepted event to the prior event for that cycle.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.
+- Treat confirmed evidence as "the user confirmed this was part of the decision," not as external fact verification. Do not invent `observed_at`; the engine preserves missing observation time separately from review capture time.
 - `prepare` ranks eligible motive and recent-exit questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question; `skip` is an explicit answer and must deduplicate that exit later.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
 

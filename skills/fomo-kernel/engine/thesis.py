@@ -21,6 +21,7 @@ ADD_DECISIONS = {
     "skip",
 }
 THESIS_STATUSES = {"open", "still", "modified", "falsified", "closed"}
+SOURCE_STATES = {"captured", "confirmed", "evaluated"}
 
 
 class ThesisError(ValueError):
@@ -104,6 +105,39 @@ def _chain_depth(row, by_id, memo, visiting=None):
     return depth
 
 
+def _evidence_record(event, default_source_state="captured"):
+    """Normalize evidence provenance without upgrading legacy confidence."""
+    delta = event.get("evidence_delta")
+    if not isinstance(delta, dict):
+        return None
+    claim = str(delta.get("claim") or "").strip()
+    source = str(delta.get("source") or "").strip()
+    if not claim or not source:
+        return None
+    provenance = event.get("provenance") if isinstance(event.get("provenance"), dict) else {}
+    source_state = provenance.get("source_state") or default_source_state
+    if source_state not in SOURCE_STATES:
+        source_state = default_source_state
+    identity = {
+        "thesis_id": event.get("thesis_id"),
+        "cycle_id": event.get("cycle_id"),
+        "claim": claim,
+        "source": source,
+        "observed_at": delta.get("observed_at"),
+    }
+    return {
+        "evidence_id": event.get("evidence_id") or stable_event_id("evidence", identity),
+        "claim": claim,
+        "source": source,
+        "observed_at": delta.get("observed_at"),
+        "falsifier": delta.get("falsifier"),
+        "source_state": source_state,
+        "captured_at": provenance.get("captured_at") or event.get("review_date"),
+        "evaluation": event.get("evaluation") or {"state": "pending", "evaluated_at": None},
+        "decision_event_id": _row_event_id(event),
+    }
+
+
 def reconstruct_states(rows, decision_rows=None, active_cycle_ids=None):
     """Fold thesis, decision, and exit events into one state per position cycle.
 
@@ -132,7 +166,8 @@ def reconstruct_states(rows, decision_rows=None, active_cycle_ids=None):
             row = _normalize_thesis_row(raw)
             if current:
                 row.setdefault("revises", current.get("last_event_id") or current.get("event_id"))
-                for key in ("decision_cursor", "last_decision", "last_exit", "final_outcome"):
+                for key in ("decision_cursor", "last_decision", "last_exit", "final_outcome",
+                            "evidence_history", "last_evidence", "source_state"):
                     if key not in row and key in current:
                         row[key] = current[key]
             states[cycle_id] = row
@@ -150,6 +185,14 @@ def reconstruct_states(rows, decision_rows=None, active_cycle_ids=None):
             current["last_decision"] = event
             if event.get("decision_cursor"):
                 current["decision_cursor"] = event["decision_cursor"]
+            evidence = _evidence_record(event)
+            if evidence:
+                history = [row for row in current.get("evidence_history") or []
+                           if row.get("evidence_id") != evidence["evidence_id"]]
+                history.append(evidence)
+                current["evidence_history"] = history
+                current["last_evidence"] = evidence
+                current["source_state"] = evidence["source_state"]
             if event.get("status") in THESIS_STATUSES:
                 current["status"] = event["status"]
         elif kind == "exit_narrative":
@@ -267,6 +310,22 @@ def build_decision_events(plan, answers, thesis_updates=None):
         event["thesis_id"] = prior.get("thesis_id") or q.get("prior_thesis_id") \
             or stable_thesis_id(q.get("cycle_id"))
         event["revises"] = prior.get("last_event_id") or prior.get("event_id") or q.get("prior_event_id")
+        if choice == "new_evidence":
+            evidence_identity = {
+                "thesis_id": event["thesis_id"],
+                "cycle_id": event.get("cycle_id"),
+                "claim": str(evidence.get("claim") or "").strip(),
+                "source": str(evidence.get("source") or "").strip(),
+                "observed_at": evidence.get("observed_at"),
+            }
+            event["evidence_id"] = stable_event_id("evidence", evidence_identity)
+            event["provenance"] = {
+                "source": evidence_identity["source"],
+                "source_state": "confirmed",
+                "captured_at": event.get("review_date"),
+                "observed_at": evidence.get("observed_at"),
+            }
+            event["evaluation"] = {"state": "pending", "evaluated_at": None}
         identity_payload = dict(event)
         identity_payload.pop("decision_id", None)
         event["event_id"] = stable_event_id("thesis-decision", identity_payload)
