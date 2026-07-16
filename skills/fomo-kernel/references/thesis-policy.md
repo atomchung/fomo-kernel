@@ -28,3 +28,5 @@ Evidence provenance follows `captured -> confirmed -> evaluated`:
 The engine assigns a stable `evidence_id`, preserves the stated source, and keeps `observed_at` null when the user did not provide it. Review time is capture provenance, not a fabricated observation date.
 
 The agent authors thesis content and user-answer payloads, not identities or cursors. `exit_trigger` is a fact that would falsify the thesis; `stop` is a price or sizing action. Keep them distinct.
+
+Inference-only accumulation fields (`source_type`/`source_name`/`source_confidence`, `emotion`/`confidence` with their `_inferred` flags) ride on thesis updates without their own questions. They accumulate for later analysis and never appear on the card. Guess only from real signals in the conversation or the trade pattern; a field with no signal stays null — an invented source or emotion is worse than a missing one. Only the user's own words upgrade `source_confidence` to `confirmed` or flip an `_inferred` flag to false. These fields cannot be backfilled: a week that stores nothing loses that week's signal permanently.

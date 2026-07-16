@@ -111,6 +111,10 @@ def append_book(book_path, new_events, mark=None, session_id=None):
         row["type"] = "event"
         if session_id:
             row["session_id"] = session_id
+        if not (row.get("key") and row.get("week")):
+            continue  # load_book can never read such a row back, and the dedupe set
+                      # would never contain it — writing it would re-append one
+                      # unreadable line on every replay (unbounded growth)
         if _event_id(row) in seen:
             continue
         seen.add(_event_id(row))
@@ -256,6 +260,26 @@ def check_rules(tracking, events, marks):
     return out
 
 
+def snapshot(book_path, rules_path=None, today=None, recent_weeks=4):
+    """Assemble the review-ready stats payload (single source for CLI and review v2).
+
+    rules_path=None keeps the CLI's opt-in semantics (rules_check/muted None);
+    a given path always computes the rule reconciliation, even when empty."""
+    events, marks, skipped = load_book(book_path)
+    today = today or dt.date.today().isoformat()
+    per, top = compute_stats(events, today, recent_weeks)
+    rules_check = muted = None
+    if rules_path:
+        tracking, muted_rules = load_rules(rules_path)
+        rules_check = check_rules(tracking, events, marks)
+        muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
+                  "problem_key": r.get("problem_key")} for r in muted_rules]
+    return {"as_of": today, "recent_weeks": recent_weeks,
+            "per_key": per, "top": top,
+            "rules_check": rules_check, "muted_rules": muted,
+            "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}
+
+
 # ─────────────────────────── CLI ───────────────────────────
 
 def _emit(obj):
@@ -306,25 +330,14 @@ def main(argv=None):
         return 0
 
     if a.cmd == "stats":
-        events, marks, skipped = load_book(a.book)
-        if skipped:
-            print(f"⚠️  problems.jsonl 有 {skipped} 行壞事件被跳過", file=sys.stderr)
-        today = a.today or dt.date.today().isoformat()
         try:
-            per, top = compute_stats(events, today, a.recent_weeks)
+            payload = snapshot(a.book, a.rules, a.today, a.recent_weeks)
         except ValueError as e:
             print(f"❌ 日期格式錯:{e}", file=sys.stderr)
             return 1
-        rules_check = muted = None
-        if a.rules:
-            tracking, muted_rules = load_rules(a.rules)
-            rules_check = check_rules(tracking, events, marks)
-            muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
-                      "problem_key": r.get("problem_key")} for r in muted_rules]
-        _emit({"as_of": today, "recent_weeks": a.recent_weeks,
-               "per_key": per, "top": top,
-               "rules_check": rules_check, "muted_rules": muted,
-               "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped})
+        if payload["skipped_lines"]:
+            print(f"⚠️  problems.jsonl 有 {payload['skipped_lines']} 行壞事件被跳過", file=sys.stderr)
+        _emit(payload)
         return 0
     return 0
 

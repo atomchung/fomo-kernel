@@ -66,5 +66,11 @@
     "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
     "acct_perf_basis": "Account performance uses partial cost or FX approximations and remains uncertain.",
     "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero."
+  },
+  "due_choices": {
+    "still_valid": "Still valid",
+    "modified": "Partly right",
+    "falsified": "Wrong call",
+    "skip": "Skip"
   }
 }

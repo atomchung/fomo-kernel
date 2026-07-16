@@ -396,9 +396,9 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         assert plan["card_plan"]["question_limit"] == 3
         assert len(plan["question_queue"]) == 3, "one review asks at most three important questions"
         assert [(q["kind"], q.get("ticker")) for q in plan["question_queue"]] == [
-            ("revisit", "BIG"), ("add_thesis", "PLTR"), ("revisit", "MID")], \
-            "exit notional and position impact must deterministically select the top three"
-        big, _add, mid = plan["question_queue"]
+            ("revisit", "BIG"), ("revisit", "MID"), ("add_thesis", "PLTR")], \
+            "perishable captures (amount-ranked, max two) lead; the rest rank by impact"
+        big, mid, _add = plan["question_queue"]
         assert big["exit_notional"] == 2000 and mid["exit_notional"] == 900
         assert mid["exit_kind"] == "reduce" and "大幅減倉" in mid["question"]
         assert "SMALL" not in {q.get("ticker") for q in plan["question_queue"]}, \
@@ -737,6 +737,330 @@ def test_account_performance_pillar_gate_and_full_render():
     assert any("不是對錯判定" in x for x in zh), "#179: cash drag stays neutral, never a verdict"
     assert card_renderer._performance_lines({"acct_perf": {"note": "offline"}}, "en", {}) == [], \
         "no holdings pillar computed -> no account section"
+
+
+def _prepare_dated(tmp, root, date_end, tag, language="zh-TW"):
+    """Prepare with the shared fixtures but a caller-controlled review date."""
+    card_path, state_path = _artifacts(tmp)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["date_end"] = date_end
+    dated = pathlib.Path(tmp) / f"state_{tag}.json"
+    dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    csv_path = _trade_csv(tmp)
+    run = _run("prepare", csv_path, "--root", root, "--language", language,
+               "--card-json", card_path, "--state-json", dated)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)["review_plan"]
+
+
+def _finalize(tmp, root, plan, answers, tag):
+    a_path = pathlib.Path(tmp) / f"answers_{tag}.json"
+    a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
+    n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+    run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+               "--answers", a_path, "--narrative", n_path)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)
+
+
+def _base_thesis_update(extra=None):
+    row = {"ticker": "PLTR", "cycle_id": "PLTR#2026-01-01#1",
+           "why": "Enterprise adoption may still be underpriced",
+           "horizon": "季", "exit_trigger": "Renewals weaken",
+           "stop": None, "target_size": "bounded", "driver": "AI software",
+           "maturity": "inferred"}
+    row.update(extra or {})
+    return row
+
+
+def _answer_queue(plan, choose):
+    """Answer every queued question via choose(question) -> answer dict."""
+    answers = {"session_id": plan["session_id"], "answers": [], "observations": [],
+               "commitment": {"choice": "candidate_0"}, "thesis_updates": []}
+    if plan["missing_thesis_positions"]:
+        answers["thesis_updates"] = [_base_thesis_update()]
+    for question in plan["question_queue"]:
+        answers["answers"].append({"question_id": question["id"], **choose(question)})
+    return answers
+
+
+def _week1_choices(question):
+    if question["kind"] == "revisit" and question["ticker"] == "BIG":
+        return {"choice": "price_target"}
+    if question["kind"] == "revisit":
+        return {"choice": "skip"}
+    if question["kind"] == "add_thesis":
+        return {"choice": "new_evidence",
+                "evidence_delta": {"claim": "Enterprise demand accelerated",
+                                   "source": "earnings call"}}
+    return {"choice": "deliberate_plan"}
+
+
+def test_due_revisit_lifecycle_asks_resolves_and_requeues_skips():
+    """#191: 30/60/90 checkpoints mature after capture, replay the user's own
+    reason, persist non-skip verdicts as queue resolutions, and requeue skips."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        assert plan1["state_snapshot"]["due_revisits"] == []          # fresh exits stay in capture
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        plan2 = _prepare_dated(tmp, root, "2026-08-15", "w2")
+        queue2 = plan2["question_queue"]
+        assert [q["kind"] for q in queue2] == ["due_revisit"] * 3     # 30d matured, capture window closed
+        assert [q["ticker"] for q in queue2] == ["BIG", "MID", "SMALL"]  # largest exit first
+        big = queue2[0]
+        assert big["checkpoint"] == "30" and big["prior_exit_reason"] == "price_target"
+        # Replays the exact kind-aware label the capture showed (full exit -> 到價了).
+        assert "你當時說是「到價了」" in big["question"]
+        assert big["compare"]["needs_prices"] == ["BIG"]              # offline stays honest
+        assert {o["value"] for o in big["options"]} == {"still_valid", "modified", "falsified", "skip"}
+        # PLTR's add question must not reopen: the decision cursor was answered in week 1.
+        assert all(q.get("ticker") != "PLTR" for q in queue2)
+        # Audit summary in the snapshot stays lightweight; the payload is the full source.
+        snapshot_rows = plan2["state_snapshot"]["due_revisits"]
+        assert [row["ticker"] for row in snapshot_rows] == ["BIG", "MID", "SMALL"]
+        assert all(set(row) == {"revisit_id", "checkpoint", "due_date", "ticker"} for row in snapshot_rows)
+
+        def week2(question):
+            if question["ticker"] == "BIG":
+                return {"choice": "falsified", "note": "Target was set too low; trend continued"}
+            if question["ticker"] == "MID":
+                return {"choice": "skip"}
+            return {"choice": "still_valid"}
+        result = _finalize(tmp, root, plan2, _answer_queue(plan2, week2), "w2")
+        assert result["projection_error"] is None
+
+        sys.path.insert(0, str(ENGINE_DIR))
+        import revisit as revisit_engine
+        _, resolutions, _ = revisit_engine.load_queue(os.path.join(root, "revisit.jsonl"))
+        by_key = {(rid.split("#")[0], cp): row["status"] for (rid, cp), row in resolutions.items()}
+        assert by_key == {("BIG", "30"): "falsified", ("SMALL", "30"): "still_valid"}
+        falsified = [row for row in resolutions.values() if row["status"] == "falsified"]
+        assert falsified[0]["note"] == "Target was set too low; trend continued"
+
+        plan3 = _prepare_dated(tmp, root, "2026-08-16", "w3")
+        pending = [(q["ticker"], q["checkpoint"]) for q in plan3["question_queue"]
+                   if q["kind"] == "due_revisit"]
+        assert pending == [("MID", "30")]                             # skip returns; verdicts do not
+
+        # Replay compatibility: week 1 answered no due checkpoint, so its bundle
+        # must not carry the key at all — a pre-upgrade session re-finalized with
+        # this code must re-draft to the identical canonical bundle (no-op retry).
+        bundle1 = json.loads((pathlib.Path(root) / "sessions" / plan1["session_id"] / "bundle.json")
+                             .read_text(encoding="utf-8"))
+        assert "revisit_resolutions" not in bundle1
+        bundle2 = json.loads((pathlib.Path(root) / "sessions" / plan2["session_id"] / "bundle.json")
+                             .read_text(encoding="utf-8"))
+        assert len(bundle2["revisit_resolutions"]) == 2
+
+
+def test_perishable_capture_outranks_larger_due_checkpoints():
+    """#136: a fresh exit's reason window cannot be backfilled, so its capture
+    question must survive a week whose matured checkpoints carry bigger amounts.
+    (All dates sit in the past relative to the wall clock — #169 rejects
+    future-dated trade rows at ingestion.)"""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        early = pathlib.Path(tmp) / "early.csv"
+        early.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "BIG,BUY,10,100,2026-05-01,Trade,US,USD",
+            "MID,BUY,10,100,2026-05-02,Trade,US,USD",
+            "SMALL,BUY,2,100,2026-05-03,Trade,US,USD",
+            "BIG,SELL,10,200,2026-05-10,Trade,US,USD",
+            "MID,SELL,6,150,2026-05-11,Trade,US,USD",
+            "SMALL,SELL,2,200,2026-05-12,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+
+        def prepare(csv_path, date_end, tag):
+            card_path, state_path = _artifacts(tmp)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["date_end"] = date_end
+            dated = pathlib.Path(tmp) / f"state_{tag}.json"
+            dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            run = _run("prepare", csv_path, "--root", root,
+                       "--card-json", card_path, "--state-json", dated)
+            assert run.returncode == 0, run.stdout + run.stderr
+            return json.loads(run.stdout)["review_plan"]
+
+        plan1 = prepare(early, "2026-05-14", "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        late = pathlib.Path(tmp) / "late.csv"
+        late.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "TINY,BUY,3,100,2026-06-08,Trade,US,USD",
+            "TINY,SELL,3,100,2026-06-12,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        queue = prepare(late, "2026-06-15", "w2")["question_queue"]
+        # TINY notional (300) is far below the matured BIG/MID/SMALL checkpoints
+        # (2000/900/400) — the capture must still hold the first slot.
+        assert queue[0]["kind"] == "revisit" and queue[0]["ticker"] == "TINY"
+        assert [q["kind"] for q in queue[1:]] == ["due_revisit", "due_revisit"]
+        assert [q["ticker"] for q in queue[1:]] == ["BIG", "MID"]
+
+
+def test_problem_book_projection_is_readable_marked_and_self_healing():
+    """#191/#194: projected problem events must round-trip through load_book,
+    each review records its Opportunity Check mark, and replays stay idempotent."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        book = pathlib.Path(root) / "problems.jsonl"
+        legacy_bad = {"key": "oversize", "kind": "state", "week": "2026-06-01",
+                      "ticker": "OLD", "amount": None, "note": "untyped legacy row"}
+        book.write_text(json.dumps(legacy_bad, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        sys.path.insert(0, str(ENGINE_DIR))
+        import problems as problems_engine
+        events, marks, skipped = problems_engine.load_book(str(book))
+        assert skipped == 1                                            # untyped legacy row stays unreadable
+        assert [e["key"] for e in events] == ["avgdown_breach"]        # typed projection reads back
+        assert marks and marks[0]["week"] == "2026-07-14"
+        assert marks[0]["opportunities"] == {"avgdown_breach": True}
+
+        # Finalize replay (already-committed session) must not duplicate the book.
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1-replay")
+        events2, marks2, _ = problems_engine.load_book(str(book))
+        assert len(events2) == len(events) and len(marks2) == len(marks)
+
+        # The next review folds the book into review-ready stats.
+        plan2 = _prepare_dated(tmp, root, "2026-08-15", "w2")
+        stats = plan2["state_snapshot"]["problem_stats"]
+        assert stats["events_n"] == 1 and stats["marks_n"] == 1
+        assert "avgdown_breach" in stats["per_key"]
+        assert isinstance(stats["rules_check"], list)                  # week-1 commitment rule is tracked
+        assert stats["rules_check"] and stats["rules_check"][0]["problem_key"] == "avgdown_breach"
+
+
+def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
+    """#166 semantics through v2: a second same-week session whose opportunities
+    differ must surface a recoverable projection error, not corrupt the book."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        card_path, state_path = _artifacts(tmp)
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["problem_opportunities"] = {"avgdown_breach": False}     # same week, different mark
+        conflicted = pathlib.Path(tmp) / "state_conflict.json"
+        conflicted.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        run = _run("prepare", _trade_csv(tmp), "--root", root,
+                   "--card-json", card_path, "--state-json", conflicted)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan2 = json.loads(run.stdout)["review_plan"]
+        answers = _answer_queue(plan2, _week1_choices)
+        a_path = pathlib.Path(tmp) / "answers_conflict.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path = pathlib.Path(tmp) / "narrative_conflict.json"
+        n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+                   "--answers", a_path, "--narrative", n_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "committed"                        # canonical bundle is never blocked
+        assert payload["recoverable"] and "review_mark" in payload["projection_error"]
+        # A mark conflict is one projection failing — it must not hold the card
+        # or the projection report hostage (they land before the conflict raises).
+        cards = list((pathlib.Path(root) / "cards").glob("*.md"))
+        assert len(cards) == 2, [c.name for c in cards]
+        report = json.loads((pathlib.Path(root) / "projections" / (plan2["session_id"] + ".json"))
+                            .read_text(encoding="utf-8"))
+        problems_rows = [row for row in report["rows"] if row.get("status") == "mark_conflict"]
+        assert problems_rows and "review_mark" in problems_rows[0]["error"]
+
+
+def test_thesis_updates_reject_out_of_vocabulary_inference_values():
+    """#155/#38: these fields cannot be backfilled, so a misspelled enum value
+    must fail closed instead of fragmenting the store permanently."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        answers = _answer_queue(plan, _week1_choices)
+        answers["thesis_updates"] = [_base_thesis_update({"emotion": "FOMO"})]
+        a_path = pathlib.Path(tmp) / "answers_vocab.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path = pathlib.Path(tmp) / "narrative_vocab.json"
+        n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+                   "--answers", a_path, "--narrative", n_path)
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error" and "invalid emotion" in payload["error"]
+        assert not (pathlib.Path(root) / "sessions" / plan["session_id"]).exists()
+
+
+def test_schemas_cover_due_revisit_and_resolutions():
+    """Contract-sync pin (CLAUDE.md): the published schemas must describe what
+    the code emits — a new question kind or bundle key updates them in the same
+    change. (Offline suite has no jsonschema validator; pin the vocabulary.)"""
+    plan_schema = json.loads((SCHEMAS / "review-plan.schema.json").read_text(encoding="utf-8"))
+    item = plan_schema["properties"]["question_queue"]["items"]
+    assert "due_revisit" in item["properties"]["kind"]["enum"]
+    for key in ("checkpoint", "due_date", "compare", "prior_exit_reason", "prior_note", "swaps"):
+        assert key in item["properties"], key
+    bundle_schema = json.loads((SCHEMAS / "session-bundle.schema.json").read_text(encoding="utf-8"))
+    resolutions = bundle_schema["properties"]["revisit_resolutions"]
+    assert set(resolutions["items"]["properties"]["status"]["enum"]) == {"still_valid", "modified", "falsified"}
+    # Absent-when-empty is the replay-compatibility contract, so it must stay optional.
+    assert "revisit_resolutions" not in bundle_schema["required"]
+
+
+def test_thesis_updates_preserve_inference_only_fields():
+    """#155/#38: emotion/confidence/source fields ride through validation,
+    the canonical bundle, and the legacy projection without being stripped."""
+    inference = {"source_type": "self", "source_name": None, "source_confidence": "candidate",
+                 "emotion": "composed", "emotion_inferred": True,
+                 "confidence": "medium", "confidence_inferred": True}
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        answers = _answer_queue(plan, _week1_choices)
+        answers["thesis_updates"] = [_base_thesis_update(inference)]
+        _finalize(tmp, root, plan, answers, "w1")
+
+        bundle = json.loads((pathlib.Path(root) / "sessions" / plan["session_id"] / "bundle.json")
+                            .read_text(encoding="utf-8"))
+        stored = bundle["thesis_updates"][0]
+        projected = [json.loads(line) for line in
+                     (pathlib.Path(root) / "theses.jsonl").read_text(encoding="utf-8").splitlines()]
+        projected_thesis = [row for row in projected if row.get("event") is None][0]
+        for key, value in inference.items():
+            assert stored.get(key) == value, key
+            assert projected_thesis.get(key) == value, key
+
+
+def test_repair_projections_never_regresses_a_newer_last_state():
+    """#194.5: replaying old bundles (repair walks every session) must not
+    overwrite a reconciliation anchor the engine has already advanced."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        _finalize(tmp, root, plan, _answer_queue(plan, _week1_choices), "w1")
+        last_state = pathlib.Path(root) / "last_state.json"
+
+        newer = json.loads(last_state.read_text(encoding="utf-8"))
+        newer["date_end"] = "2026-09-01"                               # engine moved on after commit
+        last_state.write_text(json.dumps(newer, ensure_ascii=False), encoding="utf-8")
+        run = _run("repair-projections", "--root", root)
+        assert run.returncode == 0, run.stdout + run.stderr
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "repaired"
+        assert [r["last_state"] for r in payload["reports"]] == ["kept_newer"]
+        assert json.loads(last_state.read_text(encoding="utf-8"))["date_end"] == "2026-09-01"
+
+        stale = json.loads(last_state.read_text(encoding="utf-8"))
+        stale["date_end"] = "2026-01-01"                               # corrupted/rolled-back anchor
+        last_state.write_text(json.dumps(stale, ensure_ascii=False), encoding="utf-8")
+        run = _run("repair-projections", "--root", root)
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert json.loads(last_state.read_text(encoding="utf-8"))["date_end"] == "2026-07-14"
+
+        # A corrupted date_end is NOT "newer": only a valid ISO date may win,
+        # or the documented repair path could never heal the anchor.
+        broken = json.loads(last_state.read_text(encoding="utf-8"))
+        broken["date_end"] = "9999-oops"
+        last_state.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+        run = _run("repair-projections", "--root", root)
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert json.loads(last_state.read_text(encoding="utf-8"))["date_end"] == "2026-07-14"
 
 
 def test_all_json_schemas_parse():

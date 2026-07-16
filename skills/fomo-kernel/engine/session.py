@@ -9,6 +9,7 @@ projection failure never corrupts or invalidates the committed session.
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import shutil
 import tempfile
 
 import ledger
+import problems
 
 
 class SessionError(ValueError):
@@ -202,7 +204,31 @@ def project_legacy(root, bundle, private_md):
     commitment = bundle.get("commitment")
     state["commitment"] = commitment
     state["rule"] = (commitment or {}).get("rule")
-    ledger.atomic_write_text(os.path.join(root, "last_state.json"), pretty(state))
+    # Replaying an old bundle (repair-projections walks every session) must not
+    # regress a newer reconciliation anchor; equal dates keep idempotent rewrites.
+    # Only a VALID ISO date can win — a corrupted date_end ("N/A", "9999-oops")
+    # must stay overwritable or the documented repair path could never heal it.
+    # A legitimately newer anchor is kept even when it has no bundle: the v1
+    # coach.py path writes last_state.json directly without committing one.
+    last_state_path = os.path.join(root, "last_state.json")
+    last_state_status = "written"
+
+    def _valid_date(value):
+        try:
+            return dt.date.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        existing_state = read_json(last_state_path)
+    except (OSError, ValueError):
+        existing_state = None
+    existing_date = _valid_date((existing_state or {}).get("date_end")) if isinstance(existing_state, dict) else None
+    bundle_date = _valid_date(state.get("date_end"))
+    if existing_date and (bundle_date is None or existing_date > bundle_date):
+        last_state_status = "kept_newer"
+    else:
+        ledger.atomic_write_text(last_state_path, pretty(state))
 
     date_end = state.get("date_end")
     log_row = {
@@ -220,6 +246,8 @@ def project_legacy(root, bundle, private_md):
                                         thesis_updates + exit_narratives))
     reports.append(_append_session_rows(os.path.join(root, "thesis_decisions.jsonl"), session_id,
                                         list(bundle.get("thesis_decisions") or [])))
+    reports.append(_append_session_rows(os.path.join(root, "revisit.jsonl"), session_id,
+                                        list(bundle.get("revisit_resolutions") or [])))
 
     rule_rows = []
     if commitment and commitment.get("rule"):
@@ -236,15 +264,33 @@ def project_legacy(root, bundle, private_md):
         })
     reports.append(_append_session_rows(os.path.join(root, "rules.jsonl"), session_id, rule_rows))
 
-    problems = []
-    for event in state.get("problem_events") or []:
-        row = dict(event)
-        row["session_id"] = session_id
-        problems.append(row)
-    reports.append(_append_session_rows(os.path.join(root, "problems.jsonl"), session_id, problems))
+    # The problem book goes through problems.append_book, not _append_session_rows:
+    # it stamps type:"event" (load_book drops untyped rows), dedupes by content so
+    # replays and overlapping sessions stay idempotent, and records the review_mark
+    # that defines the Opportunity Check period boundary (#146). A same-week mark
+    # with different opportunities fails closed (#166) after events are written —
+    # but visibly, AFTER the card and report projections land: a mark conflict is
+    # one projection failing, and it must not hold the session's card hostage.
+    problems_path = os.path.join(root, "problems.jsonl")
+    opportunities = state.get("problem_opportunities")
+    mark = ({"week": date_end, "opportunities": opportunities}
+            if date_end and opportunities is not None else None)
+    mark_conflict = None
+    try:
+        n_events, n_marks = problems.append_book(
+            problems_path, list(state.get("problem_events") or []), mark, session_id=session_id)
+        problems_report = {"path": problems_path, "appended": n_events, "marks": n_marks,
+                           "status": "projected" if (n_events or n_marks) else "no-op"}
+    except ValueError as exc:
+        mark_conflict = exc
+        problems_report = {"path": problems_path, "status": "mark_conflict", "error": str(exc)}
+    reports.append(problems_report)
     card_report = _project_card(root, bundle, private_md)
-    report = {"schema_version": 1, "session_id": session_id, "rows": reports, "card": card_report}
+    report = {"schema_version": 1, "session_id": session_id, "rows": reports, "card": card_report,
+              "last_state": last_state_status}
     ledger.atomic_write_text(os.path.join(root, "projections", session_id + ".json"), pretty(report))
+    if mark_conflict is not None:
+        raise mark_conflict
     return report
 
 

@@ -22,6 +22,15 @@ ADD_DECISIONS = {
 }
 THESIS_STATUSES = {"open", "still", "modified", "falsified", "closed"}
 SOURCE_STATES = {"captured", "confirmed", "evaluated"}
+# Inference-only accumulation vocabularies (#155/#38). These fields cannot be
+# backfilled, so a misspelled value ("FOMO", "comfirmed") would fragment the
+# store permanently — reject it at the gate instead of persisting it.
+INFERENCE_ENUMS = {
+    "emotion": {"fomo", "composed", "forced", "planned"},
+    "confidence": {"high", "medium", "low"},
+    "source_type": {"kol", "research", "self", "other"},
+    "source_confidence": {"candidate", "confirmed"},
+}
 
 
 class ThesisError(ValueError):
@@ -352,4 +361,10 @@ def validate_thesis_updates(rows, active_positions):
         for key in ("ticker", "why", "exit_trigger"):
             if not str(row.get(key) or "").strip():
                 raise ThesisError(f"thesis_updates[{index}] missing {key}")
+        for key, allowed in INFERENCE_ENUMS.items():
+            value = row.get(key)
+            if value is not None and value not in allowed:
+                raise ThesisError(
+                    f"thesis_updates[{index}] has invalid {key}: {value!r} (allowed: "
+                    + ", ".join(sorted(allowed)) + ", or null)")
     return rows or []

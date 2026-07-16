@@ -79,7 +79,7 @@ python3 engine/review.py repair-projections
 - Do not invent `thesis_id`, `event_id`, `revises`, or `decision_cursor`. The engine assigns stable identity and links each accepted event to the prior event for that cycle.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.
 - Treat confirmed evidence as "the user confirmed this was part of the decision," not as external fact verification. Do not invent `observed_at`; the engine preserves missing observation time separately from review capture time.
-- `prepare` ranks eligible motive and recent-exit questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question; `skip` is an explicit answer and must deduplicate that exit later.
+- `prepare` ranks eligible motive, recent-exit, and matured 30/60/90 checkpoint questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question. `skip` semantics differ by kind: skipping an exit-reason capture is durable (that reason is never asked again), while skipping a `due_revisit` verdict is not saved and the same checkpoint legitimately returns next review.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
 
 ## Language and sharing

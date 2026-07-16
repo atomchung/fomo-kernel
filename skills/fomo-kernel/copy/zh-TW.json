@@ -66,5 +66,11 @@
     "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
     "acct_perf_basis": "帳戶績效有部分成本或匯率近似，需保留不確定性。",
     "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
+  },
+  "due_choices": {
+    "still_valid": "還成立",
+    "modified": "部分對，要調",
+    "falsified": "看錯了",
+    "skip": "先跳過"
   }
 }

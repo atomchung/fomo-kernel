@@ -5,32 +5,95 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "session_id", "route", "language", "review_plan", "engine_state",
-    "engine_card", "answers", "narrative", "thesis_updates", "thesis_decisions",
-    "commitment", "observations"
+    "schema_version",
+    "session_id",
+    "route",
+    "language",
+    "review_plan",
+    "engine_state",
+    "engine_card",
+    "answers",
+    "narrative",
+    "thesis_updates",
+    "thesis_decisions",
+    "commitment",
+    "observations"
   ],
   "properties": {
-    "schema_version": {"const": 2},
-    "session_id": {"type": "string"},
-    "route": {"enum": ["first_review", "weekly_review", "snapshot_review", "test_drive"]},
-    "language": {"enum": ["zh-TW", "en"]},
-    "review_plan": {"$ref": "review-plan.schema.json"},
-    "engine_state": {"type": "object"},
-    "engine_card": {"type": "object"},
-    "answers": {"$ref": "answers.schema.json"},
-    "narrative": {"$ref": "narrative.schema.json"},
+    "schema_version": {
+      "const": 2
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "route": {
+      "enum": [
+        "first_review",
+        "weekly_review",
+        "snapshot_review",
+        "test_drive"
+      ]
+    },
+    "language": {
+      "enum": [
+        "zh-TW",
+        "en"
+      ]
+    },
+    "review_plan": {
+      "$ref": "review-plan.schema.json"
+    },
+    "engine_state": {
+      "type": "object"
+    },
+    "engine_card": {
+      "type": "object"
+    },
+    "answers": {
+      "$ref": "answers.schema.json"
+    },
+    "narrative": {
+      "$ref": "narrative.schema.json"
+    },
     "thesis_updates": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "schema_version": {"type": "integer"},
-          "thesis_id": {"type": "string"},
-          "event_id": {"type": "string"},
-          "revises": {"type": ["string", "null"]},
-          "cycle_id": {"type": "string"},
-          "status": {"enum": ["active", "open", "still", "modified", "falsified", "closed"]},
-          "position_status": {"enum": ["open", "closed"]}
+          "schema_version": {
+            "type": "integer"
+          },
+          "thesis_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "revises": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cycle_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "open",
+              "still",
+              "modified",
+              "falsified",
+              "closed"
+            ]
+          },
+          "position_status": {
+            "enum": [
+              "open",
+              "closed"
+            ]
+          }
         }
       }
     },
@@ -39,27 +102,78 @@
       "items": {
         "type": "object",
         "properties": {
-          "schema_version": {"type": "integer"},
-          "thesis_id": {"type": "string"},
-          "event_id": {"type": "string"},
-          "revises": {"type": ["string", "null"]},
-          "cycle_id": {"type": "string"},
-          "decision_cursor": {"type": ["string", "null"]},
-          "evidence_id": {"type": "string"},
+          "schema_version": {
+            "type": "integer"
+          },
+          "thesis_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "revises": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cycle_id": {
+            "type": "string"
+          },
+          "decision_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_id": {
+            "type": "string"
+          },
           "provenance": {
             "type": "object",
             "properties": {
-              "source": {"type": "string"},
-              "source_state": {"enum": ["captured", "confirmed", "evaluated"]},
-              "captured_at": {"type": ["string", "null"]},
-              "observed_at": {"type": ["string", "null"]}
+              "source": {
+                "type": "string"
+              },
+              "source_state": {
+                "enum": [
+                  "captured",
+                  "confirmed",
+                  "evaluated"
+                ]
+              },
+              "captured_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "observed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           },
           "evaluation": {
             "type": "object",
             "properties": {
-              "state": {"enum": ["pending", "confirmed", "weakened", "falsified", "insufficient"]},
-              "evaluated_at": {"type": ["string", "null"]}
+              "state": {
+                "enum": [
+                  "pending",
+                  "confirmed",
+                  "weakened",
+                  "falsified",
+                  "insufficient"
+                ]
+              },
+              "evaluated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         }
@@ -70,16 +184,91 @@
       "items": {
         "type": "object",
         "properties": {
-          "schema_version": {"type": "integer"},
-          "thesis_id": {"type": "string"},
-          "event_id": {"type": "string"},
-          "revises": {"type": ["string", "null"]},
-          "cycle_id": {"type": "string"},
-          "exit_kind": {"enum": ["full", "reduce"]}
+          "schema_version": {
+            "type": "integer"
+          },
+          "thesis_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "revises": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cycle_id": {
+            "type": "string"
+          },
+          "exit_kind": {
+            "enum": [
+              "full",
+              "reduce"
+            ]
+          }
         }
       }
     },
-    "commitment": {"type": ["object", "null"]},
-    "observations": {"type": "array"}
+    "commitment": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "observations": {
+      "type": "array"
+    },
+    "revisit_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "revisit_id",
+          "checkpoint",
+          "status",
+          "date",
+          "session_id"
+        ],
+        "properties": {
+          "type": {
+            "const": "resolution"
+          },
+          "revisit_id": {
+            "type": "string"
+          },
+          "checkpoint": {
+            "enum": [
+              "30",
+              "60",
+              "90"
+            ]
+          },
+          "status": {
+            "enum": [
+              "still_valid",
+              "modified",
+              "falsified"
+            ]
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false
+      }
+    }
   }
 }
