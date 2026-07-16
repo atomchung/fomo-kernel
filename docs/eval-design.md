@@ -48,6 +48,7 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Produces a schema-valid Review Plan.
 - Selects one route and a bounded flow path.
 - Emits a deduplicated required question queue, ranked by engine-owned amount or P&L impact and capped at three items; recent-exit questions deduplicate against canonical sessions, and a saved `skip` is never re-asked.
+- Re-asks a confirmed motive only when the engine-owned per-cycle decision cursor advances (another add in that same cycle); thesis identity (`thesis_id`, `event_id`, `revises`) is engine-assigned, content-addressed, and stable across update order, resume, and projection loss.
 - In persist mode, validates every normalized CSV before the first ledger write; cash-flow rows (deposits, dividends, interest, fees, reinvest notices) in the same file are counted and reported, never fatal — only future-dated rows reject the import.
 - Creates a pending session with a stable fingerprint.
 - Repeated prepare or resume does not refetch prices or re-ingest trades for the same pending review.
