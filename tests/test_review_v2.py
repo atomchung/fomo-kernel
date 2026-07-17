@@ -322,6 +322,9 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         plan = _prepare(tmp, root)
+        assert plan["state_snapshot"]["review_progress"] == {
+            "completed_reviews_before_start": 0, "returning": False,
+        }
         answers_path = pathlib.Path(tmp) / "answers.json"
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(_answers(plan), ensure_ascii=False), encoding="utf-8")
@@ -364,6 +367,25 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         assert repaired.returncode == 0 and (root / "thesis_decisions.jsonl").exists()
         assert (session_dir / "bundle.json").read_bytes() == bundle_before, \
             "repair must rebuild projections without mutating canonical bundle"
+        card, state = _artifacts(tmp)
+        pending_plans = []
+        for nonce in ("returning-review-a", "returning-review-b"):
+            returning = _run("prepare", "--root", root, "--card-json", card, "--state-json", state,
+                             "--session-nonce", nonce)
+            returning_plan = json.loads(returning.stdout)["review_plan"]
+            assert returning_plan["route"] == "weekly_review"
+            assert returning_plan["state_snapshot"]["review_progress"] == {
+                "completed_reviews_before_start": 1, "returning": True,
+            }
+            pending_plans.append(returning_plan)
+        assert pending_plans[0]["session_id"] != pending_plans[1]["session_id"]
+        for pending_plan in pending_plans:
+            opening = review_engine.card_renderer._review_opening_lines({
+                "review_plan": pending_plan,
+                "engine_state": pending_plan["engine_state"],
+            }, "zh-TW")
+            assert "開始這次復盤時，你已有 1 次完成紀錄。" in opening[0], \
+                "multiple pending plans report the same truthful prepare-time history"
 
 
 def test_public_card_never_reuses_user_authored_rule_text():
@@ -839,6 +861,86 @@ def test_reconciliation_opens_the_card_with_prior_commitment():
         "A-12: internal metric keys never appear on the card"
     assert card_renderer._reconciliation_lines({"review_plan": {}}, "en") == [], \
         "first review has no prior commitment and no reconciliation line"
+
+
+def test_review_count_unifies_canonical_and_legacy_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        sessions = root / "sessions"
+        sessions.mkdir()
+        canonical_id = "2026-07-14__canonical"
+        committed = sessions / canonical_id
+        committed.mkdir()
+        (committed / "bundle.json").write_text(json.dumps({
+            "session_id": canonical_id,
+            "route": "weekly_review",
+            "review_plan": {"persist": True},
+        }), encoding="utf-8")
+        demo = sessions / "2026-07-14__demo"
+        demo.mkdir()
+        (demo / "bundle.json").write_text(json.dumps({
+            "session_id": "2026-07-14__demo",
+            "route": "test_drive",
+            "review_plan": {"persist": False},
+        }), encoding="utf-8")
+        corrupt = sessions / "2026-07-14__corrupt"
+        corrupt.mkdir()
+        (corrupt / "bundle.json").write_text("not json", encoding="utf-8")
+        wrong_shape = sessions / "2026-07-14__wrong-shape"
+        wrong_shape.mkdir()
+        (wrong_shape / "bundle.json").write_text("[]", encoding="utf-8")
+        wrong_plan = sessions / "2026-07-14__wrong-plan"
+        wrong_plan.mkdir()
+        (wrong_plan / "bundle.json").write_text(json.dumps({
+            "session_id": "2026-07-14__wrong-plan", "review_plan": ["invalid"],
+        }), encoding="utf-8")
+        (root / "log.jsonl").write_text("\n".join([
+            json.dumps({"session_id": canonical_id}),
+            json.dumps({"session_id": "2026-07-01__legacy-with-id"}),
+            json.dumps({"date_end": "2026-06-01"}),
+            "not json",
+        ]) + "\n", encoding="utf-8")
+        assert review_engine._completed_review_count(root) == 3, \
+            "canonical/log projections dedupe by session id; old id-less rows still count"
+        assert review_engine._completed_review_count(root, exclude_session_id=canonical_id) == 2, \
+            "a committed-session retry is not counted as its own prior review"
+
+
+def test_returning_private_card_shows_completed_history_snapshot_only_locally():
+    import card_renderer
+    progress = {"completed_reviews_before_start": 3, "returning": True}
+    bundle = {
+        "review_plan": {"state_snapshot": {
+            "prior_commitment": {"rule": "Keep the position bounded",
+                                 "metric_key": "max_pos_pct", "metric_value": 0.51},
+            "review_progress": progress,
+        }},
+        "engine_state": {"metrics": {"max_pos_pct": 0.48}},
+    }
+    opening = card_renderer._review_opening_lines(bundle, "en")
+    assert len(opening) == 1 and "Last time you committed" in opening[0]
+    assert "already had 3 completed reviews" in opening[0]
+    public = card_renderer.render_public({**bundle, "language": "en", "engine_card": {}})
+    assert "completed reviews" not in public.lower(), "review progress remains local/private"
+    without_rule = {"review_plan": {"state_snapshot": {"review_progress": progress}}}
+    assert card_renderer._review_opening_lines(without_rule, "zh-TW") == [
+        "開始這次復盤時，你已有 3 次完成紀錄。"
+    ], \
+        "a returning user still sees progress after previously skipping a commitment"
+    first = {"review_plan": {"state_snapshot": {"review_progress": {
+        "completed_reviews_before_start": 0, "returning": False,
+    }}}}
+    assert card_renderer._review_opening_lines(first, "en") == [], \
+        "first reviews must not get a returner milestone"
+
+
+def test_feedback_form_collects_review_stage_without_trade_details():
+    text = (ROOT / ".github" / "ISSUE_TEMPLATE" / "card-feedback.yml").read_text(encoding="utf-8")
+    block = text.split("    id: review_count", 1)[1].split("  - type: textarea", 1)[0]
+    assert "label: 這是你第幾次復盤?" in block
+    assert all(option in block for option in ("第 1 次", "第 2–3 次", "第 4 次以上"))
+    assert "required: true" in block and "交易內容" in block, \
+        "retention signal stays coarse, required within voluntary feedback, and privacy-safe"
 
 
 def test_account_performance_pillar_gate_and_full_render():

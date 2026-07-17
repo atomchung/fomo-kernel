@@ -479,6 +479,31 @@ def _reconciliation_lines(bundle, language):
     return [line + "。"]
 
 
+def _review_opening_lines(bundle, language):
+    """Show the history frozen at prepare time, never a racy global ordinal."""
+    reconciliation = _reconciliation_lines(bundle, language)
+    progress = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                .get("review_progress") or {})
+    if not isinstance(progress, dict):
+        progress = {}
+    try:
+        completed = int(progress.get("completed_reviews_before_start"))
+    except (TypeError, ValueError):
+        completed = 0
+    milestone = None
+    if progress.get("returning") is True and completed > 0:
+        if language == "en":
+            noun = "review" if completed == 1 else "reviews"
+            milestone = f"When this review started, you already had {completed} completed {noun}."
+        else:
+            milestone = f"開始這次復盤時，你已有 {completed} 次完成紀錄。"
+    if milestone and reconciliation:
+        reconciliation[0] = f"{reconciliation[0]} {milestone}"
+    elif milestone:
+        reconciliation = [milestone]
+    return reconciliation
+
+
 def _trade_lines(card, language):
     best, worst = card.get("best_trade"), card.get("worst_trade")
     if not best or not worst:
@@ -751,9 +776,9 @@ def render_private(bundle):
     ]
     if bundle.get("route") == "test_drive":
         lines.extend([f"> {copy['demo_badge']}", ""])
-    reconciliation = _reconciliation_lines(bundle, copy["language"])
-    if reconciliation:
-        lines.extend(reconciliation + [""])
+    opening = _review_opening_lines(bundle, copy["language"])
+    if opening:
+        lines.extend(opening + [""])
     lines.extend([narrative["mirror"], ""])
     context_lines = _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy)
     if context_lines:

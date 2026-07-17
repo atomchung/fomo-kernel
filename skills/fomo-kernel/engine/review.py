@@ -115,6 +115,50 @@ def _has_history(root):
     return bool(_jsonl(os.path.join(root, "log.jsonl")))
 
 
+def _completed_review_count(root, exclude_session_id=None):
+    """Count completed local reviews without double-counting projections.
+
+    Canonical persistent bundles are authoritative in v2, including when their
+    legacy ``log.jsonl`` projection needs repair. Valid legacy log rows still
+    count so pre-v2 history remains visible. Session ids deduplicate the same
+    review across both stores; older rows without an id each represent one
+    completed review. A matching current session id is excluded so an
+    idempotent retry cannot present itself as a new return visit.
+    """
+    session_ids = set()
+    sessions = os.path.join(root, "sessions")
+    if os.path.isdir(sessions):
+        for name in sorted(os.listdir(sessions)):
+            bundle_path = os.path.join(sessions, name, "bundle.json")
+            if name.startswith(".") or not os.path.isfile(bundle_path):
+                continue
+            try:
+                bundle = session.read_json(bundle_path)
+            except (OSError, ValueError):
+                continue
+            if not isinstance(bundle, dict):
+                continue
+            plan = bundle.get("review_plan") or {}
+            if not isinstance(plan, dict):
+                continue
+            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                continue
+            session_id = bundle.get("session_id")
+            if session_id:
+                session_ids.add(str(session_id))
+
+    legacy_without_id = 0
+    for row in _jsonl(os.path.join(root, "log.jsonl")):
+        session_id = row.get("session_id")
+        if session_id:
+            session_ids.add(str(session_id))
+        else:
+            legacy_without_id += 1
+    if exclude_session_id:
+        session_ids.discard(str(exclude_session_id))
+    return len(session_ids) + legacy_without_id
+
+
 def _previous_state(root):
     path = os.path.join(root, "last_state.json")
     if not os.path.exists(path):
@@ -827,6 +871,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
     session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
+    completed_reviews = _completed_review_count(root, exclude_session_id=session_id)
     plan = {
         "schema_version": 2,
         "session_id": session_id,
@@ -841,6 +886,10 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
                   "ledger_ingest": ledger_ingest},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
+                           "review_progress": {
+                               "completed_reviews_before_start": completed_reviews,
+                               "returning": completed_reviews > 0,
+                           },
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single
