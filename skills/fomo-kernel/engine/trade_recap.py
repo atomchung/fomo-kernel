@@ -1996,6 +1996,49 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
+def _attribution_gaps(ab):
+    """Return every market whose allocation/selection split is incomplete.
+
+    Mixed-market compatibility fields mirror only ``scope``. Honesty checks
+    must inspect ``by_market`` instead, otherwise a complete scope market can
+    hide an incomplete split that the renderer shows for another market.
+    """
+    if not isinstance(ab, dict):
+        return {}
+    by_market = ab.get("by_market")
+    if isinstance(by_market, dict) and by_market:
+        rows = [(str(market), row) for market, row in sorted(by_market.items())]
+    else:
+        rows = [(str(ab.get("scope") or "portfolio"), ab)]
+    gaps = {}
+    for market, row in rows:
+        if not isinstance(row, dict) or row.get("note"):
+            continue
+        split = row.get("excess_split")
+        if not isinstance(split, dict):
+            continue
+        unproxied = sorted({str(ticker) for ticker in (split.get("unproxied") or []) if ticker})
+        coverage = split.get("coverage")
+        try:
+            partial_coverage = coverage is not None and float(coverage) < 0.995
+        except (TypeError, ValueError):
+            partial_coverage = False
+        if unproxied or partial_coverage:
+            gaps[market] = {"coverage": coverage, "unproxied": unproxied}
+    return gaps
+
+
+def _merge_attribution_integrity(data_integrity, ab):
+    """Merge per-market unproxied tickers into the existing integrity field."""
+    gaps = _attribution_gaps(ab)
+    unproxied = {str(ticker) for ticker in (data_integrity.get("unproxied_sectors") or []) if ticker}
+    for gap in gaps.values():
+        unproxied.update(gap["unproxied"])
+    if unproxied:
+        data_integrity["unproxied_sectors"] = sorted(unproxied)
+    return gaps
+
+
 def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None, acct_perf=None,
                          portfolio_structure=None):
     """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
@@ -2020,11 +2063,20 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                 if stat.get(k) is not None:
                     data[k] = stat[k]
             L.append({"key": "alpha_credibility", "status": gate.get("reason"), "data": data})
-    # 板塊歸因不全:有 driver 但查無板塊 ETF → 超額被全歸選股、押賽道功勞漏記(#92)
-    if di.get("unproxied_sectors"):
-        sp = (ab.get("excess_split") if isinstance(ab, dict) else None) or {}
+    # 板塊歸因不全:逐市場檢查,避免頂層 scope 的完整 coverage 遮掉另一市場的缺口。
+    attribution_gaps = _attribution_gaps(ab)
+    unproxied = {str(ticker) for ticker in (di.get("unproxied_sectors") or []) if ticker}
+    for gap in attribution_gaps.values():
+        unproxied.update(gap["unproxied"])
+    if attribution_gaps or unproxied:
+        coverages = [gap.get("coverage") for gap in attribution_gaps.values()
+                     if gap.get("coverage") is not None]
+        data = {"coverage": min(coverages) if coverages else None,
+                "unproxied": sorted(unproxied)}
+        if isinstance(ab, dict) and isinstance(ab.get("by_market"), dict):
+            data["by_market"] = attribution_gaps
         L.append({"key": "sector_attribution", "status": "partial",
-                  "data": {"coverage": sp.get("coverage"), "unproxied": list(di["unproxied_sectors"])}})
+                  "data": data})
     # 未分類 driver:分散維可能偏樂觀(假分散抓不準)
     if di.get("unclassified_drivers"):
         L.append({"key": "unclassified_drivers", "status": "present",
@@ -2263,10 +2315,7 @@ def main():
     # #92:有 driver 標籤但 SECTOR_BENCH 查無板塊 ETF 對照 → 該檔超額被全歸「選股」、賽道效應漏記。
     # 原本只在 α 面板(需 SPY + ≥60 交易日對齊 + coverage<0.995 那行 if)才揭露 → 併入永遠顯示的
     # data_integrity,與「未分類 driver」同語意(板塊歸因不可靠)的第二個揭露缺口,不再只靠自律。
-    _sp = ab.get("excess_split") if isinstance(ab, dict) else None
-    _unproxied = (_sp or {}).get("unproxied") or []
-    if _unproxied:
-        data_integrity["unproxied_sectors"] = list(_unproxied)
+    _merge_attribution_integrity(data_integrity, ab)
     currency_meta = {
         "currencies": currencies,
         "mixed": mixed_ccy,

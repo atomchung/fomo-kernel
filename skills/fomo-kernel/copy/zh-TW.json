@@ -8,6 +8,7 @@
   "sections": {
     "context": "市場與時間軸鏡子",
     "numbers": "這期的帳",
+    "performance": "相對績效",
     "trades": "最賺與最虧的已實現交易",
     "strength": "你做對的一件事",
     "hole": "最大的行為漏洞",
@@ -26,6 +27,15 @@
     "averaging_down": "加碼攤平",
     "alpha_beta": "大盤與選股歸因",
     "entry_style": "進場風格"
+  },
+  "public_patterns": {
+    "exit_discipline": "這次浮現的模式，關乎出場決策如何被安排與檢驗。",
+    "position_sizing": "這次浮現的模式，關乎風險如何分配到不同部位。",
+    "diversification": "這次浮現的模式，關乎組合是否代表彼此不同的底層風險。",
+    "holding_period": "這次浮現的模式，關乎持有時間是否對齊一致的決策時間軸。",
+    "averaging_down": "這次浮現的模式，關乎虧損部位的加碼如何受到界線約束。",
+    "alpha_beta": "這次浮現的模式，關乎相對大盤結果如何拆分為市場暴險與選擇。",
+    "entry_style": "這次浮現的模式，關乎進場時點與近期價格移動的關係。"
   },
   "rules": {
     "exit_discipline": "出場前先寫下 thesis 已完成或失效的事實；只因害怕回吐，不賣。",

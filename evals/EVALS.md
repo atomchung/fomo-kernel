@@ -34,14 +34,14 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - No internal field names or author notes.
 - No buy/sell recommendation and no personality judgment.
 - Every triggered honesty-ledger key appears in plain, narrow language.
-- Public card is independently rendered and contains no amounts, dates, tickers, exact weights, session IDs, evidence text, or agent-authored prose.
+- Public card is independently rendered, retains only fixed behavior-pattern copy plus engine-owned beta and benchmark-excess percentage points, and contains no amounts, dates, tickers, exact weights, session IDs, evidence text, or agent-authored prose. Mixed-market public lines use market labels without benchmark symbols and never reuse the top-level compatibility row as a synthetic total.
 - Test-drive cards and conversations are visibly labeled as demo data and do not touch production state.
 
 ## Important scenario checks
 
 - A vague "buying the dip" answer does not satisfy the `new_evidence` gate.
 - Broad-market, regional, bond, and commodity ETFs may receive the explicit allocation exemption; thematic, sector, leveraged, and unknown instruments do not.
-- A multi-market portfolio compares each market with its own benchmark and never synthesizes a total alpha. (Renderer support for per-market lines is deferred to #193; until it ships, the card must not fabricate them.)
+- A multi-market portfolio compares each market with its own benchmark and never synthesizes a total alpha; the renderer consumes only the supported per-market rows.
 - Account-level performance appears only when cash and price foundations satisfy engine gates.
 - Cash residual wording remains neutral and does not invent a missing deposit or withdrawal.
 - The next weekly review reconciles the prior commitment before introducing a new leak.

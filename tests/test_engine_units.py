@@ -922,6 +922,30 @@ def test_honesty_ledger_cash_reliability_trigger():
     assert not fired(None), "無 cash 欄(None)不觸發"
 
 
+def test_honesty_ledger_aggregates_non_scope_market_attribution_gap():
+    """Mixed-market honesty cannot inspect only the top-level scope compatibility row."""
+    complete = {"coverage": 1.0, "unproxied": [], "allocation": 0.02, "selection": 0.03}
+    partial = {"coverage": 0.0, "unproxied": ["2330.TW"],
+               "allocation": 0.0, "selection": 0.10}
+    ab = {
+        "scope": "US", "excess_split": complete,
+        "by_market": {
+            "US": {"excess_vs_spy": 0.05, "excess_split": complete},
+            "TW": {"excess_vs_spy": 0.10, "excess_split": partial},
+        },
+    }
+    integrity = {}
+    gaps = tr._merge_attribution_integrity(integrity, ab)
+    assert set(gaps) == {"TW"} and integrity["unproxied_sectors"] == ["2330.TW"]
+    ledger = tr.build_honesty_ledger(
+        overview={}, ab=ab, data_integrity=integrity, currency_meta={})
+    hits = [entry for entry in ledger if entry["key"] == "sector_attribution"]
+    assert len(hits) == 1, hits
+    assert hits[0]["data"]["coverage"] == 0.0
+    assert hits[0]["data"]["by_market"] == {
+        "TW": {"coverage": 0.0, "unproxied": ["2330.TW"]}}
+
+
 def test_meaningful_tickers_mv_basis():
     """殘倉過濾(#172):市值佔全持倉 <0.1% 的部位不進診斷集合;市值優先、缺價用成本近似。"""
     held = {"NVDA": (100.0, 50000.0),      # 99% → 保留
