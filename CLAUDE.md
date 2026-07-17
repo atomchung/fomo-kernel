@@ -31,7 +31,7 @@ python3 tests/run_all.py
 TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional beta-direction and market-context network smoke
 ```
 
-The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, and documentation language boundaries.
+The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, documentation language, and agent workflow boundaries.
 
 Do not commit after changing engine output, price handling, sorting, or orchestration unless the complete offline suite passes.
 

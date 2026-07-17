@@ -29,7 +29,7 @@ SUITES = [
     ("Local data-control CLI", "tests/test_coach_data_cli.py"),
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
     ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
-    ("Documentation language boundary", "tests/test_doc_language.py"),
+    ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
 ]
 
 

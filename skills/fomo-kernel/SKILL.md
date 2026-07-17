@@ -15,6 +15,7 @@ Turn trading data into one focused review card: the largest behavioral leak, the
 4. A card has exactly one final commitment at most. The user may choose a candidate, provide a custom rule, or skip.
 5. Keep trade data and derived state local. Show the review card (`card-private.*`) by default; use only `card-public.md` as a share-safe artifact. The product does not publish or upload it.
 6. Treat `sessions/<session_id>/bundle.json` as the canonical completed result. Never hand-edit projections as if they were authoritative.
+7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 
 ## Canonical entry point
 
