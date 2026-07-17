@@ -119,7 +119,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # 真的全
 
 ## 安裝
 
-**前置：**Python 3.11+。Claude Code 使用者可安裝下面的 slash-command skill；Codex、Cursor 等 agent 可直接依 `AGENTS.md` 與 `engine/review.py` 使用 repo，不需要 Claude 訂閱。
+**前置：**Python 3.11+。耐久化 session finalize 目前需要 POSIX `flock` 與目錄 `fsync`（macOS/Linux）；Windows 會在 canonical session storage 寫入前以受控 CLI 錯誤 fail closed。Claude Code 使用者可安裝下面的 slash-command skill；Codex、Cursor 等 agent 可直接依 `AGENTS.md` 與 `engine/review.py` 使用 repo，不需要 Claude 訂閱。
 
 需要 Python 3.11+。**新 macOS(Homebrew / 系統 Python)直接 `pip install` 會被 PEP 668 擋下**(`externally-managed-environment`),用 venv 三行裝:
 ```bash
