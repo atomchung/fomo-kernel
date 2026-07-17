@@ -121,7 +121,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually 
 
 ## Install
 
-**Prerequisite:** Python 3.11+. Claude Code users can install the slash-command skill below; Codex, Cursor, and other agents can use the repo directly through `AGENTS.md` and `engine/review.py` without a Claude subscription.
+**Prerequisite:** Python 3.11+. Durable session finalization currently requires POSIX `flock` and directory `fsync` (macOS/Linux); Windows fails closed with a controlled CLI error before canonical session storage is mutated. Claude Code users can install the slash-command skill below; Codex, Cursor, and other agents can use the repo directly through `AGENTS.md` and `engine/review.py` without a Claude subscription.
 
 Needs Python 3.11+. **On recent macOS (Homebrew / system Python) a bare `pip install` is blocked by PEP 668** (`externally-managed-environment`); use a venv:
 ```bash

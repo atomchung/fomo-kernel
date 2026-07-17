@@ -1355,27 +1355,24 @@ def cmd_preview(args):
 
 def cmd_finalize(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
-    committed_path = session.session_dir(root, args.session_id)
-    if os.path.isdir(committed_path):
-        existing = session.load_committed(root, args.session_id)
-        plan = existing.get("review_plan")
-        pending = {"answers": existing.get("answers"), "narrative": existing.get("narrative")}
-    else:
-        pending = session.load_pending(root, args.session_id)
-        plan = pending.get("plan")
-    answers, narrative = _load_interaction(args, pending)
-    bundle = _draft_bundle(plan, answers, narrative, require_commitment=True)
-    private_md = card_renderer.render_private(bundle)
-    public_md = card_renderer.render_public(bundle)
-    private_html = card_renderer.render_html(private_md, card_renderer.load_copy(plan["language"])["title"])
-    result = session.commit_bundle(root, bundle, private_md, public_md, private_html)
-    projection = None
-    projection_error = None
-    if plan.get("persist"):
-        try:
-            projection = session.project_legacy(root, bundle, private_md)
-        except Exception as exc:  # canonical bundle is already safe; repair-projections can retry
-            projection_error = str(exc)
+    with session.finalize_transaction(root, args.session_id) as transaction:
+        committed_path = session.session_dir(root, args.session_id)
+        if os.path.isdir(committed_path):
+            existing = session.load_committed(root, args.session_id)
+            plan = existing.get("review_plan")
+            pending = {"answers": existing.get("answers"), "narrative": existing.get("narrative")}
+        else:
+            pending = session.load_pending(root, args.session_id)
+            plan = pending.get("plan")
+        answers, narrative = _load_interaction(args, pending)
+        bundle = _draft_bundle(plan, answers, narrative, require_commitment=True)
+        private_md = card_renderer.render_private(bundle)
+        public_md = card_renderer.render_public(bundle)
+        private_html = card_renderer.render_html(
+            private_md, card_renderer.load_copy(plan["language"])["title"])
+        result, projection, projection_error = transaction.commit_bundle(
+            bundle, private_md, public_md, private_html, persist=bool(plan.get("persist"))
+        )
     _emit({"status": result["status"], "session_id": args.session_id, "path": result["path"],
            "private_card": os.path.join(result["path"], "card-private.md"),
            "public_card": os.path.join(result["path"], "card-public.md"),

@@ -9,12 +9,20 @@ projection failure never corrupts or invalidates the committed session.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
 import shutil
+import stat
 import tempfile
+
+try:  # Windows has no fcntl; fail at the durable-finalize boundary, not import.
+    import fcntl
+except ImportError:
+    fcntl = None
 
 import ledger
 import problems
@@ -33,6 +41,12 @@ PKEY = {
     "exit_severity": "sell_winner_early",
     "hold_severity": "hold_inconsistency",
 }
+
+_REQUIRED_CANONICAL_ARTIFACTS = frozenset({
+    "bundle.json", "state.json", "plan.json", "answers.json", "narrative.json",
+    "card-private.md", "card-public.md",
+})
+_LEGACY_CANONICAL_ARTIFACTS = _REQUIRED_CANONICAL_ARTIFACTS | {"card-private.html"}
 
 
 def default_root():
@@ -105,20 +119,289 @@ def _artifact_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def commit_bundle(root, bundle, private_md, public_md, private_html=None):
-    """Commit an immutable canonical bundle via staging-directory rename."""
-    session_id = _safe_id(bundle.get("session_id"))
-    sessions = os.path.join(root, "sessions")
-    os.makedirs(sessions, exist_ok=True)
-    final = session_dir(root, session_id)
-    if os.path.isdir(final):
-        existing = read_json(os.path.join(final, "bundle.json"))
-        if canonical(existing) != canonical(bundle):
-            raise SessionError(f"session {session_id} already committed with different content")
-        return {"status": "no-op", "path": final, "session_id": session_id}
+def _require_durable_platform():
+    """Fail at a controlled boundary when POSIX durability is unavailable."""
+    if fcntl is None or os.name == "nt":
+        raise SessionError(
+            "durable session finalization is unsupported on this platform "
+            "(requires POSIX flock and directory fsync)"
+        )
 
-    staging = tempfile.mkdtemp(prefix=f".{session_id}.staging-", dir=sessions)
+
+def _fsync_file(path):
+    """Flush one staged canonical artifact before its directory is published."""
+    fd = os.open(path, os.O_RDONLY)
     try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(path):
+    """Flush directory entries needed by the canonical directory rename."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _prepare_session_storage(root, session_id):
+    """Create the canonical parent and persist every newly relied-on entry."""
+    _require_durable_platform()
+    root = os.path.abspath(os.fspath(root))
+    sessions = os.path.join(root, "sessions")
+    try:
+        os.makedirs(sessions, exist_ok=True)
+        # prepare/save_pending may have created root before finalize.  Persist
+        # its name unconditionally; existence alone does not prove durability.
+        _fsync_dir(os.path.dirname(root) or os.curdir)
+        # Persist creation of sessions/ itself before relying on it as the
+        # parent of the canonical staging->final rename.
+        _fsync_dir(root)
+    except OSError as exc:
+        raise SessionError(f"cannot prepare session storage for {session_id}: {exc}") from exc
+    return root, sessions
+
+
+@contextlib.contextmanager
+def _file_lock(path, label, busy_message=None):
+    """Hold a persistent flock; ``busy_message`` selects nonblocking mode."""
+    _require_durable_platform()
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as exc:
+        raise SessionError(f"cannot open lock for {label}: {exc}") from exc
+    try:
+        operation = fcntl.LOCK_EX | (fcntl.LOCK_NB if busy_message else 0)
+        fcntl.flock(fd, operation)
+    except OSError as exc:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        if busy_message and exc.errno in {errno.EACCES, errno.EAGAIN}:
+            raise SessionError(busy_message) from exc
+        raise SessionError(f"cannot lock {label}: {exc}") from exc
+    try:
+        yield
+    finally:
+        os.close(fd)  # closing releases flock even when bundle assembly fails
+
+
+@contextlib.contextmanager
+def _session_lock(sessions, session_id, fail_if_busy=False):
+    """Serialize one session's canonical commit and projection.
+
+    The lock file intentionally stays in ``sessions/``.  Unlinking a lock file
+    while another process is waiting on its inode can create two independent
+    locks for the same session.  Hidden entries are ignored by discovery and
+    projection repair.
+    """
+    busy = f"finalize already in progress for session {session_id}" if fail_if_busy else None
+    path = os.path.join(sessions, f".{session_id}.finalize.lock")
+    with _file_lock(path, f"session {session_id}", busy_message=busy):
+        yield
+
+
+@contextlib.contextmanager
+def _projection_lock(sessions):
+    """Serialize shared legacy books across all session IDs in one root."""
+    path = os.path.join(sessions, ".projections.lock")
+    with _file_lock(path, "legacy projections"):
+        yield
+
+
+def _existing_commit(final, bundle, session_id):
+    """Return the identical existing commit, or fail closed on a conflict."""
+    if not os.path.isdir(final):
+        return None
+    try:
+        existing = read_json(os.path.join(final, "bundle.json"))
+    except (OSError, ValueError) as exc:
+        raise SessionError(f"session {session_id} has an unreadable canonical bundle: {exc}") from exc
+    if canonical(existing) != canonical(bundle):
+        raise SessionError(f"session {session_id} already committed with different content")
+    return {"status": "no-op", "path": final, "session_id": session_id}
+
+
+def _cleanup_committed_staging(sessions, final, session_id):
+    """Remove same-session staging only after an immutable final exists.
+
+    There is deliberately no age/TTL guess.  The caller holds the per-session
+    session lock, so current writers cannot be inside assembly, and a canonical
+    final proves that every older same-session staging directory has lost the
+    only rename destination it could validly claim.
+    """
+    if not os.path.isdir(final):
+        return 0
+    prefix = f".{session_id}.staging-"
+    removed = 0
+    for entry in os.scandir(sessions):
+        if not entry.name.startswith(prefix) or not entry.is_dir(follow_symlinks=False):
+            continue
+        shutil.rmtree(entry.path)
+        removed += 1
+    return removed
+
+
+def _cleanup_committed_staging_best_effort(sessions, final, session_id):
+    """Collect provably orphaned staging without changing commit success."""
+    try:
+        removed = _cleanup_committed_staging(sessions, final, session_id)
+        if removed:
+            # Cleanup durability is useful but not authoritative.  Once the
+            # canonical rename's parent sync succeeded, a GC failure must not
+            # turn a committed bundle into a false failure or block its retry.
+            _fsync_dir(sessions)
+    except (OSError, SessionError):
+        pass
+
+
+def _existing_canonical_artifacts(final, session_id):
+    """Return safe direct-child artifacts, with manifest kept last."""
+    manifest_path = os.path.join(final, "manifest.json")
+    manifest_present = os.path.lexists(manifest_path)
+    if manifest_present:
+        try:
+            mode = os.stat(manifest_path, follow_symlinks=False).st_mode
+        except OSError as exc:
+            raise SessionError(
+                f"session {session_id} canonical manifest is unreadable: {exc}"
+            ) from exc
+        if not stat.S_ISREG(mode):
+            raise SessionError(f"session {session_id} canonical manifest is not a regular file")
+        try:
+            manifest = read_json(manifest_path)
+        except (OSError, ValueError) as exc:
+            raise SessionError(
+                f"session {session_id} has an unreadable canonical manifest: {exc}"
+            ) from exc
+        if not isinstance(manifest, dict):
+            raise SessionError(f"session {session_id} has an invalid canonical manifest")
+        if manifest.get("schema_version") != 1:
+            raise SessionError(
+                f"session {session_id} has an unsupported canonical manifest schema"
+            )
+        expected_hashes = manifest.get("sha256")
+        if not isinstance(expected_hashes, dict):
+            raise SessionError(f"session {session_id} has an invalid canonical manifest")
+        names = set()
+        for name, expected in expected_hashes.items():
+            if (not isinstance(name, str) or not name or name != os.path.basename(name)
+                    or name in {".", ".."}):
+                raise SessionError(
+                    f"session {session_id} manifest contains an unsafe artifact name: {name!r}"
+                )
+            if name == "manifest.json":
+                raise SessionError(f"session {session_id} manifest cannot include itself")
+            if not isinstance(expected, str):
+                raise SessionError(
+                    f"session {session_id} manifest has an invalid hash for {name}"
+                )
+            names.add(name)
+    else:
+        # Compatibility for bundles predating manifest support.  Their content
+        # is unverifiable legacy state, so only the fixed canonical regular-file
+        # set is eligible for durability adoption.
+        expected_hashes = None
+        names = set()
+        try:
+            for entry in os.scandir(final):
+                if entry.name not in _LEGACY_CANONICAL_ARTIFACTS:
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    raise SessionError(
+                        f"session {session_id} canonical artifact is not a regular file: {entry.name}"
+                    )
+                names.add(entry.name)
+        except OSError as exc:
+            raise SessionError(
+                f"cannot inspect existing session {session_id}: {exc}"
+            ) from exc
+
+    missing = _REQUIRED_CANONICAL_ARTIFACTS - names
+    if missing:
+        raise SessionError(
+            f"session {session_id} canonical artifacts are incomplete: {', '.join(sorted(missing))}"
+        )
+
+    paths = []
+    for name in sorted(names):
+        path = os.path.join(final, name)
+        try:
+            mode = os.stat(path, follow_symlinks=False).st_mode
+        except OSError as exc:
+            raise SessionError(
+                f"session {session_id} canonical artifact is unreadable: {name}: {exc}"
+            ) from exc
+        if not stat.S_ISREG(mode):
+            raise SessionError(
+                f"session {session_id} canonical artifact is not a regular file: {name}"
+            )
+        if expected_hashes is not None:
+            expected = expected_hashes.get(name)
+            digest = hashlib.sha256()
+            try:
+                with open(path, "rb") as artifact:
+                    for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as exc:
+                raise SessionError(
+                    f"session {session_id} canonical artifact is unreadable: {name}: {exc}"
+                ) from exc
+            if digest.hexdigest() != expected:
+                raise SessionError(
+                    f"session {session_id} canonical artifact hash mismatch: {name}"
+                )
+        paths.append(path)
+
+    return paths, manifest_path if manifest_present else None
+
+
+def _sync_existing_canonical(final, sessions, session_id):
+    """Adopt a visible old-writer commit only after making all levels durable."""
+    artifact_paths, manifest_path = _existing_canonical_artifacts(final, session_id)
+    try:
+        for path in artifact_paths:
+            _fsync_file(path)
+        if manifest_path is not None:
+            _fsync_file(manifest_path)
+        _fsync_dir(final)
+        _fsync_dir(sessions)
+    except OSError as exc:
+        raise SessionError(
+            f"cannot make existing session {session_id} durable: {exc}"
+        ) from exc
+
+
+def _sync_new_canonical_parent(sessions, session_id):
+    """Persist a rename whose staged files and directory were already synced."""
+    try:
+        _fsync_dir(sessions)
+    except OSError as exc:
+        raise SessionError(
+            f"session {session_id} committed but directory sync failed: {exc}"
+        ) from exc
+
+
+def _commit_bundle_locked(root, sessions, bundle, private_md, public_md, private_html=None):
+    """Commit while the caller holds this session's finalize lock."""
+    session_id = _safe_id(bundle.get("session_id"))
+    final = os.path.join(sessions, session_id)
+    existing = _existing_commit(final, bundle, session_id)
+    if existing is not None:
+        # Existing directories may come from the pre-durability writer.  Sync
+        # artifacts -> final dir -> parent before accepting an identical no-op.
+        _sync_existing_canonical(final, sessions, session_id)
+        _cleanup_committed_staging_best_effort(sessions, final, session_id)
+        return existing
+
+    staging = None
+    race_existing = None
+    try:
+        staging = tempfile.mkdtemp(prefix=f".{session_id}.staging-", dir=sessions)
         artifacts = {
             "bundle.json": pretty(bundle),
             "state.json": pretty(bundle.get("engine_state") or {}),
@@ -133,13 +416,45 @@ def commit_bundle(root, bundle, private_md, public_md, private_html=None):
         manifest = {name: _artifact_hash(text) for name, text in artifacts.items()}
         artifacts["manifest.json"] = pretty({"schema_version": 1, "sha256": manifest})
         for name, text in artifacts.items():
-            ledger.atomic_write_text(os.path.join(staging, name), text)
+            path = os.path.join(staging, name)
+            ledger.atomic_write_text(path, text)
+            _fsync_file(path)
+        # Persist every artifact name inside the directory before exposing
+        # that directory at its canonical final path.
+        _fsync_dir(staging)
         os.replace(staging, final)
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+        staging = None
+    except OSError as exc:
+        # A writer from an older process may not honor the new lock.  If it won
+        # the rename race, collapse the loser to the same stable contract.
+        race_existing = _existing_commit(final, bundle, session_id)
+        if race_existing is None:
+            raise SessionError(f"cannot commit session {session_id}: {exc}") from exc
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    if race_existing is not None:
+        _sync_existing_canonical(final, sessions, session_id)
+        _cleanup_committed_staging_best_effort(sessions, final, session_id)
+        return race_existing
+
+    # This sync, and only this sync, decides whether the canonical rename is
+    # reported as durable.  Staging GC below is deliberately best effort.
+    _sync_new_canonical_parent(sessions, session_id)
+    _cleanup_committed_staging_best_effort(sessions, final, session_id)
     shutil.rmtree(pending_dir(root, session_id), ignore_errors=True)
     return {"status": "committed", "path": final, "session_id": session_id}
+
+
+def commit_bundle(root, bundle, private_md, public_md, private_html=None):
+    """Durably commit an immutable canonical bundle via directory rename."""
+    session_id = _safe_id(bundle.get("session_id"))
+    root, sessions = _prepare_session_storage(root, session_id)
+    with _session_lock(sessions, session_id):
+        return _commit_bundle_locked(
+            root, sessions, bundle, private_md, public_md, private_html
+        )
 
 
 def _read_jsonl(path):
@@ -199,8 +514,8 @@ def _project_card(root, bundle, private_md):
     return {"path": path, "status": "projected"}
 
 
-def project_legacy(root, bundle, private_md):
-    """Project a committed bundle into v1 files. Safe to rerun after interruption."""
+def _project_legacy_locked(root, bundle, private_md):
+    """Project while the caller holds this session's finalize lock."""
     session_id = bundle["session_id"]
     state = dict(bundle.get("engine_state") or {})
     commitment = bundle.get("commitment")
@@ -299,6 +614,56 @@ def project_legacy(root, bundle, private_md):
     return report
 
 
+def project_legacy(root, bundle, private_md):
+    """Project a committed bundle into v1 files. Safe to rerun after interruption."""
+    session_id = _safe_id(bundle.get("session_id"))
+    root, sessions = _prepare_session_storage(root, session_id)
+    with _session_lock(sessions, session_id):
+        with _projection_lock(sessions):
+            return _project_legacy_locked(root, bundle, private_md)
+
+
+class FinalizeTransaction:
+    """Operations available only while one session's finalize lock is held."""
+
+    def __init__(self, root, sessions, session_id):
+        self.root = root
+        self.sessions = sessions
+        self.session_id = session_id
+        self._active = True
+
+    def commit_bundle(self, bundle, private_md, public_md, private_html=None, persist=True):
+        if not self._active:
+            raise SessionError("finalize transaction is no longer active")
+        if _safe_id(bundle.get("session_id")) != self.session_id:
+            raise SessionError("finalize transaction session_id mismatch")
+        result = _commit_bundle_locked(
+            self.root, self.sessions, bundle, private_md, public_md, private_html
+        )
+        projection = None
+        projection_error = None
+        if persist:
+            try:
+                with _projection_lock(self.sessions):
+                    projection = _project_legacy_locked(self.root, bundle, private_md)
+            except Exception as exc:  # canonical bundle is safe; repair can retry
+                projection_error = str(exc)
+        return result, projection, projection_error
+
+
+@contextlib.contextmanager
+def finalize_transaction(root, session_id):
+    """Lock before any pending/canonical read and hold through projection."""
+    session_id = _safe_id(session_id)
+    root, sessions = _prepare_session_storage(root, session_id)
+    with _session_lock(sessions, session_id, fail_if_busy=True):
+        transaction = FinalizeTransaction(root, sessions, session_id)
+        try:
+            yield transaction
+        finally:
+            transaction._active = False
+
+
 def load_committed(root, session_id):
     path = session_dir(root, session_id)
     if not os.path.isdir(path):
@@ -321,13 +686,16 @@ def repair_projections(root):
         if not os.path.isdir(path) or session_id.startswith("."):
             continue
         try:
-            bundle = read_json(os.path.join(path, "bundle.json"))
-            plan = bundle.get("review_plan") or {}
-            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-                skipped.append({"session_id": session_id, "reason": "test_drive or persist:false"})
-                continue
-            with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
-                reports.append(project_legacy(root, bundle, f.read()))
+            with _session_lock(base, session_id):
+                bundle = read_json(os.path.join(path, "bundle.json"))
+                plan = bundle.get("review_plan") or {}
+                if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                    skipped.append({"session_id": session_id, "reason": "test_drive or persist:false"})
+                    continue
+                with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
+                    private_md = f.read()
+                with _projection_lock(base):
+                    reports.append(_project_legacy_locked(root, bundle, private_md))
         except (OSError, ValueError) as exc:
             errors.append({"session_id": session_id, "error": str(exc)})
     return {"reports": reports, "skipped": skipped, "errors": errors}

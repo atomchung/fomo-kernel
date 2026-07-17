@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Skill v2 orchestration / ETF / recovery tests (offline, standard library only)."""
+import concurrent.futures
 import hashlib
 import datetime as dt
 import json
@@ -9,6 +10,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -19,6 +22,7 @@ sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
 import instruments  # noqa: E402
 import review as review_engine  # noqa: E402
+import session as session_engine  # noqa: E402
 import thesis as thesis_engine  # noqa: E402
 import trade_recap as tr  # noqa: E402
 from check_card import check_card  # noqa: E402
@@ -188,6 +192,44 @@ def _narrative(language="zh-TW"):
             "honesty": {"etf_metadata": "配置型 ETF 缺費用率資料，這裡把缺口講明，而不是把缺值當成零。"}}
 
 
+def _minimal_bundle(session_id, marker="same"):
+    """Small direct-storage fixture: renderer/schema behavior is out of scope."""
+    return {
+        "schema_version": 2, "session_id": session_id, "route": "test_drive",
+        "language": "en", "review_plan": {"persist": False, "marker": marker},
+        "engine_state": {"date_end": "2026-07-17"}, "engine_card": {},
+        "answers": {"marker": marker}, "narrative": {"marker": marker},
+        "thesis_updates": [], "thesis_decisions": [], "exit_narratives": [],
+        "commitment": None, "observations": [],
+    }
+
+
+def _write_pre_durability_canonical(root, bundle, private_md="private", public_md="public",
+                                    private_html=None, manifest=True):
+    """Emulate the origin/main writer: complete visible files, but no fsync."""
+    final = pathlib.Path(root) / "sessions" / bundle["session_id"]
+    final.mkdir(parents=True)
+    artifacts = {
+        "bundle.json": session_engine.pretty(bundle),
+        "state.json": session_engine.pretty(bundle.get("engine_state") or {}),
+        "plan.json": session_engine.pretty(bundle.get("review_plan") or {}),
+        "answers.json": session_engine.pretty(bundle.get("answers") or {}),
+        "narrative.json": session_engine.pretty(bundle.get("narrative") or {}),
+        "card-private.md": private_md if private_md.endswith("\n") else private_md + "\n",
+        "card-public.md": public_md if public_md.endswith("\n") else public_md + "\n",
+    }
+    if private_html is not None:
+        artifacts["card-private.html"] = (
+            private_html if private_html.endswith("\n") else private_html + "\n")
+    if manifest:
+        hashes = {name: session_engine._artifact_hash(text) for name, text in artifacts.items()}
+        artifacts["manifest.json"] = session_engine.pretty(
+            {"schema_version": 1, "sha256": hashes})
+    for name, text in artifacts.items():
+        (final / name).write_text(text, encoding="utf-8")
+    return final
+
+
 def test_etf_allocation_exemption_and_focused_etf_risk():
     instruments.reset_map()
     broad = tr.dim_size([], {"SPY": (80, 8000), "PLTR": (20, 2000)}, None)
@@ -289,6 +331,631 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
             "repair-projections must never project demo sessions into coach memory"
 
 
+def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
+    """#194A: files and staging dir land before rename; parent dir lands after."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__durable"
+        bundle = _minimal_bundle(session_id)
+        events = []
+        real_file = session_engine._fsync_file
+        real_dir = session_engine._fsync_dir
+        real_replace = session_engine.os.replace
+        final = os.path.join(root, "sessions", session_id)
+
+        def track_file(path):
+            events.append(("file", str(path)))
+            return real_file(path)
+
+        def track_dir(path):
+            events.append(("dir", str(path)))
+            return real_dir(path)
+
+        def track_replace(src, dst):
+            if str(dst) == final:
+                events.append(("replace", str(dst)))
+            return real_replace(src, dst)
+
+        session_engine._fsync_file = track_file
+        session_engine._fsync_dir = track_dir
+        session_engine.os.replace = track_replace
+        try:
+            result = session_engine.commit_bundle(
+                root, bundle, "private", "public", "<html>private</html>")
+        finally:
+            session_engine._fsync_file = real_file
+            session_engine._fsync_dir = real_dir
+            session_engine.os.replace = real_replace
+
+        assert result["status"] == "committed"
+        file_names = {os.path.basename(path) for kind, path in events if kind == "file"}
+        assert file_names == {
+            "bundle.json", "state.json", "plan.json", "answers.json", "narrative.json",
+            "card-private.md", "card-public.md", "card-private.html", "manifest.json",
+        }
+        staging_syncs = [index for index, (kind, path) in enumerate(events)
+                         if kind == "dir" and os.path.basename(path).startswith(
+                             f".{session_id}.staging-")]
+        parent_syncs = [index for index, (kind, path) in enumerate(events)
+                        if kind == "dir" and path == os.path.join(root, "sessions")]
+        renames = [index for index, (kind, path) in enumerate(events)
+                   if kind == "replace" and path == final]
+        file_syncs = [index for index, (kind, _path) in enumerate(events) if kind == "file"]
+        assert file_syncs and staging_syncs and renames and parent_syncs
+        assert max(file_syncs) < staging_syncs[-1] < renames[0] < parent_syncs[0], \
+            "required order is artifact fsync -> staging fsync -> rename -> sessions fsync"
+        assert ("dir", root) in events, "creation of sessions/ must be persisted in its parent"
+
+
+def test_existing_origin_writer_bundle_fsyncs_artifacts_then_manifest_then_directories():
+    """An origin/main-visible bundle is not durable until every level is synced."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__existing-origin"
+        bundle = _minimal_bundle(session_id)
+        final = _write_pre_durability_canonical(root, bundle)
+        sessions = final.parent
+        events = []
+        real_file = session_engine._fsync_file
+        real_dir = session_engine._fsync_dir
+
+        def track_file(path):
+            if pathlib.Path(path).parent == final:
+                events.append(("file", pathlib.Path(path).name))
+            return real_file(path)
+
+        def track_dir(path):
+            if pathlib.Path(path) in {final, sessions}:
+                events.append(("dir", str(pathlib.Path(path))))
+            return real_dir(path)
+
+        session_engine._fsync_file = track_file
+        session_engine._fsync_dir = track_dir
+        try:
+            result = session_engine.commit_bundle(root, bundle, "private", "public")
+        finally:
+            session_engine._fsync_file = real_file
+            session_engine._fsync_dir = real_dir
+
+        assert result["status"] == "no-op"
+        manifest_index = events.index(("file", "manifest.json"))
+        artifact_indices = [index for index, event in enumerate(events)
+                            if event[0] == "file" and event[1] != "manifest.json"]
+        final_index = events.index(("dir", str(final)))
+        sessions_index = events.index(("dir", str(sessions)))
+        assert artifact_indices and max(artifact_indices) < manifest_index < final_index < sessions_index
+
+
+def test_manifest_hash_mismatch_fails_closed_and_corrected_retry_adopts_bundle():
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__manifest-mismatch"
+        bundle = _minimal_bundle(session_id)
+        final = _write_pre_durability_canonical(root, bundle)
+        private_card = final / "card-private.md"
+        private_card.write_text("tampered\n", encoding="utf-8")
+        try:
+            session_engine.commit_bundle(root, bundle, "private", "public")
+        except session_engine.SessionError as exc:
+            error = str(exc)
+        else:
+            assert False, "manifest-bearing canonical artifacts must be hash verified"
+        assert "canonical artifact hash mismatch: card-private.md" in error
+
+        private_card.write_text("private\n", encoding="utf-8")
+        retry = session_engine.commit_bundle(root, bundle, "private", "public")
+        assert retry["status"] == "no-op"
+
+
+def test_unverifiable_legacy_without_manifest_syncs_known_regular_artifacts():
+    """No-manifest compatibility is explicit and limited to canonical files."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__unverifiable-legacy"
+        bundle = _minimal_bundle(session_id)
+        final = _write_pre_durability_canonical(root, bundle, manifest=False)
+        synced = []
+        real_file = session_engine._fsync_file
+
+        def track_file(path):
+            if pathlib.Path(path).parent == final:
+                synced.append(pathlib.Path(path).name)
+            return real_file(path)
+
+        session_engine._fsync_file = track_file
+        try:
+            result = session_engine.commit_bundle(root, bundle, "private", "public")
+        finally:
+            session_engine._fsync_file = real_file
+        assert result["status"] == "no-op"
+        assert set(synced) == set(session_engine._REQUIRED_CANONICAL_ARTIFACTS)
+
+
+def test_finalize_fsyncs_root_parent_when_pending_precreated_root():
+    """prepare can create root first; finalize must still persist root's name."""
+    with tempfile.TemporaryDirectory() as parent:
+        root = os.path.join(parent, "new-coach-root")
+        session_id = "2026-07-17__new-root"
+        bundle = _minimal_bundle(session_id)
+        session_engine.save_pending(root, session_id, plan=bundle["review_plan"])
+        assert os.path.isdir(root) and not os.path.exists(os.path.join(root, "sessions"))
+        events = []
+        real_dir = session_engine._fsync_dir
+
+        def track_dir(path):
+            events.append(str(path))
+            return real_dir(path)
+
+        session_engine._fsync_dir = track_dir
+        try:
+            with session_engine.finalize_transaction(root, session_id) as transaction:
+                result, projection, projection_error = transaction.commit_bundle(
+                    bundle, "private", "public", persist=False)
+        finally:
+            session_engine._fsync_dir = real_dir
+
+        assert result["status"] == "committed" and projection is None and not projection_error
+        assert parent in events and root in events and events.index(parent) < events.index(root), \
+            "finalize must persist a root created earlier by pending storage"
+
+
+def test_unsupported_durable_platform_fails_at_a_controlled_boundary():
+    """Missing POSIX locking must not make importing session.py crash."""
+    with tempfile.TemporaryDirectory() as root:
+        real_fcntl = session_engine.fcntl
+        session_engine.fcntl = None
+        try:
+            try:
+                session_engine.commit_bundle(
+                    root, _minimal_bundle("2026-07-17__unsupported"), "private", "public")
+            except session_engine.SessionError as exc:
+                error = str(exc)
+            else:
+                assert False, "unsupported durability must fail closed"
+        finally:
+            session_engine.fcntl = real_fcntl
+
+        assert "unsupported on this platform" in error
+        assert not (pathlib.Path(root) / "sessions").exists(), \
+            "the platform boundary must run before canonical storage mutation"
+
+
+def test_directory_fsync_failure_is_controlled_and_retryable():
+    """A visible rename without a durable parent entry reports SessionError;
+    identical retry completes the sync and stays a no-op."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__fsync-failure"
+        bundle = _minimal_bundle(session_id)
+        sessions = os.path.join(root, "sessions")
+        final = os.path.join(sessions, session_id)
+        real_dir = session_engine._fsync_dir
+        injected = {"done": False}
+
+        def fail_after_rename(path):
+            if path == sessions and os.path.isdir(final) and not injected["done"]:
+                injected["done"] = True
+                raise OSError("injected parent fsync failure")
+            return real_dir(path)
+
+        session_engine._fsync_dir = fail_after_rename
+        try:
+            try:
+                session_engine.commit_bundle(root, bundle, "private", "public")
+            except session_engine.SessionError as exc:
+                error = str(exc)
+            else:
+                assert False, "parent fsync failure must not report a durable commit"
+        finally:
+            session_engine._fsync_dir = real_dir
+
+        assert "committed but directory sync failed" in error and os.path.isdir(final)
+        retry = session_engine.commit_bundle(root, bundle, "private", "public")
+        assert retry["status"] == "no-op"
+
+
+def test_old_writer_rename_race_sync_failure_is_controlled_and_retryable_in_order():
+    """A lock-unaware writer can win rename; adoption still runs the full sync ladder."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__old-writer-race"
+        bundle = _minimal_bundle(session_id)
+        final = pathlib.Path(root) / "sessions" / session_id
+        sessions = final.parent
+        real_replace = session_engine.os.replace
+        real_file = session_engine._fsync_file
+        published = {"done": False}
+        failed = {"done": False}
+
+        def old_writer_wins(src, dst):
+            if pathlib.Path(dst) == final and not published["done"]:
+                published["done"] = True
+                _write_pre_durability_canonical(root, bundle)
+                raise OSError("injected old writer rename win")
+            return real_replace(src, dst)
+
+        def fail_final_manifest_once(path):
+            path = pathlib.Path(path)
+            if path.parent == final and path.name == "manifest.json" and not failed["done"]:
+                failed["done"] = True
+                raise OSError("injected existing manifest fsync failure")
+            return real_file(path)
+
+        session_engine.os.replace = old_writer_wins
+        session_engine._fsync_file = fail_final_manifest_once
+        try:
+            try:
+                session_engine.commit_bundle(root, bundle, "private", "public")
+            except session_engine.SessionError as exc:
+                error = str(exc)
+            else:
+                assert False, "old-writer adoption fsync failure must not report success"
+        finally:
+            session_engine.os.replace = real_replace
+            session_engine._fsync_file = real_file
+
+        assert published["done"] and final.is_dir()
+        assert "cannot make existing session" in error
+
+        events = []
+        real_dir = session_engine._fsync_dir
+
+        def track_file(path):
+            if pathlib.Path(path).parent == final:
+                events.append(("file", pathlib.Path(path).name))
+            return real_file(path)
+
+        def track_dir(path):
+            if pathlib.Path(path) in {final, sessions}:
+                events.append(("dir", str(pathlib.Path(path))))
+            return real_dir(path)
+
+        session_engine._fsync_file = track_file
+        session_engine._fsync_dir = track_dir
+        try:
+            retry = session_engine.commit_bundle(root, bundle, "private", "public")
+        finally:
+            session_engine._fsync_file = real_file
+            session_engine._fsync_dir = real_dir
+
+        manifest_index = events.index(("file", "manifest.json"))
+        artifact_indices = [index for index, event in enumerate(events)
+                            if event[0] == "file" and event[1] != "manifest.json"]
+        assert retry["status"] == "no-op" and artifact_indices
+        assert max(artifact_indices) < manifest_index
+        assert manifest_index < events.index(("dir", str(final))) \
+            < events.index(("dir", str(sessions)))
+
+
+def test_staging_gc_waits_for_canonical_final_then_cleans_same_session_only():
+    """No TTL guess: a failed pre-rename attempt preserves unknown staging;
+    the next successful canonical commit makes it provably orphaned and GC-able."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__staging-gc"
+        bundle = _minimal_bundle(session_id)
+        sessions = pathlib.Path(root) / "sessions"
+        sessions.mkdir()
+        stale = sessions / f".{session_id}.staging-crashed"
+        stale.mkdir()
+        (stale / "partial").write_text("partial", encoding="utf-8")
+        unrelated = sessions / ".other-session.staging-crashed"
+        unrelated.mkdir()
+        real_write = session_engine.ledger.atomic_write_text
+
+        def fail_write(_path, _text):
+            raise OSError("injected artifact failure")
+
+        session_engine.ledger.atomic_write_text = fail_write
+        try:
+            try:
+                session_engine.commit_bundle(root, bundle, "private", "public")
+            except session_engine.SessionError as exc:
+                assert "cannot commit session" in str(exc)
+            else:
+                assert False, "injected artifact failure must abort before canonical rename"
+        finally:
+            session_engine.ledger.atomic_write_text = real_write
+
+        assert stale.is_dir(), "without a canonical final there is no safe stale-age contract"
+        assert not (sessions / session_id).exists()
+        committed = session_engine.commit_bundle(root, bundle, "private", "public")
+        assert committed["status"] == "committed" and not stale.exists()
+        assert unrelated.is_dir(), "GC must stay scoped to the committed session id"
+
+
+def test_staging_gc_and_cleanup_sync_are_best_effort_after_durable_commit():
+    """Cleanup failure cannot invalidate or block an identical canonical retry."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__gc-best-effort"
+        bundle = _minimal_bundle(session_id)
+        committed = session_engine.commit_bundle(root, bundle, "private", "public")
+        assert committed["status"] == "committed"
+        sessions = pathlib.Path(root) / "sessions"
+        stale = sessions / f".{session_id}.staging-crashed"
+        stale.mkdir()
+
+        real_cleanup = session_engine._cleanup_committed_staging
+
+        def fail_cleanup(_sessions, _final, _session_id):
+            raise OSError("injected staging cleanup failure")
+
+        session_engine._cleanup_committed_staging = fail_cleanup
+        try:
+            retry = session_engine.commit_bundle(root, bundle, "private", "public")
+        finally:
+            session_engine._cleanup_committed_staging = real_cleanup
+        assert retry["status"] == "no-op" and stale.is_dir()
+
+        real_dir = session_engine._fsync_dir
+
+        def fail_cleanup_sync(path):
+            if str(path) == str(sessions) and not stale.exists():
+                raise OSError("injected post-GC directory sync failure")
+            return real_dir(path)
+
+        session_engine._fsync_dir = fail_cleanup_sync
+        try:
+            retry = session_engine.commit_bundle(root, bundle, "private", "public")
+        finally:
+            session_engine._fsync_dir = real_dir
+        assert retry["status"] == "no-op" and not stale.exists(), \
+            "post-GC fsync is non-authoritative once canonical parent fsync succeeded"
+
+
+def _forced_commit_race(root, first_bundle, second_bundle):
+    """Hold the first directory rename so the second writer is truly concurrent."""
+    final = os.path.join(root, "sessions", first_bundle["session_id"])
+    real_replace = session_engine.os.replace
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+    call_count = {"value": 0}
+    call_lock = threading.Lock()
+
+    def gated_replace(src, dst):
+        is_commit = (dst == final and os.path.basename(src).startswith(
+            f".{first_bundle['session_id']}.staging-"))
+        if is_commit:
+            with call_lock:
+                call_count["value"] += 1
+                index = call_count["value"]
+            if index == 1:
+                first_entered.set()
+                if not release_first.wait(5):
+                    raise RuntimeError("timed out waiting to release forced commit race")
+            else:
+                second_entered.set()
+        return real_replace(src, dst)
+
+    def second_call():
+        second_started.set()
+        return session_engine.commit_bundle(root, second_bundle, "private", "public")
+
+    session_engine.os.replace = gated_replace
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    try:
+        first = pool.submit(session_engine.commit_bundle, root, first_bundle, "private", "public")
+        assert first_entered.wait(5), "first writer never reached canonical rename"
+        second = pool.submit(second_call)
+        assert second_started.wait(5), "second writer never started"
+        serialized = not second_entered.wait(0.5)
+        release_first.set()
+        outcomes = []
+        for future in (first, second):
+            try:
+                outcomes.append(("ok", future.result(timeout=5)))
+            except Exception as exc:  # returned for assertions below
+                outcomes.append(("error", exc))
+    finally:
+        release_first.set()
+        pool.shutdown(wait=True)
+        session_engine.os.replace = real_replace
+    return serialized, outcomes
+
+
+def test_concurrent_bundle_commit_serializes_identical_and_conflicting_retries():
+    """Canonical writers serialize; same content no-ops and conflicts fail closed."""
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__identical-race"
+        bundle = _minimal_bundle(session_id)
+        serialized, outcomes = _forced_commit_race(root, bundle, bundle)
+        assert serialized, "same-session writers must not enter bundle rename concurrently"
+        assert sorted(result["status"] for kind, result in outcomes if kind == "ok") == \
+            ["committed", "no-op"]
+        assert all(kind == "ok" for kind, _value in outcomes)
+
+    with tempfile.TemporaryDirectory() as root:
+        session_id = "2026-07-17__conflict-race"
+        first = _minimal_bundle(session_id, marker="first")
+        second = _minimal_bundle(session_id, marker="second")
+        serialized, outcomes = _forced_commit_race(root, first, second)
+        assert serialized
+        successes = [value for kind, value in outcomes if kind == "ok"]
+        errors = [value for kind, value in outcomes if kind == "error"]
+        assert len(successes) == len(errors) == 1 and successes[0]["status"] == "committed"
+        assert isinstance(errors[0], session_engine.SessionError)
+        assert "already committed with different content" in str(errors[0])
+        assert not isinstance(errors[0], OSError), "CLI catch boundary must receive SessionError"
+
+
+def test_cross_session_projections_serialize_shared_legacy_books():
+    """Different session locks still share one root-wide projection lock."""
+    with tempfile.TemporaryDirectory() as root:
+        first = _minimal_bundle("2026-07-17__projection-a")
+        second = _minimal_bundle("2026-07-17__projection-b")
+        event = {"key": "avgdown_breach", "kind": "event", "week": "2026-07-17",
+                 "ticker": "PLTR", "amount": 1, "note": "same event"}
+        for bundle in (first, second):
+            bundle["engine_state"].update({
+                "problem_events": [event],
+                "problem_opportunities": {"avgdown_breach": True},
+            })
+
+        real_append = session_engine.problems.append_book
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release_first = threading.Event()
+        call_count = {"value": 0}
+        call_lock = threading.Lock()
+
+        def gated_append(*args, **kwargs):
+            with call_lock:
+                call_count["value"] += 1
+                index = call_count["value"]
+            if index == 1:
+                first_entered.set()
+                if not release_first.wait(5):
+                    raise RuntimeError("timed out waiting to release shared projection")
+            else:
+                second_entered.set()
+            return real_append(*args, **kwargs)
+
+        session_engine.problems.append_book = gated_append
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        try:
+            a = pool.submit(session_engine.project_legacy, root, first, "private a\n")
+            assert first_entered.wait(5), "first projection never reached the shared problem book"
+            b = pool.submit(session_engine.project_legacy, root, second, "private b\n")
+            assert not second_entered.wait(0.5), \
+                "cross-session projections must not enter shared books concurrently"
+            release_first.set()
+            assert a.result(timeout=5)["session_id"] == first["session_id"]
+            assert b.result(timeout=5)["session_id"] == second["session_id"]
+        finally:
+            release_first.set()
+            pool.shutdown(wait=True)
+            session_engine.problems.append_book = real_append
+
+        events, marks, skipped = session_engine.problems.load_book(
+            os.path.join(root, "problems.jsonl"))
+        assert not skipped and len(events) == len(marks) == 1, \
+            "shared event/mark dedupe must survive different-session finalizers"
+
+
+def test_concurrent_identical_finalize_cli_is_controlled_and_projects_once():
+    """Two real CLI processes: one commits, one fails busy, later retry is no-op."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root)
+        answers_path = pathlib.Path(tmp) / "answers-concurrent.json"
+        narrative_path = pathlib.Path(tmp) / "narrative-concurrent.json"
+        answers_path.write_text(
+            json.dumps(_answers(plan, commitment="candidate_0"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        narrative_path.write_text(
+            json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+
+        # The wrapper still executes review.py's full parser/command path in a
+        # separate OS process.  One process pauses after observing pending/ but
+        # before opening plan.json.  Without an outer finalize transaction the
+        # other process can remove pending/ and force a raw FileNotFoundError.
+        barrier = pathlib.Path(tmp) / "barrier"
+        barrier.mkdir()
+        wrapper = pathlib.Path(tmp) / "concurrent_finalize_cli.py"
+        wrapper.write_text(
+            """import json
+import os
+import pathlib
+import sys
+import time
+
+engine_dir = sys.argv[1]
+barrier = pathlib.Path(sys.argv[2])
+cli = sys.argv[3:]
+sys.path.insert(0, engine_dir)
+import session
+
+real_load_pending = session.load_pending
+def gated_load_pending(root, session_id):
+    claim = barrier / "pending-reader.claim"
+    try:
+        claim.mkdir()
+        owner = True
+    except FileExistsError:
+        owner = False
+    if owner:
+        base = pathlib.Path(session.pending_dir(root, session_id))
+        if base.is_dir():
+            (barrier / "pending-reader-entered").touch()
+            deadline = time.monotonic() + 20
+            while not (barrier / "release-pending-reader").exists():
+                if time.monotonic() > deadline:
+                    raise RuntimeError("pending reader release timed out")
+                time.sleep(0.01)
+            # Deliberately open after the earlier existence observation.  This
+            # is the real TOCTOU window the outer session lock must eliminate.
+            with (base / "plan.json").open(encoding="utf-8") as handle:
+                json.load(handle)
+    else:
+        (barrier / "second-pending-reader-entered").touch()
+    return real_load_pending(root, session_id)
+session.load_pending = gated_load_pending
+
+(barrier / (str(os.getpid()) + ".ready")).touch()
+deadline = time.monotonic() + 10
+while len(list(barrier.glob("*.ready"))) < 2:
+    if time.monotonic() > deadline:
+        raise RuntimeError("concurrent CLI start barrier timed out")
+    time.sleep(0.01)
+
+sys.argv = [str(pathlib.Path(engine_dir) / "review.py"), *cli]
+import runpy
+runpy.run_path(sys.argv[0], run_name="__main__")
+""",
+            encoding="utf-8",
+        )
+        command = [
+            sys.executable, str(wrapper), str(ENGINE_DIR), str(barrier),
+            "finalize", "--root", str(root), "--session-id", plan["session_id"],
+            "--answers", str(answers_path), "--narrative", str(narrative_path),
+        ]
+        processes = [subprocess.Popen(
+            command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True) for _ in range(2)]
+        pending_reader = barrier / "pending-reader-entered"
+        second_reader = barrier / "second-pending-reader-entered"
+        deadline = time.monotonic() + 15
+        while not pending_reader.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        deadline = time.monotonic() + 15
+        while all(process.poll() is None for process in processes) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        pre_release_codes = [process.poll() for process in processes if process.poll() is not None]
+        second_reader_entered = second_reader.exists()
+        (barrier / "release-pending-reader").touch()
+        completed = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=60)
+            completed.append((process.returncode, json.loads(stdout), stderr))
+
+        assert pending_reader.exists(), "one finalize never reached the gated pending read"
+        assert pre_release_codes == [2], \
+            "the overlapping finalize must fail busy while the winner still reads pending"
+        assert not second_reader_entered, \
+            "the loser must be rejected before touching pending session files"
+        assert sorted(code for code, _payload, _stderr in completed) == [0, 2]
+        success = next(payload for code, payload, _stderr in completed if code == 0)
+        busy = next(payload for code, payload, _stderr in completed if code == 2)
+        assert success["status"] == "committed" and not success["projection_error"]
+        assert "finalize already in progress for session" in busy["error"]
+        assert all("Traceback" not in stderr for _code, _payload, stderr in completed)
+
+        retry = _run(
+            "finalize", "--root", root, "--session-id", plan["session_id"],
+            "--answers", answers_path, "--narrative", narrative_path,
+        )
+        retry_payload = json.loads(retry.stdout)
+        assert retry.returncode == 0 and retry_payload["status"] == "no-op"
+        assert not retry_payload["projection_error"]
+
+        def session_rows(name):
+            path = root / name
+            return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and json.loads(line).get("session_id") == plan["session_id"]]
+
+        assert len(session_rows("log.jsonl")) == 1
+        assert len(session_rows("rules.jsonl")) == 1
+        problem_rows = session_rows("problems.jsonl")
+        assert sorted(row["type"] for row in problem_rows) == ["event", "review_mark"], \
+            "identical concurrent finalize must not duplicate problem events or marks"
+
+
 def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
@@ -361,6 +1028,15 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] == "no-op"
+        conflicting = _answers(plan, commitment="candidate_0")
+        conflicting["observations"].append("different retry payload")
+        answers_path.write_text(json.dumps(conflicting, ensure_ascii=False), encoding="utf-8")
+        rejected = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                        "--answers", answers_path, "--narrative", narrative_path)
+        rejected_payload = json.loads(rejected.stdout)
+        assert rejected.returncode == 2 and rejected_payload["status"] == "error"
+        assert "already committed with different content" in rejected_payload["error"]
+        assert "Traceback" not in rejected.stderr, "conflicting finalize must be a controlled CLI error"
         bundle_before = (session_dir / "bundle.json").read_bytes()
         (root / "thesis_decisions.jsonl").unlink()       # simulate a projection interrupted after commit
         repaired = _run("repair-projections", "--root", root)
