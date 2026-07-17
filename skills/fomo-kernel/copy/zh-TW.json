@@ -5,6 +5,10 @@
   "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
   "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
   "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
+  "snapshot_scope": "交易歷史維度——攤平、出場紀律、持有行為、勝率、盈虧比、alpha 與歷史動機——這次都不評分；之後匯入交易紀錄即可解鎖。",
+  "snapshot_numbers": "第一次持倉結構",
+  "snapshot_strength": "這份快照建立了什麼",
+  "snapshot_hole": "主要結構風險",
   "sections": {
     "context": "市場與時間軸鏡子",
     "numbers": "這期的帳",
@@ -70,6 +74,7 @@
     }
   },
   "honesty": {
+    "snapshot_scope": "這是第一次持倉健檢；在匯入交易紀錄前，交易歷史行為維持未評分。",
     "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
     "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
     "unclassified_drivers": "部分標的尚未分類，組合集中度可能被低估。",
@@ -78,6 +83,7 @@
     "currency_mix": "組合含多幣別；聚合數字使用共同幣別，部分匯率可能為近似。",
     "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
     "acct_perf_basis": "帳戶績效有部分成本或匯率近似，需保留不確定性。",
+    "accounting_reconciliation": "匯入交易未能重現快照錨定的目前持倉，因此這次不評分部位大小、分散與未實現損益。",
     "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
   },
   "due_choices": {

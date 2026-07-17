@@ -30,6 +30,7 @@ import ledger
 import problems
 import revisit
 import session
+import snapshot_adapter
 import thesis
 
 
@@ -90,6 +91,67 @@ def _fingerprint(paths, language, route, prepared=None, nonce=""):
                     break
                 h.update(block)
     return h.hexdigest()
+
+
+def _snapshot_fact(anchor):
+    if not isinstance(anchor, dict):
+        return None
+    return {
+        **{key: anchor[key] for key in ("type", "as_of", "source", "positions", "cash")
+           if key in anchor},
+        "is_complete": anchor.get("is_complete", True),
+    }
+
+
+def _validate_initial_snapshot_root(root, anchor):
+    """Keep this adapter at its explicit initial-onboarding boundary.
+
+    A later declaration needs the PRD's diff/adjustment reconciliation flow.
+    Until that P1 path exists, only an exact idempotent replay of the already
+    committed initial declaration may enter a non-empty coach root.
+    """
+    requested = _snapshot_fact(anchor)
+    if requested is None:
+        return
+    existing_facts = []
+    has_other_history = False
+    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    for event in events:
+        if event.get("type") == "snapshot":
+            fact = _snapshot_fact(event)
+            if fact is not None:
+                existing_facts.append(fact)
+        else:
+            has_other_history = True
+
+    sessions = os.path.join(root, "sessions")
+    if os.path.isdir(sessions):
+        for session_id in os.listdir(sessions):
+            if session_id.startswith("."):
+                continue
+            path = os.path.join(sessions, session_id, "bundle.json")
+            try:
+                bundle = session.read_json(path)
+            except (OSError, ValueError):
+                continue
+            plan = bundle.get("review_plan") or {}
+            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                continue
+            fact = _snapshot_fact((bundle.get("engine_state") or {}).get("snapshot_anchor"))
+            if fact is None:
+                has_other_history = True
+            else:
+                existing_facts.append(fact)
+
+    if not existing_facts and not has_other_history:
+        return
+    if not has_other_history and all(session.canonical(fact) == session.canonical(requested)
+                                     for fact in existing_facts):
+        return
+    raise ReviewError(
+        "initial snapshot onboarding cannot replace an existing coach history; "
+        "second or subsequent snapshots require the deferred reconciliation flow"
+    )
 
 
 def _pending_by_fingerprint(root, fingerprint):
@@ -262,7 +324,216 @@ def _review_date(state):
         return dt.date.today()
 
 
-def _ingest_trades(root, paths):
+_CURRENT_VIEW_DIMS = {"position_sizing", "diversification"}
+_CURRENT_VIEW_METRICS = {
+    "max_pos_pct", "max_pos_ticker", "ai_pct", "max_sector_pct", "top3_pct"
+}
+
+
+def _is_current_view_dimension(row):
+    if not isinstance(row, dict):
+        return False
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    dim = row.get("dim") or row.get("kind") or raw.get("dim")
+    return bool(dim) and card_renderer.dimension_id(dim) in _CURRENT_VIEW_DIMS
+
+
+def _empty_portfolio_structure(source=None):
+    return {
+        "schema_version": 1,
+        "policy": (source or {}).get("policy"),
+        "allocation_weight": None,
+        "concentrated_etf_weight": None,
+        "by_kind": {},
+        "allocation_etfs": [],
+        "concentrated_etfs": [],
+        "metadata_gaps": [],
+    }
+
+
+def _gate_current_view(card, state, detail):
+    """Remove raw-CSV current-position claims that disagree with the ledger.
+
+    Transaction rows still support history diagnostics such as exits, holding
+    time, averaging-down events, payoff, and attribution.  They cannot support
+    current sizing, diversification, unrealized P&L, or ETF weights when the
+    complete snapshot anchor plus later ledger trades says the current account
+    contains something else.
+    """
+    card["dims_raw"] = [row for row in card.get("dims_raw") or []
+                        if not _is_current_view_dimension(row)]
+    card["top_holes"] = [row for row in card.get("top_holes") or []
+                         if not _is_current_view_dimension(row)]
+    card["candidate_rules"] = [row for row in card.get("candidate_rules") or []
+                               if not _is_current_view_dimension(row)]
+    card["prescriptions"] = [row for row in card.get("prescriptions") or []
+                             if not _is_current_view_dimension(row)]
+    card["what_if"] = None
+    card["ticker_diagnosis"] = []
+    card["strength"] = None
+
+    overview = dict(card.get("overview") or {})
+    overview["total_pnl"] = None
+    overview["unrealized"] = None
+    card["overview"] = overview
+    card["acct_perf"] = {"note": "accounting_reconciliation"}
+
+    for artifact in (card, state):
+        meta = dict(artifact.get("currency_meta") or {})
+        meta["pnl_by_currency"] = None
+        artifact["currency_meta"] = meta
+        cash = artifact.get("cash")
+        if isinstance(cash, dict):
+            cash = dict(cash)
+            cash["weight"] = None
+            artifact["cash"] = cash
+
+    prior_structure = card.get("portfolio_structure") or state.get("portfolio_structure") or {}
+    structure = _empty_portfolio_structure(prior_structure)
+    card["portfolio_structure"] = structure
+    state["portfolio_structure"] = dict(structure)
+
+    metrics = dict(state.get("metrics") or {})
+    for key in _CURRENT_VIEW_METRICS:
+        metrics[key] = None
+    state["metrics"] = metrics
+    state["rule"] = None
+    state["problem_events"] = [
+        row for row in state.get("problem_events") or []
+        if row.get("key") not in {"oversize", "concentration"}
+    ]
+    opportunities = state.get("problem_opportunities")
+    if isinstance(opportunities, dict):
+        opportunities = dict(opportunities)
+        opportunities["oversize"] = False
+        opportunities["concentration"] = False
+        state["problem_opportunities"] = opportunities
+
+    first_hole = (card.get("top_holes") or [None])[0]
+    if isinstance(first_hole, dict):
+        dim = first_hole.get("dim") or (first_hole.get("raw") or {}).get("dim")
+        metric_key = DIM_METRIC.get(card_renderer.dimension_id(dim)) if dim else None
+        state["headline_dim"] = dim
+        state["headline_metric"] = {
+            "key": metric_key,
+            "value": metrics.get(metric_key) if metric_key else None,
+        }
+    else:
+        state["headline_dim"] = None
+        state["headline_metric"] = {"key": None, "value": None}
+
+    integrity = dict(card.get("data_integrity") or {})
+    integrity["accounting_reconciliation"] = detail
+    card["data_integrity"] = integrity
+    honesty = [row for row in card.get("honesty_ledger") or []
+               if row.get("key") != "accounting_reconciliation"]
+    honesty.append({
+        "key": "accounting_reconciliation",
+        "status": "gated",
+        "data": detail,
+    })
+    card["honesty_ledger"] = honesty
+
+
+def _overlay_ledger_holdings(card, state, derived):
+    """Make ledger holdings/cycles canonical and gate divergent card surfaces."""
+    raw_positions = dict(((state.get("holdings") or {}).get("positions") or {}))
+    canonical = dict(derived.get("holdings") or {})
+    raw_tickers, canonical_tickers = set(raw_positions), set(canonical)
+    mismatches = []
+    for ticker in sorted(raw_tickers | canonical_tickers):
+        raw, fact = raw_positions.get(ticker), canonical.get(ticker)
+        if raw is None or fact is None:
+            mismatches.append({"ticker": ticker, "kind": "ticker_set"})
+            continue
+        raw_shares = card_renderer._finite_number(raw.get("shares"))
+        canonical_shares = card_renderer._finite_number(fact.get("shares"))
+        if (raw_shares is None or canonical_shares is None
+                or abs(raw_shares - canonical_shares) > ledger.SHARES_TOL):
+            mismatches.append({"ticker": ticker, "kind": "shares"})
+            continue
+        # Transaction artifacts historically omit these fields for the default
+        # US/USD case.  Default the raw side accordingly; falling back to the
+        # canonical fact would hide a missing/misclassified non-US position.
+        raw_market = str(raw.get("market") or "US").upper()
+        raw_currency = str(raw.get("currency") or "USD").upper()
+        if raw_market != str(fact.get("market") or "US").upper():
+            mismatches.append({"ticker": ticker, "kind": "market"})
+        if raw_currency != str(fact.get("currency") or "USD").upper():
+            mismatches.append({"ticker": ticker, "kind": "currency"})
+
+    prices = ((state.get("price_snapshot") or {}).get("prices") or {})
+    full_price_coverage = bool(canonical) and all(
+        card_renderer._finite_number(prices.get(ticker)) is not None
+        and float(prices[ticker]) > 0 for ticker in canonical
+    )
+    # Current prices can verify today's market value, but they cannot repair a
+    # divergent or unknown cost basis.  Unrealized and total P&L still depend
+    # on that basis, so compare it even when every ticker has a live price.
+    if not mismatches and canonical:
+        for ticker, fact in sorted(canonical.items()):
+            raw_cost = card_renderer._finite_number((raw_positions.get(ticker) or {}).get("cost"))
+            canonical_cost = card_renderer._finite_number(fact.get("cost_total"))
+            if (raw_cost is None or canonical_cost is None
+                    or not math.isclose(raw_cost, canonical_cost, rel_tol=1e-6, abs_tol=0.05)):
+                mismatches.append({"ticker": ticker, "kind": "valuation"})
+
+    positions = {}
+    for ticker, fact in sorted(canonical.items()):
+        raw = dict(raw_positions.get(ticker) or {})
+        observed_cycle = raw.get("cycle_id")
+        observed_start = raw.get("cycle_start")
+        add_count = int(fact.get("add_count") or 0)
+        row = dict(raw)
+        row.update({
+            "shares": fact.get("shares"),
+            "cost": fact.get("cost_total"),
+            "avg_cost": fact.get("avg_cost"),
+            "market": fact.get("market"),
+            "currency": fact.get("currency"),
+            "cycle_start": fact.get("since"),
+            "cycle_id": fact.get("cycle_id"),
+            "origin": fact.get("origin"),
+            "left_truncated": fact.get("origin") == "snapshot",
+            "add_count": add_count,
+            "decision_cursor": fact.get("decision_cursor"),
+        })
+        if observed_cycle and observed_cycle != fact.get("cycle_id"):
+            row["observed_cycle_id"] = observed_cycle
+        if observed_start and observed_start != fact.get("since"):
+            row["observed_cycle_start"] = observed_start
+        positions[ticker] = row
+
+    state["holdings"] = {
+        "as_of": state.get("date_end") or (state.get("holdings") or {}).get("as_of"),
+        "derived_from": "snapshot_plus_trades",
+        "is_complete": True,
+        "positions": positions,
+    }
+    state["n_held"] = len(positions)
+    metrics = dict(state.get("metrics") or {})
+    metrics["n_holdings"] = len(positions)
+    state["metrics"] = metrics
+
+    # A pre-anchor add is history, not a new decision after the opening snapshot.
+    post_anchor_adds = {ticker for ticker, row in positions.items()
+                        if row.get("decision_cursor")}
+    card["thesis_questions"] = [row for row in card.get("thesis_questions") or []
+                                if row.get("ticker") in post_anchor_adds]
+
+    detail = {
+        "status": "matched" if not mismatches else "current_view_gated",
+        "raw_positions_n": len(raw_positions),
+        "canonical_positions_n": len(positions),
+        "full_price_coverage": full_price_coverage,
+        "mismatches": mismatches,
+    }
+    if mismatches:
+        _gate_current_view(card, state, detail)
+    return card, state, detail
+
+
+def _ingest_trades(root, paths, card, state):
     """Validate all normalized CSVs, then append their trade facts once.
 
     Validation completes before the first write so a bad file cannot leave a
@@ -276,8 +547,6 @@ def _ingest_trades(root, paths):
     the engine's cash pipeline consumes them; they are counted and reported,
     never fatal (#50: visible, not silent).
     """
-    ledger_path = os.path.join(root, "ledger.jsonl")
-    existing, skipped_lines = ledger.load_ledger(ledger_path)
     batches = []
     skipped_non_trade = skipped_future = 0
     for path in paths or []:
@@ -291,24 +560,42 @@ def _ingest_trades(root, paths):
             f"{skipped_future} future-dated row(s)"
         )
 
-    virtual = list(existing)
-    fresh_all = []
-    skipped_dup = 0
-    for batch in batches:
-        fresh, dup = ledger.dedupe_against(virtual, batch)
-        fresh_all.extend(fresh)
-        virtual.extend(fresh)
-        skipped_dup += dup
-    if fresh_all:
-        ledger.append_events(ledger_path, fresh_all)
-    return {
-        "path": ledger_path,
-        "appended": len(fresh_all),
-        "skipped_dup": skipped_dup,
-        "skipped_non_trade": skipped_non_trade,
-        "skipped_future_dated": skipped_future,
-        "skipped_ledger_lines": skipped_lines,
-    }
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    # This is one root-wide check/derive/append transaction.  Snapshot finalize
+    # holds the same lock from its final empty-history check through canonical
+    # commit and anchor projection, so neither path can observe an empty root
+    # and then write across the other's boundary.
+    with session.projection_transaction(root):
+        existing, skipped_lines = ledger.load_ledger(ledger_path)
+        virtual = list(existing)
+        fresh_all = []
+        skipped_dup = 0
+        for batch in batches:
+            fresh, dup = ledger.dedupe_against(virtual, batch)
+            fresh_all.extend(fresh)
+            virtual.extend(fresh)
+            skipped_dup += dup
+        reconciliation = None
+        # A complete snapshot is the accounting source of truth for current
+        # holdings.  Derive against the virtual post-import ledger before the first
+        # write so the card can fail closed without leaving a partial import.
+        if ledger.latest_anchor(existing) is not None:
+            card, state, reconciliation = _overlay_ledger_holdings(
+                card, state, ledger.derive_holdings(virtual)
+            )
+        if fresh_all:
+            ledger.append_events(ledger_path, fresh_all)
+        result = {
+            "path": ledger_path,
+            "appended": len(fresh_all),
+            "skipped_dup": skipped_dup,
+            "skipped_non_trade": skipped_non_trade,
+            "skipped_future_dated": skipped_future,
+            "skipped_ledger_lines": skipped_lines,
+        }
+        if reconciliation is not None:
+            result["holdings_reconciliation"] = reconciliation
+    return result, card, state
 
 
 def _exit_narrative_index(root):
@@ -766,7 +1053,14 @@ CAPTURE_LIMIT = 2  # at most two exit-reason captures per session (c6850f0 contr
 
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
-                    due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None):
+                    due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
+                    route=None):
+    # A position snapshot can establish structure and thesis baselines, but it
+    # contains no action history.  Do not turn the generic fallback into a
+    # fabricated motive question, and do not replay exit/problem questions from
+    # an unrelated older ledger into this opening portfolio check.
+    if route == "snapshot_review":
+        return []
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     del previous_state  # retained in the call contract for older adapters
@@ -945,19 +1239,29 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                 due_revisits=None, exit_backlog=None, problem_stats=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
+    session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
     thesis_rows, decision_rows = _thesis_event_history(root)
     thesis_states = thesis.reconstruct_states(thesis_rows, decision_rows, cycle_ids)
+    cycle_relinks = []
+    if route != "snapshot_review":
+        cycle_relinks = thesis.build_incomplete_snapshot_cycle_relinks(
+            thesis_states, positions, session_id, state.get("date_end")
+        )
+        if cycle_relinks:
+            thesis_states = thesis.reconstruct_states(
+                thesis_rows + cycle_relinks, decision_rows, cycle_ids
+            )
     active_rows = [row for row in thesis_states
                    if row.get("cycle_id") in set(cycle_ids) and row.get("position_status") != "closed"]
     closed_rows = [row for row in thesis_states if row.get("position_status") == "closed"]
     active = {row.get("cycle_id"): row for row in active_rows}
     by_cycle = {row.get("cycle_id"): row for row in thesis_states}
-    horizon_markers = _horizon_markers(state, thesis_states, cycle_ids, recent_exits)
-    rule_history = _rule_breach_history(root)
+    horizon_markers = ([] if route == "snapshot_review" else
+                       _horizon_markers(state, thesis_states, cycle_ids, recent_exits))
+    rule_history = {} if route == "snapshot_review" else _rule_breach_history(root)
     missing = [{"ticker": ticker, "cycle_id": row.get("cycle_id")}
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
-    session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
     completed_reviews = _completed_review_count(root, exclude_session_id=session_id)
     plan = {
         "schema_version": 2,
@@ -994,7 +1298,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            "revisit_ingest": revisit_ingest},
         "question_queue": _question_queue(card, state, active, previous, language,
                                           recent_exits, by_cycle, due_revisits,
-                                          problem_stats, rule_history, horizon_markers),
+                                          problem_stats, rule_history, horizon_markers,
+                                          route=route),
         "missing_thesis_positions": missing,
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
@@ -1003,6 +1308,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "engine_card": card,
         "engine_state": state,
     }
+    if cycle_relinks:
+        plan["state_snapshot"]["thesis_cycle_relinks"] = cycle_relinks
     return plan
 
 
@@ -1011,23 +1318,57 @@ def cmd_prepare(args):
     language = args.language
     route = args.route
     persist = not args.test_drive
+    if args.snapshot_json:
+        if args.test_drive:
+            raise ReviewError("--snapshot-json cannot be combined with --test-drive")
+        if route not in ("auto", "snapshot_review"):
+            raise ReviewError("--snapshot-json requires --route snapshot_review")
+        route = "snapshot_review"
     if args.test_drive:
         route = "test_drive"
         if not args.root:
             root = tempfile.mkdtemp(prefix="fomo-kernel-test-drive-")
     elif route == "auto":
         route = "weekly_review" if _has_history(root) else "first_review"
-    if route == "snapshot_review" and not (args.card_json and args.state_json):
-        raise ReviewError("snapshot_review currently requires --card-json and --state-json from the snapshot adapter")
-    paths = list(args.paths or ([] if args.card_json else [str(MOCK_CSV) if args.test_drive else None]))
+    if args.snapshot_json and (args.card_json or args.state_json):
+        raise ReviewError("--snapshot-json cannot be combined with --card-json or --state-json")
+    if args.snapshot_json and args.cash:
+        raise ReviewError("--snapshot-json cannot be combined with --cash; include cash in the snapshot envelope")
+    if args.snapshot_json and args.paths:
+        raise ReviewError("pass the normalized snapshot only through --snapshot-json")
+    if route == "snapshot_review" and not args.snapshot_json and not (args.card_json and args.state_json):
+        raise ReviewError("snapshot_review requires --snapshot-json")
+    paths = ([args.snapshot_json] if args.snapshot_json else
+             list(args.paths or ([] if args.card_json else
+                                 [str(MOCK_CSV) if args.test_drive else None])))
     if any(p is None for p in paths) or (not paths and not args.card_json):
-        raise ReviewError("provide at least one CSV path, or use --test-drive")
+        raise ReviewError("provide at least one CSV path, --snapshot-json, or use --test-drive")
     # Resolve to absolute paths once: the engine subprocess runs with cwd at the
     # skill directory, so a caller-relative path would otherwise be fingerprinted
     # from one file and processed from another (or crash mid-run).
     paths = [os.path.abspath(os.path.expanduser(p)) for p in paths]
     prepared = None
-    if args.card_json or args.state_json:
+    if args.snapshot_json:
+        try:
+            card, state, adapter_meta = snapshot_adapter.prepare(
+                paths[0], driver_map=args.driver_map, instrument_map=args.instrument_map
+            )
+        except (OSError, ValueError, snapshot_adapter.SnapshotError) as exc:
+            raise ReviewError(f"snapshot adapter rejected input: {exc}") from exc
+        _validate_initial_snapshot_root(root, state.get("snapshot_anchor"))
+        prepared = {"card": card, "state": state}
+        if isinstance(adapter_meta, str):
+            engine_meta = adapter_meta
+        else:
+            # The Review Plan already contains the local input path and engine
+            # artifacts.  Keep metadata diagnostic rather than duplicating the
+            # full private anchor inside a display string.
+            safe_meta = {key: adapter_meta.get(key) for key in (
+                "source", "input_rows", "positions_n", "merged_rows",
+                "valuation_basis", "weights_available", "driver_map", "instrument_map"
+            ) if key in adapter_meta}
+            engine_meta = session.canonical(safe_meta)
+    elif args.card_json or args.state_json:
         if not (args.card_json and args.state_json):
             raise ReviewError("--card-json and --state-json must be provided together")
         card = _load_json(args.card_json, "engine card")
@@ -1044,10 +1385,21 @@ def cmd_prepare(args):
         card, state, engine_meta = _run_engine(paths, root, args)
     card, state = _apply_display_currency(card, state, _previous_state(root), language)
     ledger_ingest = None
-    if persist and route != "snapshot_review" and paths:
-        ledger_ingest = _ingest_trades(root, paths)
-    recent_exits, due_revisits, exit_backlog, revisit_ingest = _prepare_exit_capture(root, state, persist)
-    problem_stats = _problem_snapshot(root, state) if persist else None
+    if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
+        if state["snapshot_anchor"].get("is_complete", True) is False:
+            ledger_ingest = {"mode": "canonical_only", "kind": "positions_snapshot",
+                             "reason": "incomplete_snapshot"}
+        else:
+            ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
+    elif persist and paths:
+        ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
+    if route == "snapshot_review":
+        recent_exits, due_revisits, exit_backlog, revisit_ingest = [], [], None, None
+        problem_stats = None
+    else:
+        recent_exits, due_revisits, exit_backlog, revisit_ingest = \
+            _prepare_exit_capture(root, state, persist)
+        problem_stats = _problem_snapshot(root, state) if persist else None
     plan = _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint,
                        args.session_nonce or "", persist,
                        recent_exits=recent_exits, ledger_ingest=ledger_ingest,
@@ -1078,6 +1430,26 @@ def _validate_thesis_completeness(plan, answers):
     missing = sorted(x for x in needed - supplied if x)
     if missing:
         raise ReviewError("missing inferred thesis updates for cycles: " + ", ".join(missing))
+    if plan.get("route") == "snapshot_review":
+        not_inferred = sorted(
+            row.get("cycle_id") for row in updates
+            if row.get("cycle_id") in needed and row.get("maturity") != "inferred"
+        )
+        if not_inferred:
+            raise ReviewError(
+                "snapshot-origin thesis updates must remain inferred for cycles: "
+                + ", ".join(not_inferred)
+            )
+        non_candidate = sorted(
+            row.get("cycle_id") for row in updates
+            if row.get("cycle_id") in needed
+            and row.get("source_confidence") != "candidate"
+        )
+        if non_candidate:
+            raise ReviewError(
+                "snapshot-origin thesis updates require candidate provenance for cycles: "
+                + ", ".join(non_candidate)
+            )
     return updates
 
 
@@ -1088,6 +1460,16 @@ def _assign_thesis_ids(plan, updates):
     rows = []
     for update in updates:
         row = dict(update)
+        if plan.get("route") == "snapshot_review":
+            # Provenance is an engine-owned route fact, not an agent label.
+            row["origin"] = "snapshot"
+            anchor = (plan.get("engine_state") or {}).get("snapshot_anchor")
+            row["cycle_provenance"] = {
+                "kind": "snapshot_inference",
+                "snapshot_as_of": anchor.get("as_of") if isinstance(anchor, dict) else None,
+                "snapshot_complete": (anchor.get("is_complete", True)
+                                      if isinstance(anchor, dict) else None),
+            }
         prior = prior_by_cycle.get(row.get("cycle_id")) or {}
         thesis_id = prior.get("thesis_id") or thesis.stable_thesis_id(row.get("cycle_id"))
         if row.get("thesis_id") and row["thesis_id"] != thesis_id:
@@ -1287,7 +1669,11 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
     if answers.get("session_id") != plan.get("session_id"):
         raise ReviewError("answers.session_id does not match Review Plan")
     amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
-    updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
+    agent_updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
+    cycle_relinks = list(
+        ((plan.get("state_snapshot") or {}).get("thesis_cycle_relinks") or [])
+    )
+    updates = cycle_relinks + agent_updates
     decisions = thesis.build_decision_events(plan, answers, updates)
     exit_narratives = _build_exit_narratives(plan, answers, amap)
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
@@ -1420,6 +1806,8 @@ def build_parser():
     prepare.add_argument("--driver-map")
     prepare.add_argument("--instrument-map")
     prepare.add_argument("--cash", help="TR_CASH JSON string")
+    prepare.add_argument("--snapshot-json",
+                         help="normalized position-snapshot facts; valid only for snapshot_review")
     prepare.add_argument("--card-json", help="precomputed engine card (adapter/testing)")
     prepare.add_argument("--state-json", help="precomputed engine state (adapter/testing)")
     prepare.add_argument("--timeout", type=int, default=180)

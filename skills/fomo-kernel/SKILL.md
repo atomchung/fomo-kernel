@@ -1,11 +1,11 @@
 ---
 name: fomo-kernel
-description: Review a user's trade CSV or position snapshot into one behavior card, one user-chosen next-time rule, and an append-only investment-thesis record. Use for trade reviews, transaction postmortems, brokerage-statement reviews, position reviews, and equivalent requests in any supported language. Do not use for stock picks, market forecasts, or security research.
+description: Review a user's trade CSV or position snapshot into one local review card and an append-only investment-thesis record, with at most one user-chosen next-time rule. Transaction history supports behavioral diagnosis; a position snapshot supports an opening structural check. Use for trade reviews, transaction postmortems, brokerage-statement reviews, position reviews, and equivalent requests in any supported language. Do not use for stock picks, market forecasts, or security research.
 ---
 
 # fomo-kernel
 
-Turn trading data into one focused review card: the largest behavioral leak, the thesis behind any add, and one rule for the next review cycle.
+Turn transaction history into one focused behavior-review card, or a position snapshot into one narrow opening portfolio check. Both routes preserve thesis continuity and at most one user-chosen rule.
 
 ## Non-negotiable rules
 
@@ -16,17 +16,23 @@ Turn trading data into one focused review card: the largest behavioral leak, the
 5. Keep trade data and derived state local. Show the review card (`card-private.*`) by default; use only `card-public.md` as a share-safe artifact. The product does not publish or upload it.
 6. Treat `sessions/<session_id>/bundle.json` as the canonical completed result. Never hand-edit projections as if they were authoritative.
 7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
+8. For a position table or screenshot, transcribe only the broker-declared facts into the normalized snapshot JSON envelope and keep that temporary file outside the repository, such as under `/tmp`. Do not calculate weights, P&L, cycle IDs, metrics, or ETF classifications, and do not use a cloud OCR service.
+9. An incomplete snapshot may produce a bounded review, but it must not become an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and any claim about an unreconciled current broker view must fail closed.
 
 ## Canonical entry point
 
 ```bash
 cd skills/fomo-kernel
 python3 engine/review.py prepare <CSV...> --language en
+python3 engine/review.py prepare --route snapshot_review \
+  --snapshot-json /tmp/fomo-kernel-positions.json --language en
 ```
 
-The agent must understand and normalize broker data locally into:
+For transaction history, the agent must understand and normalize broker data locally into:
 `Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate / RecordType(Trade)`.
 Add `Market / Currency` for non-US instruments when available. Do not ask the user to normalize the file. Symbol and cash-anchor rules (Taiwan `.TW`/`.TWO` suffixes, ROC dates, `--cash`) live in `references/data-contract.md`.
+
+For a position table or screenshot, transcribe the displayed facts locally into the JSON envelope in `references/data-contract.md`, save that temporary file outside the repository, then pass it through `--snapshot-json`. The agent may map broker labels, normalize dates, and add the complete provider ticker suffix; it may not derive weights, returns, cycle IDs, or card/state artifacts. There is no engine OCR or cloud-upload path.
 
 `prepare` creates a Review Plan; it does not create a conclusion card. Read only the flow selected by `review_plan.flow_path`:
 
@@ -82,6 +88,8 @@ python3 engine/review.py repair-projections
 - Treat confirmed evidence as "the user confirmed this was part of the decision," not as external fact verification. Do not invent `observed_at`; the engine preserves missing observation time separately from review capture time.
 - `prepare` ranks eligible motive, recent-exit, and matured 30/60/90 checkpoint questions using engine-owned amount or P&L impact and returns at most three. Ask every returned question. `skip` semantics differ by kind: skipping an exit-reason capture is durable (that reason is never asked again), while skipping a `due_revisit` verdict is not saved and the same checkpoint legitimately returns next review.
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
+- A snapshot review is an opening portfolio check, not a transaction-history diagnosis. Discuss only engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. Do not claim averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, or historical motives from a snapshot.
+- Add an inferred thesis for every uncovered snapshot-origin cycle and label it as inferred. Invite the user to provide transaction history later; only that later history may unlock the historical behavior dimensions. Do not say that transaction import reconciles a newer broker view: ledger-derived current holdings stay canonical until an explicit snapshot reconciliation exists.
 
 ## Language and sharing
 
@@ -90,7 +98,7 @@ python3 engine/review.py repair-projections
 Each completed session produces:
 
 - `card-private.md` and `card-private.html`: the complete local review card, using the localized review-card name from copy assets.
-- `card-public.md`: a separately rendered share-safe artifact that retains a fixed behavior pattern and engine-owned beta / benchmark-excess percentage points, without amounts, dates, tickers, exact weights, session IDs, or agent-authored free text. It is not uploaded or published.
+- `card-public.md`: a separately rendered share-safe artifact. Transaction-history reviews may retain fixed behavior-pattern copy and engine-owned beta / benchmark-excess percentage points; snapshot reviews retain only fixed structural-baseline copy. Neither form includes amounts, dates, tickers, exact weights, session IDs, or agent-authored free text. It is not uploaded or published.
 
 ## Test drive
 

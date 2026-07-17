@@ -124,6 +124,75 @@ def _trade_csv(tmp, future=False):
     return path
 
 
+def _snapshot_json(tmp, payload=None, name="positions.json"):
+    payload = payload or {
+        "as_of": "2026-07-16",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market_value": 1240,
+             "market": "US", "currency": "USD"},
+            {"ticker": "QQQ", "shares": 10, "avg_cost": 500, "market_value": 5100,
+             "market": "US", "currency": "USD"},
+            {"ticker": "2330.TW", "shares": 1000, "avg_cost": 1000,
+             "market_value": 1040000, "market": "TW", "currency": "TWD"},
+        ],
+        "fx": {"USD": 1, "TWD": 0.033},
+    }
+    path = pathlib.Path(tmp) / name
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _snapshot_prepare(tmp, root, payload=None, language="en", name="positions.json"):
+    path = _snapshot_json(tmp, payload=payload, name=name)
+    run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", path,
+               "--root", root, "--language", language)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)["review_plan"], path
+
+
+def _snapshot_answers(plan, commitment=None):
+    updates = []
+    for row in plan["missing_thesis_positions"]:
+        updates.append({
+            "ticker": row["ticker"], "cycle_id": row["cycle_id"],
+            "why": "The opening snapshot suggests a portfolio role that remains inferred",
+            "horizon": None,
+            "exit_trigger": "A later review contradicts the inferred portfolio role",
+            "target_size": "bounded", "driver": "opening snapshot",
+            "maturity": "inferred", "source_type": "other",
+            "source_name": "opening snapshot", "source_confidence": "candidate",
+        })
+    out = {"session_id": plan["session_id"], "answers": [], "thesis_updates": updates,
+           "observations": ["The snapshot establishes structure without historical behavior claims"]}
+    if commitment is not None:
+        out["commitment"] = {"choice": commitment}
+    return out
+
+
+def _snapshot_narrative(plan, language="en"):
+    honesty = {}
+    for key in plan["card_plan"]["required_honesty_keys"]:
+        honesty[key] = {
+            "snapshot_scope": "This opening check cannot score transaction history yet.",
+            "currency_mix": "Currency facts remain separate unless reliable conversion is available.",
+            "unclassified_drivers": "Unclassified positions can make concentration look safer than it is.",
+            "etf_metadata": "Missing fund metadata remains unknown instead of being filled with zero.",
+        }.get(key, "The available snapshot leaves this limitation explicit.")
+    if language == "en":
+        return {"headline": "An opening structure baseline",
+                "mirror": "The supplied positions show structure without proving past behavior.",
+                "honesty": honesty}
+    zh = {
+        "snapshot_scope": "這次只建立持倉結構，交易歷史仍維持未判定。",
+        "currency_mix": "缺少可靠換算時，各幣別事實保持分開。",
+        "unclassified_drivers": "尚未分類的持倉可能讓集中風險看起來偏低。",
+        "etf_metadata": "基金資料缺值維持未知，不用零補齊。",
+    }
+    return {"headline": "先建立組合結構基線",
+            "mirror": "現有持倉能看結構，不能證明過去行為。",
+            "honesty": {key: zh.get(key, "這項快照限制保持明示。") for key in honesty}}
+
+
 def _prepare_with_trades(tmp, root, language="zh-TW", nonce=""):
     card, state = _artifacts(tmp)
     csv_path = _trade_csv(tmp)
@@ -204,6 +273,31 @@ def _minimal_bundle(session_id, marker="same"):
     }
 
 
+def _runtime_snapshot_bundle(session_id, ticker="SPY"):
+    bundle = _minimal_bundle(session_id)
+    bundle.update({
+        "route": "snapshot_review",
+        "review_plan": {"persist": True, "input": {"kind": "positions_snapshot"}},
+        "engine_state": {
+            "date_end": "2026-07-17", "metrics": {}, "problem_events": [],
+            "snapshot_anchor": {
+                "type": "snapshot", "as_of": "2026-07-17",
+                "source": "user_declared", "is_complete": True,
+                "positions": [{
+                    "ticker": ticker, "shares": 1, "avg_cost": 100,
+                    "market": "US", "currency": "USD",
+                }],
+            },
+        },
+    })
+    return bundle
+
+
+def _direct_finalize(root, bundle):
+    with session_engine.finalize_transaction(root, bundle["session_id"]) as transaction:
+        return transaction.commit_bundle(bundle, "private\n", "public\n", persist=True)
+
+
 def _write_pre_durability_canonical(root, bundle, private_md="private", public_md="public",
                                     private_html=None, manifest=True):
     """Emulate the origin/main writer: complete visible files, but no fsync."""
@@ -275,6 +369,711 @@ def test_instrument_map_and_metadata_gaps_are_explicit():
         assert analysis["allocation_weight"] == 1.0
         assert analysis["metadata_gaps"] == [{"ticker": "CUSTOM", "fields": ["tracking_error"]}]
     instruments.reset_map()
+
+
+def test_snapshot_prepare_builds_narrow_plan_without_writing_ledger():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, snapshot_path = _snapshot_prepare(tmp, root)
+        state, card = plan["engine_state"], plan["engine_card"]
+
+        assert plan["route"] == "snapshot_review"
+        assert plan["flow_path"] == "flows/snapshot-review.md"
+        assert plan["input"]["kind"] == "positions_snapshot"
+        assert plan["input"]["ledger_ingest"] == {
+            "mode": "finalize_projection", "kind": "positions_snapshot"}
+        assert plan["question_queue"] == [], "a snapshot must not invent a historical motive"
+        assert {row["ticker"] for row in plan["missing_thesis_positions"]} == {
+            "SPY", "QQQ", "2330.TW"}
+        assert set(state["holdings"]["positions"]) == {"SPY", "QQQ", "2330.TW"}
+        assert all(row["cycle_id"].endswith("#2026-07-16#1")
+                   for row in state["holdings"]["positions"].values())
+        assert state["problem_opportunities"] is None and state["problem_events"] == []
+        for key in ("avgdown_count", "avgdown_breach", "payoff", "exit_severity",
+                    "hold_severity", "beta", "alpha_ann", "alpha_t", "alpha_credible"):
+            assert state["metrics"][key] is None, key
+        assert card["overview"] == {} and card["best_trade"] is None
+        assert card["worst_trade"] is None and card["ticker_diagnosis"] == []
+        assert card["thesis_questions"] == [] and card["alpha_beta_breakdown"] == {}
+        assert {row["dim"] for row in card["dims_raw"]} <= {"部位 sizing", "分散"}
+        assert not (root / "ledger.jsonl").exists(), "prepare cannot leave an orphan anchor"
+
+        resumed = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                       snapshot_path, "--root", root, "--language", "en")
+        assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+        payload = json.loads(resumed.stdout)
+        assert payload["status"] == "resumed" and payload["session_id"] == plan["session_id"]
+        assert not (root / "ledger.jsonl").exists()
+
+
+def test_snapshot_validation_is_strict_and_atomic():
+    valid = {
+        "as_of": "2026-07-16",
+        "positions": [{"ticker": "NVDA", "shares": 10, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+    }
+    mutations = {
+        "empty": {**valid, "positions": []},
+        "future": {**valid, "as_of": "2999-01-01"},
+        "negative": {**valid, "positions": [{**valid["positions"][0], "shares": -1}]},
+        "nan": {**valid, "positions": [{**valid["positions"][0], "shares": float("nan")}]},
+        "missing_market": {**valid, "positions": [
+            {key: value for key, value in valid["positions"][0].items() if key != "market"}]},
+        "unknown_field": {**valid, "positions": [{**valid["positions"][0], "weight": 1}]},
+        "bad_fx": {**valid, "fx": {"USD": 2}},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, payload in mutations.items():
+            root = pathlib.Path(tmp) / f"coach-{name}"
+            path = _snapshot_json(tmp, payload=payload, name=f"{name}.json")
+            run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", path,
+                       "--root", root)
+            assert run.returncode == 2, (name, run.stdout, run.stderr)
+            assert json.loads(run.stdout)["status"] == "error", name
+            assert not (root / "ledger.jsonl").exists(), name
+            assert not (root / ".pending").exists(), name
+
+        valid_path = _snapshot_json(tmp, payload=valid, name="valid.json")
+        cash_root = pathlib.Path(tmp) / "coach-cash-arg"
+        cash_run = _run(
+            "prepare", "--route", "snapshot_review", "--snapshot-json", valid_path,
+            "--cash", '{"currency":"USD","amount":100}', "--root", cash_root,
+        )
+        assert cash_run.returncode == 2, cash_run.stdout + cash_run.stderr
+        assert "include cash in the snapshot envelope" in json.loads(cash_run.stdout)["error"]
+        assert not (cash_root / ".pending").exists()
+
+
+def test_snapshot_duplicate_rows_merge_in_code_and_conflicts_fail_closed():
+    payload = {
+        "as_of": "2026-07-16",
+        "positions": [
+            {"ticker": "NVDA", "shares": 2, "avg_cost": 100, "market_value": 240,
+             "market": "US", "currency": "USD"},
+            {"ticker": "nvda", "shares": 3, "avg_cost": 200, "market_value": 660,
+             "market": "US", "currency": "USD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload)
+        row = plan["engine_state"]["holdings"]["positions"]["NVDA"]
+        assert row["shares"] == 5 and row["avg_cost"] == 160
+        assert row["market_value"] == 900
+        assert json.loads(plan["input"]["engine_meta"])["merged_rows"] == 1
+
+        conflict = {**payload, "positions": [payload["positions"][0],
+                    {**payload["positions"][1], "market": "TW", "currency": "TWD"}]}
+        bad_root = pathlib.Path(tmp) / "bad-coach"
+        path = _snapshot_json(tmp, payload=conflict, name="conflict.json")
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", path,
+                   "--root", bad_root)
+        assert run.returncode == 2 and "conflicting market or currency" in run.stdout
+        assert not bad_root.exists()
+
+
+def test_snapshot_currency_gates_weights_but_preserves_etf_structure():
+    payload = {
+        "as_of": "2026-07-16",
+        "positions": [
+            {"ticker": "SPY", "shares": 1, "avg_cost": 600,
+             "market": "US", "currency": "USD"},
+            {"ticker": "QQQ", "shares": 1, "avg_cost": 500,
+             "market": "US", "currency": "USD"},
+            {"ticker": "2330.TW", "shares": 100, "avg_cost": 1000,
+             "market": "TW", "currency": "TWD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload)
+        state, card = plan["engine_state"], plan["engine_card"]
+        assert card["snapshot_summary"]["valuation_basis"] == "cost"
+        assert card["snapshot_summary"]["weights_available"] is False
+        assert card["snapshot_summary"]["fx_gaps"] == ["TWD"]
+        assert card["top_holes"] == [] and card["dims_raw"] == []
+        assert state["metrics"]["max_pos_pct"] is None
+        assert state["holdings"]["positions"]["2330.TW"]["currency"] == "TWD"
+        structure = card["portfolio_structure"]
+        assert [(row["ticker"], row["weight"]) for row in structure["allocation_etfs"]] == \
+            [("SPY", None)]
+        assert [(row["ticker"], row["weight"]) for row in structure["concentrated_etfs"]] == \
+            [("QQQ", None)]
+        assert {row["key"] for row in card["honesty_ledger"]} >= {
+            "snapshot_scope", "currency_mix", "etf_metadata"}
+
+        complete = {**payload, "fx": {"USD": 1, "TWD": 0.033}}
+        plan2, _path2 = _snapshot_prepare(tmp, pathlib.Path(tmp) / "coach-fx",
+                                         payload=complete, name="complete-fx.json")
+        card2 = plan2["engine_card"]
+        assert card2["snapshot_summary"]["weights_available"] is True
+        assert card2["portfolio_structure"]["allocation_etfs"][0]["ticker"] == "SPY"
+        assert card2["portfolio_structure"]["concentrated_etfs"][0]["ticker"] == "QQQ"
+
+
+def test_incomplete_snapshot_commits_review_without_accounting_anchor():
+    payload = {
+        "as_of": "2026-07-16",
+        "is_complete": False,
+        "positions": [{"ticker": "PLTR", "shares": 5, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        assert plan["input"]["ledger_ingest"] == {
+            "mode": "canonical_only", "kind": "positions_snapshot",
+            "reason": "incomplete_snapshot",
+        }
+        assert plan["engine_card"]["snapshot_summary"]["weights_available"] is False
+        answers = pathlib.Path(tmp) / "answers-incomplete.json"
+        narrative = pathlib.Path(tmp) / "narrative-incomplete.json"
+        answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        assert result["projection_error"] is None
+        assert result["projection"]["rows"][0]["status"] == "skipped_incomplete"
+        assert not (root / "ledger.jsonl").exists()
+        bundle = json.loads(
+            (root / "sessions" / plan["session_id"] / "bundle.json").read_text()
+        )
+        inferred = bundle["thesis_updates"][0]
+        assert inferred["cycle_provenance"] == {
+            "kind": "snapshot_inference",
+            "snapshot_as_of": "2026-07-16",
+            "snapshot_complete": False,
+        }
+        repaired = _run("repair-projections", "--root", root)
+        assert repaired.returncode == 0 and not (root / "ledger.jsonl").exists()
+
+
+def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
+    payload = {
+        "as_of": "2026-07-16",
+        "is_complete": False,
+        "positions": [{"ticker": "PLTR", "shares": 10, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        opening, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        opening_answers = pathlib.Path(tmp) / "opening-answers.json"
+        opening_narrative = pathlib.Path(tmp) / "opening-narrative.json"
+        opening_answers.write_text(
+            json.dumps(_snapshot_answers(opening, commitment="skip")), encoding="utf-8"
+        )
+        opening_narrative.write_text(
+            json.dumps(_snapshot_narrative(opening), ensure_ascii=False), encoding="utf-8"
+        )
+        committed = _run(
+            "finalize", "--root", root, "--session-id", opening["session_id"],
+            "--answers", opening_answers, "--narrative", opening_narrative,
+        )
+        assert committed.returncode == 0, committed.stdout + committed.stderr
+        opening_bundle = json.loads(
+            (root / "sessions" / opening["session_id"] / "bundle.json").read_text()
+        )
+        prior = opening_bundle["thesis_updates"][0]
+
+        card, state = _artifacts(tmp)
+        card_data = json.loads(card.read_text())
+        state_data = json.loads(state.read_text())
+        card_data["thesis_questions"] = []
+        state_data.update({"date_start": "2026-07-01", "date_end": "2026-07-18",
+                           "n_held": 1})
+        state_data["holdings"] = {
+            "as_of": "2026-07-18", "derived_from": "trades_csv", "is_complete": False,
+            "positions": {"PLTR": {
+                "shares": 10, "cost": 1000, "avg_cost": 100,
+                "market": "US", "currency": "USD", "cycle_start": "2026-07-01",
+                "cycle_id": "PLTR#2026-07-01#1", "add_count": 0,
+                "decision_cursor": None,
+            }},
+        }
+        card.write_text(json.dumps(card_data, ensure_ascii=False), encoding="utf-8")
+        state.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+        history = pathlib.Path(tmp) / "full-history.csv"
+        history.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,10,100,2026-07-01,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+
+        prepared = _run(
+            "prepare", history, "--root", root, "--language", "en",
+            "--card-json", card, "--state-json", state,
+            "--session-nonce", "reveal-cycle-start",
+        )
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+        plan = json.loads(prepared.stdout)["review_plan"]
+        target_cycle = "PLTR#2026-07-01#1"
+        assert plan["missing_thesis_positions"] == []
+        active = plan["state_snapshot"]["active_theses"]
+        assert len(active) == 1 and active[0]["cycle_id"] == target_cycle
+        assert active[0]["thesis_id"] == prior["thesis_id"]
+        relinks = plan["state_snapshot"]["thesis_cycle_relinks"]
+        assert len(relinks) == 1
+        relink = relinks[0]
+        assert relink["event"] == "thesis_cycle_relink"
+        assert relink["thesis_id"] == prior["thesis_id"]
+        assert relink["revises"] == prior["event_id"]
+        assert relink["cycle_provenance"] == {
+            "kind": "incomplete_snapshot_cycle_relink",
+            "from_cycle_id": prior["cycle_id"],
+            "snapshot_as_of": "2026-07-16",
+            "revealed_cycle_start": "2026-07-01",
+            "basis": "unique_open_ticker",
+        }
+
+        later_answers = {
+            "session_id": plan["session_id"],
+            "answers": [
+                {"question_id": question["id"], "choice": "skip"}
+                for question in plan["question_queue"]
+            ],
+            "thesis_updates": [], "observations": [],
+            "commitment": {"choice": "skip"},
+        }
+        answers_path = pathlib.Path(tmp) / "later-answers.json"
+        narrative_path = pathlib.Path(tmp) / "later-narrative.json"
+        answers_path.write_text(json.dumps(later_answers), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
+        finalized = _run(
+            "finalize", "--root", root, "--session-id", plan["session_id"],
+            "--answers", answers_path, "--narrative", narrative_path,
+        )
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        later_bundle = json.loads(
+            (root / "sessions" / plan["session_id"] / "bundle.json").read_text()
+        )
+        assert later_bundle["thesis_updates"] == [relink]
+
+        replay = _run(
+            "prepare", history, "--root", root, "--language", "en",
+            "--card-json", card, "--state-json", state,
+            "--session-nonce", "after-cycle-relink",
+        )
+        assert replay.returncode == 0, replay.stdout + replay.stderr
+        replay_plan = json.loads(replay.stdout)["review_plan"]
+        assert "thesis_cycle_relinks" not in replay_plan["state_snapshot"]
+        replay_active = replay_plan["state_snapshot"]["active_theses"]
+        assert len(replay_active) == 1
+        assert replay_active[0]["cycle_id"] == target_cycle
+        assert replay_active[0]["thesis_id"] == prior["thesis_id"]
+
+
+def test_incomplete_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguous_ticker():
+    prior = {
+        "ticker": "PLTR", "cycle_id": "PLTR#2026-07-16#1",
+        "thesis_id": "thesis-opening", "event_id": "event-opening",
+        "last_event_id": "event-opening", "why": "inferred role",
+        "exit_trigger": "role breaks", "maturity": "inferred",
+        "source_confidence": "candidate", "origin": "snapshot",
+        "position_status": "open",
+        "cycle_provenance": {
+            "kind": "snapshot_inference", "snapshot_as_of": "2026-07-16",
+            "snapshot_complete": False,
+        },
+    }
+    reopened = {"PLTR": {
+        "cycle_id": "PLTR#2026-07-17#2", "cycle_start": "2026-07-17", "shares": 1,
+    }}
+    assert thesis_engine.build_incomplete_snapshot_cycle_relinks(
+        [prior], reopened, "session-reopened", "2026-07-18"
+    ) == [], "a post-snapshot cycle may be a close/reopen and must receive a new thesis"
+
+    earlier = {"PLTR": {
+        "cycle_id": "PLTR#2026-07-01#1", "cycle_start": "2026-07-01", "shares": 1,
+    }}
+    ambiguous = {**prior, "cycle_id": "PLTR#2026-07-15#9",
+                 "event_id": "event-other", "last_event_id": "event-other"}
+    assert thesis_engine.build_incomplete_snapshot_cycle_relinks(
+        [prior, ambiguous], earlier, "session-ambiguous", "2026-07-18"
+    ) == [], "ticker-only matching must not choose between two open snapshot candidates"
+
+
+def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
+    payload = {
+        "as_of": "2026-07-16",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "market_value": 1200,
+             "market": "US", "currency": "USD"},
+            {"ticker": "PLTR", "shares": 20, "market_value": 3000,
+             "market": "US", "currency": "USD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        answers = pathlib.Path(tmp) / "snapshot-answers.json"
+        narrative = pathlib.Path(tmp) / "snapshot-narrative.json"
+        answer_payload = _snapshot_answers(plan, commitment="skip")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False),
+                             encoding="utf-8")
+        for field, value, message in (
+            ("maturity", "testable", "must remain inferred"),
+            ("source_confidence", "confirmed", "candidate provenance"),
+        ):
+            rejected = json.loads(json.dumps(answer_payload))
+            rejected["thesis_updates"][0][field] = value
+            rejected_path = pathlib.Path(tmp) / f"snapshot-answers-bad-{field}.json"
+            rejected_path.write_text(json.dumps(rejected, ensure_ascii=False), encoding="utf-8")
+            rejected_preview = _run(
+                "preview", "--root", root, "--session-id", plan["session_id"],
+                "--answers", rejected_path, "--narrative", narrative,
+            )
+            assert rejected_preview.returncode == 2
+            assert message in rejected_preview.stdout
+
+        answers.write_text(json.dumps(answer_payload, ensure_ascii=False),
+                           encoding="utf-8")
+
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers, "--narrative", narrative)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        preview_payload = json.loads(preview.stdout)
+        private, public = preview_payload["private_card"], preview_payload["public_card"]
+        assert "opening portfolio check" in private.lower()
+        assert "Import transaction history later" in private
+        assert "Total P&L" not in private and "Best:" not in private and "Worst:" not in private
+        assert "opening portfolio check" in public.lower()
+        assert "behavioral pressure" not in public and "highlighted behavior" not in public
+        for secret in ("SPY", "PLTR", "2026-07-16", plan["session_id"],
+                       "The supplied positions show structure"):
+            assert secret not in public, secret
+        assert not (root / "ledger.jsonl").exists(), "preview cannot project accounting facts"
+
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        assert result["status"] == "committed" and result["projection_error"] is None
+        bundle = json.loads((root / "sessions" / plan["session_id"] / "bundle.json").read_text())
+        assert all(row["origin"] == "snapshot" for row in bundle["thesis_updates"])
+        rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert [row["type"] for row in rows] == ["snapshot"]
+        assert rows[0]["snapshot_id"].startswith("snapshot-")
+
+        repeated = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                        "--answers", answers, "--narrative", narrative)
+        assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+        rows2 = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert rows2 == rows, "an identical finalize retry must not append a second anchor"
+
+        same_prepare = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                            _path, "--root", root, "--language", "en")
+        assert same_prepare.returncode == 0
+        assert json.loads(same_prepare.stdout)["status"] == "already_committed"
+        changed_payload = {**payload, "positions": [
+            {**payload["positions"][0], "shares": 3}, payload["positions"][1]]}
+        changed = _snapshot_json(tmp, payload=changed_payload, name="changed-snapshot.json")
+        rejected_second = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                               changed, "--root", root, "--language", "en")
+        assert rejected_second.returncode == 2
+        assert "second or subsequent snapshots" in rejected_second.stdout
+        assert [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()] == rows
+
+        (root / "ledger.jsonl").unlink()
+        repaired = _run("repair-projections", "--root", root)
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        repaired_rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert len(repaired_rows) == 1 and repaired_rows[0]["snapshot_id"] == rows[0]["snapshot_id"]
+        repaired_again = _run("repair-projections", "--root", root)
+        assert repaired_again.returncode == 0
+        assert len((root / "ledger.jsonl").read_text().splitlines()) == 1
+
+
+def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
+    payload = {
+        "as_of": "2026-07-01",
+        "positions": [
+            {"ticker": "PLTR", "shares": 10, "avg_cost": 100,
+             "market": "US", "currency": "USD"},
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600,
+             "market": "US", "currency": "USD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload)
+        answers = pathlib.Path(tmp) / "answers.json"
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+        anchor_before = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()][0]
+        initial_bundle = json.loads(
+            (root / "sessions" / plan["session_id"] / "bundle.json").read_text()
+        )
+        initial_theses = {row["ticker"]: row for row in initial_bundle["thesis_updates"]}
+
+        # A weekly/incremental file contains only the post-anchor add.  Raw CSV
+        # artifacts therefore see two PLTR shares and omit SPY; the ledger must
+        # retain the complete anchor, add the two shares, and gate every raw
+        # current-view claim without discarding history diagnostics.
+        card, state = _artifacts(tmp)
+        card_data = json.loads(card.read_text())
+        state_data = json.loads(state.read_text())
+        state_data.update({"date_start": "2026-07-02", "date_end": "2026-07-02", "n_held": 1})
+        state_data["holdings"] = {
+            "as_of": "2026-07-02", "derived_from": "trades_csv", "is_complete": False,
+            "positions": {"PLTR": {
+                "shares": 2, "cost": 220, "avg_cost": 110,
+                "market": "US", "currency": "USD",
+                "cycle_start": "2026-07-02", "cycle_id": "PLTR#2026-07-02#1",
+                "add_count": 0, "decision_cursor": None,
+            }},
+        }
+        state_data["metrics"]["n_holdings"] = 1
+        sizing_raw = {"dim": "部位 sizing", "tier": 1, "triggered": True,
+                      "severity": 0.9, "max_pct": 1.0, "max_ticker": "PLTR"}
+        sizing_hole = {"dim": "部位 sizing", "severity": 0.9, "tier_weight": 1.0,
+                       "number_line": "raw current sizing", "lens_rule": "size rule",
+                       "lens_quote": "size quote", "raw": sizing_raw}
+        card_data["dims_raw"].insert(0, sizing_raw)
+        card_data["top_holes"].insert(0, sizing_hole)
+        card_data["candidate_rules"].append({"dim": "部位 sizing", "rule": "size rule"})
+        card_data["what_if"] = {"ticker": "PLTR", "loss": -100}
+        card_data["ticker_diagnosis"] = [{"ticker": "PLTR", "tag": "raw-current"}]
+        card.write_text(json.dumps(card_data, ensure_ascii=False), encoding="utf-8")
+        state.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+        csv_path = pathlib.Path(tmp) / "incremental.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,2,110,2026-07-02,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+        later = _run("prepare", csv_path, "--root", root, "--card-json", card,
+                     "--state-json", state, "--session-nonce", "history-upgrade")
+        assert later.returncode == 0, later.stdout + later.stderr
+        later_plan = json.loads(later.stdout)["review_plan"]
+        assert later_plan["route"] == "weekly_review"
+        later_state, later_card = later_plan["engine_state"], later_plan["engine_card"]
+        positions = later_state["holdings"]["positions"]
+        assert set(positions) == {"PLTR", "SPY"}
+        assert positions["PLTR"]["shares"] == 12
+        assert positions["PLTR"]["cycle_id"] == \
+            plan["engine_state"]["holdings"]["positions"]["PLTR"]["cycle_id"]
+        assert positions["PLTR"]["decision_cursor"].endswith("#add#1")
+        assert positions["PLTR"]["observed_cycle_id"] == "PLTR#2026-07-02#1"
+        assert later_plan["missing_thesis_positions"] == []
+        active = {row["ticker"]: row for row in later_plan["state_snapshot"]["active_theses"]}
+        assert {ticker: row["thesis_id"] for ticker, row in active.items()} == \
+            {ticker: row["thesis_id"] for ticker, row in initial_theses.items()}
+        add_questions = [row for row in later_plan["question_queue"]
+                         if row.get("kind") == "add_thesis"]
+        assert [row["ticker"] for row in add_questions] == ["PLTR"]
+        assert add_questions[0]["prior_thesis_id"] == initial_theses["PLTR"]["thesis_id"]
+
+        assert later_state["metrics"]["avgdown_count"] == 3
+        assert later_state["metrics"]["max_pos_pct"] is None
+        assert all(review_engine.card_renderer.dimension_id(row["dim"]) != "position_sizing"
+                   for row in later_card["top_holes"])
+        assert later_card["what_if"] is None and later_card["ticker_diagnosis"] == []
+        assert later_card["overview"]["unrealized"] is None
+        assert "accounting_reconciliation" in \
+            later_plan["card_plan"]["required_honesty_keys"]
+        reconciliation = later_plan["input"]["ledger_ingest"]["holdings_reconciliation"]
+        assert reconciliation["status"] == "current_view_gated"
+
+        events = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert events[0] == anchor_before and sum(row["type"] == "snapshot" for row in events) == 1
+        assert sum(row["type"] == "trade" for row in events[1:]) == 1
+        resumed = _run("prepare", csv_path, "--root", root, "--card-json", card,
+                       "--state-json", state, "--session-nonce", "history-upgrade")
+        assert resumed.returncode == 0 and json.loads(resumed.stdout)["status"] == "resumed"
+        assert len((root / "ledger.jsonl").read_text().splitlines()) == len(events)
+
+
+def test_snapshot_full_history_keeps_stable_thesis_and_current_surfaces():
+    payload = {
+        "as_of": "2026-07-01",
+        "positions": [
+            {"ticker": "PLTR", "shares": 10, "avg_cost": 100,
+             "market": "US", "currency": "USD"},
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600,
+             "market": "US", "currency": "USD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload)
+        answers = pathlib.Path(tmp) / "answers.json"
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+        initial = json.loads((root / "sessions" / plan["session_id"] / "bundle.json").read_text())
+        initial_ids = {row["ticker"]: row["thesis_id"] for row in initial["thesis_updates"]}
+
+        card, state = _artifacts(tmp)
+        card_data, state_data = json.loads(card.read_text()), json.loads(state.read_text())
+        state_data.update({"date_start": "2026-06-01", "date_end": "2026-07-01", "n_held": 2})
+        state_data["holdings"] = {
+            "as_of": "2026-07-01", "derived_from": "trades_csv", "is_complete": False,
+            "positions": {
+                "PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
+                         "market": "US", "currency": "USD", "cycle_start": "2026-06-01",
+                         "cycle_id": "PLTR#2026-06-01#1", "add_count": 0,
+                         "decision_cursor": None},
+                "SPY": {"shares": 2, "cost": 1200, "avg_cost": 600,
+                        "market": "US", "currency": "USD", "cycle_start": "2026-06-01",
+                        "cycle_id": "SPY#2026-06-01#1", "add_count": 0,
+                        "decision_cursor": None},
+            },
+        }
+        state_data["metrics"]["n_holdings"] = 2
+        card.write_text(json.dumps(card_data, ensure_ascii=False), encoding="utf-8")
+        state.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+        history = pathlib.Path(tmp) / "full-history.csv"
+        history.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,10,100,2026-06-01,Trade,US,USD\n"
+            "SPY,BUY,2,600,2026-06-01,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+        run = _run("prepare", history, "--root", root, "--card-json", card,
+                   "--state-json", state, "--session-nonce", "full-history")
+        assert run.returncode == 0, run.stdout + run.stderr
+        upgraded = json.loads(run.stdout)["review_plan"]
+        positions = upgraded["engine_state"]["holdings"]["positions"]
+        assert positions["PLTR"]["observed_cycle_id"] == "PLTR#2026-06-01#1"
+        assert positions["PLTR"]["cycle_id"].endswith("#2026-07-01#1")
+        assert upgraded["missing_thesis_positions"] == []
+        active = {row["ticker"]: row["thesis_id"]
+                  for row in upgraded["state_snapshot"]["active_theses"]}
+        assert active == initial_ids
+        assert not [row for row in upgraded["question_queue"]
+                    if row.get("kind") == "add_thesis"]
+        reconciliation = upgraded["input"]["ledger_ingest"]["holdings_reconciliation"]
+        assert reconciliation["status"] == "matched"
+        assert "accounting_reconciliation" not in \
+            upgraded["card_plan"]["required_honesty_keys"]
+        assert upgraded["engine_card"]["portfolio_structure"] == card_data["portfolio_structure"]
+
+
+def test_snapshot_full_prices_do_not_hide_a_cost_basis_mismatch():
+    with tempfile.TemporaryDirectory() as tmp:
+        card_path, state_path = _artifacts(tmp)
+        card = json.loads(card_path.read_text())
+        state = json.loads(state_path.read_text())
+        state["price_snapshot"] = {"prices": {"PLTR": 200}}
+        state["holdings"]["positions"]["PLTR"].update({
+            "market": "US", "currency": "USD",
+        })
+        derived = {"holdings": {"PLTR": {
+            "shares": 10, "cost_total": 1500, "avg_cost": 150,
+            "market": "US", "currency": "USD", "since": "2026-07-01",
+            "cycle_id": "PLTR#2026-07-01#1", "origin": "snapshot",
+            "add_count": 0, "decision_cursor": None,
+        }}}
+
+        gated_card, _gated_state, detail = review_engine._overlay_ledger_holdings(
+            card, state, derived
+        )
+
+        assert detail["full_price_coverage"] is True
+        assert detail["status"] == "current_view_gated"
+        assert detail["mismatches"] == [{"ticker": "PLTR", "kind": "valuation"}]
+        assert gated_card["overview"]["total_pnl"] is None
+        assert gated_card["overview"]["unrealized"] is None
+        assert {row["key"] for row in gated_card["honesty_ledger"]} >= {
+            "accounting_reconciliation"
+        }
+
+
+def test_snapshot_raw_market_defaults_cannot_mask_a_non_us_mismatch():
+    with tempfile.TemporaryDirectory() as tmp:
+        card_path, state_path = _artifacts(tmp)
+        card = json.loads(card_path.read_text())
+        state = json.loads(state_path.read_text())
+        state["price_snapshot"] = {"prices": {"PLTR": 200}}
+        raw = state["holdings"]["positions"]["PLTR"]
+        raw.pop("market", None)
+        raw.pop("currency", None)
+        derived = {"holdings": {"PLTR": {
+            "shares": 10, "cost_total": 1000, "avg_cost": 100,
+            "market": "TW", "currency": "TWD", "since": "2026-07-01",
+            "cycle_id": "PLTR#2026-07-01#1", "origin": "snapshot",
+            "add_count": 0, "decision_cursor": None,
+        }}}
+
+        _card, _state, detail = review_engine._overlay_ledger_holdings(card, state, derived)
+
+        assert detail["status"] == "current_view_gated"
+        assert detail["mismatches"] == [
+            {"ticker": "PLTR", "kind": "market"},
+            {"ticker": "PLTR", "kind": "currency"},
+        ]
+
+
+def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
+    payload = {
+        "as_of": "2026-07-01",
+        "positions": [{"ticker": "PLTR", "shares": 10, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload)
+        answers = pathlib.Path(tmp) / "answers.json"
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+
+        card, state = _artifacts(tmp)
+        state_data = json.loads(state.read_text())
+        state_data.update({"date_start": "2026-07-02", "date_end": "2026-07-03", "n_held": 1})
+        state_data["holdings"] = {
+            "as_of": "2026-07-03", "derived_from": "trades_csv", "is_complete": False,
+            "positions": {"PLTR": {"shares": 5, "cost": 600, "avg_cost": 120,
+                                      "market": "US", "currency": "USD",
+                                      "cycle_start": "2026-07-03",
+                                      "cycle_id": "PLTR#2026-07-03#1",
+                                      "add_count": 0, "decision_cursor": None}},
+        }
+        state_data["metrics"]["n_holdings"] = 1
+        state.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+        history = pathlib.Path(tmp) / "reopen.csv"
+        history.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,SELL,10,110,2026-07-02,Trade,US,USD\n"
+            "PLTR,BUY,5,120,2026-07-03,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+        run = _run("prepare", history, "--root", root, "--card-json", card,
+                   "--state-json", state, "--session-nonce", "reopen")
+        assert run.returncode == 0, run.stdout + run.stderr
+        upgraded = json.loads(run.stdout)["review_plan"]
+        position = upgraded["engine_state"]["holdings"]["positions"]["PLTR"]
+        assert position["cycle_id"] == "PLTR#2026-07-03#2"
+        assert position["origin"] == "trades" and position["left_truncated"] is False
+        assert upgraded["missing_thesis_positions"] == [
+            {"ticker": "PLTR", "cycle_id": "PLTR#2026-07-03#2"}
+        ]
+
+
+def test_snapshot_precomputed_artifacts_remain_a_developer_compatibility_path():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        run = _run("prepare", "--route", "snapshot_review", "--root", root,
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["route"] == "snapshot_review" and plan["question_queue"] == []
+        assert plan["input"]["ledger_ingest"] is None
+        assert not (root / "ledger.jsonl").exists()
 
 
 def test_prepare_is_resumable_without_rerunning_artifacts():
@@ -825,6 +1624,126 @@ def test_cross_session_projections_serialize_shared_legacy_books():
             os.path.join(root, "problems.jsonl"))
         assert not skipped and len(events) == len(marks) == 1, \
             "shared event/mark dedupe must survive different-session finalizers"
+
+
+def test_trade_ingest_and_initial_snapshot_share_one_root_boundary_lock():
+    """A trade append that wins the lock makes the initial snapshot fail closed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card_path, state_path = _artifacts(tmp)
+        card = json.loads(card_path.read_text())
+        state = json.loads(state_path.read_text())
+        csv_path = pathlib.Path(tmp) / "race-trade.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,1,100,2026-07-17,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+        snapshot = _runtime_snapshot_bundle("2026-07-17__snapshot-after-trade")
+        ledger_path = root / "ledger.jsonl"
+
+        real_append = review_engine.ledger.append_events
+        real_boundary = session_engine._assert_initial_snapshot_boundary
+        append_entered = threading.Event()
+        boundary_entered = threading.Event()
+        release_append = threading.Event()
+
+        def gated_append(path, events):
+            if os.path.abspath(path) == os.path.abspath(ledger_path):
+                append_entered.set()
+                if not release_append.wait(5):
+                    raise RuntimeError("timed out waiting to release trade append")
+            return real_append(path, events)
+
+        def observed_boundary(*args, **kwargs):
+            boundary_entered.set()
+            return real_boundary(*args, **kwargs)
+
+        review_engine.ledger.append_events = gated_append
+        session_engine._assert_initial_snapshot_boundary = observed_boundary
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        try:
+            ingest = pool.submit(
+                review_engine._ingest_trades, str(root), [str(csv_path)], card, state
+            )
+            assert append_entered.wait(5), "trade ingest never reached its locked append"
+            finalize = pool.submit(_direct_finalize, str(root), snapshot)
+            assert not boundary_entered.wait(0.5), \
+                "snapshot boundary ran while the trade ledger transaction held the root lock"
+            release_append.set()
+            ingest_result, _card, _state = ingest.result(timeout=5)
+            assert ingest_result["appended"] == 1
+            try:
+                finalize.result(timeout=5)
+                raise AssertionError("snapshot crossed trade history instead of failing closed")
+            except session_engine.SessionError as exc:
+                assert "existing coach history" in str(exc)
+        finally:
+            release_append.set()
+            pool.shutdown(wait=True)
+            review_engine.ledger.append_events = real_append
+            session_engine._assert_initial_snapshot_boundary = real_boundary
+
+        rows = session_engine._read_jsonl(str(ledger_path))
+        assert [row["type"] for row in rows] == ["trade"]
+        assert not os.path.isdir(
+            session_engine.session_dir(str(root), snapshot["session_id"])
+        )
+
+
+def test_persistent_review_commit_cannot_appear_inside_snapshot_check_and_commit():
+    """A non-snapshot canonical commit that wins the lock blocks onboarding."""
+    with tempfile.TemporaryDirectory() as root:
+        weekly = _minimal_bundle("2026-07-17__weekly-wins")
+        weekly.update({
+            "route": "weekly_review",
+            "review_plan": {"persist": True, "input": {"kind": "trades_csv"}},
+            "engine_state": {"date_end": "2026-07-17", "metrics": {},
+                             "problem_events": []},
+        })
+        snapshot = _runtime_snapshot_bundle("2026-07-17__snapshot-loses")
+
+        real_commit = session_engine._commit_bundle_locked
+        real_boundary = session_engine._assert_initial_snapshot_boundary
+        weekly_commit_entered = threading.Event()
+        boundary_entered = threading.Event()
+        release_weekly = threading.Event()
+
+        def gated_commit(root_arg, sessions, bundle, *args, **kwargs):
+            if bundle.get("session_id") == weekly["session_id"]:
+                weekly_commit_entered.set()
+                if not release_weekly.wait(5):
+                    raise RuntimeError("timed out waiting to release weekly commit")
+            return real_commit(root_arg, sessions, bundle, *args, **kwargs)
+
+        def observed_boundary(*args, **kwargs):
+            boundary_entered.set()
+            return real_boundary(*args, **kwargs)
+
+        session_engine._commit_bundle_locked = gated_commit
+        session_engine._assert_initial_snapshot_boundary = observed_boundary
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        try:
+            weekly_future = pool.submit(_direct_finalize, root, weekly)
+            assert weekly_commit_entered.wait(5), "weekly finalize never reached canonical commit"
+            snapshot_future = pool.submit(_direct_finalize, root, snapshot)
+            assert not boundary_entered.wait(0.5), \
+                "snapshot boundary ran while another persistent commit held the root lock"
+            release_weekly.set()
+            assert weekly_future.result(timeout=5)[0]["status"] == "committed"
+            try:
+                snapshot_future.result(timeout=5)
+                raise AssertionError("snapshot crossed canonical review history")
+            except session_engine.SessionError as exc:
+                assert "existing coach history" in str(exc)
+        finally:
+            release_weekly.set()
+            pool.shutdown(wait=True)
+            session_engine._commit_bundle_locked = real_commit
+            session_engine._assert_initial_snapshot_boundary = real_boundary
+
+        assert os.path.isdir(session_engine.session_dir(root, weekly["session_id"]))
+        assert not os.path.isdir(session_engine.session_dir(root, snapshot["session_id"]))
 
 
 def test_concurrent_identical_finalize_cli_is_controlled_and_projects_once():

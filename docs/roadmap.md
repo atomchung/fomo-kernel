@@ -1,6 +1,6 @@
 # fomo-kernel roadmap: rule loop and lens loop
 
-This document updates the original June roadmap to reflect the v2 implementation on 2026-07-14.
+This document updates the original June roadmap to reflect the v2.1 snapshot implementation on 2026-07-17.
 
 ## Two evolution axes
 
@@ -35,12 +35,19 @@ Current P0 release candidate:
 
 Exit criteria are documented in `docs/release-2026-07-19.md`.
 
-### v2.1: snapshot onboarding
+### v2.1: initial snapshot onboarding
 
-- direct position screenshot or table adapter
-- opening portfolio check with narrow claims
-- inferred thesis initialization
-- transaction-history upgrade path
+Delivered after the P0 release-gate scope was frozen:
+
+- local position-table or screenshot transcription into a normalized JSON envelope, with `review.py` as the only runtime engine entry point
+- temporary normalized JSON kept outside the repository
+- opening portfolio check limited to cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity
+- inferred thesis initialization for every uncovered open cycle
+- complete initial snapshots may establish an accounting anchor; incomplete snapshots produce a review without becoming an anchor
+- transaction-history upgrade path for later supported history-dependent behavioral diagnostics, while ledger-derived current holdings remain canonical and unreconciled current-view claims fail closed
+- no engine OCR, cloud upload, agent-calculated weights, or hand-assembled card/state artifacts
+
+Deferred P1 continuation: compare a second or subsequent snapshot with ledger-derived current holdings, show the narrow diff, and emit any explicit adjustment/new anchor without guessing why the mismatch occurred. The initial adapter does not implement this reconciliation contract.
 
 ### v2.2: multi-lens P1
 
