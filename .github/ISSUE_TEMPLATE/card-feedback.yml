@@ -10,6 +10,17 @@ body:
       value: |
         感謝回報!「這張卡有沒有用」是這個 skill **唯一**回收的東西。
         ⚠️ **別貼任何交易明細**(金額、股數、損益、持倉、對帳單截圖)——只要你的感想。
+  - type: dropdown
+    id: review_count
+    attributes:
+      label: 這是你第幾次復盤?
+      description: 只選次數區間，不需要提供任何交易內容。
+      options:
+        - 第 1 次
+        - 第 2–3 次
+        - 第 4 次以上
+    validations:
+      required: true
   - type: textarea
     id: hit
     attributes:
