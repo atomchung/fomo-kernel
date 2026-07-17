@@ -8,6 +8,7 @@
   "sections": {
     "context": "Context and timeline mirrors",
     "numbers": "The account for this review",
+    "performance": "Relative performance",
     "trades": "Best and worst realized trades",
     "strength": "One thing you did well",
     "hole": "The biggest behavioral leak",
@@ -26,6 +27,15 @@
     "averaging_down": "averaging-down discipline",
     "alpha_beta": "benchmark attribution",
     "entry_style": "entry style"
+  },
+  "public_patterns": {
+    "exit_discipline": "The highlighted behavior concerned how exit decisions were timed and evaluated.",
+    "position_sizing": "The highlighted behavior concerned how risk was distributed across position sizes.",
+    "diversification": "The highlighted behavior concerned whether the portfolio represented distinct underlying risks.",
+    "holding_period": "The highlighted behavior concerned whether holding durations matched a consistent decision horizon.",
+    "averaging_down": "The highlighted behavior concerned how additions to losing positions were bounded.",
+    "alpha_beta": "The highlighted behavior concerned how benchmark-relative results were attributed between exposure and selection.",
+    "entry_style": "The highlighted behavior concerned when entries occurred relative to recent price moves."
   },
   "rules": {
     "exit_discipline": "Before exiting, name the fact that completed or broke the thesis. Fear of giving back gains is not enough.",

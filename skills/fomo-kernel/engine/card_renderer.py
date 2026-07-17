@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import re
 
@@ -30,6 +31,7 @@ DIMENSION_ID_BY_LEGACY_LABEL = {
     "alpha/beta": "alpha_beta",
     "進場": "entry_style",
 }
+MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 
 
 def load_copy(language):
@@ -98,6 +100,133 @@ def _money_abs(value, currency):
 
 def _pct(value, digits=0):
     return "—" if value is None else f"{float(value) * 100:.{digits}f}%"
+
+
+def _finite_number(value):
+    """Return a finite engine-owned number, or None without inventing a zero."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _benchmark_pp(value):
+    """Format an engine ratio as signed percentage points without negative zero."""
+    number = _finite_number(value)
+    if number is None:
+        return "—"
+    # Match the renderer's existing whole-point, half-even rounding while
+    # converting the rounded result to int so a negative zero is impossible.
+    points = int(round(number * 100))
+    return f"{points:+d}"
+
+
+def _beta_text(value):
+    """Format a finite beta to two decimals without exposing negative zero."""
+    number = _finite_number(value)
+    if number is None:
+        return None
+    rounded = round(number, 2)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:.2f}"
+
+
+def _benchmark_rows(card):
+    """Normalize single- and mixed-market attribution for deterministic rendering.
+
+    Mixed-market cards intentionally ignore the compatibility fields copied to
+    the top level: those fields describe only the largest market, not a combined
+    portfolio.  Only the two engine-supported market identifiers are rendered,
+    in a stable order, and incomplete rows are omitted rather than zero-filled.
+    """
+    ab = card.get("alpha_beta_breakdown") or {}
+    by_market = ab.get("by_market")
+    if isinstance(by_market, dict) and by_market:
+        rows = []
+        for market in MARKET_BENCHMARKS:
+            row = by_market.get(market)
+            if not isinstance(row, dict) or row.get("note"):
+                continue
+            if any(_finite_number(row.get(key)) is None
+                   for key in ("port_tot", "spy_tot", "excess_vs_spy")):
+                continue
+            rows.append((market, MARKET_BENCHMARKS[market], row))
+        return rows
+    if not isinstance(ab, dict) or ab.get("note"):
+        return []
+    if any(_finite_number(ab.get(key)) is None
+           for key in ("port_tot", "spy_tot", "excess_vs_spy")):
+        return []
+    bench = ab.get("bench")
+    if bench not in set(MARKET_BENCHMARKS.values()):
+        bench = None
+    return [(None, bench, ab)]
+
+
+def _private_benchmark_line(market, bench, row, language):
+    port = _finite_number(row.get("port_tot"))
+    benchmark = _finite_number(row.get("spy_tot"))
+    excess = _finite_number(row.get("excess_vs_spy"))
+    beta = _beta_text(row.get("beta"))
+    beta_suffix = ((f"; β {beta}" if language == "en" else f"；β {beta}")
+                   if beta is not None else "")
+    if language == "en":
+        subject = f"{market} holdings" if market else "The measured portfolio"
+        comparator = bench or "its market benchmark"
+        return (f"{subject} returned {_pct(port)} versus {_pct(benchmark)} for {comparator}, "
+                f"a {_benchmark_pp(excess)} pp difference{beta_suffix}.")
+    subject = f"{market} 部位" if market else "可比較的持倉"
+    comparator = bench or "市場大盤"
+    return (f"{subject}報酬 {_pct(port)}，同期 {comparator} {_pct(benchmark)}，"
+            f"相差 {_benchmark_pp(excess)} 個百分點{beta_suffix}。")
+
+
+def _private_split_lines(market, row, language):
+    """Explain positive benchmark excess using the engine's accounting split."""
+    excess = _finite_number(row.get("excess_vs_spy"))
+    split = row.get("excess_split") or {}
+    allocation = _finite_number(split.get("allocation"))
+    selection = _finite_number(split.get("selection"))
+    if excess is None or excess <= 0 or allocation is None or selection is None:
+        return []
+    subject_en = f"{market}'s" if market else "The portfolio's"
+    prefix_zh = f"{market} " if market else ""
+    if language == "en":
+        line = (f"{subject_en} {_benchmark_pp(excess)} pp excess split into "
+                f"{_benchmark_pp(allocation)} pp from market/sector allocation and "
+                f"{_benchmark_pp(selection)} pp from security selection.")
+    else:
+        line = (f"{prefix_zh}贏大盤的 {_benchmark_pp(excess)} 個百分點拆為："
+                f"市場／賽道配置 {_benchmark_pp(allocation)} 個百分點、"
+                f"標的選擇 {_benchmark_pp(selection)} 個百分點。")
+    # Coverage limitations belong to the engine-triggered sector_attribution
+    # honesty entry, which _performance_lines places once after this split.
+    return [line]
+
+
+def _alpha_interval_line(ab, language):
+    stat = ab.get("alpha_stat") or {}
+    alpha = _finite_number(stat.get("alpha_ann"))
+    ci = stat.get("ci95")
+    if alpha is None or not isinstance(ci, (list, tuple)) or len(ci) != 2:
+        return None
+    low, high = (_finite_number(ci[0]), _finite_number(ci[1]))
+    if low is None or high is None:
+        return None
+    market = ab.get("scope") if isinstance(ab.get("by_market"), dict) else None
+    scope_en = f" for {market} holdings" if market in MARKET_BENCHMARKS else ""
+    scope_zh = f"（{market} 部位）" if market in MARKET_BENCHMARKS else ""
+    if language == "en":
+        return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
+                f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
+                "the interval controls how strong the conclusion may be.")
+    return (f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，"
+            f"九十五％區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
+            "定論強度以這個區間為準。")
 
 
 def _hole_line(hole, language):
@@ -245,26 +374,14 @@ def _performance_lines(card, language, honesty=None):
             lines.append(f"已實現盈虧比 {payoff:.1f}；平均賺 {_money(overview.get('avg_win'), currency)}，"
                          f"平均賠 {_money_abs(overview.get('avg_loss'), currency)}。")
     ab = card.get("alpha_beta_breakdown") or {}
-    if not ab.get("note") and ab.get("port_tot") is not None:
-        bench = ab.get("bench") or "SPY"
-        if en:
-            line = (f"The measured portfolio returned {_pct(ab.get('port_tot'))} versus {_pct(ab.get('spy_tot'))} "
-                    f"for {bench}, a {float(ab.get('excess_vs_spy') or 0) * 100:+.0f} pp difference.")
-        else:
-            line = (f"可比較的持倉報酬 {_pct(ab.get('port_tot'))}，同期 {bench} {_pct(ab.get('spy_tot'))}，"
-                    f"相差 {float(ab.get('excess_vs_spy') or 0) * 100:+.0f} 個百分點。")
-        lines.append(line)
-        stat = ab.get("alpha_stat") or {}
-        if stat.get("alpha_ann") is not None and stat.get("ci95"):
-            low, high = stat["ci95"]
-            if en:
-                lines.append(f"Risk-adjusted alpha was {float(stat['alpha_ann']) * 100:+.0f}% annualized, "
-                             f"with a 95% interval from {float(low) * 100:+.0f}% to {float(high) * 100:+.0f}%; "
-                             "the interval controls how strong the conclusion may be.")
-            else:
-                lines.append(f"風險調整後 alpha 年化 {float(stat['alpha_ann']) * 100:+.0f}%，"
-                             f"九十五％區間為 {float(low) * 100:+.0f}% 到 {float(high) * 100:+.0f}%；"
-                             "定論強度以這個區間為準。")
+    benchmark_rows = _benchmark_rows(card)
+    for market, bench, row in benchmark_rows:
+        lines.append(_private_benchmark_line(market, bench, row, language))
+        lines.extend(_private_split_lines(market, row, language))
+    if benchmark_rows:
+        alpha_line = _alpha_interval_line(ab, language)
+        if alpha_line:
+            lines.append(alpha_line)
     for key in ("alpha_credibility", "sector_attribution", "unclassified_drivers"):
         if key in honesty:
             lines.append(honesty.pop(key))
@@ -718,6 +835,23 @@ def _public_band(value, language):
     return "很高" if language != "en" else "very high"
 
 
+def _public_performance_lines(card, language):
+    """Share only allowlisted market labels and engine-owned relative scalars."""
+    lines = []
+    for market, _bench, row in _benchmark_rows(card):
+        excess = _finite_number(row.get("excess_vs_spy"))
+        beta = _beta_text(row.get("beta"))
+        if excess is None or beta is None:
+            continue
+        if language == "en":
+            subject = market or "Portfolio"
+            lines.append(f"{subject}: {_benchmark_pp(excess)} pp versus its market benchmark; β {beta}.")
+        else:
+            subject = market or "可比較部位"
+            lines.append(f"{subject}：相對各自市場大盤 {_benchmark_pp(excess)} 個百分點；β {beta}。")
+    return lines
+
+
 def render_public(bundle):
     """Render a conservative shareable card without user-authored free text."""
     language = bundle.get("language") or "zh-TW"
@@ -726,7 +860,9 @@ def render_public(bundle):
     holes = card.get("top_holes") or []
     hole = holes[0] if holes else {}
     raw = hole.get("raw") or {}
-    dim_label = (copy.get("dimensions") or {}).get(dimension_id(raw.get("dim"))) if raw.get("dim") else None
+    dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
+    dim_label = (copy.get("dimensions") or {}).get(dim_id) if dim_id else None
+    pattern = (copy.get("public_patterns") or {}).get(dim_id) if dim_id else None
     severity = _public_band(hole.get("severity"), copy["language"])
     commitment = bundle.get("commitment") or {}
     # Candidate rules resolve to fixed copy strings; custom rules (and anything of
@@ -744,12 +880,17 @@ def render_public(bundle):
     else:
         mirror = f"這次復盤在「{dim_label or '主要行為維度'}」看見{severity}程度的行為壓力。"
         structure = "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
+    if pattern:
+        mirror += " " + pattern
     lines = [
         "---", "privacy: public", f"language: {copy['language']}", "---", "",
         f"# {copy['title']}", "", f"> {copy['public_badge']}", "", mirror, "",
     ]
     if bundle.get("route") == "test_drive":
         lines[9:9] = [f"> {copy['demo_badge']}", ""]
+    performance = _public_performance_lines(card, copy["language"])
+    if performance:
+        lines.extend([f"## {copy['sections']['performance']}", ""] + [f"- {x}" for x in performance] + [""])
     ps = card.get("portfolio_structure") or {}
     if ps.get("allocation_etfs") or ps.get("concentrated_etfs"):
         lines.extend([f"## {copy['sections']['etf']}", "", structure, ""])

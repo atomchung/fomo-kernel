@@ -42,6 +42,8 @@ The public card is a separately rendered structured view. It excludes:
 - session IDs
 - evidence text and agent-authored free prose
 
+It may retain a fixed, de-identified behavior-pattern sentence plus engine-owned beta and benchmark-excess percentage points. For mixed-market portfolios, public comparison lines use only the market labels and say "market benchmark"; benchmark symbols and holding tickers remain private.
+
 Do not create the public card by applying regular-expression redaction to the private card. Independent rendering prevents portfolio reconstruction and accidental disclosure.
 
 ## Numeric truth
@@ -81,7 +83,7 @@ The card must state the limitation neutrally and narrowly. It must not guess the
 ## Performance framing
 
 - Compare the held portfolio with the appropriate market benchmark only when engine output supports the comparison.
-- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha. (Per-market renderer lines are deferred to #193; do not hand-write them from `by_market` in the meantime.)
+- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha. The renderer consumes `by_market` directly and ignores the top-level compatibility row for these comparison lines.
 - Treat account TWR, holding TWR, cash drag, and IRR as different questions. Use only engine-provided values and copy.
 - Interpret positive cash drag as protection in a falling market and negative cash drag as diluted participation; do not treat cash as inherently wrong.
 - Use alpha capability language only when the engine marks it credible. Otherwise show the interval and uncertainty.

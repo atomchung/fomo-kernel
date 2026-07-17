@@ -6,6 +6,6 @@ The private card follows this order when data exists: mirror, frozen market/time
 
 Agent narrative may not contain digits. The renderer obtains every amount, percentage, date, ticker, and metric from engine card and state artifacts. This deliberately strict boundary prevents the engine and prose from becoming competing numeric truth sources.
 
-The public card does not reuse agent narrative. It renders a separate structured view and removes session IDs, dates, tickers, amounts, exact weights, and evidence text. It is not a regular-expression mask over the private card.
+The public card does not reuse agent narrative. It renders a separate structured view and removes session IDs, dates, tickers, amounts, exact weights, and evidence text. It may retain fixed behavior-pattern copy plus engine-owned beta and benchmark-excess percentage points; mixed-market public lines name only the market and never expose benchmark symbols. It is not a regular-expression mask over the private card.
 
 Do not provide buy or sell recommendations, shame the user, or list several action items. A commitment may be skipped. Code labels short samples as baselines rather than pretending they passed a mature threshold.

@@ -391,6 +391,124 @@ def test_public_card_never_reuses_user_authored_rule_text():
         assert not re.search(r"[一-鿿]", public), "en public card must not mix CJK labels"
 
 
+def _mixed_market_card_for_rendering():
+    """Synthetic renderer input with sentinels in every field public copy must ignore."""
+    return {
+        "top_holes": [{"severity": 0.52, "raw": {
+            "dim": "加碼攤平", "tickers": ["PRIVATE_HOLDING"],
+            "number_line": "PRIVATE_HOLDING above $1234 on 2026-07-14"}}],
+        "alpha_beta_breakdown": {
+            # Compatibility fields describe only the largest market. Deliberately
+            # make them impossible sentinels so mixed rendering cannot masquerade
+            # as a combined portfolio result.
+            "scope": "TW", "port_tot": 9.99, "spy_tot": -9.99,
+            "excess_vs_spy": 19.98, "beta": 99.0,
+            "by_market": {
+                "TW": {
+                    "bench": "^TWII", "port_tot": 0.20, "spy_tot": 0.10,
+                    "excess_vs_spy": 0.10, "beta": 1.10,
+                    "benchmarks": {"PRIVATE_HOLDING": {"secret": "2026-07-14"}},
+                    "excess_split": {"excess": 0.10, "allocation": 0.04,
+                                     "selection": 0.06, "coverage": 0.80,
+                                     "proxy": {"PRIVATE_HOLDING": "PRIVATE_PROXY"},
+                                     "unproxied": ["PRIVATE_HOLDING"]}},
+                "US": {
+                    "bench": "SPY", "port_tot": 0.05, "spy_tot": 0.08,
+                    "excess_vs_spy": -0.03, "beta": 0.80,
+                    "excess_split": {"excess": -0.03, "allocation": 0.01,
+                                     "selection": -0.04, "coverage": 1.0,
+                                     "proxy": {}, "unproxied": []}},
+                "PRIVATE_MARKET": {"port_tot": 4.2, "spy_tot": 0,
+                                   "excess_vs_spy": 4.2, "beta": 4.2},
+            },
+        },
+    }
+
+
+def test_mixed_market_private_card_renders_each_market_and_winning_split():
+    import card_renderer
+    card = _mixed_market_card_for_rendering()
+    honesty = {"sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。"}
+    text = "\n".join(card_renderer._performance_lines(card, "zh-TW", honesty))
+    assert "TW 部位報酬 20%" in text and "同期 ^TWII 10%" in text and "β 1.10" in text
+    assert "US 部位報酬 5%" in text and "同期 SPY 8%" in text and "β 0.80" in text
+    assert "TW 贏大盤的 +10 個百分點" in text
+    assert "市場／賽道配置 +4 個百分點" in text and "標的選擇 +6 個百分點" in text
+    assert text.count("賽道與選股拆帳不完整") == 1, \
+        "the engine-triggered attribution caveat must be placed exactly once"
+    assert "US 贏大盤" not in text, "a losing market must not be described as beating its benchmark"
+    assert "999%" not in text and "99.00" not in text and "PRIVATE_MARKET" not in text, \
+        "mixed cards must never render the top-level scope row as a combined third result"
+
+
+def test_public_card_keeps_behavior_and_relative_performance_without_identifiers():
+    import card_renderer
+    card = _mixed_market_card_for_rendering()
+    bundle = {
+        "route": "weekly_review", "engine_card": card,
+        "review_plan": {"state_snapshot": {"market_context": {
+            "start": "2026-07-01", "benchmarks": {"PRIVATE_HOLDING": {"last": 1234}}}}},
+        "narrative": {"mirror": "PRIVATE_NARRATIVE $1234 2026-07-14"},
+        "commitment": {"origin": "custom", "rule": "PRIVATE_RULE $1234 2026-07-14"},
+    }
+    for language in ("en", "zh-TW"):
+        bundle["language"] = language
+        public = card_renderer.render_public(bundle)
+        assert "β 1.10" in public and "β 0.80" in public
+        if language == "en":
+            assert "TW: +10 pp" in public and "US: -3 pp" in public
+            assert "The highlighted behavior concerned how additions to losing positions were bounded" in public
+        else:
+            assert "TW：相對各自市場大盤 +10 個百分點" in public
+            assert "US：相對各自市場大盤 -3 個百分點" in public
+            assert "這次浮現的模式，關乎虧損部位的加碼如何受到界線約束" in public
+        for secret in ("PRIVATE_HOLDING", "PRIVATE_PROXY", "PRIVATE_MARKET", "PRIVATE_NARRATIVE",
+                       "PRIVATE_RULE", "SPY", "^TWII", "$1234", "2026-07-14", "999", "99.00"):
+            assert secret not in public, f"public card leaked {secret!r}"
+
+
+def test_public_behavior_copy_does_not_invent_a_specific_subsignal():
+    import card_renderer
+    cases = [
+        ("holding_period", {"median_days": 0, "incon_rate": 0},
+         "whether holding durations matched a consistent decision horizon", "mixing different"),
+        ("exit_discipline", {"disposition_gap": 0.25},
+         "how exit decisions were timed and evaluated", "original thesis"),
+    ]
+    for dim, raw, expected, unsupported in cases:
+        raw["dim"] = dim
+        public = card_renderer.render_public({
+            "language": "en",
+            "engine_card": {"top_holes": [{"severity": 0.6, "raw": raw}]},
+        })
+        assert expected in public
+        assert unsupported not in public, \
+            "dimension-level public copy must not diagnose a sub-signal the engine did not establish"
+
+
+def test_public_relative_performance_omits_bad_rows_and_preserves_zero():
+    import card_renderer
+    assert card_renderer._benchmark_pp(-0.0001) == "+0", "rounded ratios must not render as negative zero"
+    assert card_renderer._benchmark_pp(-0.005) == "+0"
+    assert card_renderer._benchmark_pp(0.005) == "+0"
+    assert card_renderer._beta_text(-0.004) == "0.00"
+    assert card_renderer._beta_text(-0.0) == "0.00"
+    mixed = _mixed_market_card_for_rendering()
+    mixed["alpha_beta_breakdown"]["by_market"]["TW"] = {
+        "note": "PRIVATE_HOLDING missing on 2026-07-14"}
+    mixed["alpha_beta_breakdown"]["by_market"]["US"]["excess_vs_spy"] = float("nan")
+    public = card_renderer.render_public({"language": "en", "engine_card": mixed})
+    assert "Relative performance" not in public and "nan" not in public.lower()
+    assert "PRIVATE_HOLDING" not in public and "2026-07-14" not in public
+
+    single = {"alpha_beta_breakdown": {
+        "scope": None, "by_market": None, "bench": "SPY",
+        "port_tot": 0.0, "spy_tot": 0.0, "excess_vs_spy": -0.005, "beta": -0.004}}
+    public = card_renderer.render_public({"language": "en", "engine_card": single})
+    assert "Portfolio: +0 pp versus its market benchmark; β 0.00." in public, \
+        "rounded zero is a valid engine result and must never expose a negative sign"
+
+
 def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"

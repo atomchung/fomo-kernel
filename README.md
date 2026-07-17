@@ -117,7 +117,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually 
 - **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
 - **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
 
-> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered artifact that removes amounts, dates, tickers, exact weights, and agent free text. The review card remains the default response. This is a local file for manual sharing; there is no upload or publishing feature yet.
+> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered artifact that keeps a de-identified behavior pattern plus engine-owned beta and benchmark-excess percentage points, while removing amounts, dates, tickers, exact weights, and agent free text. The review card remains the default response. This is a local file for manual sharing; there is no upload or publishing feature yet.
 
 ## Install
 

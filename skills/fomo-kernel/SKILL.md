@@ -89,7 +89,7 @@ python3 engine/review.py repair-projections
 Each completed session produces:
 
 - `card-private.md` and `card-private.html`: the complete local review card, using the localized review-card name from copy assets.
-- `card-public.md`: a separately rendered share-safe artifact without amounts, dates, tickers, exact weights, session IDs, or agent-authored free text. It is not uploaded or published.
+- `card-public.md`: a separately rendered share-safe artifact that retains a fixed behavior pattern and engine-owned beta / benchmark-excess percentage points, without amounts, dates, tickers, exact weights, session IDs, or agent-authored free text. It is not uploaded or published.
 
 ## Test drive
 
