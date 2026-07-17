@@ -661,6 +661,12 @@ def test_fetch_fx_usd_only_is_offline_noop():
     assert fx == {"USD": 1.0} and err is None, "純 USD 不碰網路、不報錯"
 
 
+def test_fx_request_includes_unheld_display_currency_only_for_mixed_portfolios():
+    assert tr.fx_request_currencies(["EUR", "USD"], "TWD") == ["EUR", "TWD", "USD"]
+    assert tr.fx_request_currencies(["USD"], "TWD") == ["USD"], \
+        "single-currency portfolios stay on the offline identity path"
+
+
 def test_ticker_diagnosis_ranks_on_aggregate_currency():
     """混幣時標的層排序/佔比要在 USD 視圖上做:2330 名目 +90k(TWD)其實只值 3k USD,
     不准霸榜壓過 NVDA 的 +5k USD(review 2026-07-06 抓的聚合遺漏)。"""

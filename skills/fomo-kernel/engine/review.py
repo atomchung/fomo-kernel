@@ -17,6 +17,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -123,6 +124,91 @@ def _previous_state(root):
         return session.read_json(path)
     except (OSError, ValueError):
         return None
+
+
+def _positive_fx_rate(value):
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None
+
+
+def _apply_display_currency(card, state, previous, language):
+    """Freeze the locale display-currency decision into both engine artifacts.
+
+    The engine fetches current rates during ``prepare``.  If the requested
+    display rate is unavailable, only presentation may reuse the prior state's
+    rate; portfolio calculations keep their current honesty/fx-gap semantics.
+    ``preview`` and ``finalize`` therefore remain deterministic and offline.
+    """
+    requested = card_renderer.default_display_currency(language)
+    card_meta = dict((card or {}).get("currency_meta") or {})
+    state_meta = dict((state or {}).get("currency_meta") or {})
+    aggregate = str(card_meta.get("aggregate_currency") or
+                    state_meta.get("aggregate_currency") or "USD").upper()
+    mixed = bool(card_meta.get("mixed") if "mixed" in card_meta else state_meta.get("mixed"))
+
+    rate = None
+    source = "identity"
+    reason = None
+    as_of = None
+    effective = aggregate
+    if mixed:
+        effective = requested
+        current_fx = dict(state_meta.get("fx") or {})
+        current_fx.update(card_meta.get("fx") or {})
+        currencies = list(card_meta.get("currencies") or state_meta.get("currencies") or [])
+        explicit_gaps = (((card or {}).get("data_integrity") or {}).get("fx_gaps") or [])
+        held_rate_missing = bool(explicit_gaps) or bool(currencies and any(
+            str(currency).upper() != "USD" and _positive_fx_rate(current_fx.get(str(currency).upper())) is None
+            for currency in currencies
+        ))
+        if held_rate_missing:
+            # The engine already aggregated the missing held currency with its
+            # explicit 1:1 approximation.  A display-only cache cannot repair
+            # that common-currency amount, so fall back to original buckets.
+            effective = None
+            source = "unavailable"
+            reason = "portfolio_fx_gap"
+        else:
+            rate = 1.0 if requested == "USD" else _positive_fx_rate(current_fx.get(requested))
+            source = "current"
+        if not held_rate_missing and rate is None:
+            previous_meta = ((previous or {}).get("currency_meta") or {})
+            if previous_meta.get("mixed") and previous_meta.get("display_currency") == requested:
+                rate = _positive_fx_rate(previous_meta.get("display_fx_rate"))
+            if rate is None:
+                rate = _positive_fx_rate((previous_meta.get("fx") or {}).get(requested))
+            if rate is not None:
+                source = "cached"
+                as_of = previous_meta.get("display_fx_as_of") or (previous or {}).get("date_end")
+            else:
+                effective = None
+                source = "unavailable"
+                reason = "display_fx_gap"
+
+    def enrich(artifact):
+        out = dict(artifact or {})
+        meta = dict(out.get("currency_meta") or {})
+        meta.update({
+            "requested_display_currency": requested,
+            "display_currency": effective,
+            "display_fx_source": source,
+            "display_fx_rate": rate if mixed else None,
+        })
+        if reason:
+            meta["display_fx_reason"] = reason
+        else:
+            meta.pop("display_fx_reason", None)
+        if as_of:
+            meta["display_fx_as_of"] = as_of
+        else:
+            meta.pop("display_fx_as_of", None)
+        out["currency_meta"] = meta
+        return out
+
+    return enrich(card), enrich(state)
 
 
 def _review_date(state):
@@ -343,7 +429,8 @@ def _run_engine(paths, root, args):
     with tempfile.TemporaryDirectory(prefix="fomo-review-") as tmp:
         state_path = os.path.join(tmp, "state.json")
         env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
-                   TR_LEDGER=os.path.join(root, "ledger.jsonl"))
+                   TR_LEDGER=os.path.join(root, "ledger.jsonl"),
+                   TR_DISPLAY_CURRENCY=card_renderer.default_display_currency(args.language))
         previous = _previous_state(root)
         if previous and previous.get("date_end"):
             env["TR_PREV_END"] = str(previous["date_end"])
@@ -906,6 +993,7 @@ def cmd_prepare(args):
         return
     if prepared is None:
         card, state, engine_meta = _run_engine(paths, root, args)
+    card, state = _apply_display_currency(card, state, _previous_state(root), language)
     ledger_ingest = None
     if persist and route != "snapshot_review" and paths:
         ledger_ingest = _ingest_trades(root, paths)
