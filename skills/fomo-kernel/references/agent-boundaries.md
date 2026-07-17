@@ -18,5 +18,6 @@ The agent may not:
 - use polished prose to bypass a missing claim or source for `new_evidence`.
 - Assemble state by hand, append several JSONL files directly, and claim an atomic completion.
 - Put private data into a public card.
+- Call another `engine/*` script or import engine modules directly. Invoke the engine through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`) so lifecycle validation, required-question gates, and canonical session state remain authoritative.
 
 If a new observation could overturn the top behavioral leak, add it to `observations` and rerun preview. Do not mutate the engine artifact. This preserves analytical flexibility while keeping conclusion changes inside the same validator and renderer path.

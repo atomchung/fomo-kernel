@@ -33,6 +33,7 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 3. Required motive questions cannot be skipped. A `new_evidence` decision requires both a claim and a source.
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
 5. Keep trade data local and out of cloud memory. Never mix private-card content into a public card.
+6. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 
 ## Why this bridge stays thin
 
