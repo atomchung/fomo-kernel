@@ -441,6 +441,130 @@ def test_mixed_market_private_card_renders_each_market_and_winning_split():
         "mixed cards must never render the top-level scope row as a combined third result"
 
 
+def test_display_currency_converts_aggregate_and_keeps_trade_original_currency():
+    import card_renderer
+    base = {
+        "overview": {"total_pnl": -300, "realized": 200, "unrealized": -500,
+                     "payoff": 1.5, "avg_win": 100, "avg_loss": -50},
+        "best_trade": {"ticker": "2330.TW", "ret": 0.2, "pnl": 1200, "currency": "TWD"},
+        "worst_trade": {"ticker": "AAPL", "ret": -0.1, "pnl": -40, "currency": "USD"},
+        "currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                          "currencies": ["TWD", "USD"], "fx": {"TWD": 1 / 32},
+                          "pnl_by_currency": {
+                              "TWD": {"realized": 1200, "unrealized": -3200},
+                              "USD": {"realized": 40, "unrealized": 10},
+                          }},
+    }
+    state = {"currency_meta": dict(base["currency_meta"])}
+    zh_card, _ = review_engine._apply_display_currency(base, state, None, "zh-TW")
+    assert zh_card["currency_meta"]["display_currency"] == "TWD"
+    overview = "\n".join(card_renderer._overview_lines(zh_card, "zh-TW"))
+    assert "TWD -9,600" in overview and "TWD +6,400" in overview and "TWD -16,000" in overview
+    trades = "\n".join(card_renderer._trade_lines(zh_card, "zh-TW"))
+    assert "2330.TW" in trades and "TWD +1,200" in trades
+    assert "AAPL" in trades and "$-40" in trades, \
+        "per-trade P&L must retain brokerage currency instead of the aggregate/display label"
+
+    en_card, _ = review_engine._apply_display_currency(base, state, None, "en")
+    assert en_card["currency_meta"]["display_currency"] == "USD"
+    assert "$-300" in "\n".join(card_renderer._overview_lines(en_card, "en"))
+
+    single = {"overview": base["overview"],
+              "currency_meta": {"mixed": False, "aggregate_currency": "USD"}}
+    single_zh, _ = review_engine._apply_display_currency(single, {}, None, "zh-TW")
+    assert single_zh["currency_meta"]["display_currency"] == "USD"
+    assert "$-300" in "\n".join(card_renderer._overview_lines(single_zh, "zh-TW")), \
+        "single-market cards stay in their own currency regardless of locale"
+
+
+def test_display_currency_uses_dated_cache_then_falls_back_to_original_buckets():
+    import card_renderer
+    card = {
+        "overview": {"total_pnl": 10, "realized": 4, "unrealized": 6},
+        "currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                          "currencies": ["EUR", "USD"], "fx": {"EUR": 1.1},
+                          "pnl_by_currency": {
+                              "EUR": {"realized": 2, "unrealized": 3},
+                              "USD": {"realized": 4, "unrealized": 6},
+                          }},
+    }
+    state = {"currency_meta": dict(card["currency_meta"])}
+    previous = {"date_end": "2026-07-10", "currency_meta": {"fx": {"TWD": 1 / 31}}}
+    cached, cached_state = review_engine._apply_display_currency(card, state, previous, "zh-TW")
+    assert cached["currency_meta"]["display_fx_source"] == "cached"
+    assert "TWD +310" in "\n".join(card_renderer._overview_lines(cached, "zh-TW"))
+    note = card_renderer._currency_note(cached, "zh-TW")
+    assert "2026-07-10" in note and "上次對帳匯率" in note
+
+    cached_state["date_end"] = "2026-07-17"
+    recached, _ = review_engine._apply_display_currency(card, state, cached_state, "zh-TW")
+    assert recached["currency_meta"]["display_fx_as_of"] == "2026-07-10", \
+        "reusing the same cached rate must not refresh its provenance date"
+
+    original, _ = review_engine._apply_display_currency(card, state, None, "zh-TW")
+    assert original["currency_meta"]["display_fx_source"] == "unavailable"
+    text = "\n".join(card_renderer._overview_lines(original, "zh-TW"))
+    assert "EUR 帳面損益" in text and "USD 帳面損益" in text
+    assert "TWD" not in text, "missing display FX must not invent a locale conversion"
+    assert "保留原幣" in card_renderer._currency_note(original, "zh-TW")
+
+
+def test_display_currency_rejects_approximate_aggregate_and_single_currency_identity_cache():
+    import card_renderer
+    incomplete = {
+        "overview": {"total_pnl": 1100, "realized": 1100, "unrealized": 0},
+        "data_integrity": {"fx_gaps": ["EUR"]},
+        "currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                          "currencies": ["EUR", "USD"], "fx": {"TWD": 1 / 32},
+                          "pnl_by_currency": {
+                              "EUR": {"realized": 1000, "unrealized": 0},
+                              "USD": {"realized": 100, "unrealized": 0},
+                          }},
+    }
+    state = {"currency_meta": dict(incomplete["currency_meta"])}
+    legacy_text = "\n".join(card_renderer._overview_lines(incomplete, "en"))
+    assert "EUR" in legacy_text and "$+1,100" not in legacy_text, \
+        "re-rendering a pre-display-currency bundle must also fail closed on held FX gaps"
+    for language in ("en", "zh-TW"):
+        resolved, _ = review_engine._apply_display_currency(incomplete, state, None, language)
+        assert resolved["currency_meta"]["display_fx_source"] == "unavailable"
+        assert resolved["currency_meta"]["display_fx_reason"] == "portfolio_fx_gap"
+        text = "\n".join(card_renderer._overview_lines(resolved, language))
+        assert "EUR" in text and ("$+100" in text or "USD" in text)
+        assert "TWD +35,200" not in text and "$+1,100" not in text, \
+            "a 1:1 approximate engine aggregate must never be relabeled or converted"
+        assert "held-currency" in card_renderer._currency_note(resolved, "en")
+
+    pure_twd = {"currency_meta": {"mixed": False, "aggregate_currency": "TWD"}}
+    _, pure_state = review_engine._apply_display_currency(pure_twd, pure_twd, None, "zh-TW")
+    pure_state["date_end"] = "2026-07-10"
+    assert pure_state["currency_meta"]["display_fx_rate"] is None
+    offline_mixed = {
+        "overview": incomplete["overview"],
+        "currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                          "currencies": ["EUR", "USD"], "fx": {"EUR": 1.1},
+                          "pnl_by_currency": incomplete["currency_meta"]["pnl_by_currency"]},
+    }
+    resolved, _ = review_engine._apply_display_currency(
+        offline_mixed, {"currency_meta": dict(offline_mixed["currency_meta"])}, pure_state, "zh-TW")
+    assert resolved["currency_meta"]["display_fx_source"] == "unavailable", \
+        "single-currency identity factor is not a USD-per-unit FX cache"
+
+
+def test_engine_card_carries_original_currency_on_best_and_worst_trades():
+    best = {"ticker": "2330.TW", "qty": 2, "buy_px": 100, "sell_px": 120, "ret": 0.2}
+    worst = {"ticker": "AAPL", "qty": 1, "buy_px": 100, "sell_px": 90, "ret": -0.1}
+    card = tr.build_card_data([], None, {}, best, worst, None, [], [], {}, {}, None,
+                              currency_meta={"aggregate_currency": "USD", "mixed": True},
+                              currency_by_ticker={"2330.TW": "TWD", "AAPL": "USD"})
+    assert card["best_trade"]["currency"] == "TWD" and card["best_trade"]["pnl"] == 40
+    assert card["worst_trade"]["currency"] == "USD" and card["worst_trade"]["pnl"] == -10
+    unknown = tr.build_card_data([], None, {}, best, worst, None, [], [], {}, {}, None,
+                                 currency_meta={"aggregate_currency": "USD", "mixed": True})
+    assert unknown["best_trade"]["currency"] is None and unknown["worst_trade"]["currency"] is None, \
+        "unknown per-trade currency must omit the amount instead of borrowing the aggregate label"
+
+
 def test_public_card_keeps_behavior_and_relative_performance_without_identifiers():
     import card_renderer
     card = _mixed_market_card_for_rendering()

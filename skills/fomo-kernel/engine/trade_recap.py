@@ -479,6 +479,15 @@ def fetch_fx(currencies):
     return fx, err
 
 
+def fx_request_currencies(currencies, requested_display=None):
+    """Include the renderer's target only for a genuinely mixed portfolio."""
+    held = {str(c).strip().upper() for c in currencies if str(c).strip()}
+    requested = str(requested_display or "").strip().upper()
+    if len(held) > 1 and requested:
+        held.add(requested)
+    return sorted(held)
+
+
 def fetch_fx_series(currencies, start):
     """非 USD 幣別的每日匯率序列('{CUR}=X' → usd_per_unit DataFrame),帳戶級估值用
     (#171 拍板默認:混幣 V_t 用每日 fx、含匯率損益)。離線/缺 →(None, err),
@@ -2141,7 +2150,8 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
 
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
-                    acct_perf=None, pnl_curve_data=None, portfolio_structure=None):
+                    acct_perf=None, pnl_curve_data=None, portfolio_structure=None,
+                    currency_by_ticker=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -2190,8 +2200,20 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "philosophy": master,
         "strength": strength,
         "overview": overview,
-        "best_trade": {**best, "pnl": best["qty"] * (best["sell_px"] - best["buy_px"])} if best else None,   # 補 $ 損益,卡上 %和$ 都要
-        "worst_trade": {**worst, "pnl": worst["qty"] * (worst["sell_px"] - worst["buy_px"])} if worst else None,
+        # Per-trade amounts stay in brokerage/original currency.  The v2 renderer
+        # must never apply the aggregate portfolio label to these raw values.
+        "best_trade": ({**best,
+                         "pnl": best["qty"] * (best["sell_px"] - best["buy_px"]),
+                         "currency": (currency_by_ticker or {}).get(best["ticker"]) or
+                                     (None if (currency_meta or {}).get("mixed") else
+                                      (currency_meta or {}).get("aggregate_currency") or "USD")}
+                       if best else None),
+        "worst_trade": ({**worst,
+                          "pnl": worst["qty"] * (worst["sell_px"] - worst["buy_px"]),
+                          "currency": (currency_by_ticker or {}).get(worst["ticker"]) or
+                                      (None if (currency_meta or {}).get("mixed") else
+                                       (currency_meta or {}).get("aggregate_currency") or "USD")}
+                        if worst else None),
         "what_if": wi,
         "ticker_diagnosis": tdiag,                          # tags 已是人話
         "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
@@ -2257,7 +2279,12 @@ def main():
     # 直接相加 = 靜默算錯。單一幣別組合(含純台股)聚合自洽 → 不抓匯率、路徑零變化。
     cur_map, currencies, cur_conflicts = currency_map(rows)
     mixed_ccy = len(currencies) > 1
-    fx, fx_err = fetch_fx(currencies) if mixed_ccy else ({"USD": 1.0}, None)
+    # Rendering is deterministic and must not fetch at preview/finalize time.
+    # The orchestration layer therefore requests the locale's display currency
+    # during prepare, even when that currency is not held in the portfolio.
+    requested_display = str(os.environ.get("TR_DISPLAY_CURRENCY") or "").strip().upper()
+    fx_currencies = fx_request_currencies(currencies, requested_display)
+    fx, fx_err = fetch_fx(fx_currencies) if mixed_ccy else ({"USD": 1.0}, None)
     if mixed_ccy:
         rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
         decision_rts_u = [r for r in rts_u
@@ -2324,6 +2351,7 @@ def main():
         "aggregate_currency": "USD" if mixed_ccy else (currencies[0] if currencies else "USD"),
         "fx": ({c: r for c, r in fx.items() if c != "USD"} or None) if mixed_ccy else None,  # {cur: 兌 USD}
         "fx_error": fx_err,
+        "requested_display_currency": requested_display or None,
         # ⚠️ 分桶刻意吃「原幣」物件(decision_rts/held,非 _u 版):桶的意義就是原幣會計事實,換成 _u = 全桶變 USD 廢掉
         "pnl_by_currency": pnl_by_currency(decision_rts, held, last_px, cur_map) if mixed_ccy else None,
         "alpha_beta_note": (
@@ -2385,7 +2413,8 @@ def main():
                                ab, pa, master, data_integrity=data_integrity,
                                currency_meta=currency_meta, cash=cash_data,
                                acct_perf=acct_perf, pnl_curve_data=pc,
-                               portfolio_structure=portfolio_structure)
+                               portfolio_structure=portfolio_structure,
+                               currency_by_ticker=cur_map)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)

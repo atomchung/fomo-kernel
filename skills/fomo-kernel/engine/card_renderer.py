@@ -32,6 +32,7 @@ DIMENSION_ID_BY_LEGACY_LABEL = {
     "進場": "entry_style",
 }
 MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
+DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
 
 def load_copy(language):
@@ -84,6 +85,62 @@ def _currency(card):
     return ((card.get("currency_meta") or {}).get("aggregate_currency") or "USD").upper()
 
 
+def default_display_currency(language):
+    normalized = str(language or "zh-TW").strip().lower()
+    if normalized.startswith("en"):
+        return DISPLAY_CURRENCY_BY_LANGUAGE["en"]
+    if normalized.startswith("zh-cn") or normalized.startswith("zh-hans"):
+        return DISPLAY_CURRENCY_BY_LANGUAGE["zh-CN"]
+    return DISPLAY_CURRENCY_BY_LANGUAGE["zh-TW"]
+
+
+def _positive_rate(value):
+    number = _finite_number(value)
+    return number if number is not None and number > 0 else None
+
+
+def _display_context(card, language):
+    """Return the frozen aggregate-to-display conversion, or an honest gap.
+
+    A mixed portfolio is aggregated by the engine in a common currency (USD in
+    the current contract).  The locale changes only its presentation.  Old
+    bundles without the explicit display fields remain readable by deriving the
+    rate from their frozen ``currency_meta.fx`` map.
+    """
+    meta = (card or {}).get("currency_meta") or {}
+    aggregate = _currency(card or {})
+    if not meta.get("mixed"):
+        return {"currency": aggregate, "factor": 1.0, "source": "identity", "as_of": None}
+
+    requested = str(meta.get("requested_display_currency") or
+                    default_display_currency(language)).upper()
+    fx = meta.get("fx") or {}
+    currencies = list(meta.get("currencies") or [])
+    explicit_gaps = (((card or {}).get("data_integrity") or {}).get("fx_gaps") or [])
+    held_rate_missing = bool(explicit_gaps) or bool(currencies and any(
+        str(currency).upper() != "USD" and _positive_rate(fx.get(str(currency).upper())) is None
+        for currency in currencies
+    ))
+    if held_rate_missing:
+        return {"currency": None, "factor": None, "source": "unavailable", "as_of": None,
+                "requested": requested, "reason": "portfolio_fx_gap"}
+    source = meta.get("display_fx_source")
+    selected = meta.get("display_currency")
+    if source == "unavailable" or selected is None and "display_currency" in meta:
+        return {"currency": None, "factor": None, "source": "unavailable", "as_of": None,
+                "requested": requested, "reason": meta.get("display_fx_reason")}
+    selected = str(selected or requested).upper()
+    aggregate_rate = 1.0 if aggregate == "USD" else _positive_rate(fx.get(aggregate))
+    selected_rate = (1.0 if selected == "USD" else
+                     _positive_rate(meta.get("display_fx_rate")) or _positive_rate(fx.get(selected)))
+    if aggregate_rate is None or selected_rate is None:
+        return {"currency": None, "factor": None, "source": "unavailable", "as_of": None,
+                "requested": requested, "reason": meta.get("display_fx_reason")}
+    return {"currency": selected, "factor": aggregate_rate / selected_rate,
+            "source": source or "current", "as_of": meta.get("display_fx_as_of"),
+            "requested": requested}
+
+
 def _money(value, currency):
     if value is None:
         return "—"
@@ -96,6 +153,68 @@ def _money_abs(value, currency):
         return "—"
     symbol = "$" if currency == "USD" else currency + " "
     return f"{symbol}{abs(float(value)):,.0f}"
+
+
+def _display_money(value, context, absolute=False):
+    if not context.get("currency") or context.get("factor") is None:
+        return None
+    converted = None if value is None else float(value) * float(context["factor"])
+    return (_money_abs if absolute else _money)(converted, context["currency"])
+
+
+def _currency_note(card, language):
+    context = _display_context(card, language)
+    if context.get("source") == "cached":
+        when = context.get("as_of")
+        if language == "en":
+            return (f"Display conversion uses the FX rate cached at the prior review ({when})."
+                    if when else "Display conversion uses the FX rate cached at the prior review.")
+        return (f"顯示換算沿用上次對帳匯率（截至 {when}）。"
+                if when else "顯示換算沿用上次對帳匯率。")
+    if context.get("source") == "unavailable":
+        if context.get("reason") == "portfolio_fx_gap":
+            if language == "en":
+                return "At least one held-currency FX rate was unavailable; amounts remain in original currencies."
+            return "至少一個持倉幣別缺少可靠匯率；金額保留原幣，不把近似聚合值當成精確換算。"
+        requested = context.get("requested") or default_display_currency(language)
+        if language == "en":
+            return f"No reliable {requested} display rate was available; amounts remain in original currencies."
+        return f"找不到可靠的 {requested} 顯示匯率；金額保留原幣，不做猜測換算。"
+    return None
+
+
+def _original_pnl_lines(card, language):
+    rows = ((card.get("currency_meta") or {}).get("pnl_by_currency") or {})
+    lines = []
+    for currency, row in sorted(rows.items()):
+        realized = _finite_number((row or {}).get("realized"))
+        unrealized = _finite_number((row or {}).get("unrealized"))
+        if realized is None and unrealized is None:
+            continue
+        realized = realized or 0.0
+        unrealized = unrealized or 0.0
+        total = realized + unrealized
+        if language == "en":
+            lines.append(f"{currency} P&L was {_money(total, currency)}: "
+                         f"{_money(realized, currency)} realized and "
+                         f"{_money(unrealized, currency)} unrealized.")
+        else:
+            lines.append(f"{currency} 帳面損益 {_money(total, currency)}，其中已實現 "
+                         f"{_money(realized, currency)}、未實現 {_money(unrealized, currency)}。")
+    return lines
+
+
+def _overview_lines(card, language):
+    overview = card.get("overview") or {}
+    context = _display_context(card, language)
+    if context.get("currency"):
+        total = _display_money(overview.get("total_pnl"), context)
+        realized = _display_money(overview.get("realized"), context)
+        unrealized = _display_money(overview.get("unrealized"), context)
+        if language == "en":
+            return [f"Total P&L was {total}: {realized} realized and {unrealized} unrealized."]
+        return [f"帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。"]
+    return _original_pnl_lines(card, language)
 
 
 def _pct(value, digits=0):
@@ -361,18 +480,22 @@ def _performance_lines(card, language, honesty=None):
     panel it qualifies (for example a gated alpha block) is not rendered."""
     honesty = honesty if honesty is not None else {}
     overview = card.get("overview") or {}
-    currency = _currency(card)
+    display = _display_context(card, language)
     en = language == "en"
     lines = []
     payoff = overview.get("payoff")
     if payoff is not None:
-        if en:
+        avg_win = _display_money(overview.get("avg_win"), display)
+        avg_loss = _display_money(overview.get("avg_loss"), display, absolute=True)
+        if en and avg_win is not None and avg_loss is not None:
             lines.append(f"Realized payoff ratio was {payoff:.1f}; the average win was "
-                         f"{_money(overview.get('avg_win'), currency)} versus "
-                         f"{_money_abs(overview.get('avg_loss'), currency)} for the average loss.")
+                         f"{avg_win} versus {avg_loss} for the average loss.")
+        elif not en and avg_win is not None and avg_loss is not None:
+            lines.append(f"已實現盈虧比 {payoff:.1f}；平均賺 {avg_win}，平均賠 {avg_loss}。")
         else:
-            lines.append(f"已實現盈虧比 {payoff:.1f}；平均賺 {_money(overview.get('avg_win'), currency)}，"
-                         f"平均賠 {_money_abs(overview.get('avg_loss'), currency)}。")
+            lines.append((f"Realized payoff ratio was {payoff:.1f}; average gain/loss amounts remain "
+                          "in original currencies." if en else
+                          f"已實現盈虧比 {payoff:.1f}；平均盈虧金額因顯示匯率缺失而保留原幣。"))
     ab = card.get("alpha_beta_breakdown") or {}
     benchmark_rows = _benchmark_rows(card)
     for market, bench, row in benchmark_rows:
@@ -421,12 +544,21 @@ def _performance_lines(card, language, honesty=None):
                          "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的持倉柱不受影響。")
     cash = card.get("cash") or {}
     if cash.get("reliable") and cash.get("balance") is not None:
-        if en:
-            lines.append(f"Anchored account cash was {_money(cash.get('balance'), currency)}"
+        display_cash = _display_money(cash.get("balance"), display)
+        if en and display_cash is not None:
+            lines.append(f"Anchored account cash was {display_cash}"
                          + (f", {_pct(cash.get('weight'))} of the account." if cash.get("weight") is not None else "."))
-        else:
-            lines.append(f"有餘額錨點的帳戶現金為 {_money(cash.get('balance'), currency)}"
+        elif not en and display_cash is not None:
+            lines.append(f"有餘額錨點的帳戶現金為 {display_cash}"
                          + (f"，佔帳戶 {_pct(cash.get('weight'))}。" if cash.get("weight") is not None else "。"))
+        else:
+            original = []
+            for currency, row in sorted((cash.get("by_currency") or {}).items()):
+                if (row or {}).get("balance") is not None:
+                    original.append(_money((row or {}).get("balance"), currency))
+            if original:
+                lines.append(("Anchored account cash by original currency: " + ", ".join(original) + "."
+                              if en else "有餘額錨點的帳戶現金（原幣）：" + "、".join(original) + "。"))
     for key in ("cash_reliability", "acct_perf_basis"):
         if key in honesty:
             lines.append(honesty.pop(key))
@@ -434,12 +566,17 @@ def _performance_lines(card, language, honesty=None):
     cf = pa.get("counterfactual") or {}
     if cf.get("ticker"):
         after = "—" if cf.get("payoff") is None else f"{float(cf['payoff']):.1f}"
-        if en:
-            lines.append(f"The largest realized drag was {cf['ticker']} at {_money(cf.get('drag'), currency)}; "
+        drag = _display_money(cf.get("drag"), display)
+        if en and drag is not None:
+            lines.append(f"The largest realized drag was {cf['ticker']} at {drag}; "
                          f"without it, the payoff ratio would have been {after}.")
-        else:
-            lines.append(f"最大已實現拖累是 {cf['ticker']}，淨影響 {_money(cf.get('drag'), currency)}；"
+        elif not en and drag is not None:
+            lines.append(f"最大已實現拖累是 {cf['ticker']}，淨影響 {drag}；"
                          f"拿掉它後盈虧比會是 {after}。")
+        else:
+            lines.append((f"The largest realized drag was {cf['ticker']}; without it, the payoff ratio "
+                          f"would have been {after}." if en else
+                          f"最大已實現拖累是 {cf['ticker']}；拿掉它後盈虧比會是 {after}。"))
     for key in [k for k in honesty if k != "etf_metadata"]:
         lines.append(honesty.pop(key))
     return lines
@@ -483,15 +620,27 @@ def _trade_lines(card, language):
     best, worst = card.get("best_trade"), card.get("worst_trade")
     if not best or not worst:
         return []
-    currency = _currency(card)
+    mixed = bool((card.get("currency_meta") or {}).get("mixed"))
+
+    def amount(trade):
+        currency = trade.get("currency")
+        if not currency and not mixed:
+            currency = _currency(card)
+        return _money(trade.get("pnl"), str(currency).upper()) if currency else None
+
+    best_amount, worst_amount = amount(best), amount(worst)
     if language == "en":
         return [
-            f"Best: {best['ticker']} {_pct(best.get('ret'))}, {_money(best.get('pnl'), currency)} realized.",
-            f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}, {_money(worst.get('pnl'), currency)} realized.",
+            (f"Best: {best['ticker']} {_pct(best.get('ret'))}, {best_amount} realized."
+             if best_amount else f"Best: {best['ticker']} {_pct(best.get('ret'))}."),
+            (f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}, {worst_amount} realized."
+             if worst_amount else f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}."),
         ]
     return [
-        f"最賺：{best['ticker']} {_pct(best.get('ret'))}，已實現 {_money(best.get('pnl'), currency)}。",
-        f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}，已實現 {_money(worst.get('pnl'), currency)}。",
+        (f"最賺：{best['ticker']} {_pct(best.get('ret'))}，已實現 {best_amount}。"
+         if best_amount else f"最賺：{best['ticker']} {_pct(best.get('ret'))}。"),
+        (f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}，已實現 {worst_amount}。"
+         if worst_amount else f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}。"),
     ]
 
 
@@ -732,8 +881,6 @@ def render_private(bundle):
     card = bundle.get("engine_card") or {}
     state = bundle.get("engine_state") or {}
     sections = copy["sections"]
-    overview = card.get("overview") or {}
-    currency = _currency(card)
     holes = card.get("top_holes") or []
     commitment = bundle.get("commitment") or {}
 
@@ -758,16 +905,12 @@ def render_private(bundle):
     context_lines = _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy)
     if context_lines:
         lines.extend([f"## {sections['context']}", ""] + [f"- {x}" for x in context_lines] + [""])
-    lines.extend([
-        f"## {sections['numbers']}", "",
-        ((f"帳面總損益 {_money(overview.get('total_pnl'), currency)}，其中已實現 "
-          f"{_money(overview.get('realized'), currency)}、未實現 {_money(overview.get('unrealized'), currency)}。")
-         if copy["language"] != "en" else
-         (f"Total P&L was {_money(overview.get('total_pnl'), currency)}: "
-          f"{_money(overview.get('realized'), currency)} realized and "
-          f"{_money(overview.get('unrealized'), currency)} unrealized.")),
-        "",
-    ])
+    lines.extend([f"## {sections['numbers']}", ""])
+    lines.extend(_overview_lines(card, copy["language"]))
+    currency_note = _currency_note(card, copy["language"])
+    if currency_note:
+        lines.append(currency_note)
+    lines.append("")
     # #82: honesty sentences are woven into the sections they qualify — never
     # printed as a standalone checklist section.
     honesty = _honesty_lines(bundle, copy)
