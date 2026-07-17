@@ -19,6 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.join(os.path.dirname(HERE), "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
 import market_context as mc  # noqa: E402
+import trade_recap as tr  # noqa: E402
 
 
 def _approx(a, b, tol=1e-6):
@@ -71,6 +72,29 @@ def test_unsorted_input_ok():
 def test_single_day_window():
     out = mc.compute_context({"SPY": _spy()}, "2026-06-13", "2026-06-13")
     assert _approx(out["SPY"]["window_ret"], 121.0 / 115.0 - 1), "單日窗口:前收=06-09"
+
+
+def test_review_window_uses_previous_review_or_first_review_fallback():
+    assert tr.review_window("2026-07-14", "2026-07-01") == ("2026-07-01", "2026-07-14")
+    assert tr.review_window("2026-07-14", None) == ("2026-07-07", "2026-07-14")
+    assert tr.review_window("2026-07-14", "2026-08-01") == ("2026-07-07", "2026-07-14")
+
+
+def test_shared_price_start_preserves_market_context_anchors():
+    assert tr.shared_price_start("2026-07-01", "2026-07-07", "2026-07-14") == "2025-12-15"
+    assert tr.shared_price_start("2024-01-02", "2026-07-07", "2026-07-14") == "2024-01-02"
+    assert tr.shared_price_start("2026-07-01", "2026-06-01", "2026-07-14") == "2025-12-15"
+
+
+def test_trade_engine_reuses_price_frame_for_frozen_market_context():
+    pd = _pd()
+    idx = pd.to_datetime(["2025-12-31", "2026-07-01", "2026-07-14"])
+    frame = pd.DataFrame({"SPY": [100.0, 110.0, 121.0], "QQQ": [200.0, 220.0, 209.0],
+                          "^VIX": [18.0, 20.0, 16.0]}, index=idx)
+    out = tr.market_context_from_prices(frame, None, "2026-07-02", "2026-07-14")
+    assert _approx(out["benchmarks"]["SPY"]["window_ret"], 0.1)
+    assert _approx(out["benchmarks"]["QQQ"]["window_ret"], -0.05)
+    assert out["benchmarks"]["VIX"]["delta"] == -4.0
 
 
 def test_cross_year_window_semantics_locked():

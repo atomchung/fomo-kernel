@@ -6,12 +6,15 @@
   "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
   "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
   "sections": {
+    "context": "Context and timeline mirrors",
     "numbers": "The account for this review",
     "trades": "Best and worst realized trades",
     "strength": "One thing you did well",
     "hole": "The biggest behavioral leak",
     "motive": "The thesis behind the add",
     "exit_capture": "Exit reasons recorded this review",
+    "exit_followup": "Exit follow-up",
+    "patterns": "What the problem ledger remembers",
     "etf": "ETF and portfolio structure",
     "rule": "Change only this next time"
   },
@@ -72,5 +75,35 @@
     "modified": "Partly right",
     "falsified": "Wrong call",
     "skip": "Skip"
+  },
+  "rule_breach_choices": {
+    "keep_tracking": "I did not keep it",
+    "revise_rule": "The rule needs revision",
+    "exception": "This was a justified exception"
+  },
+  "rule_breach_decisions": {
+    "keep_tracking": "not kept; keep tracking",
+    "revise_rule": "marked for revision",
+    "exception": "recorded as a justified exception"
+  },
+  "horizons": {
+    "weeks": "weeks",
+    "quarters": "quarters",
+    "years": "years"
+  },
+  "problem_keys": {
+    "avgdown_breach": "Averaging-down boundary",
+    "sell_winner_early": "Winner exit opportunity cost",
+    "oversize": "Oversized position",
+    "concentration": "Shared-driver concentration",
+    "hold_inconsistency": "Holding-horizon inconsistency",
+    "exit_anxiety": "Anxiety-driven exit",
+    "fomo_entry": "FOMO entry",
+    "horizon_break": "Thesis-horizon break"
+  },
+  "trends": {
+    "worse": "worsening",
+    "flat": "flat",
+    "better": "improving"
   }
 }

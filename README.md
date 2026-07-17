@@ -2,10 +2,10 @@
 
 **English** · [繁體中文](README.zh-TW.md)
 
-> A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It reviews your real trades through **one master's lens** and hands you back **a single card** —
-> the one thing you did right + your biggest leak (in your own numbers) + one rule to keep next time + one line from the master.
+> A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It turns your real trades into **one review card** through deterministic diagnosis and a short judgment dialogue —
+> the one thing you did right + your biggest leak (in your own numbers) + one checkable rule you choose. On the next review, it starts by reconciling whether you kept that rule.
 
-Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it forces you to change exactly one thing next time.**
+Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it converges on one checkable change you choose and checks it next review.**
 
 > 📝 **Language.** The same review contract renders in Traditional Chinese or English (`--language zh-TW|en`). Translation changes the questions and card copy, not the engine facts or analysis policy.
 
@@ -31,7 +31,7 @@ cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --languag
 Running the built-in mock, the **illustrative card** looks like this (below is a simplified quick-view; the finished review card is rendered only after the required motive questions and one-rule choice):
 
 ```text
-Review card · Master lens · mock sample
+Review card · mock sample
 On paper you're up +$138k, but almost all of it is "held and never sold";
 your active trades are what need discipline, not luck.
 
@@ -50,10 +50,9 @@ Per-position diagnosis (sorted by size; small lots not nitpicked):
 [v] What you did right: you averaged down twice, but both times stayed within your position cap — no ticker got averaged into an oversized position
 [X] Biggest leak: position sizing — largest single lot PLTR is 50%, the rest average 17%
 [*] Change only this next time: hard-cap any single position at 20% — trim if it goes over
- >  Lens principle: a cheap one-time probe is allowed — it doesn't count as completing long-term validation of trust
 ```
 
-The same card, rendered as a dark visual card (translated, same as above — the real thing renders in Chinese):
+A synchronized dark-card mock is available as [English HTML](docs/demo-card-en.html) and [Traditional Chinese HTML](docs/demo-card.html).
 
 ![fomo-kernel review card demo](docs/demo-card-en.png)
 
@@ -70,11 +69,11 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
    - 5-dimension behavioral diagnosis: position sizing / averaging down / exit / diversification / holding consistency
    - **Per-position diagnosis**: every ticker ranked **by dollar size** (small lots not nitpicked), with a classifier splitting "likely DCA vs likely averaging-a-loser vs unclear"
    - **Return attribution**: splits "beat the market" into "right sector (luck / direction)" vs "stock picking (skill)" — so you see whether the gains were edge or nerve
-2. **Lens layer (a master's principles × dialogue)** — the "why" a machine can't infer, asked before the card is issued:
+2. **Judgment-dialogue layer (engine signals × your intent)** — the "why" a machine can't infer, asked before the card is issued:
    - Thesis check: "MSTR — you kept adding and it's still down. Do you still believe the thesis, or just won't book the loss?"
    - Motive: "You sold a winner early — was the thesis at target, or were you afraid of giving back the gain?"
    - **The engine picks the few positions worth asking about; your answer sets the read** — the machine is always guessing, your one sentence decides
-3. **Prescription layer** — from "where you're leaking" to "what to do differently next time": amplify (scale your edge) / cut waste (a mechanical rule you can check next time)
+3. **One-rule layer** — turns the verdict into a small candidate set. You choose one candidate, write a custom rule, or skip; the next review checks the same rule instead of starting from zero.
 
 → It all converges into **one card**: one leak, one checkable rule for next time. Come back a second time and it first reconciles "did you keep that rule?"
 
@@ -113,7 +112,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually 
 
 - **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
 - **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
-- **Switch philosophy lens / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
+- **Start over / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
 - **Wrote a thesis wrong** → correct it in the next review; the new event points to the earlier thesis. Do not hand-edit `theses.jsonl`: it is now a rebuildable projection of canonical sessions.
 - **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
 - **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
@@ -200,8 +199,8 @@ skills/fomo-kernel/
   card-spec.md              ← Step 3 card spec (blocklist / redact / narrative rules; read only after Step 2 questions)
   engine/trade_recap.py     ← mechanical layer: 5-dim + per-position DCA/loser classifier + attribution (pure functions, no real paths)
   rubric/
-    vincent-yu.md           ← the default lens's principle distillation (paraphrased, with per-lens source lists; swappable for another master)
-    vincent-yu.lens.json    ← the lens's "swappable master layer": rules / quotes / motive prompts (swap master = swap this file)
+    vincent-yu.md           ← post-release research notes: paraphrased principles + source list; not loaded by current v2
+    vincent-yu.lens.json    ← post-release research schema asset; not connected to current v2 questions or cards
   behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
   card-template.html        ← review-card HTML layout example
   mock/                     ← 12 sample sets + mock_trades + each one's driver map + SAMPLES.md
@@ -209,6 +208,6 @@ skills/fomo-kernel/
 
 ## Disclaimer
 
-The default lens is a principle distillation from one investor's public writing — paraphrased summaries with per-lens source lists in `rubric/`, not verbatim quotation, not reproduced, and not endorsed by that person; the lens is swappable, with more to come.
+The files under `rubric/` are post-release research assets distilled from public writing. They use paraphrased summaries with source lists, not verbatim quotation, reproduction, or endorsement, and current v2 does not load them as a runtime persona.
 This tool is positioned as **research / coaching support**; all output is trade-behavior review and discipline suggestions only — **not investment advice, and no buy/sell recommendation on any instrument**; final investment decisions and outcomes are your own.
-The code is licensed under the [MIT License](LICENSE); the lens content in `rubric/` is paraphrased principle distillation with per-lens source lists, and is not relicensed under MIT.
+The code is licensed under the [MIT License](LICENSE); the paraphrased research content in `rubric/` has source lists and is not relicensed under MIT.

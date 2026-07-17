@@ -38,7 +38,8 @@
         "rule": {"type": "string"},
         "metric_key": {"type": "string"},
         "goal": {"enum": ["down", "up", "hold"]},
-        "dim": {"type": "string"}
+        "dim": {"type": "string"},
+        "revises_rule_id": {"type": "string"}
       },
       "additionalProperties": false
     },

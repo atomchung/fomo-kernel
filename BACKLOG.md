@@ -1,6 +1,6 @@
 # fomo-kernel backlog
 
-Last refreshed: 2026-07-15. The target is a promotion-ready release on 2026-07-19.
+Last refreshed: 2026-07-16. The target is a promotion-ready release on 2026-07-19.
 
 ## North star (owner correction 2026-07-05, #112 — do not regress this)
 
@@ -30,6 +30,17 @@ Status: implemented in the v2 lifecycle.
 - Store append-only thesis decision events tied to active cycle IDs.
 - Reconcile the evidence in future reviews rather than asking a generic averaging-down question again.
 
+### Weekly reconciliation and memory presentation
+
+Status: implemented in the v2 lifecycle and private-card renderer, pending second-review dogfood and the manual card-quality gate.
+
+- Open a later review by reconciling the user's prior commitment rather than starting from zero.
+- Put due exit revisits into the required question queue, preserve the earlier exit reason, and frame the checkpoint against the actual swap outcome.
+- Keep cold-start historical exits in a summarized backlog instead of flooding required questions.
+- Surface recurring four-week problem counts and ask for a qualitative judgment when a chosen rule appears to have been broken again.
+- Mirror frozen market context and holding-horizon contradictions from the review plan onto the private card.
+- Leave skipped due checkpoints unresolved so they return; commit answered checkpoints and review marks through canonical session projections.
+
 ### ETF policy
 
 Status: implemented with conservative fallback.
@@ -56,16 +67,19 @@ Status: implemented in this change, pending full verification.
 - Inspect the public card manually for amounts, dates, tickers, exact weights, session IDs, evidence text, and free-form narrative.
 - Demonstrate evidence-gate rejection and recovery.
 - Demonstrate broad ETF exemption versus thematic ETF concentration.
+- Complete a second review against the same local state and inspect prior-rule reconciliation, due checks with frozen-price swap framing, exit backlog, recurring-problem presentation, market context, and any horizon contradiction.
 
 ## P1
 
-### Multi-lens selection and comparison
+### Post-release lens research and possible selection
 
+- Keep the existing `rubric/` files as research assets; do not load them into current v2 questions or cards.
 - Select from a small verified lens set.
 - Apply style-specific divergence only where mechanical evidence supports a style axis.
-- Keep universal risk failures outside the lens override.
+- Omit lens-specific interpretation when the selected lens has no explicit stance for that dimension.
+- Keep universal risk facts independent of the lens and never attribute them to a persona.
 - Do not duplicate lifecycle, state, schemas, or renderers.
-- Verify every public quotation against a primary source before promotion.
+- Keep public wording as source-linked paraphrase, never a quotation or persona endorsement.
 
 ### Complete snapshot adapter
 

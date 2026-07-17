@@ -13,9 +13,10 @@
 (從 cycle_id 內嵌的起始日)+ 判閾值。
 
 矛盾規則(horizon 缺欄 / null / 非三值 → 靜默跳過,不回補):
-  清倉太快(有 exit_date):說「年」持有 <90d / 說「季」<21d → exit_too_fast
-  抱太久(無 exit_date):  說「週」持有 >60d / 說「季」>180d → held_too_long
-  (說「週」快清、說「年」長抱 = 正常,不標)
+  新資料使用 locale-neutral `weeks` / `quarters` / `years`;舊 `週` / `季` / `年` 同義保留。
+  清倉太快(有 exit_date):years <90d / quarters <21d → exit_too_fast
+  抱太久(無 exit_date):  weeks >60d / quarters >180d → held_too_long
+  (weeks 快清、years 長抱 = 正常,不標)
 
 CLI:
   python3 horizon.py scan <active_theses.json> --as-of YYYY-MM-DD
@@ -30,14 +31,27 @@ import datetime as dt
 import json
 import sys
 
-HORIZONS = {"週", "季", "年"}
+HORIZON_ALIASES = {
+    "週": "weeks", "周": "weeks", "week": "weeks", "weeks": "weeks",
+    "季": "quarters", "quarter": "quarters", "quarters": "quarters",
+    "年": "years", "year": "years", "years": "years",
+}
+HORIZONS = {"weeks", "quarters", "years"}
 # 閾值單一事實源(#148 item5 下沉點;dogfood 後可調,SKILL 不再各存一份)
-EXIT_FAST = {"年": 90, "季": 21}    # 有 exit_date 且 holding_days < 門檻 → 清倉太快
-HELD_LONG = {"週": 60, "季": 180}   # 無 exit_date 且 holding_days > 門檻 → 抱太久
+EXIT_FAST = {"years": 90, "quarters": 21}    # 有 exit_date 且 holding_days < 門檻 → 清倉太快
+HELD_LONG = {"weeks": 60, "quarters": 180}   # 無 exit_date 且 holding_days > 門檻 → 抱太久
+
+
+def normalize_horizon(value):
+    """Return the locale-neutral horizon id while accepting legacy stored values."""
+    if not isinstance(value, str):
+        return None
+    return HORIZON_ALIASES.get(value.strip().lower())
 
 
 def horizon_contradiction(horizon, holding_days, exited):
     """回矛盾類型字串 or None。門檻 deterministic;horizon 非三值一律 None(靜默跳過)。"""
+    horizon = normalize_horizon(horizon)
     if horizon not in HORIZONS:
         return None
     if exited:
@@ -67,7 +81,7 @@ def scan(theses, as_of):
     as_of_d = dt.date.fromisoformat(as_of)
     out = []
     for t in theses:
-        horizon, cid = t.get("horizon"), t.get("cycle_id")
+        horizon, cid = normalize_horizon(t.get("horizon")), t.get("cycle_id")
         if horizon not in HORIZONS or not cid:        # 缺 horizon / cycle_id → 跳過
             continue
         start = _cycle_start(cid)

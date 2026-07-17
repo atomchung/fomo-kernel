@@ -2,10 +2,10 @@
 
 [English](README.md) · **繁體中文**
 
-> 一個給 Claude Code、Codex、Cursor 等 coding agent 使用的本機交易復盤 skill：用**一面大師鏡片**把你的真實交易收斂成**一張卡**——
-> 你做對的一件事 + 一個最大的洞(用你自己的數字)+ 一條下次要守的規矩 + 一句大師的話。
+> 一個給 Claude Code、Codex、Cursor 等 coding agent 使用的本機交易復盤 skill：先用確定性診斷找出行為漏洞，再透過一段判斷對話收斂成**一張卡**——
+> 你做對的一件事 + 一個最大的洞(用你自己的數字)+ 一條你親選、下次可驗的規矩。下次復盤會先對帳這條規矩有沒有守。
 
-不是又一份統計報表。它做的是報表做不到的事:**先算出你看不見的行為漏洞,再問出你不願承認的動機,最後逼你下次只改一件事。**
+不是又一份統計報表。它做的是報表做不到的事:**先算出你看不見的行為漏洞,再問出你不願承認的動機,最後收斂到你親選的一個可驗改變,下次復盤再回來對帳。**
 
 
 ## Quick start
@@ -30,7 +30,7 @@ cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --languag
 跑內建 mock 的**示意卡**長這樣(下面是簡化速覽版;實際引擎輸出是彩色終端卡,另含 what-if 回檔壓測、5 維行為 bar、報酬拆帳專區——真正的定論卡則是 Claude 在 Step ② 對話問完動機後才收斂的):
 
 ```text
-復盤卡 · 大師鏡片 · mock 範例
+復盤卡 · mock 範例
 你帳面賺 +$138k,但幾乎全是「抱著沒賣」賺的;真正進出操作,要靠紀律不靠運氣。
 
   帳面總損益      +$138,058    (已實現 $19k + 未實現 $119k)
@@ -48,10 +48,9 @@ cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --languag
 [v] 你做對的:往下加碼 2 次,但都守在部位上限內,沒有任何一檔越攤越重
 [X] 最大的洞:部位 sizing — 最大一筆 PLTR 佔 50%,其餘平均 17%
 [*] 下次只改:單筆部位上限定死 20%,超過就減
- >  鏡片原則:可以低成本試探一次,不代表完成長期信任的驗證
 ```
 
-同一張卡的視覺版(深色卡片):
+同步的深色卡片示意可見 [English HTML](docs/demo-card-en.html) 與 [繁體中文 HTML](docs/demo-card.html)。
 
 ![fomo-kernel 復盤卡 demo](docs/demo-card.png)
 
@@ -68,11 +67,11 @@ ChatGPT 算不出 FIFO 配對的真實 α/β、分不清你是「定投」還是
    - 5 維行為診斷:部位 sizing / 加碼攤平 / 出場 / 分散 / 持有一致性
    - **標的層診斷**:按**金額**排序每檔(小倉不糾結),主從分類器分「疑似定投 vs 疑似凹單 vs 待確認」
    - **報酬歸因**:把「贏大盤」拆成「押對賽道(運氣/方向)」vs「選股(技巧)」——讓你看清賺的是本事還是膽子
-2. **鏡片層(大師原則 × 對話)** — 機械分不出的「為什麼」,出卡前問你:
+2. **判斷對話層(引擎訊號 × 你的意圖)** — 機械分不出的「為什麼」,出卡前問你:
    - 持股假設:「MSTR 一路加碼還虧,是還相信 thesis,還是不想認賠在凹單?」
    - 動機:「賣掉賺錢的賣太早,是 thesis 到價,還是怕回吐?」
    - **機械挑該問的少數標的,你的答案定性**——機械永遠在猜,你一句話定案
-3. **處方層** — 從「你哪裡爛」進到「下一步換什麼做法」:揚長(放大你的 edge)/ 砍損耗(機械規則,下次可驗)
+3. **單一規矩層** — 把定性收斂成少數候選規矩。你可選一條、自訂一條或跳過；下次復盤會沿用同一條規矩對帳，不從零開始。
 
 → 最後收斂成**一張卡**,一個洞、一條下次能驗的規矩。第二次來,先對帳「上次那條守了沒」。
 
@@ -111,7 +110,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # 真的全
 
 - **下週回來要匯哪份 CSV?** 直接把**全歷史**再匯出來丟給它就好——你不用手動追增量。跟之前重疊的列會自動去重(去重就是為這個設計的),所以**每週丟整份對帳單都安全**;引擎用上次復盤的截點判斷哪些是新的,卡第一句就對帳你上次承諾的那條規矩。
 - **看歷次復盤** → `cat ~/.trade-coach/log.jsonl`。
-- **換哲學鏡片重來 / 清空對帳基準** → `coach.py data-reset --confirm`(或自己刪掉/改名 `~/.trade-coach/`,效果一樣:下次就當第一次)。
+- **重新開始 / 清空對帳基準** → `coach.py data-reset --confirm`(或自己刪掉/改名 `~/.trade-coach/`,效果一樣:下次就當第一次)。
 - **thesis 寫歪了** → 在下一次復盤新增修訂 event，指回舊 thesis；不要直接手改 `theses.jsonl`，它現在是 canonical session 的可重建 projection。
 - **隱私自證**:教練記憶就是 `data-status` 列出的那些檔、全在你機器上,作者那邊一行都沒有。
 - **想先看「多週迴圈」長什麼樣**(全程在 temp 目錄跑,**不碰**你正式的 `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`:把內建 mock 按時間切 3 段模擬「初診 → 對帳 → 對帳」,直接看到第二張卡怎麼引用上週承諾、log.jsonl 怎麼一行行長出來。
@@ -198,8 +197,8 @@ skills/fomo-kernel/
   card-spec.md              ← Step 3 卡規格(禁止清單 / redact / 敘事鐵律;Step 2 問完才讀)
   engine/trade_recap.py     ← 機械層:5 維 + 標的層主從分類 + 歸因(純函式,無真實路徑)
   rubric/
-    vincent-yu.md           ← 預設鏡片的原則蒸餾(意譯摘要,各檔附來源清單;可換成別的大師)
-    vincent-yu.lens.json    ← 鏡片的「可換大師層」:規矩/引言/動機問句(換大師 = 換這檔)
+    vincent-yu.md           ← release 後研究筆記:意譯原則 + 來源清單;現行 v2 不讀取
+    vincent-yu.lens.json    ← release 後研究用 schema 資產;未接入現行 v2 問句或卡片
   behavior-diagnosis.md     ← 診斷哲學:對事不對人、行為多標籤(why 的設計記錄)
   card-template.html        ← 復盤卡 HTML 版型範例
   mock/                     ← 12 組 sample + mock_trades + 各自 driver map + SAMPLES.md
@@ -207,6 +206,6 @@ skills/fomo-kernel/
 
 ## 免責
 
-預設鏡片來自一位投資人公開文章的原則蒸餾(現行為意譯摘要,各鏡片檔內附來源清單,非逐字引述),非轉載、非經本人背書;鏡片可換,之後會補多位。
+`rubric/` 內是從公開文章蒸餾的 release 後研究資產。內容採意譯摘要並附來源清單，非逐字引述、非轉載、非經本人背書；現行 v2 也不會把它們載入成 runtime persona。
 本工具定位 **research / coaching support**,所有輸出僅為交易行為回顧與紀律建議,**不構成投資建議、不涉及任何標的買賣推薦**;最終投資決策與結果由使用者自負。
-程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的鏡片內容屬意譯的原則蒸餾,各檔附來源清單,不隨 MIT 轉授權。
+程式碼以 [MIT License](LICENSE) 授權;`rubric/` 內的意譯研究內容附來源清單,不隨 MIT 轉授權。
