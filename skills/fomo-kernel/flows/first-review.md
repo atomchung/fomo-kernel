@@ -14,7 +14,7 @@ Use when the Review Plan has `route=first_review`.
    - Inference-only accumulation fields (never ask extra questions for them; they cannot be backfilled later): `source_type` (`kol`|`research`|`self`|`other`, with `source_name` and `source_confidence:"candidate"` only when the conversation contains a real signal), `emotion` (`fomo`|`composed`|`forced`|`planned`) and `confidence` (`high`|`medium`|`low`), each with `emotion_inferred`/`confidence_inferred` set to true. Leave a field null when no signal supports a guess; upgrade `_inferred` to false or `source_confidence` to `"confirmed"` only when the user volunteers it in an existing answer.
 4. Keep the narrative qualitative. Write `headline` and `mirror`; optionally add `counterfactual`, `strength`, and `rule_rationale`. Cover every `card_plan.required_honesty_keys` entry with one sentence in `narrative.honesty` (wording guidance in `card-spec.md`). Do not include digits.
 5. Run preview. If validation fails, fix the artifact described by the error; do not bypass the gate.
-6. Show the review-card preview and ask the user to choose one candidate rule, provide a custom rule, or skip.
-7. Write the choice to `answers.commitment`, then finalize. Return the review card (`card-private.md`). Return the share-safe artifact only when the user asks for it; do not imply that the product publishes it.
+6. Show the review-card preview following `references/card-delivery.md` and ask the user to choose one candidate rule, provide a custom rule, or skip.
+7. Write the choice to `answers.commitment`, then finalize. Return the review card (`card-private.md`) per the same delivery contract. Return the share-safe artifact only when the user asks for it; do not imply that the product publishes it.
 
 Success means that a canonical session is committed and the user sees one card. Projection errors are repairable and must not be described as session loss.

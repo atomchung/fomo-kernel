@@ -6,4 +6,4 @@ Use when the user has no data and wants to see the product experience.
 
 Label every conversation and card clearly as demo data. Do not read from or project into the user's production `~/.trade-coach` state, and never mix demo theses into production memory.
 
-Return the private demo card. Return the public demo card only when the user asks for a shareable version.
+Return the private demo card following `references/card-delivery.md`. Return the public demo card only when the user asks for a shareable version.

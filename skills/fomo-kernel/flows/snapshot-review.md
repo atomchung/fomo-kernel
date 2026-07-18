@@ -19,4 +19,4 @@ When the coach root already has an accounting anchor, the same prepare call rout
 
 An incomplete snapshot still produces a bounded review on an empty root, but it is not an accounting anchor and it cannot reconcile existing history — the engine rejects it; ask for the complete account view. A declaration older than the current anchor is also rejected.
 
-The remaining lifecycle matches first review: answer every `required:true` question returned by the plan, create the thesis updates and qualitative narrative, preview, choose at most one commitment, and finalize. A snapshot plan may return an empty question queue because it contains no action history; do not invent a motive question to fill it.
+The remaining lifecycle matches first review: answer every `required:true` question returned by the plan, create the thesis updates and qualitative narrative, preview, choose at most one commitment, and finalize. Show the previewed and final cards following `references/card-delivery.md`. A snapshot plan may return an empty question queue because it contains no action history; do not invent a motive question to fill it.

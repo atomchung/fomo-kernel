@@ -1143,50 +1143,52 @@ def _problem_lines(bundle, copy):
     return lines
 
 
-def render_private(bundle):
+def _card_structure(bundle):
+    """Assemble the private card's structured content once (#225).
+
+    Both ``render_private`` (canonical Markdown) and ``render_html`` (styled
+    HTML artifact) consume this single assembly, so the two surfaces cannot
+    drift into different content-policy decisions.  Every displayed string is
+    produced by the same helpers the Markdown card has always used; section
+    blocks are ``("paragraph" | "bullets", [lines])`` tuples."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
     card = bundle.get("engine_card") or {}
     state = bundle.get("engine_state") or {}
-    sections = copy["sections"]
+    sections_copy = copy["sections"]
     holes = card.get("top_holes") or []
     commitment = bundle.get("commitment") or {}
     snapshot = bundle.get("route") == "snapshot_review"
 
-    lines = [
-        "---",
-        f"session_id: {bundle.get('session_id')}",
-        "privacy: private",
-        f"language: {copy['language']}",
-        "---",
-        "",
-        f"# {narrative['headline']}",
-        "",
-        f"> {copy['private_badge']}",
-        "",
-    ]
+    badges = [copy["private_badge"]]
     if bundle.get("route") == "test_drive":
-        lines.extend([f"> {copy['demo_badge']}", ""])
+        badges.append(copy["demo_badge"])
+
+    preamble = []
     opening = [] if snapshot else _review_opening_lines(bundle, copy["language"])
     if opening:
-        lines.extend(opening + [""])
-    lines.extend([narrative["mirror"], ""])
+        preamble.append(("paragraph", opening))
+    preamble.append(("paragraph", [narrative["mirror"]]))
+
+    sections = []
     context_lines = ([] if snapshot else
                      _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy))
     if context_lines:
-        lines.extend([f"## {sections['context']}", ""] + [f"- {x}" for x in context_lines] + [""])
-    numbers_section = (_copy_string(copy, "snapshot_numbers", sections["numbers"])
-                       if snapshot else sections["numbers"])
-    lines.extend([f"## {numbers_section}", ""])
+        sections.append({"id": "context", "title": sections_copy["context"],
+                         "blocks": [("bullets", context_lines)]})
+
+    numbers_title = (_copy_string(copy, "snapshot_numbers", sections_copy["numbers"])
+                     if snapshot else sections_copy["numbers"])
+    numbers_blocks = []
     if snapshot:
-        lines.extend(_snapshot_overview_lines(card, copy))
+        numbers_blocks.append(("paragraph", _snapshot_overview_lines(card, copy)))
     else:
-        lines.extend(_overview_lines(card, copy["language"]))
+        overview = _overview_lines(card, copy["language"])
         currency_note = _currency_note(card, copy["language"])
         if currency_note:
-            lines.append(currency_note)
-    lines.append("")
+            overview = overview + [currency_note]
+        numbers_blocks.append(("paragraph", overview))
     # #82: honesty sentences are woven into the sections they qualify — never
     # printed as a standalone checklist section.
     honesty = _honesty_lines(bundle, copy)
@@ -1198,72 +1200,119 @@ def render_private(bundle):
         # performance panels are intentionally suppressed for this route.
         snapshot_honesty = [honesty.pop(key) for key in list(honesty)]
         if snapshot_honesty:
-            lines.extend(snapshot_honesty + [""])
+            numbers_blocks.append(("paragraph", snapshot_honesty))
     performance = [] if snapshot else _performance_lines(card, copy["language"], honesty)
     if etf_honesty:
         (etf_lines if snapshot or etf_lines else performance).append(etf_honesty)
     if performance:
-        lines.extend(performance + [""])
+        numbers_blocks.append(("paragraph", performance))
     if snapshot and honesty:
         # Preview requires one agent-authored sentence for every triggered
         # honesty key. Snapshot cards have no performance section to consume
         # these entries, so keep them in the numbers/scope section instead of
         # silently dropping validated limitations.
-        lines.extend([honesty.pop(key) for key in list(honesty)] + [""])
-    strength_section = (_copy_string(copy, "snapshot_strength", sections["strength"])
-                        if snapshot else sections["strength"])
-    lines.extend([
-        f"## {strength_section}",
-        "",
-        (_snapshot_strength_line(card, copy["language"]) if snapshot else
-         narrative.get("strength") or _best_strength(card, copy["language"])),
-        "",
-    ])
+        numbers_blocks.append(("paragraph", [honesty.pop(key) for key in list(honesty)]))
+    sections.append({"id": "numbers", "title": numbers_title, "blocks": numbers_blocks})
+
+    strength_title = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
+                      if snapshot else sections_copy["strength"])
+    strength_line = (_snapshot_strength_line(card, copy["language"]) if snapshot else
+                     narrative.get("strength") or _best_strength(card, copy["language"]))
+    sections.append({"id": "strength", "title": strength_title,
+                     "blocks": [("paragraph", [strength_line])]})
+
     trades = [] if snapshot else _trade_lines(card, copy["language"])
     if trades:
-        lines.extend([f"## {sections['trades']}", ""] + [f"- {x}" for x in trades] + [""])
-    hole_section = (_copy_string(copy, "snapshot_hole", sections["hole"])
-                    if snapshot else sections["hole"])
-    lines.extend([f"## {hole_section}", ""])
+        sections.append({"id": "trades", "title": sections_copy["trades"],
+                         "blocks": [("bullets", trades)]})
+
+    hole_title = (_copy_string(copy, "snapshot_hole", sections_copy["hole"])
+                  if snapshot else sections_copy["hole"])
+    hole_blocks = []
     if snapshot:
-        lines.extend([_snapshot_hole_line(card, copy["language"]), ""])
+        hole_blocks.append(("paragraph", [_snapshot_hole_line(card, copy["language"])]))
     elif holes:
-        lines.extend([_hole_line(holes[0], copy["language"]), ""])
+        hole_blocks.append(("paragraph", [_hole_line(holes[0], copy["language"])]))
     if not snapshot and narrative.get("counterfactual"):
-        lines.extend([narrative["counterfactual"], ""])
+        hole_blocks.append(("paragraph", [narrative["counterfactual"]]))
+    sections.append({"id": "hole", "title": hole_title, "blocks": hole_blocks})
 
     decisions = [] if snapshot else _decision_lines(bundle, copy)
     if decisions:
-        lines.extend([f"## {sections['motive']}", ""] + [f"- {x}" for x in decisions] + [""])
+        sections.append({"id": "motive", "title": sections_copy["motive"],
+                         "blocks": [("bullets", decisions)]})
     exits = [] if snapshot else _exit_lines(bundle, copy)
     if exits:
-        lines.extend([f"## {sections['exit_capture']}", ""] + [f"- {x}" for x in exits] + [""])
+        sections.append({"id": "exit_capture", "title": sections_copy["exit_capture"],
+                         "blocks": [("bullets", exits)]})
     exit_followup = [] if snapshot else _exit_followup_lines(bundle, copy)
     if exit_followup:
-        lines.extend([f"## {sections['exit_followup']}", ""] + [f"- {x}" for x in exit_followup] + [""])
+        sections.append({"id": "exit_followup", "title": sections_copy["exit_followup"],
+                         "blocks": [("bullets", exit_followup)]})
     if etf_lines:
-        lines.extend([f"## {sections['etf']}", ""] + [f"- {x}" for x in etf_lines] + [""])
+        sections.append({"id": "etf", "title": sections_copy["etf"],
+                         "blocks": [("bullets", etf_lines)]})
     problem_lines = [] if snapshot else _problem_lines(bundle, copy)
     if problem_lines:
-        lines.extend([f"## {sections['patterns']}", ""] + [f"- {x}" for x in problem_lines] + [""])
+        sections.append({"id": "patterns", "title": sections_copy["patterns"],
+                         "blocks": [("bullets", problem_lines)]})
 
+    rule_blocks = []
     rule = commitment.get("rule")
     if rule:
-        lines.extend([f"## {sections['rule']}", "", rule, ""])
+        rule_blocks.append(("paragraph", [rule]))
         if narrative.get("rule_rationale"):
-            lines.extend([narrative["rule_rationale"], ""])
+            rule_blocks.append(("paragraph", [narrative["rule_rationale"]]))
     elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
-        lines.extend([f"## {sections['rule']}", "",
-                      ("你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if copy["language"] != "en"
-                       else "You chose not to set a new commitment; the same baseline remains available next time."), ""])
+        rule_blocks.append(("paragraph", [
+            "你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if copy["language"] != "en"
+            else "You chose not to set a new commitment; the same baseline remains available next time."]))
     elif snapshot:
-        lines.extend([f"## {sections['rule']}", "",
-                      ("這次開場檢查先保留結構基線，不強迫設定承諾。" if copy["language"] != "en"
-                       else "This opening check keeps the structural baseline without forcing a commitment."), ""])
+        rule_blocks.append(("paragraph", [
+            "這次開場檢查先保留結構基線，不強迫設定承諾。" if copy["language"] != "en"
+            else "This opening check keeps the structural baseline without forcing a commitment."]))
     elif state.get("insufficient_data"):
-        lines.extend([f"## {sections['rule']}", "",
-                      ("樣本仍短，這次不硬塞承諾；先把它當基線。" if copy["language"] != "en"
-                       else "The sample is still short, so this review sets a baseline without forcing a commitment."), ""])
+        rule_blocks.append(("paragraph", [
+            "樣本仍短，這次不硬塞承諾；先把它當基線。" if copy["language"] != "en"
+            else "The sample is still short, so this review sets a baseline without forcing a commitment."]))
+    if rule_blocks:
+        sections.append({"id": "rule", "title": sections_copy["rule"], "blocks": rule_blocks})
+
+    return {
+        "session_id": bundle.get("session_id"),
+        "route": bundle.get("route"),
+        "language": copy["language"],
+        "copy": copy,
+        "headline": narrative["headline"],
+        "badges": badges,
+        "preamble": preamble,
+        "sections": sections,
+    }
+
+
+def render_private(bundle):
+    structure = _card_structure(bundle)
+    lines = [
+        "---",
+        f"session_id: {structure['session_id']}",
+        "privacy: private",
+        f"language: {structure['language']}",
+        "---",
+        "",
+        f"# {structure['headline']}",
+        "",
+    ]
+    for badge in structure["badges"]:
+        lines.extend([f"> {badge}", ""])
+    for _kind, block in structure["preamble"]:
+        lines.extend(list(block) + [""])
+    for section in structure["sections"]:
+        lines.extend([f"## {section['title']}", ""])
+        for kind, block in section["blocks"]:
+            if kind == "bullets":
+                lines.extend([f"- {x}" for x in block] + [""])
+            else:
+                lines.extend(list(block) + [""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -1366,12 +1415,178 @@ def render_public(bundle):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_html(markdown_text, title="Trade Review Card"):
-    """Dependency-free HTML artifact; Markdown remains the canonical card text."""
-    escaped = html.escape(markdown_text)
-    return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
-            f"<title>{html.escape(title)}</title><style>"
-            "body{margin:0;background:#f4f1ea;color:#191919;font:17px/1.65 system-ui,sans-serif}"
-            "article{max-width:760px;margin:40px auto;padding:40px;background:#fff;border:1px solid #d8d1c4;"
-            "box-shadow:0 12px 30px #0001}pre{white-space:pre-wrap;font:inherit;margin:0}</style></head>"
-            f"<body><article><pre>{escaped}</pre></article></body></html>\n")
+# ── Styled HTML card (#225) ──────────────────────────────────────────────────
+# Design provenance: card-template.html (2026-07-04 UI review). Runtime truth
+# lives here; design-rule changes must land in both files. Constraints: flat,
+# light/dark via prefers-color-scheme, system font stack, one <=20px heading,
+# outlined tags, neutral surfaces, semantic color only on section labels and
+# P&L accents, font weights 400/500, no emoji, no icon font, and zero external
+# requests (no http(s) URLs anywhere in the document).
+
+# Document-level shim: lets the artifact open directly in a browser. The widget
+# fragment below is self-contained and does not depend on this shim.
+_HTML_SHIM_CSS = """\
+body{margin:0;background:#eceae1;color:#1a1915;padding:28px 16px;display:flex;justify-content:center;
+font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
+@media (prefers-color-scheme:dark){body{background:#1a1917;color:#f5f4ef}}
+.page{width:680px;max-width:100%}"""
+
+# Widget-fragment styles. Host theme variables (--surface-*, --text-*, --border,
+# --radius) win when present; the var() fallbacks keep the fragment readable in
+# hosts without them, with a prefers-color-scheme dark set of fallbacks.
+_HTML_WIDGET_CSS = """\
+.rc{--rc-surface-2:var(--surface-2,#ffffff);--rc-surface-1:var(--surface-1,#f5f4ef);
+--rc-text-primary:var(--text-primary,#1a1915);--rc-text-secondary:var(--text-secondary,#5f5e5a);
+--rc-text-muted:var(--text-muted,#8a8980);--rc-text-success:var(--text-success,#3b6d11);
+--rc-text-danger:var(--text-danger,#a32d2d);--rc-text-accent:var(--text-accent,#185fa5);
+--rc-border:var(--border,rgba(0,0,0,0.10));--rc-radius:var(--radius,8px)}
+@media (prefers-color-scheme:dark){.rc{--rc-surface-2:var(--surface-2,#2b2a27);
+--rc-surface-1:var(--surface-1,#232220);--rc-text-primary:var(--text-primary,#f5f4ef);
+--rc-text-secondary:var(--text-secondary,#b4b2a9);--rc-text-muted:var(--text-muted,#8a8980);
+--rc-text-success:var(--text-success,#a7be83);--rc-text-danger:var(--text-danger,#df8b84);
+--rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10))}}
+.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;font-weight:400;
+color:var(--rc-text-primary);background:var(--rc-surface-2);border:0.5px solid var(--rc-border);
+border-radius:12px;overflow:hidden;line-height:1.6}
+.rc .sec{padding:18px 22px}
+.rc .sec+.sec{border-top:0.5px solid var(--rc-border)}
+.rc .eyebrow{font-size:12px;color:var(--rc-text-muted);margin:0 0 6px}
+.rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
+.rc .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.rc .tag{display:inline-flex;align-items:center;font-size:12px;padding:1px 8px;border-radius:6px;
+line-height:1.5;background:transparent;border:0.5px solid var(--rc-border);color:var(--rc-text-secondary)}
+.rc .lead{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:12px 0 0}
+.rc h2{font-size:15px;font-weight:500;margin:0 0 10px;color:var(--rc-text-primary)}
+.rc p{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:0}
+.rc p+p,.rc ul+p,.rc p+ul{margin-top:8px}
+.rc ul{margin:0;padding-left:20px}
+.rc li{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:0 0 8px}
+.rc li:last-child{margin-bottom:0}
+.rc .spark{display:block;width:100%;height:34px;margin:12px 0 0}
+.rc .spark path{fill:none;stroke:var(--rc-text-muted);stroke-width:1.5;stroke-linecap:round;
+stroke-linejoin:round;opacity:.85}
+.rc .spark.pos path{stroke:var(--rc-text-success)}
+.rc .spark.neg path{stroke:var(--rc-text-danger)}
+.rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
+border-radius:var(--rc-radius);padding:16px 18px}
+.rc .panel-label{font-size:12px;font-weight:500;margin:0 0 8px}
+.rc .strength .panel-label{color:var(--rc-text-success)}
+.rc .hole .panel-label{color:var(--rc-text-danger)}
+.rc .rule .panel-label{color:var(--rc-text-accent)}
+.rc .rule .rmain{font-size:15px;color:var(--rc-text-primary);line-height:1.65;font-weight:500}
+.rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
+
+# Sections rendered as tinted panels with a semantic-color label instead of a
+# plain heading; a purely visual mapping that never changes section content.
+_HTML_PANEL_SECTIONS = {"strength", "hole", "rule"}
+
+
+def _sparkline_svg(card):
+    """Inline-SVG cumulative P&L sparkline from engine ``pnl_curve.points``.
+
+    Renders only when at least two finite points exist.  Note-form or missing
+    curve data omits the sparkline silently: card-spec forbids inventing a new
+    user-facing caveat for it.  One thin line, colored only by the final sign,
+    per the card-template design reference.  No external references, so the
+    artifact stays request-free."""
+    curve = (card or {}).get("pnl_curve") or {}
+    if curve.get("note"):
+        return None
+    values = []
+    for point in curve.get("points") or []:
+        number = _finite_number((point or {}).get("cum_ret"))
+        if number is not None:
+            values.append(number)
+    if len(values) < 2:
+        return None
+    width, height, pad = 120.0, 28.0, 2.0
+    low, high = min(values), max(values)
+    spread = high - low
+    coords = []
+    for index, value in enumerate(values):
+        x = index * width / (len(values) - 1)
+        y = (height / 2.0 if spread <= 0
+             else pad + (high - value) * (height - 2 * pad) / spread)
+        coords.append(f"{x:.1f},{y:.1f}")
+    tone = "pos" if values[-1] >= 0 else "neg"
+    path = "M" + " L".join(coords)
+    return (f'<svg class="spark {tone}" viewBox="0 0 {width:.0f} {height:.0f}" '
+            f'preserveAspectRatio="none" aria-hidden="true"><path d="{path}"/></svg>')
+
+
+def _html_block(kind, rows, lead_class=None):
+    """Render one structure block; ``lead_class`` styles the first paragraph."""
+    rows = [row for row in rows if row]
+    if not rows:
+        return ""
+    if kind == "bullets":
+        return "<ul>" + "".join(f"<li>{html.escape(row)}</li>" for row in rows) + "</ul>"
+    parts = []
+    for index, row in enumerate(rows):
+        attr = f' class="{lead_class}"' if index == 0 and lead_class else ""
+        parts.append(f"<p{attr}>{html.escape(row)}</p>")
+    return "".join(parts)
+
+
+def render_html(bundle):
+    """Self-contained styled HTML artifact for the private card (#225).
+
+    Consumes the same ``_card_structure`` assembly as ``render_private``, so
+    the HTML card can never show facts the canonical Markdown card does not.
+    The body between the WIDGET-FRAGMENT markers is a host-independent
+    ``<style>`` + ``<div class="rc">`` pair that graphical surfaces can lift
+    directly; delivery rules live in ``references/card-delivery.md``."""
+    structure = _card_structure(bundle)
+    copy = structure["copy"]
+    e = html.escape
+
+    header = [f'<p class="eyebrow">{e(copy["title"])}</p>',
+              f"<h1>{e(structure['headline'])}</h1>",
+              '<div class="tags">'
+              + "".join(f'<span class="tag">{e(badge)}</span>' for badge in structure["badges"])
+              + "</div>"]
+    for _kind, block in structure["preamble"]:
+        for row in block:
+            if row:
+                header.append(f'<p class="lead">{e(row)}</p>')
+    body = ['<div class="sec">' + "".join(header) + "</div>"]
+
+    # Snapshot cards have no performance panel, and their engine card carries no
+    # pnl_curve; the route guard keeps that existing conditional explicit.
+    spark = (None if structure["route"] == "snapshot_review"
+             else _sparkline_svg(bundle.get("engine_card") or {}))
+    for section in structure["sections"]:
+        sid = section["id"]
+        rendered = []
+        for index, (kind, rows) in enumerate(section["blocks"]):
+            lead_class = "rmain" if sid == "rule" and index == 0 else None
+            chunk = _html_block(kind, rows, lead_class)
+            if chunk:
+                rendered.append(chunk)
+        if sid == "numbers" and spark:
+            rendered.insert(1 if rendered else 0, spark)
+        if sid in _HTML_PANEL_SECTIONS:
+            body.append(f'<div class="sec {sid}"><div class="panel">'
+                        f'<p class="panel-label">{e(section["title"])}</p>'
+                        + "".join(rendered) + "</div></div>")
+        else:
+            body.append(f'<div class="sec"><h2>{e(section["title"])}</h2>'
+                        + "".join(rendered) + "</div>")
+    body.append('<div class="sec foot">'
+                f"session_id: {e(str(structure['session_id']))} · "
+                f"language: {e(structure['language'])}</div>")
+
+    fragment = ("<!-- WIDGET-FRAGMENT-START -->\n"
+                f"<style>\n{_HTML_WIDGET_CSS}\n</style>\n"
+                '<div class="rc">\n' + "\n".join(body) + "\n</div>\n"
+                "<!-- WIDGET-FRAGMENT-END -->")
+    return ("<!doctype html>\n"
+            f'<html lang="{e(structure["language"])}"><head>\n'
+            '<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f"<title>{e(copy['title'])}</title>\n"
+            f"<style>\n{_HTML_SHIM_CSS}\n</style>\n"
+            "</head>\n<body>\n"
+            '<div class="page">\n'
+            f"{fragment}\n"
+            "</div>\n</body>\n</html>\n")

@@ -6,22 +6,31 @@
 <title>fomo-kernel · review card template</title>
 <!--
   ====================================================================
-  fomo-kernel · full review-card layout reference (card-template.html)
+  fomo-kernel · review-card design reference (card-template.html)
   --------------------------------------------------------------------
-  This is the HTML layout for SKILL.md Step 3, "render one card." At runtime,
-  send the section marked WIDGET FRAGMENT (<style> + <div class="rc">...</div>)
-  to the widget renderer. The host provides light/dark CSS variables and the
-  Tabler icon font.
+  Design provenance and layout reference for the runtime HTML card. Runtime
+  rendering truth lives in engine/card_renderer.py: render_html() builds the
+  styled self-contained artifact — including its WIDGET FRAGMENT (<style> +
+  <div class="rc">...</div>) — from the same structured content as the
+  canonical Markdown card. This file preserves the richer hand-designed layout
+  from the 2026-07-04 UI review as the visual target; it is never loaded or
+  executed at runtime. Design-rule changes must land in BOTH places: this
+  reference and card_renderer.render_html(). tests/test_card_html.py enforces
+  the key invariants on renderer output (self-contained, light/dark support,
+  one widget-fragment pair, sparkline conditionality).
 
   - Data source: actual output from engine/trade_recap.py on mock/mock_trades.csv.
-  - For a real CSV, replace values, labels, and narrative without changing layout.
+  - Mock values and narrative below are illustrative layout content only.
   - Design rules finalized after the 2026-07-04 UI review:
-    - flat, light/dark compatible, Tabler outline icons, no emoji, weights 400/500;
+    - flat, light/dark compatible, no emoji, weights 400/500; this reference
+      uses Tabler outline icons, while the runtime renderer ships icon-free
+      because the artifact must make zero external requests;
     - neutral section surfaces only; semantic colors belong only on icons,
       section labels, keywords, and P&L values;
     - outlined tags, a single 20px maximum heading, and neutral progress bars;
-    - use host variables --surface-*, --text-*, --border, --radius, and
-      --font-{sans,voice,mono}; legacy --color-background-* names are obsolete.
+    - host variables --surface-*, --text-*, --border, --radius may theme the
+      widget fragment; the runtime fragment adds local fallbacks so it stays
+      readable in hosts without them.
   - Content rules: converge on one leak and one rule; ground every sentence in
     numbers and examples; lead with a strength; prioritize money over count or
     win rate; compare alpha with SPY and use sector ETFs for attribution only;
@@ -33,7 +42,8 @@
 
   PREVIEW SHIM exists only so this file opens directly in a browser. Exclude it
   from the widget fragment. Its dark values follow surface-0 (page) through
-  surface-2 (card).
+  surface-2 (card). The shim's Tabler CDN link serves local browsing of this
+  reference only and has no runtime counterpart.
   ====================================================================
 -->
 

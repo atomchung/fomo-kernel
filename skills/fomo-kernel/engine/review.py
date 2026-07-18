@@ -1687,13 +1687,16 @@ def cmd_preview(args):
     bundle = _draft_bundle(plan, answers, narrative, require_commitment=False)
     private_md = card_renderer.render_private(bundle)
     public_md = card_renderer.render_public(bundle)
+    private_html = card_renderer.render_html(bundle)
     paths = session.save_pending(root, args.session_id, answers=answers, narrative=narrative,
                                  **{"card-private-preview": private_md,
-                                    "card-public-preview": public_md})
+                                    "card-public-preview": public_md,
+                                    "card-private-preview.html": private_html})
     _emit({"status": "previewed", "session_id": args.session_id,
            "private_card": private_md, "public_card": public_md,
+           "private_card_html_path": paths.get("card-private-preview.html"),
            "candidate_rules": (plan.get("card_plan") or {}).get("candidate_rules") or [],
-           "paths": paths, "next_action": "show the review-card preview; ask the user to choose one rule or skip; then finalize"})
+           "paths": paths, "next_action": "show the review-card preview (delivery contract: references/card-delivery.md); ask the user to choose one rule or skip; then finalize"})
 
 
 def cmd_finalize(args):
@@ -1711,14 +1714,14 @@ def cmd_finalize(args):
         bundle = _draft_bundle(plan, answers, narrative, require_commitment=True)
         private_md = card_renderer.render_private(bundle)
         public_md = card_renderer.render_public(bundle)
-        private_html = card_renderer.render_html(
-            private_md, card_renderer.load_copy(plan["language"])["title"])
+        private_html = card_renderer.render_html(bundle)
         result, projection, projection_error = transaction.commit_bundle(
             bundle, private_md, public_md, private_html, persist=bool(plan.get("persist"))
         )
     _emit({"status": result["status"], "session_id": args.session_id, "path": result["path"],
            "private_card": os.path.join(result["path"], "card-private.md"),
            "public_card": os.path.join(result["path"], "card-public.md"),
+           "private_card_html": os.path.join(result["path"], "card-private.html"),
            "projection": projection, "projection_error": projection_error,
            "recoverable": bool(projection_error)})
 
