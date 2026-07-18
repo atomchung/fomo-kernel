@@ -25,6 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
+from test_support import preserve_driver_state  # noqa: E402
 
 import pandas as pd  # noqa: E402  # CI 本來就裝 pandas(dim_alpha_beta 需要);本檔不需 yfinance
 
@@ -870,7 +871,8 @@ def _main():
     passed = failed = 0
     for name, fn in tests:
         try:
-            fn()
+            with preserve_driver_state(tr):
+                fn()
             passed += 1
             print(f"PASS  {name}")
         except AssertionError as e:

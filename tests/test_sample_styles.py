@@ -22,6 +22,7 @@ SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
 MOCK = os.path.join(SKILL, "mock")
 sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
+from test_support import preserve_driver_state  # noqa: E402
 
 _SKIP = "__skip__"               # 標準庫 runner 用的 skip 哨兵(pytest 下會被當 pass)
 
@@ -492,7 +493,9 @@ def _main():
     passed = failed = skipped = 0
     for name, fn in tests:
         try:
-            if fn() == _SKIP:
+            with preserve_driver_state(tr):
+                result = fn()
+            if result == _SKIP:
                 skipped += 1
                 print(f"SKIP  {name}  (設 TR_TEST_NETWORK=1 才跑)")
             else:

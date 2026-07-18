@@ -18,9 +18,11 @@
   pytest tests/test_engine_units.py         # 若已裝 pytest 亦可被發現
 """
 import datetime as dt
+import io
 import os
 import sys
 import tempfile
+from contextlib import redirect_stderr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
@@ -29,6 +31,7 @@ sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
 import horizon as hz  # noqa: E402  # #148 item5:horizon 時間軸矛盾(純狀態側,閾值下沉)
 import perf as pf  # noqa: E402  # #171 B 路線:XIRR solver(純函式;#164 已部署 XIRR 未來共用)
+from test_support import preserve_driver_state  # noqa: E402
 
 _SKIP = "__skip__"        # 與 test_sample_styles 一致的 skip 哨兵(本檔暫無 network 測試)
 
@@ -205,6 +208,41 @@ def test_load_bad_date_counted_not_crash():
     assert tr._LOAD_STATS["skip_parse"] == 2, f"壞日期+空日期都歸 skip_parse,實得 {tr._LOAD_STATS['skip_parse']}"
 
 
+def test_driver_map_bad_json_warns_and_keeps_fallback():
+    """壞 JSON 必須明確警告、回傳零筆，且不能污染既有 fallback。"""
+    fd, path = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("{not-json")
+        before = dict(tr._DRIVER_MAP)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            loaded = tr.load_driver_map(path)
+        assert loaded == 0
+        assert "driver map 載入失敗" in stderr.getvalue()
+        assert tr._DRIVER_MAP == before, "壞 JSON 不得部分覆寫 driver map"
+    finally:
+        os.unlink(path)
+
+
+def test_driver_state_isolation_restores_after_failure():
+    """Runner cleanup must survive both in-place mutation and map replacement."""
+    original_map = tr._DRIVER_MAP
+    original_contents = dict(original_map)
+    original_skipped = tr._DM_SKIPPED
+    try:
+        with preserve_driver_state(tr):
+            tr._DRIVER_MAP["LEAK"] = ("污染", 1)
+            tr._DRIVER_MAP = {"REPLACED": ("污染", 1)}
+            tr._DM_SKIPPED = 99
+            raise RuntimeError("synthetic test failure")
+    except RuntimeError:
+        pass
+    assert tr._DRIVER_MAP is original_map
+    assert tr._DRIVER_MAP == original_contents and "LEAK" not in tr._DRIVER_MAP
+    assert tr._DM_SKIPPED == original_skipped
+
+
 # ─────────────────────── B. round_trips():FIFO 配對 ───────────────────────
 
 def test_round_trips_fifo_partial():
@@ -232,6 +270,16 @@ def test_round_trips_oversell_no_crash():
     assert len(lots["B"]) == 0, "lot 應被吃光,不留負數殘量"
 
 
+def test_orphan_sells_reports_only_unmatched_quantity():
+    """缺期初持倉時只回報無法與已知買量配對的賣量，不污染後續持倉。"""
+    rows = [_R("MISS", "sell", 30, 12, "2024-01-01"),
+            _R("PART", "buy", 10, 10, "2024-01-02"),
+            _R("PART", "sell", 25, 11, "2024-01-03"),
+            _R("CLEAN", "buy", 8, 10, "2024-01-04"),
+            _R("CLEAN", "sell", 8, 12, "2024-01-05")]
+    assert tr.orphan_sells(rows) == {"MISS": 30.0, "PART": 15.0}
+
+
 # ─────────────────────── C. positions():持倉 + 攤平偵測 ───────────────────────
 
 def test_positions_avgdown_threshold():
@@ -252,6 +300,14 @@ def test_positions_cleared_not_held():
             _R("D", "sell", 10, 120, "2024-02-01")]
     held, _ = tr.positions(rows)
     assert "D" not in held, "清倉後不應在 held"
+
+
+def test_dim_hold_buy_only_returns_explicit_no_data_shape():
+    """只有買入、沒有 round trip 時應回完整降級 shape，而非例外或假訊號。"""
+    out = tr.dim_hold([])
+    assert out["no_data"] is True and out["triggered"] is False
+    assert out["median_hold"] == out["min"] == out["max"] == 0
+    assert out["n_incon"] == out["n_multi"] == 0 and out["incon_tickers"] == []
 
 
 # ─────────────────────── D. classify_adds():主從分類 ───────────────────────
@@ -595,6 +651,21 @@ def test_dim_diversify_triggered_severity_thresholds_aligned():
     assert abs(d["max_sector_pct"] - 0.45) < 1e-6
     assert d["triggered"] is True, f"45% 過新門檻(40%)應觸發,實得 triggered={d['triggered']}"
     assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
+
+
+def test_card_for_fallback_and_loaded_lens_paths():
+    """鏡片未載入走固定 fallback；載入後只覆寫有明確 stance 的維度。"""
+    original_lens = tr._LENS
+    try:
+        tr._LENS = None
+        assert tr.card_for("部位 sizing") == tr.CARD_LIB_FALLBACK["部位 sizing"]
+        tr._LENS = {"philosophy": "Test lens", "dims": {
+            "position_sizing": {"rule": "bounded rule", "quote": "grounded quote"}}}
+        rule, quote = tr.card_for("部位 sizing")
+        assert rule == "bounded rule" and quote == "grounded quote（Test lens）"
+        assert tr.card_for("不存在") == ("", "")
+    finally:
+        tr._LENS = original_lens
 
 
 # ─────────────────── H. 多市場幣別(#51/#129 PR-2a)───────────────────
@@ -1045,7 +1116,9 @@ def _main():
     passed = failed = skipped = 0
     for name, fn in tests:
         try:
-            if fn() == _SKIP:
+            with preserve_driver_state(tr):
+                result = fn()
+            if result == _SKIP:
                 skipped += 1
                 print(f"SKIP  {name}")
             else:
