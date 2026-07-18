@@ -1063,12 +1063,17 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
     if not candidates:
         top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")
-        top_label = card_renderer.localized_dimension(top, language)
-        question = (f"What mainly drove the behavior behind {top_label}?" if str(language).lower().startswith("en")
-                    else f"這次「{top}」背後，主要是事先規劃、情緒反應，還是外部限制？")
-        candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
-                           "question": question, "options": _generic_options(language),
-                           "_importance": 0.0, "_tie": 2})
+        # An insufficient or quiet history can trigger no hole and carry
+        # headline_dim=None (#227). With no dimension to anchor the motive
+        # question to, asking would fabricate one; an empty queue is the same
+        # legal contract the snapshot route already returns.
+        if top is not None:
+            top_label = card_renderer.localized_dimension(top, language)
+            question = (f"What mainly drove the behavior behind {top_label}?" if str(language).lower().startswith("en")
+                        else f"這次「{top}」背後，主要是事先規劃、情緒反應，還是外部限制？")
+            candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
+                               "question": question, "options": _generic_options(language),
+                               "_importance": 0.0, "_tie": 2})
     # Priority tiers are semantic, then amount/rank resolves within a tier:
     # perishable exit capture -> unqualified chosen-rule breach -> due/add motive.
     candidates.sort(key=lambda row: (int(row.get("_priority", 2)),
