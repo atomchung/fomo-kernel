@@ -86,18 +86,45 @@ def append_events(path, events):
 # ─────────────────────────── 推導 ───────────────────────────
 
 def latest_anchor(events):
-    """最近一筆 as_of 合法的 snapshot(同 as_of 取檔案序較後者=較新宣告)。無 → None。"""
-    best, best_key = None, None
+    """Return the latest valid snapshot anchor.
+
+    Same-day adapter projections carry a root-wide monotonic
+    ``projection_sequence``.  When both candidates have one, the higher
+    sequence is the newer declaration even if projection repair appended the
+    JSONL rows in a different order.  Old hand-written/CLI rows have no
+    sequence, so their long-standing file-order tie-break remains unchanged.
+    """
+    best, best_date, best_index, best_sequence = None, None, None, None
     for i, ev in enumerate(events):
         if ev.get("type") != "snapshot":
+            continue
+        if ev.get("is_complete", True) is not True:
+            # Partial declarations may exist in old/manual ledgers.  They are
+            # review evidence, not a replacement for the complete account.
             continue
         try:
             d = dt.date.fromisoformat(str(ev.get("as_of")))
         except (TypeError, ValueError):
             continue
-        key = (d, i)
-        if best_key is None or key > best_key:
-            best, best_key = ev, key
+        raw_sequence = ev.get("projection_sequence")
+        sequence = (raw_sequence if isinstance(raw_sequence, int)
+                    and not isinstance(raw_sequence, bool) and raw_sequence > 0 else None)
+        if best is None or d > best_date:
+            best, best_date, best_index, best_sequence = ev, d, i, sequence
+            continue
+        if d < best_date:
+            continue
+        if sequence is not None and best_sequence is not None:
+            if sequence > best_sequence or (sequence == best_sequence and i > best_index):
+                best, best_index, best_sequence = ev, i, sequence
+        elif sequence is not None:
+            # A sequence-bearing adapter projection was finalized after the
+            # root's legacy rows and remains ordered even if repair appends an
+            # older legacy row later.
+            best, best_index, best_sequence = ev, i, sequence
+        elif best_sequence is None and i > best_index:
+            # All-legacy same-day rows retain the historical file-order rule.
+            best, best_index = ev, i
     return best
 
 
@@ -120,7 +147,8 @@ def derive_holdings(events):
     """錨點推導當前持倉。回傳 {anchor, holdings, integrity, counts}。
 
     holdings: {ticker: {shares, avg_cost(None=未宣告且不可知), cost_total, currency,
-                        market, origin(snapshot|trades), since, cycle_id}}
+                        market, origin(snapshot|trades), since, cycle_id,
+                        add_count, decision_cursor}}
     integrity: 壞事件 / oversell(賣超,clamp 後照走)清單 —— 資料誠實層,呈現端要帶出。
     """
     anchor = latest_anchor(events)
@@ -151,7 +179,8 @@ def derive_holdings(events):
                 integrity.append({"issue": "bad_avg_cost", "ticker": t})
             pos[t] = {"shares": sh, "cost_total": cost_total,
                       "currency": p.get("currency", "USD"), "market": p.get("market", "US"),
-                      "origin": "snapshot", "since": anchor_date.isoformat()}
+                      "origin": "snapshot", "since": anchor_date.isoformat(),
+                      "add_count": 0}
             seq_base[t] = 1                # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)
 
     trades = []
@@ -176,9 +205,11 @@ def derive_holdings(events):
                 seq_base[t] += 1
                 pos[t] = {"shares": qty, "cost_total": qty * px,
                           "currency": ev.get("currency", "USD"), "market": ev.get("market", "US"),
-                          "origin": "trades", "since": d.isoformat()}
+                          "origin": "trades", "since": d.isoformat(),
+                          "add_count": 0}
             else:
                 cur["shares"] += qty
+                cur["add_count"] += 1
                 if cur["cost_total"] is not None:    # 錨點均價未宣告 → 總成本不可知,None 傳播
                     cur["cost_total"] += qty * px
         else:  # sell
@@ -202,12 +233,15 @@ def derive_holdings(events):
         if round(p["shares"], 4) <= 0:     # 微量殘股 round 後歸零 → 不列(避免 shares=0.0 的幽靈持倉)
             continue
         ac = (p["cost_total"] / p["shares"]) if (p["cost_total"] is not None and p["shares"] > EPS) else None
+        cycle_id = f"{t}#{p['since']}#{seq_base[t]}"
+        add_count = p.get("add_count", 0)
         holdings[t] = {"shares": round(p["shares"], 4),
                        "avg_cost": round(ac, 4) if ac is not None else None,
                        "cost_total": round(p["cost_total"], 2) if p["cost_total"] is not None else None,
                        "currency": p["currency"], "market": p["market"],
                        "origin": p["origin"], "since": p["since"],
-                       "cycle_id": f"{t}#{p['since']}#{seq_base[t]}"}
+                       "cycle_id": cycle_id, "add_count": add_count,
+                       "decision_cursor": f"{cycle_id}#add#{add_count}" if add_count else None}
     return {"anchor": ({"as_of": anchor.get("as_of"), "source": anchor.get("source", "user_declared")}
                        if anchor is not None else None),
             "holdings": holdings,

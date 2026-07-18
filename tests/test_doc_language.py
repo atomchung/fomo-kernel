@@ -475,6 +475,23 @@ def test_agent_runtime_surfaces_do_not_import_engine_internals():
     assert not violations, "Agent workflow imports an engine internal directly:\n" + "\n".join(violations)
 
 
+def test_snapshot_runtime_uses_raw_facts_through_review_only():
+    surfaces = [Path("AGENTS.md"), SKILL_DIR / "SKILL.md",
+                SKILL_DIR / "flows/snapshot-review.md"]
+    for rel in surfaces:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "--snapshot-json" in text, f"{rel}: snapshot entry point is missing"
+        assert "engine/review.py" in text, f"{rel}: snapshot bypasses review.py"
+    flow = (ROOT / SKILL_DIR / "flows/snapshot-review.md").read_text(encoding="utf-8")
+    assert "--card-json" not in flow and "--state-json" not in flow, \
+        "runtime flow must not ask the agent to assemble engine artifacts"
+    contract = (ROOT / SKILL_DIR / "references/data-contract.md").read_text(encoding="utf-8")
+    for field in ('"as_of"', '"positions"', '"ticker"', '"shares"', '"market"', '"currency"'):
+        assert field in contract, f"snapshot contract omits {field}"
+    assert "no OCR or cloud-upload path" in flow
+    assert "Do not calculate weights" in flow
+
+
 def test_engine_script_bypass_mutations_are_caught():
     for label, mutation, expected_modules in SCRIPT_BYPASS_FIXTURES:
         found = tuple(match["module"] for match in forbidden_engine_script_calls(mutation))
@@ -497,6 +514,7 @@ def main():
         test_json_ref_contract_links_are_discoverable,
         test_agent_runtime_surfaces_only_invoke_review_py,
         test_agent_runtime_surfaces_do_not_import_engine_internals,
+        test_snapshot_runtime_uses_raw_facts_through_review_only,
         test_engine_script_bypass_mutations_are_caught,
         test_engine_import_bypass_mutations_are_caught,
     ]

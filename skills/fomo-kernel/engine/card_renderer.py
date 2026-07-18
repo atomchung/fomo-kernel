@@ -191,16 +191,23 @@ def _original_pnl_lines(card, language):
         unrealized = _finite_number((row or {}).get("unrealized"))
         if realized is None and unrealized is None:
             continue
-        realized = realized or 0.0
-        unrealized = unrealized or 0.0
-        total = realized + unrealized
-        if language == "en":
-            lines.append(f"{currency} P&L was {_money(total, currency)}: "
-                         f"{_money(realized, currency)} realized and "
-                         f"{_money(unrealized, currency)} unrealized.")
+        if realized is not None and unrealized is not None:
+            total = realized + unrealized
+            if language == "en":
+                lines.append(f"{currency} P&L was {_money(total, currency)}: "
+                             f"{_money(realized, currency)} realized and "
+                             f"{_money(unrealized, currency)} unrealized.")
+            else:
+                lines.append(f"{currency} 帳面損益 {_money(total, currency)}，其中已實現 "
+                             f"{_money(realized, currency)}、未實現 {_money(unrealized, currency)}。")
+        elif realized is not None:
+            lines.append((f"{currency} realized P&L was {_money(realized, currency)}."
+                          if language == "en" else
+                          f"{currency} 已實現損益 {_money(realized, currency)}。"))
         else:
-            lines.append(f"{currency} 帳面損益 {_money(total, currency)}，其中已實現 "
-                         f"{_money(realized, currency)}、未實現 {_money(unrealized, currency)}。")
+            lines.append((f"{currency} unrealized P&L was {_money(unrealized, currency)}."
+                          if language == "en" else
+                          f"{currency} 未實現損益 {_money(unrealized, currency)}。"))
     return lines
 
 
@@ -208,12 +215,27 @@ def _overview_lines(card, language):
     overview = card.get("overview") or {}
     context = _display_context(card, language)
     if context.get("currency"):
-        total = _display_money(overview.get("total_pnl"), context)
-        realized = _display_money(overview.get("realized"), context)
-        unrealized = _display_money(overview.get("unrealized"), context)
-        if language == "en":
-            return [f"Total P&L was {total}: {realized} realized and {unrealized} unrealized."]
-        return [f"帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。"]
+        total_value = _finite_number(overview.get("total_pnl"))
+        realized_value = _finite_number(overview.get("realized"))
+        unrealized_value = _finite_number(overview.get("unrealized"))
+        if total_value is not None and realized_value is not None and unrealized_value is not None:
+            total = _display_money(total_value, context)
+            realized = _display_money(realized_value, context)
+            unrealized = _display_money(unrealized_value, context)
+            if language == "en":
+                return [f"Total P&L was {total}: {realized} realized and {unrealized} unrealized."]
+            return [f"帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。"]
+        if realized_value is not None:
+            realized = _display_money(realized_value, context)
+            return ([f"Realized P&L was {realized}; current unrealized P&L was not scored."]
+                    if language == "en" else
+                    [f"已實現損益 {realized}；目前未實現損益未評分。"])
+        if unrealized_value is not None:
+            unrealized = _display_money(unrealized_value, context)
+            return ([f"Unrealized P&L was {unrealized}; realized P&L was unavailable."]
+                    if language == "en" else
+                    [f"未實現損益 {unrealized}；已實現損益無法取得。"])
+        return []
     return _original_pnl_lines(card, language)
 
 
@@ -641,6 +663,115 @@ def _review_opening_lines(bundle, language):
     return reconciliation
 
 
+def _copy_string(copy, key, fallback):
+    """Read a localized string while keeping older copy bundles renderable."""
+    value = copy.get(key)
+    if not isinstance(value, str) or not value.strip():
+        value = (copy.get("sections") or {}).get(key)
+    return value if isinstance(value, str) and value.strip() else fallback
+
+
+def _snapshot_summary(card):
+    summary = card.get("snapshot_summary") or {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def _snapshot_overview_lines(card, copy):
+    """Render only facts supported by an opening position snapshot."""
+    summary = _snapshot_summary(card)
+    en = copy.get("language") == "en"
+    positions_n = _finite_number(summary.get("positions_n"))
+    positions = (str(int(positions_n)) if positions_n is not None
+                 and positions_n.is_integer() else None)
+    as_of = summary.get("as_of")
+    basis = summary.get("valuation_basis")
+    weights_available = summary.get("weights_available") is True
+
+    if en:
+        subject = f"{positions} supplied positions" if positions is not None else "the supplied positions"
+        opening = f"This is an opening portfolio check of {subject}"
+        if as_of:
+            opening += f" as of {as_of}"
+        opening += "."
+        if weights_available and basis == "market_value":
+            valuation = "Structural weights use the supplied market-value basis."
+        elif weights_available and basis == "cost":
+            valuation = "Structural weights use the supplied cost basis."
+        else:
+            valuation = "No reliable valuation basis was available, so weight-based structure remains unscored."
+        scope = _copy_string(
+            copy, "snapshot_scope",
+            "Transaction-history dimensions — averaging down, exit discipline, win rate, payoff, and historical motives — were not scored. Import transaction history later to unlock them.",
+        )
+    else:
+        subject = f"使用者提供的 {positions} 個持倉" if positions is not None else "使用者提供的持倉"
+        opening = f"這是針對{subject}的開場組合檢查"
+        if as_of:
+            opening += f"，快照截至 {as_of}"
+        opening += "。"
+        if weights_available and basis == "market_value":
+            valuation = "結構權重採使用者提供的市值口徑。"
+        elif weights_available and basis == "cost":
+            valuation = "結構權重採使用者提供的成本口徑。"
+        else:
+            valuation = "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。"
+        scope = _copy_string(
+            copy, "snapshot_scope",
+            "交易歷史維度——攤平、出場紀律、勝率、盈虧比與歷史動機——這次都不評分；之後匯入交易紀錄即可解鎖。",
+        )
+
+    integrity = []
+    missing_avg_cost = summary.get("missing_avg_cost") or []
+    fx_gaps = summary.get("fx_gaps") or []
+    if isinstance(missing_avg_cost, list) and missing_avg_cost:
+        tickers = ", ".join(str(x) for x in missing_avg_cost)
+        integrity.append((f"Average cost was missing for: {tickers}." if en else
+                          f"以下持倉缺少平均成本：{tickers}。"))
+    if isinstance(fx_gaps, list) and fx_gaps:
+        currencies = ", ".join(str(x) for x in fx_gaps)
+        integrity.append((f"Reliable FX coverage was missing for: {currencies}." if en else
+                          f"以下幣別缺少可靠匯率：{currencies}。"))
+    return [opening, valuation] + integrity + [scope]
+
+
+def _snapshot_strength_line(card, language):
+    summary = _snapshot_summary(card)
+    complete = summary.get("is_complete") is True
+    weighted = summary.get("weights_available") is True
+    if language == "en":
+        if complete and weighted:
+            return "The supplied snapshot establishes a complete structural baseline for the opening portfolio check."
+        if weighted:
+            return "The available fields establish a structural baseline; missing inputs remain explicit rather than inferred."
+        return "The supplied positions establish a structural baseline; weight-based strengths remain unscored."
+    if complete and weighted:
+        return "這份持倉快照已建立完整的開場組合結構基線。"
+    if weighted:
+        return "現有欄位已建立組合結構基線；缺少的輸入維持明示，不用推測補齊。"
+    return "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。"
+
+
+def _snapshot_hole_line(card, language):
+    summary = _snapshot_summary(card)
+    holes = card.get("top_holes") or []
+    if summary.get("weights_available") is True and holes:
+        hole = holes[0] if isinstance(holes[0], dict) else {}
+        raw = hole.get("raw") or {}
+        dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
+        # A position snapshot can support only structural dimensions. Never let
+        # an accidentally carried history dimension become a snapshot claim.
+        if dim_id in {"position_sizing", "diversification"}:
+            line = _hole_line(hole, language)
+            if line:
+                return line
+            label = localized_dimension(dim_id, language)
+            return ((f"The leading structural risk in the available snapshot was {label}."
+                     if language == "en" else f"現有快照的主要結構風險是「{label}」。"))
+    if language == "en":
+        return "This opening check establishes a structural baseline without treating unavailable weights as low risk."
+    return "這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"
+
+
 def _trade_lines(card, language):
     best, worst = card.get("best_trade"), card.get("worst_trade")
     if not best or not worst:
@@ -908,6 +1039,7 @@ def render_private(bundle):
     sections = copy["sections"]
     holes = card.get("top_holes") or []
     commitment = bundle.get("commitment") or {}
+    snapshot = bundle.get("route") == "snapshot_review"
 
     lines = [
         "---",
@@ -923,56 +1055,82 @@ def render_private(bundle):
     ]
     if bundle.get("route") == "test_drive":
         lines.extend([f"> {copy['demo_badge']}", ""])
-    opening = _review_opening_lines(bundle, copy["language"])
+    opening = [] if snapshot else _review_opening_lines(bundle, copy["language"])
     if opening:
         lines.extend(opening + [""])
     lines.extend([narrative["mirror"], ""])
-    context_lines = _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy)
+    context_lines = ([] if snapshot else
+                     _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy))
     if context_lines:
         lines.extend([f"## {sections['context']}", ""] + [f"- {x}" for x in context_lines] + [""])
-    lines.extend([f"## {sections['numbers']}", ""])
-    lines.extend(_overview_lines(card, copy["language"]))
-    currency_note = _currency_note(card, copy["language"])
-    if currency_note:
-        lines.append(currency_note)
+    numbers_section = (_copy_string(copy, "snapshot_numbers", sections["numbers"])
+                       if snapshot else sections["numbers"])
+    lines.extend([f"## {numbers_section}", ""])
+    if snapshot:
+        lines.extend(_snapshot_overview_lines(card, copy))
+    else:
+        lines.extend(_overview_lines(card, copy["language"]))
+        currency_note = _currency_note(card, copy["language"])
+        if currency_note:
+            lines.append(currency_note)
     lines.append("")
     # #82: honesty sentences are woven into the sections they qualify — never
     # printed as a standalone checklist section.
     honesty = _honesty_lines(bundle, copy)
     etf_lines = _etf_lines(card, copy["language"])
     etf_honesty = honesty.pop("etf_metadata", None)
-    performance = _performance_lines(card, copy["language"], honesty)
+    if snapshot:
+        # Snapshot caveats qualify the opening structure facts above.  Keep the
+        # agent-authored honesty contract visible even though history-only
+        # performance panels are intentionally suppressed for this route.
+        snapshot_honesty = [honesty.pop(key) for key in list(honesty)]
+        if snapshot_honesty:
+            lines.extend(snapshot_honesty + [""])
+    performance = [] if snapshot else _performance_lines(card, copy["language"], honesty)
     if etf_honesty:
-        (etf_lines if etf_lines else performance).append(etf_honesty)
+        (etf_lines if snapshot or etf_lines else performance).append(etf_honesty)
     if performance:
         lines.extend(performance + [""])
+    if snapshot and honesty:
+        # Preview requires one agent-authored sentence for every triggered
+        # honesty key. Snapshot cards have no performance section to consume
+        # these entries, so keep them in the numbers/scope section instead of
+        # silently dropping validated limitations.
+        lines.extend([honesty.pop(key) for key in list(honesty)] + [""])
+    strength_section = (_copy_string(copy, "snapshot_strength", sections["strength"])
+                        if snapshot else sections["strength"])
     lines.extend([
-        f"## {sections['strength']}",
+        f"## {strength_section}",
         "",
-        narrative.get("strength") or _best_strength(card, copy["language"]),
+        (_snapshot_strength_line(card, copy["language"]) if snapshot else
+         narrative.get("strength") or _best_strength(card, copy["language"])),
         "",
     ])
-    trades = _trade_lines(card, copy["language"])
+    trades = [] if snapshot else _trade_lines(card, copy["language"])
     if trades:
         lines.extend([f"## {sections['trades']}", ""] + [f"- {x}" for x in trades] + [""])
-    lines.extend([f"## {sections['hole']}", ""])
-    if holes:
+    hole_section = (_copy_string(copy, "snapshot_hole", sections["hole"])
+                    if snapshot else sections["hole"])
+    lines.extend([f"## {hole_section}", ""])
+    if snapshot:
+        lines.extend([_snapshot_hole_line(card, copy["language"]), ""])
+    elif holes:
         lines.extend([_hole_line(holes[0], copy["language"]), ""])
-    if narrative.get("counterfactual"):
+    if not snapshot and narrative.get("counterfactual"):
         lines.extend([narrative["counterfactual"], ""])
 
-    decisions = _decision_lines(bundle, copy)
+    decisions = [] if snapshot else _decision_lines(bundle, copy)
     if decisions:
         lines.extend([f"## {sections['motive']}", ""] + [f"- {x}" for x in decisions] + [""])
-    exits = _exit_lines(bundle, copy)
+    exits = [] if snapshot else _exit_lines(bundle, copy)
     if exits:
         lines.extend([f"## {sections['exit_capture']}", ""] + [f"- {x}" for x in exits] + [""])
-    exit_followup = _exit_followup_lines(bundle, copy)
+    exit_followup = [] if snapshot else _exit_followup_lines(bundle, copy)
     if exit_followup:
         lines.extend([f"## {sections['exit_followup']}", ""] + [f"- {x}" for x in exit_followup] + [""])
     if etf_lines:
         lines.extend([f"## {sections['etf']}", ""] + [f"- {x}" for x in etf_lines] + [""])
-    problem_lines = _problem_lines(bundle, copy)
+    problem_lines = [] if snapshot else _problem_lines(bundle, copy)
     if problem_lines:
         lines.extend([f"## {sections['patterns']}", ""] + [f"- {x}" for x in problem_lines] + [""])
 
@@ -985,6 +1143,10 @@ def render_private(bundle):
         lines.extend([f"## {sections['rule']}", "",
                       ("你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if copy["language"] != "en"
                        else "You chose not to set a new commitment; the same baseline remains available next time."), ""])
+    elif snapshot:
+        lines.extend([f"## {sections['rule']}", "",
+                      ("這次開場檢查先保留結構基線，不強迫設定承諾。" if copy["language"] != "en"
+                       else "This opening check keeps the structural baseline without forcing a commitment."), ""])
     elif state.get("insufficient_data"):
         lines.extend([f"## {sections['rule']}", "",
                       ("樣本仍短，這次不硬塞承諾；先把它當基線。" if copy["language"] != "en"
@@ -1025,13 +1187,18 @@ def render_public(bundle):
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     card = bundle.get("engine_card") or {}
+    snapshot = bundle.get("route") == "snapshot_review"
+    snapshot_summary = _snapshot_summary(card)
     holes = card.get("top_holes") or []
     hole = holes[0] if holes else {}
     raw = hole.get("raw") or {}
     dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
     dim_label = (copy.get("dimensions") or {}).get(dim_id) if dim_id else None
-    pattern = (copy.get("public_patterns") or {}).get(dim_id) if dim_id else None
-    severity = _public_band(hole.get("severity"), copy["language"])
+    pattern = ((copy.get("public_patterns") or {}).get(dim_id)
+               if dim_id and not snapshot else None)
+    severity_value = _finite_number(hole.get("severity"))
+    severity = (None if snapshot and severity_value is None
+                else _public_band(hole.get("severity"), copy["language"]))
     commitment = bundle.get("commitment") or {}
     # Candidate rules resolve to fixed copy strings; custom rules (and anything of
     # unknown origin) render as a generic localized line so user-authored text —
@@ -1042,11 +1209,30 @@ def render_public(bundle):
             rule = localized_rule(commitment.get("dim"), language)
         if not rule:
             rule = copy.get("public_custom_rule")
+    structural_hole = (snapshot and snapshot_summary.get("weights_available") is True
+                       and bool(holes) and dim_id in {"position_sizing", "diversification"})
     if copy["language"] == "en":
-        mirror = f"This review found {severity} behavioral pressure in {dim_label or 'the leading diagnostic dimension'}."
+        if structural_hole:
+            mirror = f"This opening portfolio check identified {dim_label or 'portfolio structure'} as the leading structural risk"
+            mirror += f", with {severity} pressure." if severity else "."
+        elif snapshot:
+            mirror = ("This opening portfolio check establishes a structural baseline; "
+                      "transaction-history behavior remains unscored.")
+        elif not holes:
+            mirror = "This review did not rank a leading behavior pattern from the available history."
+        else:
+            mirror = f"This review found {severity} behavioral pressure in {dim_label or 'the leading diagnostic dimension'}."
         structure = "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
     else:
-        mirror = f"這次復盤在「{dim_label or '主要行為維度'}」看見{severity}程度的行為壓力。"
+        if structural_hole:
+            mirror = f"這次開場組合檢查把「{dim_label or '組合結構'}」列為主要結構風險"
+            mirror += f"，風險壓力為{severity}。" if severity else "。"
+        elif snapshot:
+            mirror = "這次開場組合檢查只建立結構基線；交易歷史行為維度維持未評分。"
+        elif not holes:
+            mirror = "這次可用歷史不足以排序出主要行為模式。"
+        else:
+            mirror = f"這次復盤在「{dim_label or '主要行為維度'}」看見{severity}程度的行為壓力。"
         structure = "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
     if pattern:
         mirror += " " + pattern
@@ -1056,7 +1242,7 @@ def render_public(bundle):
     ]
     if bundle.get("route") == "test_drive":
         lines[9:9] = [f"> {copy['demo_badge']}", ""]
-    performance = _public_performance_lines(card, copy["language"])
+    performance = [] if snapshot else _public_performance_lines(card, copy["language"])
     if performance:
         lines.extend([f"## {copy['sections']['performance']}", ""] + [f"- {x}" for x in performance] + [""])
     ps = card.get("portfolio_structure") or {}

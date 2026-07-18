@@ -14,9 +14,12 @@ Not another stats report. It does what a report can't: **first it computes the b
 **The full flow (this is the actual product) — inside Claude Code:**
 ```
 /fomo-kernel ~/Downloads/my.csv   # review your own trades (CSV from any broker)
+/fomo-kernel <attached position table or statement screenshot>   # opening portfolio check
 /fomo-kernel                      # no file → asks you for one, or offers a "test drive" on built-in fake data (nothing written to coach memory)
 ```
 The card's value is in step ② — the engine flags a suspicious position and asks *"averaging down on conviction, or refusing to cut a loser?"*; your one-sentence answer is what turns the raw diagnosis into a verdict. **You can't see that layer from the engine's raw output alone.** Install steps under [Install](#install).
+
+A position table or screenshot takes the narrower snapshot route. It creates an opening portfolio check from cost or value weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not pretend that one snapshot reveals prior averaging down, exits, holding behavior, win rate, payoff, alpha, or historical motives. Add transaction history later to unlock supported historical diagnostics; it does not by itself reconcile a fresh broker view, so ledger-derived current holdings remain canonical.
 
 **Want zero-install, just to see the stable flow start:**
 ```bash
@@ -79,10 +82,10 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
 
 ## 🔒 Privacy: no backend upload, the author can't see it
 
-- The skill runs your CSV **on your own machine** — **no upload to any backend, no storage anywhere else, nothing sent to the author**. For weekly reconciliation it does save review-derived state **locally** under `~/.trade-coach/` (never sent anywhere) — see the next section for exactly what that is and how to inspect, export, or wipe it.
+- The skill runs your CSV or normalized position snapshot **on your own machine** — **no upload to any backend, no storage anywhere else, nothing sent to the author**. For weekly reconciliation it does save review-derived state **locally** under `~/.trade-coach/` (never sent anywhere) — see the next section for exactly what that is and how to inspect, export, or wipe it.
 - The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
 - `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
-- Precisely: the local Python engine reads the normalized CSV, and the coding agent you invoke may read the source statement to map broker columns. Nothing is sent to the author. This differs from handing a statement to a SaaS whose retained data you cannot inspect.
+- Precisely: the local Python engine reads a normalized trade CSV or snapshot JSON envelope. The coding agent you invoke may read a source table or screenshot locally to transcribe broker-declared facts, but it does not use engine OCR or a cloud OCR/upload path. It keeps the temporary normalized JSON outside the repository (for example under `/tmp`) and never calculates weights or hand-builds card/state artifacts. Nothing is sent to the author. This differs from handing a statement to a SaaS whose retained data you cannot inspect.
 
 ## 📁 Where your coach memory lives / how to maintain it
 
@@ -111,13 +114,14 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually 
 ```
 
 - **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
+- **What does a snapshot anchor?** A complete initial snapshot may establish the ledger's accounting anchor. An incomplete snapshot can still produce a bounded review but is not written as an anchor. Later transaction files can unlock supported historical analysis while ledger-derived holdings stay canonical. Comparing a second or subsequent snapshot with that ledger, showing the diff, and writing an adjustment is explicitly deferred P1 work; current-view claims that need that reconciliation stay unavailable.
 - **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
 - **Start over / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
 - **Wrote a thesis wrong** → correct it in the next review; the new event points to the earlier thesis. Do not hand-edit `theses.jsonl`: it is now a rebuildable projection of canonical sessions.
 - **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
 - **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
 
-> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered artifact that keeps a de-identified behavior pattern plus engine-owned beta and benchmark-excess percentage points, while removing amounts, dates, tickers, exact weights, and agent free text. The review card remains the default response. This is a local file for manual sharing; there is no upload or publishing feature yet.
+> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered artifact. A transaction-history review may keep a de-identified behavior pattern plus engine-owned beta and benchmark-excess percentage points; a snapshot review keeps only fixed structural-baseline copy and does not imply historical behavior. Both remove amounts, dates, tickers, exact weights, and agent free text. The review card remains the default response. This is a local file for manual sharing; there is no upload or publishing feature yet.
 
 ## Install
 
@@ -140,14 +144,17 @@ cp -r skills/fomo-kernel ~/.claude/skills/                         # B. copy (to
 
 Inside Claude Code:
 ```
-/fomo-kernel ~/Downloads/my.csv   # review your own trades (a statement screenshot works too)
+/fomo-kernel ~/Downloads/my.csv   # transaction-history review
+/fomo-kernel <attached position table or statement screenshot>   # opening portfolio check
 /fomo-kernel                      # no file → asks you for one, or a "test drive" through all four steps on built-in fake data (labeled as demo, nothing written to coach memory)
 ```
 Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`, plus optional `Market / Currency` for non-US stocks — e.g. `2330.TW / TW / TWD`; omitted = US/USD); you don't hand-clean anything.
 
+For a position table or screenshot, the agent locally transcribes only the displayed facts into a normalized JSON envelope (`as_of`, `positions`, and optional cash, FX, and completeness facts), keeps that temporary file outside the repository, and sends it through `review.py`. The engine, not the agent, calculates weights, cycle IDs, risk metrics, and ETF treatment. The opening snapshot initializes inferred theses for uncovered positions; only a complete initial snapshot may establish an accounting anchor. Later transaction history can unlock supported behavioral diagnostics, but does not claim that ledger holdings match a newer broker view.
+
 > 🏷️ For **obscure tickers**, the agent may propose a local driver map for sector/theme exposure. For obscure ETFs it may also propose an instrument map, but the code grants an allocation exemption only to explicit broad-market, regional, bond, or commodity classifications; unknowns remain concentrated by default.
 
-**What happens**: ① `prepare` runs the deterministic diagnosis and builds a question queue → ② the agent asks those thesis/motive questions → ③ `preview` validates the answers and renders a card → ④ you choose one rule and `finalize` commits the session atomically.
+**What happens**: ① `prepare` runs the deterministic diagnosis and builds a question queue → ② the agent asks every returned question and creates any required inferred theses (a snapshot may return no motive questions) → ③ `preview` validates the artifacts and renders a card → ④ you choose at most one rule, or skip, and `finalize` commits the session atomically.
 
 ## Using it from other coding agents
 
@@ -156,6 +163,8 @@ You don't need Claude Code's skill system. Codex, Cursor, and other agents use t
 ```bash
 cd skills/fomo-kernel
 python3 engine/review.py prepare ~/Downloads/my.csv --language en
+python3 engine/review.py prepare --route snapshot_review \
+  --snapshot-json /tmp/fomo-kernel-positions.json --language en
 # follow review_plan.flow_path, answer question_queue, then call preview and finalize
 ```
 

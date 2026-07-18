@@ -213,6 +213,20 @@ def _projection_lock(sessions):
         yield
 
 
+@contextlib.contextmanager
+def projection_transaction(root):
+    """Serialize a root-wide ledger read/derive/write transaction.
+
+    Snapshot finalize uses the same persistent lock for its initial-history
+    boundary, canonical commit, and ledger projection.  Trade preparation must
+    therefore take this transaction around the complete existing-ledger check
+    and append; sharing only the append would leave a check-then-write race.
+    """
+    root, sessions = _prepare_session_storage(root, "ledger-transaction")
+    with _projection_lock(sessions):
+        yield root
+
+
 def _existing_commit(final, bundle, session_id):
     """Return the identical existing commit, or fail closed on a conflict."""
     if not os.path.isdir(final):
@@ -452,9 +466,19 @@ def commit_bundle(root, bundle, private_md, public_md, private_html=None):
     session_id = _safe_id(bundle.get("session_id"))
     root, sessions = _prepare_session_storage(root, session_id)
     with _session_lock(sessions, session_id):
-        return _commit_bundle_locked(
-            root, sessions, bundle, private_md, public_md, private_html
-        )
+        # Canonical session discovery is part of the snapshot initial-history
+        # boundary, so even callers that only commit a bundle share the root
+        # lock with snapshot finalize.
+        with _projection_lock(sessions):
+            if bundle.get("route") == "snapshot_review":
+                _assert_initial_snapshot_boundary(root, bundle)
+                prepared = _snapshot_bundle_for_commit(root, bundle)
+                return _commit_bundle_locked(
+                    root, sessions, prepared, private_md, public_md, private_html
+                )
+            return _commit_bundle_locked(
+                root, sessions, bundle, private_md, public_md, private_html
+            )
 
 
 def _read_jsonl(path):
@@ -514,6 +538,213 @@ def _project_card(root, bundle, private_md):
     return {"path": path, "status": "projected"}
 
 
+def _snapshot_payload(event):
+    """Return the stable snapshot identity payload.
+
+    Completeness is part of the accounting fact: an explicitly partial
+    declaration must never collide with a complete one.  The old envelope did
+    not persist the field, so absence normalizes to ``True``.  Projection order
+    is deliberately excluded; a retry with the same fact and sequence is still
+    the same snapshot.
+    """
+    payload = {key: event[key] for key in ("type", "as_of", "source", "positions", "cash")
+               if key in event}
+    payload["is_complete"] = event.get("is_complete", True)
+    return payload
+
+
+def _positive_projection_sequence(value):
+    """Return a valid root-wide projection sequence, else ``None``."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _max_projection_sequence(root):
+    """Find every durable sequence reservation in one coach root.
+
+    Canonical bundles reserve a number before their ledger projection runs, so
+    a projection failure cannot let a later finalize reuse that number.  The
+    ledger scan bootstraps roots that gained sequence-aware sessions before
+    their canonical directory was copied here.
+    """
+    highest = 0
+    for row in _read_jsonl(os.path.join(root, "ledger.jsonl")):
+        sequence = _positive_projection_sequence(row.get("projection_sequence"))
+        if sequence is not None:
+            highest = max(highest, sequence)
+    sessions = os.path.join(root, "sessions")
+    if not os.path.isdir(sessions):
+        return highest
+    for session_id in os.listdir(sessions):
+        if session_id.startswith("."):
+            continue
+        bundle_path = os.path.join(sessions, session_id, "bundle.json")
+        try:
+            stored = read_json(bundle_path)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(stored, dict):
+            continue
+        sequence = _positive_projection_sequence(
+            (stored.get("engine_state") or {}).get("projection_sequence")
+        )
+        if sequence is not None:
+            highest = max(highest, sequence)
+    return highest
+
+
+def _snapshot_bundle_for_commit(root, bundle):
+    """Attach or reuse a sequence while the caller holds the projection lock."""
+    if bundle.get("route") != "snapshot_review":
+        return bundle
+    anchor = ((bundle.get("engine_state") or {}).get("snapshot_anchor"))
+    if not isinstance(anchor, dict) or anchor.get("type") != "snapshot":
+        return bundle  # compatibility for pre-adapter snapshot bundles
+    if anchor.get("is_complete", True) is False:
+        # Partial declarations are review evidence, never accounting anchors,
+        # so they do not reserve a ledger ordering number.
+        prepared = dict(bundle)
+        state = dict(bundle.get("engine_state") or {})
+        state.pop("projection_sequence", None)
+        prepared["engine_state"] = state
+        return prepared
+
+    final = session_dir(root, bundle["session_id"])
+    if os.path.isdir(final):
+        try:
+            existing = read_json(os.path.join(final, "bundle.json"))
+        except (OSError, ValueError) as exc:
+            raise SessionError(
+                f"session {bundle['session_id']} has an unreadable canonical bundle: {exc}"
+            ) from exc
+        sequence = _positive_projection_sequence(
+            (existing.get("engine_state") or {}).get("projection_sequence")
+        )
+        if sequence is None:
+            # An immutable pre-sequence bundle must remain byte-for-byte
+            # retryable.  Its projected event retains the legacy file-order
+            # same-day tie-break.
+            prepared = dict(bundle)
+            state = dict(bundle.get("engine_state") or {})
+            state.pop("projection_sequence", None)
+            prepared["engine_state"] = state
+            return prepared
+    else:
+        sequence = _max_projection_sequence(root) + 1
+
+    prepared = dict(bundle)
+    state = dict(bundle.get("engine_state") or {})
+    state["projection_sequence"] = sequence
+    prepared["engine_state"] = state
+    return prepared
+
+
+def _assert_initial_snapshot_boundary(root, bundle):
+    """Reject a new runtime snapshot until reconciliation is implemented.
+
+    Direct legacy/test bundles do not carry the adapter input kind and retain
+    their compatibility path.  Runtime adapter bundles may replay the identical
+    declaration (for example in another language), but a different snapshot or
+    any intervening trade history needs the deferred diff/adjustment workflow.
+    The caller holds the root projection lock, closing the two-finalize race.
+    """
+    plan = bundle.get("review_plan") or {}
+    if (plan.get("input") or {}).get("kind") != "positions_snapshot":
+        return
+    anchor = (bundle.get("engine_state") or {}).get("snapshot_anchor")
+    if not isinstance(anchor, dict):
+        return
+    requested = canonical(_snapshot_payload(anchor))
+    session_id = bundle.get("session_id")
+    conflicts = []
+    for event in _read_jsonl(os.path.join(root, "ledger.jsonl")):
+        if event.get("type") != "snapshot" or canonical(_snapshot_payload(event)) != requested:
+            conflicts.append("ledger")
+            break
+
+    sessions = os.path.join(root, "sessions")
+    if os.path.isdir(sessions):
+        for entry in os.listdir(sessions):
+            if entry.startswith(".") or entry == session_id:
+                continue
+            path = os.path.join(sessions, entry, "bundle.json")
+            try:
+                existing = read_json(path)
+            except (OSError, ValueError):
+                continue
+            existing_plan = existing.get("review_plan") or {}
+            if existing.get("route") == "test_drive" or existing_plan.get("persist") is False:
+                continue
+            prior_anchor = (existing.get("engine_state") or {}).get("snapshot_anchor")
+            if (not isinstance(prior_anchor, dict)
+                    or canonical(_snapshot_payload(prior_anchor)) != requested):
+                conflicts.append("session")
+                break
+    if conflicts:
+        raise SessionError(
+            "initial snapshot onboarding cannot replace existing coach history; "
+            "second or subsequent snapshots require reconciliation"
+        )
+
+
+def _project_snapshot_anchor(root, bundle):
+    """Project one validated snapshot fact into the shared ledger idempotently.
+
+    The canonical session is committed before projections run.  A ledger write
+    failure is therefore recoverable through ``repair-projections`` and an
+    abandoned pending review can never leave an orphan accounting anchor.
+    """
+    if bundle.get("route") != "snapshot_review":
+        return None
+    anchor = ((bundle.get("engine_state") or {}).get("snapshot_anchor"))
+    if anchor is None:  # compatibility for pre-adapter snapshot bundles
+        return None
+    if not isinstance(anchor, dict) or anchor.get("type") != "snapshot":
+        raise SessionError("snapshot projection requires a snapshot anchor object")
+    try:
+        dt.date.fromisoformat(str(anchor.get("as_of")))
+    except (TypeError, ValueError) as exc:
+        raise SessionError("snapshot projection has invalid as_of") from exc
+    if not isinstance(anchor.get("positions"), list) or not anchor["positions"]:
+        raise SessionError("snapshot projection requires non-empty positions")
+
+    payload = _snapshot_payload(anchor)
+    snapshot_id = "snapshot-" + hashlib.sha256(canonical(payload).encode("utf-8")).hexdigest()[:16]
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    if payload["is_complete"] is False:
+        return {"path": ledger_path, "appended": 0, "status": "skipped_incomplete",
+                "snapshot_id": snapshot_id}
+    if payload["is_complete"] is not True:
+        raise SessionError("snapshot projection requires boolean is_complete")
+    state = bundle.get("engine_state") or {}
+    sequence = _positive_projection_sequence(state.get("projection_sequence"))
+    if "projection_sequence" in state and sequence is None:
+        raise SessionError("snapshot projection_sequence must be a positive integer")
+    existing = _read_jsonl(ledger_path)
+    for row in existing:
+        if row.get("type") != "snapshot":
+            continue
+        if row.get("snapshot_id") == snapshot_id or canonical(_snapshot_payload(row)) == canonical(payload):
+            report = {"path": ledger_path, "appended": 0, "status": "no-op",
+                      "snapshot_id": snapshot_id}
+            if sequence is not None:
+                report["projection_sequence"] = sequence
+            return report
+
+    event = dict(payload)
+    event["snapshot_id"] = snapshot_id
+    event["session_id"] = bundle["session_id"]
+    if sequence is not None:
+        event["projection_sequence"] = sequence
+    ledger.append_events(ledger_path, [event])
+    report = {"path": ledger_path, "appended": 1, "status": "projected",
+              "snapshot_id": snapshot_id}
+    if sequence is not None:
+        report["projection_sequence"] = sequence
+    return report
+
+
 def _project_legacy_locked(root, bundle, private_md):
     """Project while the caller holds this session's finalize lock."""
     session_id = bundle["session_id"]
@@ -522,7 +753,9 @@ def _project_legacy_locked(root, bundle, private_md):
     state["commitment"] = commitment
     state["rule"] = (commitment or {}).get("rule")
     # Replaying an old bundle (repair-projections walks every session) must not
-    # regress a newer reconciliation anchor; equal dates keep idempotent rewrites.
+    # regress a newer reconciliation anchor.  Equal-date legacy states keep their
+    # file/projection-order behavior, while sequence-aware snapshot states use the
+    # same monotonic tie-break as ledger.latest_anchor().
     # Only a VALID ISO date can win — a corrupted date_end ("N/A", "9999-oops")
     # must stay overwritable or the documented repair path could never heal it.
     # A legitimately newer anchor is kept even when it has no bundle: the v1
@@ -540,9 +773,27 @@ def _project_legacy_locked(root, bundle, private_md):
         existing_state = read_json(last_state_path)
     except (OSError, ValueError):
         existing_state = None
-    existing_date = _valid_date((existing_state or {}).get("date_end")) if isinstance(existing_state, dict) else None
+    existing_date = (_valid_date((existing_state or {}).get("date_end"))
+                     if isinstance(existing_state, dict) else None)
     bundle_date = _valid_date(state.get("date_end"))
-    if existing_date and (bundle_date is None or existing_date > bundle_date):
+    existing_snapshot = ((existing_state or {}).get("snapshot_anchor")
+                         if isinstance(existing_state, dict) else None)
+    bundle_snapshot = state.get("snapshot_anchor")
+    existing_sequence = _positive_projection_sequence(
+        (existing_state or {}).get("projection_sequence")
+        if isinstance(existing_state, dict) else None
+    )
+    bundle_sequence = _positive_projection_sequence(state.get("projection_sequence"))
+    same_day_sequence_regression = (
+        existing_date is not None
+        and existing_date == bundle_date
+        and isinstance(existing_snapshot, dict)
+        and isinstance(bundle_snapshot, dict)
+        and existing_sequence is not None
+        and (bundle_sequence is None or existing_sequence > bundle_sequence)
+    )
+    if (existing_date and (bundle_date is None or existing_date > bundle_date)
+            or same_day_sequence_regression):
         last_state_status = "kept_newer"
     else:
         ledger.atomic_write_text(last_state_path, pretty(state))
@@ -555,7 +806,11 @@ def _project_legacy_locked(root, bundle, private_md):
         "metrics_snapshot": dict(state.get("metrics") or {}),
         "session_id": session_id,
     }
-    reports = [_append_session_rows(os.path.join(root, "log.jsonl"), session_id, [log_row])]
+    reports = []
+    snapshot_report = _project_snapshot_anchor(root, bundle)
+    if snapshot_report is not None:
+        reports.append(snapshot_report)
+    reports.append(_append_session_rows(os.path.join(root, "log.jsonl"), session_id, [log_row]))
 
     thesis_updates = list(bundle.get("thesis_updates") or [])
     exit_narratives = list(bundle.get("exit_narratives") or [])
@@ -637,18 +892,31 @@ class FinalizeTransaction:
             raise SessionError("finalize transaction is no longer active")
         if _safe_id(bundle.get("session_id")) != self.session_id:
             raise SessionError("finalize transaction session_id mismatch")
+        if persist:
+            projection = None
+            projection_error = None
+            # Every persistent canonical session participates in the snapshot
+            # initial-history boundary.  Hold the root lock across commit and
+            # projection so a weekly/first review cannot appear between the
+            # snapshot's final check and canonical rename.
+            with _projection_lock(self.sessions):
+                prepared = bundle
+                if bundle.get("route") == "snapshot_review":
+                    _assert_initial_snapshot_boundary(self.root, bundle)
+                    prepared = _snapshot_bundle_for_commit(self.root, bundle)
+                result = _commit_bundle_locked(
+                    self.root, self.sessions, prepared, private_md, public_md, private_html
+                )
+                try:
+                    projection = _project_legacy_locked(self.root, prepared, private_md)
+                except Exception as exc:  # canonical bundle is safe; repair can retry
+                    projection_error = str(exc)
+            return result, projection, projection_error
+
         result = _commit_bundle_locked(
             self.root, self.sessions, bundle, private_md, public_md, private_html
         )
-        projection = None
-        projection_error = None
-        if persist:
-            try:
-                with _projection_lock(self.sessions):
-                    projection = _project_legacy_locked(self.root, bundle, private_md)
-            except Exception as exc:  # canonical bundle is safe; repair can retry
-                projection_error = str(exc)
-        return result, projection, projection_error
+        return result, None, None
 
 
 @contextlib.contextmanager

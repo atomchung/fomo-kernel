@@ -93,6 +93,6 @@ Do not import:
 
 ## Current implementation
 
-As of 2026-07-16, v2 implements the core review lifecycle, canonical atomic sessions, append-only thesis decisions, prior-commitment reconciliation, frozen market/timeline context, exit and problem-ledger follow-up on the private card, public/private rendering, ETF policy, and projection repair. The snapshot route still needs a complete adapter, and multi-lens selection remains P1.
+As of 2026-07-17, v2 implements the core review lifecycle, canonical atomic sessions, append-only thesis decisions, prior-commitment reconciliation, frozen market/timeline context, exit and problem-ledger follow-up on the private card, public/private rendering, ETF policy, projection repair, and initial snapshot onboarding through the single `review.py` entry point. A position table or locally transcribed screenshot now produces an opening portfolio check with narrow structural claims and inferred thesis baselines. A complete initial snapshot may establish an accounting anchor; an incomplete snapshot produces a bounded review without becoming one. Later transaction history may unlock supported history-dependent diagnostics while ledger-derived current holdings remain canonical. Second and subsequent snapshot diff, reconciliation, and adjustment events remain P1, so current-view claims that require that comparison fail closed. Multi-lens selection also remains P1.
 
 The canonical implementation references are `skills/fomo-kernel/SKILL.md`, its routed flows and references, and `docs/skill-v2-architecture.md`.

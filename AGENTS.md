@@ -9,12 +9,14 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 ## Workflow
 
 1. Read `skills/fomo-kernel/SKILL.md` completely.
-2. Normalize brokerage data locally. Do not require the user to reformat it.
-3. Start from the single orchestration entry point:
+2. Normalize brokerage data locally. Do not require the user to reformat it. For a position table or screenshot, transcribe only the broker-declared facts into the snapshot JSON envelope documented in `references/data-contract.md`; keep this temporary JSON outside the repository (for example under `/tmp`), and do not calculate weights, P&L, cycle IDs, or classifications. Screenshot transcription stays local and does not use a cloud OCR service.
+3. Start from the single orchestration entry point. Use the trade command for transaction history or the snapshot command for declared positions:
 
    ```bash
    cd skills/fomo-kernel
    python3 engine/review.py prepare <CSV...> --language en
+   python3 engine/review.py prepare --route snapshot_review \
+     --snapshot-json /tmp/fomo-kernel-positions.json --language en
    ```
 
 4. Read the returned `review_plan.flow_path` and shared references. Ask only questions in `question_queue` with `required:true`. Use a native option UI when available; otherwise present the same options in plain text.
@@ -28,12 +30,13 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 
 ## Non-negotiable boundaries
 
-1. Numbers, rankings, cycle IDs, metrics, and ETF exemptions come from code. The agent must not calculate, invent, or alter them.
+1. Numbers, rankings, cycle IDs, metrics, weights, and ETF exemptions come from code. The agent may transcribe broker-declared position facts, but must not calculate, invent, or alter derived values.
 2. Do not provide buy or sell recommendations. Review behavior, motives, thesis evolution, and the next process rule.
 3. Required motive questions cannot be skipped. A `new_evidence` decision requires both a claim and a source.
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
 5. Keep trade data local and out of cloud memory. Never mix private-card content into a public card.
-6. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
+6. An incomplete snapshot may produce a bounded review, but it is not an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and claims about an unreconciled current broker view must fail closed.
+7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 
 ## Why this bridge stays thin
 

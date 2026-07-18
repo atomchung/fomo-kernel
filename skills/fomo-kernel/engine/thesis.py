@@ -8,6 +8,7 @@ without an explicit delta that future reviews can revisit.
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -158,7 +159,8 @@ def reconstruct_states(rows, decision_rows=None, active_cycle_ids=None):
     for source_rank, source in enumerate((rows or [], decision_rows or [])):
         for index, row in enumerate(source):
             if isinstance(row, dict) and row.get("cycle_id"):
-                kind_rank = {None: 0, "thesis_decision": 1, "exit_narrative": 2}.get(row.get("event"), 3)
+                kind_rank = {None: 0, "thesis_cycle_relink": 0,
+                             "thesis_decision": 1, "exit_narrative": 2}.get(row.get("event"), 3)
                 fallback = (_event_date(row), str(row.get("session_id") or ""), kind_rank,
                             source_rank, index)
                 events.append((fallback, row))
@@ -170,7 +172,7 @@ def reconstruct_states(rows, decision_rows=None, active_cycle_ids=None):
     for _key, raw in events:
         cycle_id = raw.get("cycle_id")
         kind = raw.get("event")
-        if not kind:
+        if not kind or kind == "thesis_cycle_relink":
             current = states.get(cycle_id)
             row = _normalize_thesis_row(raw)
             if current:
@@ -231,6 +233,104 @@ def reconstruct_active(rows, active_cycle_ids=None, decision_rows=None):
     return [row for row in reconstruct_states(rows, decision_rows, active_cycle_ids)
             if (not active_cycle_ids or row.get("cycle_id") in active_cycle_ids)
             and row.get("position_status") != "closed"]
+
+
+_RELINK_CONTENT_FIELDS = (
+    "why", "horizon", "exit_trigger", "stop", "target_size", "driver",
+    "maturity", "source_type", "source_name", "source_confidence",
+    "emotion", "emotion_inferred", "confidence", "confidence_inferred",
+)
+
+
+def _iso_date(value):
+    try:
+        return dt.date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def build_incomplete_snapshot_cycle_relinks(states, active_positions, session_id, review_date):
+    """Build fail-closed, engine-owned links from provisional snapshot cycles.
+
+    An incomplete opening snapshot knows that one ticker is held, but its
+    snapshot-date cycle id is provisional.  A later transaction review can
+    reveal an earlier start for the *same still-open holding*.  Reuse the
+    inferred thesis only when one unambiguous candidate exists and the visible
+    transaction cycle already existed at the snapshot date.  A cycle starting
+    after the snapshot is a possible close/reopen and must receive a new thesis.
+    """
+    states = [row for row in (states or []) if isinstance(row, dict)]
+    positions = active_positions or {}
+    state_cycles = {row.get("cycle_id") for row in states if row.get("cycle_id")}
+    open_by_ticker = {}
+    for row in states:
+        if (not row.get("ticker") or row.get("position_status") == "closed"
+                or row.get("final_outcome")):
+            continue
+        open_by_ticker.setdefault(row["ticker"], []).append(row)
+
+    review_day = _iso_date(review_date)
+    relinks = []
+    for ticker, position in sorted(positions.items()):
+        if not isinstance(position, dict):
+            continue
+        target_cycle = position.get("cycle_id")
+        if not target_cycle or target_cycle in state_cycles:
+            continue
+        open_states = open_by_ticker.get(ticker) or []
+        if len(open_states) != 1:
+            continue
+        prior = open_states[0]
+        provenance = prior.get("cycle_provenance")
+        if not isinstance(provenance, dict):
+            continue
+        eligible = (
+            prior.get("origin") == "snapshot"
+            and prior.get("maturity") == "inferred"
+            and prior.get("source_confidence") == "candidate"
+            and provenance.get("kind") == "snapshot_inference"
+            and provenance.get("snapshot_complete") is False
+            and not prior.get("last_decision")
+            and not prior.get("last_exit")
+            and not prior.get("decision_cursor")
+        )
+        if not eligible:
+            continue
+        snapshot_day = _iso_date(provenance.get("snapshot_as_of"))
+        cycle_day = _iso_date(position.get("cycle_start"))
+        if snapshot_day is None or cycle_day is None or cycle_day > snapshot_day:
+            continue
+        if review_day is None or review_day < snapshot_day:
+            continue
+        revises = prior.get("last_event_id") or prior.get("event_id")
+        if not prior.get("thesis_id") or not revises:
+            continue
+
+        row = {key: prior[key] for key in _RELINK_CONTENT_FIELDS if key in prior}
+        row.update({
+            "event": "thesis_cycle_relink",
+            "schema_version": 2,
+            "session_id": session_id,
+            "session_date": review_day.isoformat(),
+            "ticker": ticker,
+            "cycle_id": target_cycle,
+            "thesis_id": prior["thesis_id"],
+            "revises": revises,
+            "status": "open",
+            "position_status": "open",
+            "origin": "snapshot",
+            "cycle_provenance": {
+                "kind": "incomplete_snapshot_cycle_relink",
+                "from_cycle_id": prior.get("cycle_id"),
+                "snapshot_as_of": snapshot_day.isoformat(),
+                "revealed_cycle_start": cycle_day.isoformat(),
+                "basis": "unique_open_ticker",
+            },
+        })
+        identity = dict(row)
+        row["event_id"] = stable_event_id("thesis-cycle-relink", identity)
+        relinks.append(row)
+    return relinks
 
 
 def _answer_map(answers):
