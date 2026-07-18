@@ -41,6 +41,113 @@ def load_copy(language):
         return json.load(f)
 
 
+# ── Spelled-out numeric-claim detection (issue #194 item 1) ──────────────────
+# The narrative contract is "no numbers; magnitudes come only from the engine".
+# ``re.search(r"\d", ...)`` already rejects ASCII and Unicode digits (30, ３０,
+# ٣), but not spelled-out quantities, so zh users could smuggle "三成"/"五萬" and
+# en users "thirty percent".  ``numeric_claim`` closes that hole with a
+# deterministic pass (regex + word tables, no LLM) shared by zh and en.  It is
+# the authoritative gate; ``schemas/narrative.schema.json`` documents this and
+# no longer tries to express the rule in an ECMA-262 pattern (see that file's
+# ``$comment``).
+#
+# Design bias (from the issue): a false positive only costs the agent a rewrite
+# (annoying but safe); a false negative puts a hallucinated number on the card
+# (a product red line).  So the rules lean strict, and idioms that merely reuse
+# a numeral character are exempted through an explicit allowlist that is punched
+# out of the text before scanning.
+
+# CJK numerals that can head a spelled-out quantity.
+_CJK_NUMERALS = "零〇一二兩三四五六七八九十百千萬億兆"
+# "Hard" units are almost never word-heads, so a numeral in front is always a
+# quantity claim (percent / colloquial percent / multiple).
+_CJK_HARD_UNITS = "％%趴倍"
+# "Soft" units also head common words (成本, 個人, 天氣…), so a numeral+unit only
+# counts when the unit sits at a word boundary (not glued to another non-numeral
+# Han letter that would form a compound word).
+_CJK_SOFT_UNITS = "成元塊股張檔天日週月年季次個點"
+
+# Idioms that reuse a numeral character without asserting a quantity.  They are
+# removed before scanning so the rules below never see them.  Tunable: extend
+# this list rather than loosening a rule when a legitimate idiom is rejected.
+_ZH_IDIOMS = (
+    "一起", "一同", "一直", "一致", "一度", "一旦", "一時", "一向", "一律",
+    "一連", "一再", "一舉", "一切", "一定", "一般", "一樣", "一些", "一味",
+    "一環", "一線", "一路", "一員", "一體", "一如", "一概", "一心", "一面",
+    "一來", "統一", "唯一", "專一", "每一", "進一步",
+    "一一", "一五一十", "三三兩兩", "兩兩", "三兩", "三天兩頭",
+    "十分", "十足", "十全",
+    "百分之百", "百分百", "百般",
+    "千萬別", "千萬不", "千萬勿", "千萬要", "千萬記", "千萬得", "千萬莫", "千萬請",
+    "萬一", "萬分", "萬萬", "萬全", "萬難", "萬象", "萬能", "萬無",
+    "兩難", "兩者", "兩極", "兩全", "兩可", "兩相", "兩敗", "兩性", "兩岸", "兩用",
+    "第一", "第二", "第三", "第四", "第五",
+    "一次性", "再一次", "一次到位", "一次又一次",
+)
+
+# Consecutive CJK numerals (三十, 一百, 五萬, 二〇二六) read as an actual number.
+_CJK_COMPOUND_RE = re.compile(f"[{_CJK_NUMERALS}]{{2,}}")
+# Numeral + hard unit (兩倍, 五趴, 三％).
+_CJK_HARD_RE = re.compile(f"[{_CJK_NUMERALS}][{_CJK_HARD_UNITS}]")
+# Numeral + soft unit (三成, 五股, 十張); boundary is checked in code.
+_CJK_SOFT_RE = re.compile(f"[{_CJK_NUMERALS}][{_CJK_SOFT_UNITS}]")
+# Percentage spelled as 百分之X (百分之三十, 百分之五); 百分之百 is an idiom, stripped first.
+_CJK_PCT_RE = re.compile(f"百分之[{_CJK_NUMERALS}]")
+# Approximate quantifiers (幾十, 數百, 幾成, 幾倍) — 幾/數 only count before a
+# magnitude/unit, so 數字/幾乎/多數 stay clean.
+_CJK_APPROX_RE = re.compile(f"[幾數](?=[十百千萬億{_CJK_HARD_UNITS}成])")
+
+# English number words and the units that turn them into quantity claims.
+_EN_SMALL = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+             "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+             "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety")
+_EN_MAG = "hundred|thousand|million|billion|trillion"
+_EN_NUM = f"(?:{_EN_SMALL}|{_EN_MAG})"
+_EN_UNIT = "percent|percents|percentage\\s+points?|pp|times|dollars?|cents?|shares?"
+# Number word(s) + unit: "thirty percent", "two times", "five thousand dollars".
+_EN_UNIT_RE = re.compile(rf"\b{_EN_NUM}(?:[\s-]+(?:{_EN_NUM}|and))*[\s-]+(?:{_EN_UNIT})\b", re.I)
+# Compound number: "twenty five", "one hundred".
+_EN_COMPOUND_RE = re.compile(rf"\b{_EN_NUM}[\s-]+{_EN_NUM}\b", re.I)
+# Standalone plural magnitude: "thousands", "millions".
+_EN_MAG_RE = re.compile(r"\b(?:hundreds|thousands|millions|billions|trillions)\b", re.I)
+
+
+def _forms_word(ch):
+    """A non-numeral Han letter after a soft unit means the unit heads a
+    compound word (成本, 個人), not a magnitude."""
+    return bool(ch) and "一" <= ch <= "鿿" and ch not in _CJK_NUMERALS
+
+
+def numeric_claim(text):
+    """Return a short reason if ``text`` carries a spelled-out numeric/quantity
+    claim (CJK or English), else ``None``.
+
+    Deterministic (regex + word tables, no LLM).  ASCII/Unicode digits are
+    handled by ``validate_narrative`` via ``re.search(r"\\d", ...)``; this
+    function only covers spelled-out forms.
+    """
+    if not isinstance(text, str):
+        return None
+    scan = text
+    for idiom in _ZH_IDIOMS:
+        scan = scan.replace(idiom, " ")
+    if _CJK_COMPOUND_RE.search(scan):
+        return "spelled-out CJK number (e.g. 三十/五萬)"
+    if _CJK_HARD_RE.search(scan):
+        return "CJK numeral with a unit (e.g. 倍/趴/%)"
+    for match in _CJK_SOFT_RE.finditer(scan):
+        after = scan[match.end():match.end() + 1]
+        if not _forms_word(after):
+            return "CJK numeral with a measure word (e.g. 成/股/次)"
+    if _CJK_PCT_RE.search(scan):
+        return "CJK percentage (百分之…)"
+    if _CJK_APPROX_RE.search(scan):
+        return "approximate CJK quantity (e.g. 幾十/數百)"
+    if _EN_UNIT_RE.search(scan) or _EN_COMPOUND_RE.search(scan) or _EN_MAG_RE.search(scan):
+        return "English number-word quantity (e.g. thirty percent)"
+    return None
+
+
 def validate_narrative(narrative):
     if not isinstance(narrative, dict):
         raise RenderError("narrative must be an object")
@@ -56,11 +163,17 @@ def validate_narrative(narrative):
                     raise RenderError(f"narrative.honesty.{hkey} must be a non-empty string")
                 if re.search(r"\d", hval):
                     raise RenderError(f"narrative.honesty.{hkey} contains digits; numeric claims must come from engine output")
+                reason = numeric_claim(hval)
+                if reason:
+                    raise RenderError(f"narrative.honesty.{hkey} contains a numeric claim ({reason}); magnitudes must come from engine output")
             continue
         if not isinstance(value, str) or not value.strip():
             raise RenderError(f"narrative.{key} must be a non-empty string")
         if re.search(r"\d", value):
             raise RenderError(f"narrative.{key} contains digits; numeric claims must come from engine output")
+        reason = numeric_claim(value)
+        if reason:
+            raise RenderError(f"narrative.{key} contains a numeric claim ({reason}); magnitudes must come from engine output")
     if not narrative.get("headline") or not narrative.get("mirror"):
         raise RenderError("narrative.headline and narrative.mirror are required")
     return narrative

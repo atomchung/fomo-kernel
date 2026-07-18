@@ -2,19 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/narrative.schema.json",
   "title": "Fomo Kernel Prose-only Narrative",
+  "$comment": "The prose-only, no-numbers rule is enforced authoritatively by engine/card_renderer.py:validate_narrative (issue #194 item 1). It rejects ASCII/Unicode digits AND spelled-out quantity claims in both languages (三成, 五萬, 兩倍, 百分之三十, thirty percent). ECMA-262 schema patterns cannot express the CJK/word-form rule, and the former per-field '^\\D+$' matched ASCII digits only — it accepted full-width digits (３０) that the engine's Unicode \\d rejects, so the two layers disagreed. The pattern is removed so this schema no longer makes a weaker, contradictory claim; card_renderer.validate_narrative is the single source of truth for digit-ban.",
   "type": "object",
   "additionalProperties": false,
   "required": ["headline", "mirror"],
   "properties": {
-    "headline": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
-    "mirror": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
-    "counterfactual": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
-    "rule_rationale": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
-    "strength": {"type": "string", "minLength": 1, "pattern": "^\\D+$"},
+    "headline": {"type": "string", "minLength": 1},
+    "mirror": {"type": "string", "minLength": 1},
+    "counterfactual": {"type": "string", "minLength": 1},
+    "rule_rationale": {"type": "string", "minLength": 1},
+    "strength": {"type": "string", "minLength": 1},
     "honesty": {
       "type": "object",
-      "description": "One qualitative sentence per triggered honesty-ledger key; preview fails unless every required_honesty_keys entry is covered (#82: conditions live in the engine, wording stays with the agent).",
-      "additionalProperties": {"type": "string", "minLength": 1, "pattern": "^\\D+$"}
+      "description": "One qualitative sentence per triggered honesty-ledger key; preview fails unless every required_honesty_keys entry is covered (#82: conditions live in the engine, wording stays with the agent). Digit-ban is enforced by card_renderer.validate_narrative, not by a schema pattern (see top-level $comment).",
+      "additionalProperties": {"type": "string", "minLength": 1}
     }
   }
 }
