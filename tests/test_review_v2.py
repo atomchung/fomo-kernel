@@ -2625,6 +2625,92 @@ def test_review_count_unifies_canonical_and_legacy_history():
             "a committed-session retry is not counted as its own prior review"
 
 
+def test_route_auto_ignores_finalized_test_drive_history():
+    """#215: a finalized demo in an explicit --root must not fake weekly history."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        sessions = root / "sessions"
+        demo = sessions / "2026-07-17__demo"
+        demo.mkdir(parents=True)
+        (demo / "bundle.json").write_text(
+            json.dumps(_minimal_bundle("2026-07-17__demo")), encoding="utf-8")
+        corrupt = sessions / "2026-07-17__corrupt"
+        corrupt.mkdir()
+        (corrupt / "bundle.json").write_text("not json", encoding="utf-8")
+        assert review_engine._has_history(str(root)) is False, \
+            "finalized test-drive bundles and corrupt directories are not coach history"
+        plan = _prepare(tmp, root)  # --route defaults to auto
+        assert plan["route"] == "first_review", \
+            "route=auto must stay first_review when only demo sessions exist"
+
+        persistent = sessions / "2026-07-10__real"
+        persistent.mkdir()
+        real_bundle = _minimal_bundle("2026-07-10__real")
+        real_bundle["route"] = "weekly_review"
+        real_bundle["review_plan"] = {"persist": True}
+        (persistent / "bundle.json").write_text(json.dumps(real_bundle), encoding="utf-8")
+        assert review_engine._has_history(str(root)) is True
+        card, state = _artifacts(tmp)
+        rerun = _run("prepare", "--root", root, "--card-json", card, "--state-json", state,
+                     "--session-nonce", "after-real-history")
+        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+        assert json.loads(rerun.stdout)["review_plan"]["route"] == "weekly_review"
+
+
+def test_initial_snapshot_boundary_layers_share_one_verdict():
+    """The prepare fail-fast and finalize's authoritative check cannot drift."""
+    bundle = _runtime_snapshot_bundle("2026-07-17__snapshot")
+    anchor = bundle["engine_state"]["snapshot_anchor"]
+
+    def verdicts(root):
+        try:
+            review_engine._validate_initial_snapshot_root(str(root), anchor)
+            prepare_ok = True
+        except review_engine.ReviewError:
+            prepare_ok = False
+        try:
+            session_engine._assert_initial_snapshot_boundary(str(root), bundle)
+            commit_ok = True
+        except session_engine.SessionError:
+            commit_ok = False
+        return prepare_ok, commit_ok
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        assert verdicts(root) == (True, True), "an empty root admits the initial declaration"
+
+        sessions = root / "sessions"
+        demo = sessions / "2026-07-16__demo"
+        demo.mkdir(parents=True)
+        (demo / "bundle.json").write_text(
+            json.dumps(_minimal_bundle("2026-07-16__demo")), encoding="utf-8")
+        assert verdicts(root) == (True, True), "a finalized demo is history for neither layer"
+
+        # Unknown ledger event types count as existing history for BOTH layers
+        # (fail-closed): the prepare layer previously read through
+        # ledger.load_ledger, which silently dropped them, so only finalize
+        # rejected this root.
+        (root / "ledger.jsonl").write_text(
+            json.dumps({"type": "mystery_event", "as_of": "2026-07-01"}) + "\n",
+            encoding="utf-8")
+        assert verdicts(root) == (False, False)
+
+        (root / "ledger.jsonl").unlink()
+        committed = sessions / bundle["session_id"]
+        committed.mkdir()
+        (committed / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+        assert verdicts(root) == (True, True), \
+            "an identical committed declaration replays in both layers"
+
+        other = _runtime_snapshot_bundle("2026-07-15__other", ticker="QQQ")
+        (sessions / other["session_id"]).mkdir()
+        (sessions / other["session_id"] / "bundle.json").write_text(
+            json.dumps(other), encoding="utf-8")
+        assert verdicts(root) == (False, False), \
+            "a different prior snapshot conflicts in both layers"
+
+
 def test_returning_private_card_shows_completed_history_snapshot_only_locally():
     import card_renderer
     progress = {"completed_reviews_before_start": 3, "returning": True}

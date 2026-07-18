@@ -496,6 +496,55 @@ def _read_jsonl(path):
     return rows
 
 
+def _is_demo_bundle(bundle):
+    """True when a canonical bundle must never reach real coach memory.
+
+    Finalized test drives still commit canonical bundles (they only skip
+    projection), so every ``sessions/`` consumer shares this one filter:
+    ``route == "test_drive"`` or an explicit ``review_plan.persist: false``.
+    """
+    plan = bundle.get("review_plan") or {}
+    return bundle.get("route") == "test_drive" or plan.get("persist") is False
+
+
+def iter_canonical_bundles(root, *, skip_test_drive=True, sort_by_date=False):
+    """Yield ``(session_id, bundle)`` for each readable canonical bundle.
+
+    The single shared ``sessions/`` walk: hidden entries (locks, staging
+    directories) are ignored, unreadable or non-object bundles are skipped, and
+    demo bundles are filtered out unless ``skip_test_drive`` is False.  Under
+    the default filter a bundle whose ``review_plan`` is not an object cannot
+    prove it is persistent, so it is skipped as well.  ``sort_by_date`` yields
+    in ``(engine_state.date_end, session_id)`` order — the override order every
+    continuity consumer shares; the default is directory-name order.
+    """
+    sessions = os.path.join(root, "sessions")
+    if not os.path.isdir(sessions):
+        return
+    dated = []
+    for session_id in sorted(os.listdir(sessions)):
+        if session_id.startswith("."):
+            continue
+        try:
+            bundle = read_json(os.path.join(sessions, session_id, "bundle.json"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(bundle, dict):
+            continue
+        if skip_test_drive:
+            plan = bundle.get("review_plan") or {}
+            if not isinstance(plan, dict) or _is_demo_bundle(bundle):
+                continue
+        if not sort_by_date:
+            yield session_id, bundle
+            continue
+        state = bundle.get("engine_state")
+        state = state if isinstance(state, dict) else {}
+        dated.append(((str(state.get("date_end") or ""), session_id), bundle))
+    for (_date, session_id), bundle in sorted(dated, key=lambda item: item[0]):
+        yield session_id, bundle
+
+
 def _append_session_rows(path, session_id, new_rows):
     """Idempotent per-session append; conflicting retries fail closed.
 
@@ -573,19 +622,11 @@ def _max_projection_sequence(root):
         sequence = _positive_projection_sequence(row.get("projection_sequence"))
         if sequence is not None:
             highest = max(highest, sequence)
-    sessions = os.path.join(root, "sessions")
-    if not os.path.isdir(sessions):
-        return highest
-    for session_id in os.listdir(sessions):
-        if session_id.startswith("."):
-            continue
-        bundle_path = os.path.join(sessions, session_id, "bundle.json")
-        try:
-            stored = read_json(bundle_path)
-        except (OSError, ValueError):
-            continue
-        if not isinstance(stored, dict):
-            continue
+    # Deliberately unfiltered (skip_test_drive=False): a sequence reservation is
+    # a durability fact, not coach memory.  The snapshot route rejects
+    # --test-drive so demo bundles never carry a sequence today, but if one ever
+    # did, reusing its number would still be wrong.
+    for _session_id, stored in iter_canonical_bundles(root, skip_test_drive=False):
         sequence = _positive_projection_sequence(
             (stored.get("engine_state") or {}).get("projection_sequence")
         )
@@ -640,6 +681,42 @@ def _snapshot_bundle_for_commit(root, bundle):
     return prepared
 
 
+INITIAL_SNAPSHOT_CONFLICT = (
+    "initial snapshot onboarding cannot replace existing coach history; "
+    "second or subsequent snapshots require reconciliation"
+)
+
+
+def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
+    """Return the conflict sources blocking an initial snapshot declaration.
+
+    Single implementation behind both boundary layers: the prepare-time UX
+    fail-fast in review.py and the authoritative finalize check that runs under
+    the root projection lock.  Any ledger row that is not the identical
+    snapshot fact counts as existing history — including unknown event types,
+    which the ledger loader would silently drop (strict fail-closed).  Only
+    canonical persistent bundles participate, and an exact replay of the same
+    declaration is not a conflict.  ``exclude_session_id`` removes the session
+    being committed so an idempotent finalize retry cannot conflict with
+    itself.
+    """
+    requested = canonical(_snapshot_payload(anchor))
+    conflicts = []
+    for event in _read_jsonl(os.path.join(root, "ledger.jsonl")):
+        if event.get("type") != "snapshot" or canonical(_snapshot_payload(event)) != requested:
+            conflicts.append("ledger")
+            break
+    for session_id, existing in iter_canonical_bundles(root):
+        if exclude_session_id is not None and session_id == exclude_session_id:
+            continue
+        prior_anchor = (existing.get("engine_state") or {}).get("snapshot_anchor")
+        if (not isinstance(prior_anchor, dict)
+                or canonical(_snapshot_payload(prior_anchor)) != requested):
+            conflicts.append("session")
+            break
+    return conflicts
+
+
 def _assert_initial_snapshot_boundary(root, bundle):
     """Reject a new runtime snapshot until reconciliation is implemented.
 
@@ -655,37 +732,9 @@ def _assert_initial_snapshot_boundary(root, bundle):
     anchor = (bundle.get("engine_state") or {}).get("snapshot_anchor")
     if not isinstance(anchor, dict):
         return
-    requested = canonical(_snapshot_payload(anchor))
-    session_id = bundle.get("session_id")
-    conflicts = []
-    for event in _read_jsonl(os.path.join(root, "ledger.jsonl")):
-        if event.get("type") != "snapshot" or canonical(_snapshot_payload(event)) != requested:
-            conflicts.append("ledger")
-            break
-
-    sessions = os.path.join(root, "sessions")
-    if os.path.isdir(sessions):
-        for entry in os.listdir(sessions):
-            if entry.startswith(".") or entry == session_id:
-                continue
-            path = os.path.join(sessions, entry, "bundle.json")
-            try:
-                existing = read_json(path)
-            except (OSError, ValueError):
-                continue
-            existing_plan = existing.get("review_plan") or {}
-            if existing.get("route") == "test_drive" or existing_plan.get("persist") is False:
-                continue
-            prior_anchor = (existing.get("engine_state") or {}).get("snapshot_anchor")
-            if (not isinstance(prior_anchor, dict)
-                    or canonical(_snapshot_payload(prior_anchor)) != requested):
-                conflicts.append("session")
-                break
-    if conflicts:
-        raise SessionError(
-            "initial snapshot onboarding cannot replace existing coach history; "
-            "second or subsequent snapshots require reconciliation"
-        )
+    if scan_initial_snapshot_conflicts(root, anchor,
+                                       exclude_session_id=bundle.get("session_id")):
+        raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
 
 
 def _project_snapshot_anchor(root, bundle):
@@ -944,7 +993,12 @@ def repair_projections(root):
 
     Skips non-persistent sessions (test drive) so demo data never reaches real
     coach memory, and keeps going past corrupt session directories instead of
-    aborting the whole repair."""
+    aborting the whole repair.
+
+    This walk deliberately does not go through ``iter_canonical_bundles``: the
+    bundle must be read under the per-session finalize lock, and unreadable
+    bundles are reported as errors rather than silently skipped.  Only the
+    demo-filter decision is shared, via ``_is_demo_bundle``."""
     reports, skipped, errors = [], [], []
     base = os.path.join(root, "sessions")
     if not os.path.isdir(base):
@@ -956,8 +1010,7 @@ def repair_projections(root):
         try:
             with _session_lock(base, session_id):
                 bundle = read_json(os.path.join(path, "bundle.json"))
-                plan = bundle.get("review_plan") or {}
-                if bundle.get("route") == "test_drive" or plan.get("persist") is False:
+                if _is_demo_bundle(bundle):
                     skipped.append({"session_id": session_id, "reason": "test_drive or persist:false"})
                     continue
                 with open(os.path.join(path, "card-private.md"), encoding="utf-8") as f:
