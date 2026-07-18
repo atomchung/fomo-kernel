@@ -69,6 +69,7 @@ When multiple sessions are active:
 | Runtime behavior | engine ↔ `SKILL.md` and routed flows/references ↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
 | Demo card values | English README ↔ English demo HTML/image; Traditional Chinese README ↔ Traditional Chinese demo HTML/image. Values must match; only wording differs. |
 | GTM documentation | `README.md` is the English default; `README.zh-TW.md` is the complete Traditional Chinese counterpart. Keep language links and substantive product claims synchronized. |
+| Hole number-line copy | `trade_recap.number_line()` (v1 human-card zh narration) ↔ `card_renderer._hole_line()` (v2 card; independent en implementation). The two per-dimension number narrations must stay semantically in sync. |
 
 Date product assumptions when using them for prioritization. Reconfirm assumptions that are several weeks old or contradicted by new evidence.
 
