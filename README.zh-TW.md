@@ -45,7 +45,7 @@ cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --languag
 標的層診斷(按金額排序,小倉不糾結):
   PLTR  +$74,058   [v] 疑似定投(漲跌都買,不是凹單) · [!] 押太重 50%
   NVDA  +$56,412   [v] 疑似定投 · [!] 押太重 46%
-  ORCL   +$1,658   [v] 紀律持有:賺 22%
+  ORCL   +$1,658   [v] 紀律持有:賺 +22%
   AMD    -$1,000   --  大致中性
 
 [v] 你做對的:往下加碼 2 次,但都守在部位上限內,沒有任何一檔越攤越重
