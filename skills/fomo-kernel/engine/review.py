@@ -94,22 +94,75 @@ def _fingerprint(paths, language, route, prepared=None, nonce=""):
 
 
 def _validate_initial_snapshot_root(root, anchor):
-    """Keep this adapter at its explicit initial-onboarding boundary.
+    """Resolve how a runtime snapshot declaration may enter this coach root.
 
-    A later declaration needs the PRD's diff/adjustment reconciliation flow.
-    Until that P1 path exists, only an exact idempotent replay of the already
-    committed initial declaration may enter a non-empty coach root.
+    Empty history or an exact idempotent replay returns ``None`` (initial
+    onboarding path, unchanged).  A different complete declaration against an
+    anchored ledger returns the reconciliation the Review Plan freezes: the
+    narrow fact diff plus the ``reconciled``/``adjusted`` verdict from
+    ``ledger.snapshot_reconciliation``.  Everything else stays fail-closed —
+    an incomplete second declaration, a declaration older than the current
+    anchor, and history without a complete anchor (replay-only trades, unknown
+    ledger event types, or an unrepaired ledger projection) are rejected.
 
-    This is the prepare-time UX fail-fast only; the authoritative check runs
-    under the root projection lock at finalize.  Both layers call
-    ``session.scan_initial_snapshot_conflicts`` so their verdicts cannot drift
-    — including the strict rule that unknown ledger event types count as
-    existing history.
+    This is the prepare-time UX layer only; the authoritative check reruns
+    under the root projection lock at finalize
+    (``session._assert_initial_snapshot_boundary``) and fails closed when the
+    frozen diff no longer matches the ledger.  Both layers share
+    ``session.scan_initial_snapshot_conflicts`` and
+    ``ledger.snapshot_reconciliation`` so their verdicts cannot drift.
     """
     if not isinstance(anchor, dict):
-        return
-    if session.scan_initial_snapshot_conflicts(root, anchor):
+        return None
+    if not session.scan_initial_snapshot_conflicts(root, anchor):
+        return None
+    if anchor.get("is_complete", True) is not True:
+        raise ReviewError(session.INCOMPLETE_SNAPSHOT_RECONCILIATION)
+    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    try:
+        reconciliation = ledger.snapshot_reconciliation(events, anchor)
+    except ValueError as exc:
+        raise ReviewError(str(exc)) from exc
+    if reconciliation is None:
         raise ReviewError(session.INITIAL_SNAPSHOT_CONFLICT)
+    return reconciliation
+
+
+def _apply_snapshot_reconciliation(card, state, reconciliation):
+    """Freeze the reconciliation into both engine artifacts, honesty included.
+
+    The full fact diff lives in ``state.snapshot_reconciliation`` (and thereby
+    in the Review Plan the user confirms).  The card carries a summary through
+    the existing honesty-ledger and data-integrity channels only — disclosure
+    stays an engine decision (#82), wording stays with the renderer copy and
+    the agent-authored narrative sentence.
+    """
+    card = dict(card)
+    state = dict(state)
+    state["snapshot_reconciliation"] = reconciliation
+    diff = reconciliation.get("diff") or {}
+    positions = diff.get("positions") or []
+    summary = {
+        "status": reconciliation.get("status"),
+        "as_of": reconciliation.get("as_of"),
+        "against_as_of": (reconciliation.get("against") or {}).get("as_of"),
+        "positions_changed": sorted({row["ticker"] for row in positions
+                                     if row.get("kind") not in ("only_declared", "only_derived")}),
+        "only_declared": sorted({row["ticker"] for row in positions
+                                 if row.get("kind") == "only_declared"}),
+        "only_derived": sorted({row["ticker"] for row in positions
+                                if row.get("kind") == "only_derived"}),
+        "cash_currencies": sorted({row["currency"] for row in diff.get("cash") or []}),
+    }
+    integrity = dict(card.get("data_integrity") or {})
+    integrity["snapshot_reconciliation"] = summary
+    card["data_integrity"] = integrity
+    honesty = [row for row in card.get("honesty_ledger") or []
+               if row.get("key") != "snapshot_reconciliation"]
+    honesty.append({"key": "snapshot_reconciliation",
+                    "status": summary["status"], "data": summary})
+    card["honesty_ledger"] = honesty
+    return card, state
 
 
 def _pending_by_fingerprint(root, fingerprint):
@@ -1250,7 +1303,9 @@ def cmd_prepare(args):
             )
         except (OSError, ValueError, snapshot_adapter.SnapshotError) as exc:
             raise ReviewError(f"snapshot adapter rejected input: {exc}") from exc
-        _validate_initial_snapshot_root(root, state.get("snapshot_anchor"))
+        reconciliation = _validate_initial_snapshot_root(root, state.get("snapshot_anchor"))
+        if reconciliation is not None:
+            card, state = _apply_snapshot_reconciliation(card, state, reconciliation)
         prepared = {"card": card, "state": state}
         if isinstance(adapter_meta, str):
             engine_meta = adapter_meta
@@ -1286,6 +1341,8 @@ def cmd_prepare(args):
                              "reason": "incomplete_snapshot"}
         else:
             ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
+            if isinstance(state.get("snapshot_reconciliation"), dict):
+                ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
     elif persist and paths:
         ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
     if route == "snapshot_review":

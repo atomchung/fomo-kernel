@@ -90,6 +90,7 @@ python3 engine/review.py repair-projections
 - Do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments. Unknown instruments receive no allocation exemption.
 - A snapshot review is an opening portfolio check, not a transaction-history diagnosis. Discuss only engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. Do not claim averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, or historical motives from a snapshot.
 - Add an inferred thesis for every uncovered snapshot-origin cycle and label it as inferred. Invite the user to provide transaction history later; only that later history may unlock the historical behavior dimensions. Do not say that transaction import reconciles a newer broker view: ledger-derived current holdings stay canonical until an explicit snapshot reconciliation exists.
+- A second complete snapshot routes through the same prepare call into reconciliation: show the engine-owned narrow diff from `engine_state.snapshot_reconciliation` before preview, state that finalize records the result (`reconciled` keeps the anchor; `adjusted` writes an adjustment event and adopts the newer declaration as the anchor), and never infer why values differ.
 
 ## Language and sharing
 

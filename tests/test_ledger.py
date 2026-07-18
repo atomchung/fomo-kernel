@@ -327,6 +327,125 @@ def test_reconcile_kinds():
     assert clean["clean"] is True and clean["mismatch"] == []
 
 
+# ─────────────── B2. snapshot_reconciliation(#220 二次宣告窄 diff)───────────────
+
+def test_snapshot_reconciliation_narrow_diff_kinds_and_time_alignment():
+    """窄 diff 只列事實(derived vs declared),零原因推斷;比較基準是宣告 as_of 當日收盤
+    的推導持倉——晚於 as_of 的 ledger 交易不參與比較。混幣 cash 原幣各自比,絕不換算。"""
+    events = [
+        _snap("2026-07-01", [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 100, "market": "US", "currency": "USD"},
+            {"ticker": "PLTR", "shares": 30, "avg_cost": 50, "market": "US", "currency": "USD"},
+            {"ticker": "MSFT", "shares": 5, "avg_cost": 200, "market": "US", "currency": "USD"},
+            {"ticker": "AMD", "shares": 3, "market": "US", "currency": "USD"},  # 均價未宣告
+        ], cash={"USD": 8200, "TWD": 100000}),
+        _tr("2026-07-03", "NVDA", "buy", 10, 120),   # ≤ as_of:計入(NVDA 50 @104)
+        _tr("2026-07-09", "NVDA", "sell", 50, 130),  # > as_of:宣告的收盤視角看不到,排除
+    ]
+    declared = {"as_of": "2026-07-08", "positions": [
+        {"ticker": "NVDA", "shares": 55, "avg_cost": 104, "market": "US", "currency": "USD"},
+        {"ticker": "PLTR", "shares": 30, "avg_cost": 60, "market": "TW", "currency": "TWD"},
+        {"ticker": "AMD", "shares": 3, "avg_cost": 77, "market": "US", "currency": "USD"},
+        {"ticker": "2330.TW", "shares": 100, "market": "TW", "currency": "TWD"},
+    ], "cash": {"USD": 9000}}
+    out = lg.snapshot_reconciliation(events, declared)
+    assert out["status"] == "adjusted"
+    assert out["as_of"] == "2026-07-08" and out["against"]["as_of"] == "2026-07-01"
+    assert out["diff"]["positions"] == [
+        {"ticker": "2330.TW", "kind": "only_declared", "derived": None, "declared": 100.0},
+        {"ticker": "MSFT", "kind": "only_derived", "derived": 5.0, "declared": None},
+        {"ticker": "NVDA", "kind": "shares", "derived": 50.0, "declared": 55.0},
+        {"ticker": "PLTR", "kind": "market", "derived": "US", "declared": "TW"},
+        {"ticker": "PLTR", "kind": "currency", "derived": "USD", "declared": "TWD"},
+        {"ticker": "PLTR", "kind": "avg_cost", "derived": 50.0, "declared": 60.0},
+    ], "AMD(推導均價未知 vs 宣告 77)不成列:單邊缺值是缺資料,不是兩個事實相衝"
+    assert out["diff"]["cash"] == [
+        {"currency": "TWD", "derived": 100000.0, "declared": None},
+        {"currency": "USD", "derived": 8200.0, "declared": 9000.0},
+    ], "cash 原幣各自比、單邊缺列為事實,不做任何匯率換算"
+    assert "reason" not in json.dumps(out["diff"]), "diff 本體不得夾帶原因欄位"
+
+
+def test_snapshot_reconciliation_clean_uses_tolerances():
+    """一致判定的容差契約:shares 用 SHARES_TOL、cash/avg_cost 用 CASH_TOL。
+    mutation dance 靶:把 SHARES_TOL 容差拿掉 → 本測試必紅(同股數被誤報 diff)。"""
+    events = [
+        _snap("2026-07-01", [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 100, "market": "US", "currency": "USD"},
+        ], cash={"USD": 8200}),
+    ]
+    clean = lg.snapshot_reconciliation(events, {
+        "as_of": "2026-07-05",
+        "positions": [{"ticker": "NVDA", "shares": 40.00005, "avg_cost": 100.004,
+                       "market": "US", "currency": "USD"}],
+        "cash": {"USD": 8200.004},
+    })
+    assert clean["status"] == "reconciled", clean["diff"]
+    assert clean["diff"] == {"positions": [], "cash": []}
+
+    beyond = lg.snapshot_reconciliation(events, {
+        "as_of": "2026-07-05",
+        "positions": [{"ticker": "NVDA", "shares": 40.001, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+        "cash": {"USD": 8200},
+    })
+    assert beyond["status"] == "adjusted"
+    assert [row["kind"] for row in beyond["diff"]["positions"]] == ["shares"]
+
+    omitted_cash = lg.snapshot_reconciliation(events, {
+        "as_of": "2026-07-05",
+        "positions": [{"ticker": "NVDA", "shares": 40, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}],
+    })
+    assert omitted_cash["status"] == "reconciled", \
+        "宣告整個省略 cash 欄 = 未宣告,不是宣告為零,不觸發 diff"
+
+
+def test_snapshot_reconciliation_requires_anchor_and_newer_view():
+    declared = {"as_of": "2026-07-08",
+                "positions": [{"ticker": "MU", "shares": 15, "market": "US", "currency": "USD"}]}
+    replay_only = [_tr("2026-06-01", "MU", "buy", 15, 100.0)]
+    assert lg.snapshot_reconciliation(replay_only, declared) is None, \
+        "無完整錨點(純 replay 歷史)→ 對帳未定義,維持初始 onboarding 的 fail-closed"
+    anchored = [_snap("2026-07-10", [{"ticker": "MU", "shares": 15}])]
+    try:
+        lg.snapshot_reconciliation(anchored, declared)
+        raise AssertionError("宣告日早於現行錨點必須 fail closed")
+    except ValueError as exc:
+        assert "older than the current ledger anchor" in str(exc)
+    same_day = lg.snapshot_reconciliation(
+        anchored, {**declared, "as_of": "2026-07-10"})
+    assert same_day["status"] == "reconciled", "同日宣告合法(採納端由 projection_sequence 決勝)"
+
+
+def test_derive_holdings_chain_across_adopted_anchor():
+    """舊錨點→交易→adjustment→新錨點→再交易:推導只從新錨點起算+其後交易;
+    舊錨點、舊交易與 adjustment 全數留在事件流當歷史,不干擾也不雙重套用。
+    mutation dance 靶:reconciliation/adjustment 事件若被推導誤用 → 本測試必紅。"""
+    events = [
+        _snap("2026-07-01", [{"ticker": "NVDA", "shares": 40, "avg_cost": 100}]),
+        _tr("2026-07-03", "NVDA", "buy", 10, 120),
+        {"type": "adjustment", "date": "2026-07-10", "reason": "snapshot_reconciliation",
+         "against": {"as_of": "2026-07-01", "snapshot_id": None},
+         "diff": {"positions": [{"ticker": "NVDA", "kind": "shares",
+                                 "derived": 50.0, "declared": 45.0}], "cash": []}},
+        _snap("2026-07-10", [{"ticker": "NVDA", "shares": 45, "avg_cost": 105},
+                             {"ticker": "PLTR", "shares": 5, "avg_cost": 30}],
+              projection_sequence=2),
+        {"type": "reconciliation", "date": "2026-07-12", "status": "reconciled",
+         "against": {"as_of": "2026-07-10", "snapshot_id": None}},
+        _tr("2026-07-14", "NVDA", "sell", 5, 130),
+    ]
+    out = lg.derive_holdings(events)
+    assert out["anchor"]["as_of"] == "2026-07-10"
+    assert out["counts"]["trades_applied"] == 1, "只有新錨點之後那筆交易疊加"
+    n = out["holdings"]["NVDA"]
+    assert _approx(n["shares"], 40) and _approx(n["avg_cost"], 105.0)
+    assert n["cycle_id"] == "NVDA#2026-07-10#1"
+    assert _approx(out["holdings"]["PLTR"]["shares"], 5)
+    assert out["integrity"] == [], "adjustment/reconciliation 純留痕,不得產生 integrity 噪音"
+
+
 # ─────────────── C. 匯入:去重 + 過濾計數 ───────────────
 
 def test_dedupe_against_existing():

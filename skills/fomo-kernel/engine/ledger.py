@@ -20,7 +20,9 @@ as_of 日收盤後狀態,同日交易視為已反映在宣告數字內);沒有�
     仍以 engine state 的 cycle_id 為準(SKILL.md 現行規則),ledger cycle_id 供帳本自身追蹤。
 
 adjustment 事件是 reconcile 的差異留痕(給人回看),不進推導 —— 差異的實際修正由
-reconcile 後追加的新 snapshot(新錨點)承擔,避免雙重套用。
+reconcile 後追加的新 snapshot(新錨點)承擔,避免雙重套用。reconciliation 事件是
+乾淨對帳的標記(宣告與推導一致,#220),同樣不進推導。二次宣告的窄 diff 契約見
+snapshot_reconciliation() docstring 與 docs/prd-ledger.md。
 
 CLI(SKILL 消費;JSON 走 stdout、人話訊息走 stderr,對齊 TR_JSON 模式):
   python3 ledger.py holdings        [--ledger P]                      # 推導當前持倉+integrity
@@ -33,6 +35,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -42,7 +45,8 @@ SCHEMA_V = 1
 DEFAULT_LEDGER = os.path.expanduser("~/.trade-coach/ledger.jsonl")
 EPS = 1e-6
 SHARES_TOL = 1e-4          # reconcile 股數容差(對齊事件 round 精度:qty round4)
-EVENT_TYPES = ("snapshot", "trade", "adjustment")
+CASH_TOL = 0.005           # cash / avg-cost absolute tolerance (broker cent rounding)
+EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation")
 
 
 # ─────────────────────────── 讀寫 ───────────────────────────
@@ -283,6 +287,156 @@ def reconcile(events, declared_positions):
             mismatch.append({"ticker": t, "derived_shares": ds, "declared_shares": cs,
                              "kind": "shares_mismatch"})
     return {"match": match, "mismatch": mismatch, "clean": not mismatch}
+
+
+def _declared_positions_map(declared):
+    """Validate a declared snapshot's positions into {ticker: facts}; fail closed."""
+    out = {}
+    for index, row in enumerate(declared.get("positions") or []):
+        if not isinstance(row, dict):
+            raise ValueError(f"declared positions[{index}] must be an object")
+        ticker = row.get("ticker")
+        if not ticker or not isinstance(ticker, str):
+            raise ValueError(f"declared positions[{index}] is missing a ticker")
+        if ticker in out:
+            raise ValueError(f"declared snapshot repeats ticker {ticker}")
+        try:
+            shares = float(row.get("shares"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"declared {ticker} has invalid shares") from exc
+        if not math.isfinite(shares) or shares <= 0:
+            raise ValueError(f"declared {ticker} has invalid shares")
+        avg_cost = row.get("avg_cost")
+        if avg_cost is not None:
+            try:
+                avg_cost = float(avg_cost)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"declared {ticker} has invalid avg_cost") from exc
+            if not math.isfinite(avg_cost) or avg_cost <= 0:
+                raise ValueError(f"declared {ticker} has invalid avg_cost")
+        out[ticker] = {"shares": shares, "avg_cost": avg_cost,
+                       "market": str(row.get("market") or "US").upper(),
+                       "currency": str(row.get("currency") or "USD").upper()}
+    if not out:
+        raise ValueError("declared snapshot has no positions")
+    return out
+
+
+def _cash_amount(value, label):
+    """Original-currency cash balance or None; non-numeric fails closed."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} cash balance must be a number")
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"{label} cash balance must be finite")
+    return value
+
+
+def snapshot_reconciliation(events, declared):
+    """Fact-only reconciliation between the ledger and a newer complete declaration.
+
+    Implements the docs/prd-ledger.md reconciliation contract: compare
+    ledger-derived holdings, as of the declared snapshot's end-of-day ``as_of``,
+    with the newly declared positions and cash.  Returns ``None`` when the
+    ledger has no complete anchor (replay-only history keeps the
+    initial-onboarding fail-closed boundary), otherwise::
+
+        {"schema_version": 1, "status": "reconciled" | "adjusted",
+         "as_of": ..., "against": {"as_of": ..., "snapshot_id": ...},
+         "diff": {"positions": [...], "cash": [...]}}
+
+    Rules pinned by owner decision (do not weaken):
+
+    - The diff lists facts only (derived vs declared values).  It never infers
+      whether a mismatch is a missing trade, transfer, split, fee, or data
+      error — those are indistinguishable here.
+    - Every value is compared in its original currency; nothing is converted.
+    - Shares use ``SHARES_TOL``; cash and avg_cost use ``CASH_TOL`` (avg_cost
+      additionally allows 1e-6 relative slack for large prices).  avg_cost is
+      compared only when both sides state a number: an omitted or unknown cost
+      is missing data, not a disputed fact.
+    - Trades dated after the declared ``as_of`` are excluded: the declaration
+      is an end-of-day view and later ledger trades are not part of it.
+    - Cash is compared only when the declaration carries a cash object; within
+      it, a currency present on only one side is itself a listed difference.
+    - A declaration older than the current anchor raises ``ValueError``; only
+      the newer view can reconcile (same-day is resolved by the existing
+      ``projection_sequence`` tie-break at adoption time).
+    """
+    anchor = latest_anchor(events)
+    if anchor is None:
+        return None
+    try:
+        declared_as_of = dt.date.fromisoformat(str(declared.get("as_of")))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("declared snapshot has an invalid as_of date") from exc
+    anchor_as_of = dt.date.fromisoformat(str(anchor.get("as_of")))
+    if declared_as_of < anchor_as_of:
+        raise ValueError(
+            f"declared snapshot as_of {declared_as_of.isoformat()} is older than the "
+            f"current ledger anchor {anchor_as_of.isoformat()}; only a newer or "
+            "same-day declaration can reconcile")
+    declared_map = _declared_positions_map(declared)
+
+    aligned = []
+    for ev in events:
+        if ev.get("type") == "trade":
+            norm = _norm_trade(ev)
+            if norm is not None and norm[0] > declared_as_of:
+                continue
+        aligned.append(ev)
+    derived = derive_holdings(aligned)["holdings"]
+
+    positions = []
+    for ticker in sorted(set(derived) | set(declared_map)):
+        fact = derived.get(ticker)
+        claim = declared_map.get(ticker)
+        if fact is None:
+            positions.append({"ticker": ticker, "kind": "only_declared",
+                              "derived": None, "declared": claim["shares"]})
+            continue
+        if claim is None:
+            positions.append({"ticker": ticker, "kind": "only_derived",
+                              "derived": fact["shares"], "declared": None})
+            continue
+        if abs(float(fact["shares"]) - claim["shares"]) > SHARES_TOL:
+            positions.append({"ticker": ticker, "kind": "shares",
+                              "derived": fact["shares"], "declared": claim["shares"]})
+        if str(fact.get("market") or "US").upper() != claim["market"]:
+            positions.append({"ticker": ticker, "kind": "market",
+                              "derived": fact.get("market"), "declared": claim["market"]})
+        if str(fact.get("currency") or "USD").upper() != claim["currency"]:
+            positions.append({"ticker": ticker, "kind": "currency",
+                              "derived": fact.get("currency"), "declared": claim["currency"]})
+        derived_cost = fact.get("avg_cost")
+        if (derived_cost is not None and claim["avg_cost"] is not None
+                and not math.isclose(float(derived_cost), claim["avg_cost"],
+                                     rel_tol=1e-6, abs_tol=CASH_TOL)):
+            positions.append({"ticker": ticker, "kind": "avg_cost",
+                              "derived": derived_cost, "declared": claim["avg_cost"]})
+
+    cash = []
+    declared_cash = declared.get("cash")
+    if isinstance(declared_cash, dict):
+        anchor_cash = anchor.get("cash") if isinstance(anchor.get("cash"), dict) else {}
+        derived_cash = {str(key).upper(): value for key, value in anchor_cash.items()}
+        claimed_cash = {str(key).upper(): value for key, value in declared_cash.items()}
+        for currency in sorted(set(derived_cash) | set(claimed_cash)):
+            have = _cash_amount(derived_cash.get(currency), f"ledger {currency}")
+            claim_amount = _cash_amount(claimed_cash.get(currency), f"declared {currency}")
+            if (have is not None and claim_amount is not None
+                    and abs(have - claim_amount) <= CASH_TOL):
+                continue
+            cash.append({"currency": currency, "derived": have, "declared": claim_amount})
+
+    return {"schema_version": 1,
+            "status": "reconciled" if not positions and not cash else "adjusted",
+            "as_of": declared_as_of.isoformat(),
+            "against": {"as_of": anchor.get("as_of"),
+                        "snapshot_id": anchor.get("snapshot_id")},
+            "diff": {"positions": positions, "cash": cash}}
 
 
 # ─────────────────────────── 交易匯入 ───────────────────────────

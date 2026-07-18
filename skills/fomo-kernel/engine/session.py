@@ -650,6 +650,15 @@ def _snapshot_bundle_for_commit(root, bundle):
         state.pop("projection_sequence", None)
         prepared["engine_state"] = state
         return prepared
+    reconciliation = (bundle.get("engine_state") or {}).get("snapshot_reconciliation")
+    if isinstance(reconciliation, dict) and reconciliation.get("status") == "reconciled":
+        # A clean reconciliation marks the ledger without adopting a new
+        # anchor, so it must not consume a root-wide ordering number either.
+        prepared = dict(bundle)
+        state = dict(bundle.get("engine_state") or {})
+        state.pop("projection_sequence", None)
+        prepared["engine_state"] = state
+        return prepared
 
     final = session_dir(root, bundle["session_id"])
     if os.path.isdir(final):
@@ -686,6 +695,16 @@ INITIAL_SNAPSHOT_CONFLICT = (
     "second or subsequent snapshots require reconciliation"
 )
 
+INCOMPLETE_SNAPSHOT_RECONCILIATION = (
+    "an incomplete snapshot cannot reconcile existing coach history; "
+    "declare the complete account view to compare it with the ledger"
+)
+
+SNAPSHOT_RECONCILIATION_STALE = (
+    "the ledger changed after this reconciliation diff was prepared; "
+    "run prepare again with the same snapshot to refreeze the diff"
+)
+
 
 def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
     """Return the conflict sources blocking an initial snapshot declaration.
@@ -718,13 +737,20 @@ def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
 
 
 def _assert_initial_snapshot_boundary(root, bundle):
-    """Reject a new runtime snapshot until reconciliation is implemented.
+    """Admit a runtime snapshot only as initial onboarding or as reconciliation.
 
     Direct legacy/test bundles do not carry the adapter input kind and retain
     their compatibility path.  Runtime adapter bundles may replay the identical
-    declaration (for example in another language), but a different snapshot or
-    any intervening trade history needs the deferred diff/adjustment workflow.
-    The caller holds the root projection lock, closing the two-finalize race.
+    declaration (for example in another language).  Any other declaration
+    against existing history must carry the reconciliation frozen at prepare,
+    and that frozen diff must still equal a recomputation under this root
+    projection lock — otherwise finalize fails closed instead of writing an
+    adjustment the user never previewed.  A ledger whose current anchor is
+    already the declared fact is an idempotent post-adoption replay.  History
+    without a complete anchor (replay-only trades, unknown event types, or an
+    unrepaired ledger projection) keeps the original fail-closed rejection, and
+    an incomplete declaration can never reconcile.  The caller holds the root
+    projection lock, closing the two-finalize race.
     """
     plan = bundle.get("review_plan") or {}
     if (plan.get("input") or {}).get("kind") != "positions_snapshot":
@@ -732,9 +758,28 @@ def _assert_initial_snapshot_boundary(root, bundle):
     anchor = (bundle.get("engine_state") or {}).get("snapshot_anchor")
     if not isinstance(anchor, dict):
         return
-    if scan_initial_snapshot_conflicts(root, anchor,
-                                       exclude_session_id=bundle.get("session_id")):
+    if not scan_initial_snapshot_conflicts(root, anchor,
+                                           exclude_session_id=bundle.get("session_id")):
+        return
+    frozen = (bundle.get("engine_state") or {}).get("snapshot_reconciliation")
+    if not isinstance(frozen, dict):
         raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
+    if anchor.get("is_complete", True) is not True:
+        raise SessionError(INCOMPLETE_SNAPSHOT_RECONCILIATION)
+    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    current_anchor = ledger.latest_anchor(events)
+    if (current_anchor is not None
+            and canonical(_snapshot_payload(current_anchor))
+            == canonical(_snapshot_payload(anchor))):
+        return
+    try:
+        current = ledger.snapshot_reconciliation(events, anchor)
+    except ValueError as exc:
+        raise SessionError(str(exc)) from exc
+    if current is None:
+        raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
+    if canonical(current) != canonical(frozen):
+        raise SessionError(SNAPSHOT_RECONCILIATION_STALE)
 
 
 def _project_snapshot_anchor(root, bundle):
@@ -743,6 +788,13 @@ def _project_snapshot_anchor(root, bundle):
     The canonical session is committed before projections run.  A ledger write
     failure is therefore recoverable through ``repair-projections`` and an
     abandoned pending review can never leave an orphan accounting anchor.
+
+    A frozen ``snapshot_reconciliation`` in the bundle's engine state selects
+    the repeated-snapshot path (#220): status ``reconciled`` appends only a
+    content-addressed reconciliation mark and never a new anchor, while status
+    ``adjusted`` appends one content-addressed adjustment event preserving the
+    narrow diff plus the newly declared anchor, whose ``projection_sequence``
+    lets ``ledger.latest_anchor`` adopt it.  Every write replays as a no-op.
     """
     if bundle.get("route") != "snapshot_review":
         return None
@@ -761,37 +813,80 @@ def _project_snapshot_anchor(root, bundle):
     payload = _snapshot_payload(anchor)
     snapshot_id = "snapshot-" + hashlib.sha256(canonical(payload).encode("utf-8")).hexdigest()[:16]
     ledger_path = os.path.join(root, "ledger.jsonl")
+    state = bundle.get("engine_state") or {}
+    reconciliation = state.get("snapshot_reconciliation")
+    if reconciliation is not None and not isinstance(reconciliation, dict):
+        raise SessionError("snapshot_reconciliation must be an object")
+    status = (reconciliation or {}).get("status")
+    if reconciliation is not None and status not in ("reconciled", "adjusted"):
+        raise SessionError(f"unsupported snapshot reconciliation status: {status}")
     if payload["is_complete"] is False:
+        if reconciliation is not None:
+            raise SessionError("an incomplete snapshot cannot carry a reconciliation")
         return {"path": ledger_path, "appended": 0, "status": "skipped_incomplete",
                 "snapshot_id": snapshot_id}
     if payload["is_complete"] is not True:
         raise SessionError("snapshot projection requires boolean is_complete")
-    state = bundle.get("engine_state") or {}
     sequence = _positive_projection_sequence(state.get("projection_sequence"))
     if "projection_sequence" in state and sequence is None:
         raise SessionError("snapshot projection_sequence must be a positive integer")
     existing = _read_jsonl(ledger_path)
-    for row in existing:
-        if row.get("type") != "snapshot":
-            continue
-        if row.get("snapshot_id") == snapshot_id or canonical(_snapshot_payload(row)) == canonical(payload):
-            report = {"path": ledger_path, "appended": 0, "status": "no-op",
-                      "snapshot_id": snapshot_id}
-            if sequence is not None:
-                report["projection_sequence"] = sequence
-            return report
 
-    event = dict(payload)
-    event["snapshot_id"] = snapshot_id
-    event["session_id"] = bundle["session_id"]
-    if sequence is not None:
-        event["projection_sequence"] = sequence
-    ledger.append_events(ledger_path, [event])
-    report = {"path": ledger_path, "appended": 1, "status": "projected",
-              "snapshot_id": snapshot_id}
+    if status == "reconciled":
+        identity = {"type": "reconciliation", "status": "reconciled",
+                    "date": reconciliation.get("as_of"),
+                    "declared_snapshot_id": snapshot_id,
+                    "against": reconciliation.get("against")}
+        reconciliation_id = ("reconcile-" + hashlib.sha256(
+            canonical(identity).encode("utf-8")).hexdigest()[:16])
+        report = {"path": ledger_path, "snapshot_id": snapshot_id,
+                  "reconciliation": "reconciled", "reconciliation_id": reconciliation_id}
+        if any(row.get("type") == "reconciliation"
+               and row.get("reconciliation_id") == reconciliation_id for row in existing):
+            return dict(report, appended=0, status="no-op")
+        event = dict(identity)
+        event["reconciliation_id"] = reconciliation_id
+        event["session_id"] = bundle["session_id"]
+        ledger.append_events(ledger_path, [event])
+        return dict(report, appended=1, status="projected")
+
+    to_append = []
+    report = {"path": ledger_path, "snapshot_id": snapshot_id}
+    if status == "adjusted":
+        identity = {"type": "adjustment", "date": reconciliation.get("as_of"),
+                    "reason": "snapshot_reconciliation",
+                    "declared_snapshot_id": snapshot_id,
+                    "against": reconciliation.get("against"),
+                    "diff": reconciliation.get("diff")}
+        adjustment_id = ("adjust-" + hashlib.sha256(
+            canonical(identity).encode("utf-8")).hexdigest()[:16])
+        report["reconciliation"] = "adjusted"
+        report["adjustment_id"] = adjustment_id
+        if not any(row.get("type") == "adjustment"
+                   and row.get("adjustment_id") == adjustment_id for row in existing):
+            event = dict(identity)
+            event["adjustment_id"] = adjustment_id
+            event["session_id"] = bundle["session_id"]
+            to_append.append(event)
+
+    anchor_exists = any(
+        row.get("type") == "snapshot"
+        and (row.get("snapshot_id") == snapshot_id
+             or canonical(_snapshot_payload(row)) == canonical(payload))
+        for row in existing)
+    if not anchor_exists:
+        event = dict(payload)
+        event["snapshot_id"] = snapshot_id
+        event["session_id"] = bundle["session_id"]
+        if sequence is not None:
+            event["projection_sequence"] = sequence
+        to_append.append(event)
     if sequence is not None:
         report["projection_sequence"] = sequence
-    return report
+    if not to_append:
+        return dict(report, appended=0, status="no-op")
+    ledger.append_events(ledger_path, to_append)
+    return dict(report, appended=len(to_append), status="projected")
 
 
 def _project_legacy_locked(root, bundle, private_md):
