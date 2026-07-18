@@ -84,6 +84,7 @@
     "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
     "acct_perf_basis": "Account performance uses partial cost or FX approximations and remains uncertain.",
     "accounting_reconciliation": "The imported transactions did not reproduce the snapshot-anchored current holdings, so current sizing, diversification, and unrealized P&L were not scored.",
+    "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
     "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero."
   },
   "due_choices": {

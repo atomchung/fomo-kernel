@@ -21,6 +21,7 @@ SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
 import instruments  # noqa: E402
+import ledger as ledger_engine  # noqa: E402
 import review as review_engine  # noqa: E402
 import session as session_engine  # noqa: E402
 import thesis as thesis_engine  # noqa: E402
@@ -767,14 +768,24 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
                             _path, "--root", root, "--language", "en")
         assert same_prepare.returncode == 0
         assert json.loads(same_prepare.stdout)["status"] == "already_committed"
+        # A different second declaration no longer fails closed at prepare: it
+        # enters the reconciliation path (#220) with the narrow diff frozen in
+        # the Review Plan — and prepare still writes nothing to the ledger.
         changed_payload = {**payload, "positions": [
             {**payload["positions"][0], "shares": 3}, payload["positions"][1]]}
         changed = _snapshot_json(tmp, payload=changed_payload, name="changed-snapshot.json")
-        rejected_second = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
-                               changed, "--root", root, "--language", "en")
-        assert rejected_second.returncode == 2
-        assert "second or subsequent snapshots" in rejected_second.stdout
-        assert [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()] == rows
+        second = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                      changed, "--root", root, "--language", "en")
+        assert second.returncode == 0, second.stdout + second.stderr
+        second_plan = json.loads(second.stdout)["review_plan"]
+        reconciliation = second_plan["engine_state"]["snapshot_reconciliation"]
+        assert reconciliation["status"] == "adjusted"
+        assert reconciliation["diff"]["positions"] == [
+            {"ticker": "SPY", "kind": "shares", "derived": 2.0, "declared": 3.0}]
+        assert "snapshot_reconciliation" in \
+            second_plan["card_plan"]["required_honesty_keys"]
+        assert [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()] == rows, \
+            "prepare freezes the reconciliation diff without any ledger write"
 
         (root / "ledger.jsonl").unlink()
         repaired = _run("repair-projections", "--root", root)
@@ -784,6 +795,242 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         repaired_again = _run("repair-projections", "--root", root)
         assert repaired_again.returncode == 0
         assert len((root / "ledger.jsonl").read_text().splitlines()) == 1
+
+
+def _finalize_snapshot_session(tmp, root, plan, tag):
+    answers = pathlib.Path(tmp) / f"answers-{tag}.json"
+    narrative = pathlib.Path(tmp) / f"narrative-{tag}.json"
+    answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+    narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                "--answers", answers, "--narrative", narrative)
+
+
+def _ledger_rows(root):
+    return [json.loads(line)
+            for line in (pathlib.Path(root) / "ledger.jsonl").read_text().splitlines()]
+
+
+def test_second_snapshot_adjusted_writes_adjustment_and_adopts_new_anchor():
+    """The #220 adjusted path: narrow frozen diff -> adjustment event preserving
+    history -> newer declaration adopted by latest_anchor -> idempotent replay."""
+    initial = {
+        "as_of": "2026-07-10",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market": "US", "currency": "USD"},
+            {"ticker": "PLTR", "shares": 20, "avg_cost": 30, "market": "US", "currency": "USD"},
+        ],
+        "cash": {"USD": 1000},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
+        first = _finalize_snapshot_session(tmp, root, plan1, "first")
+        assert first.returncode == 0, first.stdout + first.stderr
+
+        # Prior weekly ingests: one trade inside the declared window, one after
+        # the second declaration's end-of-day view.
+        ledger_engine.append_events(str(root / "ledger.jsonl"), [
+            {"type": "trade", "date": "2026-07-12", "ticker": "PLTR", "action": "buy",
+             "qty": 5, "price": 40, "market": "US", "currency": "USD"},
+            {"type": "trade", "date": "2026-07-16", "ticker": "SPY", "action": "buy",
+             "qty": 1, "price": 610, "market": "US", "currency": "USD"},
+        ])
+
+        second_payload = {
+            "as_of": "2026-07-15",
+            "positions": [
+                {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market": "US", "currency": "USD"},
+                {"ticker": "PLTR", "shares": 30, "avg_cost": 32, "market": "US", "currency": "USD"},
+            ],
+            "cash": {"USD": 800},
+        }
+        plan2, _second = _snapshot_prepare(tmp, root, payload=second_payload, name="second.json")
+        frozen = plan2["engine_state"]["snapshot_reconciliation"]
+        assert frozen["status"] == "adjusted"
+        assert frozen["against"]["as_of"] == "2026-07-10"
+        # Facts only, in the declared as-of window: the 2026-07-12 buy counts
+        # (derived 25), the 2026-07-16 buy does not (SPY stays clean).
+        assert frozen["diff"]["positions"] == [
+            {"ticker": "PLTR", "kind": "shares", "derived": 25.0, "declared": 30.0}]
+        assert frozen["diff"]["cash"] == [
+            {"currency": "USD", "derived": 1000.0, "declared": 800.0}]
+        assert plan2["input"]["ledger_ingest"]["reconciliation"] == "adjusted"
+        summary = plan2["engine_card"]["data_integrity"]["snapshot_reconciliation"]
+        assert summary["positions_changed"] == ["PLTR"] and summary["cash_currencies"] == ["USD"]
+        honesty = {row["key"]: row for row in plan2["engine_card"]["honesty_ledger"]}
+        assert honesty["snapshot_reconciliation"]["status"] == "adjusted"
+
+        second = _finalize_snapshot_session(tmp, root, plan2, "second")
+        assert second.returncode == 0, second.stdout + second.stderr
+        snapshot_report = json.loads(second.stdout)["projection"]["rows"][0]
+        assert snapshot_report["reconciliation"] == "adjusted"
+        assert snapshot_report["appended"] == 2 and snapshot_report["projection_sequence"] == 2
+
+        rows = _ledger_rows(root)
+        assert [row["type"] for row in rows] == \
+            ["snapshot", "trade", "trade", "adjustment", "snapshot"], \
+            "history is preserved: old anchor and trades stay, adjustment precedes the new anchor"
+        adjustment = rows[3]
+        assert adjustment["adjustment_id"].startswith("adjust-")
+        assert adjustment["reason"] == "snapshot_reconciliation"
+        assert adjustment["diff"] == frozen["diff"]
+        assert adjustment["against"]["as_of"] == "2026-07-10"
+        assert rows[4]["snapshot_id"].startswith("snapshot-")
+        assert rows[4]["projection_sequence"] == 2
+
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        assert ledger_engine.latest_anchor(events)["as_of"] == "2026-07-15"
+        derived = ledger_engine.derive_holdings(events)["holdings"]
+        assert derived["PLTR"]["shares"] == 30, "holdings derive from the adopted anchor"
+        assert derived["SPY"]["shares"] == 3, "post-adoption trades still apply on top"
+        assert derived["PLTR"]["cycle_id"] == "PLTR#2026-07-15#1"
+
+        retry = _finalize_snapshot_session(tmp, root, plan2, "second-retry")
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        assert json.loads(retry.stdout)["status"] == "no-op"
+        assert _ledger_rows(root) == rows, \
+            "an identical finalize replay appends neither a second adjustment nor a second anchor"
+
+
+def test_second_snapshot_reconciled_marks_ledger_without_new_anchor():
+    """The #220 clean path: agreement appends only a content-addressed
+    reconciliation mark; the anchor, ordering numbers, and repair stay stable."""
+    initial = {
+        "as_of": "2026-07-10",
+        "positions": [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                       "market": "US", "currency": "USD"}],
+        "cash": {"USD": 1000},
+    }
+    matching = {
+        "as_of": "2026-07-15",
+        "positions": [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                       "market": "US", "currency": "USD"}],
+        "cash": {"USD": 1000},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
+        assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
+        plan2, _second = _snapshot_prepare(tmp, root, payload=matching, name="match.json")
+        frozen = plan2["engine_state"]["snapshot_reconciliation"]
+        assert frozen["status"] == "reconciled"
+        assert frozen["diff"] == {"positions": [], "cash": []}
+        assert plan2["input"]["ledger_ingest"]["reconciliation"] == "reconciled"
+
+        second = _finalize_snapshot_session(tmp, root, plan2, "second")
+        assert second.returncode == 0, second.stdout + second.stderr
+        rows = _ledger_rows(root)
+        assert [row["type"] for row in rows] == ["snapshot", "reconciliation"]
+        mark = rows[1]
+        assert mark["status"] == "reconciled"
+        assert mark["reconciliation_id"].startswith("reconcile-")
+        assert mark["date"] == "2026-07-15" and mark["against"]["as_of"] == "2026-07-10"
+        assert mark["declared_snapshot_id"].startswith("snapshot-")
+
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        assert ledger_engine.latest_anchor(events)["as_of"] == "2026-07-10", \
+            "agreement never churns the anchor or the derived cycle identities"
+        bundle = json.loads((root / "sessions" / plan2["session_id"] / "bundle.json").read_text())
+        assert "projection_sequence" not in bundle["engine_state"], \
+            "a clean reconciliation must not consume a root-wide ordering number"
+
+        retry = _finalize_snapshot_session(tmp, root, plan2, "second-retry")
+        assert retry.returncode == 0 and json.loads(retry.stdout)["status"] == "no-op"
+        assert _ledger_rows(root) == rows
+
+        (root / "ledger.jsonl").unlink()
+        repaired = _run("repair-projections", "--root", root)
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        rebuilt = _ledger_rows(root)
+        assert [row["type"] for row in rebuilt] == ["snapshot", "reconciliation"], \
+            "repair rebuilds the mark from the canonical bundle without a second anchor"
+        assert rebuilt[1]["reconciliation_id"] == mark["reconciliation_id"]
+
+
+def test_second_snapshot_same_day_adoption_uses_projection_sequence():
+    initial = {
+        "as_of": "2026-07-16",
+        "positions": [{"ticker": "SPY", "shares": 2, "market": "US", "currency": "USD"}],
+    }
+    corrected = {
+        "as_of": "2026-07-16",
+        "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
+        assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
+        plan2, _second = _snapshot_prepare(tmp, root, payload=corrected, name="same-day.json")
+        assert plan2["engine_state"]["snapshot_reconciliation"]["status"] == "adjusted"
+        assert _finalize_snapshot_session(tmp, root, plan2, "second").returncode == 0
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        anchors = [row for row in events if row.get("type") == "snapshot"]
+        assert [row["projection_sequence"] for row in anchors] == [1, 2]
+        adopted = ledger_engine.latest_anchor(events)
+        assert adopted["projection_sequence"] == 2
+        assert adopted["positions"][0]["shares"] == 3, \
+            "the same-day tie-break adopts the newer declaration by sequence"
+
+
+def test_second_snapshot_fail_closed_edges():
+    """Incomplete second declarations, older-than-anchor views, and a ledger
+    that changed after prepare all fail closed without partial writes."""
+    initial = {
+        "as_of": "2026-07-10",
+        "positions": [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                       "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
+        assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
+        baseline = _ledger_rows(root)
+
+        incomplete = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-15", "is_complete": False,
+            "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
+        }, name="incomplete.json")
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                   incomplete, "--root", root, "--language", "en")
+        assert run.returncode == 2
+        assert "incomplete snapshot cannot reconcile" in run.stdout
+
+        older = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-05",
+            "positions": [{"ticker": "SPY", "shares": 1, "market": "US", "currency": "USD"}],
+        }, name="older.json")
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                   older, "--root", root, "--language", "en")
+        assert run.returncode == 2
+        assert "older than the current ledger anchor" in run.stdout
+        assert _ledger_rows(root) == baseline, "rejected declarations write nothing"
+
+        # Drift between prepare and finalize: the frozen diff no longer matches
+        # the ledger, so finalize refuses to write an unpreviewed adjustment.
+        drifting = {
+            "as_of": "2026-07-15",
+            "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
+        }
+        plan2, _second = _snapshot_prepare(tmp, root, payload=drifting, name="drift.json")
+        assert plan2["engine_state"]["snapshot_reconciliation"]["status"] == "adjusted"
+        ledger_engine.append_events(str(root / "ledger.jsonl"), [
+            {"type": "trade", "date": "2026-07-12", "ticker": "SPY", "action": "buy",
+             "qty": 1, "price": 610, "market": "US", "currency": "USD"}])
+        stale = _finalize_snapshot_session(tmp, root, plan2, "stale")
+        assert stale.returncode == 2
+        assert "run prepare again" in stale.stdout
+        rows = _ledger_rows(root)
+        assert [row["type"] for row in rows] == ["snapshot", "trade"], \
+            "a stale finalize must not write an adjustment or a new anchor"
+
+        # Re-preparing recomputes honestly: the interleaved buy explains the
+        # whole difference, so the same declaration is now simply reconciled.
+        rerun = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                     _second, "--root", root, "--language", "en")
+        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+        replanned = json.loads(rerun.stdout)["review_plan"]
+        assert replanned["engine_state"]["snapshot_reconciliation"]["status"] == "reconciled"
 
 
 def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():

@@ -84,6 +84,7 @@
     "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
     "acct_perf_basis": "帳戶績效有部分成本或匯率近似，需保留不確定性。",
     "accounting_reconciliation": "匯入交易未能重現快照錨定的目前持倉，因此這次不評分部位大小、分散與未實現損益。",
+    "snapshot_reconciliation": "這份持倉宣告已與帳本推導持倉對帳；一致即標記為已對帳，若有差異則以明確的調整事件保留紀錄，並改以較新宣告為記帳錨點，不猜測差異原因。",
     "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
   },
   "due_choices": {
