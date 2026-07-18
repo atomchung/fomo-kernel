@@ -105,6 +105,183 @@ IMPORT_BYPASS_FIXTURES = (
     ("blockquote import", "> import engine.session", "session"),
 )
 
+# --- #113: mechanical mirror checkers for the bilingual README pair and the
+# per-language demo-card HTML mocks. These files are the GTM locale pair
+# (GTM_MARKDOWN_ALLOWLIST above) and are deliberately excluded from the
+# English-only and agent-runtime-surface checks; the checks below instead
+# enforce the language-invariant facts CLAUDE.md's Mirrored surfaces table
+# promises stay in sync, without asserting anything about translated prose.
+README_EN_PATH = ROOT / "README.md"
+README_ZH_PATH = ROOT / "README.zh-TW.md"
+DEMO_CARD_EN_PATH = ROOT / "docs/demo-card-en.html"
+DEMO_CARD_ZH_PATH = ROOT / "docs/demo-card.html"
+
+BASH_FENCED_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.S)
+FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```", re.S)
+TRAILING_SHELL_COMMENT_RE = re.compile(r"(?:^|\s)#.*$")
+LANGUAGE_FLAG_RE = re.compile(r"--language\s+\S+")
+LANGUAGE_FLAG_VALUE_RE = re.compile(r"--language\s+(\S+)")
+MARKDOWN_LINK_TARGET_RE = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
+HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+.*$", re.M)
+DOLLAR_AMOUNT_RE = re.compile(r"[+-]?\$[0-9][0-9,]*[kK]?")
+PERCENT_VALUE_RE = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?%")
+PP_VALUE_RE = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?pp")
+
+# The mutual "switch language" links (README.md <-> README.zh-TW.md) and the
+# per-language hero image each README embeds (its own locale's PNG) are
+# legitimate per-language content, not drift.
+README_LINK_ALLOWLIST = {
+    "README.md",
+    "README.zh-TW.md",
+    "docs/demo-card.png",
+    "docs/demo-card-en.png",
+}
+
+
+def bash_fenced_blocks(text):
+    return [match.group(1) for match in BASH_FENCED_BLOCK_RE.finditer(text)]
+
+
+def normalized_shell_commands(text):
+    """Collect language-invariant commands from ```bash fenced blocks.
+
+    Trailing shell comments are translated prose, not command content, so
+    they are stripped. The one legitimately-diverging flag value
+    (``--language en`` vs ``--language zh-TW``) is normalized to a shared
+    placeholder so the remaining command text can be compared as a set.
+    """
+    commands = set()
+    for block in bash_fenced_blocks(text):
+        for line in block.splitlines():
+            cleaned = TRAILING_SHELL_COMMENT_RE.sub("", line).strip()
+            if not cleaned:
+                continue
+            cleaned = LANGUAGE_FLAG_RE.sub("--language <LOCALE>", cleaned)
+            commands.add(cleaned)
+    return commands
+
+
+def language_flag_values(text):
+    values = set()
+    for block in bash_fenced_blocks(text):
+        values.update(LANGUAGE_FLAG_VALUE_RE.findall(block))
+    return values
+
+
+def markdown_link_targets(text):
+    targets = set()
+    for match in MARKDOWN_LINK_TARGET_RE.finditer(text):
+        target = match.group(1).strip()
+        if not target or target.startswith("#"):
+            continue  # in-page anchor derived from a translated heading, not a mirrored fact
+        targets.add(target)
+    return targets
+
+
+def html_body_after_style(text):
+    marker = "</style>"
+    index = text.find(marker)
+    assert index >= 0, "expected a </style> tag to scope HTML scanning away from CSS"
+    return text[index + len(marker):]
+
+
+def demo_number_tokens(text):
+    """Extract dollar amounts, percentages, and pp deltas as a language-agnostic set.
+
+    A set (not a multiset) is deliberate: the styled HTML card repeats some
+    figures in a subheading for emphasis (e.g. "+247pp" appears once in the
+    plaintext README quick-view but twice in the HTML mock's metrics grid and
+    attribution heading). That repetition is a prose-density choice, not a
+    value fact, so counting occurrences would make the checker fail on
+    cosmetic emphasis rather than on an actual missing or wrong figure.
+    """
+    normalized = text.replace("−", "-")  # HTML uses U+2212 MINUS SIGN, Markdown uses '-'
+    tokens = set()
+    for regex in (DOLLAR_AMOUNT_RE, PERCENT_VALUE_RE, PP_VALUE_RE):
+        tokens.update(regex.findall(normalized))
+    return tokens
+
+
+def heading_levels(text):
+    stripped = FENCED_CODE_BLOCK_RE.sub("", text)  # drop shell '#' comments that look like ATX headings
+    return [len(match.group(1)) for match in HEADING_LINE_RE.finditer(stripped)]
+
+
+def test_readme_bash_commands_match_across_languages():
+    en = normalized_shell_commands(README_EN_PATH.read_text(encoding="utf-8"))
+    zh = normalized_shell_commands(README_ZH_PATH.read_text(encoding="utf-8"))
+    assert en, "no ```bash commands found in README.md — extraction likely broken"
+    only_en = en - zh
+    only_zh = zh - en
+    assert not only_en and not only_zh, (
+        "README.md and README.zh-TW.md bash commands drifted:\n"
+        f"  only in README.md: {sorted(only_en)}\n"
+        f"  only in README.zh-TW.md: {sorted(only_zh)}"
+    )
+
+
+def test_readme_language_flag_values_match_locale():
+    en_values = language_flag_values(README_EN_PATH.read_text(encoding="utf-8"))
+    zh_values = language_flag_values(README_ZH_PATH.read_text(encoding="utf-8"))
+    assert en_values == {"en"}, f"README.md --language flags should all be 'en', found {sorted(en_values)}"
+    assert zh_values == {"zh-TW"}, (
+        f"README.zh-TW.md --language flags should all be 'zh-TW', found {sorted(zh_values)}"
+    )
+
+
+def test_readme_links_match_across_languages():
+    en = markdown_link_targets(README_EN_PATH.read_text(encoding="utf-8"))
+    zh = markdown_link_targets(README_ZH_PATH.read_text(encoding="utf-8"))
+    assert en, "no links found in README.md — extraction likely broken"
+    only_en = en - zh - README_LINK_ALLOWLIST
+    only_zh = zh - en - README_LINK_ALLOWLIST
+    assert not only_en and not only_zh, (
+        "README.md and README.zh-TW.md links drifted beyond the known per-language allowlist:\n"
+        f"  only in README.md: {sorted(only_en)}\n"
+        f"  only in README.zh-TW.md: {sorted(only_zh)}"
+    )
+
+
+def test_demo_card_numbers_match_across_all_surfaces():
+    sources = {
+        "README.md (What it looks like)": demo_number_tokens(
+            markdown_section(README_EN_PATH.read_text(encoding="utf-8"), "## What it looks like")
+        ),
+        "docs/demo-card-en.html": demo_number_tokens(
+            html_body_after_style(DEMO_CARD_EN_PATH.read_text(encoding="utf-8"))
+        ),
+        "README.zh-TW.md (跑出來長什麼樣)": demo_number_tokens(
+            markdown_section(README_ZH_PATH.read_text(encoding="utf-8"), "## 跑出來長什麼樣")
+        ),
+        "docs/demo-card.html": demo_number_tokens(
+            html_body_after_style(DEMO_CARD_ZH_PATH.read_text(encoding="utf-8"))
+        ),
+    }
+    reference_label, reference_tokens = next(iter(sources.items()))
+    assert reference_tokens, f"no $/%/pp tokens extracted from {reference_label} — extraction likely broken"
+    failures = []
+    for label, tokens in sources.items():
+        if tokens != reference_tokens:
+            failures.append(
+                f"  {label}: missing {sorted(reference_tokens - tokens)}, extra {sorted(tokens - reference_tokens)}"
+            )
+    assert not failures, (
+        f"Demo card $/%/pp values drifted across surfaces (reference: {reference_label}):\n"
+        + "\n".join(failures)
+    )
+
+
+def test_readme_heading_structure_matches_across_languages():
+    en_levels = heading_levels(README_EN_PATH.read_text(encoding="utf-8"))
+    zh_levels = heading_levels(README_ZH_PATH.read_text(encoding="utf-8"))
+    assert en_levels, "no headings found in README.md — extraction likely broken"
+    assert en_levels == zh_levels, (
+        "README.md and README.zh-TW.md heading structure (level sequence; order-sensitive, "
+        "text-agnostic) diverged:\n"
+        f"  README.md:       {en_levels}\n"
+        f"  README.zh-TW.md: {zh_levels}"
+    )
+
 
 def implementation_markdown_files():
     for rel in sorted(ROOT_IMPLEMENTATION_DOCS):
@@ -517,6 +694,11 @@ def main():
         test_implementation_markdown_is_english_only,
         test_english_skill_assets_are_english_only,
         test_gtm_locale_pair_exists,
+        test_readme_bash_commands_match_across_languages,
+        test_readme_language_flag_values_match_locale,
+        test_readme_links_match_across_languages,
+        test_demo_card_numbers_match_across_all_surfaces,
+        test_readme_heading_structure_matches_across_languages,
         test_review_py_is_a_non_negotiable_boundary,
         test_agent_runtime_surface_scope_is_bounded,
         test_json_ref_contract_links_are_discoverable,
