@@ -93,65 +93,23 @@ def _fingerprint(paths, language, route, prepared=None, nonce=""):
     return h.hexdigest()
 
 
-def _snapshot_fact(anchor):
-    if not isinstance(anchor, dict):
-        return None
-    return {
-        **{key: anchor[key] for key in ("type", "as_of", "source", "positions", "cash")
-           if key in anchor},
-        "is_complete": anchor.get("is_complete", True),
-    }
-
-
 def _validate_initial_snapshot_root(root, anchor):
     """Keep this adapter at its explicit initial-onboarding boundary.
 
     A later declaration needs the PRD's diff/adjustment reconciliation flow.
     Until that P1 path exists, only an exact idempotent replay of the already
     committed initial declaration may enter a non-empty coach root.
+
+    This is the prepare-time UX fail-fast only; the authoritative check runs
+    under the root projection lock at finalize.  Both layers call
+    ``session.scan_initial_snapshot_conflicts`` so their verdicts cannot drift
+    — including the strict rule that unknown ledger event types count as
+    existing history.
     """
-    requested = _snapshot_fact(anchor)
-    if requested is None:
+    if not isinstance(anchor, dict):
         return
-    existing_facts = []
-    has_other_history = False
-    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
-    for event in events:
-        if event.get("type") == "snapshot":
-            fact = _snapshot_fact(event)
-            if fact is not None:
-                existing_facts.append(fact)
-        else:
-            has_other_history = True
-
-    sessions = os.path.join(root, "sessions")
-    if os.path.isdir(sessions):
-        for session_id in os.listdir(sessions):
-            if session_id.startswith("."):
-                continue
-            path = os.path.join(sessions, session_id, "bundle.json")
-            try:
-                bundle = session.read_json(path)
-            except (OSError, ValueError):
-                continue
-            plan = bundle.get("review_plan") or {}
-            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-                continue
-            fact = _snapshot_fact((bundle.get("engine_state") or {}).get("snapshot_anchor"))
-            if fact is None:
-                has_other_history = True
-            else:
-                existing_facts.append(fact)
-
-    if not existing_facts and not has_other_history:
-        return
-    if not has_other_history and all(session.canonical(fact) == session.canonical(requested)
-                                     for fact in existing_facts):
-        return
-    raise ReviewError(
-        "initial snapshot onboarding cannot replace an existing coach history; "
-        "second or subsequent snapshots require the deferred reconciliation flow"
-    )
+    if session.scan_initial_snapshot_conflicts(root, anchor):
+        raise ReviewError(session.INITIAL_SNAPSHOT_CONFLICT)
 
 
 def _pending_by_fingerprint(root, fingerprint):
@@ -172,8 +130,10 @@ def _pending_by_fingerprint(root, fingerprint):
 
 
 def _has_history(root):
-    sessions = os.path.join(root, "sessions")
-    if os.path.isdir(sessions) and any(not n.startswith(".") for n in os.listdir(sessions)):
+    # Canonical-bundle semantics, same as every other scanner (#215): a
+    # finalized test drive in an explicit --root leaves a sessions/ directory,
+    # and counting it flipped --route auto from first_review to weekly_review.
+    if next(session.iter_canonical_bundles(root), None) is not None:
         return True
     return bool(_jsonl(os.path.join(root, "log.jsonl")))
 
@@ -189,26 +149,10 @@ def _completed_review_count(root, exclude_session_id=None):
     idempotent retry cannot present itself as a new return visit.
     """
     session_ids = set()
-    sessions = os.path.join(root, "sessions")
-    if os.path.isdir(sessions):
-        for name in sorted(os.listdir(sessions)):
-            bundle_path = os.path.join(sessions, name, "bundle.json")
-            if name.startswith(".") or not os.path.isfile(bundle_path):
-                continue
-            try:
-                bundle = session.read_json(bundle_path)
-            except (OSError, ValueError):
-                continue
-            if not isinstance(bundle, dict):
-                continue
-            plan = bundle.get("review_plan") or {}
-            if not isinstance(plan, dict):
-                continue
-            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-                continue
-            session_id = bundle.get("session_id")
-            if session_id:
-                session_ids.add(str(session_id))
+    for _name, bundle in session.iter_canonical_bundles(root):
+        session_id = bundle.get("session_id")
+        if session_id:
+            session_ids.add(str(session_id))
 
     legacy_without_id = 0
     for row in _jsonl(os.path.join(root, "log.jsonl")):
@@ -601,35 +545,16 @@ def _ingest_trades(root, paths, card, state):
 def _exit_narrative_index(root):
     """Map revisit_id -> latest captured exit narrative (canonical sessions win).
 
-    Legacy `theses.jsonl` rows load first, then canonical bundles override them in
-    session order, so capture identity and the recorded reason stay consistent
-    with `_thesis_event_history` precedence.
+    Legacy `theses.jsonl` rows load first, then canonical bundles override them
+    in the iterator's shared (date_end, session_id) order — the same precedence
+    `_thesis_event_history` uses — so capture identity and the recorded reason
+    stay consistent even when an undated bundle is present.
     """
     index = {}
     for row in _jsonl(os.path.join(root, "theses.jsonl")):
         if row.get("event") == "exit_narrative" and row.get("revisit_id"):
             index[row["revisit_id"]] = row
-    sessions = os.path.join(root, "sessions")
-    if not os.path.isdir(sessions):
-        return index
-    bundles = []
-    for session_id in sorted(os.listdir(sessions)):
-        bundle_path = os.path.join(sessions, session_id, "bundle.json")
-        if not os.path.isfile(bundle_path):
-            continue
-        try:
-            bundle = session.read_json(bundle_path)
-        except (OSError, ValueError):
-            continue
-        plan = bundle.get("review_plan") or {}
-        if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-            continue
-        date = str((bundle.get("engine_state") or {}).get("date_end") or "")
-        bundles.append(((date, session_id), bundle))
-    # Same override order as _thesis_event_history — (date_end, session_id), not
-    # directory-name order — so the replayed reason is the one continuity treats
-    # as latest even when an undated bundle is present.
-    for _key, bundle in sorted(bundles, key=lambda item: item[0]):
+    for _session_id, bundle in session.iter_canonical_bundles(root, sort_by_date=True):
         for row in bundle.get("exit_narratives") or []:
             if row.get("revisit_id"):
                 index[row["revisit_id"]] = row
@@ -645,29 +570,16 @@ def _thesis_event_history(root):
     legacy_theses = _jsonl(os.path.join(root, "theses.jsonl"))
     legacy_decisions = _jsonl(os.path.join(root, "thesis_decisions.jsonl"))
     canonical_sessions = set()
-    bundles = []
-    base = os.path.join(root, "sessions")
-    if os.path.isdir(base):
-        for session_id in sorted(os.listdir(base)):
-            path = os.path.join(base, session_id, "bundle.json")
-            if not os.path.isfile(path):
-                continue
-            try:
-                bundle = session.read_json(path)
-            except (OSError, ValueError):
-                continue
-            plan = bundle.get("review_plan") or {}
-            if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-                continue
-            canonical_sessions.add(session_id)
-            date = str((bundle.get("engine_state") or {}).get("date_end") or "")
-            bundles.append(((date, session_id), bundle))
+    ordered_bundles = []
+    for session_id, bundle in session.iter_canonical_bundles(root, sort_by_date=True):
+        canonical_sessions.add(session_id)
+        ordered_bundles.append(bundle)
 
     thesis_rows = [row for row in legacy_theses
                    if row.get("session_id") not in canonical_sessions]
     decision_rows = [row for row in legacy_decisions
                      if row.get("session_id") not in canonical_sessions]
-    for _key, bundle in sorted(bundles, key=lambda item: item[0]):
+    for bundle in ordered_bundles:
         thesis_rows.extend(bundle.get("thesis_updates") or [])
         thesis_rows.extend(bundle.get("exit_narratives") or [])
         decision_rows.extend(bundle.get("thesis_decisions") or [])
@@ -680,28 +592,11 @@ def _rule_breach_history(root):
     The history stays in immutable bundles rather than a second mutable ledger.
     It is used only to enforce the first-breach-or-worsening question cadence.
     """
-    rows = []
-    base = os.path.join(root, "sessions")
-    if not os.path.isdir(base):
-        return {}
-    for session_id in sorted(os.listdir(base)):
-        path = os.path.join(base, session_id, "bundle.json")
-        if not os.path.isfile(path):
-            continue
-        try:
-            bundle = session.read_json(path)
-        except (OSError, ValueError):
-            continue
-        plan = bundle.get("review_plan") or {}
-        if bundle.get("route") == "test_drive" or plan.get("persist") is False:
-            continue
-        date = str((bundle.get("engine_state") or {}).get("date_end") or "")
+    latest = {}
+    for _session_id, bundle in session.iter_canonical_bundles(root, sort_by_date=True):
         for row in bundle.get("rule_breach_decisions") or []:
             if row.get("rule_id"):
-                rows.append(((date, session_id), row))
-    latest = {}
-    for _key, row in sorted(rows, key=lambda item: item[0]):
-        latest[row["rule_id"]] = row
+                latest[row["rule_id"]] = row
     return latest
 
 
