@@ -14,6 +14,6 @@ Use when the Review Plan has `route=weekly_review`.
 10. Treat every `missing_thesis_positions` item as a new cycle or a historical thesis gap and fill it using the inference-first contract from the first-review flow.
 11. Classify each losing-position add as `planned_tranche`, `new_evidence`, `valuation_change`, `price_only`, or `skip`. A `new_evidence` choice must include an evidence delta so the next review can examine it as a thesis event.
 12. Focus the narrative on movement against the previous rule and the largest new behavioral leak. Cover every `card_plan.required_honesty_keys` entry with one sentence in `narrative.honesty`. Do not produce a complete dashboard.
-13. After preview, let the user choose only one rule. Finalize atomically; update legacy state only through projections.
+13. After preview, show the card following `references/card-delivery.md` and let the user choose only one rule. Finalize atomically; update legacy state only through projections.
 
 Do not ask for an already confirmed motive every week. Prepare should requeue it only for a new cycle, new behavior, or an inferred answer that remains the largest contradiction.

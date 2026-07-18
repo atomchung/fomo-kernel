@@ -88,8 +88,11 @@ def save_pending(root, session_id, **artifacts):
     for name, value in artifacts.items():
         if value is None:
             continue
-        ext = ".json" if isinstance(value, (dict, list)) else ".md"
-        path = os.path.join(base, name + ext)
+        if os.path.splitext(name)[1] in {".json", ".md", ".html"}:
+            filename = name  # caller-pinned extension (e.g. card-private-preview.html)
+        else:
+            filename = name + (".json" if isinstance(value, (dict, list)) else ".md")
+        path = os.path.join(base, filename)
         text = pretty(value) if isinstance(value, (dict, list)) else str(value)
         if text and not text.endswith("\n"):
             text += "\n"
@@ -107,11 +110,18 @@ def load_pending(root, session_id):
         path = os.path.join(base, name + ".json")
         if os.path.exists(path):
             out[name] = read_json(path)
-    for name in ("card-private-preview", "card-public-preview"):
-        path = os.path.join(base, name + ".md")
+    for key, filename in (("card-private-preview", "card-private-preview.md"),
+                          ("card-public-preview", "card-public-preview.md")):
+        path = os.path.join(base, filename)
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
-                out[name] = f.read()
+                out[key] = f.read()
+    # The styled preview surfaces as a path, not content: resume must expose
+    # the same `private_card_html_path` key the preview emit documents (see
+    # references/card-delivery.md) without dumping the HTML blob into stdout.
+    html_path = os.path.join(base, "card-private-preview.html")
+    if os.path.exists(html_path):
+        out["private_card_html_path"] = html_path
     return out
 
 

@@ -616,6 +616,8 @@ def test_agent_runtime_surface_scope_is_bounded():
         SKILL_DIR / "SKILL.md",
         SKILL_DIR / "card-spec.md",
         SKILL_DIR / "evals/evals.json",
+        # #225: the card delivery contract must stay a discoverable runtime surface.
+        SKILL_DIR / "references/card-delivery.md",
         SKILL_DIR / "schemas/answers.schema.json",
         SKILL_DIR / "schemas/narrative.schema.json",
         SKILL_DIR / "schemas/review-plan.schema.json",
