@@ -1718,10 +1718,14 @@ def cmd_finalize(args):
         result, projection, projection_error = transaction.commit_bundle(
             bundle, private_md, public_md, private_html, persist=bool(plan.get("persist"))
         )
+    # A no-op idempotent retry writes nothing and legacy sessions may lack the
+    # HTML artifact; emit its path only when the file is really there so the
+    # delivery contract's markdown fallback triggers instead of file-not-found.
+    html_path = os.path.join(result["path"], "card-private.html")
     _emit({"status": result["status"], "session_id": args.session_id, "path": result["path"],
            "private_card": os.path.join(result["path"], "card-private.md"),
            "public_card": os.path.join(result["path"], "card-public.md"),
-           "private_card_html": os.path.join(result["path"], "card-private.html"),
+           "private_card_html": html_path if os.path.isfile(html_path) else None,
            "projection": projection, "projection_error": projection_error,
            "recoverable": bool(projection_error)})
 

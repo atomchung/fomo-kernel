@@ -111,12 +111,17 @@ def load_pending(root, session_id):
         if os.path.exists(path):
             out[name] = read_json(path)
     for key, filename in (("card-private-preview", "card-private-preview.md"),
-                          ("card-public-preview", "card-public-preview.md"),
-                          ("card-private-preview-html", "card-private-preview.html")):
+                          ("card-public-preview", "card-public-preview.md")):
         path = os.path.join(base, filename)
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 out[key] = f.read()
+    # The styled preview surfaces as a path, not content: resume must expose
+    # the same `private_card_html_path` key the preview emit documents (see
+    # references/card-delivery.md) without dumping the HTML blob into stdout.
+    html_path = os.path.join(base, "card-private-preview.html")
+    if os.path.exists(html_path):
+        out["private_card_html_path"] = html_path
     return out
 
 

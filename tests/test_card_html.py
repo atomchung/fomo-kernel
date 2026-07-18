@@ -31,12 +31,15 @@ CURVE_POINTS = [
     {"date": "2026-07-08", "cum_ret": 0.018},
     {"date": "2026-07-14", "cum_ret": 0.034},
 ]
-FLOW_FILES = ("first-review.md", "weekly-review.md", "snapshot-review.md", "test-drive.md")
+# Discovered, not enumerated: a new flow route must route card delivery too,
+# so the invariant has to quantify over every flow file that ships.
+FLOW_FILES = tuple(sorted(p.name for p in (SKILL / "flows").glob("*.md")))
 
 
 def _copy_title(language):
-    payload = json.loads((SKILL / "copy" / f"{language}.json").read_text(encoding="utf-8"))
-    return payload["title"]
+    # Use the same loader render_html uses so the assertion tracks the copy the
+    # renderer actually reads (load_copy normalizes the language).
+    return card_renderer.load_copy(language)["title"]
 
 
 def _artifacts_with_curve(tmp):
@@ -198,17 +201,68 @@ def test_card_template_is_deorphaned():
         "card-template.html must point at the runtime rendering truth"
 
 
+def test_sparkline_is_failsoft_on_wrong_typed_curve():
+    """A decorative curve field must never crash render_html: adapter or
+    --card-json inputs can carry any JSON shape, and the Markdown card
+    tolerates them, so the HTML card must too (review of #225)."""
+    run = _session("zh-TW")
+    for bad in ({"points": "n/a"}, {"points": ["2026", 0.1]}, {"points": {}},
+                [], "note", {"points": [None, 3]}, {"points": [{"cum_ret": "x"}]}):
+        bundle = copy.deepcopy(run["bundle"])
+        bundle["engine_card"]["pnl_curve"] = bad
+        html = card_renderer.render_html(bundle)  # must not raise
+        assert "<svg" not in html, f"malformed curve {bad!r} must omit the sparkline"
+
+
+def test_sparkline_tone_treats_negative_zero_as_loss():
+    run = _session("zh-TW")
+    bundle = copy.deepcopy(run["bundle"])
+    bundle["engine_card"]["pnl_curve"] = {"points": [{"cum_ret": -0.02},
+                                                     {"cum_ret": -0.0}]}
+    html = card_renderer.render_html(bundle)
+    assert 'class="spark neg"' in html, "a -0.0 final return must render as a loss"
+
+
+def test_resume_exposes_preview_html_path_not_blob():
+    """After preview, resume must surface the styled preview by the same
+    private_card_html_path key the delivery contract names, and must not dump
+    the HTML content into stdout."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "demo-root"
+        card, state = _artifacts_with_curve(tmp)
+        prepared = v2._run("prepare", "--test-drive", "--root", root,
+                           "--card-json", card, "--state-json", state, "--language", "en")
+        plan = json.loads(prepared.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "a.json"
+        narrative = pathlib.Path(tmp) / "n.json"
+        answers.write_text(json.dumps(v2._answers(plan), ensure_ascii=False), encoding="utf-8")
+        narrative.write_text(json.dumps(v2._narrative("en"), ensure_ascii=False), encoding="utf-8")
+        v2._run("preview", "--root", root, "--session-id", plan["session_id"],
+                "--answers", answers, "--narrative", narrative)
+        resumed = v2._run("resume", "--root", root, "--session-id", plan["session_id"])
+        payload = json.loads(resumed.stdout)
+        assert payload.get("private_card_html_path", "").endswith("card-private-preview.html")
+        assert "card-private-preview-html" not in payload, \
+            "resume must not surface the undocumented mangled key"
+        assert "<div class=\"rc\">" not in json.dumps(payload), \
+            "resume must not dump the HTML blob into stdout"
+
+
 def test_delivery_contract_exists_and_is_routed():
     contract = SKILL / "references" / "card-delivery.md"
     assert contract.is_file(), "references/card-delivery.md must exist"
     text = contract.read_text(encoding="utf-8")
     assert "WIDGET-FRAGMENT-START" in text and "WIDGET-FRAGMENT-END" in text, \
         "delivery contract must name the widget-fragment markers"
-    assert "verbatim" in text, "delivery contract must keep the verbatim-Markdown fallback"
+    # Pin the actual fallback rule, not the mere presence of one word: the
+    # terminal/graphical surfaces must both fall back to the canonical Markdown.
+    fallback = re.search(r"fall back[^\n]*Markdown|Markdown card text verbatim", text)
+    assert fallback, "delivery contract must keep the verbatim-Markdown fallback rule"
 
     assert "references/card-delivery.md" in (SKILL / "SKILL.md").read_text(encoding="utf-8")
     assert "references/card-delivery.md" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "references/card-delivery.md" in (SKILL / "card-spec.md").read_text(encoding="utf-8")
+    assert FLOW_FILES, "at least one flow file must exist to route card delivery"
     for name in FLOW_FILES:
         flow = (SKILL / "flows" / name).read_text(encoding="utf-8")
         assert "references/card-delivery.md" in flow, f"flows/{name} must route card delivery"

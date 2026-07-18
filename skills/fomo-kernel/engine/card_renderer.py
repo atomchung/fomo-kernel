@@ -1489,12 +1489,19 @@ def _sparkline_svg(card):
     user-facing caveat for it.  One thin line, colored only by the final sign,
     per the card-template design reference.  No external references, so the
     artifact stays request-free."""
-    curve = (card or {}).get("pnl_curve") or {}
-    if curve.get("note"):
+    # Decorative field, fail-soft contract: any wrong-typed curve (adapter or
+    # --card-json input) must omit the sparkline, never abort the render.
+    curve = (card or {}).get("pnl_curve")
+    if not isinstance(curve, dict) or curve.get("note"):
+        return None
+    points = curve.get("points")
+    if not isinstance(points, list):
         return None
     values = []
-    for point in curve.get("points") or []:
-        number = _finite_number((point or {}).get("cum_ret"))
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        number = _finite_number(point.get("cum_ret"))
         if number is not None:
             values.append(number)
     if len(values) < 2:
@@ -1508,7 +1515,7 @@ def _sparkline_svg(card):
         y = (height / 2.0 if spread <= 0
              else pad + (high - value) * (height - 2 * pad) / spread)
         coords.append(f"{x:.1f},{y:.1f}")
-    tone = "pos" if values[-1] >= 0 else "neg"
+    tone = "neg" if math.copysign(1.0, values[-1]) < 0 else "pos"  # -0.0 counts as a loss
     path = "M" + " L".join(coords)
     return (f'<svg class="spark {tone}" viewBox="0 0 {width:.0f} {height:.0f}" '
             f'preserveAspectRatio="none" aria-hidden="true"><path d="{path}"/></svg>')

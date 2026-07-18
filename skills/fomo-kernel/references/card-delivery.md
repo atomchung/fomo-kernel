@@ -4,7 +4,7 @@ How an agent shows an engine-rendered review card to the user. This contract app
 
 ## Never re-render by hand
 
-- Card artifacts are engine-rendered. Never re-summarize, paraphrase, or partially quote the card body in chat — a real test lost the alpha/beta line exactly that way. Never hand-assemble card HTML and never invent or restate values.
+- Card artifacts are engine-rendered. Never re-summarize, paraphrase, or partially quote the card body in chat: retyping the card risks silently dropping a line the engine computed (for example an alpha/beta figure). Never hand-assemble card HTML and never invent or restate values.
 - The canonical card text is the Markdown artifact: `card-private-preview.md` at preview, `sessions/<session_id>/card-private.md` after finalize. The styled artifact is the matching engine-rendered `.html` file (preview emits its path as `private_card_html_path`); both are rendered from the same structured content.
 
 ## Choose a channel per surface
