@@ -2722,6 +2722,143 @@ def test_custom_exit_reason_requires_the_users_words():
         assert "requires a short note" in str(exc)
 
 
+def _memory_add_queue(active_row, language, diagnosis=None, cost=5000, custom_question=None):
+    """Build one reopenable NVDA add question through _question_queue (#226)."""
+    positions = {"NVDA": {"cycle_id": "NVDA#2026-06-01#1", "cost": cost,
+                          "decision_cursor": "NVDA#2026-06-01#1#add#2"}}
+    state = {"holdings": {"positions": positions}}
+    item = {"ticker": "NVDA"}
+    if custom_question:
+        item["question"] = custom_question
+    card = {"thesis_questions": [item], "ticker_diagnosis": diagnosis or []}
+    active = {}
+    if active_row is not None:
+        active["NVDA#2026-06-01#1"] = active_row
+    queue = review_engine._question_queue(card, state, active, None, language)
+    assert [row["kind"] for row in queue] == ["add_thesis"]
+    return queue[0]
+
+
+def test_add_question_stem_weaves_prior_thesis_with_voice_rules():
+    """#226 option A: the add stem quotes the user's own recorded thesis with the
+    same inferred/confirmed voice split `_due_question` uses, localized both ways,
+    and exposes asked_because instead of discarding the importance basis."""
+    confirmed = {"why": "AI capex 還在加速", "maturity": "testable",
+                 "session_date": "2026-07-02"}
+    row = _memory_add_queue(confirmed, "zh-TW")
+    assert row["question"] == ("NVDA 你在 2026-07-02 說過『AI capex 還在加速』。"
+                               "這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？"
+                               "（問這題是因為它是你本週成本最大的部位）")
+    assert row["asked_because"] == "它是你本週成本最大的部位"
+
+    english = {"why": "AI capex is still accelerating", "maturity": "testable",
+               "session_date": "2026-07-02"}
+    row = _memory_add_queue(english, "en", diagnosis=[{"ticker": "NVDA", "impact": -1200}])
+    assert row["question"] == ('For NVDA: on 2026-07-02 you said "AI capex is still accelerating". '
+                               "Was the add based on new evidence, a pre-planned tranche, "
+                               "a valuation change, or only the lower price? "
+                               "(Asked because it is the position with the largest P&L impact this week.)")
+    assert row["asked_because"] == "it is the position with the largest P&L impact this week"
+
+    # Inferred-and-never-confirmed stays a guess; the date may fall back to the
+    # session-id prefix exactly like the thesis fold's event-date resolution.
+    guessed = {"why": "AI capex 還在加速", "maturity": "inferred",
+               "session_id": "2026-07-02__w1"}
+    row = _memory_add_queue(guessed, "zh-TW")
+    assert row["question"].startswith("NVDA 我在 2026-07-02 猜你的論點是『AI capex 還在加速』。")
+    row = _memory_add_queue(dict(guessed, why="AI capex is still accelerating"), "en")
+    assert row["question"].startswith('For NVDA: on 2026-07-02 I guessed your thesis was '
+                                      '"AI capex is still accelerating".')
+
+    # An undated record still replays the quote without inventing a date.
+    row = _memory_add_queue({"why": "AI capex 還在加速", "maturity": "testable"}, "zh-TW")
+    assert row["question"].startswith("NVDA 你先前說過『AI capex 還在加速』。")
+
+
+def test_add_question_stem_falls_back_byte_identical_without_memory():
+    """No prior thesis -> today's exact sentence; no mapped basis -> no suffix."""
+    # Unparseable cost makes the importance basis unknown: the whole stem must
+    # be byte-identical to the pre-#226 template.
+    row = _memory_add_queue(None, "zh-TW", cost="n/a")
+    assert row["question"] == "NVDA 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？"
+    assert "asked_because" not in row
+    row = _memory_add_queue(None, "en", cost="n/a")
+    assert row["question"] == ("For NVDA, was the add based on new evidence, a pre-planned tranche, "
+                               "a valuation change, or only the lower price?")
+
+    # A known basis appends only the parenthetical; the base sentence is unchanged.
+    row = _memory_add_queue(None, "zh-TW")
+    assert row["question"] == ("NVDA 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？"
+                               "（問這題是因為它是你本週成本最大的部位）")
+
+    # An engine-authored zh question (thesis_q) still passes through verbatim.
+    custom = "虧損中加碼 4 次、現在還虧 15%——你還相信當初買它的理由嗎?"
+    row = _memory_add_queue(None, "zh-TW", cost="n/a", custom_question=custom)
+    assert row["question"] == custom
+    woven = _memory_add_queue({"why": "AI capex 還在加速", "maturity": "testable",
+                               "session_date": "2026-07-02"}, "zh-TW", cost="n/a",
+                              custom_question=custom)
+    assert woven["question"] == f"NVDA 你在 2026-07-02 說過『AI capex 還在加速』。{custom}"
+
+    # Corrupt records fail soft to the plain stem, never to an exception.
+    for broken in ({"why": "   ", "maturity": "testable"}, {"maturity": "inferred"},
+                   {"why": None}):
+        row = _memory_add_queue(broken, "zh-TW", cost="n/a")
+        assert row["question"] == "NVDA 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？"
+    assert review_engine._thesis_recall("not-a-dict", "zh-TW", "add") is None
+
+
+def test_thesis_quote_clips_word_safe_with_ellipsis():
+    long_why = ("AI capex is still accelerating across every hyperscaler and the "
+                "backlog keeps growing while supply stays tight")
+    quote = review_engine._clip_quote(long_why)
+    assert quote.endswith("…") and len(quote) <= review_engine.QUOTE_CLIP + 1
+    assert long_why.startswith(quote[:-1])
+    assert long_why[len(quote) - 1] == " ", "clip must land on a word boundary"
+    row = _memory_add_queue({"why": long_why, "maturity": "testable",
+                             "session_date": "2026-07-02"}, "en")
+    assert f'you said "{quote}"' in row["question"]
+    assert "supply stays tight" not in row["question"]
+    # CJK has no word boundaries: keep the raw budget, still mark the cut.
+    cjk = "半" * 90
+    assert review_engine._clip_quote(cjk) == "半" * review_engine.QUOTE_CLIP + "…"
+    assert review_engine._clip_quote("短句") == "短句"
+
+
+def test_exit_question_weaves_entry_thesis_memory():
+    """#226: the exit-reason capture stem replays the entry thesis for that cycle
+    with the same voice rules; without one it stays byte-identical to today."""
+    item = {"revisit_id": "BIG#2026-07-01#1#2026-07-10#10.0", "ticker": "BIG",
+            "cycle_id": "BIG#2026-07-01#1", "exit_date": "2026-07-10",
+            "exit_price": 200.0, "shares_sold": 10.0, "shares_before": 10.0,
+            "kind": "full", "currency": "USD"}
+    confirmed = {"why": "Data-center demand is not priced in", "maturity": "testable",
+                 "session_date": "2026-07-01"}
+    question = review_engine._exit_question(item, "en", None, confirmed)
+    assert question["question"] == (
+        "BIG was fully exited on 2026-07-10 for about USD 2,000. "
+        'At entry on 2026-07-01 you said "Data-center demand is not priced in". '
+        "What mainly drove that decision?")
+    assert question["asked_because"] == "it is one of your largest recent exits by amount"
+    zh = review_engine._exit_question(item, "zh-TW", None, confirmed)
+    assert zh["question"] == (
+        "BIG 在 2026-07-10 全部出清，出場金額約 USD 2,000。"
+        "你進場時（2026-07-01）說的是『Data-center demand is not priced in』。"
+        "當時主要是什麼理由？")
+    assert zh["asked_because"] == "它是你近期金額最大的出場之一"
+
+    guessed = dict(confirmed, maturity="inferred")
+    assert "進場時（2026-07-01）我猜你的論點是『" in \
+        review_engine._exit_question(item, "zh-TW", None, guessed)["question"]
+    assert "At entry on 2026-07-01 I guessed your thesis was" in \
+        review_engine._exit_question(item, "en", None, guessed)["question"]
+
+    plain = review_engine._exit_question(item, "zh-TW")
+    assert plain["question"] == "BIG 在 2026-07-10 全部出清，出場金額約 USD 2,000。當時主要是什麼理由？"
+    assert review_engine._exit_question(item, "en", None, {"why": "   "})["question"] == \
+        "BIG was fully exited on 2026-07-10 for about USD 2,000. What mainly drove that decision?"
+
+
 def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
     rows = [
         {"ticker": "A", "side": "buy", "qty": 1, "price": 10, "date": dt.date(2026, 1, 1)},
@@ -3420,6 +3557,76 @@ def test_perishable_capture_outranks_larger_due_checkpoints():
         assert [q["ticker"] for q in queue[1:]] == ["BIG", "MID"]
 
 
+def test_week_two_question_stems_quote_the_week_one_thesis_verbatim():
+    """#226 option A: prepare weaves the user's own recorded thesis into add/exit
+    stems deterministically — the engine resolves text and date from the same
+    folded thesis states the plan already carries, the quote is verbatim, and a
+    cycle without any recorded thesis keeps today's plain stem."""
+    claim = "Enterprise adoption may still be underpriced"        # _base_thesis_update wording
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        w1_csv = pathlib.Path(tmp) / "memory_w1.csv"
+        w1_csv.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "PLTR,BUY,10,100,2026-01-01,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        card_path, state_path = _artifacts(tmp)
+        state = json.loads(pathlib.Path(state_path).read_text(encoding="utf-8"))
+        state["date_end"] = "2026-06-14"                          # thesis recording date
+        w1_state = pathlib.Path(tmp) / "memory_state_w1.json"
+        w1_state.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        run = _run("prepare", w1_csv, "--root", root, "--card-json", card_path,
+                   "--state-json", w1_state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan1 = json.loads(run.stdout)["review_plan"]
+        answers1 = _answer_queue(plan1, _week1_choices, "skip")
+        # The user states the thesis in their own words -> user-confirmed voice.
+        answers1["thesis_updates"] = [_base_thesis_update({"maturity": "testable"})]
+        _finalize(tmp, root, plan1, answers1, "memory-w1")
+
+        # All trade dates sit in the past relative to the wall clock (#169
+        # rejects future-dated rows); both exits stay inside the 14-day capture
+        # window of the week-2 review date and below their 30-day checkpoints.
+        w2_csv = pathlib.Path(tmp) / "memory_w2.csv"
+        w2_csv.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "PLTR,BUY,10,100,2026-01-01,Trade,US,USD",
+            "PLTR,SELL,10,150,2026-07-05,Trade,US,USD",
+            "NEW,BUY,2,100,2026-07-01,Trade,US,USD",
+            "NEW,SELL,2,100,2026-07-10,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        state = json.loads(pathlib.Path(state_path).read_text(encoding="utf-8"))
+        state["date_end"] = "2026-07-12"
+        position = state["holdings"]["positions"]["PLTR"]
+        position["add_count"] = 4
+        position["decision_cursor"] = "PLTR#2026-01-01#1#add#4"   # a new add reopens the question
+        dated = pathlib.Path(tmp) / "memory_state_w2.json"
+        dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        run = _run("prepare", w2_csv, "--root", root, "--card-json", card_path,
+                   "--state-json", dated, "--session-nonce", "memory-w2")
+        assert run.returncode == 0, run.stdout + run.stderr
+        queue = json.loads(run.stdout)["review_plan"]["question_queue"]
+        assert [(q["kind"], q["ticker"]) for q in queue] == \
+            [("revisit", "PLTR"), ("revisit", "NEW"), ("add_thesis", "PLTR")]
+        pltr_exit, new_exit, add = queue
+
+        assert pltr_exit["question"] == (
+            "PLTR 在 2026-07-05 全部出清，出場金額約 USD 1,500。"
+            f"你進場時（2026-06-14）說的是『{claim}』。"
+            "當時主要是什麼理由？")
+        assert pltr_exit["asked_because"] == "它是你近期金額最大的出場之一"
+        # NEW never recorded a thesis: its capture stem is byte-identical to today's.
+        assert new_exit["question"] == \
+            "NEW 在 2026-07-10 全部出清，出場金額約 USD 200。當時主要是什麼理由？"
+        assert claim not in new_exit["question"]
+        assert add["question"] == (
+            f"PLTR 你在 2026-06-14 說過『{claim}』。"
+            "PLTR 加碼時有新證據，還是只想攤低成本？"
+            "（問這題是因為它是你本週成本最大的部位）")
+        assert add["asked_because"] == "它是你本週成本最大的部位"
+        assert add["prior_thesis_id"] and add["prior_thesis_id"].startswith("thesis-"), \
+            "IDs stay attached for provenance even though the stem already quotes the text"
+
+
 def test_problem_book_projection_is_readable_marked_and_self_healing():
     """#191/#194: projected problem events must round-trip through load_book,
     each review records its Opportunity Check mark, and replays stay idempotent."""
@@ -3536,6 +3743,9 @@ def test_schemas_cover_due_revisit_and_resolutions():
     for key in ("rule_id", "rule_text", "problem_key", "breach_week", "evidence",
                 "recent_count", "recent_amount", "trend", "horizon_marker"):
         assert key in item["properties"], key
+    # #226: the localized "why this question was picked" display field is part
+    # of the published queue-row shape (add/exit questions).
+    assert "asked_because" in item["properties"]
     bundle_schema = json.loads((SCHEMAS / "session-bundle.schema.json").read_text(encoding="utf-8"))
     resolutions = bundle_schema["properties"]["revisit_resolutions"]
     assert set(resolutions["items"]["properties"]["status"]["enum"]) == {"still_valid", "modified", "falsified"}

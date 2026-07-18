@@ -961,19 +961,109 @@ def _exit_importance(item, card):
         return abs(notional)
 
 
-def _exit_question(item, language, card=None):
+QUOTE_CLIP = 80  # word-safe character budget for a replayed thesis quote in a stem
+
+
+def _clip_quote(text):
+    """Collapse whitespace and clip a quote near QUOTE_CLIP at a word boundary.
+
+    Spaced scripts back off to the last complete word; CJK text has no spaces
+    and keeps the raw character budget. A clipped quote always ends with an
+    ellipsis so it never reads as the user's complete sentence.
+    """
+    text = " ".join(str(text or "").split())
+    if len(text) <= QUOTE_CLIP:
+        return text
+    clipped = text[:QUOTE_CLIP]
+    head = clipped.rpartition(" ")[0]
+    if head:
+        clipped = head
+    return clipped.rstrip() + "…"
+
+
+def _thesis_recall(prior, language, frame):
+    """One lead sentence replaying the user's own recorded thesis (#226).
+
+    Same voice contract as `_due_question`: only text the user confirmed reads
+    as "you said"; an inferred thesis that was never confirmed stays a guess
+    (first-review contract: never present it as user-confirmed). The quote is
+    the stored `why` verbatim (clipped, never paraphrased) and the date uses
+    the same event-date resolution the thesis fold orders by. A missing or
+    corrupt record returns None so the caller keeps today's plain stem.
+
+    frame "add" returns a lowercase clause the add stem prefixes with its
+    ticker; frame "entry" returns a standalone sentence for the exit capture.
+    """
+    if not isinstance(prior, dict):
+        return None
+    quote = _clip_quote(prior.get("why"))
+    if not quote:
+        return None
+    date = thesis._event_date(prior)
+    guessed = prior.get("maturity") == "inferred"
+    if str(language).lower().startswith("en"):
+        quoted = f'"{quote}"'
+        if frame == "entry":
+            lead = f"At entry on {date}" if date else "At entry"
+            return (f"{lead} I guessed your thesis was {quoted}." if guessed
+                    else f"{lead} you said {quoted}.")
+        if guessed:
+            return (f"on {date} I guessed your thesis was {quoted}." if date
+                    else f"earlier I guessed your thesis was {quoted}.")
+        return (f"on {date} you said {quoted}." if date
+                else f"earlier you said {quoted}.")
+    quoted = f"『{quote}』"
+    if frame == "entry":
+        if guessed:
+            return (f"進場時（{date}）我猜你的論點是{quoted}。" if date
+                    else f"進場時我猜你的論點是{quoted}。")
+        return (f"你進場時（{date}）說的是{quoted}。" if date
+                else f"你進場時說的是{quoted}。")
+    if guessed:
+        return (f"我在 {date} 猜你的論點是{quoted}。" if date
+                else f"我先前猜你的論點是{quoted}。")
+    return (f"你在 {date} 說過{quoted}。" if date
+            else f"你先前說過{quoted}。")
+
+
+def _asked_because(basis, language):
+    """Localized display reason a question was picked (#226, former option C).
+
+    Only vetted display strings leave the engine; the raw basis key remains an
+    internal sort detail that `_question_queue` strips with `_importance`.
+    """
+    table = {
+        "pnl_impact": ("它是你本週影響損益最大的部位",
+                       "it is the position with the largest P&L impact this week"),
+        "position_cost": ("它是你本週成本最大的部位",
+                          "it is your largest position by cost this week"),
+        "exit_notional": ("它是你近期金額最大的出場之一",
+                          "it is one of your largest recent exits by amount"),
+    }
+    row = table.get(basis)
+    if not row:
+        return None
+    return row[1] if str(language).lower().startswith("en") else row[0]
+
+
+def _exit_question(item, language, card=None, prior=None):
     ticker = item.get("ticker") or "position"
     kind = item.get("kind") or "full"
     notional = revisit._notional(item)
     amount = _format_notional(notional, item.get("currency"))
+    # #226: replay the entry thesis inside the stem. Without a prior thesis the
+    # joined parts stay byte-identical to the historical plain stem.
+    recall = _thesis_recall(prior, language, "entry")
     if str(language).lower().startswith("en"):
         action = "fully exited" if kind == "full" else "substantially reduced"
-        question = (f"{ticker} was {action} on {item.get('exit_date')} for about {amount}. "
-                    "What mainly drove that decision?")
+        base = f"{ticker} was {action} on {item.get('exit_date')} for about {amount}."
+        ask = "What mainly drove that decision?"
+        question = " ".join(part for part in (base, recall, ask) if part)
     else:
         action = "全部出清" if kind == "full" else "大幅減倉"
-        question = (f"{ticker} 在 {item.get('exit_date')} {action}，出場金額約 {amount}。"
-                    "當時主要是什麼理由？")
+        base = f"{ticker} 在 {item.get('exit_date')} {action}，出場金額約 {amount}。"
+        ask = "當時主要是什麼理由？"
+        question = "".join(part for part in (base, recall, ask) if part)
     digest = hashlib.sha256(str(item.get("revisit_id")).encode("utf-8")).hexdigest()[:12]
     return {
         "id": f"exit_{digest}", "kind": "revisit", "ticker": ticker,
@@ -982,7 +1072,9 @@ def _exit_question(item, language, card=None):
         "exit_kind": kind, "exit_date": item.get("exit_date"),
         "exit_price": item.get("exit_price"), "shares_sold": item.get("shares_sold"),
         "shares_before": item.get("shares_before"), "currency": item.get("currency") or "USD",
-        "exit_notional": notional, "_importance": _exit_importance(item, card), "_tie": 0,
+        "exit_notional": notional,
+        "asked_because": _asked_because("exit_notional", language),
+        "_importance": _exit_importance(item, card), "_tie": 0,
     }
 
 
@@ -1022,8 +1114,10 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     # everything regardless of notional — but take at most CAPTURE_LIMIT slots
     # so one busy week cannot turn the review into an exit interrogation.
     for item in (recent_exits or [])[:CAPTURE_LIMIT]:
-        question = _exit_question(item, language, card)
+        # #226: the stem itself replays the entry thesis for this cycle, so the
+        # agent never has to resolve the attached IDs from disk.
         prior = thesis_states.get(item.get("cycle_id")) or {}
+        question = _exit_question(item, language, card, prior)
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
         if item.get("cycle_id") in horizon_by_cycle:
@@ -1042,16 +1136,30 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             continue
         if old and not decision_cursor and old.get("maturity") == "testable":
             continue
-        if str(language).lower().startswith("en"):
-            question = (f"For {ticker}, was the add based on new evidence, a pre-planned tranche, "
-                        "a valuation change, or only the lower price?")
-        else:
-            question = (item.get("question") or
-                        f"{ticker} 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？")
         importance, basis = _ticker_importance(card, state, ticker)
+        # #226: quote the cycle's own recorded thesis in the stem and say why
+        # this question was picked. Without a prior thesis (or a mapped basis)
+        # each part degrades independently to today's plain sentence.
+        recall = _thesis_recall(old, language, "add")
+        because = _asked_because(basis, language)
+        if str(language).lower().startswith("en"):
+            question = (f"For {ticker}: {recall} Was the add based on new evidence, "
+                        "a pre-planned tranche, a valuation change, or only the lower price?"
+                        if recall else
+                        f"For {ticker}, was the add based on new evidence, a pre-planned tranche, "
+                        "a valuation change, or only the lower price?")
+            if because:
+                question += f" (Asked because {because}.)"
+        else:
+            tail = (item.get("question") or
+                    "這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？")
+            question = (f"{ticker} {recall}{tail}" if recall
+                        else (item.get("question") or f"{ticker} {tail}"))
+            if because:
+                question += f"（問這題是因為{because}）"
         cursor_key = decision_cursor or f"{cycle_id}|legacy|{index}"
         question_digest = hashlib.sha256(cursor_key.encode("utf-8")).hexdigest()[:12]
-        candidates.append({
+        row = {
             "id": f"add_{question_digest}", "kind": "add_thesis", "ticker": ticker,
             "cycle_id": cycle_id, "required": True, "question": question,
             "options": _add_options(language),
@@ -1059,7 +1167,10 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             "prior_event_id": (old or {}).get("last_event_id") or (old or {}).get("event_id"),
             "decision_cursor": decision_cursor,
             "_importance": importance, "_importance_basis": basis, "_tie": 1,
-        })
+        }
+        if because:
+            row["asked_because"] = because
+        candidates.append(row)
     candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
     if not candidates:
         top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")

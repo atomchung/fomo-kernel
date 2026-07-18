@@ -179,6 +179,12 @@
               "null"
             ]
           },
+          "asked_because": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "revisit_id": {
             "type": [
               "string",
