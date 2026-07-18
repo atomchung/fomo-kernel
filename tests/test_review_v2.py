@@ -92,9 +92,9 @@ def _artifacts(tmp):
     return card_path, state_path
 
 
-def _run(*args):
+def _run(*args, env=None):
     return subprocess.run([sys.executable, str(REVIEW), *map(str, args)], cwd=ROOT,
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, env=env)
 
 
 def _prepare(tmp, root, language="zh-TW"):
@@ -1375,6 +1375,48 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
         assert outcome["errors"] and "0000-00-00__corrupt" in outcome["errors"][0]["session_id"]
         assert not (root / "log.jsonl").exists() and not (root / "last_state.json").exists(), \
             "repair-projections must never project demo sessions into coach memory"
+
+
+def test_prepare_completes_when_no_hole_and_no_headline_dimension():
+    """#227: sample_insufficient (2 round trips, 41-day span) trips the
+    insufficiency gate, so the card has no top hole and headline_dim is None.
+    The generic motive fallback must skip instead of localizing None — an empty
+    queue is the same contract the snapshot route returns. yfinance is stubbed
+    to an ImportError so the real CSV build stays offline-deterministic."""
+    mock = ROOT / "skills" / "fomo-kernel" / "mock"
+    with tempfile.TemporaryDirectory() as tmp:
+        stub_dir = pathlib.Path(tmp) / "stubs"
+        stub_dir.mkdir()
+        (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n',
+                                              encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+        root = pathlib.Path(tmp) / "demo-root"
+        for language in ("en", "zh-TW"):
+            run = _run("prepare", mock / "sample_insufficient.csv", "--test-drive",
+                       "--root", root / language, "--language", language,
+                       "--driver-map", mock / "sample_insufficient.driver_map.json",
+                       env=env)
+            assert run.returncode == 0, run.stdout + run.stderr
+            plan = json.loads(run.stdout)["review_plan"]
+            assert plan["question_queue"] == [], \
+                "no hole and no headline dimension must not fabricate a motive question"
+
+        # Positive side of the same guard: when a hole exists and nothing else
+        # fills the queue, the generic motive question must still appear.
+        card, state = _artifacts(tmp)
+        payload = json.loads(card.read_text(encoding="utf-8"))
+        payload["thesis_questions"] = []
+        card.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        for language in ("en", "zh-TW"):
+            run = _run("prepare", "--test-drive", "--root", root / f"anchored-{language}",
+                       "--language", language, "--card-json", card, "--state-json", state,
+                       env=env)
+            assert run.returncode == 0, run.stdout + run.stderr
+            queue = json.loads(run.stdout)["review_plan"]["question_queue"]
+            assert [q["id"] for q in queue] == ["headline_motive"]
+            assert "None" not in queue[0]["question"]
 
 
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
