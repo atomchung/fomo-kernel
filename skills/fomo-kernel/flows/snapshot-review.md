@@ -2,7 +2,7 @@
 
 Use when only a position snapshot is available and complete transaction history is not.
 
-Transcribe a position table or screenshot locally into the normalized JSON envelope in `references/data-contract.md`. Copy only broker-declared facts and keep the temporary JSON outside the repository, for example under `/tmp`. Do not calculate weights, P&L, cycle IDs, metrics, driver concentration, or ETF classifications, and do not assemble card/state artifacts by hand. The engine has no OCR or cloud-upload path.
+Transcribe a position table or screenshot locally into the normalized JSON envelope in `references/data-contract.md`. Copy only broker-declared facts and keep the temporary JSON outside the repository, for example under `/tmp`. `fomo-kernel-positions.json` is the recommended filename for that temporary file; the repository's `.gitignore` also matches this exact name at any path depth as a backstop in case it is ever created inside the repository. Do not calculate weights, P&L, cycle IDs, metrics, driver concentration, or ETF classifications, and do not assemble card/state artifacts by hand. The engine has no OCR or cloud-upload path.
 
 Invoke the only runtime engine entry point:
 
