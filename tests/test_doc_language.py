@@ -490,6 +490,14 @@ def test_snapshot_runtime_uses_raw_facts_through_review_only():
         assert field in contract, f"snapshot contract omits {field}"
     assert "no OCR or cloud-upload path" in flow
     assert "Do not calculate weights" in flow
+    # #214: *.json cannot be blanket-ignored, so the gitignore backstop only
+    # covers the one recommended filename. The doc instruction to keep the
+    # envelope outside the repository is the only defense layer for any other
+    # filename — lock the wording so a future edit cannot silently drop it.
+    assert "outside the repository" in flow, \
+        "flows/snapshot-review.md must keep the temp-envelope privacy instruction"
+    assert "outside the repository" in contract, \
+        "references/data-contract.md must keep the temp-envelope privacy instruction"
 
 
 def test_engine_script_bypass_mutations_are_caught():

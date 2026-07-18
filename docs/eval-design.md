@@ -81,6 +81,14 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Projection failure cannot invalidate the canonical session.
 - `repair-projections` rebuilds compatibility files without asking the user again.
 
+### Snapshot review
+
+- Claims only structural facts a position snapshot supports — cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity — and never a transaction-history dimension such as averaging down, exit discipline, win rate, payoff, alpha, or historical motives.
+- Returns an empty question queue for this route instead of inventing a motive question, because a snapshot carries no action history.
+- Produces a bounded review from an incomplete snapshot (`is_complete:false`) without treating it as the local accounting anchor; only a complete initial snapshot may become one.
+- Makes ledger-derived current holdings canonical once later transaction history is imported; a disagreement with the raw snapshot view on tickers, shares, market, currency, or cost basis fails closed under the `accounting_reconciliation` honesty key on every current-view claim (sizing, diversification, unrealized P&L, ETF weights) instead of trusting either source silently.
+- Renders the public card with only fixed structural-baseline copy for this route, never a behavior-pattern line, so it cannot imply transaction-history behavior the review did not score.
+
 ## Thesis and evidence assertions
 
 - Losing-position adds use only the defined decision enum.
