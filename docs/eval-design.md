@@ -182,6 +182,10 @@ Automated success does not prove that the card matters. After a real review, rec
 
 Keep raw feedback local because it may contain real tickers or amounts. Convert only the failure structure into a synthetic regression case.
 
+The host interaction itself has a separate local presentation trace. `skills/fomo-kernel/tools/ux_receipt.py` records capability modes, presentation events, and artifact paths inside the protected state directory (`~/.trade-coach/ux/`), the same trust boundary as the ledger, so placement rather than content scrubbing keeps trade data safe. A complete trace proves the preview and final cards were each presented after they were generated, a declared widget that failed degraded to inline canonical Markdown, and the weekly opening memory was surfaced before the first card. It deliberately distinguishes `artifact_generated` from `card_presented`; only the latter is evidence about what the user could see. Answer and commitment completeness remain the engine's job at preview and finalize.
+
+For cross-client owner dogfood, follow `tests/agent/manual-cross-client-ux.md` and require `owner_verdict`. Automated trace checks prove the trajectory shape, while the owner verdict answers the product question: whether the controls felt usable, the card was actually legible, and the weekly review felt remembered.
+
 For each miss:
 
 1. Determine whether the cause is missing instruction, poor adherence, conflicting instructions, or a wrong product rule.
