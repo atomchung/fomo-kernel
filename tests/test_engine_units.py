@@ -1108,6 +1108,56 @@ def test_xirr_degenerate_inputs_none():
     assert pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=30), 0.0)]) is None  # 零流被濾 → 只剩單筆
 
 
+# ─────────────────── fetch_splits 並行化(#235)───────────────────
+
+def test_fetch_splits_parallel_preserves_serial_semantics():
+    """#235: fetch_splits 執行緒並行後,輸出契約必須與序列版逐檔一致 ——
+    按 ticker 排序、單檔炸掉不連累其他檔、空序列與零比率被濾掉、空輸入回 {}。
+    (yfinance 缺席的離線降級由 test_state_loop 的 import shim 端到端覆蓋。)"""
+    import types
+
+    class _FakeSeries:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def __len__(self):
+            return len(self._rows)
+
+        def items(self):
+            return iter(self._rows)
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            self._symbol = symbol
+
+        @property
+        def splits(self):
+            if self._symbol == "BOOM":
+                raise RuntimeError("single-ticker failure must not spread")
+            if self._symbol == "EMPTY":
+                return _FakeSeries([])
+            if self._symbol == "ZERO":
+                return _FakeSeries([(dt.datetime(2024, 6, 10), 0.0)])
+            return _FakeSeries([(dt.datetime(2024, 6, 10), 10.0),
+                                (dt.datetime(2022, 3, 1), 2.0)])
+
+    fake = types.ModuleType("yfinance")
+    fake.Ticker = _FakeTicker
+    saved = sys.modules.get("yfinance")
+    sys.modules["yfinance"] = fake
+    try:
+        out = tr.fetch_splits({"NVDA", "BOOM", "EMPTY", "ZERO", "AAPL"})
+        assert tr.fetch_splits(set()) == {}
+    finally:
+        if saved is None:
+            sys.modules.pop("yfinance", None)
+        else:
+            sys.modules["yfinance"] = saved
+    assert list(out.keys()) == ["AAPL", "NVDA"], "sorted-ticker order must survive parallelism"
+    assert out["NVDA"] == [(dt.date(2024, 6, 10), 10.0), (dt.date(2022, 3, 1), 2.0)]
+    assert out["AAPL"] == out["NVDA"]
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():

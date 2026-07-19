@@ -9,6 +9,7 @@ fomo-kernel · trade-recap engine v0.2
 """
 import csv, os, re, sys, statistics, datetime as dt
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 import instruments as instrument_policy
 import market_context as market_context_engine
 
@@ -592,20 +593,30 @@ def market_context_from_prices(data, error, start, end):
     return market_context_engine.build_output(prices or None, error, start, end)
 
 def fetch_splits(tickers):
-    """抓每檔的分割事件 {ticker: [(date, ratio), ...]}。抓不到/離線 → 回 {}(不調整,降級)。"""
+    """抓每檔的分割事件 {ticker: [(date, ratio), ...]}。抓不到/離線 → 回 {}(不調整,降級)。
+    yfinance 沒有批次 splits 端點,只能逐檔;序列逐檔是 prepare 網路時間裡唯一隨持倉數
+    線性增長的段(#235 實測 8 執行緒 4.2×),故執行緒並行。結果按排序後的 ticker 合併,
+    與序列版逐檔輸出一致;單檔失敗仍不連累其他檔。"""
     try:
         import yfinance as yf
     except ImportError:
         return {}
-    out = {}
-    for t in sorted(set(tickers)):
+
+    def one(t):
         try:
             s = yf.Ticker(t).splits           # pandas Series:index=日期, value=分割比率(10:1 → 10.0)
             if s is not None and len(s):
-                out[t] = [(d.date(), float(r)) for d, r in s.items() if r and r > 0]
+                return [(d.date(), float(r)) for d, r in s.items() if r and r > 0]
         except Exception:                     # 單檔抓不到不影響其他檔
-            continue
-    return {t: v for t, v in out.items() if v}
+            return None
+        return None
+
+    todo = sorted(set(tickers))
+    if not todo:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
+        fetched = list(pool.map(one, todo))   # map 保持輸入順序 → 輸出決定論
+    return {t: v for t, v in zip(todo, fetched) if v}
 
 def adjust_for_splits(rows, splits):
     """把每筆成交換算到『分割後(今日)』基礎,與 yfinance auto_adjust 的價格對齊。
