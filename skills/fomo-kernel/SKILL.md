@@ -47,13 +47,14 @@ Then read the shared rules:
 - `references/thesis-policy.md`
 - `references/card-policy.md`
 - `references/data-contract.md`
+- `references/interaction-delivery.md`
 
 ## Fixed lifecycle
 
 1. `prepare`: run the engine, reconstruct active theses, deduplicate questions, and return a Review Plan.
-2. Agent work: make only permitted qualitative judgments, ask every required question, create inferred theses for uncovered positions, and write a narrative with no digits.
+2. Agent work: declare the host capabilities in the privacy-safe UX receipt, make only permitted qualitative judgments, ask every required question once using the native control or fixed fallback in `references/interaction-delivery.md`, create inferred theses for uncovered positions, and write a narrative with no digits.
 3. `preview`: validate answers, evidence, theses, and narrative; then render private and public previews.
-4. Show the review-card preview. Ask the user to choose a candidate rule, provide a custom rule, or skip.
+4. Show the complete review-card preview inline, record the actual delivery mode, then ask the user to choose a candidate rule, provide a custom rule, or skip. Artifact generation alone is not card delivery.
 5. `finalize`: validate the final commitment, atomically commit the canonical session bundle, then rebuild compatibility projections.
 
 ```bash

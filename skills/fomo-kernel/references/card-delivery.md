@@ -2,6 +2,8 @@
 
 How an agent shows an engine-rendered review card to the user. This contract applies at both card moments: the preview shown at the rule-choice step and the final card after finalize.
 
+Record the actual user-visible mode following `interaction-delivery.md`. Artifact creation and a file path are not evidence that the card appeared inline.
+
 ## Never re-render by hand
 
 - Card artifacts are engine-rendered. Never re-summarize, paraphrase, or partially quote the card body in chat: retyping the card risks silently dropping a line the engine computed (for example an alpha/beta figure). Never hand-assemble card HTML and never invent or restate values.

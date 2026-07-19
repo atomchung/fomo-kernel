@@ -182,6 +182,10 @@ Automated success does not prove that the card matters. After a real review, rec
 
 Keep raw feedback local because it may contain real tickers or amounts. Convert only the failure structure into a synthetic regression case.
 
+The host interaction itself has a separate privacy-safe receipt. `skills/fomo-kernel/tools/ux_receipt.py` records capability modes and event identifiers, never answers or card contents. A complete receipt proves that every required question was visible and answered once, the preview was visible before commitment, the final card was visible, and a rich-card failure degraded to inline canonical Markdown. It deliberately distinguishes `artifact_generated` from `card_presented`; only the latter is evidence about what the user could see.
+
+For cross-client owner dogfood, follow `tests/agent/manual-cross-client-ux.md` and require `owner_verdict`. Automated receipt checks prove the trajectory shape, while the owner verdict answers the product question: whether the controls felt usable, the card was actually legible, and the weekly review felt remembered.
+
 For each miss:
 
 1. Determine whether the cause is missing instruction, poor adherence, conflicting instructions, or a wrong product rule.
