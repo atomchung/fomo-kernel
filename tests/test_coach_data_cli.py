@@ -135,6 +135,22 @@ def test_reset_confirm_on_empty_root_is_noop():
         assert out["deleted"] == []
 
 
+def test_reset_and_status_cover_ux_trace_dir():
+    """#239: the cross-client presentation trace lives under <root>/ux/ and must be a
+    tracked footprint -- visible in data-status and cleared by data-reset --confirm --
+    so the "placement keeps it safe" guarantee includes user-controlled deletion."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "ux"), exist_ok=True)
+        with open(os.path.join(tmp, "ux", "session-1.jsonl"), "w", encoding="utf-8") as f:
+            f.write('{"event":"capabilities_declared","session_id":"session-1"}\n')
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {e["name"]: e for e in status["files"]}
+        assert by_name["ux"]["exists"] and by_name["ux"]["count"] == 1, "ux/ must be a tracked footprint"
+        r = _run("data-reset", "--root", tmp, "--confirm")
+        assert r.returncode == 0, r.stderr
+        assert not os.path.exists(os.path.join(tmp, "ux")), "reset --confirm must clear the ux/ trace"
+
+
 # ─────────────── D. --root 覆寫隔離(不誤觸真正的 ~/.trade-coach/)───────────────
 
 def test_root_override_reported_exactly_as_passed():

@@ -60,6 +60,8 @@ def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
     """
     if not session_id:
         raise ReceiptError("a session id is required")
+    if session_id in {".", ".."} or any(ch in session_id for ch in ("/", "\\", "\x00")):
+        raise ReceiptError("session id must be a bare identifier, not a path")
     root = pathlib.Path(os.path.expanduser(state_root))
     return root / "ux" / f"{session_id}.jsonl"
 
@@ -184,6 +186,10 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append(f"row {index} has unsupported event {event!r}")
         if row.get("version") != VERSION:
             errors.append(f"row {index} has unsupported version {row.get('version')!r}")
+        if event in {"artifact_generated", "card_presented", "widget_attempt_failed"} and row.get("stage") not in STAGES:
+            errors.append(f"row {index} has unsupported stage {row.get('stage')!r}")
+        if event == "memory_presented" and row.get("memory_kind") not in MEMORY_KINDS:
+            errors.append(f"row {index} has unsupported memory kind {row.get('memory_kind')!r}")
 
     question_modes = set(declaration.get("question_modes") or [])
     card_modes = set(declaration.get("card_modes") or [])
@@ -218,8 +224,11 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
 
     preview_card = _positions(rows, "card_presented", stage="preview")
     final_card = _positions(rows, "card_presented", stage="final")
+    final_artifact = _positions(rows, "artifact_generated", stage="final")
     if preview_card and final_card and preview_card[0] >= final_card[0]:
         errors.append("final card presentation must follow the preview card")
+    if preview_card and final_artifact and final_artifact[0] <= preview_card[0]:
+        errors.append("final artifact was generated before the preview card was presented")
 
     if Counter(row.get("event") for row in rows)["widget_attempt_failed"] and "widget" not in card_modes:
         errors.append("widget failure was recorded without declared widget capability")
@@ -232,11 +241,13 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             for index, row in enumerate(rows)
             if row.get("event") == "memory_presented" and row.get("memory_kind") in WEEKLY_OPENERS
         ]
-        first_card = min(preview_card + final_card or [len(rows)])
+        first_surface = min(
+            _positions(rows, "question_presented") + preview_card + final_card or [len(rows)]
+        )
         if len(openers) != 1:
             errors.append("weekly_review must present exactly one prior commitment or skip opener")
-        elif openers[0] >= first_card:
-            errors.append("weekly opening memory was presented after the first card")
+        elif openers[0] >= first_surface:
+            errors.append("weekly opening memory was presented after the first question or card")
 
     verdicts = _positions(rows, "owner_verdict")
     if len(verdicts) > 1:

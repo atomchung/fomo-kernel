@@ -410,6 +410,7 @@ DATA_FILES = [
     ("sessions", "tree", "v2 canonical session bundles(private/public cards + manifest)"),
     ("projections", "dir", "canonical bundle 投影到舊資料檔的修復紀錄"),
     (".pending", "tree", "尚未 finalize 的可恢復 review plan/answers/preview"),
+    ("ux", "dir", "cross-client 呈現軌跡(host capability 與卡片/問題呈現事件,不含交易內容)"),
 ]
 
 

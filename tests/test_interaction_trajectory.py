@@ -160,7 +160,7 @@ def test_weekly_opener_after_first_card_fails():
     rows = good_markdown_rows()
     rows[0] = declaration(route="weekly_review")
     rows.append(row("memory_presented", memory_kind="prior_skip"))  # after both cards
-    assert_has(ux_receipt.verify_rows(rows), "presented after the first card")
+    assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
 
 
 # --- Declaration integrity ---------------------------------------------------
@@ -302,6 +302,44 @@ def test_every_runtime_adapter_routes_to_one_shared_contract():
     missing = [str(path.relative_to(ROOT)) for path in surfaces
                if "references/interaction-delivery.md" not in path.read_text(encoding="utf-8")]
     assert not missing, f"runtime surfaces bypass the shared adapter contract: {missing}"
+
+
+def test_final_artifact_before_preview_card_fails():
+    # #239 review (Codex): the final stage must not begin before the preview is visible.
+    rows = [declaration(),
+            row("artifact_generated", stage="preview", artifact_path="/tmp/p.md"),
+            row("artifact_generated", stage="final", artifact_path="/tmp/f.md"),
+            row("card_presented", stage="preview", mode="markdown_inline"),
+            row("card_presented", stage="final", mode="markdown_inline")]
+    assert_has(ux_receipt.verify_rows(rows), "final artifact was generated before the preview card")
+
+
+def test_weekly_opener_after_first_question_fails():
+    # #239 review (Codex): the opener must precede the first QUESTION, not merely the first card.
+    rows = good_markdown_rows()
+    rows[0] = declaration(route="weekly_review")
+    rows.insert(1, row("question_presented", mode="plain_text"))
+    rows.insert(2, row("memory_presented", memory_kind="prior_commitment"))
+    assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
+
+
+def test_unknown_stage_row_fails_closed():
+    # #239 review (Codex): a structurally invalid stage must fail, not be silently ignored.
+    rows = good_markdown_rows()
+    rows.append(row("card_presented", stage="bogus", mode="markdown_inline"))
+    assert_has(ux_receipt.verify_rows(rows), "unsupported stage")
+
+
+def test_cli_rejects_session_id_path_traversal():
+    # #239 review (Codex): session_id must not escape <state-root>/ux/ via path separators.
+    with tempfile.TemporaryDirectory() as tmp:
+        bad = subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "../escape", "--state-root", tmp,
+             "--client", "c", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True,
+        )
+        assert bad.returncode == 2 and "not a path" in bad.stderr
 
 
 def main():
