@@ -321,6 +321,59 @@ def _review_date(state):
         return dt.date.today()
 
 
+# Cadence detection (#237). The span between the previous review and this one
+# decides how heavy a card is warranted: a short span is a high-frequency check
+# that later stages should render light, while a long span, a first review, or a
+# snapshot opening check warrants the full story card. The threshold is the one
+# human knob ("how short counts as high-frequency"); everything else keys off
+# real timestamps. This is a presentation-selection signal only — it never
+# changes an engine number, so card output is unchanged until a consumer reads
+# the tier.
+CADENCE_LIGHT_MAX_DAYS = 5
+
+
+def _review_span_days(date_end, previous):
+    """Calendar days from the previous review's ``date_end`` to this one.
+
+    Returns None when there is no comparable prior boundary (first review,
+    missing or unparseable dates). An out-of-order re-run clamps to 0 instead of
+    going negative, so a stale resend cannot read as a long span.
+    """
+    prev_end = (previous or {}).get("date_end")
+    if not date_end or not prev_end:
+        return None
+    try:
+        start = dt.date.fromisoformat(str(prev_end))
+        end = dt.date.fromisoformat(str(date_end))
+    except (TypeError, ValueError):
+        return None
+    return max(0, (end - start).days)
+
+
+def _cadence(route, date_end, previous):
+    """Classify this review's cadence tier from its span.
+
+    ``light`` marks a short-span, high-frequency review that later stages should
+    render as a light capture rather than the full story card; ``full`` marks a
+    first review, a snapshot opening check, a returning review with no
+    comparable prior boundary, or any span past the threshold. The tier is
+    advisory metadata for downstream rendering and questioning; it does not gate
+    or alter any engine calculation, so existing output is unchanged until a
+    consumer opts in.
+    """
+    threshold = CADENCE_LIGHT_MAX_DAYS
+    if route in ("first_review", "snapshot_review"):
+        return {"tier": "full", "span_days": None, "threshold_days": threshold,
+                "basis": route, "override": None}
+    span = _review_span_days(date_end, previous)
+    if span is None:
+        return {"tier": "full", "span_days": None, "threshold_days": threshold,
+                "basis": "no_prior_boundary", "override": None}
+    tier = "light" if span <= threshold else "full"
+    return {"tier": tier, "span_days": span, "threshold_days": threshold,
+            "basis": "span", "override": None}
+
+
 _CURRENT_VIEW_DIMS = {"position_sizing", "diversification"}
 _CURRENT_VIEW_METRICS = {
     "max_pos_pct", "max_pos_ticker", "ai_pct", "max_sector_pct", "top3_pct"
@@ -1327,6 +1380,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
     completed_reviews = _completed_review_count(root, exclude_session_id=session_id)
+    cadence = _cadence(route, state.get("date_end"), previous)
     plan = {
         "schema_version": 2,
         "session_id": session_id,
@@ -1345,6 +1399,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                                "completed_reviews_before_start": completed_reviews,
                                "returning": completed_reviews > 0,
                            },
+                           "cadence": cadence,
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single
