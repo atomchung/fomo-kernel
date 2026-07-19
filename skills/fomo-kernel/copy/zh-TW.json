@@ -14,6 +14,9 @@
     "numbers": "這期的帳",
     "performance": "相對績效",
     "trades": "最賺與最虧的已實現交易",
+    "instruments": "標的層影響 · 按金額排序",
+    "attribution": "報酬歸因 · 賽道曝險還是選股",
+    "improve": "改進 · 保留強項、移除損耗",
     "strength": "你做對的一件事",
     "hole": "最大的行為漏洞",
     "motive": "這次加碼的 thesis 判斷",
@@ -22,6 +25,16 @@
     "patterns": "問題帳記得的模式",
     "etf": "ETF 與組合結構",
     "rule": "下次只改這一件"
+  },
+  "kpi": {
+    "pnl": "帳面總損益",
+    "pnl_sub": "已實現 {realized} · 未實現 {unrealized}",
+    "payoff": "已實現盈虧比",
+    "payoff_sub": "平均賺 {win} vs 賠 {loss}",
+    "excess": "相對大盤",
+    "excess_sub": "β {beta}",
+    "alpha": "年化 α",
+    "alpha_unreliable": "統計上還不可信"
   },
   "dimensions": {
     "exit_discipline": "出場紀律",

@@ -13,11 +13,15 @@
   styled self-contained artifact — including its WIDGET FRAGMENT (<style> +
   <div class="rc">...</div>) — from the same structured content as the
   canonical Markdown card. This file preserves the richer hand-designed layout
-  from the 2026-07-04 UI review as the visual target; it is never loaded or
-  executed at runtime. Design-rule changes must land in BOTH places: this
+  from the 2026-07-04 UI review as the visual target; since #247 the runtime
+  renderer implements this full layout (KPI tile grid, ranked instrument bars,
+  stress row, attribution bars, prescription rows) from engine facts, minus
+  the icon font and per-question interactivity noted below. It is never loaded
+  or executed at runtime. Design-rule changes must land in BOTH places: this
   reference and card_renderer.render_html(). tests/test_card_html.py enforces
   the key invariants on renderer output (self-contained, light/dark support,
-  one widget-fragment pair, sparkline conditionality).
+  one widget-fragment pair, sparkline conditionality, rich-block presence and
+  degradation).
 
   - Data source: actual output from engine/trade_recap.py on mock/mock_trades.csv.
   - Mock values and narrative below are illustrative layout content only.

@@ -1143,6 +1143,183 @@ def _problem_lines(bundle, copy):
     return lines
 
 
+# ── Rich-layout facts (#247) ────────────────────────────────────────────
+# Structured presentation facts consumed by BOTH surfaces: render_private
+# writes them as text lines, render_html as the card-template.html layout
+# (KPI grid, ranked instrument bars, stress row, attribution bars, improve
+# rows).  The facts layer only formats engine-owned numbers through the same
+# helpers the Markdown card uses — it never computes one.  A missing engine
+# field drops its tile/row instead of inventing a value, so degraded cards
+# (snapshot, insufficient, fx gaps) keep today's plainer shape.
+
+
+def _kpi_tiles(card, context, copy):
+    """Up to four headline tiles: P&L, payoff, benchmark excess, alpha."""
+    overview = card.get("overview") or {}
+    kpi_copy = copy.get("kpi") or {}
+    tiles = []
+
+    total = _finite_number(overview.get("total_pnl"))
+    realized = _finite_number(overview.get("realized"))
+    unrealized = _finite_number(overview.get("unrealized"))
+    total_text = _display_money(total, context)
+    if total is not None and total_text:
+        sub = None
+        realized_text = _display_money(realized, context)
+        unrealized_text = _display_money(unrealized, context)
+        if realized_text and unrealized_text and kpi_copy.get("pnl_sub"):
+            sub = kpi_copy["pnl_sub"].format(realized=realized_text, unrealized=unrealized_text)
+        tiles.append({"id": "pnl", "label": kpi_copy.get("pnl"), "value": total_text,
+                      "tone": "neg" if total < 0 else "pos", "sub": sub, "spark": True})
+
+    payoff = _finite_number(overview.get("payoff"))
+    if payoff is not None and kpi_copy.get("payoff"):
+        sub = None
+        win_text = _display_money(_finite_number(overview.get("avg_win")), context)
+        loss_text = _display_money(_finite_number(overview.get("avg_loss")), context, absolute=True)
+        if win_text and loss_text and kpi_copy.get("payoff_sub"):
+            sub = kpi_copy["payoff_sub"].format(win=win_text, loss=loss_text)
+        tiles.append({"id": "payoff", "label": kpi_copy["payoff"],
+                      "value": f"{payoff:.1f}", "tone": None, "sub": sub})
+
+    ab = card.get("alpha_beta_breakdown") or {}
+    # Mixed-market cards keep their per-market text rows (#205); a synthetic
+    # top-level figure would recreate the total-alpha the engine refuses.
+    single_scope = not ab.get("by_market")
+    excess = _finite_number(ab.get("excess_vs_spy")) if single_scope else None
+    if excess is not None and kpi_copy.get("excess"):
+        beta_text = _beta_text(ab.get("beta"))
+        sub = kpi_copy["excess_sub"].format(beta=beta_text) if beta_text and kpi_copy.get("excess_sub") else None
+        tiles.append({"id": "excess", "label": kpi_copy["excess"],
+                      "value": f"{_benchmark_pp(excess)}pp",
+                      "tone": "neg" if excess < 0 else "pos", "sub": sub})
+
+    alpha = _finite_number(ab.get("alpha_ann")) if single_scope else None
+    if alpha is not None and kpi_copy.get("alpha"):
+        credible = bool(ab.get("credible"))
+        value = _signed_pct(alpha, digits=0)
+        tiles.append({"id": "alpha", "label": kpi_copy["alpha"],
+                      "value": value if credible else f"{value} *",
+                      "tone": None,
+                      "sub": None if credible else "* " + (kpi_copy.get("alpha_unreliable") or "")})
+    return tiles
+
+
+def _instrument_rows(card, context, language):
+    """Ranked per-instrument money impact for the template's bar list.
+
+    Amounts are the engine's aggregate-view impacts converted like every other
+    aggregate figure; bar widths are pure presentation geometry (share of the
+    largest |impact|), the same class of scaling the sparkline already does.
+    Behavior tags are engine zh vocabulary, so they ride only on the zh card
+    until the engine grows localized tags."""
+    diagnosis = card.get("ticker_diagnosis") or []
+    if not context.get("currency") or len(diagnosis) < 2:
+        return []
+    rows = []
+    peak = max((abs(_finite_number(row.get("impact")) or 0.0) for row in diagnosis), default=0.0)
+    if peak <= 0:
+        return []
+    for row in diagnosis:
+        impact = _finite_number(row.get("impact"))
+        amount = _display_money(impact, context)
+        ticker = str(row.get("ticker") or "").strip()
+        if impact is None or not amount or not ticker:
+            continue
+        tags = [str(tag) for tag in (row.get("tags") or []) if tag] if language != "en" else []
+        rows.append({"ticker": ticker, "amount": amount,
+                     "tone": "neg" if impact < 0 else "pos",
+                     "tags": tags,
+                     "width_pct": max(2, int(round(abs(impact) / peak * 100)))})
+    return rows if len(rows) >= 2 else []
+
+
+def _stress_lines(card, context, language):
+    """The what-if concentration stress row (engine ``what_if``); zh only —
+    the scenario label is engine zh vocabulary."""
+    stress = card.get("what_if") or {}
+    if language == "en" or not stress:
+        return []
+    exposure = _display_money(_finite_number(stress.get("mval")), context, absolute=True)
+    drop30 = _display_money(_finite_number(stress.get("drop30")), context, absolute=True)
+    drop50 = _display_money(_finite_number(stress.get("drop50")), context, absolute=True)
+    label = str(stress.get("label") or "").strip()
+    pct = _finite_number(stress.get("pct"))
+    if not (exposure and drop30 and drop50 and label) or pct is None:
+        return []
+    return [f"你 {label} 暴險約 {exposure}（佔 {_pct(pct)}）；"
+            f"回檔 30% → 帳面 −{drop30}、回檔 50% → −{drop50}，撐得住嗎？"]
+
+
+def _attribution_facts(card):
+    """Benchmark-comparison rows for the attribution bars (private card only).
+
+    Single-scope cards only: a mixed-market card keeps its per-market rows
+    (#205) and never synthesizes one comparable series.  Row order follows the
+    engine's benchmark map; widths scale to the largest |excess|."""
+    ab = card.get("alpha_beta_breakdown") or {}
+    if ab.get("by_market"):
+        return None
+    benchmarks = ab.get("benchmarks") or {}
+    port = _finite_number(ab.get("port_tot"))
+    bench_tot = _finite_number(ab.get("spy_tot"))
+    headline = _finite_number(ab.get("excess_vs_spy"))
+    primary = str(ab.get("bench") or "")
+    rows = []
+    for symbol, row in benchmarks.items():
+        # The headline already states the primary-benchmark excess; the rows
+        # exist for the alternative comparators (template: "vs QQQ / vs SOXX").
+        if str(symbol) == primary:
+            continue
+        excess = _finite_number((row or {}).get("excess"))
+        if excess is not None:
+            rows.append({"label": str(symbol), "excess": excess,
+                         "pp": f"{_benchmark_pp(excess)}pp"})
+    if headline is None or not rows:
+        return None
+    peak = max(abs(row["excess"]) for row in rows)
+    if peak <= 0:
+        return None
+    for row in rows:
+        row["width_pct"] = max(2, int(round(abs(row["excess"]) / peak * 100)))
+    return {"headline": f"{_benchmark_pp(headline)}pp",
+            "tone": "neg" if headline < 0 else "pos",
+            "port": _signed_pct(port, digits=0) if port is not None else None,
+            "bench": _signed_pct(bench_tot, digits=0) if bench_tot is not None else None,
+            "rows": rows}
+
+
+def _improve_rows(card, language):
+    """Prescription rows (preserve / test / cut); engine zh text, zh card only."""
+    if language == "en":
+        return []
+    rows = []
+    for item in card.get("prescriptions") or []:
+        kind = str((item or {}).get("kind") or "").strip()
+        text = str((item or {}).get("text") or "").strip()
+        if kind and text:
+            rows.append({"kind": kind, "text": text})
+    return rows
+
+
+def _card_facts(bundle, copy):
+    """Assemble the rich-layout facts shared by both surfaces (#247)."""
+    card = bundle.get("engine_card") or {}
+    language = copy["language"]
+    context = _display_context(card, language)
+    if bundle.get("route") == "snapshot_review":
+        # Snapshot cards intentionally suppress history-performance panels; the
+        # rich layout has nothing honest to add there yet.
+        return {"kpi": [], "instruments": [], "stress": [], "attribution": None, "improve": []}
+    return {
+        "kpi": _kpi_tiles(card, context, copy),
+        "instruments": _instrument_rows(card, context, language),
+        "stress": _stress_lines(card, context, language),
+        "attribution": _attribution_facts(card),
+        "improve": _improve_rows(card, language),
+    }
+
+
 def _card_structure(bundle):
     """Assemble the private card's structured content once (#225).
 
@@ -1160,6 +1337,7 @@ def _card_structure(bundle):
     holes = card.get("top_holes") or []
     commitment = bundle.get("commitment") or {}
     snapshot = bundle.get("route") == "snapshot_review"
+    facts = _card_facts(bundle, copy)
 
     badges = [copy["private_badge"]]
     if bundle.get("route") == "test_drive":
@@ -1222,7 +1400,19 @@ def _card_structure(bundle):
                      "blocks": [("paragraph", [strength_line])]})
 
     trades = [] if snapshot else _trade_lines(card, copy["language"])
-    if trades:
+    if facts["instruments"]:
+        # Full ranked instrument list (template layout); best/worst rows stay
+        # as the closing caption so no prior fact disappears.
+        ranked = [row["ticker"] + " " + row["amount"]
+                  + ("（" + "；".join(row["tags"]) + "）" if row["tags"] else "")
+                  for row in facts["instruments"]]
+        blocks = [("bullets", ranked)]
+        if trades:
+            blocks.append(("bullets", trades))
+        sections.append({"id": "instruments",
+                         "title": sections_copy.get("instruments", sections_copy["trades"]),
+                         "blocks": blocks})
+    elif trades:
         sections.append({"id": "trades", "title": sections_copy["trades"],
                          "blocks": [("bullets", trades)]})
 
@@ -1235,7 +1425,15 @@ def _card_structure(bundle):
         hole_blocks.append(("paragraph", [_hole_line(holes[0], copy["language"])]))
     if not snapshot and narrative.get("counterfactual"):
         hole_blocks.append(("paragraph", [narrative["counterfactual"]]))
+    if facts["stress"]:
+        hole_blocks.append(("paragraph", facts["stress"]))
     sections.append({"id": "hole", "title": hole_title, "blocks": hole_blocks})
+
+    attribution = facts["attribution"]
+    if attribution and sections_copy.get("attribution"):
+        rows = ["vs " + row["label"] + " " + row["pp"] for row in attribution["rows"]]
+        sections.append({"id": "attribution", "title": sections_copy["attribution"],
+                         "blocks": [("bullets", rows)]})
 
     decisions = [] if snapshot else _decision_lines(bundle, copy)
     if decisions:
@@ -1256,6 +1454,11 @@ def _card_structure(bundle):
     if problem_lines:
         sections.append({"id": "patterns", "title": sections_copy["patterns"],
                          "blocks": [("bullets", problem_lines)]})
+
+    if facts["improve"] and sections_copy.get("improve"):
+        sections.append({"id": "improve", "title": sections_copy["improve"],
+                         "blocks": [("bullets",
+                                     [row["kind"] + "：" + row["text"] for row in facts["improve"]])]})
 
     rule_blocks = []
     rule = commitment.get("rule")
@@ -1287,6 +1490,7 @@ def _card_structure(bundle):
         "badges": badges,
         "preamble": preamble,
         "sections": sections,
+        "facts": facts,
     }
 
 
@@ -1467,6 +1671,39 @@ line-height:1.5;background:transparent;border:0.5px solid var(--rc-border);color
 stroke-linejoin:round;opacity:.85}
 .rc .spark.pos path{stroke:var(--rc-text-success)}
 .rc .spark.neg path{stroke:var(--rc-text-danger)}
+.rc .pos{color:var(--rc-text-success)}
+.rc .neg{color:var(--rc-text-danger)}
+.rc .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 4px}
+@media (max-width:520px){.rc .grid4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:380px){.rc .grid4{grid-template-columns:1fr}}
+.rc .m{background:var(--rc-surface-1);border-radius:var(--rc-radius);padding:13px 15px}
+.rc .m .lbl{font-size:12px;color:var(--rc-text-secondary);margin:0}
+.rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25;color:var(--rc-text-primary)}
+.rc .m .val.pos{color:var(--rc-text-success)}
+.rc .m .val.neg{color:var(--rc-text-danger)}
+.rc .m .sub{font-size:11px;color:var(--rc-text-muted);margin:4px 0 0;line-height:1.4}
+.rc .m .spark{height:22px;margin:8px 0 0}
+.rc .trow{margin:0 0 11px}
+.rc .trow:last-of-type{margin-bottom:0}
+.rc .ttop{display:flex;align-items:baseline;gap:10px}
+.rc .tk{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px;font-weight:500;min-width:52px}
+.rc .tamt{font-size:14px;font-weight:500;min-width:78px;text-align:right}
+.rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+.rc .track{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:6px 0 0;overflow:hidden}
+.rc .fill{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
+.rc .fill.neg{background:var(--rc-text-danger);opacity:.85}
+.rc .cap{font-size:12px;color:var(--rc-text-muted);margin:12px 0 0;line-height:1.6}
+.rc .attr-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin:0 0 14px}
+.rc .attr-head .big{font-size:19px;font-weight:500}
+.rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
+.rc .arow .al{font-size:13px;color:var(--rc-text-secondary)}
+.rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace}
+.rc .abar{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:5px 0 0;overflow:hidden}
+.rc .abar div{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
+.rc .rx{display:flex;flex-direction:column;gap:2px;padding:11px 0;border-top:0.5px solid var(--rc-border)}
+.rc .rx:first-of-type{border-top:none;padding-top:2px}
+.rc .rx .kind{font-size:13px;font-weight:500;margin:0;color:var(--rc-text-primary)}
+.rc .rx .desc{font-size:13px;color:var(--rc-text-secondary);line-height:1.55;margin:0}
 .rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-radius);padding:16px 18px}
 .rc .panel-label{font-size:12px;font-weight:500;margin:0 0 8px}
@@ -1562,16 +1799,83 @@ def render_html(bundle):
     # pnl_curve; the route guard keeps that existing conditional explicit.
     spark = (None if structure["route"] == "snapshot_review"
              else _sparkline_svg(bundle.get("engine_card") or {}))
+    facts = structure["facts"]
+
+    def kpi_grid():
+        tiles = []
+        for tile in facts["kpi"]:
+            tone = f' {tile["tone"]}' if tile.get("tone") else ""
+            parts = []
+            if tile.get("label"):
+                parts.append(f'<p class="lbl">{e(tile["label"])}</p>')
+            parts.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
+            if tile.get("sub"):
+                parts.append(f'<p class="sub">{e(tile["sub"])}</p>')
+            if tile.get("spark") and spark:
+                parts.append(spark)
+            tiles.append('<div class="m">' + "".join(parts) + "</div>")
+        return '<div class="grid4">' + "".join(tiles) + "</div>" if tiles else ""
+
+    def instrument_bars(caption_rows):
+        rows = []
+        for row in facts["instruments"]:
+            tone = f' {row["tone"]}' if row.get("tone") else ""
+            fill = ' neg' if row.get("tone") == "neg" else ""
+            tags = "".join(f'<span class="tag">{e(tag)}</span>' for tag in row["tags"])
+            rows.append(
+                '<div class="trow"><div class="ttop">'
+                f'<span class="tk">{e(row["ticker"])}</span>'
+                f'<span class="tamt{tone}">{e(row["amount"])}</span>'
+                + (f'<div class="ttags">{tags}</div>' if tags else "")
+                + f'</div><div class="track"><div class="fill{fill}" '
+                  f'style="width:{row["width_pct"]}%"></div></div></div>')
+        if caption_rows:
+            rows.append(f'<p class="cap">{e(" · ".join(caption_rows))}</p>')
+        return rows
+
+    def attribution_bars():
+        attribution = facts["attribution"]
+        tone = f' {attribution["tone"]}' if attribution.get("tone") else ""
+        parts = [f'<p class="attr-head"><span class="big{tone}">{e(attribution["headline"])}</span></p>']
+        for row in attribution["rows"]:
+            parts.append(f'<div class="arow"><span class="al">vs {e(row["label"])}</span>'
+                         f'<span class="av">{e(row["pp"])}</span></div>'
+                         f'<div class="abar"><div style="width:{row["width_pct"]}%"></div></div>')
+        return parts
+
+    def improve_rows():
+        return ['<div class="rx">'
+                f'<p class="kind">{e(row["kind"])}</p><p class="desc">{e(row["text"])}</p></div>'
+                for row in facts["improve"]]
+
     for section in structure["sections"]:
         sid = section["id"]
         rendered = []
-        for index, (kind, rows) in enumerate(section["blocks"]):
-            lead_class = "rmain" if sid == "rule" and index == 0 else None
-            chunk = _html_block(kind, rows, lead_class)
-            if chunk:
-                rendered.append(chunk)
-        if sid == "numbers" and spark:
-            rendered.insert(1 if rendered else 0, spark)
+        if sid == "instruments" and facts["instruments"]:
+            # blocks[0] is the ranked text list (Markdown form of the bars);
+            # blocks[1], when present, is the best/worst caption pair.
+            caption = section["blocks"][1][1] if len(section["blocks"]) > 1 else []
+            rendered = instrument_bars(caption)
+        elif sid == "attribution" and facts["attribution"]:
+            rendered = attribution_bars()
+        elif sid == "improve" and facts["improve"]:
+            rendered = improve_rows()
+        else:
+            for index, (kind, rows) in enumerate(section["blocks"]):
+                lead_class = "rmain" if sid == "rule" and index == 0 else None
+                chunk = _html_block(kind, rows, lead_class)
+                if chunk:
+                    rendered.append(chunk)
+            if sid == "numbers":
+                grid = kpi_grid()
+                if grid:
+                    # The tiles restate the opening sentences as the template's
+                    # KPI row; the sentences stay below as the story block.
+                    rendered.insert(0, grid)
+                    if spark and not any(t.get("spark") for t in facts["kpi"]):
+                        rendered.insert(1, spark)
+                elif spark:
+                    rendered.insert(1 if rendered else 0, spark)
         if sid in _HTML_PANEL_SECTIONS:
             body.append(f'<div class="sec {sid}"><div class="panel">'
                         f'<p class="panel-label">{e(section["title"])}</p>'
