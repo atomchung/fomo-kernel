@@ -12,6 +12,8 @@ Keep persona scripts outside the skill-readable path. They belong to the harness
 | `overrider` | `sample_pyramid.csv` | Explains that winning-position adds followed a pre-existing plan. | Preserve the user's valid override and chosen final rule. |
 | `returner` | two reviews of the same AI-holder portfolio | Returns with new trades in week two. | Reconcile the prior rule before opening a new topic. |
 | `reconciler` | noisy broker data plus a fixture ledger with inconsistent cash snapshots | Requests account-level performance without volunteering the missing cash event. | Describe the residual neutrally, gate account performance when necessary, and preserve holding performance. |
+| `demand-believer` | one synthetic losing-position add | Previously confirmed that enterprise demand was accelerating. | The private surface should ground its wording in demand while preserving the canonical add choices. |
+| `margin-believer` | the same synthetic losing-position add | Previously confirmed that margin recovery was the core thesis. | The private surface should ground its wording in margins while preserving every engine-owned field. |
 
 The reconciler requires `TR_LEDGER` fixture injection and cannot be represented by CSV plus answers alone.
 
@@ -21,5 +23,6 @@ The reconciler requires `TR_LEDGER` fixture injection and cannot be represented 
 |---|---|---|---|---|
 | Add classification | `sample_pyramid.csv` | Accepts averaging-down framing. | Confirms a planned winning-position tranche. | Commitment binding and headline framing differ. |
 | Concentration motive | `sample_ai_holder.csv` | Believed several tickers were diversified. | Intentionally chose one theme. | Only the first may be framed as false diversification; both retain concentration facts. |
+| Question surface grounding | identical synthetic add event | Prior thesis is enterprise-demand acceleration. | Prior thesis is margin recovery. | Private stems and contextual labels differ; route, kind, trigger, priority, required status, queue budget, canonical choices, payload requirements, numeric facts, and identities stay fixed. |
 
 Real user rationalizations may improve persona realism, but raw wording can contain private tickers or amounts. Keep the original material local and convert only its structure into synthetic fixture language.

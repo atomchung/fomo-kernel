@@ -28,6 +28,7 @@ import card_renderer
 import horizon
 import ledger
 import problems
+import question_surface
 import revisit
 import session
 import snapshot_adapter
@@ -1223,6 +1224,16 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         }
         if because:
             row["asked_because"] = because
+        prior_context = None
+        prior_quote = _clip_quote(old.get("why")) if isinstance(old, dict) else None
+        if prior_quote:
+            prior_context = {
+                "text": prior_quote,
+                "voice": "inferred" if old.get("maturity") == "inferred" else "user_confirmed",
+            }
+        row["question_opportunity"] = question_surface.build_opportunity(
+            row, language, prior_thesis=prior_context
+        )
         candidates.append(row)
     candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
     if not candidates:
@@ -1235,9 +1246,14 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             top_label = card_renderer.localized_dimension(top, language)
             question = (f"What mainly drove the behavior behind {top_label}?" if str(language).lower().startswith("en")
                         else f"這次「{top}」背後，主要是事先規劃、情緒反應，還是外部限制？")
-            candidates.append({"id": "headline_motive", "kind": "headline_motive", "required": True,
-                               "question": question, "options": _generic_options(language),
-                               "_importance": 0.0, "_tie": 2})
+            row = {"id": "headline_motive", "kind": "headline_motive", "required": True,
+                   "question": question, "options": _generic_options(language),
+                   "_importance": 0.0, "_tie": 2}
+            row["question_opportunity"] = question_surface.build_opportunity(
+                row, language,
+                headline_dimension={"id": top, "label": top_label},
+            )
+            candidates.append(row)
     # Priority tiers are semantic, then amount/rank resolves within a tier:
     # perishable exit capture -> unqualified chosen-rule breach -> due/add motive.
     candidates.sort(key=lambda row: (int(row.get("_priority", 2)),
@@ -1458,6 +1474,17 @@ def _plan_for_agent(plan):
     return projection
 
 
+def _pending_for_agent(bundle):
+    """Trim a resumed pending bundle without dropping its frozen presentation."""
+    projection = dict(bundle)
+    if isinstance(projection.get("plan"), dict):
+        projection["plan"] = _plan_for_agent(projection["plan"])
+    # The resolved presentation is the runtime handoff. The authored candidate
+    # remains private canonical state and would only duplicate that copy here.
+    projection.pop("question_surfaces", None)
+    return projection
+
+
 def cmd_prepare(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     language = args.language
@@ -1527,7 +1554,8 @@ def cmd_prepare(args):
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
                "review_plan": _plan_for_agent(existing),
-               "next_action": "ask question_queue, then run preview"})
+               "next_action": ("run resume --session-id to reuse any validated question surface; "
+                               "then ask question_queue and run preview")})
         return
     if prepared is None:
         card, state, engine_meta = _run_engine(paths, root, args)
@@ -1560,7 +1588,10 @@ def cmd_prepare(args):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
         return
     session.save_pending(root, plan["session_id"], plan=plan)
-    next_action = "ask every required question, author thesis_updates and prose-only narrative, then run preview"
+    next_action = ("for question_opportunity rows, author a private surface and bind it with "
+                   "resume --question-surfaces, or keep the engine question/options fallback; "
+                   "then ask every required question, author thesis_updates and prose-only narrative, "
+                   "and run preview")
     if not persist:
         # The test drive lives in an isolated root that preview/finalize cannot
         # discover on their own; without this handoff they report "pending session
@@ -1816,9 +1847,16 @@ def _resolve_commitment(plan, answers):
     return chosen
 
 
-def _draft_bundle(plan, answers, narrative, require_commitment):
+def _draft_bundle(plan, answers, narrative, require_commitment,
+                  question_surfaces=None, question_presentations=None):
     if answers.get("session_id") != plan.get("session_id"):
         raise ReviewError("answers.session_id does not match Review Plan")
+    if question_surfaces is not None and not isinstance(question_presentations, list):
+        raise ReviewError("validated question surface is missing its frozen presentation")
+    question_surface.validate_answer_contract(
+        plan, answers,
+        presentations=question_presentations if question_surfaces is not None else None,
+    )
     amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
     agent_updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
     cycle_relinks = list(
@@ -1855,6 +1893,9 @@ def _draft_bundle(plan, answers, narrative, require_commitment):
         "commitment": commitment,
         "observations": list(answers.get("observations") or []),
     }
+    if question_surfaces is not None:
+        bundle["question_surfaces"] = question_surfaces
+        bundle["question_presentations"] = question_presentations
     # Only present when a due checkpoint was actually answered: sessions committed
     # before this key existed must re-draft to the identical canonical bundle, or
     # the documented-safe finalize retry would fail closed on every old session.
@@ -1878,7 +1919,11 @@ def cmd_preview(args):
     pending = session.load_pending(root, args.session_id)
     plan = pending.get("plan")
     answers, narrative = _load_interaction(args, pending)
-    bundle = _draft_bundle(plan, answers, narrative, require_commitment=False)
+    bundle = _draft_bundle(
+        plan, answers, narrative, require_commitment=False,
+        question_surfaces=pending.get("question_surfaces"),
+        question_presentations=pending.get("question_presentations"),
+    )
     private_md = card_renderer.render_private(bundle)
     public_md = card_renderer.render_public(bundle)
     private_html = card_renderer.render_html(bundle)
@@ -1900,12 +1945,18 @@ def cmd_finalize(args):
         if os.path.isdir(committed_path):
             existing = session.load_committed(root, args.session_id)
             plan = existing.get("review_plan")
-            pending = {"answers": existing.get("answers"), "narrative": existing.get("narrative")}
+            pending = {"answers": existing.get("answers"), "narrative": existing.get("narrative"),
+                       "question_surfaces": existing.get("question_surfaces"),
+                       "question_presentations": existing.get("question_presentations")}
         else:
             pending = session.load_pending(root, args.session_id)
             plan = pending.get("plan")
         answers, narrative = _load_interaction(args, pending)
-        bundle = _draft_bundle(plan, answers, narrative, require_commitment=True)
+        bundle = _draft_bundle(
+            plan, answers, narrative, require_commitment=True,
+            question_surfaces=pending.get("question_surfaces"),
+            question_presentations=pending.get("question_presentations"),
+        )
         private_md = card_renderer.render_private(bundle)
         public_md = card_renderer.render_public(bundle)
         private_html = card_renderer.render_html(bundle)
@@ -1927,12 +1978,51 @@ def cmd_finalize(args):
 def cmd_resume(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     if args.session_id:
-        bundle = session.load_pending(root, args.session_id)
-        if isinstance(bundle.get("plan"), dict):
-            # Same projection as prepare stdout: the resumed agent re-reads the
-            # plan into context, so the engine blobs stay on disk here too.
-            bundle = dict(bundle, plan=_plan_for_agent(bundle["plan"]))
-        _emit(bundle)
+        pending = session.load_pending(root, args.session_id)
+        plan = pending.get("plan")
+        existing = pending.get("question_surfaces")
+        if args.question_surfaces:
+            try:
+                candidate = _load_json(args.question_surfaces, "question surfaces")
+                validated = question_surface.validate_surfaces(plan, candidate)
+            except (ReviewError, question_surface.QuestionSurfaceError) as exc:
+                if existing is not None:
+                    raise ReviewError(
+                        "validated question surfaces are already fixed for this pending session"
+                    ) from exc
+                fallback = question_surface.build_presentations(plan)
+                _emit({**_pending_for_agent(pending), "status": "surface_fallback",
+                       "question_presentations": fallback,
+                       "surface_error": str(exc),
+                       "next_action": "present the unchanged engine question/options fallback"})
+                return
+            if existing is not None and session.canonical(existing) != session.canonical(validated):
+                raise ReviewError("validated question surfaces are already fixed for this pending session")
+            if existing is None:
+                presentations = question_surface.build_presentations(plan, validated)
+                session.save_pending(root, args.session_id,
+                                     **{"question-presentations": presentations,
+                                        "question-surfaces": validated})
+                pending = session.load_pending(root, args.session_id)
+            else:
+                presentations = pending.get("question_presentations")
+                if not isinstance(presentations, list):
+                    raise ReviewError("validated question surface is missing its frozen presentation")
+            _emit({**_pending_for_agent(pending), "status": "surface_validated",
+                   "question_presentations": presentations,
+                   "next_action": "present these exact questions in queue order, then run preview"})
+            return
+        if existing is not None:
+            if not isinstance(pending.get("question_presentations"), list):
+                raise ReviewError("validated question surface is missing its frozen presentation")
+            pending["status"] = "surface_validated"
+            pending["next_action"] = "reuse these exact question presentations, then run preview"
+        else:
+            pending["status"] = "engine_fallback"
+            pending["question_presentations"] = question_surface.build_presentations(plan)
+            pending["next_action"] = ("author eligible private surfaces with resume --question-surfaces, "
+                                      "or present the unchanged engine fallback")
+        _emit(_pending_for_agent(pending))
         return
     base = os.path.join(root, ".pending")
     pending = [] if not os.path.isdir(base) else sorted(
@@ -1986,6 +2076,8 @@ def build_parser():
     resume = sub.add_parser("resume")
     resume.add_argument("--session-id")
     resume.add_argument("--root")
+    resume.add_argument("--question-surfaces",
+                        help="private AI-authored surfaces to validate and freeze before presentation")
     resume.set_defaults(func=cmd_resume)
     render = sub.add_parser("render")
     render.add_argument("--session-id", required=True)
@@ -2001,7 +2093,8 @@ def main():
     args = build_parser().parse_args()
     try:
         args.func(args)
-    except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError) as exc:
+    except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError,
+            question_surface.QuestionSurfaceError) as exc:
         _emit({"status": "error", "error": str(exc)})
         return 2
     return 0

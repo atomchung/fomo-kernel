@@ -44,10 +44,10 @@ For a position table or screenshot, transcribe the displayed facts locally into 
 Then read the shared rules:
 
 - `references/agent-boundaries.md`
+- `references/interaction-delivery.md`
 - `references/thesis-policy.md`
 - `references/card-policy.md`
 - `references/data-contract.md`
-- `references/interaction-delivery.md`
 
 ## Fixed lifecycle
 
@@ -80,6 +80,8 @@ python3 engine/review.py repair-projections
 
 ## Agent artifact contract
 
+- For `add_thesis` and `headline_motive` rows with `question_opportunity`, author only the private surface fields in `schemas/question-surface.schema.json`, bind them through `review.py resume --question-surfaces`, and present the returned `question_presentations`. Use the unchanged engine fallback on generation or validation failure. Other question kinds remain engine-rendered.
+- Preserve the resolved option order and show its engine-owned semantic anchor and payload requirement copy. Native and text clients write the same canonical value and a content-free interaction receipt. A `none_of_above` response gets at most one clarification; unresolved wording becomes `skip` plus exact private provenance, never a forced classification.
 - Validate `answers.json` against `schemas/answers.schema.json`.
 - Validate `narrative.json` against `schemas/narrative.schema.json`; it may contain qualitative prose only and no digits.
 - Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer weaves each sentence into the section it qualifies.

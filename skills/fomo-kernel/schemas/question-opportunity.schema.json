@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/question-opportunity.schema.json",
+  "title": "Fomo Kernel Question Opportunity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent", "context", "answer_contract"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "intent": {
+      "enum": ["classify_losing_position_add", "classify_headline_motive"]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "prior_thesis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "voice"],
+          "properties": {
+            "text": {"type": "string", "minLength": 1},
+            "voice": {"enum": ["user_confirmed", "inferred"]}
+          }
+        },
+        "asked_because": {"type": "string", "minLength": 1},
+        "headline_dimension": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "label"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "label": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "answer_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_choices",
+        "requirements_by_choice",
+        "requirement_text_by_choice",
+        "allow_none_of_above",
+        "max_clarifications"
+      ],
+      "properties": {
+        "canonical_choices": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "requirements_by_choice": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          }
+        },
+        "requirement_text_by_choice": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "allow_none_of_above": {"const": true},
+        "max_clarifications": {"const": 1}
+      }
+    }
+  }
+}

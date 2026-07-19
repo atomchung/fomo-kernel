@@ -106,10 +106,10 @@ def load_pending(root, session_id):
     if not os.path.isdir(base):
         raise SessionError(f"pending session not found: {session_id}")
     out = {"session_id": session_id, "path": base}
-    for name in ("plan", "answers", "narrative"):
+    for name in ("plan", "answers", "narrative", "question-surfaces", "question-presentations"):
         path = os.path.join(base, name + ".json")
         if os.path.exists(path):
-            out[name] = read_json(path)
+            out[name.replace("-", "_")] = read_json(path)
     for key, filename in (("card-private-preview", "card-private-preview.md"),
                           ("card-public-preview", "card-public-preview.md")):
         path = os.path.join(base, filename)
@@ -435,6 +435,10 @@ def _commit_bundle_locked(root, sessions, bundle, private_md, public_md, private
             "card-private.md": private_md if private_md.endswith("\n") else private_md + "\n",
             "card-public.md": public_md if public_md.endswith("\n") else public_md + "\n",
         }
+        if bundle.get("question_surfaces") is not None:
+            artifacts["question-surfaces.json"] = pretty(bundle["question_surfaces"])
+        if bundle.get("question_presentations") is not None:
+            artifacts["question-presentations.json"] = pretty(bundle["question_presentations"])
         if private_html is not None:
             artifacts["card-private.html"] = private_html if private_html.endswith("\n") else private_html + "\n"
         manifest = {name: _artifact_hash(text) for name, text in artifacts.items()}

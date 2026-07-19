@@ -185,6 +185,9 @@
               "null"
             ]
           },
+          "question_opportunity": {
+            "$ref": "question-opportunity.schema.json"
+          },
           "revisit_id": {
             "type": [
               "string",

@@ -6,4 +6,4 @@ Use when the user has no data and wants to see the product experience.
 
 Label every conversation and card clearly as demo data. Do not read from or project into the user's production `~/.trade-coach` state, and never mix demo theses into production memory.
 
-Declare capabilities and record user-visible questions and cards following `references/interaction-delivery.md`. Return the private demo card inline following `references/card-delivery.md`. Return the public demo card only when the user asks for a shareable version.
+Declare capabilities and record user-visible questions and cards following `references/interaction-delivery.md`. With the same isolated `--root`, validate eligible private surfaces through `resume --question-surfaces`, or use the unchanged engine fallback; this does not change the demo queue, answers, or one-rule lifecycle. Return the private demo card inline following `references/card-delivery.md`. Return the public demo card only when the user asks for a shareable version.

@@ -1,8 +1,8 @@
 # Surface adapter contract
 
-Claude, Codex, Cursor, and future hosts use the same Review Plan, schemas, and rendered artifacts. A host adapter may choose controls and rendering channels; it may not duplicate or reinterpret review logic.
+Claude, Codex, Cursor, and future hosts use the same Review Plan, schemas, validated question presentations, and rendered artifacts. A host adapter may choose controls and rendering channels; it may not duplicate or reinterpret review logic.
 
-The engine already fail-closes on review content: `preview`/`finalize` reject a missing required answer or an absent commitment. This contract covers only what the engine cannot see — whether the host actually *presented* each card and the weekly opening memory to the user. That evidence is recorded in a local presentation trace.
+The engine already fail-closes on review content: `preview`/`finalize` reject a missing required answer, invalid private motive provenance, or an absent commitment. This contract also covers what the engine cannot see — whether the host actually *presented* each question, card, and weekly opening memory to the user. That evidence is recorded in a local presentation trace.
 
 ## Declare capabilities once
 
@@ -14,28 +14,50 @@ python3 tools/ux_receipt.py start \
   --question-mode plain_text --card-mode markdown_inline
 ```
 
-The tool writes the trace inside the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`) — the same trust boundary as the canonical ledger. It is never committed and never published; placement, not scrubbing, is what keeps trade content safe, so the trace carries only session and capability/delivery identifiers and needs no per-field content review. After an interruption, append to the existing trace with the same `--session-id`; do not start a new one. (Tests and inspection pass `--state-root` to redirect it.)
+The tool writes the trace inside the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`) — the same trust boundary as the canonical ledger. It is never committed and never published. Question events are also mechanically restricted to mode, surface source, and an opaque digest; they cannot carry the stem, options, ticker, thesis, user statement, or interpretation. After an interruption, append to the existing trace with the same `--session-id`; do not start a new one. (Tests and inspection pass `--state-root` to redirect it.)
+
+## Bind a private surface or the engine fallback
+
+The Review Plan keeps display-ready `question` and `options` for every queue row. `add_thesis` and `headline_motive` may additionally carry an engine-owned `question_opportunity`; `due_revisit`, `rule_breach`, and recent-exit `revisit` remain engine-rendered.
+
+For an eligible opportunity, the agent may author only the private stem, surface labels/descriptions, allowed grounding references, `none_of_above` copy, and one optional clarification in `schemas/question-surface.schema.json`. Keep that candidate outside the repository and bind it through the existing lifecycle entry point before showing it:
+
+```bash
+python3 engine/review.py resume --session-id <session_id> \
+  --question-surfaces /tmp/fomo-kernel-question-surfaces.json
+```
+
+A successful bind returns `question_presentations` with `source=validated_dynamic` and freezes the exact artifact in pending state. Every later `resume` returns the same bytes; a different candidate for that session fails closed. If generation, parsing, grounding, one-to-one mapping, order, or payload-semantics validation fails, use the returned `source=engine_fallback` presentation. A host that cannot author dynamic copy may call `resume --session-id` and use the unchanged fallback directly. The route, kind, trigger, priority, required status, queue budget, canonical values, payload requirements, numeric facts, and identities never enter the authored surface.
 
 ## Present each required question once
 
-Ask one required question at a time, in queue order. With `native_options`, use one single-choice control whose options preserve the engine's label, description, value, and order. When native controls are unavailable, use this exact structural fallback without merging, reordering, or rewriting the options:
+Ask one resolved `question_presentations` item at a time, in queue order. With `native_options`, use one single-choice control whose options preserve the resolved label, description, engine-owned semantic anchor, non-empty requirement text, canonical value, and order. When native controls are unavailable, use this exact structural fallback without merging, reordering, or rewriting the resolved presentation:
 
 ```text
 <question>
 
-A. <label> — <description>
-B. <label> — <description>
+A. <label> — <description> — <semantic anchor> — <requirement text when non-empty>
+B. <label> — <description> — <semantic anchor> — <requirement text when non-empty>
 ...
+
+<none_of_above label and description when present>
 
 Reply with one option label: A, B, ...
 ```
 
-Letters are a presentation mapping only; write the mapped engine `value` to `answers.json`. An invalid or ambiguous reply is not an answer: clarify inside the same question without displaying a second option set. The engine validates answer completeness and choice validity at `preview`; this contract does not re-check them. Record how a question was surfaced so a silent mode downgrade stays visible:
+Letters are a presentation mapping only; write the mapped engine `value` to `answers.json`. `semantic_anchor`, `payload_requirements`, and `requirement_text` are engine-owned and cannot be replaced by custom wording. An invalid or ambiguous reply is not an answer. If the resolved presentation includes a clarification, the agent may use that exact frozen wording once inside the same `question_id`, without displaying a second option set; it may not improvise another follow-up.
+
+`none_of_above` is not a new canonical choice. Preserve the user's exact words in `response_provenance.user_statement`. A mapped interpretation requires `summary_author=ai_interpretation`, mapping confidence, and explicit user confirmation. If the mapping remains ambiguous, write `choice=skip`, preserve the exact statement in `note`, and mark the private provenance low-confidence and unresolved. Existing gates still apply: `new_evidence` requires claim and source, while planned-tranche and valuation-change answers require their short note.
+
+The engine validates answer completeness, choice validity, provenance, and the clarification limit at `preview`; the local trace does not duplicate those checks. Record only how the frozen surface was presented so mode or copy drift stays visible:
 
 ```bash
 python3 tools/ux_receipt.py event --session-id <session_id> \
-  --event question_presented --mode plain_text
+  --event question_presented --mode plain_text \
+  --surface-source validated_dynamic --surface-digest <surface_digest>
 ```
+
+`native_options` and `plain_text` use the same `surface_digest` and write the same canonical answer. The trace rejects extra question-content fields.
 
 On `weekly_review`, surface the opening memory before the first question or card — `prior_commitment` when a prior rule exists, otherwise `prior_skip` — and record it. Record `exit_reason` or `due_revisit` too when the Review Plan carries them:
 
@@ -58,4 +80,4 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 python3 tools/ux_receipt.py verify --session-id <id>
 ```
 
-`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. For owner dogfood, append `owner_verdict` after the final card and verify with `--require-owner-verdict`; a weekly pass requires controls, card visibility, and remembered context all to pass.
+`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. For owner dogfood, append `owner_verdict` after the final card and verify with `--require-owner-verdict`; a weekly pass requires controls, card visibility, and remembered context all to pass. When a validated dynamic surface was presented, the verdict must also record whether the question felt specific and whether an available answer fit, using `--question-specificity` and `--answer-fit`. These owner judgments are product gates, not schema-derived claims.

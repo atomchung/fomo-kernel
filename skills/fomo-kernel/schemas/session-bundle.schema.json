@@ -220,6 +220,13 @@
     "observations": {
       "type": "array"
     },
+    "question_surfaces": {
+      "$ref": "question-surface.schema.json"
+    },
+    "question_presentations": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
     "revisit_resolutions": {
       "type": "array",
       "items": {
