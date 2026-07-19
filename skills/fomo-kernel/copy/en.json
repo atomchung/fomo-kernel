@@ -14,6 +14,9 @@
     "numbers": "The account for this review",
     "performance": "Relative performance",
     "trades": "Best and worst realized trades",
+    "instruments": "Instrument impact · ranked by money",
+    "attribution": "Return attribution · theme exposure or selection",
+    "improve": "Improve · preserve strengths, remove process loss",
     "strength": "One thing you did well",
     "hole": "The biggest behavioral leak",
     "motive": "The thesis behind the add",
@@ -22,6 +25,16 @@
     "patterns": "What the problem ledger remembers",
     "etf": "ETF and portfolio structure",
     "rule": "Change only this next time"
+  },
+  "kpi": {
+    "pnl": "Total P&L",
+    "pnl_sub": "Realized {realized} · unrealized {unrealized}",
+    "payoff": "Realized payoff ratio",
+    "payoff_sub": "Average win {win} vs loss {loss}",
+    "excess": "Benchmark excess",
+    "excess_sub": "β {beta}",
+    "alpha": "Annualized alpha",
+    "alpha_unreliable": "not yet statistically credible"
   },
   "dimensions": {
     "exit_discipline": "exit discipline",

@@ -179,6 +179,75 @@ def test_sparkline_renders_only_with_curve_points():
     assert SVG_RE.sub("", html) == html_note
 
 
+# #247: engine fields that light up the card-template rich layout. Values are
+# synthetic but shaped exactly like trade_recap output on the committed mocks.
+_RICH_CARD_FIELDS = {
+    "ticker_diagnosis": [
+        {"ticker": "PLTR", "impact": 76647.0, "tags": ["⚠押太重:佔組合 49%"]},
+        {"ticker": "NVDA", "impact": 58524.0, "tags": ["✓紀律持有:賺 150%"]},
+        {"ticker": "AMD", "impact": -1000.0, "tags": ["— 大致中性"]},
+    ],
+    "what_if": {"label": "AI 概念股(跨板塊)", "mval": 170963.0, "pct": 0.983,
+                "drop30": 51289.0, "drop50": 85482.0},
+    "prescriptions": [
+        {"kind": "保留強項", "text": "保留研究流程，別讓集中度吃掉它。"},
+        {"kind": "砍損耗", "text": "沒有新證據就往虧損倉加碼，是第一個要移除的行為。"},
+    ],
+    "alpha_beta_breakdown": {
+        "bench": "SPY", "beta": 2.05, "alpha_ann": 0.33, "credible": False,
+        "port_tot": 3.21, "spy_tot": 0.60, "excess_vs_spy": 2.61,
+        "benchmarks": {"SPY": {"excess": 2.61}, "QQQ": {"excess": 2.43},
+                       "SOXX": {"excess": 0.96}},
+    },
+}
+
+
+def _rich_bundle(language):
+    bundle = copy.deepcopy(_session(language)["bundle"])
+    bundle["engine_card"].update(copy.deepcopy(_RICH_CARD_FIELDS))
+    return bundle
+
+
+def test_rich_layout_renders_template_blocks_from_shared_facts():
+    """#247: engine facts render as the card-template layout — KPI grid, ranked
+    instrument bars, stress row, attribution bars, improve rows — and every
+    rich number appears in BOTH surfaces (one _card_structure facts source)."""
+    bundle = _rich_bundle("zh-TW")
+    html = card_renderer.render_html(bundle)
+    markdown = card_renderer.render_private(bundle)
+    assert 'class="grid4"' in html and html.count('<div class="m">') == 4
+    assert html.count('<div class="trow">') == 3
+    assert html.count('class="track"') == 3
+    assert 'class="attr-head"' in html and html.count('<div class="arow">') == 2
+    assert html.count('<div class="rx">') == 2
+    # The headline already carries the primary-benchmark excess; comparator
+    # rows are the alternatives only.
+    assert "vs SPY" not in html and "vs QQQ" in html and "vs SOXX" in html
+    for token in ("$+76,647", "$-1,000", "+243pp", "+96pp", "撐得住嗎", "砍損耗"):
+        assert token in html, f"missing from HTML: {token}"
+        assert token in markdown, f"missing from Markdown: {token}"
+    # Alpha below the credibility gate stays starred with its caveat.
+    assert "+33% *" in html and "* 統計上還不可信" in html
+
+
+def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
+    """The stock fixture lacks the rich fields: KPI tiles still come from the
+    overview, and every other rich block stays absent instead of inventing."""
+    html = _session("zh-TW")["html"]
+    assert 'class="grid4"' in html
+    for marker in ('class="trow"', 'class="attr-head"', 'class="rx"'):
+        assert marker not in html, f"unexpected rich block on plain fixture: {marker}"
+
+
+def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
+    """Engine zh vocabulary (tags, stress, prescriptions) must not leak onto
+    the English card; language-neutral blocks (grid, bars) still render."""
+    html = card_renderer.render_html(_rich_bundle("en"))
+    assert 'class="grid4"' in html and 'class="trow"' in html
+    assert "押太重" not in html and "撐得住嗎" not in html
+    assert 'class="rx"' not in html
+
+
 def test_preview_emits_html_and_finalize_cleans_pending():
     for language in ("zh-TW", "en"):
         run = _session(language)
@@ -277,6 +346,9 @@ def main():
         test_localized_title_from_copy_assets,
         test_engine_numbers_match_markdown_card,
         test_sparkline_renders_only_with_curve_points,
+        test_rich_layout_renders_template_blocks_from_shared_facts,
+        test_rich_layout_degrades_to_plain_sections_when_facts_missing,
+        test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
         test_delivery_contract_exists_and_is_routed,
