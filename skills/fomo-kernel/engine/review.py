@@ -1432,6 +1432,32 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     return plan
 
 
+# Fields the agent never reads but that inflate every subsequent turn.  The
+# prepare stdout is re-sent by the agent as context on each later turn
+# (narrative authoring, preview, finalize, and any retries), so anything the
+# flow contract does not read is pure ballast multiplied by the turn count.
+# engine_card and the bulk of engine_state are agent-unreadable by rule #1
+# (the agent must never compute or alter a number) and are reloaded from the
+# on-disk pending bundle by preview/finalize, so dropping them from the stdout
+# copy is lossless for the agent.  The only engine_state field the flow reads
+# directly is snapshot_reconciliation (SKILL.md, flows/snapshot-review.md,
+# references/data-contract.md), which is preserved.
+_AGENT_PLAN_DROP = ("engine_card", "engine_state")
+
+
+def _plan_for_agent(plan):
+    """Project the Review Plan down to what the flow contract reads.
+
+    The full plan (with engine_card/engine_state) is still persisted on disk by
+    save_pending; this only trims the copy echoed to stdout for the agent.
+    """
+    projection = {key: value for key, value in plan.items() if key not in _AGENT_PLAN_DROP}
+    reconciliation = (plan.get("engine_state") or {}).get("snapshot_reconciliation")
+    if reconciliation is not None:
+        projection["engine_state"] = {"snapshot_reconciliation": reconciliation}
+    return projection
+
+
 def cmd_prepare(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     language = args.language
@@ -1499,7 +1525,8 @@ def cmd_prepare(args):
     fingerprint = _fingerprint(paths, language, route, prepared=prepared, nonce=args.session_nonce or "")
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
-        _emit({"status": "resumed", "session_id": existing["session_id"], "review_plan": existing,
+        _emit({"status": "resumed", "session_id": existing["session_id"],
+               "review_plan": _plan_for_agent(existing),
                "next_action": "ask question_queue, then run preview"})
         return
     if prepared is None:
@@ -1539,7 +1566,8 @@ def cmd_prepare(args):
         # discover on their own; without this handoff they report "pending session
         # not found" against the default root.
         next_action += f"; test drive is isolated — pass --root {root} to every later command"
-    _emit({"status": "prepared", "session_id": plan["session_id"], "review_plan": plan,
+    _emit({"status": "prepared", "session_id": plan["session_id"],
+           "review_plan": _plan_for_agent(plan),
            "next_action": next_action})
 
 
@@ -1899,7 +1927,12 @@ def cmd_finalize(args):
 def cmd_resume(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     if args.session_id:
-        _emit(session.load_pending(root, args.session_id))
+        bundle = session.load_pending(root, args.session_id)
+        if isinstance(bundle.get("plan"), dict):
+            # Same projection as prepare stdout: the resumed agent re-reads the
+            # plan into context, so the engine blobs stay on disk here too.
+            bundle = dict(bundle, plan=_plan_for_agent(bundle["plan"]))
+        _emit(bundle)
         return
     base = os.path.join(root, ".pending")
     pending = [] if not os.path.isdir(base) else sorted(

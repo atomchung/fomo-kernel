@@ -97,12 +97,25 @@ def _run(*args, env=None):
                           capture_output=True, text=True, timeout=60, env=env)
 
 
+def _pending_plan(root, stdout):
+    """Read the full persisted plan from the pending bundle on disk.
+
+    prepare's stdout now carries only the agent-facing projection: engine_card
+    and most of engine_state are trimmed to cut the context the agent re-sends
+    every turn.  The canonical full plan lives in the pending bundle — where
+    preview/finalize read it, and where these engine-correctness assertions
+    must read it too.
+    """
+    session_id = json.loads(stdout)["review_plan"]["session_id"]
+    return session_engine.load_pending(str(root), session_id)["plan"]
+
+
 def _prepare(tmp, root, language="zh-TW"):
     card, state = _artifacts(tmp)
     run = _run("prepare", "--root", root, "--language", language,
                "--card-json", card, "--state-json", state)
     assert run.returncode == 0, run.stdout + run.stderr
-    return json.loads(run.stdout)["review_plan"]
+    return _pending_plan(root, run.stdout)
 
 
 def _trade_csv(tmp, future=False):
@@ -148,7 +161,7 @@ def _snapshot_prepare(tmp, root, payload=None, language="en", name="positions.js
     run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", path,
                "--root", root, "--language", language)
     assert run.returncode == 0, run.stdout + run.stderr
-    return json.loads(run.stdout)["review_plan"], path
+    return _pending_plan(root, run.stdout), path
 
 
 def _snapshot_answers(plan, commitment=None):
@@ -203,7 +216,7 @@ def _prepare_with_trades(tmp, root, language="zh-TW", nonce=""):
         args.extend(["--session-nonce", nonce])
     run = _run(*args)
     assert run.returncode == 0, run.stdout + run.stderr
-    return json.loads(run.stdout)["review_plan"], csv_path, card, state
+    return _pending_plan(root, run.stdout), csv_path, card, state
 
 
 def _exit_answers(plan, commitment=None):
@@ -1098,7 +1111,7 @@ def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
         later = _run("prepare", csv_path, "--root", root, "--card-json", card,
                      "--state-json", state, "--session-nonce", "history-upgrade")
         assert later.returncode == 0, later.stdout + later.stderr
-        later_plan = json.loads(later.stdout)["review_plan"]
+        later_plan = _pending_plan(root, later.stdout)
         assert later_plan["route"] == "weekly_review"
         later_state, later_card = later_plan["engine_state"], later_plan["engine_card"]
         positions = later_state["holdings"]["positions"]
@@ -1189,7 +1202,7 @@ def test_snapshot_full_history_keeps_stable_thesis_and_current_surfaces():
         run = _run("prepare", history, "--root", root, "--card-json", card,
                    "--state-json", state, "--session-nonce", "full-history")
         assert run.returncode == 0, run.stdout + run.stderr
-        upgraded = json.loads(run.stdout)["review_plan"]
+        upgraded = _pending_plan(root, run.stdout)
         positions = upgraded["engine_state"]["holdings"]["positions"]
         assert positions["PLTR"]["observed_cycle_id"] == "PLTR#2026-06-01#1"
         assert positions["PLTR"]["cycle_id"].endswith("#2026-07-01#1")
@@ -1301,7 +1314,7 @@ def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
         run = _run("prepare", history, "--root", root, "--card-json", card,
                    "--state-json", state, "--session-nonce", "reopen")
         assert run.returncode == 0, run.stdout + run.stderr
-        upgraded = json.loads(run.stdout)["review_plan"]
+        upgraded = _pending_plan(root, run.stdout)
         position = upgraded["engine_state"]["holdings"]["positions"]["PLTR"]
         assert position["cycle_id"] == "PLTR#2026-07-03#2"
         assert position["origin"] == "trades" and position["left_truncated"] is False
@@ -1332,6 +1345,49 @@ def test_prepare_is_resumable_without_rerunning_artifacts():
         card, state = _artifacts(tmp)
         again = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
         assert json.loads(again.stdout)["status"] == "resumed"
+
+
+def test_stdout_plan_is_projected_for_the_agent_but_full_on_disk():
+    """#234: the agent re-sends the emitted plan as context on every later turn,
+    so prepare/resume stdout must carry only the fields the flow contract reads.
+    engine_card and engine_state stay in the pending bundle on disk, where
+    preview/finalize reload them. The one engine_state field the flow reads
+    directly — snapshot_reconciliation — must survive the projection."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        run = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        # strict=True: the trimmed payload must be clean JSON (the engine blobs
+        # were what carried the bare control character).
+        stdout_plan = json.loads(run.stdout, strict=True)["review_plan"]
+        assert "engine_card" not in stdout_plan
+        assert "engine_state" not in stdout_plan
+        for key in ("session_id", "question_queue", "card_plan", "state_snapshot",
+                    "missing_thesis_positions", "flow_path"):
+            assert key in stdout_plan, key
+        disk = session_engine.load_pending(str(root), stdout_plan["session_id"])["plan"]
+        assert "engine_card" in disk and "engine_state" in disk, \
+            "the canonical pending bundle must keep the full plan"
+
+        # The resumed-prepare and resume paths re-emit the plan; both project.
+        again = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        resumed = json.loads(again.stdout, strict=True)
+        assert resumed["status"] == "resumed"
+        assert "engine_card" not in resumed["review_plan"]
+        assert "engine_state" not in resumed["review_plan"]
+        cmd = _run("resume", "--root", root, "--session-id", stdout_plan["session_id"])
+        resumed_bundle = json.loads(cmd.stdout, strict=True)
+        assert "engine_card" not in resumed_bundle["plan"]
+        assert resumed_bundle["plan"]["question_queue"] == stdout_plan["question_queue"]
+
+        # Unit pin: snapshot_reconciliation is preserved, everything else drops.
+        projected = review_engine._plan_for_agent({
+            "session_id": "s", "engine_card": {"x": 1},
+            "engine_state": {"holdings": {"y": 2},
+                             "snapshot_reconciliation": {"events": []}}})
+        assert projected == {"session_id": "s",
+                             "engine_state": {"snapshot_reconciliation": {"events": []}}}
 
 
 def test_session_nonce_starts_a_distinct_session():
@@ -2256,7 +2312,7 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         for nonce in ("returning-review-a", "returning-review-b"):
             returning = _run("prepare", "--root", root, "--card-json", card, "--state-json", state,
                              "--session-nonce", nonce)
-            returning_plan = json.loads(returning.stdout)["review_plan"]
+            returning_plan = _pending_plan(root, returning.stdout)
             assert returning_plan["route"] == "weekly_review"
             assert returning_plan["state_snapshot"]["review_progress"] == {
                 "completed_reviews_before_start": 1, "returning": True,
@@ -3386,7 +3442,7 @@ def _prepare_dated(tmp, root, date_end, tag, language="zh-TW"):
     run = _run("prepare", csv_path, "--root", root, "--language", language,
                "--card-json", card_path, "--state-json", dated)
     assert run.returncode == 0, run.stdout + run.stderr
-    return json.loads(run.stdout)["review_plan"]
+    return _pending_plan(root, run.stdout)
 
 
 def _finalize(tmp, root, plan, answers, tag):
