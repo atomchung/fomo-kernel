@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Deterministic probes for the cross-client surface adapter receipt."""
+"""Deterministic probes for the slim cross-client presentation trace.
+
+Scope mirrors ux_receipt.py: prove that each engine-rendered card actually
+reached the user (and the weekly opening memory), and nothing more. Answer and
+commitment completeness are the engine's job (test_review_v2 / thesis) and are
+deliberately not re-tested here.
+"""
 
 import importlib.util
 import json
@@ -21,40 +27,44 @@ module_spec.loader.exec_module(ux_receipt)
 
 def declaration(**overrides):
     value = {
-        "version": 1,
+        "version": 2,
         "event": "capabilities_declared",
         "session_id": "session-230",
         "client": "codex-desktop",
         "route": "first_review",
         "question_modes": ["plain_text"],
         "card_modes": ["markdown_inline"],
-        "required_question_ids": ["q-1"],
-        "expected_memory": [],
     }
     value.update(overrides)
     return value
 
 
 def row(event, **values):
-    return {"version": 1, "event": event, "session_id": "session-230", **values}
+    return {"version": 2, "event": event, "session_id": "session-230", **values}
 
 
 def good_markdown_rows():
     return [
         declaration(),
-        row("question_presented", question_id="q-1", mode="plain_text"),
-        row("question_answered", question_id="q-1"),
         row("artifact_generated", stage="preview", artifact_path="/tmp/card-private-preview.md"),
         row("card_presented", stage="preview", mode="markdown_inline"),
-        row("commitment_answered"),
         row("artifact_generated", stage="final", artifact_path="/tmp/card-private.md"),
         row("card_presented", stage="final", mode="markdown_inline"),
     ]
 
 
+def weekly_rows():
+    rows = good_markdown_rows()
+    rows[0] = declaration(route="weekly_review")
+    rows.insert(1, row("memory_presented", memory_kind="prior_commitment"))
+    return rows
+
+
 def assert_has(errors, fragment):
     assert any(fragment in error for error in errors), errors
 
+
+# --- Happy paths --------------------------------------------------------------
 
 def test_known_good_text_fallback_passes():
     assert ux_receipt.verify_rows(good_markdown_rows()) == []
@@ -66,58 +76,127 @@ def test_native_controls_and_widget_pass():
         question_modes=["plain_text", "native_options"],
         card_modes=["markdown_inline", "widget"],
     )
-    rows[1]["mode"] = "native_options"
-    rows[4]["mode"] = "widget"
-    rows[7]["mode"] = "widget"
+    rows.insert(1, row("question_presented", mode="native_options"))
+    rows[3]["mode"] = "widget"   # preview card
+    rows[5]["mode"] = "widget"   # final card
     assert ux_receipt.verify_rows(rows) == []
 
 
-def test_artifact_generation_does_not_count_as_card_delivery():
+def test_weekly_opening_memory_passes():
+    assert ux_receipt.verify_rows(weekly_rows()) == []
+
+
+# --- Presentation is not artifact generation ---------------------------------
+
+def test_generated_without_presented_fails():
     rows = good_markdown_rows()
-    del rows[4]
+    del rows[2]  # drop the preview card_presented, keep its artifact
     assert_has(ux_receipt.verify_rows(rows), "preview card_presented must appear exactly once")
 
 
-def test_duplicate_question_interaction_fails():
+def test_card_marked_presented_before_artifact_fails():
     rows = good_markdown_rows()
-    rows.insert(2, row("question_presented", question_id="q-1", mode="plain_text"))
-    assert_has(ux_receipt.verify_rows(rows), "must be presented exactly once")
+    rows[1], rows[2] = rows[2], rows[1]  # card before its artifact
+    assert_has(ux_receipt.verify_rows(rows), "before its artifact existed")
 
 
-def test_receipt_rejects_private_payload_fields():
-    rows = good_markdown_rows()
-    rows[2]["answer"] = "price_only"
-    assert_has(ux_receipt.verify_rows(rows), "forbidden receipt fields")
+def test_final_card_before_preview_card_fails():
+    rows = [good_markdown_rows()[0]] + good_markdown_rows()[3:5] + good_markdown_rows()[1:3]
+    assert_has(ux_receipt.verify_rows(rows), "final card presentation must follow the preview card")
 
 
-def test_widget_capability_requires_explicit_failure_before_markdown_fallback():
+# --- Widget degradation must be explicit -------------------------------------
+
+def test_declared_widget_silent_markdown_fails():
     rows = good_markdown_rows()
     rows[0] = declaration(card_modes=["markdown_inline", "widget"])
     assert_has(ux_receipt.verify_rows(rows), "without recording a failed widget attempt")
-    rows.insert(4, row("widget_attempt_failed", stage="preview"))
-    assert ux_receipt.verify_rows(rows) == []
 
 
-def test_weekly_opening_memory_is_observable():
+def test_declared_widget_with_recorded_failure_passes():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        route="weekly_review",
-        expected_memory=["prior_commitment", "exit_reason", "due_revisit"],
-    )
-    errors = ux_receipt.verify_rows(rows)
-    assert_has(errors, "expected memory 'prior_commitment'")
-    assert_has(errors, "expected memory 'exit_reason'")
-    assert_has(errors, "expected memory 'due_revisit'")
-
-    rows[1:1] = [
-        row("memory_presented", memory_kind="prior_commitment"),
-        row("memory_presented", memory_kind="exit_reason"),
-        row("memory_presented", memory_kind="due_revisit"),
-    ]
+    rows[0] = declaration(card_modes=["markdown_inline", "widget"])
+    rows.insert(1, row("widget_attempt_failed", stage="preview"))
     assert ux_receipt.verify_rows(rows) == []
 
 
-def test_manual_verification_requires_owner_experience_verdict():
+def test_widget_failure_without_capability_fails():
+    rows = good_markdown_rows()
+    rows.insert(1, row("widget_attempt_failed", stage="preview"))
+    assert_has(ux_receipt.verify_rows(rows), "without declared widget capability")
+
+
+# --- Capability / mode declarations ------------------------------------------
+
+def test_missing_universal_fallbacks_fail():
+    rows = good_markdown_rows()
+    rows[0] = declaration(question_modes=["native_options"], card_modes=["widget"])
+    errors = ux_receipt.verify_rows(rows)
+    assert_has(errors, "plain_text as the universal question fallback")
+    assert_has(errors, "markdown_inline as the universal card fallback")
+
+
+def test_undeclared_card_mode_fails():
+    rows = good_markdown_rows()
+    rows[2]["mode"] = "widget"  # not declared
+    assert_has(ux_receipt.verify_rows(rows), "undeclared mode")
+
+
+def test_undeclared_question_mode_fails():
+    rows = good_markdown_rows()
+    rows.insert(1, row("question_presented", mode="native_options"))  # not declared
+    assert_has(ux_receipt.verify_rows(rows), "question used undeclared mode")
+
+
+# --- Weekly opening memory ordering ------------------------------------------
+
+def test_weekly_missing_opener_fails():
+    rows = good_markdown_rows()
+    rows[0] = declaration(route="weekly_review")
+    assert_has(ux_receipt.verify_rows(rows), "exactly one prior commitment or skip opener")
+
+
+def test_weekly_opener_after_first_card_fails():
+    rows = good_markdown_rows()
+    rows[0] = declaration(route="weekly_review")
+    rows.append(row("memory_presented", memory_kind="prior_skip"))  # after both cards
+    assert_has(ux_receipt.verify_rows(rows), "presented after the first card")
+
+
+# --- Declaration integrity ---------------------------------------------------
+
+def test_session_id_must_be_consistent():
+    rows = good_markdown_rows()
+    rows[2]["session_id"] = "another-session"
+    assert_has(ux_receipt.verify_rows(rows), "declared session_id")
+
+
+def test_unknown_route_fails():
+    rows = good_markdown_rows()
+    rows[0] = declaration(route="bogus_route")
+    assert_has(ux_receipt.verify_rows(rows), "unsupported route")
+
+
+def test_version_mismatch_fails():
+    rows = good_markdown_rows()
+    rows[2]["version"] = 1
+    assert_has(ux_receipt.verify_rows(rows), "unsupported version")
+
+
+def test_missing_declaration_first_fails():
+    rows = good_markdown_rows()[1:]  # no capabilities_declared row
+    assert_has(ux_receipt.verify_rows(rows), "capabilities_declared event as its first row")
+
+
+# --- Owner verdict / manual gate ---------------------------------------------
+
+def test_owner_verdict_must_follow_final_card():
+    rows = good_markdown_rows()
+    rows.insert(4, row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
+    assert_has(ux_receipt.verify_rows(rows), "must follow the final card presentation")
+
+
+def test_manual_verification_requires_owner_verdict():
     rows = good_markdown_rows()
     assert_has(
         ux_receipt.verify_rows(rows, require_owner_verdict=True),
@@ -127,10 +206,8 @@ def test_manual_verification_requires_owner_experience_verdict():
     assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
 
-def test_manual_weekly_verification_requires_memory_to_feel_present():
-    rows = good_markdown_rows()
-    rows[0] = declaration(route="weekly_review", expected_memory=["prior_skip"])
-    rows.insert(1, row("memory_presented", memory_kind="prior_skip"))
+def test_manual_weekly_requires_memory_verdict():
+    rows = weekly_rows()
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="fail"))
     assert_has(
         ux_receipt.verify_rows(rows, require_owner_verdict=True),
@@ -140,44 +217,68 @@ def test_manual_weekly_verification_requires_memory_to_feel_present():
     assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
 
-def test_cli_writes_only_bounded_receipt_fields():
+# --- CLI end to end ----------------------------------------------------------
+
+def test_cli_writes_trace_into_protected_state_root():
     with tempfile.TemporaryDirectory() as tmp:
-        receipt = pathlib.Path(tmp) / "ux.jsonl"
+        common = ["--session-id", "session-230", "--state-root", tmp]
         start = subprocess.run(
-            [
-                sys.executable, str(TOOL), "start", "--path", str(receipt),
-                "--session-id", "session-230", "--client", "codex-desktop",
-                "--route", "first_review", "--question-mode", "plain_text",
-                "--card-mode", "markdown_inline", "--required-question", "q-1",
-            ],
-            capture_output=True,
-            text=True,
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "codex-desktop", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True,
         )
         assert start.returncode == 0, start.stderr
-        event = subprocess.run(
-            [
-                sys.executable, str(TOOL), "event", "--path", str(receipt),
-                "--event", "question_presented", "--question-id", "q-1",
-                "--mode", "plain_text",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        assert event.returncode == 0, event.stderr
-        lines = [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()]
-        assert set(lines[1]) == {"version", "event", "session_id", "question_id", "mode"}
+        receipt = pathlib.Path(tmp) / "ux" / "session-230.jsonl"
+        assert receipt.is_file(), "trace must live under <state-root>/ux/"
 
-        rejected = subprocess.run(
-            [
-                sys.executable, str(TOOL), "event", "--path", str(receipt),
-                "--event", "question_answered", "--question-id", "my answer has spaces",
-            ],
-            capture_output=True,
-            text=True,
+        # start refuses to overwrite an existing trace
+        again = subprocess.run(
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "codex-desktop", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True,
         )
-        assert rejected.returncode == 2
-        assert "not free text" in rejected.stderr
+        assert again.returncode == 2 and "refusing to overwrite" in again.stderr
 
+        for args in (
+            ["--event", "artifact_generated", "--stage", "preview", "--artifact-path", "/tmp/p.md"],
+            ["--event", "card_presented", "--stage", "preview", "--mode", "markdown_inline"],
+            ["--event", "artifact_generated", "--stage", "final", "--artifact-path", "/tmp/f.md"],
+            ["--event", "card_presented", "--stage", "final", "--mode", "markdown_inline"],
+        ):
+            done = subprocess.run(
+                [sys.executable, str(TOOL), "event", *common, *args],
+                capture_output=True, text=True,
+            )
+            assert done.returncode == 0, done.stderr
+
+        verified = subprocess.run(
+            [sys.executable, str(TOOL), "verify", *common],
+            capture_output=True, text=True,
+        )
+        assert verified.returncode == 0, verified.stderr
+        assert json.loads(verified.stdout)["status"] == "pass"
+
+
+def test_cli_rejects_undeclared_stage_choice():
+    # argparse choices constrains stage/mode/route/memory-kind at the CLI edge.
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "s", "--state-root", tmp,
+             "--client", "c", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, check=True,
+        )
+        bad = subprocess.run(
+            [sys.executable, str(TOOL), "event", "--session-id", "s", "--state-root", tmp,
+             "--event", "card_presented", "--stage", "AAPL 100@150", "--mode", "markdown_inline"],
+            capture_output=True, text=True,
+        )
+        assert bad.returncode != 0 and "invalid choice" in bad.stderr
+
+
+# --- Contract mirror ---------------------------------------------------------
 
 def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
     text = SPEC.read_text(encoding="utf-8")
@@ -187,6 +288,7 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "Artifact generation is not presentation",
         "A file path or attachment without inline card content is not presentation",
         "--require-owner-verdict",
+        "protected state directory",
     ):
         assert fragment in text, fragment
 

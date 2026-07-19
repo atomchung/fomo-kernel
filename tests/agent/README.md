@@ -12,9 +12,9 @@ Implementation authority is [docs/eval-design.md](../../docs/eval-design.md). Th
 
 - `check_card.py`: deterministic card invariants from the card specification and eval design.
 - `check_state.py`: finalization and trajectory artifacts not already owned by `coach.py` or JSON contract tests.
-- `../../skills/fomo-kernel/tools/ux_receipt.py`: privacy-safe host capability and generated-versus-presented trajectory receipt.
+- `../../skills/fomo-kernel/tools/ux_receipt.py`: local presentation trace — host capability plus generated-versus-presented card evidence, stored in the protected state dir (`~/.trade-coach/ux/`).
 - `../test_checkers_offline.py`: mutation probes that prove known-good artifacts pass and intentionally broken artifacts fail.
-- `../test_interaction_trajectory.py`: deterministic native-control, text-fallback, card-delivery, and weekly-memory receipt probes.
+- `../test_interaction_trajectory.py`: deterministic native-control, text-fallback, card-delivery, and weekly-memory presentation-trace probes.
 - `judge_narrative.py`: optional narrative-quality rubric.
 - `run_judge_eval.py`: mutation probes for the judge fixtures.
 - `fixtures/`: known-good and intentionally broken card examples.
