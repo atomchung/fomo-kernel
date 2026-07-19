@@ -3823,6 +3823,60 @@ def test_all_json_schemas_parse():
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
 
 
+def test_cadence_classification_is_span_driven_and_fails_safe():
+    """#237: the cadence tier keys off the span between reviews. A first review,
+    a snapshot opening check, or any span past the 5-day threshold warrants the
+    full story card; a short-span return is a light high-frequency check. Any
+    unmeasurable span fails safe to full so nothing is silently hidden."""
+    rv = review_engine
+    prev = {"date_end": "2026-07-01"}
+    # No prior boundary to measure against -> full, tagged with the reason.
+    for route in ("first_review", "snapshot_review"):
+        cad = rv._cadence(route, "2026-07-14", prev)
+        assert cad["tier"] == "full" and cad["basis"] == route
+        assert cad["span_days"] is None and cad["threshold_days"] == 5
+        assert cad["override"] is None
+    # Threshold is inclusive: 5 days is still light, 6 tips over to full.
+    assert rv._cadence("weekly_review", "2026-07-06", prev) == {
+        "tier": "light", "span_days": 5, "threshold_days": 5,
+        "basis": "span", "override": None}
+    assert rv._cadence("weekly_review", "2026-07-07", prev)["tier"] == "full"
+    assert rv._cadence("weekly_review", "2026-07-07", prev)["span_days"] == 6
+    # Same-day re-review is the lightest case; an out-of-order resend clamps to
+    # 0 rather than reading as a long span.
+    assert rv._cadence("weekly_review", "2026-07-01", prev)["span_days"] == 0
+    assert rv._cadence("weekly_review", "2026-06-20", prev)["span_days"] == 0
+    assert rv._cadence("weekly_review", "2026-06-20", prev)["tier"] == "light"
+    # Returning with no comparable boundary, or unparseable/missing dates -> full.
+    no_prior = rv._cadence("weekly_review", "2026-07-14", None)
+    assert no_prior["tier"] == "full" and no_prior["basis"] == "no_prior_boundary"
+    assert rv._cadence("weekly_review", "garbage", prev)["tier"] == "full"
+    assert rv._cadence("weekly_review", "2026-07-06", {"date_end": None})["tier"] == "full"
+    # The span helper is standalone and honest about missing inputs.
+    assert rv._review_span_days("2026-07-06", prev) == 5
+    assert rv._review_span_days(None, prev) is None
+    assert rv._review_span_days("2026-07-06", {}) is None
+
+
+def test_cadence_tier_is_wired_into_the_review_plan():
+    """#237: the tier reaches the Review Plan's state_snapshot for both a first
+    review (full) and a short-span return (light), proving the engine wiring —
+    not just the pure classifier — carries it end to end."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "cad1")
+        assert plan1["route"] == "first_review"
+        cad1 = plan1["state_snapshot"]["cadence"]
+        assert cad1["tier"] == "full" and cad1["basis"] == "first_review"
+        assert cad1["span_days"] is None and cad1["threshold_days"] == 5
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "cad1")
+
+        # A 3-day return is a high-frequency check -> light.
+        plan2 = _prepare_dated(tmp, root, "2026-07-17", "cad2")
+        assert plan2["route"] == "weekly_review"
+        cad2 = plan2["state_snapshot"]["cadence"]
+        assert cad2["tier"] == "light" and cad2["basis"] == "span" and cad2["span_days"] == 3
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0
