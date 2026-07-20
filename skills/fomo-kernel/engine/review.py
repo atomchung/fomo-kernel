@@ -1335,8 +1335,16 @@ def _candidate_rules(card, state, language):
         if not rule:
             continue
         seen.add(dim)
-        candidates.append({"id": f"candidate_{len(candidates)}", "dim": dim_id, "rule": rule,
-                           "metric_key": metric, "goal": "down"})
+        candidate = {"id": f"candidate_{len(candidates)}", "dim": dim_id, "rule": rule,
+                     "metric_key": metric, "goal": "down"}
+        # #248: engine-owned grounding ties the reusable rule template to this
+        # period's actual positions (tickers + behavior fact). Omitted when the
+        # dimension has nothing citable; the canonical rule text tracked in
+        # rules.jsonl stays generic either way.
+        grounding = card_renderer.localized_rule_grounding(dim, language, card)
+        if grounding:
+            candidate["grounding"] = grounding
+        candidates.append(candidate)
         if len(candidates) == 3:
             break
     return candidates

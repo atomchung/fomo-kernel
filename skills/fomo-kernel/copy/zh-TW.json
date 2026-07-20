@@ -61,6 +61,12 @@
     "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
     "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。"
   },
+  "rule_grounding": {
+    "position_sizing": "本期實況：最大單一部位 {ticker} 佔 {pct}。",
+    "diversification": "本期實況：前幾大部位 {tickers} 合計佔 {pct}。",
+    "holding_period": "本期實況：{tickers} 同一檔既有短進短出、也有長抱。",
+    "averaging_down": "本期實況：你在虧損部位往下加碼 {count} 次，包括 {tickers}。"
+  },
   "add_choices": {
     "planned_tranche": "事先規劃的分批",
     "new_evidence": "有新的可驗證證據",

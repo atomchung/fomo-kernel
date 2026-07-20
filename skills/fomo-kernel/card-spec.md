@@ -96,7 +96,7 @@ The product coaches process rather than selecting securities. A prescription may
 - outsource a decision layer that consistently destroys value
 - remove a measurable behavioral leak with a mechanical rule
 
-It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule.
+It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule. A candidate may carry an engine-authored `grounding` sentence citing this period's actual positions; the reusable rule text stays generic (it is what rules.jsonl tracks across weeks), and the grounding renders only on private surfaces, never on the share-safe card.
 
 ## Rendering
 

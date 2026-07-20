@@ -194,6 +194,107 @@ def localized_rule(dim, language):
     return (load_copy(language).get("rules") or {}).get(dimension_id(dim))
 
 
+# ── Candidate-rule grounding (#248) ──────────────────────────────────────────
+# The canonical rule text stays a reusable template — it is tracked across
+# weeks in rules.jsonl, so a single period's tickers must never be baked into
+# it. The tie to the user's actual positions travels as a separate
+# engine-authored ``grounding`` sentence instead. Facts come only from
+# existing engine_card output (dims_raw / ticker_diagnosis): no new
+# computation, and a dimension without citable facts omits the sentence
+# rather than printing an empty shell.
+RULE_GROUNDING_TICKER_LIMIT = 2
+
+
+def _grounding_dims(card):
+    dims = {}
+    for row in (card or {}).get("dims_raw") or []:
+        if isinstance(row, dict) and row.get("dim"):
+            dims[dimension_id(row.get("dim"))] = row
+    return dims
+
+
+def _diagnosis_ticker_order(card):
+    """ticker_diagnosis is already |impact|-ranked by the engine; reuse that
+    order so grounding cites the money-relevant names deterministically."""
+    order = []
+    for row in (card or {}).get("ticker_diagnosis") or []:
+        ticker = row.get("ticker") if isinstance(row, dict) else None
+        if isinstance(ticker, str) and ticker and ticker not in order:
+            order.append(ticker)
+    return order
+
+
+def rule_grounding_facts(card, dim_id):
+    """Deterministic per-dimension grounding facts, or ``None`` when the
+    dimension has nothing citable in this period's engine card."""
+    dims = _grounding_dims(card)
+    dim = dims.get(dim_id)
+    if not isinstance(dim, dict):
+        return None
+    if dim_id == "averaging_down":
+        tickers = [t for t in dim.get("tickers") or [] if isinstance(t, str) and t]
+        count = dim.get("count")
+        if not tickers or not isinstance(count, (int, float)) or count < 1:
+            return None
+        ranked = [t for t in _diagnosis_ticker_order(card) if t in set(tickers)]
+        ranked += [t for t in tickers if t not in ranked]
+        return {"tickers": ranked[:RULE_GROUNDING_TICKER_LIMIT], "count": int(count)}
+    if dim_id == "position_sizing":
+        ticker = dim.get("max_ticker")
+        pct = _positive_rate(dim.get("max_pct"))
+        if not isinstance(ticker, str) or not ticker or pct is None:
+            return None
+        return {"tickers": [ticker], "pct": pct}
+    if dim_id == "diversification":
+        # The diversification dimension carries no per-ticker weights of its
+        # own; the sizing dimension's risk weights (same engine card, residual
+        # and allocation-ETF noise already excluded) name the top positions.
+        pct = _positive_rate(dim.get("top3"))
+        weights = (dims.get("position_sizing") or {}).get("risk_weights")
+        if pct is None or not isinstance(weights, dict):
+            return None
+        ranked = sorted((t for t in weights
+                         if isinstance(t, str) and t
+                         and _positive_rate(weights.get(t)) is not None),
+                        key=lambda t: (-float(weights[t]), t))
+        if not ranked:
+            return None
+        return {"tickers": ranked[:3], "pct": pct}
+    if dim_id == "holding_period":
+        tickers = [t for t in dim.get("incon_tickers") or [] if isinstance(t, str) and t]
+        if not tickers:
+            return None
+        return {"tickers": tickers[:RULE_GROUNDING_TICKER_LIMIT]}
+    # exit_discipline (and any future dimension) has no per-ticker fact in the
+    # engine card yet; stay silent rather than inventing a reference.
+    return None
+
+
+def localized_rule_grounding(dim, language, card):
+    """One engine-authored sentence citing this period's actual positions for
+    a candidate rule, or ``None`` when the dimension has no citable facts."""
+    dim_id = dimension_id(dim)
+    facts = rule_grounding_facts(card, dim_id)
+    if not facts:
+        return None
+    copy = load_copy(language)
+    template = (copy.get("rule_grounding") or {}).get(dim_id)
+    if not template:
+        return None
+    tickers = facts.get("tickers") or []
+    joiner = ", " if copy["language"] == "en" else "、"
+    values = {
+        "tickers": joiner.join(tickers),
+        "ticker": tickers[0] if tickers else "",
+        "count": facts.get("count", ""),
+        "pct": f"{facts['pct'] * 100:.0f}%" if facts.get("pct") is not None else "",
+    }
+    try:
+        return template.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
 def _currency(card):
     return ((card.get("currency_meta") or {}).get("aggregate_currency") or "USD").upper()
 
@@ -1327,7 +1428,8 @@ def _card_structure(bundle):
     HTML artifact) consume this single assembly, so the two surfaces cannot
     drift into different content-policy decisions.  Every displayed string is
     produced by the same helpers the Markdown card has always used; section
-    blocks are ``("paragraph" | "bullets", [lines])`` tuples."""
+    blocks are ``("paragraph" | "bullets" | "grounding", [lines])`` tuples
+    (``grounding`` renders as a muted paragraph on the HTML surface)."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
@@ -1464,6 +1566,11 @@ def _card_structure(bundle):
     rule = commitment.get("rule")
     if rule:
         rule_blocks.append(("paragraph", [rule]))
+        # #248: engine-owned sub-line grounding the committed rule in this
+        # period's actual positions; the canonical rule text stays generic.
+        grounding = commitment.get("grounding")
+        if isinstance(grounding, str) and grounding.strip():
+            rule_blocks.append(("grounding", [grounding]))
         if narrative.get("rule_rationale"):
             rule_blocks.append(("paragraph", [narrative["rule_rationale"]]))
     elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
@@ -1711,6 +1818,7 @@ border-radius:var(--rc-radius);padding:16px 18px}
 .rc .hole .panel-label{color:var(--rc-text-danger)}
 .rc .rule .panel-label{color:var(--rc-text-accent)}
 .rc .rule .rmain{font-size:15px;color:var(--rc-text-primary);line-height:1.65;font-weight:500}
+.rc .rule .rground{font-size:13px;color:var(--rc-text-muted);line-height:1.6}
 .rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
 
 # Sections rendered as tinted panels with a semantic-color label instead of a
@@ -1863,7 +1971,8 @@ def render_html(bundle):
             rendered = improve_rows()
         else:
             for index, (kind, rows) in enumerate(section["blocks"]):
-                lead_class = "rmain" if sid == "rule" and index == 0 else None
+                lead_class = ("rmain" if sid == "rule" and index == 0 else
+                              "rground" if kind == "grounding" else None)
                 chunk = _html_block(kind, rows, lead_class)
                 if chunk:
                     rendered.append(chunk)
