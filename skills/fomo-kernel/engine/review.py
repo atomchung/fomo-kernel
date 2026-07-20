@@ -86,11 +86,11 @@ def _engine_version():
         if tag:
             _ENGINE_VERSION = {"id": tag, "source": "file"}
             return _ENGINE_VERSION
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
     try:
         head = subprocess.run(
-            ["git", "-C", root, "rev-parse", "--short", "HEAD"],
+            ["git", "-C", root, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=2,
         )
         if head.returncode == 0 and head.stdout.strip():
@@ -99,7 +99,7 @@ def _engine_version():
                 capture_output=True, text=True, timeout=2,
             )
             _ENGINE_VERSION = {
-                "id": head.stdout.strip(),
+                "id": head.stdout.strip()[:12],
                 "source": "git",
                 "dirty": bool(status.stdout.strip()),
             }

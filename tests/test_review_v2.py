@@ -3813,6 +3813,14 @@ def test_schemas_cover_due_revisit_and_resolutions():
     assert set(breach["items"]["properties"]["decision"]["enum"]) == \
         {"keep_tracking", "revise_rule", "exception"}
     assert "rule_breach_decisions" not in bundle_schema["required"]
+    # #250: engine_version provenance is a published top-level metadata key on
+    # both the plan and the bundle. It must stay optional — older artifacts
+    # predate it, so it is off the required list for replay compatibility.
+    for schema in (plan_schema, bundle_schema):
+        engine_version = schema["properties"]["engine_version"]
+        assert engine_version["required"] == ["id", "source"]
+        assert set(engine_version["properties"]["source"]["enum"]) == {"file", "git", "unknown"}
+        assert "engine_version" not in schema["required"]
 
 
 def test_thesis_updates_preserve_inference_only_fields():
