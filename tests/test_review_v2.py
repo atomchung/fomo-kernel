@@ -3960,6 +3960,14 @@ def test_authoring_contract_mirrors_validation_constants():
         assert narrative_contract["allowed_fields"] == \
             sorted(review_engine.card_renderer.ALLOWED_NARRATIVE)
         assert narrative_contract["required"] == ["headline", "mirror"]
+        # #260: gaps the engine chose not to ask about must stay neutral
+        # coverage facts — the clause is contract surface, so pin its wording.
+        assert narrative_contract["unprompted_gaps"] == (
+            "coverage gaps the engine chose not to ask about "
+            "(e.g. missing_thesis_positions) may appear only as neutral coverage "
+            "facts; do not frame them as the user's negligence, and do not make "
+            "them the central judgment of the headline or mirror"
+        )
 
 
 def test_repair_projections_never_regresses_a_newer_last_state():
