@@ -57,6 +57,7 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Re-asks a confirmed motive only when the engine-owned per-cycle decision cursor advances (another add in that same cycle); thesis identity (`thesis_id`, `event_id`, `revises`) is engine-assigned, content-addressed, and stable across update order, resume, and projection loss.
 - In persist mode, validates every normalized CSV before the first ledger write; cash-flow rows (deposits, dividends, interest, fees, reinvest notices) in the same file are counted and reported, never fatal — only future-dated rows reject the import.
 - Creates a pending session with a stable fingerprint.
+- Stamps a fail-safe `engine_version` provenance marker (a committed VERSION file, else the git short SHA plus a dirty flag, else `unknown`) onto the plan and carries it into the bundle and the private HTML card `<meta>`. It is pure metadata: it never enters narrative, numeric facts, or the public card.
 - Repeated prepare or resume does not refetch prices or re-ingest trades for the same pending review.
 
 ### Agent artifacts

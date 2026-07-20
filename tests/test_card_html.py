@@ -119,6 +119,30 @@ def test_finalize_html_is_structured_not_a_pre_dump():
         assert "<pre" not in html, "old whole-document <pre> dump came back"
 
 
+def test_engine_version_stamped_on_private_card_not_public():
+    """#250: every session/card self-reports which build produced it, as pure
+    metadata — present on the plan, the bundle, and the private HTML card's
+    ``<meta>``, frozen consistently, but never leaked into the share-safe public
+    card or the plain card face."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        plan_ver = run["plan"].get("engine_version")
+        bundle_ver = run["bundle"].get("engine_version")
+        # Present and well-formed on plan + bundle.
+        assert isinstance(plan_ver, dict) and plan_ver.get("id"), "plan missing engine_version.id"
+        assert plan_ver.get("source") in ("file", "git", "unknown"), "bad engine_version.source"
+        # Bundle carries the same stamp the plan froze (one provenance, not two).
+        assert bundle_ver == plan_ver, "bundle engine_version must be frozen from the plan"
+        # Stamped on the private HTML card's metadata, carrying the id.
+        assert '<meta name="engine-version"' in run["html"], "private HTML card missing version meta"
+        assert plan_ver["id"] in run["html"], "private HTML card should carry the version id"
+        # NEVER on the share-safe public card, and never as plain card-face text.
+        public_md = card_renderer.render_public(run["bundle"])
+        assert "engine-version" not in public_md, "version metadata leaked into the public card"
+        assert plan_ver["id"] not in public_md, "version id leaked into the public card"
+        assert "engine-version" not in run["markdown"], "version meta leaked into the markdown card face"
+
+
 def test_html_is_self_contained():
     for language in ("zh-TW", "en"):
         html = _session(language)["html"]
@@ -352,6 +376,7 @@ def main():
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
         test_delivery_contract_exists_and_is_routed,
+        test_engine_version_stamped_on_private_card_not_public,
     ]
     for test in tests:
         test()

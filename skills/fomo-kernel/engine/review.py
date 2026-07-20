@@ -60,6 +60,56 @@ def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+_ENGINE_VERSION = None
+
+
+def _engine_version():
+    """Provenance stamp: which build produced this artifact.
+
+    Pure metadata — it never enters narrative, numeric facts, or the public
+    card. Resolution is fail-safe at every step so a missing git checkout or
+    VERSION file can never break a review:
+
+      1. a committed ``VERSION`` file (what a future release will ship);
+      2. the git short SHA plus a dirty flag;
+      3. ``unknown``.
+
+    Cached per process so repeated prepare/preview/finalize calls agree.
+    """
+    global _ENGINE_VERSION
+    if _ENGINE_VERSION is not None:
+        return _ENGINE_VERSION
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(root, "VERSION"), encoding="utf-8") as handle:
+            tag = handle.read().strip()
+        if tag:
+            _ENGINE_VERSION = {"id": tag, "source": "file"}
+            return _ENGINE_VERSION
+    except OSError:
+        pass
+    try:
+        head = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if head.returncode == 0 and head.stdout.strip():
+            status = subprocess.run(
+                ["git", "-C", root, "status", "--porcelain"],
+                capture_output=True, text=True, timeout=2,
+            )
+            _ENGINE_VERSION = {
+                "id": head.stdout.strip(),
+                "source": "git",
+                "dirty": bool(status.stdout.strip()),
+            }
+            return _ENGINE_VERSION
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _ENGINE_VERSION = {"id": "unknown", "source": "unknown"}
+    return _ENGINE_VERSION
+
+
 def _load_json(path, label):
     try:
         with open(path, encoding="utf-8") as f:
@@ -1452,6 +1502,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     cadence = _cadence(route, state.get("date_end"), previous)
     plan = {
         "schema_version": 2,
+        "engine_version": _engine_version(),
         "session_id": session_id,
         "status": "awaiting_answers",
         "route": route,
@@ -1976,6 +2027,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     commitment = _resolve_commitment(plan, answers) if require_commitment else None
     bundle = {
         "schema_version": 2,
+        "engine_version": plan.get("engine_version") or _engine_version(),
         "session_id": plan["session_id"],
         "route": plan["route"],
         "language": plan["language"],
