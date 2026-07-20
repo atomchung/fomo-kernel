@@ -1461,6 +1461,11 @@ def _authoring_contract(route):
             "digit_ban": ("no digits and no spelled-out numeric magnitudes in any field; "
                           "numbers come only from engine artifacts"),
             "honesty_keys": "cover exactly card_plan.required_honesty_keys",
+            "unprompted_gaps": ("coverage gaps the engine chose not to ask about "
+                                "(e.g. missing_thesis_positions) may appear only as "
+                                "neutral coverage facts; do not frame them as the "
+                                "user's negligence, and do not make them the central "
+                                "judgment of the headline or mirror"),
         },
     }
     if route == "snapshot_review":
