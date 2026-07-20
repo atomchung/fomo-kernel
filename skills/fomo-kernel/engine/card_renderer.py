@@ -1783,6 +1783,7 @@ def render_html(bundle):
     structure = _card_structure(bundle)
     copy = structure["copy"]
     e = html.escape
+    version_id = (bundle.get("engine_version") or {}).get("id") or "unknown"
 
     header = [f'<p class="eyebrow">{e(copy["title"])}</p>',
               f"<h1>{e(structure['headline'])}</h1>",
@@ -1895,6 +1896,7 @@ def render_html(bundle):
             f'<html lang="{e(structure["language"])}"><head>\n'
             '<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f'<meta name="engine-version" content="{e(version_id)}">\n'
             f"<title>{e(copy['title'])}</title>\n"
             f"<style>\n{_HTML_SHIM_CSS}\n</style>\n"
             "</head>\n<body>\n"

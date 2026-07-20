@@ -25,9 +25,28 @@
     "schema_version": {
       "const": 2
     },
-    "session_id": {
-      "type": "string",
-      "minLength": 8
+    "engine_version": {
+      "type": "object",
+      "required": [
+        "id",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "file",
+            "git",
+            "unknown"
+          ]
+        },
+        "dirty": {
+          "type": "boolean"
+        }
+      }
     },
     "status": {
       "const": "awaiting_answers"
