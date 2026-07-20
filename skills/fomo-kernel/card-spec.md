@@ -12,7 +12,7 @@ The target reader understands a brokerage statement. Use standard account langua
 
 - Lead with account impact, not trade count or win rate.
 - Name one real strength before the largest leak.
-- Ground the largest leak in an engine-owned number and a concrete transaction when available.
+- Ground the largest leak in an engine-owned number and a concrete transaction when available. When the leak is an averaging-down pattern with a recorded add-motive classification, name that classification beside the dollar cost so outcome does not stand in for process — a reasoned add that still lost money is a different problem from adding only to lower the cost basis.
 - Include qualitative motive or thesis interpretation only after the user answers required questions.
 - Surface every triggered honesty-ledger limitation in natural prose.
 - End with at most one user-chosen if-then rule. Skipping is valid.
@@ -65,7 +65,7 @@ When a field is unavailable, omit it or use renderer-owned honesty copy. Never i
 
 `build_honesty_ledger()` determines which caveats must appear; the agent writes how each one is said (#82: conditions in the engine, wording with the agent). The Review Plan exposes the triggered keys as `card_plan.required_honesty_keys`; the agent supplies one qualitative, digit-free sentence per key in `narrative.honesty`, and preview fails when any key is missing or extra. The renderer weaves each sentence into the section it qualifies — alpha and attribution caveats beside the performance numbers, cash caveats beside the account line, ETF metadata gaps in the ETF section — never as a standalone checklist section. Fixed copy strings exist only as a fallback for re-rendering bundles committed before this contract.
 
-Per-key wording guidance: `alpha_credibility` names the sample or interval limit without calling skill durable; `sector_attribution` says part of the allocation-versus-selection split is unattributed; `unclassified_drivers` says concentration may be understated; `unrealized_coverage` says unrealized P&L is incomplete; `orphan_sells` says some realized P&L was excluded for lacking a known entry; `currency_mix` says aggregate figures cross currencies; `cash_reliability` says cash lacks a complete anchor and what unlocks it; `acct_perf_basis` says account performance rests on partial cost or FX approximations; `etf_metadata` says missing expense-ratio or tracking-error data was not treated as zero.
+Per-key wording guidance: `alpha_credibility` names the sample or interval limit without calling skill durable, and states that the excess return may still trace mostly to market or sector exposure rather than selection — self-attribution credits skill for wins and blames the market for losses, so this matters most exactly when the period looks good; `sector_attribution` says part of the allocation-versus-selection split is unattributed; `unclassified_drivers` says concentration may be understated; `unrealized_coverage` says unrealized P&L is incomplete; `orphan_sells` says some realized P&L was excluded for lacking a known entry; `currency_mix` says aggregate figures cross currencies; `cash_reliability` says cash lacks a complete anchor and what unlocks it; `acct_perf_basis` says account performance rests on partial cost or FX approximations; `etf_metadata` says missing expense-ratio or tracking-error data was not treated as zero.
 
 Examples include:
 
