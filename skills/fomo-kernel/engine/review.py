@@ -1367,6 +1367,59 @@ def _horizon_markers(state, thesis_states, active_cycle_ids, recent_exits):
     return markers[:HORIZON_MARKER_LIMIT]
 
 
+def _missing_thesis_entry(ticker, position):
+    """One uncovered-cycle row: the join keys plus the engine-owned provenance
+    the agent needs to ground an inferred thesis without reading engine_state.
+    origin is forwarded only when the ingestion path recorded it — the engine
+    must not fabricate provenance it does not own."""
+    entry = {"ticker": ticker, "cycle_id": position.get("cycle_id")}
+    if position.get("origin"):
+        entry["origin"] = position["origin"]
+    return entry
+
+
+def _authoring_contract(route):
+    """Surface the artifact-authoring contract in the Review Plan so the agent
+    self-checks before submitting instead of rediscovering field rules from
+    engine source at runtime (#251).
+
+    Every vocabulary here derives from the constant validation enforces
+    (thesis.MATURITY_VALUES, thesis.INFERENCE_ENUMS, card_renderer.ALLOWED_NARRATIVE);
+    a contract test pins the equivalence so this cannot drift into a second
+    source of truth.
+    """
+    contract = {
+        "thesis_updates": {
+            "required_from_agent": ["cycle_id", "why", "exit_trigger"],
+            "engine_prefilled_for_missing_cycles": {
+                "ticker": "from missing_thesis_positions",
+                "maturity": "inferred",
+            },
+            "optional_fields": ["horizon", "stop", "target_size", "driver",
+                                "source_type", "source_name", "source_confidence",
+                                "emotion", "emotion_inferred",
+                                "confidence", "confidence_inferred"],
+            "maturity_values": sorted(thesis.MATURITY_VALUES),
+            "horizon_values": "card_plan.horizon_ids, or null",
+            "inference_enums": {key: sorted(values)
+                                for key, values in thesis.INFERENCE_ENUMS.items()},
+            "engine_owned_identity": ["thesis_id", "event_id", "revises", "decision_cursor"],
+        },
+        "narrative": {
+            "required": ["headline", "mirror"],
+            "allowed_fields": sorted(card_renderer.ALLOWED_NARRATIVE),
+            "digit_ban": ("no digits and no spelled-out numeric magnitudes in any field; "
+                          "numbers come only from engine artifacts"),
+            "honesty_keys": "cover exactly card_plan.required_honesty_keys",
+        },
+    }
+    if route == "snapshot_review":
+        contract["thesis_updates"]["engine_prefilled_for_missing_cycles"]["source_confidence"] = "candidate"
+        contract["thesis_updates"]["route_locked"] = {"maturity": "inferred",
+                                                      "source_confidence": "candidate"}
+    return contract
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None, revisit_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None):
@@ -1392,7 +1445,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     horizon_markers = ([] if route == "snapshot_review" else
                        _horizon_markers(state, thesis_states, cycle_ids, recent_exits))
     rule_history = {} if route == "snapshot_review" else _rule_breach_history(root)
-    missing = [{"ticker": ticker, "cycle_id": row.get("cycle_id")}
+    missing = [_missing_thesis_entry(ticker, row)
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
     completed_reviews = _completed_review_count(root, exclude_session_id=session_id)
@@ -1436,6 +1489,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                                           problem_stats, rule_history, horizon_markers,
                                           route=route),
         "missing_thesis_positions": missing,
+        "authoring_contract": _authoring_contract(route),
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
                       "horizon_ids": ["weeks", "quarters", "years"],
@@ -1602,8 +1656,43 @@ def cmd_prepare(args):
            "next_action": next_action})
 
 
+def _apply_thesis_skeletons(plan, updates):
+    """Merge engine-known defaults into agent updates for uncovered cycles (#251).
+
+    The agent submits only the join key and the qualitative fields; the engine
+    fills the mechanical fields it already owns. Explicit agent values are never
+    rewritten — a snapshot-route override still reaches (and is rejected by)
+    the provenance gates in _validate_thesis_completeness. A ticker that
+    contradicts the engine-owned cycle mapping fails closed instead of being
+    persisted."""
+    missing = {row.get("cycle_id"): row
+               for row in plan.get("missing_thesis_positions") or []
+               if isinstance(row, dict) and row.get("cycle_id")}
+    snapshot_route = plan.get("route") == "snapshot_review"
+    merged = []
+    for update in updates:
+        cycle_id = update.get("cycle_id") if isinstance(update, dict) else None
+        if not isinstance(cycle_id, str) or cycle_id not in missing:
+            merged.append(update)
+            continue
+        row = dict(update)
+        entry = missing[cycle_id]
+        supplied_ticker = str(row.get("ticker") or "").strip()
+        if supplied_ticker and supplied_ticker.upper() != entry.get("ticker"):
+            raise ReviewError(
+                f"thesis update ticker {supplied_ticker!r} does not match engine-owned "
+                f"ticker {entry.get('ticker')!r} for cycle: {cycle_id}")
+        row["ticker"] = entry.get("ticker")
+        if row.get("maturity") is None:
+            row["maturity"] = "inferred"
+        if snapshot_route and row.get("source_confidence") is None:
+            row["source_confidence"] = "candidate"
+        merged.append(row)
+    return merged
+
+
 def _validate_thesis_completeness(plan, answers):
-    updates = answers.get("thesis_updates") or []
+    updates = _apply_thesis_skeletons(plan, answers.get("thesis_updates") or [])
     positions = _active_positions(plan.get("engine_state") or {})
     allowed_horizons = (plan.get("card_plan") or {}).get("horizon_ids")
     thesis.validate_thesis_updates(updates, positions, allowed_horizons=allowed_horizons)
@@ -1642,6 +1731,13 @@ def _assign_thesis_ids(plan, updates):
     rows = []
     for update in updates:
         row = dict(update)
+        # decision_cursor is written only by engine-built thesis_decision events;
+        # an agent-supplied value would poison question dedup on the next review
+        # (reconstruct_states stops carrying the engine cursor forward once the
+        # row carries the key), so its mere presence fails closed.
+        if row.get("decision_cursor") is not None:
+            raise ReviewError(
+                f"thesis update carries engine-owned decision_cursor for cycle: {row.get('cycle_id')}")
         if plan.get("route") == "snapshot_review":
             # Provenance is an engine-owned route fact, not an agent label.
             row["origin"] = "snapshot"
