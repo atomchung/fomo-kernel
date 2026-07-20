@@ -272,6 +272,54 @@ def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
     assert 'class="rx"' not in html
 
 
+def _hole_panel_chunk(html):
+    """The hole panel's HTML, up to the next section container."""
+    return html.split('<div class="sec hole">', 1)[1].split('<div class="sec', 1)[0]
+
+
+def _markdown_section(markdown, title):
+    return markdown.split(f"## {title}", 1)[1].split("## ", 1)[0]
+
+
+def test_stress_row_detaches_from_non_concentration_hole():
+    """#263: the stress row argues a concentration exposure; a top hole from
+    another dimension (the rich fixture's is averaging_down) must not absorb
+    it.  The row moves to its own section on both surfaces instead."""
+    bundle = _rich_bundle("zh-TW")
+    html = card_renderer.render_html(bundle)
+    markdown = card_renderer.render_private(bundle)
+    sections = card_renderer.load_copy("zh-TW")["sections"]
+
+    assert "撐得住嗎" not in _hole_panel_chunk(html), \
+        "stress row may not ride inside the averaging-down hole panel"
+    assert sections["stress"] in html and "撐得住嗎" in html, \
+        "detached stress row must keep its own titled section"
+
+    assert "撐得住嗎" not in _markdown_section(markdown, sections["hole"])
+    assert "撐得住嗎" in _markdown_section(markdown, sections["stress"])
+
+
+def test_stress_row_stays_inside_concentration_hole_panel():
+    """#263 template provenance: when the top hole IS a concentration-family
+    dimension, the stress row remains its supporting evidence inside the
+    panel and no separate stress section appears."""
+    sections = card_renderer.load_copy("zh-TW")["sections"]
+    for dim, number_line in (("分散", "前三大風險部位佔 83%，最大 driver 佔 98%。"),
+                             ("部位 sizing", "最大單一風險部位佔 49%，其餘平均 5%。")):
+        bundle = _rich_bundle("zh-TW")
+        hole = bundle["engine_card"]["top_holes"][0]
+        hole["dim"] = hole["raw"]["dim"] = dim
+        hole["number_line"] = number_line
+        html = card_renderer.render_html(bundle)
+        markdown = card_renderer.render_private(bundle)
+
+        assert "撐得住嗎" in _hole_panel_chunk(html), \
+            f"stress row must stay inside the {dim} hole panel"
+        assert sections["stress"] not in html
+        assert "撐得住嗎" in _markdown_section(markdown, sections["hole"])
+        assert f"## {sections['stress']}" not in markdown
+
+
 def test_preview_emits_html_and_finalize_cleans_pending():
     for language in ("zh-TW", "en"):
         run = _session(language)
@@ -373,6 +421,8 @@ def main():
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
+        test_stress_row_detaches_from_non_concentration_hole,
+        test_stress_row_stays_inside_concentration_hole_panel,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
         test_delivery_contract_exists_and_is_routed,

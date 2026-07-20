@@ -16,6 +16,7 @@
     "trades": "Best and worst realized trades",
     "instruments": "Instrument impact · ranked by money",
     "attribution": "Return attribution · theme exposure or selection",
+    "stress": "Concentration stress test",
     "improve": "Improve · preserve strengths, remove process loss",
     "strength": "One thing you did well",
     "hole": "The biggest behavioral leak",
