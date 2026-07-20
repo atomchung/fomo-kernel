@@ -17,6 +17,51 @@
           "question_id": {"type": "string"},
           "choice": {"type": "string"},
           "note": {"type": ["string", "null"]},
+          "response_mode": {
+            "enum": ["canonical_choice", "own_words"]
+          },
+          "response_provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "user_statement",
+              "motive_summary",
+              "summary_author",
+              "mapping_confidence",
+              "unresolved",
+              "interpretation_confirmed"
+            ],
+            "properties": {
+              "user_statement": {"type": "string", "minLength": 1, "maxLength": 1200},
+              "motive_summary": {"type": "string", "minLength": 1, "maxLength": 600},
+              "summary_author": {"const": "ai_interpretation"},
+              "mapping_confidence": {"enum": ["high", "medium", "low"]},
+              "unresolved": {"type": "boolean"},
+              "interpretation_confirmed": {"type": "boolean"},
+              "clarification": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["stem", "grounding_refs", "user_statement"],
+                "properties": {
+                  "stem": {"type": "string", "minLength": 1, "maxLength": 1000},
+                  "grounding_refs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "context.ticker",
+                        "context.prior_thesis.text",
+                        "context.asked_because",
+                        "context.headline_dimension.label"
+                      ]
+                    }
+                  },
+                  "user_statement": {"type": "string", "minLength": 1, "maxLength": 1200}
+                }
+              }
+            }
+          },
           "evidence_delta": {
             "type": ["object", "null"],
             "properties": {

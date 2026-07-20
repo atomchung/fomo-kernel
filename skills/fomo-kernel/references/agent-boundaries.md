@@ -8,6 +8,7 @@ The agent may:
 - Transcribe broker-declared position facts from a table or screenshot into the normalized snapshot envelope, including date and symbol-format normalization, and keep the temporary envelope outside the repository.
 - Use world knowledge to propose a driver map or instrument map. Mark uncertainty as unknown rather than pretending certainty.
 - Interpret motive answers and evidence deltas.
+- Customize a grounded private question surface only for an engine-selected `add_thesis` or `headline_motive` opportunity, then map it back to the unchanged canonical choices through `references/interaction-delivery.md`.
 - Write an inferred hypothesis for a position without a thesis.
 - Write the headline, mirror, counterfactual, and rule rationale.
 - Add observations that do not silently replace the engine's top conclusion.
@@ -16,6 +17,7 @@ The agent may not:
 
 - Calculate or alter numbers, rankings, weights, P&L, cycle IDs, metrics, driver concentration, or ETF allocation exemptions. Transcription is allowed; derived analysis is not.
 - Skip required questions, answer for the user, or represent an inference as confirmed.
+- Change a question's route, kind, trigger, priority, required status, queue position, canonical choices, payload requirements, numeric facts, identity, or validation; add a surface to an engine-rendered question kind; or ask more than one clarification.
 - use polished prose to bypass a missing claim or source for `new_evidence`.
 - Assemble engine card/state artifacts by hand, append several JSONL files directly, and claim an atomic completion.
 - Upload a statement or screenshot for OCR. Snapshot transcription stays local; the engine accepts only the normalized JSON envelope through `review.py`.

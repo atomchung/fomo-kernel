@@ -10,10 +10,10 @@ degraded to a file link, and how required questions or the weekly opening
 memory were surfaced.
 
 The trace lives inside the protected state directory (default ~/.trade-coach),
-the same trust boundary as the canonical ledger: never committed, never
-published, sitting beside records the user already keeps locally. Because the
-location is trusted, the trace needs no per-field content auditing -- placement,
-not scrubbing, is what keeps trade content safe.
+the same trust boundary as the canonical ledger: never committed and never
+published. Question-presentation rows are additionally restricted to mode,
+surface source, and an opaque digest so cross-client evidence cannot copy the
+private question surface into the trace.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 from collections import Counter
 
@@ -29,6 +30,7 @@ from collections import Counter
 VERSION = 2
 DEFAULT_STATE_ROOT = "~/.trade-coach"
 QUESTION_MODES = ("native_options", "plain_text")
+SURFACE_SOURCES = ("validated_dynamic", "engine_fallback")
 CARD_MODES = ("widget", "markdown_inline")
 ROUTES = ("first_review", "weekly_review", "snapshot_review", "test_drive")
 STAGES = ("preview", "final")
@@ -42,6 +44,7 @@ EVENT_KINDS = (
     "widget_attempt_failed",
     "owner_verdict",
 )
+SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
 
 
 class ReceiptError(ValueError):
@@ -119,6 +122,17 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.mode not in QUESTION_MODES:
             raise ReceiptError(f"question mode must be one of {QUESTION_MODES}")
         row["mode"] = args.mode
+        has_source = bool(args.surface_source)
+        has_digest = bool(args.surface_digest)
+        if has_source != has_digest:
+            raise ReceiptError("question_presented surface source and digest must be recorded together")
+        if has_source:
+            if args.surface_source not in SURFACE_SOURCES:
+                raise ReceiptError(f"surface source must be one of {SURFACE_SOURCES}")
+            if not SURFACE_DIGEST.fullmatch(args.surface_digest):
+                raise ReceiptError("surface digest must be a lowercase sha256 hex string")
+            row["surface_source"] = args.surface_source
+            row["surface_digest"] = args.surface_digest
     if args.event in {"artifact_generated", "card_presented", "widget_attempt_failed"}:
         if args.stage not in STAGES:
             raise ReceiptError(f"{args.event} requires --stage in {STAGES}")
@@ -142,6 +156,16 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if any(value is None for value in verdicts.values()):
             raise ReceiptError("owner_verdict requires --controls, --card, and --memory")
         row.update(verdicts)
+        question_verdicts = {
+            "question_specificity": args.question_specificity,
+            "answer_fit": args.answer_fit,
+        }
+        if any(value is not None for value in question_verdicts.values()):
+            if any(value is None for value in question_verdicts.values()):
+                raise ReceiptError(
+                    "owner_verdict question specificity and answer fit must be recorded together"
+                )
+            row.update(question_verdicts)
     return row
 
 
@@ -190,6 +214,22 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append(f"row {index} has unsupported stage {row.get('stage')!r}")
         if event == "memory_presented" and row.get("memory_kind") not in MEMORY_KINDS:
             errors.append(f"row {index} has unsupported memory kind {row.get('memory_kind')!r}")
+        if event == "question_presented":
+            allowed = {"version", "event", "session_id", "mode", "surface_source", "surface_digest"}
+            extra = sorted(set(row) - allowed)
+            if extra:
+                errors.append(
+                    f"row {index} question trace contains content fields: {', '.join(extra)}"
+                )
+            source = row.get("surface_source")
+            digest = row.get("surface_digest")
+            if bool(source) != bool(digest):
+                errors.append(f"row {index} surface source and digest must appear together")
+            elif source:
+                if source not in SURFACE_SOURCES:
+                    errors.append(f"row {index} has unsupported surface source {source!r}")
+                if not isinstance(digest, str) or not SURFACE_DIGEST.fullmatch(digest):
+                    errors.append(f"row {index} has invalid surface digest")
 
     question_modes = set(declaration.get("question_modes") or [])
     card_modes = set(declaration.get("card_modes") or [])
@@ -260,6 +300,10 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append("owner card verdict must be pass or fail")
         if verdict.get("memory") not in {"pass", "fail", "not_applicable"}:
             errors.append("owner memory verdict must be pass, fail, or not_applicable")
+        question_verdicts = (verdict.get("question_specificity"), verdict.get("answer_fit"))
+        if any(value is not None for value in question_verdicts):
+            if any(value not in {"pass", "fail"} for value in question_verdicts):
+                errors.append("owner question specificity and answer fit verdicts must both be pass or fail")
         if final_card and verdicts[0] <= final_card[0]:
             errors.append("owner_verdict must follow the final card presentation")
     if require_owner_verdict:
@@ -269,6 +313,15 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append("manual verification requires passing controls and card verdicts")
         elif route == "weekly_review" and rows[verdicts[0]].get("memory") != "pass":
             errors.append("weekly manual verification requires a passing memory verdict")
+        elif any(row.get("event") == "question_presented" and
+                 row.get("surface_source") == "validated_dynamic" for row in rows):
+            verdict = rows[verdicts[0]]
+            if any(verdict.get(key) != "pass" for key in
+                   ("question_specificity", "answer_fit")):
+                errors.append(
+                    "dynamic-surface manual verification requires passing question specificity "
+                    "and answer fit verdicts"
+                )
 
     return errors
 
@@ -304,12 +357,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(event)
     event.add_argument("--event", required=True, choices=EVENT_KINDS)
     event.add_argument("--mode")
+    event.add_argument("--surface-source", choices=SURFACE_SOURCES)
+    event.add_argument("--surface-digest")
     event.add_argument("--stage", choices=STAGES)
     event.add_argument("--artifact-path")
     event.add_argument("--memory-kind", choices=MEMORY_KINDS)
     event.add_argument("--controls", choices=("pass", "fail"))
     event.add_argument("--card", choices=("pass", "fail"))
     event.add_argument("--memory", choices=("pass", "fail", "not_applicable"))
+    event.add_argument("--question-specificity", choices=("pass", "fail"))
+    event.add_argument("--answer-fit", choices=("pass", "fail"))
     event.set_defaults(handler=record_event)
 
     verify = subparsers.add_parser("verify", help="confirm each card actually reached the user")

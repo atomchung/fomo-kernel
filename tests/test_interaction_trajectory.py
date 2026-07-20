@@ -18,6 +18,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
 SPEC = ROOT / "skills" / "fomo-kernel" / "references" / "interaction-delivery.md"
+SURFACE_DIGEST = "a" * 64
 
 module_spec = importlib.util.spec_from_file_location("ux_receipt", TOOL)
 ux_receipt = importlib.util.module_from_spec(module_spec)
@@ -76,10 +77,30 @@ def test_native_controls_and_widget_pass():
         question_modes=["plain_text", "native_options"],
         card_modes=["markdown_inline", "widget"],
     )
-    rows.insert(1, row("question_presented", mode="native_options"))
+    rows.insert(1, row("question_presented", mode="native_options",
+                       surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
     rows[3]["mode"] = "widget"   # preview card
     rows[5]["mode"] = "widget"   # final card
     assert ux_receipt.verify_rows(rows) == []
+
+
+def test_question_surface_trace_is_content_free():
+    rows = good_markdown_rows()
+    rows.insert(1, row("question_presented", mode="plain_text",
+                       surface_source="engine_fallback", surface_digest=SURFACE_DIGEST))
+    assert ux_receipt.verify_rows(rows) == []
+
+    leaked = [dict(value) for value in rows]
+    leaked[1]["stem"] = "private trade wording"
+    assert_has(ux_receipt.verify_rows(leaked), "question trace contains content fields")
+
+    missing = [dict(value) for value in rows]
+    missing[1].pop("surface_digest")
+    assert_has(ux_receipt.verify_rows(missing), "source and digest must appear together")
+
+    invalid = [dict(value) for value in rows]
+    invalid[1]["surface_digest"] = "not-a-digest"
+    assert_has(ux_receipt.verify_rows(invalid), "invalid surface digest")
 
 
 def test_weekly_opening_memory_passes():
@@ -206,6 +227,24 @@ def test_manual_verification_requires_owner_verdict():
     assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
 
+def test_dynamic_surface_manual_verdict_requires_specificity_and_answer_fit():
+    rows = good_markdown_rows()
+    rows.insert(1, row("question_presented", mode="plain_text",
+                       surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
+    rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
+    assert_has(
+        ux_receipt.verify_rows(rows, require_owner_verdict=True),
+        "requires passing question specificity and answer fit verdicts",
+    )
+    rows[-1].update(question_specificity="pass", answer_fit="fail")
+    assert_has(
+        ux_receipt.verify_rows(rows, require_owner_verdict=True),
+        "requires passing question specificity and answer fit verdicts",
+    )
+    rows[-1]["answer_fit"] = "pass"
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
+
+
 def test_manual_weekly_requires_memory_verdict():
     rows = weekly_rows()
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="fail"))
@@ -242,6 +281,8 @@ def test_cli_writes_trace_into_protected_state_root():
         assert again.returncode == 2 and "refusing to overwrite" in again.stderr
 
         for args in (
+            ["--event", "question_presented", "--mode", "plain_text",
+             "--surface-source", "validated_dynamic", "--surface-digest", SURFACE_DIGEST],
             ["--event", "artifact_generated", "--stage", "preview", "--artifact-path", "/tmp/p.md"],
             ["--event", "card_presented", "--stage", "preview", "--mode", "markdown_inline"],
             ["--event", "artifact_generated", "--stage", "final", "--artifact-path", "/tmp/f.md"],
@@ -289,6 +330,10 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "A file path or attachment without inline card content is not presentation",
         "--require-owner-verdict",
         "protected state directory",
+        "--surface-source",
+        "--surface-digest",
+        "--question-specificity",
+        "--answer-fit",
     ):
         assert fragment in text, fragment
 

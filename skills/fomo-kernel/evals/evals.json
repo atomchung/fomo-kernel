@@ -39,6 +39,20 @@
         "The private card preserves engine-derived P&L, payoff, best/worst trades, top hole, honesty disclosures, and one rule.",
         "Only the public card is offered for posting; the private artifact remains local."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Review the same losing-position add for two returning users. One previously confirmed an enterprise-demand thesis; the other confirmed a margin-recovery thesis. Keep the engine-selected question and answer contract fixed, but make each private question feel grounded in that user's own thesis.",
+      "expected_output": "The engine emits the same add-thesis opportunity contract for both mechanics. The agent binds a different grounded private surface for each prior thesis, preserves canonical option order and payload gates, records a content-free delivery receipt, and falls back to engine copy if validation fails.",
+      "files": ["mock/sample_value.csv"],
+      "expectations": [
+        "Only add_thesis or headline_motive receives a dynamic private surface; no route, trigger, priority, required status, identity, or queue budget changes.",
+        "Every canonical choice appears exactly once in engine order, and new_evidence still requires both claim and source.",
+        "The two stems and contextual labels differ because their supplied prior theses differ, while all engine facts remain unchanged.",
+        "Resume returns the exact frozen presentation; invalid generation uses the existing engine question and options.",
+        "Native and text delivery map to the same canonical value and write only mode, source, and digest to the presentation trace.",
+        "Owner dogfood, not the automated score, decides whether the question felt specific and whether an answer fit."
+      ]
     }
   ]
 }

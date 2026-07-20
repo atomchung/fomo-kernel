@@ -27,6 +27,9 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 10. Commit one immutable canonical bundle; rebuild projections from it, then show the final private card inline and record its actual delivery mode.
 11. Resume pending work without refetching prices.
 12. Keep all trade data local.
+13. Let the engine select every question. Only `add_thesis` and `headline_motive` may receive a grounded private surface; all other kinds keep engine copy.
+14. Freeze a validated surface before presentation, reuse it exactly on resume, and use the unchanged engine fallback on any surface failure.
+15. Native and text delivery record the same surface digest and canonical value without placing question or trade copy in the receipt.
 
 ## Card invariants
 
@@ -40,6 +43,7 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 ## Important scenario checks
 
 - A vague "buying the dip" answer does not satisfy the `new_evidence` gate.
+- A vague own-words answer gets at most one clarification. Without an explicitly confirmed mapping it becomes low-confidence `skip` plus unresolved private provenance, never a forced motive.
 - Broad-market, regional, bond, and commodity ETFs may receive the explicit allocation exemption; thematic, sector, leveraged, and unknown instruments do not.
 - A multi-market portfolio compares each market with its own benchmark and never synthesizes a total alpha; the renderer consumes only the supported per-market rows.
 - Account-level performance appears only when cash and price foundations satisfy engine gates.
@@ -48,6 +52,7 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - The weekly surface explicitly presents the prior commitment or prior skip before its first question, and presents old exit reasons or due revisits when the Review Plan carries them; a local presentation trace distinguishes that presentation from state merely existing on disk.
 - A recent exit or large reduction inside the freshness window yields capture questions (largest exit amount first, at most two per session); an explicit `skip` is durable and the same exit's reason is never asked again, and a confirmed reason appears only on the local review card, never on the public card. Capture questions outrank every non-perishable question kind because the reason window cannot be backfilled.
 - An add or exit-capture stem may open with the cycle's recorded thesis quoted verbatim (a confirmed thesis as the user's words, an inferred one as a guess) plus why the question was picked; the agent presents the quote as-is and may add only a fact-grounded, direct lead-in, in-question follow-up, or at most one flagged observation per review — no softening preambles, no invented facts, and never a change to a question's meaning, options, or required status.
+- An `add_thesis` or `headline_motive` opportunity may instead use a validated private surface. Every canonical option appears once in unchanged order, engine semantic anchors and payload requirements remain visible, resume returns the exact frozen presentation, and validation failure uses the original engine question/options. Due revisits, rule breaches, and recent exits remain engine-rendered.
 - A confirmed motive question reappears only when that same cycle receives another add (per-cycle decision cursor); activity in a different ticker never re-opens it. The agent never invents `thesis_id`, `event_id`, `revises`, or `decision_cursor` — the engine assigns identity, and a full exit preserves an explicit closed or falsified outcome instead of silently dropping the cycle.
 - Confirmed evidence means "the user confirmed this was part of the decision," never external fact verification: legacy evidence stays `captured` without silent promotion, a missing `observed_at` stays null instead of inheriting the review date, and nothing is auto-promoted to `evaluated`.
 - A normalized CSV containing cash-flow rows (deposits, dividends, interest, fees, reinvest notices) still prepares: those rows are counted in `ledger_ingest`, and only future-dated rows reject the import.
@@ -74,3 +79,4 @@ Prefer deterministic checks over an LLM judge, and an LLM judge over manual insp
 | 2026-07-16 | Evidence provenance: content-addressed `evidence_id`, captured/confirmed source states without legacy promotion, null `observed_at` preserved, evaluation left pending (#198) | v2 suite provenance assertions inside the continuity and legacy-fold cases | Passed. |
 | 2026-07-19 | Structured self-contained HTML card from one shared assembly, preview-time HTML artifact, and the `references/card-delivery.md` never-paraphrase contract restoring the #82 guardrail (#225) | `tests/test_card_html.py` (Markdown byte-identical to prior renderer, one widget fragment, no external request, sparkline conditionality, delivery routing over every flow) plus the complete offline suite | Passed; review caught and fixed a sparkline type-crash on adapter curves and a finalize path emitting a nonexistent HTML file on legacy sessions. |
 | 2026-07-19 | Shared cross-client capability declaration, fixed question fallback, and a local presentation trace separating generated artifacts from user-visible cards (#230; trace slimmed to presentation-only, engine owns answer/commitment completeness, in #239) | `tests/test_interaction_trajectory.py`, owner checklist in `tests/agent/manual-cross-client-ux.md`, and the complete offline suite | Pending owner dogfood; deterministic native/text/widget/Markdown/memory trajectories pass. |
+| 2026-07-19 | Engine-selected `add_thesis` and `headline_motive` opportunities with validated private question surfaces (#238) | `tests/test_question_surfaces.py`, focused lifecycle and mutation probes, differential prior-thesis personas, plus the complete offline suite | Pending owner dogfood; deterministic tests can prove containment, fallback, persistence, and privacy, but not that the questions feel specific or the answers fit. |

@@ -3873,7 +3873,8 @@ def test_repair_projections_never_regresses_a_newer_last_state():
 
 def test_all_json_schemas_parse():
     names = {"review-plan.schema.json", "answers.schema.json", "narrative.schema.json",
-             "session-bundle.schema.json"}
+             "session-bundle.schema.json", "question-opportunity.schema.json",
+             "question-surface.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")

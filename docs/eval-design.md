@@ -8,7 +8,7 @@ Engine formulas are tested in the standard unit suites. Real-user usefulness is 
 
 One run has four observable surfaces:
 
-1. Review Plan and conversation trajectory.
+1. Review Plan, frozen question presentations, content-free interaction receipts, and conversation trajectory.
 2. Canonical session bundle and manifest.
 3. Private and public cards.
 4. Rebuildable compatibility projections.
@@ -50,6 +50,8 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Emits a deduplicated required question queue, ranked by engine-owned amount or P&L impact and capped at three items; recent-exit questions deduplicate against canonical sessions, and a saved capture `skip` is never re-asked.
 - Perishable exit-reason captures (at most two per session) outrank matured `due_revisit` checkpoints and add questions regardless of notional; a due question replays the recorded reason from the kind-aware copy table, its non-skip verdict persists as a queue resolution, and its `skip` is not saved so the checkpoint returns.
 - Weaves the cycle's recorded thesis into add and exit-capture stems verbatim with voice fidelity (confirmed as the user's words, inferred as a guess) and emits `asked_because`; a cycle without a recorded thesis keeps the plain stem byte-identical.
+- Emits an engine-owned `question_opportunity` only for `add_thesis` and `headline_motive`. Its canonical choices, order, payload requirements, required status, identity, queue rank, and single-clarification budget remain deterministic; due revisits, rule breaches, and recent exits stay engine-rendered.
+- Accepts only a grounded private stem plus one-to-one surface labels/descriptions, freezes the validated presentation in pending state, and returns it byte-identically on resume. Missing, reordered, duplicate, invented-fact, semantics-changing, or otherwise invalid surfaces fall back to the existing engine stem/options without blocking the review.
 - Frozen market context, engine-owned exit/swap prices, and ranked horizon markers enter the plan once; resume and rendering never refetch or recalculate them, and the public card never consumes their private fields.
 - Problem-book stats and exact-period rule-breach evidence fold into the plan read-only; events and the weekly Opportunity Check mark append only at finalize through projections and round-trip through `load_book`. A breach decision is canonical, first-or-worsening deduplicated, and a rule replacement can only be the review's one final commitment with `revises` linkage.
 - Re-asks a confirmed motive only when the engine-owned per-cycle decision cursor advances (another add in that same cycle); thesis identity (`thesis_id`, `event_id`, `revises`) is engine-assigned, content-addressed, and stable across update order, resume, and projection loss.
@@ -64,6 +66,8 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Inferred theses use `maturity:"inferred"` and never claim user confirmation.
 - Narrative is qualitative and contains no digits.
 - A `new_evidence` choice requires claim and source.
+- Native and text clients present the same frozen surface digest and write the same canonical value. Their presentation trace contains only delivery mode, surface source, and digest; it contains no question, trade, thesis, answer, or clarification copy.
+- An own-words answer preserves the exact private statement and explicitly attributed AI interpretation. A resolved mapping requires user confirmation; an unresolved mapping becomes low-confidence `skip`, and the schema permits at most one clarification.
 - The agent never calculates numbers or ETF exemptions.
 
 ### Preview
@@ -145,6 +149,8 @@ Run the same mechanical facts with different user answers:
 
 Differential tests prove that the conversation affects permitted qualitative state without allowing the user or agent to rewrite mechanical facts.
 
+For question surfaces, hold the event, queue rank, required status, canonical choices, payload gates, and identities fixed while changing only the confirmed prior thesis. The validated stems and contextual surface labels should differ; every engine-owned field and canonical answer remains identical.
+
 ## Narrative judge
 
 Use an LLM judge only for prose qualities that deterministic checks cannot settle:
@@ -166,6 +172,9 @@ Every important guard should fail under an intentional mutation at least once. H
 - add a digit to agent narrative
 - let unknown ETFs receive an allocation exemption
 - leak a ticker into the public card
+- reorder or duplicate a private surface mapping
+- remove a payload requirement or required status through a surface mutation
+- add an ungrounded numeric fact or a second clarification
 - interrupt projection after canonical commit
 - retry one session with conflicting content
 - place non-English text in implementation Markdown
@@ -185,6 +194,8 @@ Keep raw feedback local because it may contain real tickers or amounts. Convert 
 The host interaction itself has a separate local presentation trace. `skills/fomo-kernel/tools/ux_receipt.py` records capability modes, presentation events, and artifact paths inside the protected state directory (`~/.trade-coach/ux/`), the same trust boundary as the ledger, so placement rather than content scrubbing keeps trade data safe. A complete trace proves the preview and final cards were each presented after they were generated, a declared widget that failed degraded to inline canonical Markdown, and the weekly opening memory was surfaced before the first card. It deliberately distinguishes `artifact_generated` from `card_presented`; only the latter is evidence about what the user could see. Answer and commitment completeness remain the engine's job at preview and finalize.
 
 For cross-client owner dogfood, follow `tests/agent/manual-cross-client-ux.md` and require `owner_verdict`. Automated trace checks prove the trajectory shape, while the owner verdict answers the product question: whether the controls felt usable, the card was actually legible, and the weekly review felt remembered.
+
+For the first question-surface slice, owner dogfood must also rate whether the stem felt specific and whether one of the available answers fit. Test success proves containment and lifecycle correctness, not product usefulness.
 
 For each miss:
 
