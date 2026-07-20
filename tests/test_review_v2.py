@@ -4052,6 +4052,60 @@ def test_cadence_tier_is_wired_into_the_review_plan():
         assert cad2["tier"] == "light" and cad2["basis"] == "span" and cad2["span_days"] == 3
 
 
+def test_thesis_update_rejects_forged_engine_owned_identity():
+    """thesis_id, revises, and event_id are engine-owned: on a cycle that has a
+    prior thesis, an agent-supplied value that contradicts the engine's fails
+    closed with a structured error, while echoing the engine's own values back
+    is accepted (#251 covers the decision_cursor rejection; these are the other
+    three enforce paths in _assign_thesis_ids)."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices), "w1")
+
+        plan2 = _prepare_dated(tmp, root, "2026-08-15", "w2")
+        prior = [row for row in plan2["state_snapshot"]["thesis_states"]
+                 if row.get("cycle_id") == "PLTR#2026-01-01#1"][0]
+        # The stale-link case below only bites if the chain has advanced past
+        # the original update event (week 1's decision moved last_event_id).
+        assert prior["thesis_id"] and prior["last_event_id"] != prior["event_id"]
+
+        answers = _answer_queue(plan2, lambda question: {"choice": "still_valid"})
+        a_path = pathlib.Path(tmp) / "answers_identity.json"
+        n_path = pathlib.Path(tmp) / "narrative_identity.json"
+        n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+
+        def reject(update, needle):
+            answers["thesis_updates"] = [update]
+            a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+            run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+                       "--answers", a_path, "--narrative", n_path)
+            payload = json.loads(run.stdout)
+            assert payload["status"] == "error" and needle in payload["error"], payload
+            assert not (pathlib.Path(root) / "sessions" / plan2["session_id"]).exists()
+
+        base = _base_thesis_update()
+        reject(dict(base, thesis_id="thesis-invented"), "changes stable identity")
+        reject(dict(base, revises="thesis-update-invented"), "stale revises link")
+        # A real-but-superseded link (the original update event instead of the
+        # latest decision) is the literal stale case and must also fail.
+        reject(dict(base, revises=prior["event_id"]), "stale revises link")
+        reject(dict(base, event_id="thesis-update-invented"), "invalid event_id")
+
+        # Echoing the engine-owned values back is not a forgery: finalize
+        # succeeds and the stored row carries the engine-assigned identity.
+        answers["thesis_updates"] = [dict(base, thesis_id=prior["thesis_id"],
+                                          revises=prior["last_event_id"])]
+        _finalize(tmp, root, plan2, answers, "identity")
+        bundle = json.loads((pathlib.Path(root) / "sessions" / plan2["session_id"] / "bundle.json")
+                            .read_text(encoding="utf-8"))
+        stored = [row for row in bundle["thesis_updates"]
+                  if row.get("cycle_id") == "PLTR#2026-01-01#1"][0]
+        assert stored["thesis_id"] == prior["thesis_id"]
+        assert stored["revises"] == prior["last_event_id"]
+        assert stored["event_id"].startswith("thesis-update-")
+        assert stored["event_id"] != prior["event_id"]
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0
