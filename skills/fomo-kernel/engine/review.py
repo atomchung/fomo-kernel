@@ -1732,10 +1732,11 @@ def _assign_thesis_ids(plan, updates):
     for update in updates:
         row = dict(update)
         # decision_cursor is written only by engine-built thesis_decision events;
-        # an agent-supplied value would poison question dedup on the next review
+        # an agent-supplied entry would poison question dedup on the next review
         # (reconstruct_states stops carrying the engine cursor forward once the
-        # row carries the key), so its mere presence fails closed.
-        if row.get("decision_cursor") is not None:
+        # row carries the key — even with a null value), so key presence itself
+        # fails closed.
+        if "decision_cursor" in row:
             raise ReviewError(
                 f"thesis update carries engine-owned decision_cursor for cycle: {row.get('cycle_id')}")
         if plan.get("route") == "snapshot_review":

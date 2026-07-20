@@ -3867,8 +3867,10 @@ def test_thesis_update_delta_fills_skeleton_and_rejects_ticker_mismatch():
 
         reject(dict(delta, ticker="NVDA"), "does not match engine-owned")
         # SKILL.md rule: the agent may not invent decision_cursor — enforced, not
-        # just documented (#251 review finding).
+        # just documented (#251 review finding). A null value must also be
+        # rejected: key presence alone blocks reconstruct_states carry-forward.
         reject(dict(delta, decision_cursor="AGENT-INVENTED"), "engine-owned decision_cursor")
+        reject(dict(delta, decision_cursor=None), "engine-owned decision_cursor")
         # A non-string cycle_id must produce the structured error contract, not a
         # bare TypeError traceback.
         reject(dict(delta, cycle_id=["not", "hashable"]), "unknown/inactive cycle_id")
