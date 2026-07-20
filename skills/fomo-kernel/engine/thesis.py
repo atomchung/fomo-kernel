@@ -22,6 +22,7 @@ ADD_DECISIONS = {
     "skip",
 }
 THESIS_STATUSES = {"open", "still", "modified", "falsified", "closed"}
+MATURITY_VALUES = {"inferred", "testable", "draft"}
 SOURCE_STATES = {"captured", "confirmed", "evaluated"}
 # Inference-only accumulation vocabularies (#155/#38). These fields cannot be
 # backfilled, so a misspelled value ("FOMO", "comfirmed") would fragment the
@@ -456,12 +457,12 @@ def validate_thesis_updates(rows, active_positions, allowed_horizons=None):
         if not isinstance(row, dict):
             raise ThesisError(f"thesis_updates[{index}] must be an object")
         cycle_id = row.get("cycle_id")
-        if cycle_id not in valid_cycles:
-            raise ThesisError(f"thesis_updates[{index}] has unknown/inactive cycle_id: {cycle_id}")
+        if not isinstance(cycle_id, str) or cycle_id not in valid_cycles:
+            raise ThesisError(f"thesis_updates[{index}] has unknown/inactive cycle_id: {cycle_id!r}")
         if cycle_id in seen:
             raise ThesisError(f"more than one thesis update for cycle: {cycle_id}")
         seen.add(cycle_id)
-        if row.get("maturity") not in {"inferred", "testable", "draft"}:
+        if row.get("maturity") not in MATURITY_VALUES:
             raise ThesisError(f"thesis_updates[{index}] has invalid maturity")
         for key in ("ticker", "why", "exit_trigger"):
             if not str(row.get(key) or "").strip():

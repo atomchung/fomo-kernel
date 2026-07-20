@@ -329,6 +329,10 @@
         "type": "object"
       }
     },
+    "authoring_contract": {
+      "type": "object",
+      "$comment": "Engine-derived authoring vocabulary (#251). The single source of truth is thesis.MATURITY_VALUES, thesis.INFERENCE_ENUMS, and card_renderer.ALLOWED_NARRATIVE; a contract test pins the equivalence. Optional so plans prepared before #251 stay readable."
+    },
     "card_plan": {
       "type": "object",
       "properties": {

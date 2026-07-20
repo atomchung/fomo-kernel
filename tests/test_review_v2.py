@@ -1318,8 +1318,10 @@ def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
         position = upgraded["engine_state"]["holdings"]["positions"]["PLTR"]
         assert position["cycle_id"] == "PLTR#2026-07-03#2"
         assert position["origin"] == "trades" and position["left_truncated"] is False
+        # The uncovered-cycle row forwards engine-owned provenance (#251) so the
+        # agent can ground the inferred thesis without reading engine_state.
         assert upgraded["missing_thesis_positions"] == [
-            {"ticker": "PLTR", "cycle_id": "PLTR#2026-07-03#2"}
+            {"ticker": "PLTR", "cycle_id": "PLTR#2026-07-03#2", "origin": "trades"}
         ]
 
 
@@ -3834,6 +3836,122 @@ def test_thesis_updates_preserve_inference_only_fields():
         for key, value in inference.items():
             assert stored.get(key) == value, key
             assert projected_thesis.get(key) == value, key
+
+
+def test_thesis_update_delta_fills_skeleton_and_rejects_ticker_mismatch():
+    """#251: for uncovered cycles the agent submits only the join key and the
+    qualitative fields; the engine fills ticker/maturity from the plan. An
+    explicit ticker that contradicts the engine-owned mapping, or any
+    agent-supplied decision_cursor, fails closed with a structured error."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_dated(tmp, root, "2026-07-14", "w1")
+        assert plan["authoring_contract"]["thesis_updates"]["required_from_agent"] == \
+            ["cycle_id", "why", "exit_trigger"]
+        delta = {"cycle_id": "PLTR#2026-01-01#1",
+                 "why": "Enterprise adoption may still be underpriced",
+                 "exit_trigger": "Renewals weaken", "horizon": "quarters"}
+
+        answers = _answer_queue(plan, _week1_choices)
+        a_path = pathlib.Path(tmp) / "answers_mismatch.json"
+        n_path = pathlib.Path(tmp) / "narrative_delta.json"
+        n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+
+        def reject(update, needle):
+            answers["thesis_updates"] = [update]
+            a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+            run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+                       "--answers", a_path, "--narrative", n_path)
+            payload = json.loads(run.stdout)
+            assert payload["status"] == "error" and needle in payload["error"], payload
+            assert not (pathlib.Path(root) / "sessions" / plan["session_id"]).exists()
+
+        reject(dict(delta, ticker="NVDA"), "does not match engine-owned")
+        # SKILL.md rule: the agent may not invent decision_cursor — enforced, not
+        # just documented (#251 review finding). A null value must also be
+        # rejected: key presence alone blocks reconstruct_states carry-forward.
+        reject(dict(delta, decision_cursor="AGENT-INVENTED"), "engine-owned decision_cursor")
+        reject(dict(delta, decision_cursor=None), "engine-owned decision_cursor")
+        # A non-string cycle_id must produce the structured error contract, not a
+        # bare TypeError traceback.
+        reject(dict(delta, cycle_id=["not", "hashable"]), "unknown/inactive cycle_id")
+
+        # A redundant lowercase ticker is the same instrument, not a mismatch.
+        answers["thesis_updates"] = [dict(delta, ticker="pltr")]
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        run = _run("preview", "--session-id", plan["session_id"], "--root", root,
+                   "--answers", a_path, "--narrative", n_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        answers["thesis_updates"] = [dict(delta)]
+        _finalize(tmp, root, plan, answers, "delta")
+        bundle = json.loads((pathlib.Path(root) / "sessions" / plan["session_id"] / "bundle.json")
+                            .read_text(encoding="utf-8"))
+        stored = [row for row in bundle["thesis_updates"]
+                  if row.get("cycle_id") == "PLTR#2026-01-01#1"][0]
+        assert stored["ticker"] == "PLTR" and stored["maturity"] == "inferred"
+        assert stored["why"] == delta["why"] and stored["horizon"] == "quarters"
+
+
+def test_snapshot_delta_inherits_candidate_provenance_and_stays_locked():
+    """#251: snapshot-route deltas inherit source_confidence:"candidate" from the
+    skeleton, while an explicit maturity override is still rejected — prefills
+    must not weaken the no-laundering gate."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root)
+        assert all(row.get("origin") == "snapshot" for row in plan["missing_thesis_positions"])
+        assert plan["authoring_contract"]["thesis_updates"]["route_locked"] == \
+            {"maturity": "inferred", "source_confidence": "candidate"}
+        deltas = [{"cycle_id": row["cycle_id"],
+                   "why": "The opening snapshot suggests a portfolio role that remains inferred",
+                   "exit_trigger": "A later review contradicts the inferred portfolio role"}
+                  for row in plan["missing_thesis_positions"]]
+        answers = {"session_id": plan["session_id"], "answers": [],
+                   "commitment": {"choice": "skip"}}
+        a_path = pathlib.Path(tmp) / "answers.json"
+        n_path = pathlib.Path(tmp) / "narrative.json"
+        n_path.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False),
+                          encoding="utf-8")
+
+        answers["thesis_updates"] = [dict(deltas[0], maturity="testable")] + \
+            [dict(row) for row in deltas[1:]]
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                   "--answers", a_path, "--narrative", n_path)
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error" and "must remain inferred" in payload["error"]
+
+        answers["thesis_updates"] = [dict(row) for row in deltas]
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                   "--answers", a_path, "--narrative", n_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        bundle = json.loads((root / "sessions" / plan["session_id"] / "bundle.json")
+                            .read_text(encoding="utf-8"))
+        by_cycle = {row["cycle_id"]: row for row in bundle["thesis_updates"]}
+        for delta in deltas:
+            stored = by_cycle[delta["cycle_id"]]
+            assert stored["maturity"] == "inferred"
+            assert stored["source_confidence"] == "candidate"
+            assert stored["origin"] == "snapshot"
+
+
+def test_authoring_contract_mirrors_validation_constants():
+    """#251 single-source pin: the contract surfaced to the agent must equal the
+    constants validation enforces, or it silently becomes a second contract."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root)
+        contract = plan["authoring_contract"]["thesis_updates"]
+        assert contract["inference_enums"] == \
+            {key: sorted(values) for key, values in review_engine.thesis.INFERENCE_ENUMS.items()}
+        assert contract["maturity_values"] == sorted(review_engine.thesis.MATURITY_VALUES)
+        assert contract["engine_owned_identity"] == \
+            ["thesis_id", "event_id", "revises", "decision_cursor"]
+        narrative_contract = plan["authoring_contract"]["narrative"]
+        assert narrative_contract["allowed_fields"] == \
+            sorted(review_engine.card_renderer.ALLOWED_NARRATIVE)
+        assert narrative_contract["required"] == ["headline", "mirror"]
 
 
 def test_repair_projections_never_regresses_a_newer_last_state():
