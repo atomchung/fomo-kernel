@@ -16,6 +16,8 @@ python3 tools/ux_receipt.py start \
 
 The tool writes the trace inside the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`) — the same trust boundary as the canonical ledger. It is never committed and never published. Question events are also mechanically restricted to mode, surface source, and an opaque digest; they cannot carry the stem, options, ticker, thesis, user statement, or interpretation. After an interruption, append to the existing trace with the same `--session-id`; do not start a new one. (Tests and inspection pass `--state-root` to redirect it.)
 
+Every row the tool writes is stamped with a UTC ISO-8601 `ts` (seconds, e.g. `2026-07-20T13:46:02Z`) at write time. `verify` accepts legacy traces written before `ts` existed, but fails on a malformed value; row order, not `ts`, remains the ordering authority.
+
 ## Bind a private surface or the engine fallback
 
 The Review Plan keeps display-ready `question` and `options` for every queue row. `add_thesis` and `headline_motive` may additionally carry an engine-owned `question_opportunity`; `due_revisit`, `rule_breach`, and recent-exit `revisit` remain engine-rendered.
@@ -66,9 +68,23 @@ python3 tools/ux_receipt.py event --session-id <session_id> \
   --event memory_presented --memory-kind prior_commitment
 ```
 
+When the user's final required answer has arrived in the conversation, record `answers_received` immediately, before calling `preview`:
+
+```bash
+python3 tools/ux_receipt.py event --session-id <session_id> --event answers_received
+```
+
+This content-free marker makes the "answered → card" machine wait (#236) measurable from the trace as `card_presented(stage=preview).ts - answers_received.ts`.
+
 ## Artifact generation is not presentation
 
 After a successful `preview`, record `artifact_generated`, then present the complete card inline following `card-delivery.md`, and only then record `card_presented`. A file path or attachment without inline card content is not presentation. Ask for the one commitment only after the preview card is visible. Apply the same generated-versus-presented distinction to the final card.
+
+When the rule choice — the candidate rules, a custom rule, or skip — is shown to the user after the preview card, record `rule_choice_presented` with the presentation mode used (it must be a declared question mode):
+
+```bash
+python3 tools/ux_receipt.py event --session-id <id> --event rule_choice_presented --mode native_options
+```
 
 If `widget` was declared, attempt it. When an attempt fails, record `widget_attempt_failed` and paste the canonical Markdown verbatim inline; do not stop at a file link and do not paraphrase the card. A recorded failure authorizes the Markdown fallback for the rest of the session (widget capability is fixed per host, so one failure need not be repeated per stage); presenting Markdown under a declared widget capability with no recorded failure fails verification.
 
@@ -80,4 +96,4 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 python3 tools/ux_receipt.py verify --session-id <id>
 ```
 
-`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. For owner dogfood, append `owner_verdict` after the final card and verify with `--require-owner-verdict`; a weekly pass requires controls, card visibility, and remembered context all to pass. When a validated dynamic surface was presented, the verdict must also record whether the question felt specific and whether an available answer fit, using `--question-specificity` and `--answer-fit`. These owner judgments are product gates, not schema-derived claims.
+`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. `answers_received` and `rule_choice_presented` are content-free latency markers: `verify` enforces their field whitelists and the `ts` format but imposes no ordering rules on them. For owner dogfood, append `owner_verdict` after the final card and verify with `--require-owner-verdict`; a weekly pass requires controls, card visibility, and remembered context all to pass. When a validated dynamic surface was presented, the verdict must also record whether the question felt specific and whether an available answer fit, using `--question-specificity` and `--answer-fit`. These owner judgments are product gates, not schema-derived claims.
