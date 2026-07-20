@@ -27,7 +27,7 @@ CLI(JSON stdout / 訊息 stderr,同 ledger 慣例;#166:close/append-theses/appen
       # 產生新檔);真正不同的第二個 session 才遞增 <date>-2.md,不蓋舊卡。
   python3 coach.py data-status [--root P]
       # 列出 ~/.trade-coach/ 下每個已知檔案的存在/大小/筆數(#165:單一命令看到完整持久化足跡,
-      # 不印交易內容本身)。root 預設 ~/.trade-coach,測試/檢視別的路徑用 --root 覆寫。
+      # 不印交易內容本身)。root 解析 --root > TRADE_COACH_HOME > ~/.trade-coach,與 review CLI 同源。
   python3 coach.py data-export --out BACKUP.zip [--root P]
       # 把現有檔案打包成 zip 備份;stderr 明確標示內含敏感交易衍生資料。
   python3 coach.py data-reset (--dry-run | --confirm) [--root P]
@@ -47,6 +47,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ledger as lg  # noqa: E402  # 共用 atomic_write_text / session_id_from_state(#166)
+import session  # noqa: E402  # 共用 default_root():TRADE_COACH_HOME 是 coach root 的單一事實源
 
 # 與 trade_recap.CYCLE_ID_RE 同一條契約(#61)。coach 刻意不 import trade_recap(保持純標準庫、
 # 免 pandas 依賴——同 ledger.py 慣例);pattern 同步由 tests/test_tr_json_contract.py 機械鎖定。
@@ -135,7 +136,7 @@ def _optional_session_id(args):
     """append-theses/append-rules/save-card 用:--state 檔存在才算 session_id;不存在不算
     錯誤,退化成不做 session 級去重/衝突偵測(僅供孤立呼叫,正常 SKILL 六步流程裡 Step 1
     早就寫出 last_state.json,不會走到這條退化路徑)。"""
-    state_path = args.state or os.path.expanduser("~/.trade-coach/last_state.json")
+    state_path = args.state or os.path.join(session.default_root(), "last_state.json")
     if not os.path.exists(state_path):
         print(f"warning: state 檔不存在({state_path}),本次不做 session 級去重/衝突偵測",
               file=sys.stderr)
@@ -147,8 +148,8 @@ def _optional_session_id(args):
 # ─────────────────────────── close(log append)───────────────────────────
 
 def cmd_close(args):
-    state_path = args.state or os.path.expanduser("~/.trade-coach/last_state.json")
-    log_path = args.log or os.path.expanduser("~/.trade-coach/log.jsonl")
+    state_path = args.state or os.path.join(session.default_root(), "last_state.json")
+    log_path = args.log or os.path.join(session.default_root(), "log.jsonl")
     st = _load_json(state_path, "state")
     session_id = lg.session_id_from_state(st, args.session_nonce or "")
 
@@ -196,7 +197,7 @@ def _valid_cycle_id(cid):
 
 
 def cmd_append_theses(args):
-    theses_path = args.theses or os.path.expanduser("~/.trade-coach/theses.jsonl")
+    theses_path = args.theses or os.path.join(session.default_root(), "theses.jsonl")
     rows = _load_json(args.file, "theses")
     if not isinstance(rows, list):
         _die("theses JSON 必須是陣列(可為空 [])")
@@ -271,7 +272,7 @@ def cmd_append_theses(args):
 # ─────────────────────── append-rules(rules append)───────────────────────
 
 def cmd_append_rules(args):
-    rules_path = args.rules or os.path.expanduser("~/.trade-coach/rules.jsonl")
+    rules_path = args.rules or os.path.join(session.default_root(), "rules.jsonl")
     rows = _load_json(args.file, "rules")
     if not isinstance(rows, list):
         _die("rules JSON 必須是陣列(可為空 [])")
@@ -356,7 +357,7 @@ def _strip_card_session_id(text):
 
 
 def cmd_save_card(args):
-    cards_dir = args.cards_dir or os.path.expanduser("~/.trade-coach/cards")
+    cards_dir = args.cards_dir or os.path.join(session.default_root(), "cards")
     try:
         with open(args.file, encoding="utf-8") as f:
             text = f.read()
@@ -415,7 +416,7 @@ DATA_FILES = [
 
 
 def _coach_root(args):
-    return os.path.expanduser(args.root) if args.root else os.path.expanduser("~/.trade-coach")
+    return os.path.expanduser(args.root) if args.root else session.default_root()
 
 
 def _scan_root(root):
@@ -535,7 +536,7 @@ def main(argv=None):
     s.set_defaults(fn=cmd_save_card)
 
     ds = sub.add_parser("data-status", help="列出本機保存了哪些資料(路徑/大小/筆數,不印交易內容)")
-    ds.add_argument("--root", default=None, help="覆寫 ~/.trade-coach/ 路徑(預設值本身)")
+    ds.add_argument("--root", default=None, help="覆寫 root(預設 TRADE_COACH_HOME 或 ~/.trade-coach)")
     ds.set_defaults(fn=cmd_data_status)
 
     de = sub.add_parser("data-export", help="把現有資料打包成 zip 備份")
