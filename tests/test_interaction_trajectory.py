@@ -169,6 +169,81 @@ def test_undeclared_question_mode_fails():
     assert_has(ux_receipt.verify_rows(rows), "question used undeclared mode")
 
 
+# --- Latency markers: answers_received / rule_choice_presented (#236, #230) ---
+
+def test_latency_marker_events_pass_without_ordering_rules():
+    rows = good_markdown_rows()
+    rows.insert(1, row("answers_received"))  # before the preview artifact
+    rows.insert(4, row("rule_choice_presented", mode="plain_text"))  # after the preview card
+    assert ux_receipt.verify_rows(rows) == []
+    # Deliberately no ordering rules for the markers: they verify wherever they
+    # appear, including before the weekly opener.
+    weekly = weekly_rows()
+    weekly.insert(1, row("answers_received"))
+    assert ux_receipt.verify_rows(weekly) == []
+
+
+def test_answers_received_rejects_extra_fields():
+    rows = good_markdown_rows()
+    rows.insert(1, row("answers_received", note="private wording"))
+    assert_has(ux_receipt.verify_rows(rows), "answers_received contains unsupported fields")
+
+
+def test_rule_choice_rejects_extra_fields():
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text", options="A/B/C"))
+    assert_has(ux_receipt.verify_rows(rows), "rule_choice_presented contains unsupported fields")
+
+
+def test_rule_choice_undeclared_mode_fails():
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="native_options"))  # only plain_text declared
+    assert_has(ux_receipt.verify_rows(rows), "rule choice used undeclared mode")
+    missing = good_markdown_rows()
+    missing.insert(3, row("rule_choice_presented"))  # no mode at all fails closed
+    assert_has(ux_receipt.verify_rows(missing), "rule choice used undeclared mode")
+
+
+# --- Timestamps are optional metadata, validated when present (#236) ----------
+
+def test_legacy_trace_without_ts_still_passes():
+    assert ux_receipt.verify_rows(good_markdown_rows()) == []
+    mixed = good_markdown_rows()
+    mixed[2]["ts"] = "2026-07-20T13:46:02Z"  # partially stamped traces pass too
+    assert ux_receipt.verify_rows(mixed) == []
+
+
+def test_fully_stamped_trace_passes():
+    rows = good_markdown_rows()
+    for value in rows:
+        value["ts"] = "2026-07-20T13:46:02Z"
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_malformed_ts_fails():
+    for bad in ("2026-07-20 13:46:02", "2026-07-20T13:46:02", "not-a-time",
+                "2026-13-45T99:99:99Z", 1752934962, None):
+        rows = good_markdown_rows()
+        rows[1]["ts"] = bad
+        assert_has(ux_receipt.verify_rows(rows), "invalid ts")
+
+
+def test_cli_verifies_legacy_trace_without_ts():
+    # A receipt written before ts existed must keep verifying end to end.
+    with tempfile.TemporaryDirectory() as tmp:
+        receipt = pathlib.Path(tmp) / "ux" / "legacy.jsonl"
+        receipt.parent.mkdir(parents=True)
+        rows = good_markdown_rows()
+        for value in rows:
+            value["session_id"] = "legacy"
+        receipt.write_text("".join(json.dumps(value) + "\n" for value in rows), encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "verify", "--session-id", "legacy", "--state-root", tmp],
+            capture_output=True, text=True,
+        )
+        assert done.returncode == 0, done.stderr
+
+
 # --- Weekly opening memory ordering ------------------------------------------
 
 def test_weekly_missing_opener_fails():
@@ -283,8 +358,10 @@ def test_cli_writes_trace_into_protected_state_root():
         for args in (
             ["--event", "question_presented", "--mode", "plain_text",
              "--surface-source", "validated_dynamic", "--surface-digest", SURFACE_DIGEST],
+            ["--event", "answers_received"],
             ["--event", "artifact_generated", "--stage", "preview", "--artifact-path", "/tmp/p.md"],
             ["--event", "card_presented", "--stage", "preview", "--mode", "markdown_inline"],
+            ["--event", "rule_choice_presented", "--mode", "plain_text"],
             ["--event", "artifact_generated", "--stage", "final", "--artifact-path", "/tmp/f.md"],
             ["--event", "card_presented", "--stage", "final", "--mode", "markdown_inline"],
         ):
@@ -300,6 +377,16 @@ def test_cli_writes_trace_into_protected_state_root():
         )
         assert verified.returncode == 0, verified.stderr
         assert json.loads(verified.stdout)["status"] == "pass"
+
+        # Every persisted row is stamped with a UTC ts at write time (#236).
+        written = [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()]
+        assert all(ux_receipt.TS_PATTERN.fullmatch(value.get("ts", "")) for value in written), written
+
+        nomode = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "rule_choice_presented"],
+            capture_output=True, text=True,
+        )
+        assert nomode.returncode == 2 and "requires --mode" in nomode.stderr
 
 
 def test_cli_rejects_undeclared_stage_choice():
@@ -334,6 +421,9 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "--surface-digest",
         "--question-specificity",
         "--answer-fit",
+        "answers_received",
+        "rule_choice_presented",
+        "stamped with a UTC ISO-8601 `ts`",
     ):
         assert fragment in text, fragment
 
