@@ -3,9 +3,10 @@
 """Validated private question surfaces for engine-selected opportunities.
 
 The review engine still selects every question and owns its canonical answer
-contract.  This module accepts only presentation copy for the two explicitly
-enabled question kinds, binds it one-to-one to the engine choices, and returns
-an adapter-neutral presentation.  It performs no file or network access.
+contract.  This module accepts only presentation copy for the three explicitly
+enabled question kinds (add_thesis, headline_motive, initial_thesis), binds it
+one-to-one to the engine choices, and returns an adapter-neutral presentation.
+It performs no file or network access.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import re
 
 
 SCHEMA_VERSION = 1
-ELIGIBLE_KINDS = frozenset({"add_thesis", "headline_motive"})
+ELIGIBLE_KINDS = frozenset({"add_thesis", "headline_motive", "initial_thesis"})
 MAPPING_CONFIDENCE = frozenset({"high", "medium", "low"})
 GROUNDING_REFS = frozenset({
     "context.ticker",
@@ -36,6 +37,13 @@ _HEADLINE_REQUIREMENTS = {
     "deliberate_plan": [],
     "emotional_reaction": [],
     "external_constraint": [],
+    "skip": [],
+}
+_INITIAL_THESIS_REQUIREMENTS = {
+    "planned_entry": [],
+    "momentum_follow": [],
+    "external_call": [],
+    "no_clear_thesis": [],
     "skip": [],
 }
 _DIGIT = re.compile(r"\d+(?:[.,]\d+)?%?")
@@ -62,6 +70,8 @@ def _requirement_copy(language, kind):
             "price_only": "",
             "skip": "",
         }
+    if kind == "initial_thesis":
+        return {key: "" for key in _INITIAL_THESIS_REQUIREMENTS}
     return {key: "" for key in _HEADLINE_REQUIREMENTS}
 
 
@@ -86,6 +96,13 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
             context["asked_because"] = question["asked_because"]
         intent = "classify_losing_position_add"
         requirements = _ADD_REQUIREMENTS
+    elif kind == "initial_thesis":
+        if question.get("ticker"):
+            context["ticker"] = question["ticker"]
+        if question.get("asked_because"):
+            context["asked_because"] = question["asked_because"]
+        intent = "classify_initial_thesis"
+        requirements = _INITIAL_THESIS_REQUIREMENTS
     else:
         if isinstance(headline_dimension, dict):
             context["headline_dimension"] = {

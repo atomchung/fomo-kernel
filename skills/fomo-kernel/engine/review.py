@@ -46,9 +46,22 @@ DIM_METRIC = {
     "holding_period": "hold_severity",
     "averaging_down": "avgdown_count",
 }
-QUESTION_LIMIT = 3
+# Question density is a product contract per route (#291): a first review earns
+# up to five questions when each extra answer creates durable decision-relevant
+# information, weekly reviews stay one to three, a snapshot asks none. The min is
+# a floor the min-backfill defends by information gain, never questionnaire
+# volume. An unknown route falls back to the weekly band (defensive).
+QUESTION_POLICY = {
+    "first_review": {"min": 3, "max": 5},
+    "weekly_review": {"min": 1, "max": 3},
+    "snapshot_review": {"min": 0, "max": 0},
+    "test_drive": {"min": 1, "max": 3},
+}
 HORIZON_MARKER_LIMIT = 2
 RULE_BREACH_LIMIT = 2
+INITIAL_THESIS_LIMIT = 2  # at most two first-review entry-thesis captures per review
+INITIAL_THESIS_CHOICES = {"planned_entry", "momentum_follow", "external_call",
+                          "no_clear_thesis", "skip"}
 EXIT_DECISIONS = {"price_target", "thesis_broken", "swap", "anxiety", "other", "skip"}
 RULE_BREACH_CHOICES = {"keep_tracking", "revise_rule", "exception"}
 
@@ -938,6 +951,33 @@ def _generic_options(language):
     ]
 
 
+def _initial_thesis_options(language):
+    """Canonical first-review entry-motive choices (#291), localized labels.
+
+    Engine owns the stable codes; the copy layer localizes the labels. `skip`
+    is the standard escape consistent with the other kinds.
+    """
+    copy = card_renderer.load_copy(language)
+    labels = copy.get("initial_thesis_choices") or {}
+    en = copy["language"] == "en"
+    descriptions = {
+        "planned_entry": ("進場前就有明確的論點。",
+                          "You had an explicit thesis before entering."),
+        "momentum_follow": ("追了價格動能或 FOMO。",
+                            "You chased price momentum or FOMO."),
+        "external_call": ("KOL、朋友或研究報告推薦的。",
+                          "A KOL, friend, or research recommendation drove it."),
+        "no_clear_thesis": ("在沒有明確論點下持有。",
+                            "You are holding without a clear thesis."),
+        "skip": ("這次先不替進場動機下定論。",
+                 "Leave the entry motive unresolved for now."),
+    }
+    return [{"value": key, "label": labels[key],
+             "description": descriptions[key][1 if en else 0]}
+            for key in ("planned_entry", "momentum_follow", "external_call",
+                        "no_clear_thesis", "skip")]
+
+
 def _exit_options(language, exit_kind):
     copy = card_renderer.load_copy(language)
     labels = (copy.get("exit_choices") or {}).get(exit_kind) or {}
@@ -1061,7 +1101,10 @@ def _rule_breach_questions(problem_stats, history, language):
             "_priority": 1, "_importance": float(max(0, len(top_rank) - rank)), "_tie": 3,
         })
     candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
-    return candidates[:RULE_BREACH_LIMIT]
+    # #291: the caller (_question_queue) applies RULE_BREACH_LIMIT so it can
+    # record the trimmed rows in the selection report. Direct callers see the
+    # full ranked list, still bounded by the two-per-key/worsening cadence above.
+    return candidates
 
 
 def _due_question(row, language, card=None):
@@ -1257,18 +1300,75 @@ def _ticker_importance(card, state, ticker):
         return 0.0, "unknown"
 
 
+def _initial_thesis_id(cycle_id):
+    return "initial_thesis_" + hashlib.sha256(str(cycle_id).encode("utf-8")).hexdigest()[:12]
+
+
+def _initial_thesis_question(ticker, pos, cost, card, state, language):
+    """One first-review entry-thesis capture (#291) grounded in ticker + cost.
+
+    The stem cites the engine-owned cost basis (the deterministic per-position
+    magnitude the engine stores; live-price weights are not persisted). Both the
+    stem number and the stored `cost_basis` come from the same value so the card
+    context and the recorded event cannot drift.
+    """
+    cycle_id = pos.get("cycle_id")
+    currency = str(pos.get("currency") or "USD")
+    amount = _format_notional(cost, currency)
+    importance, basis = _ticker_importance(card, state, ticker)
+    because = _asked_because(basis, language)
+    if str(language).lower().startswith("en"):
+        stem = (f"You are holding {ticker} at a cost basis of about {amount}. "
+                "When you first entered this position, what was your thesis?")
+        if because:
+            stem += f" (Asked because {because}.)"
+    else:
+        stem = f"你持有 {ticker}，成本約 {amount}。當初第一次進場時，你的論點是什麼？"
+        if because:
+            stem += f"（問這題是因為{because}）"
+    row = {
+        "id": _initial_thesis_id(cycle_id), "kind": "initial_thesis", "ticker": ticker,
+        "cycle_id": cycle_id, "required": True, "question": stem,
+        "options": _initial_thesis_options(language),
+        "cost_basis": cost, "currency": currency,
+        "_importance": importance, "_importance_basis": basis, "_tie": 1,
+    }
+    if because:
+        row["asked_because"] = because
+    row["question_opportunity"] = question_surface.build_opportunity(row, language)
+    return row
+
+
 CAPTURE_LIMIT = 2  # at most two exit-reason captures per session (c6850f0 contract)
+
+
+def _rejection(id_, kind, reason, cycle_id=None):
+    """One question_selection.rejected row with a uniform shape (#291).
+
+    `id` is the question id whenever the candidate became a real (if unqueued)
+    question; `cycle_id` is the stable join key present whenever a cycle is
+    known, so a QA tool always has one reliable key to cross-reference.
+    """
+    return {"id": id_, "kind": kind, "cycle_id": cycle_id, "reason": reason}
 
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
-                    route=None):
+                    route=None, missing_thesis_positions=None):
+    """Return (queue, selection_report). The report states, plan-internally, how
+    the route's density band was filled: the eligible/selected counts, why the
+    queue fell short of the route minimum, and every candidate rejected with its
+    reason (#291). It is QA/agent-facing and never rendered on the card."""
+    policy = QUESTION_POLICY.get(route) or QUESTION_POLICY["weekly_review"]
+    report = {"route": route, "min": policy["min"], "max": policy["max"],
+              "eligible": 0, "selected": 0, "shortfall_reason": None, "rejected": []}
+    rejected = report["rejected"]
     # A position snapshot can establish structure and thesis baselines, but it
     # contains no action history.  Do not turn the generic fallback into a
     # fabricated motive question, and do not replay exit/problem questions from
     # an unrelated older ledger into this opening portfolio check.
     if route == "snapshot_review":
-        return []
+        return [], report
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     del previous_state  # retained in the call contract for older adapters
@@ -1281,11 +1381,15 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     # legitimately returns next review. Perishable questions therefore outrank
     # everything regardless of notional — but take at most CAPTURE_LIMIT slots
     # so one busy week cannot turn the review into an exit interrogation.
-    for item in (recent_exits or [])[:CAPTURE_LIMIT]:
+    for index, item in enumerate(recent_exits or []):
         # #226: the stem itself replays the entry thesis for this cycle, so the
         # agent never has to resolve the attached IDs from disk.
         prior = thesis_states.get(item.get("cycle_id")) or {}
         question = _exit_question(item, language, card, prior)
+        if index >= CAPTURE_LIMIT:
+            rejected.append(_rejection(question["id"], "revisit", "capture_limit",
+                                       cycle_id=question.get("cycle_id")))
+            continue
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
         if item.get("cycle_id") in horizon_by_cycle:
@@ -1300,9 +1404,16 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         cycle_id = pos.get("cycle_id")
         old = active.get(cycle_id)
         decision_cursor = pos.get("decision_cursor")
+        # The add question id is a pure function of the cursor key, so derive it
+        # once up front — the two dedup rejections below then carry the same
+        # question id (plus cycle_id) that the emitted row would have used.
+        cursor_key = decision_cursor or f"{cycle_id}|legacy|{index}"
+        add_id = "add_" + hashlib.sha256(cursor_key.encode("utf-8")).hexdigest()[:12]
         if old and decision_cursor and old.get("decision_cursor") == decision_cursor:
+            rejected.append(_rejection(add_id, "add_thesis", "already_captured", cycle_id=cycle_id))
             continue
         if old and not decision_cursor and old.get("maturity") == "testable":
+            rejected.append(_rejection(add_id, "add_thesis", "already_captured", cycle_id=cycle_id))
             continue
         importance, basis = _ticker_importance(card, state, ticker)
         # #226: quote the cycle's own recorded thesis in the stem and say why
@@ -1325,10 +1436,8 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
                         else (item.get("question") or f"{ticker} {tail}"))
             if because:
                 question += f"（問這題是因為{because}）"
-        cursor_key = decision_cursor or f"{cycle_id}|legacy|{index}"
-        question_digest = hashlib.sha256(cursor_key.encode("utf-8")).hexdigest()[:12]
         row = {
-            "id": f"add_{question_digest}", "kind": "add_thesis", "ticker": ticker,
+            "id": add_id, "kind": "add_thesis", "ticker": ticker,
             "cycle_id": cycle_id, "required": True, "question": question,
             "options": _add_options(language),
             "prior_thesis_id": (old or {}).get("thesis_id"),
@@ -1349,8 +1458,61 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             row, language, prior_thesis=prior_context
         )
         candidates.append(row)
-    candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
-    if not candidates:
+    # #291: first-review entry-thesis capture. Source is the same missing-thesis
+    # set the inferred-skeleton path consumes; a cycle already covered by an
+    # add_thesis question above needs no second motive question, and a cycle that
+    # already carries a real (draft/testable) thesis is a no-duplicate rejection.
+    # The over-INITIAL_THESIS_LIMIT rows are held in `initial_overflow`, not
+    # rejected yet: a below-min queue prefers these grounded rows over the
+    # generic motive backfill (refill loop below).
+    initial_overflow = []
+    if route == "first_review":
+        add_covered = {row.get("cycle_id") for row in candidates
+                       if row.get("kind") == "add_thesis"}
+        missing_cycles = {entry.get("cycle_id") for entry in (missing_thesis_positions or [])
+                          if entry.get("cycle_id")}
+        initial_candidates = []
+        for ticker, pos in sorted(positions.items()):
+            cycle_id = pos.get("cycle_id")
+            if not cycle_id or cycle_id in add_covered:
+                continue
+            existing = active.get(cycle_id)
+            if existing and existing.get("maturity") in ("testable", "draft"):
+                rejected.append(_rejection(_initial_thesis_id(cycle_id), "initial_thesis",
+                                           "has_existing_thesis", cycle_id=cycle_id))
+                continue
+            if cycle_id not in missing_cycles:
+                continue  # carries an inferred thesis already; nothing new to capture
+            cost = card_renderer._finite_number(pos.get("cost"))
+            if cost is None or cost <= 0:
+                continue  # cannot ground the stem in a concrete magnitude
+            initial_candidates.append(_initial_thesis_question(ticker, pos, cost, card, state, language))
+        initial_candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
+        candidates.extend(initial_candidates[:INITIAL_THESIS_LIMIT])
+        initial_overflow = initial_candidates[INITIAL_THESIS_LIMIT:]
+    breach_questions = _rule_breach_questions(problem_stats, rule_history, language)
+    candidates.extend(breach_questions[:RULE_BREACH_LIMIT])
+    for row in breach_questions[RULE_BREACH_LIMIT:]:
+        rejected.append(_rejection(row.get("id"), "rule_breach", "rule_breach_limit",
+                                   cycle_id=row.get("cycle_id")))
+    # #291 P2-A: a below-min queue earns its extra slots through durable
+    # information gain first — refill from the grounded initial-thesis overflow
+    # (importance order) before falling back to the generic motive backfill.
+    # This runs BEFORE the generic block and does not touch that block's
+    # internals (PR #296 rewrites those). The non-shortfall case is unchanged:
+    # a queue already at the route min keeps thesis questions capped at two and
+    # the leftover overflow is a genuine over-limit trim.
+    while len(candidates) < policy["min"] and initial_overflow:
+        candidates.append(initial_overflow.pop(0))
+    for row in initial_overflow:
+        rejected.append(_rejection(row.get("id"), "initial_thesis", "initial_thesis_limit",
+                                   cycle_id=row.get("cycle_id")))
+    # #291: route-min-aware min-backfill. The gate condition is the only change
+    # here (was `if not candidates:`); weekly min=1 makes it exactly equivalent
+    # to the prior behavior, while first-review min=3 lets the motive question
+    # backfill when 1-2 grounded candidates exist. The row internals are
+    # untouched (PR #296 rewrites them; keep the rebase surface minimal).
+    if len(candidates) < policy["min"]:
         top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")
         # An insufficient or quiet history can trigger no hole and carry
         # headline_dim=None (#227). With no dimension to anchor the motive
@@ -1373,13 +1535,23 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     candidates.sort(key=lambda row: (int(row.get("_priority", 2)),
                                      -float(row.get("_importance") or 0),
                                      int(row.get("_tie") or 0), str(row.get("id"))))
-    queue = candidates[:QUESTION_LIMIT]
+    # `eligible` counts everything that survived to the sort; the over-max rows
+    # below are then also recorded in `rejected`, so `eligible + len(rejected)`
+    # double-counts them. Each field is individually correct — do not sum them.
+    report["eligible"] = len(candidates)
+    queue = candidates[:policy["max"]]
+    for row in candidates[policy["max"]:]:
+        rejected.append(_rejection(row.get("id"), row.get("kind"), "over_max_capacity",
+                                   cycle_id=row.get("cycle_id")))
+    report["selected"] = len(queue)
+    if len(queue) < policy["min"]:
+        report["shortfall_reason"] = "insufficient_eligible_candidates"
     for row in queue:
         row.pop("_importance", None)
         row.pop("_importance_basis", None)
         row.pop("_tie", None)
         row.pop("_priority", None)
-    return queue
+    return queue, report
 
 
 def _candidate_rules(card, state, language):
@@ -1589,6 +1761,10 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # only asked to author sentences whose host lines render this month.
         required_honesty_keys = [key for key in required_honesty_keys
                                  if key not in card_renderer.VS_MARKET_HONESTY_KEYS]
+    question_queue, question_selection = _question_queue(
+        card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
+        problem_stats, rule_history, horizon_markers, route=route,
+        missing_thesis_positions=missing)
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -1624,14 +1800,15 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            "market_context": state.get("market_context"),
                            "horizon_markers": horizon_markers,
                            "revisit_ingest": revisit_ingest},
-        "question_queue": _question_queue(card, state, active, previous, language,
-                                          recent_exits, by_cycle, due_revisits,
-                                          problem_stats, rule_history, horizon_markers,
-                                          route=route),
+        "question_queue": question_queue,
         "missing_thesis_positions": missing,
         "authoring_contract": _authoring_contract(route),
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
-                      "question_limit": QUESTION_LIMIT,
+                      "question_limit": question_selection["max"],
+                      "question_policy": {"route": question_selection["route"],
+                                          "min": question_selection["min"],
+                                          "max": question_selection["max"]},
+                      "question_selection": question_selection,
                       "horizon_ids": ["weeks", "quarters", "years"],
                       "required_honesty_keys": required_honesty_keys},
         "engine_card": card,
@@ -1841,6 +2018,24 @@ def _validate_thesis_completeness(plan, answers):
     missing = sorted(x for x in needed - supplied if x)
     if missing:
         raise ReviewError("missing inferred thesis updates for cycles: " + ", ".join(missing))
+    # #291: a `planned_entry` initial-thesis answer asserts the user entered with
+    # an explicit thesis, so a silently-inferred update is not an honest record of
+    # it — that cycle must carry a real capture (maturity draft/testable). Every
+    # other answer (momentum_follow/external_call/no_clear_thesis/skip) keeps
+    # inferred legal, so different answers produce different downstream state.
+    answer_choice = {row.get("question_id"): row.get("choice")
+                     for row in (answers.get("answers") or []) if isinstance(row, dict)}
+    planned_entry_cycles = {q.get("cycle_id") for q in plan.get("question_queue") or []
+                            if q.get("kind") == "initial_thesis"
+                            and answer_choice.get(q.get("id")) == "planned_entry"}
+    update_by_cycle = {row.get("cycle_id"): row for row in updates}
+    inferred_planned = sorted(
+        cid for cid in planned_entry_cycles
+        if cid and (update_by_cycle.get(cid) or {}).get("maturity") == "inferred")
+    if inferred_planned:
+        raise ReviewError(
+            "planned_entry initial-thesis answers require a captured thesis "
+            "(maturity draft or testable) for cycles: " + ", ".join(inferred_planned))
     if plan.get("route") == "snapshot_review":
         not_inferred = sorted(
             row.get("cycle_id") for row in updates
@@ -2035,6 +2230,42 @@ def _build_rule_breach_decisions(plan, answers, amap=None):
     return events
 
 
+def _build_initial_thesis_events(plan, answers, amap=None):
+    """Persist the first-review entry-motive classification as append-only events (#291).
+
+    Non-skip answers become typed events with the question's grounding facts
+    (cost basis, currency) and session refs. `skip` records nothing — it is an
+    explicit non-classification, not a decision. These rows project to their own
+    `initial_theses.jsonl` audit log; they never enter the thesis-reconstruction
+    streams, so they cannot corrupt `_thesis_event_history`.
+    """
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "initial_thesis":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        offered = {option.get("value") for option in question.get("options") or []}
+        if choice not in INITIAL_THESIS_CHOICES or choice not in offered:
+            raise ReviewError(f"unsupported initial thesis decision: {choice}")
+        note = _clean_note(question["id"], answer, "an initial thesis")
+        if choice == "skip":
+            continue
+        event = {
+            "event": "initial_thesis", "schema_version": 1,
+            "session_id": plan.get("session_id"), "cycle_id": question.get("cycle_id"),
+            "ticker": question.get("ticker"), "choice": choice, "note": note,
+            "cost_basis": question.get("cost_basis"), "currency": question.get("currency"),
+            "review_date": (plan.get("engine_state") or {}).get("date_end"),
+        }
+        identity = session.canonical(event)
+        event["event_id"] = "initial-thesis-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        events.append(event)
+    return events
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
@@ -2104,6 +2335,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     exit_narratives = _build_exit_narratives(plan, answers, amap)
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
     rule_breach_decisions = _build_rule_breach_decisions(plan, answers, amap)
+    initial_thesis_events = _build_initial_thesis_events(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every required honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the plan does not require —
@@ -2143,6 +2375,10 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
         bundle["revisit_resolutions"] = revisit_resolutions
     if rule_breach_decisions:
         bundle["rule_breach_decisions"] = rule_breach_decisions
+    # Absent-when-empty, same replay-compatibility contract as the keys above:
+    # first-review-only, and only when at least one entry motive was classified.
+    if initial_thesis_events:
+        bundle["initial_thesis_events"] = initial_thesis_events
     return bundle
 
 
