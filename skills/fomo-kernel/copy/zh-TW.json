@@ -98,6 +98,11 @@
     "price_only": "只有價格下跌／想攤低成本",
     "skip": "先跳過"
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "事先規劃",
+    "emotional_reaction": "情緒反應",
+    "external_constraint": "外部限制"
+  },
   "initial_thesis_choices": {
     "planned_entry": "進場前就有明確論點",
     "momentum_follow": "追了動能／FOMO",

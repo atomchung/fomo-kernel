@@ -823,6 +823,40 @@ def _decision_entries(bundle, copy):
     return entries
 
 
+def _headline_motive_entries(bundle, copy):
+    """Return the localized rendering of typed headline-motive decisions.
+
+    The event's context is copied from the engine-owned question opportunity.
+    A ticker/fact therefore appears only when the engine supplied it; rendering
+    never mines the user's prose or infers a security from the chosen class.
+    """
+    labels = copy.get("headline_motive_choices") or {}
+    entries = []
+    en = copy.get("language") == "en"
+    for event in bundle.get("headline_motive_events") or []:
+        choice = event.get("decision")
+        label = labels.get(choice, choice)
+        context = event.get("context") or {}
+        dimension = (context.get("headline_dimension") or {}).get("label")
+        ticker = context.get("ticker")
+        fact = context.get("asked_because")
+        subject = dimension or ("highlighted behavior" if en else "這次浮現的行為")
+        if en:
+            parts = []
+            if fact:
+                parts.append(f"Engine context: {str(fact).rstrip('.')}.")
+            parts.append(f"Motive recorded for {subject}: {label}.")
+            parts.append("This recorded choice was saved for a later review.")
+        else:
+            parts = []
+            if fact:
+                parts.append(f"引擎脈絡：{str(fact).rstrip('。')}。")
+            parts.append(f"「{subject}」的動機記為：{label}。")
+            parts.append("這個選項已保存，供後續復盤對帳。")
+        entries.append((ticker, " ".join(parts)))
+    return entries
+
+
 def _exit_entries(bundle, copy):
     entries = []
     for event in bundle.get("exit_narratives") or []:
@@ -1748,6 +1782,12 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
             loose.append(text)
 
     if not snapshot:
+        for ticker, text in _headline_motive_entries(bundle, copy):
+            # A headline motive belongs under Key trades only when the
+            # engine-owned context names a ticker that already has a rendered
+            # instrument row.  Ungrounded/unmatched events are routed to Risks.
+            if ticker and str(ticker) in row_tickers:
+                push(ticker, text)
         for ticker, text in _decision_entries(bundle, copy):
             push(ticker, text)
         for ticker, text in _exit_entries(bundle, copy):
@@ -1794,15 +1834,18 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     return blocks
 
 
-def _risks_block(bundle, card, copy, narrative, snapshot):
+def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     """Block 3 (Risks and problems): the [v] strength / [X] hole pair as
     panels, with behavior patterns folded in below."""
     language = copy["language"]
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
     holes = card.get("top_holes") or []
+    trade_tickers = set(trade_tickers or [])
+    motive_lines = [text for ticker, text in _headline_motive_entries(bundle, copy)
+                    if not ticker or str(ticker) not in trade_tickers]
     blocks = []
-    if not snapshot and not holes and not card.get("dims_raw"):
+    if not snapshot and not holes and not card.get("dims_raw") and not motive_lines:
         note = missing.get("risks", "")
         return [("paragraph", [note])] if note else []
     strength_label = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
@@ -1826,6 +1869,8 @@ def _risks_block(bundle, card, copy, narrative, snapshot):
     problem_lines = [] if snapshot else _problem_lines(bundle, copy)
     if problem_lines:
         blocks.append(("bullets", problem_lines))
+    if motive_lines:
+        blocks.append(("bullets", motive_lines))
     return blocks
 
 
@@ -1939,7 +1984,8 @@ def _card_structure(bundle):
         {"id": "performance", "title": performance_title, "blocks": performance_blocks},
         {"id": "trades", "title": blocks_copy.get("trades", ""), "blocks": trades_blocks},
         {"id": "risks", "title": blocks_copy.get("risks", ""),
-         "blocks": _risks_block(bundle, card, copy, narrative, snapshot)},
+         "blocks": _risks_block(bundle, card, copy, narrative, snapshot,
+                                 [row.get("ticker") for row in facts["instruments"]])},
         {"id": "next", "title": blocks_copy.get("next", ""),
          "blocks": _next_block(bundle, copy, facts, state, snapshot)},
     ]

@@ -976,6 +976,8 @@ def _project_legacy_locked(root, bundle, private_md):
                                         thesis_updates + exit_narratives))
     reports.append(_append_session_rows(os.path.join(root, "thesis_decisions.jsonl"), session_id,
                                         list(bundle.get("thesis_decisions") or [])))
+    reports.append(_append_session_rows(os.path.join(root, "headline_motives.jsonl"), session_id,
+                                        list(bundle.get("headline_motive_events") or [])))
     reports.append(_append_session_rows(os.path.join(root, "revisit.jsonl"), session_id,
                                         list(bundle.get("revisit_resolutions") or [])))
     # #291: first-review entry-motive classifications are an isolated append-only

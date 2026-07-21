@@ -98,6 +98,11 @@
     "price_only": "Only the price fell / lower the cost basis",
     "skip": "Skip for now"
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "Deliberate plan",
+    "emotional_reaction": "Emotional reaction",
+    "external_constraint": "External constraint"
+  },
   "initial_thesis_choices": {
     "planned_entry": "I had a planned thesis",
     "momentum_follow": "I chased the momentum",
