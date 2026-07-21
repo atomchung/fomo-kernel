@@ -48,7 +48,7 @@ never silent omission.
 | Keynote | always (any committed review) | — |
 | 1① absolute P&L | trades or snapshot with cost basis | one-line note |
 | 1② annualized return | cash-flow anchors complete (deposit/withdraw history; `perf.py` gate, #180) | one-line note; never estimate |
-| 1③ vs market | benchmark series resolvable for the period; single-scope (mixed-market keeps per-market rows, #205) | one-line note |
+| 1③ vs market | benchmark series resolvable for the period **and** the monthly slot is open — first full review of the calendar month, judged by the review's own `date_end` against committed-session history and frozen at prepare into `engine_card.vs_market_gate` (#284; unreadable history fails closed toward showing); single-scope (mixed-market keeps per-market rows, #205) | one-line note only when benchmark data is missing on a review whose monthly slot is open; a month-gated review renders **nothing — no gap note** (absolute P&L + annualized return stand alone) |
 | 1 stress line | `what_if` complete (label+mval+drop30/50+pct; `card_renderer.py:1349`) | omit the line (it decorates an indicator, not a block) |
 | 2 instrument rows | currency known and ≥2 diagnosed tickers with nonzero impact (`_instrument_rows`) | one-line note listing what was traded |
 | 2 behavior tags | engine per-ticker diagnosis present | row renders without tags |
@@ -68,9 +68,15 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 - **Monthly vs-market cadence** (owner ruling 2026-07-21, closing #237
   item 3): the vs-market comparison (excess pp, α, β, attribution split)
   renders on the **first full review of each calendar month**; other full
-  reviews render Block 1 with absolute P&L and annualized return only.
-  Short windows never render long-window cumulative α/β (the #277 trigger
-  defect). Implementation: #284 (after #283).
+  reviews render Block 1 with absolute P&L and annualized return only —
+  the vs-market lines are simply absent, with no gap note. Short windows
+  never render long-window cumulative α/β (the #277 trigger defect).
+  Implemented by #284 (after #283): review.py derives "first this month"
+  from committed sessions (snapshot and demo sessions do not consume the
+  slot; light sessions never finalize a card, so they neither consume nor
+  reset it), freezes the decision into `engine_card.vs_market_gate`, and
+  requires the segment-hosted honesty keys (`alpha_credibility`,
+  `sector_attribution`) only when the segment renders.
 
 ## 4. Honesty / caveat placement
 
@@ -149,3 +155,4 @@ LLM judge and dogfood verdicts: structure is mechanical, prose is judged.
 | 2026-07-21 | language | Internal canonical language is English; user language exists only at presentation and interaction layers. Check logic must split from language data — parked as #281. |
 | 2026-07-21 | language | Dev-phase: persisted zh literals get no compatibility mapping; clean up on demand. |
 | 2026-07-21 | axis 3 | Cadence tiers finalized: light (≤5 trading days) = capture-only with no card; full = the four-block card. Vs-market segment renders monthly (first full review each calendar month) — closes #237 item 3; implementation #284. |
+| 2026-07-21 | axis 3 | Month-gate implementation landed (#284): the decision is frozen at prepare into `engine_card.vs_market_gate` (fail-closed toward showing on unreadable history); gated reviews render no gap note; `alpha_credibility`/`sector_attribution` are required honesty keys only when the segment renders; S-2 accepts the gate signal and stays strict in both directions. |

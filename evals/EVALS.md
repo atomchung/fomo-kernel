@@ -36,7 +36,7 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - One strength, one largest leak, and at most one commitment.
 - No internal field names or author notes.
 - No buy/sell recommendation and no personality judgment.
-- Every triggered honesty-ledger key appears in plain, narrow language.
+- Every triggered honesty-ledger key appears in plain, narrow language — except `alpha_credibility` and `sector_attribution` on a review whose vs-market segment is month-gated out (#284): the segment and its hosted keys are absent together, with no gap note.
 - Public card is independently rendered, retains only fixed behavior-pattern copy plus engine-owned beta and benchmark-excess percentage points, and contains no amounts, dates, tickers, exact weights, session IDs, evidence text, or agent-authored prose. Mixed-market public lines use market labels without benchmark symbols and never reuse the top-level compatibility row as a synthetic total.
 - Test-drive cards and conversations are visibly labeled as demo data and do not touch production state.
 
