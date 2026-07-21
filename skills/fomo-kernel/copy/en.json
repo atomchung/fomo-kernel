@@ -103,6 +103,13 @@
     "emotional_reaction": "Emotional reaction",
     "external_constraint": "External constraint"
   },
+  "initial_thesis_choices": {
+    "planned_entry": "I had a planned thesis",
+    "momentum_follow": "I chased the momentum",
+    "external_call": "Someone recommended it",
+    "no_clear_thesis": "No clear thesis",
+    "skip": "Skip for now"
+  },
   "exit_choices": {
     "full": {
       "price_target": "The target was reached",

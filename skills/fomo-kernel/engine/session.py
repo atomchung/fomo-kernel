@@ -980,6 +980,11 @@ def _project_legacy_locked(root, bundle, private_md):
                                         list(bundle.get("headline_motive_events") or [])))
     reports.append(_append_session_rows(os.path.join(root, "revisit.jsonl"), session_id,
                                         list(bundle.get("revisit_resolutions") or [])))
+    # #291: first-review entry-motive classifications are an isolated append-only
+    # audit log; they are deliberately NOT folded into the thesis-reconstruction
+    # streams (theses/thesis_decisions), so they cannot alter thesis continuity.
+    reports.append(_append_session_rows(os.path.join(root, "initial_theses.jsonl"), session_id,
+                                        list(bundle.get("initial_thesis_events") or [])))
 
     rule_rows = []
     if commitment and commitment.get("rule"):

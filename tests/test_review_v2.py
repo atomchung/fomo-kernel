@@ -236,6 +236,8 @@ def _exit_answers(plan, commitment=None):
             answers.append({"question_id": question["id"], "choice": "skip"})
         elif question["kind"] == "rule_breach":
             answers.append({"question_id": question["id"], "choice": "keep_tracking"})
+        elif question["kind"] == "initial_thesis":
+            answers.append({"question_id": question["id"], "choice": "no_clear_thesis"})
         else:
             answers.append({"question_id": question["id"], "choice": "deliberate_plan"})
     out["answers"] = answers
@@ -243,12 +245,28 @@ def _exit_answers(plan, commitment=None):
 
 
 def _answers(plan, evidence=True, commitment=None):
-    answer = {"question_id": plan["question_queue"][0]["id"], "choice": "new_evidence"}
-    if evidence:
-        answer["evidence_delta"] = {"claim": "Enterprise demand accelerated", "source": "earnings call",
-                                    "falsifier": "renewals weaken"}
+    # Answer every queued question. On a sparse first review the route-min
+    # backfill (#291) adds a grounded headline_motive beside the PLTR add, so a
+    # single-answer helper would now under-answer the required queue.
+    answers = []
+    for question in plan["question_queue"]:
+        kind = question["kind"]
+        if kind == "add_thesis":
+            row = {"question_id": question["id"], "choice": "new_evidence"}
+            if evidence:
+                row["evidence_delta"] = {"claim": "Enterprise demand accelerated",
+                                         "source": "earnings call", "falsifier": "renewals weaken"}
+            answers.append(row)
+        elif kind == "initial_thesis":
+            answers.append({"question_id": question["id"], "choice": "no_clear_thesis"})
+        elif kind == "rule_breach":
+            answers.append({"question_id": question["id"], "choice": "keep_tracking"})
+        elif kind in ("revisit", "due_revisit"):
+            answers.append({"question_id": question["id"], "choice": "skip"})
+        else:
+            answers.append({"question_id": question["id"], "choice": "deliberate_plan"})
     out = {
-        "session_id": plan["session_id"], "answers": [answer],
+        "session_id": plan["session_id"], "answers": answers,
         "thesis_updates": [{"ticker": "PLTR", "cycle_id": "PLTR#2026-01-01#1",
                             "why": "Enterprise adoption may still be underpriced",
                             "horizon": "quarters", "exit_trigger": "Renewals weaken",
@@ -2669,8 +2687,11 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         plan, csv_path, card_path, state_path = _prepare_with_trades(tmp, root)
-        assert plan["card_plan"]["question_limit"] == 3
-        assert len(plan["question_queue"]) == 3, "one review asks at most three important questions"
+        # This fixture routes first_review, whose density band is three to five (#291).
+        assert plan["route"] == "first_review"
+        assert plan["card_plan"]["question_limit"] == 5
+        assert plan["card_plan"]["question_policy"] == {"route": "first_review", "min": 3, "max": 5}
+        assert len(plan["question_queue"]) == 3, "these three grounded candidates fit inside the five-slot band"
         assert [(q["kind"], q.get("ticker")) for q in plan["question_queue"]] == [
             ("revisit", "BIG"), ("revisit", "MID"), ("add_thesis", "PLTR")], \
             "perishable captures (amount-ranked, max two) lead; the rest rank by impact"
@@ -2860,7 +2881,7 @@ def _memory_add_queue(active_row, language, diagnosis=None, cost=5000, custom_qu
     active = {}
     if active_row is not None:
         active["NVDA#2026-06-01#1"] = active_row
-    queue = review_engine._question_queue(card, state, active, None, language)
+    queue, _report = review_engine._question_queue(card, state, active, None, language)
     assert [row["kind"] for row in queue] == ["add_thesis"]
     return queue[0]
 
@@ -3454,7 +3475,7 @@ def test_rule_breach_decision_is_durable_deduped_and_revision_supersedes():
                    "cycle_id": "EXIT#2026-07-01#1", "exit_date": "2026-07-10",
                    "exit_price": 10.0, "shares_sold": 1.0, "shares_before": 1.0,
                    "kind": "full", "currency": "USD"}
-    queue = review_engine._question_queue(
+    queue, _report = review_engine._question_queue(
         {"thesis_questions": [{"ticker": "PLTR", "question": "why add"}],
          "ticker_diagnosis": [{"ticker": "PLTR", "impact": 99999}]},
         {"holdings": {"positions": {"PLTR": {"cycle_id": "PLTR#2026-01-01#1", "cost": 99999}}}},
@@ -3534,13 +3555,18 @@ def _prepare_dated(tmp, root, date_end, tag, language="zh-TW"):
 
 
 def _prepare_headline_motive(tmp, root, tag, language="zh-TW"):
-    """Prepare the fallback motive path with identical engine facts per tag."""
+    """Prepare the fallback motive path with identical engine facts per tag.
+
+    Pinned to weekly_review: the quiet-week backfill is the motive question's
+    native route, and first_review would add #291 initial-thesis captures on
+    top of the single question this fixture depends on."""
     card_path, state_path = _artifacts(tmp)
     card = json.loads(card_path.read_text(encoding="utf-8"))
     card["thesis_questions"] = []
     headline_card = pathlib.Path(tmp) / f"headline_card_{tag}.json"
     headline_card.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
     run = _run("prepare", "--root", root, "--language", language,
+               "--route", "weekly_review",
                "--card-json", headline_card, "--state-json", state_path,
                "--session-nonce", tag)
     assert run.returncode == 0, run.stdout + run.stderr
@@ -3635,6 +3661,27 @@ def test_headline_motive_choice_changes_private_card_and_persists_canonically():
         repaired_rows = [json.loads(line) for line in
                          projection.read_text(encoding="utf-8").splitlines()]
         assert repaired_rows == [event]
+        assert bundle_path.read_text(encoding="utf-8") == before_retry
+
+
+def test_headline_motive_skip_keeps_bundle_key_absent_for_replay_compat():
+    """#294: a skip produces no event AND no bundle key, the same
+    absent-when-empty contract as revisit_resolutions — so sessions finalized
+    before this key existed re-draft byte-identically and the documented-safe
+    finalize retry stays a no-op instead of failing closed (#257 class)."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_headline_motive(tmp, root, "skipcompat")
+        skipped_a, narrative = _write_headline_interaction(tmp, plan, "skip", "skipcompat")
+        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", skipped_a, "--narrative", narrative)
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
+        before_retry = bundle_path.read_text(encoding="utf-8")
+        assert "headline_motive_events" not in json.loads(before_retry)
+        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", skipped_a, "--narrative", narrative)
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        assert json.loads(retry.stdout)["status"] == "no-op"
         assert bundle_path.read_text(encoding="utf-8") == before_retry
 
 
@@ -4853,6 +4900,317 @@ def test_vs_market_gate_slot_consumers_and_fail_closed():
             assert verdict == {"render": True, "basis": "history_unreadable",
                                "month": "2026-07"}, \
                 "unreadable history fails closed toward showing the segment"
+
+
+# ─────────────── #291 route-specific question density ───────────────
+
+def _pos(ticker, cost, start="2026-01-01"):
+    return {"shares": 10, "cost": cost, "avg_cost": cost / 10, "cycle_start": start,
+            "cycle_id": f"{ticker}#{start}#1", "market": "US", "currency": "USD"}
+
+
+def _density_artifacts(tmp, tag, positions, thesis_questions, date_end="2026-07-14"):
+    """First-review card/state with caller-chosen holdings and add questions."""
+    card_path, state_path = _artifacts(tmp)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    state["date_end"] = date_end
+    state["holdings"]["positions"] = positions
+    state["holdings"]["is_complete"] = False
+    state["metrics"]["n_holdings"] = len(positions)
+    card["thesis_questions"] = list(thesis_questions)
+    card["ticker_diagnosis"] = []
+    cp = pathlib.Path(tmp) / f"card_{tag}.json"
+    sp = pathlib.Path(tmp) / f"state_{tag}.json"
+    cp.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    sp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    return cp, sp
+
+
+def _exits_csv(tmp, tag, sells):
+    """One BUY+SELL round trip per (ticker, sell_price, sell_date) → recent exits."""
+    rows = ["Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency"]
+    for ticker, price, date in sells:
+        rows.append(f"{ticker},BUY,10,100,2026-07-01,Trade,US,USD")
+        rows.append(f"{ticker},SELL,10,{price},{date},Trade,US,USD")
+    path = pathlib.Path(tmp) / f"exits_{tag}.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _thesis_update(ticker, start="2026-01-01", maturity="inferred"):
+    return {"ticker": ticker, "cycle_id": f"{ticker}#{start}#1",
+            "why": f"{ticker} inferred entry rationale", "horizon": "quarters",
+            "exit_trigger": f"{ticker} thesis is contradicted", "maturity": maturity}
+
+
+def test_first_review_one_exit_still_returns_three_grounded_questions():
+    """#291 acceptance: one recent exit plus two un-thesised holdings must still
+    return at least three grounded questions on a first review, not just one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        positions = {"AAA": _pos("AAA", 4000), "BBB": _pos("BBB", 3000)}
+        card, state = _density_artifacts(tmp, "one_exit", positions, thesis_questions=[])
+        csv = _exits_csv(tmp, "one_exit", [("SOLDX", 200, "2026-07-10")])
+        run = _run("prepare", csv, "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        assert plan["route"] == "first_review"
+        queue = plan["question_queue"]
+        assert len(queue) >= 3, "one exit must not collapse the review to a single question"
+        assert any(q["kind"] == "revisit" and q.get("ticker") == "SOLDX" for q in queue)
+        initial = [q for q in queue if q["kind"] == "initial_thesis"]
+        assert len(initial) >= 1
+        for q in initial:
+            assert q["ticker"] in q["question"], "the stem must cite the ticker"
+            assert f"{q['cost_basis']:,.0f}" in q["question"], "the stem must cite the cost-basis magnitude"
+            assert {o["value"] for o in q["options"]} == \
+                {"planned_entry", "momentum_follow", "external_call", "no_clear_thesis", "skip"}
+        assert plan["card_plan"]["question_selection"]["shortfall_reason"] is None
+
+
+def test_first_review_high_information_queue_is_bounded_and_durable():
+    """#291: a high-information first review caps at five, every selected answer
+    has a durable destination, and the trimmed candidates carry typed reasons."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        positions = {"ADDHI": _pos("ADDHI", 9000), "ADDLO": _pos("ADDLO", 1000),
+                     "INITHI": _pos("INITHI", 8000), "INITLO": _pos("INITLO", 2000)}
+        card, state = _density_artifacts(
+            tmp, "hi", positions,
+            thesis_questions=[{"ticker": "ADDHI"}, {"ticker": "ADDLO"}])
+        csv = _exits_csv(tmp, "hi", [("EXA", 300, "2026-07-10"),
+                                     ("EXB", 250, "2026-07-11"), ("EXC", 200, "2026-07-12")])
+        run = _run("prepare", csv, "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        queue = plan["question_queue"]
+        assert len(queue) <= 5, "the first-review band is capped at five"
+        report = plan["card_plan"]["question_selection"]
+        reasons = {row["reason"] for row in report["rejected"]}
+        assert "over_max_capacity" in reasons and "capture_limit" in reasons, report
+        assert {"revisit", "add_thesis", "initial_thesis"} <= {q["kind"] for q in queue}, \
+            "the five slots must mix a durable exit, add, and initial-thesis question"
+
+        answers = {"session_id": plan["session_id"], "answers": [],
+                   "observations": ["Agent interpretation stays separate from engine facts"],
+                   "commitment": {"choice": "candidate_0"},
+                   "thesis_updates": [_thesis_update(t) for t in positions]}
+        for q in queue:
+            if q["kind"] == "revisit":
+                answers["answers"].append({"question_id": q["id"], "choice": "thesis_broken"})
+            elif q["kind"] == "add_thesis":
+                answers["answers"].append({"question_id": q["id"], "choice": "new_evidence",
+                                           "evidence_delta": {"claim": "demand accelerated",
+                                                              "source": "earnings call"}})
+            elif q["kind"] == "initial_thesis":
+                answers["answers"].append({"question_id": q["id"], "choice": "momentum_follow"})
+            else:
+                answers["answers"].append({"question_id": q["id"], "choice": "deliberate_plan"})
+        a_path = pathlib.Path(tmp) / "hi-answers.json"
+        n_path = pathlib.Path(tmp) / "hi-narrative.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path.write_text(json.dumps(_narrative("en"), ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", a_path, "--narrative", n_path)
+        assert final.returncode == 0, final.stdout + final.stderr
+        bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json")
+                            .read_text(encoding="utf-8"))
+        # Every selected kind reached its durable append-only destination.
+        assert bundle.get("exit_narratives"), "selected exit answers must persist"
+        assert bundle.get("thesis_decisions"), "selected add answers must persist"
+        assert bundle.get("initial_thesis_events"), "selected initial-thesis answers must persist"
+
+
+def test_weekly_review_quiet_week_backfills_exactly_one_never_zero():
+    """#291: a weekly queue stays in the one-to-three band; a quiet week with a
+    scored hole still yields exactly one grounded backfill question, never zero."""
+    quiet_card = {"top_holes": [{"dim": "averaging_down"}], "ticker_diagnosis": []}
+    quiet_state = {"holdings": {"positions": {}}, "headline_dim": "averaging_down"}
+    queue, report = review_engine._question_queue(
+        quiet_card, quiet_state, {}, None, "en", route="weekly_review")
+    assert [q["kind"] for q in queue] == ["headline_motive"], "quiet week backfills exactly one"
+    assert report["selected"] == 1 and report["shortfall_reason"] is None
+
+    # A weekly with two add questions stays inside the one-to-three band.
+    positions = {"T0": _pos("T0", 5000), "T1": _pos("T1", 4000)}
+    busy_card = {"thesis_questions": [{"ticker": "T0"}, {"ticker": "T1"}],
+                 "ticker_diagnosis": [], "top_holes": [{"dim": "averaging_down"}]}
+    busy_state = {"holdings": {"positions": positions}, "headline_dim": "averaging_down"}
+    busy_queue, busy_report = review_engine._question_queue(
+        busy_card, busy_state, {}, None, "en", route="weekly_review")
+    assert 1 <= len(busy_queue) <= 3 and busy_report["selected"] == 2
+
+
+def test_initial_thesis_dedup_skips_a_position_with_an_existing_thesis():
+    """#291: a holding that already carries a real (testable) thesis is not asked
+    an entry-thesis question, and the selection report records why."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True)
+        seed = {"cycle_id": "TESTED#2026-01-01#1", "ticker": "TESTED",
+                "why": "seeded durable thesis", "exit_trigger": "seeded falsifier",
+                "maturity": "testable", "status": "open", "position_status": "open",
+                "schema_version": 2, "session_id": "2026-06-01__seed", "session_date": "2026-06-01"}
+        (root / "theses.jsonl").write_text(json.dumps(seed, ensure_ascii=False) + "\n", encoding="utf-8")
+        positions = {"TESTED": _pos("TESTED", 6000), "AAA": _pos("AAA", 3000)}
+        card, state = _density_artifacts(tmp, "dedup", positions, thesis_questions=[])
+        run = _run("prepare", "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        assert "TESTED" not in {q.get("ticker") for q in plan["question_queue"]}, \
+            "a position with an existing thesis must not be asked an entry-thesis question"
+        rejected = plan["card_plan"]["question_selection"]["rejected"]
+        assert {"id": review_engine._initial_thesis_id("TESTED#2026-01-01#1"),
+                "kind": "initial_thesis", "cycle_id": "TESTED#2026-01-01#1",
+                "reason": "has_existing_thesis"} in rejected
+        # P2-B: every rejected entry carries a uniform shape with a join key.
+        assert all(set(row) == {"id", "kind", "cycle_id", "reason"} for row in rejected)
+        assert any(q["kind"] == "initial_thesis" and q.get("ticker") == "AAA"
+                   for q in plan["question_queue"]), "the un-thesised holding is still asked"
+
+
+def test_initial_thesis_consumption_maturity_gate_and_idempotency():
+    """#291: planned_entry forces a real captured thesis; other answers keep the
+    inferred record legal; the classification projects; finalize stays idempotent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        positions = {"AAA": _pos("AAA", 5000), "BBB": _pos("BBB", 4000)}
+        card, state = _density_artifacts(tmp, "consume", positions, thesis_questions=[])
+        run = _run("prepare", "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        aaa_q = next(q for q in plan["question_queue"]
+                     if q["kind"] == "initial_thesis" and q["ticker"] == "AAA")
+        bbb_q = next(q for q in plan["question_queue"]
+                     if q["kind"] == "initial_thesis" and q["ticker"] == "BBB")
+
+        base = {"session_id": plan["session_id"], "observations": [],
+                "commitment": {"choice": "candidate_0"}}
+        base["answers"] = [{"question_id": aaa_q["id"], "choice": "planned_entry"},
+                           {"question_id": bbb_q["id"], "choice": "no_clear_thesis"}]
+        for q in plan["question_queue"]:
+            if q["kind"] not in ("initial_thesis",):
+                base["answers"].append({"question_id": q["id"], "choice": "deliberate_plan"})
+        n_path = pathlib.Path(tmp) / "c-narrative.json"
+        n_path.write_text(json.dumps(_narrative("en"), ensure_ascii=False), encoding="utf-8")
+
+        # planned_entry with a silently-inferred thesis is rejected.
+        bad = json.loads(json.dumps(base))
+        bad["thesis_updates"] = [_thesis_update("AAA", maturity="inferred"),
+                                 _thesis_update("BBB", maturity="inferred")]
+        bad_path = pathlib.Path(tmp) / "c-bad.json"
+        bad_path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
+        rejected = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                        "--answers", bad_path, "--narrative", n_path)
+        assert rejected.returncode == 2 and "planned_entry" in json.loads(rejected.stdout)["error"]
+
+        # A real captured thesis for the planned_entry cycle passes; the
+        # no_clear_thesis cycle stays honestly inferred.
+        good = json.loads(json.dumps(base))
+        good["thesis_updates"] = [_thesis_update("AAA", maturity="testable"),
+                                  _thesis_update("BBB", maturity="inferred")]
+        good_path = pathlib.Path(tmp) / "c-good.json"
+        good_path.write_text(json.dumps(good, ensure_ascii=False), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", good_path, "--narrative", n_path)
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        assert not result["projection_error"], final.stdout
+        bundle = json.loads((pathlib.Path(result["path"]) / "bundle.json").read_text(encoding="utf-8"))
+        events = {e["ticker"]: e["choice"] for e in bundle["initial_thesis_events"]}
+        assert events == {"AAA": "planned_entry", "BBB": "no_clear_thesis"}
+        projected = [json.loads(line) for line in
+                     (root / "initial_theses.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert {r["ticker"] for r in projected} == {"AAA", "BBB"}, "the classification projects to its own log"
+
+        # Idempotent finalize retry writes nothing new.
+        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", good_path, "--narrative", n_path)
+        assert retry.returncode == 0 and json.loads(retry.stdout)["status"] in ("committed", "no-op")
+        again = [json.loads(line) for line in
+                 (root / "initial_theses.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert again == projected, "an idempotent finalize retry must not duplicate rows"
+
+
+def test_question_density_matrix_selects_expected_counts_per_route():
+    """#291: candidate counts of 1, 3, and 5 resolve to the per-route band —
+    first review floors at three (backfilling), weekly caps at three."""
+    def selected(k, route):
+        positions = {f"T{i}": {"cycle_id": f"T{i}#2026-01-01#1", "cost": 1000 * (k - i)}
+                     for i in range(k)}
+        card = {"thesis_questions": [{"ticker": f"T{i}"} for i in range(k)],
+                "ticker_diagnosis": [], "top_holes": [{"dim": "averaging_down"}]}
+        state = {"holdings": {"positions": positions}, "headline_dim": "averaging_down"}
+        return review_engine._question_queue(card, state, {}, None, "en", route=route)
+
+    _q, r1 = selected(1, "first_review")
+    assert r1["selected"] == 2 and r1["shortfall_reason"] == "insufficient_eligible_candidates", \
+        "one candidate plus the single grounded backfill still cannot reach the floor of three"
+    _q, r3 = selected(3, "first_review")
+    assert r3["selected"] == 3 and r3["shortfall_reason"] is None
+    _q, r5 = selected(5, "first_review")
+    assert r5["selected"] == 5 and r5["eligible"] == 5
+
+    _q, w1 = selected(1, "weekly_review")
+    assert w1["selected"] == 1
+    _q, w3 = selected(3, "weekly_review")
+    assert w3["selected"] == 3
+    q5, w5 = selected(5, "weekly_review")
+    assert w5["selected"] == 3 and w5["eligible"] == 5
+    assert sum(1 for row in w5["rejected"] if row["reason"] == "over_max_capacity") == 2
+
+
+def test_first_review_grounded_refill_beats_generic_backfill():
+    """#291 P2-A: below the route min, a suppressed grounded initial-thesis
+    candidate refills the queue before the generic motive backfill is used —
+    an extra slot earns its place through durable information gain."""
+    def first_review_holdings(n):
+        positions = {f"H{i}": _pos(f"H{i}", 9000 - 1000 * i) for i in range(n)}
+        missing = [{"ticker": f"H{i}", "cycle_id": f"H{i}#2026-01-01#1"} for i in range(n)]
+        card = {"thesis_questions": [], "ticker_diagnosis": [],
+                "top_holes": [{"dim": "averaging_down"}]}
+        state = {"holdings": {"positions": positions}, "headline_dim": "averaging_down"}
+        return review_engine._question_queue(card, state, {}, None, "en",
+                                             route="first_review", missing_thesis_positions=missing)
+
+    # Three un-thesised holdings fill the floor of three with grounded questions;
+    # the generic motive never appears even though a hole dimension is available.
+    q3, r3 = first_review_holdings(3)
+    assert [x["kind"] for x in q3] == ["initial_thesis"] * 3, "grounded refill, not a generic motive"
+    assert not any(x["kind"] == "headline_motive" for x in q3)
+    assert r3["selected"] == 3 and r3["shortfall_reason"] is None and r3["rejected"] == []
+
+    # A fourth holding still caps the queue at the floor; the one unused grounded
+    # row is the only over-limit trim and no generic motive is fabricated.
+    q4, r4 = first_review_holdings(4)
+    assert [x["kind"] for x in q4] == ["initial_thesis"] * 3
+    assert not any(x["kind"] == "headline_motive" for x in q4)
+    trims = [x for x in r4["rejected"] if x["reason"] == "initial_thesis_limit"]
+    assert len(trims) == 1 and trims[0]["cycle_id"] == "H3#2026-01-01#1"
+
+
+def test_add_thesis_already_captured_rejection_carries_join_keys():
+    """#291 P2-B: an already-captured add dedup records the same question id the
+    row would have used, plus the cycle_id, so QA joins never silently miss."""
+    cycle_id = "NVDA#2026-06-01#1"
+    cursor = cycle_id + "#add#2"
+    positions = {"NVDA": {"cycle_id": cycle_id, "cost": 5000, "decision_cursor": cursor}}
+    card = {"thesis_questions": [{"ticker": "NVDA"}], "ticker_diagnosis": [],
+            "top_holes": [{"dim": "averaging_down"}]}
+    state = {"holdings": {"positions": positions}, "headline_dim": "averaging_down"}
+    active = {cycle_id: {"decision_cursor": cursor, "maturity": "testable"}}
+    queue, report = review_engine._question_queue(card, state, active, None, "en", route="weekly_review")
+    assert all(q["kind"] != "add_thesis" for q in queue), "the captured add is deduped away"
+    dedup = [r for r in report["rejected"] if r["reason"] == "already_captured"]
+    assert len(dedup) == 1 and dedup[0]["kind"] == "add_thesis" and dedup[0]["cycle_id"] == cycle_id
+    assert dedup[0]["id"] == "add_" + hashlib.sha256(cursor.encode("utf-8")).hexdigest()[:12], \
+        "the rejection id matches the add question's own id derivation"
+    assert set(dedup[0]) == {"id", "kind", "cycle_id", "reason"}
 
 
 def main():

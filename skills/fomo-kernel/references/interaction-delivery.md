@@ -31,7 +31,7 @@ python3 engine/review.py resume --session-id <session_id> \
   --question-surfaces /tmp/fomo-kernel-question-surfaces.json
 ```
 
-A successful bind returns `question_presentations` with `source=validated_dynamic` and freezes the exact artifact in pending state. Every later `resume` returns the same bytes; a different candidate for that session fails closed. If generation, parsing, grounding, one-to-one mapping, order, or payload-semantics validation fails, use the returned `source=engine_fallback` presentation. A host that cannot author dynamic copy may call `resume --session-id` and use the unchanged fallback directly. The route, kind, trigger, priority, required status, queue budget, canonical values, payload requirements, numeric facts, and identities never enter the authored surface.
+A successful bind returns `question_presentations` with `source=validated_dynamic` and freezes the exact artifact in pending state. Every later `resume` returns the same bytes; a different candidate for that session fails closed. If generation, parsing, grounding, one-to-one mapping, order, or payload-semantics validation fails, use the returned `source=engine_fallback` presentation. A host that cannot author dynamic copy may call `resume --session-id` and use the unchanged fallback directly. The route, kind, trigger, priority, required status, route-varying queue budget, canonical values, payload requirements, numeric facts, and identities never enter the authored surface.
 
 ## Present each required question once
 

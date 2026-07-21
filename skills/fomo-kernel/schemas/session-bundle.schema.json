@@ -338,6 +338,37 @@
         "additionalProperties": false
       }
     },
+    "initial_thesis_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event",
+          "schema_version",
+          "event_id",
+          "session_id",
+          "cycle_id",
+          "choice",
+          "review_date"
+        ],
+        "properties": {
+          "event": {"const": "initial_thesis"},
+          "schema_version": {"const": 1},
+          "event_id": {"type": "string"},
+          "session_id": {"type": "string"},
+          "cycle_id": {"type": "string"},
+          "ticker": {"type": ["string", "null"]},
+          "choice": {
+            "enum": ["planned_entry", "momentum_follow", "external_call", "no_clear_thesis"]
+          },
+          "note": {"type": ["string", "null"], "maxLength": 500},
+          "cost_basis": {"type": ["number", "null"]},
+          "currency": {"type": ["string", "null"]},
+          "review_date": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
     "rule_breach_decisions": {
       "type": "array",
       "items": {
