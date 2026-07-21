@@ -6,19 +6,31 @@
 絕不用 judge。本檔管「卡犯規沒」(純文字機檢),judge_narrative.py 管「敘事好不好」
 (需 LLM)——兩支分工,別把機檢項丟給 judge(judge 非確定性、有成本)。
 
-**斷言的單一權威 = docs/eval-design.md 的 A/B 編號**(鐵律文本住 skills/fomo-kernel/
-card-spec.md)。改那兩份的對應鐵律時,同步這裡的 CHECKS——漂移防線見 eval-design §5。
+**斷言的單一權威**:A/B 系列 = docs/eval-design.md 編號(鐵律文本住 skills/fomo-kernel/
+card-spec.md);S 系列(結構檢)= docs/output-contract.md §8。改那些文件的對應鐵律時,
+同步這裡的 CHECKS——漂移防線見 eval-design §5。
+
+S 系列只對 v2 renderer 私卡生效(front matter 含 privacy: private + language);
+v1 人話卡 / 任意文字不出 S findings,舊 eval case 行為零變:
+  S-1  keynote + 四大 block 標題齊且序正(標題取自 copy/<locale>.json blocks)
+  S-2  模組點亮與 §3 資料前提表一致(需 --context 給 card/state JSON;沒給則降級跳過)
+  S-3  caveat 佈局:不得連續 caveat 段、Block 1 首指標前不得先出 caveat
+  S-4  語言規則(output-language.md §5):禁 IRR token、單句內禁混用數字風格
 
 每條 check 回一個 Finding(assertion 編號 / passed / 證據原句)。任一 FAIL → CLI exit 1。
 只驗**卡面輸出**,不驗 repo 文檔(A-13 同款限定)。
 
 跑法:
-  python3 tests/agent/check_card.py <card.md|->      # 檔案或 stdin(-)
+  python3 tests/agent/check_card.py <card.md|-> [context.json]   # context = bundle/card/state JSON
   cat card.md | python3 tests/agent/check_card.py -
 可 import:
   from check_card import check_card
   findings = check_card(card_text)                    # list[Finding];[f for f in findings if not f.passed]
+  findings = check_card(card_text, context=json.load(open("bundle.json")))  # 啟用 S-2 資料對照
 """
+import json
+import math
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -67,6 +79,199 @@ _ABSTRACT_RULES = ("注意分散", "加碼前想清楚", "控制風險")
 _CONCRETE_NUM = re.compile(r"\$[\d,]+|\d+ *%|\d+\.\d+|\d{1,3}(?:,\d{3})+")
 
 
+# ═══════════════ S 系列(結構檢;權威 = docs/output-contract.md §8)═══════════════
+# 只對 v2 renderer 私卡生效(front matter privacy: private)。標題 / 缺料 note 的
+# 對照文本一律讀 copy/<locale>.json——checker 不自帶第二份 wording 事實源。
+
+_COPY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "..", "skills", "fomo-kernel", "copy")
+_FRONT_MATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+# 卡面 caveat 的唯一形狀(renderer 契約):縮排 + 整行括號。
+_CAVEAT_LINE_RE = re.compile(r"^[ \t]+[（(].*[)）][ \t]*$")
+_IRR_TOKEN_RE = re.compile(r"\bIRR\b")
+# 中文拼寫數量(混風格檢用;窄集,寧漏勿誤殺——完整判定住 card_renderer.numeric_claim)
+_ZH_SPELLED_QTY_RE = re.compile(r"百分之[零〇一二兩三四五六七八九十百]"
+                                r"|[零〇一二兩三四五六七八九十百千萬]+[成趴倍％]")
+_EN_SPELLED_QTY_RE = re.compile(
+    r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|"
+    r"fifty|sixty|seventy|eighty|ninety|hundred|thousand)[\s-]+"
+    r"(?:percent|percentage\s+points?|pp)\b", re.I)
+_SENTENCE_SPLIT_RE = re.compile(r"[。．.!?！？;；]\s*|\n")
+
+
+def _front_matter(text: str) -> dict:
+    match = _FRONT_MATTER_RE.match(text)
+    if not match:
+        return {}
+    fm = {}
+    for line in match.group(1).splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            fm[key.strip()] = value.strip()
+    return fm
+
+
+def _card_body(text: str) -> str:
+    match = _FRONT_MATTER_RE.match(text)
+    return text[match.end():] if match else text
+
+
+def _load_copy(language) -> dict:
+    name = "en" if str(language).lower().startswith("en") else "zh-TW"
+    try:
+        with open(os.path.join(_COPY_DIR, name + ".json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _finite(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _context_card(context):
+    """從 bundle / card / state JSON 撈 engine card(S-2 對照源);認不出 → None。"""
+    if not isinstance(context, dict):
+        return None
+    if isinstance(context.get("engine_card"), dict):
+        return context["engine_card"]
+    if any(key in context for key in ("overview", "top_holes", "ticker_diagnosis",
+                                      "alpha_beta_breakdown")):
+        return context
+    return None
+
+
+def _s1_block_titles(body: str, copy: dict) -> "Finding":
+    blocks = copy.get("blocks") or {}
+    expected = [blocks.get(key) for key in ("performance", "trades", "risks", "next")]
+    if not all(expected):
+        return Finding("S-1", False, "keynote + 四大 block 齊且序正",
+                       "copy 檔缺 blocks.* 標題,無從對照")
+    titles = [line[3:].strip() for line in body.splitlines() if line.startswith("## ")]
+    # snapshot 路線的 Block 1 標題採 snapshot_numbers 覆寫(§3 snapshot row)。
+    snapshot_first = copy.get("snapshot_numbers")
+    ok_first = titles[:1] and titles[0] in {expected[0], snapshot_first}
+    ok = bool(ok_first) and titles[1:] == expected[1:] and len(titles) == 4
+    headline = any(line.startswith("# ") for line in body.splitlines())
+    evidence = "" if (ok and headline) else f"標題序:{titles!r}" + ("" if headline else ";缺 keynote(# 行)")
+    return Finding("S-1", ok and headline, "keynote + 四大 block 齊且序正", evidence)
+
+
+def _s2_module_lighting(body: str, copy: dict, context) -> "Finding":
+    card = _context_card(context)
+    if card is None:
+        return Finding("S-2", True, "模組點亮 vs 資料前提表(未給 context,降級跳過)")
+    missing_copy = copy.get("block_missing") or {}
+    if not missing_copy:
+        return Finding("S-2", False, "模組點亮 vs 資料前提表", "copy 檔缺 block_missing.*")
+    if isinstance(card.get("snapshot_summary"), dict):
+        # snapshot 路線刻意壓掉歷史績效模組(§3 最後一列),缺料 note 不適用。
+        return Finding("S-2", True, "模組點亮 vs 資料前提表(snapshot 路線,依約壓掉歷史模組)")
+    overview = card.get("overview") or {}
+    pnl_rows = ((card.get("currency_meta") or {}).get("pnl_by_currency") or {})
+    has_abs = (any(_finite(overview.get(key)) is not None
+                   for key in ("total_pnl", "realized", "unrealized"))
+               or any(_finite((row or {}).get("realized")) is not None
+                      or _finite((row or {}).get("unrealized")) is not None
+                      for row in pnl_rows.values()))
+    has_ann = _finite((card.get("acct_perf") or {}).get("hold_twr")) is not None
+    ab = card.get("alpha_beta_breakdown") or {}
+    by_market = ab.get("by_market")
+    if isinstance(by_market, dict) and by_market:
+        has_vs = any(isinstance(row, dict) and not row.get("note")
+                     and all(_finite(row.get(key)) is not None
+                             for key in ("port_tot", "spy_tot", "excess_vs_spy"))
+                     for row in by_market.values())
+    else:
+        has_vs = (isinstance(ab, dict) and not ab.get("note")
+                  and all(_finite(ab.get(key)) is not None
+                          for key in ("port_tot", "spy_tot", "excess_vs_spy")))
+    diagnosed = [row for row in (card.get("ticker_diagnosis") or [])
+                 if isinstance(row, dict) and _finite(row.get("impact"))]
+    rows_indeterminate = bool((card.get("currency_meta") or {}).get("mixed"))
+    has_rows = len(diagnosed) >= 2
+    has_diag = bool(card.get("top_holes") or card.get("dims_raw"))
+
+    problems = []
+    for key, lit, note_key in (("absolute_pnl", has_abs, "absolute_pnl"),
+                               ("annualized", has_ann, "annualized"),
+                               ("vs_market", has_vs, "vs_market"),
+                               ("risks", has_diag, "risks")):
+        note = missing_copy.get(note_key) or ""
+        shown = bool(note) and note in body
+        if not lit and not shown:
+            problems.append(f"{key}: 前提缺但缺料 note 沒出(靜默省略)")
+        if lit and shown:
+            problems.append(f"{key}: 前提在但卡上出了缺料 note")
+    # Both trades variants (with/without a traded-ticker list) share this stem.
+    trades_needle = (missing_copy.get("trades") or "").rstrip("。.")
+    trades_note_shown = bool(trades_needle) and trades_needle in body
+    if not has_rows and not rows_indeterminate and not trades_note_shown:
+        problems.append("trades: 標的列前提缺但缺料 note 沒出")
+    if has_rows and not rows_indeterminate and trades_note_shown:
+        problems.append("trades: 標的列前提在但卡上出了缺料 note")
+    return Finding("S-2", not problems, "模組點亮 vs 資料前提表(§3)", "; ".join(problems))
+
+
+def _s3_caveat_placement(body: str) -> "Finding":
+    lines = body.splitlines()
+    caveat_indices = [index for index, line in enumerate(lines)
+                      if _CAVEAT_LINE_RE.match(line)]
+    problems = []
+    adjacent = next((lines[b] for a, b in zip(caveat_indices, caveat_indices[1:])
+                     if b - a == 1), None)
+    if adjacent:
+        problems.append(f"連續 caveat 段:{adjacent.strip()}")
+    header_indices = [index for index, line in enumerate(lines) if line.startswith("## ")]
+    if header_indices:
+        block1 = header_indices[0]
+        before = next((lines[i] for i in caveat_indices if i < block1), None)
+        if before is not None:
+            problems.append(f"Block 1 前(keynote 區)出現 caveat:{before.strip()}")
+        first_content = next((i for i in range(block1 + 1, len(lines)) if lines[i].strip()),
+                             None)
+        if first_content is not None and first_content in caveat_indices:
+            problems.append(f"Block 1 首行是 caveat,先於任何指標:{lines[first_content].strip()}")
+    return Finding("S-3", not problems,
+                   "caveat 佈局:不連續、不先於 Block 1 指標", "; ".join(problems))
+
+
+def _s4_language_rules(body: str, language) -> "Finding":
+    problems = []
+    irr = _IRR_TOKEN_RE.search(body)
+    if irr:
+        problems.append("IRR token 上卡(須用「年化報酬」/ annualized return)")
+    spelled = (_ZH_SPELLED_QTY_RE if not str(language).lower().startswith("en")
+               else _EN_SPELLED_QTY_RE)
+    mixed = next((s.strip() for s in _SENTENCE_SPLIT_RE.split(body)
+                  if s and re.search(r"\d", s) and spelled.search(s)), None)
+    if mixed:
+        problems.append(f"單句混用數字風格:{mixed[:60]}")
+    return Finding("S-4", not problems,
+                   "語言規則:無 IRR token、單句單一數字風格", "; ".join(problems))
+
+
+def check_structure(text: str, context=None) -> list["Finding"]:
+    """S 系列(output-contract §8)。只對 v2 私卡出 findings;其餘回空 list。"""
+    fm = _front_matter(text)
+    if fm.get("privacy") != "private" or not fm.get("language"):
+        return []
+    body = _card_body(text)
+    copy = _load_copy(fm["language"])
+    return [
+        _s1_block_titles(body, copy),
+        _s2_module_lighting(body, copy, context),
+        _s3_caveat_placement(body),
+        _s4_language_rules(body, fm["language"]),
+    ]
+
+
 def _first_paragraph(text: str) -> str:
     """首段 = 第一個非空白區塊(到第一個空行為止)。A-6 只看首段。"""
     for block in re.split(r"\n\s*\n", text.strip()):
@@ -75,8 +280,11 @@ def _first_paragraph(text: str) -> str:
     return ""
 
 
-def check_card(text: str) -> list[Finding]:
-    """對一張卡跑全部離線鐵律機檢。回 list[Finding](含通過項,方便呈現全貌)。"""
+def check_card(text: str, context=None) -> list[Finding]:
+    """對一張卡跑全部離線鐵律機檢。回 list[Finding](含通過項,方便呈現全貌)。
+
+    ``context``(選填)= bundle / engine card / state 的已解析 JSON,供 S-2 對照
+    §3 資料前提表;不給則 S-2 降級跳過。S 系列只對 v2 私卡出 findings。"""
     findings: list[Finding] = []
 
     # A-2 5 維 severity 小數表
@@ -122,20 +330,27 @@ def check_card(text: str) -> list[Finding]:
                             "卡含 ≥1 具體數字(非純形容詞堆砌)",
                             "" if has_num else "全卡查無金額 / % / 小數"))
 
+    # S 系列(v2 私卡限定;非 v2 文字回空 list,不影響舊 eval case)
+    findings.extend(check_structure(text, context))
+
     return findings
 
 
 def _main() -> int:
-    if len(sys.argv) != 2:
-        print(f"用法: {sys.argv[0]} <card.md|->", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print(f"用法: {sys.argv[0]} <card.md|-> [context.json]", file=sys.stderr)
         return 2
     if sys.argv[1] == "-":
         text = sys.stdin.read()
     else:
         with open(sys.argv[1], encoding="utf-8") as f:
             text = f.read()
+    context = None
+    if len(sys.argv) == 3:
+        with open(sys.argv[2], encoding="utf-8") as f:
+            context = json.load(f)
 
-    findings = check_card(text)
+    findings = check_card(text, context)
     for f in findings:
         print(f)
     failed = [f for f in findings if not f.passed]

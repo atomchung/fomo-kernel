@@ -275,51 +275,115 @@ def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
 
 
 def _hole_panel_chunk(html):
-    """The hole panel's HTML, up to the next section container."""
-    return html.split('<div class="sec hole">', 1)[1].split('<div class="sec', 1)[0]
+    """The hole panel's HTML (panels contain only <p> children, no nested divs)."""
+    return html.split('<div class="panel hole">', 1)[1].split("</div>", 1)[0]
 
 
 def _markdown_section(markdown, title):
     return markdown.split(f"## {title}", 1)[1].split("## ", 1)[0]
 
 
-def test_stress_row_detaches_from_non_concentration_hole():
-    """#263: the stress row argues a concentration exposure; a top hole from
-    another dimension (the rich fixture's is averaging_down) must not absorb
-    it.  The row moves to its own section on both surfaces instead."""
-    bundle = _rich_bundle("zh-TW")
-    html = card_renderer.render_html(bundle)
-    markdown = card_renderer.render_private(bundle)
+def _markdown_block(markdown, language, block):
+    blocks = card_renderer.load_copy(language)["blocks"]
+    return _markdown_section(markdown, blocks[block])
+
+
+def test_stress_line_rides_block1_exposure_for_any_hole_dimension():
+    """Output contract §2 (supersedes the #263/#265 split placement): the
+    stress line rides Block 1's exposure indicator area unconditionally when
+    its data exists. #265's intent survives — an unrelated hole never absorbs
+    the stress fact — and the concentration-family holes no longer host it
+    either; there is no standalone stress section on either surface."""
     sections = card_renderer.load_copy("zh-TW")["sections"]
-
-    assert "撐得住嗎" not in _hole_panel_chunk(html), \
-        "stress row may not ride inside the averaging-down hole panel"
-    assert sections["stress"] in html and "撐得住嗎" in html, \
-        "detached stress row must keep its own titled section"
-
-    assert "撐得住嗎" not in _markdown_section(markdown, sections["hole"])
-    assert "撐得住嗎" in _markdown_section(markdown, sections["stress"])
-
-
-def test_stress_row_stays_inside_concentration_hole_panel():
-    """#263 template provenance: when the top hole IS a concentration-family
-    dimension, the stress row remains its supporting evidence inside the
-    panel and no separate stress section appears."""
-    sections = card_renderer.load_copy("zh-TW")["sections"]
-    for dim, number_line in (("分散", "前三大風險部位佔 83%，最大 driver 佔 98%。"),
-                             ("部位 sizing", "最大單一風險部位佔 49%，其餘平均 5%。")):
+    cases = (
+        ("加碼攤平", None),  # the rich fixture's own non-concentration hole
+        ("分散", "前三大風險部位佔 83%，最大 driver 佔 98%。"),
+        ("部位 sizing", "最大單一風險部位佔 49%，其餘平均 5%。"),
+    )
+    for dim, number_line in cases:
         bundle = _rich_bundle("zh-TW")
-        hole = bundle["engine_card"]["top_holes"][0]
-        hole["dim"] = hole["raw"]["dim"] = dim
-        hole["number_line"] = number_line
+        if number_line is not None:
+            hole = bundle["engine_card"]["top_holes"][0]
+            hole["dim"] = hole["raw"]["dim"] = dim
+            hole["number_line"] = number_line
         html = card_renderer.render_html(bundle)
         markdown = card_renderer.render_private(bundle)
 
-        assert "撐得住嗎" in _hole_panel_chunk(html), \
-            f"stress row must stay inside the {dim} hole panel"
-        assert sections["stress"] not in html
-        assert "撐得住嗎" in _markdown_section(markdown, sections["hole"])
-        assert f"## {sections['stress']}" not in markdown
+        assert "撐得住嗎" not in _hole_panel_chunk(html), \
+            f"the {dim} hole panel must not absorb the stress line"
+        assert "撐得住嗎" in html and f"## {sections['stress']}" not in markdown \
+            and sections["stress"] not in html, \
+            "the stress line must render without a standalone stress section"
+        assert "撐得住嗎" in _markdown_block(markdown, "zh-TW", "performance"), \
+            f"stress line must ride Block 1 when the top hole is {dim}"
+        assert "撐得住嗎" not in _markdown_block(markdown, "zh-TW", "risks")
+
+
+def test_keynote_and_four_blocks_in_order_on_both_surfaces():
+    """Output contract §2: keynote + performance → key trades → risks →
+    next step, with localized block titles from copy, on md and HTML."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        blocks = card_renderer.load_copy(language)["blocks"]
+        expected = [blocks[key] for key in ("performance", "trades", "risks", "next")]
+        md_titles = [line[3:].strip() for line in run["markdown"].splitlines()
+                     if line.startswith("## ")]
+        assert md_titles == expected, f"{language} md blocks: {md_titles}"
+        html_titles = re.findall(r"<h2>(.*?)</h2>", run["html"])
+        assert html_titles == expected, f"{language} html blocks: {html_titles}"
+        assert run["markdown"].count("# ") >= 1, "keynote headline missing"
+
+
+def test_zh_and_en_cards_light_the_same_blocks_from_the_same_state():
+    """output-language.md §6 structure-equivalence: same state, both locales
+    light the same blocks and block kinds — a locale gap is a defect."""
+    shapes = {}
+    for language in ("zh-TW", "en"):
+        bundle = copy.deepcopy(_session("zh-TW")["bundle"])
+        bundle["language"] = language
+        structure = card_renderer._card_structure(bundle)
+        shapes[language] = [
+            (section["id"], [kind for kind, _ in section["blocks"]],
+             [payload["style"] for kind, payload in section["blocks"] if kind == "panel"])
+            for section in structure["sections"]
+        ]
+    assert shapes["zh-TW"] == shapes["en"], shapes
+
+
+def test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote():
+    """Output contract §4: a hosted honesty sentence renders as one caveat
+    line under its indicator; unhosted sentences collapse into the Block-1
+    footnote; caveat lines never stack."""
+    bundle = _rich_bundle("zh-TW")
+    card = bundle["engine_card"]
+    card["alpha_beta_breakdown"]["alpha_stat"] = {"alpha_ann": 0.33, "ci95": [0.10, 0.56]}
+    card["honesty_ledger"] = [
+        {"key": "alpha_credibility", "status": "gate", "data": {}},
+        {"key": "accounting_reconciliation", "status": "unreconciled", "data": {}},
+    ]
+    bundle["narrative"]["honesty"] = {
+        "alpha_credibility": "這裡的超額樣本仍薄，先當觀察不當能力。",
+        "accounting_reconciliation": "匯入紀錄與快照對不攏，這期先不評分部位結構。",
+    }
+    markdown = card_renderer.render_private(bundle)
+    html = card_renderer.render_html(bundle)
+
+    block1 = _markdown_block(markdown, "zh-TW", "performance")
+    lines = block1.splitlines()
+    caveat_rows = [index for index, line in enumerate(lines)
+                   if re.match(r"^[ \t]+[（(].*[)）][ \t]*$", line)]
+    assert caveat_rows, "hosted caveat line missing from Block 1"
+    assert all(b - a > 1 for a, b in zip(caveat_rows, caveat_rows[1:])), \
+        "caveat lines must never stack into a wall"
+    hosted = next(index for index in caveat_rows if "先當觀察" in lines[index])
+    assert "alpha" in lines[hosted - 1] or "α" in lines[hosted - 1], \
+        "the alpha caveat must sit directly under the alpha indicator line"
+    assert "資料備註：" in block1 and "對不攏" in block1, \
+        "unhosted honesty must collapse into the Block-1 footnote line"
+    assert '<p class="cavt">' in html and '<details class="fnote">' in html, \
+        "HTML must render the caveat line and the collapsed footnote"
+    assert "<details" in html.split("<h2>", 2)[1], \
+        "the footnote details element must live inside Block 1"
 
 
 # #279 i18n phase 1: the engine now emits stable codes + raw params for tags,
@@ -546,8 +610,10 @@ def main():
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
-        test_stress_row_detaches_from_non_concentration_hole,
-        test_stress_row_stays_inside_concentration_hole_panel,
+        test_stress_line_rides_block1_exposure_for_any_hole_dimension,
+        test_keynote_and_four_blocks_in_order_on_both_surfaces,
+        test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
+        test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_render_zh_prescriptions_from_copy,
         test_coded_fields_render_localized_english_blocks,

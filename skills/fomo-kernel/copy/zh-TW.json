@@ -27,6 +27,29 @@
     "etf": "ETF 與組合結構",
     "rule": "下次只改這一件"
   },
+  "blocks": {
+    "performance": "這期的績效",
+    "trades": "關鍵交易 · 按金額排序",
+    "risks": "風險與問題",
+    "next": "下一步"
+  },
+  "period": {
+    "span": "復盤區間 {start} → {end}",
+    "as_of": "截至 {end}",
+    "spy": "SPY 區間 {ret}",
+    "vix": "VIX {value}"
+  },
+  "block_missing": {
+    "absolute_pnl": "本期算不出帳面損益：缺交易或估值基礎。",
+    "annualized": "本期算不出年化報酬：現金流錨點不完整。",
+    "vs_market": "本期無法比對大盤：缺可用的基準序列。",
+    "trades": "本期沒有可排序的標的層診斷。",
+    "trades_traded": "本期沒有可排序的標的層診斷；這期交易過：{tickers}。",
+    "risks": "本期沒有行為診斷：引擎沒有可評分的維度。",
+    "rule": "這次沒有新的規矩承諾；下次復盤可再選一條。",
+    "rule_standing": "這期不改規矩；現行規矩維持：「{rule}」"
+  },
+  "footnote_label": "資料備註",
   "kpi": {
     "pnl": "帳面總損益",
     "pnl_sub": "已實現 {realized} · 未實現 {unrealized}",

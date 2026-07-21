@@ -31,9 +31,6 @@ DIMENSION_ID_BY_LEGACY_LABEL = {
     "alpha/beta": "alpha_beta",
     "進場": "entry_style",
 }
-# The what-if stress row argues a concentration exposure; only these hole
-# dimensions can absorb it as supporting evidence (#263).
-_CONCENTRATION_DIMS = {"position_sizing", "diversification"}
 MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
@@ -783,21 +780,25 @@ def _etf_lines(card, language):
     return lines
 
 
-def _decision_lines(bundle, copy):
+def _decision_entries(bundle, copy):
+    """(ticker, line) pairs so Block 2 can attach each motive to its instrument
+    row (contract §2); a pair without a row keeps its line at block level."""
     labels = copy.get("add_choices") or {}
-    lines = []
+    entries = []
     for event in bundle.get("thesis_decisions") or []:
         label = labels.get(event.get("decision"), event.get("decision"))
         ticker = event.get("ticker") or "position"
         if copy.get("language") == "en":
-            lines.append(f"{ticker}: {label}. The decision and its evidence boundary were saved for the next review.")
+            entries.append((event.get("ticker"),
+                            f"{ticker}: {label}. The decision and its evidence boundary were saved for the next review."))
         else:
-            lines.append(f"{ticker}：{label}。這個判斷與證據邊界已保存，供下次對帳。")
-    return lines
+            entries.append((event.get("ticker"),
+                            f"{ticker}：{label}。這個判斷與證據邊界已保存，供下次對帳。"))
+    return entries
 
 
-def _exit_lines(bundle, copy):
-    lines = []
+def _exit_entries(bundle, copy):
+    entries = []
     for event in bundle.get("exit_narratives") or []:
         if event.get("capture") == "skipped":
             continue
@@ -813,125 +814,210 @@ def _exit_lines(bundle, copy):
         ticker = event.get("ticker") or ("position" if copy.get("language") == "en" else "這筆部位")
         if copy.get("language") == "en":
             action = "exit" if kind == "full" else "reduction"
-            lines.append(f"{ticker}: you recorded the {action} reason as “{label}”. "
-                         "This preserves the reason at the time; it does not judge the outcome yet.")
+            entries.append((event.get("ticker"),
+                            f"{ticker}: you recorded the {action} reason as “{label}”. "
+                            "This preserves the reason at the time; it does not judge the outcome yet."))
         else:
             action = "清倉" if kind == "full" else "減倉"
-            lines.append(f"{ticker}：你把這次{action}記為「{label}」。"
-                         "這裡只保存當時的理由，尚未判斷決策結果。")
-    return lines
+            entries.append((event.get("ticker"),
+                            f"{ticker}：你把這次{action}記為「{label}」。"
+                            "這裡只保存當時的理由，尚未判斷決策結果。"))
+    return entries
 
 
-def _performance_lines(card, language, honesty=None):
-    """Render important existing product facts without giving the agent a calculator.
+# ── Block 1 caveat placement (output contract §4) ────────────────────────────
+# Every honesty sentence rides the number it qualifies: one indented line
+# directly under that indicator. The key → host mapping is renderer-side
+# (consumer) knowledge next to _honesty_lines; review.py stays untouched.
+# Hosts are indicator tags emitted by _performance_items; a key tries its
+# chain in order and an occupied host line never takes a second caveat, so
+# the ledger can never re-form the consecutive-paragraph wall (#276 root
+# cause B). Keys with no reachable host collapse into the Block-1 footnote.
+_HONESTY_HOSTS = {
+    "unrealized_coverage": ("pnl",),
+    "orphan_sells": ("payoff", "pnl"),
+    "currency_mix": ("currency_note", "pnl"),
+    "cash_reliability": ("cash", "account"),
+    "acct_perf_basis": ("account", "cash"),
+    "alpha_credibility": ("alpha", "benchmark"),
+    "sector_attribution": ("split", "benchmark"),
+    "unclassified_drivers": ("stress", "benchmark"),
+}
+# etf_metadata rides the ETF lines in Block 2 (special-cased in _card_structure);
+# every other key (snapshot/accounting reconciliation, future keys) is footnote-only.
 
-    `honesty` is the mutable dict from _honesty_lines: sentences are popped and
-    placed right after the numbers they qualify, and whatever remains is appended
-    at the end so a triggered disclosure can never be dropped — even when the
-    panel it qualifies (for example a gated alpha block) is not rendered."""
-    honesty = honesty if honesty is not None else {}
+
+def _place_caveats(items, honesty):
+    """Insert hosted honesty sentences as caveat items under their indicators.
+
+    ``items`` are Block-1 indicator dicts ({"kind", "tag", "text"}); ``honesty``
+    is consumed for every placed key and keeps the leftovers for the footnote.
+    Placement is deterministic: ledger order for keys, first free host wins,
+    at most one caveat per indicator line."""
+    placements = {}
+    for key in [k for k in list(honesty) if k in _HONESTY_HOSTS]:
+        for tag in _HONESTY_HOSTS[key]:
+            index = next((i for i, item in enumerate(items)
+                          if item["kind"] == "line" and item.get("tag") == tag
+                          and i not in placements), None)
+            if index is not None:
+                placements[index] = key
+                break
+    out = []
+    for index, item in enumerate(items):
+        out.append(item)
+        key = placements.get(index)
+        if key is not None:
+            out.append({"kind": "caveat", "tag": None, "text": honesty.pop(key)})
+    return out
+
+
+def _performance_items(card, language):
+    """Block-1 indicator lines as tagged items, in the contract §2 order:
+    ① absolute P&L (KPI-mirror line) → payoff/drag → ② annualized/account →
+    cash → ③ vs market (benchmark/split/alpha) → alternative comparators.
+
+    Tags are the caveat hosts (_HONESTY_HOSTS); text wording reuses the same
+    sentences the card always printed so no engine number changes shape."""
+    copy = load_copy(language)
     overview = card.get("overview") or {}
     display = _display_context(card, language)
     en = language == "en"
-    lines = []
+    kpi_copy = copy.get("kpi") or {}
+    items = []
+
+    def line(tag, text):
+        items.append({"kind": "line", "tag": tag, "text": text})
+
+    # ① absolute P&L: one numbers-summary line mirroring the HTML KPI tile
+    # (README anchor "Total P&L +$138,058 (realized $19k + unrealized $119k)");
+    # partial or original-currency accounts keep the sentence fallbacks.
+    total = _finite_number(overview.get("total_pnl"))
+    realized = _finite_number(overview.get("realized"))
+    unrealized = _finite_number(overview.get("unrealized"))
+    if (display.get("currency") and total is not None and realized is not None
+            and unrealized is not None and kpi_copy.get("pnl") and kpi_copy.get("pnl_sub")):
+        sub = kpi_copy["pnl_sub"].format(realized=_display_money(realized, display),
+                                         unrealized=_display_money(unrealized, display))
+        line("pnl", f"{kpi_copy['pnl']} {_display_money(total, display)}"
+             + (f" ({sub})" if en else f"（{sub}）"))
+    else:
+        for text in _overview_lines(card, language):
+            line("pnl", text)
+    currency_note = _currency_note(card, language)
+    if currency_note:
+        line("currency_note", currency_note)
     payoff = overview.get("payoff")
     if payoff is not None:
         avg_win = _display_money(overview.get("avg_win"), display)
         avg_loss = _display_money(overview.get("avg_loss"), display, absolute=True)
-        if en and avg_win is not None and avg_loss is not None:
-            lines.append(f"Realized payoff ratio was {payoff:.1f}; the average win was "
-                         f"{avg_win} versus {avg_loss} for the average loss.")
-        elif not en and avg_win is not None and avg_loss is not None:
-            lines.append(f"已實現盈虧比 {payoff:.1f}；平均賺 {avg_win}，平均賠 {avg_loss}。")
+        if (avg_win is not None and avg_loss is not None
+                and kpi_copy.get("payoff") and kpi_copy.get("payoff_sub")):
+            sub = kpi_copy["payoff_sub"].format(win=avg_win, loss=avg_loss)
+            line("payoff", f"{kpi_copy['payoff']} {float(payoff):.1f}"
+                 + (f" ({sub})" if en else f"（{sub}）"))
         else:
-            lines.append((f"Realized payoff ratio was {payoff:.1f}; average gain/loss amounts remain "
-                          "in original currencies." if en else
-                          f"已實現盈虧比 {payoff:.1f}；平均盈虧金額因顯示匯率缺失而保留原幣。"))
-    ab = card.get("alpha_beta_breakdown") or {}
-    benchmark_rows = _benchmark_rows(card)
-    for market, bench, row in benchmark_rows:
-        lines.append(_private_benchmark_line(market, bench, row, language))
-        lines.extend(_private_split_lines(market, row, language))
-    if benchmark_rows:
-        alpha_line = _alpha_interval_line(ab, language)
-        if alpha_line:
-            lines.append(alpha_line)
-    for key in ("alpha_credibility", "sector_attribution", "unclassified_drivers"):
-        if key in honesty:
-            lines.append(honesty.pop(key))
-    # #179/#181: the account pillar renders verbatim engine numbers. When the cash
-    # anchor is incomplete the engine gates account-level TWR/IRR (note set) — the
-    # holdings pillar still shows, plus a localized unlock invitation instead of
-    # the engine's internal note text. Cash drag stays a neutral observation, never
-    # a verdict on holding cash.
-    ap = card.get("acct_perf") or {}
-    if ap.get("hold_twr") is not None:
-        window = (ap.get("window") or {}).get("days")
-        if en:
-            lines.append(f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}"
-                         + (f" over the {int(window)}-day window." if window else "."))
-        else:
-            lines.append(f"持倉柱的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
-                         + (f"（{int(window)} 天窗口）。" if window else "。"))
-        if ap.get("acct_twr") is not None:
-            if en:
-                line = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
-                if ap.get("irr_annual") is not None:
-                    # Output contract: plain phrase, not the IRR jargon token.
-                    line += f"; annualized return was {_pct(ap.get('irr_annual'))}"
-                if ap.get("cash_drag") is not None:
-                    line += (f"; the gap versus the holdings pillar, {_pct(ap.get('cash_drag'))}, "
-                             "is explained by holding cash — an observation, not a verdict")
-                lines.append(line + ".")
-            else:
-                line = f"帳戶級時間加權報酬為 {_pct(ap.get('acct_twr'))}"
-                if ap.get("irr_annual") is not None:
-                    # Output contract: plain phrase, not the IRR jargon token.
-                    line += f"，年化報酬 {_pct(ap.get('irr_annual'))}"
-                if ap.get("cash_drag") is not None:
-                    line += f"；與持倉柱的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
-                lines.append(line + "。")
-        elif ap.get("note"):
-            lines.append("Account-level return stays locked until cash has a complete anchor; "
-                         "the holdings pillar above is unaffected." if en else
-                         "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的持倉柱不受影響。")
-    cash = card.get("cash") or {}
-    if cash.get("reliable") and cash.get("balance") is not None:
-        display_cash = _display_money(cash.get("balance"), display)
-        if en and display_cash is not None:
-            lines.append(f"Anchored account cash was {display_cash}"
-                         + (f", {_pct(cash.get('weight'))} of the account." if cash.get("weight") is not None else "."))
-        elif not en and display_cash is not None:
-            lines.append(f"有餘額錨點的帳戶現金為 {display_cash}"
-                         + (f"，佔帳戶 {_pct(cash.get('weight'))}。" if cash.get("weight") is not None else "。"))
-        else:
-            original = []
-            for currency, row in sorted((cash.get("by_currency") or {}).items()):
-                if (row or {}).get("balance") is not None:
-                    original.append(_money((row or {}).get("balance"), currency))
-            if original:
-                lines.append(("Anchored account cash by original currency: " + ", ".join(original) + "."
-                              if en else "有餘額錨點的帳戶現金（原幣）：" + "、".join(original) + "。"))
-    for key in ("cash_reliability", "acct_perf_basis"):
-        if key in honesty:
-            lines.append(honesty.pop(key))
+            line("payoff", (f"Realized payoff ratio was {payoff:.1f}; average gain/loss amounts remain "
+                            "in original currencies." if en else
+                            f"已實現盈虧比 {payoff:.1f}；平均盈虧金額因顯示匯率缺失而保留原幣。"))
     pa = card.get("payoff_attribution") or {}
     cf = pa.get("counterfactual") or {}
     if cf.get("ticker"):
         after = "—" if cf.get("payoff") is None else f"{float(cf['payoff']):.1f}"
         drag = _display_money(cf.get("drag"), display)
         if en and drag is not None:
-            lines.append(f"The largest realized drag was {cf['ticker']} at {drag}; "
+            line("drag", f"The largest realized drag was {cf['ticker']} at {drag}; "
                          f"without it, the payoff ratio would have been {after}.")
         elif not en and drag is not None:
-            lines.append(f"最大已實現拖累是 {cf['ticker']}，淨影響 {drag}；"
+            line("drag", f"最大已實現拖累是 {cf['ticker']}，淨影響 {drag}；"
                          f"拿掉它後盈虧比會是 {after}。")
         else:
-            lines.append((f"The largest realized drag was {cf['ticker']}; without it, the payoff ratio "
+            line("drag", (f"The largest realized drag was {cf['ticker']}; without it, the payoff ratio "
                           f"would have been {after}." if en else
                           f"最大已實現拖累是 {cf['ticker']}；拿掉它後盈虧比會是 {after}。"))
-    for key in [k for k in honesty if k != "etf_metadata"]:
-        lines.append(honesty.pop(key))
+    # ② annualized return / account pillar (#179/#181): verbatim engine numbers;
+    # a gated account level renders the unlock invitation, never the raw note.
+    # Cash drag stays a neutral observation, never a verdict on holding cash.
+    ap = card.get("acct_perf") or {}
+    if ap.get("hold_twr") is not None:
+        window = (ap.get("window") or {}).get("days")
+        if en:
+            line("account_hold", f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}"
+                 + (f" over the {int(window)}-day window." if window else "."))
+        else:
+            line("account_hold", f"持倉柱的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
+                 + (f"（{int(window)} 天窗口）。" if window else "。"))
+        if ap.get("acct_twr") is not None:
+            if en:
+                text = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
+                if ap.get("irr_annual") is not None:
+                    # Output contract: plain phrase, not the IRR jargon token.
+                    text += f"; annualized return was {_pct(ap.get('irr_annual'))}"
+                if ap.get("cash_drag") is not None:
+                    text += (f"; the gap versus the holdings pillar, {_pct(ap.get('cash_drag'))}, "
+                             "is explained by holding cash — an observation, not a verdict")
+                line("account", text + ".")
+            else:
+                text = f"帳戶級時間加權報酬為 {_pct(ap.get('acct_twr'))}"
+                if ap.get("irr_annual") is not None:
+                    # Output contract: plain phrase, not the IRR jargon token.
+                    text += f"，年化報酬 {_pct(ap.get('irr_annual'))}"
+                if ap.get("cash_drag") is not None:
+                    text += f"；與持倉柱的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
+                line("account", text + "。")
+        elif ap.get("note"):
+            line("account_gate",
+                 "Account-level return stays locked until cash has a complete anchor; "
+                 "the holdings pillar above is unaffected." if en else
+                 "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的持倉柱不受影響。")
+    cash = card.get("cash") or {}
+    if cash.get("reliable") and cash.get("balance") is not None:
+        display_cash = _display_money(cash.get("balance"), display)
+        if en and display_cash is not None:
+            line("cash", f"Anchored account cash was {display_cash}"
+                 + (f", {_pct(cash.get('weight'))} of the account." if cash.get("weight") is not None else "."))
+        elif not en and display_cash is not None:
+            line("cash", f"有餘額錨點的帳戶現金為 {display_cash}"
+                 + (f"，佔帳戶 {_pct(cash.get('weight'))}。" if cash.get("weight") is not None else "。"))
+        else:
+            original = []
+            for currency, row in sorted((cash.get("by_currency") or {}).items()):
+                if (row or {}).get("balance") is not None:
+                    original.append(_money((row or {}).get("balance"), currency))
+            if original:
+                line("cash", ("Anchored account cash by original currency: " + ", ".join(original) + "."
+                              if en else "有餘額錨點的帳戶現金（原幣）：" + "、".join(original) + "。"))
+    # ③ vs market: benchmark rows, the winning split, the alpha interval, then
+    # the alternative comparators the HTML bars show (md keeps them as one line).
+    ab = card.get("alpha_beta_breakdown") or {}
+    benchmark_rows = _benchmark_rows(card)
+    for market, bench, row in benchmark_rows:
+        line("benchmark", _private_benchmark_line(market, bench, row, language))
+        for text in _private_split_lines(market, row, language):
+            line("split", text)
+    if benchmark_rows:
+        alpha_line = _alpha_interval_line(ab, language)
+        if alpha_line:
+            line("alpha", alpha_line)
+    attribution = _attribution_facts(card)
+    if attribution:
+        items.append({"kind": "attr_rows", "tag": None,
+                      "text": " · ".join("vs " + row["label"] + " " + row["pp"]
+                                         for row in attribution["rows"])})
+    return items
+
+
+def _performance_lines(card, language, honesty=None):
+    """Legacy flat projection of the Block-1 performance cluster.
+
+    Unit-test compatibility shim over ``_performance_items`` +
+    ``_place_caveats``; the card structure consumes the structured items
+    directly. Leftover honesty (minus the Block-2-hosted etf_metadata) is
+    appended so a triggered disclosure can never be dropped."""
+    honesty = dict(honesty) if honesty is not None else {}
+    items = _place_caveats(_performance_items(card, language), honesty)
+    lines = [item["text"] for item in items if item["kind"] in ("line", "caveat")]
+    lines.extend(honesty[key] for key in honesty if key != "etf_metadata")
     return lines
 
 
@@ -1139,42 +1225,51 @@ def _signed_pp(value, digits=1):
     return "—" if value is None else f"{float(value) * 100:+.{digits}f} pp"
 
 
-def _market_context_lines(bundle, language):
+def _period_line(bundle, copy):
+    """Block 1's one-line period label (contract §2): the review span from
+    engine state, plus at most two demoted market indicators (primary
+    benchmark window return and VIX) — the former standalone market-timeline
+    section collapses into this line and nothing else."""
+    state = bundle.get("engine_state") or {}
     context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("market_context") or {})
+    period_copy = copy.get("period") or {}
+    start = state.get("date_start") or context.get("start")
+    end = state.get("date_end") or context.get("end")
+    label = None
+    try:
+        if start and end and period_copy.get("span"):
+            label = period_copy["span"].format(start=start, end=end)
+        elif end and period_copy.get("as_of"):
+            label = period_copy["as_of"].format(end=end)
+    except (KeyError, IndexError, ValueError):
+        label = None
+    pieces = [] if label is None else [label]
     benchmarks = context.get("benchmarks") or {}
-    pieces = []
-    for symbol in ("SPY", "QQQ"):
-        row = benchmarks.get(symbol) or {}
-        values = []
-        if row.get("window_ret") is not None:
-            values.append(("window " if language == "en" else "區間") + _signed_pct(row["window_ret"]))
-        if row.get("ytd_ret") is not None:
-            values.append("YTD " + _signed_pct(row["ytd_ret"]))
-        if values:
-            pieces.append(f"{symbol} " + ", ".join(values))
+    spy = benchmarks.get("SPY") or {}
+    if spy.get("window_ret") is not None and period_copy.get("spy"):
+        try:
+            pieces.append(period_copy["spy"].format(ret=_signed_pct(spy["window_ret"])))
+        except (KeyError, IndexError, ValueError):
+            pass
     vix = benchmarks.get("VIX") or {}
-    if vix.get("last") is not None:
-        vix_piece = f"VIX {float(vix['last']):.1f}"
+    if vix.get("last") is not None and period_copy.get("vix"):
+        value = f"{float(vix['last']):.1f}"
         if vix.get("delta") is not None:
-            vix_piece += f" ({float(vix['delta']):+.1f})"
-        pieces.append(vix_piece)
-    if not pieces:
-        return []
-    start, end = context.get("start"), context.get("end")
-    if language == "en":
-        lead = f"Market window {start} to {end}: " if start and end else "Market context: "
-    else:
-        lead = f"市場區間 {start} 到 {end}：" if start and end else "市場背景："
-    return [lead + "; ".join(pieces) + "."]
+            value += f" ({float(vix['delta']):+.1f})"
+        try:
+            pieces.append(period_copy["vix"].format(value=value))
+        except (KeyError, IndexError, ValueError):
+            pass
+    return " · ".join(pieces) if pieces else None
 
 
-def _horizon_lines(bundle, copy):
+def _horizon_entries(bundle, copy):
     markers = ((((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                 .get("horizon_markers")) or [])
     labels = copy.get("horizons") or {}
     en = copy.get("language") == "en"
-    lines = []
+    entries = []
     for marker in markers:
         ticker = marker.get("ticker") or ("Position" if en else "這筆部位")
         horizon_label = labels.get(marker.get("horizon"), marker.get("horizon"))
@@ -1183,31 +1278,39 @@ def _horizon_lines(bundle, copy):
         if marker.get("kind") == "exit_too_fast":
             if en:
                 voice = "inferred" if inferred else "recorded"
-                lines.append(f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it ended after {days} days; "
-                             "this is a timeline mismatch, not a verdict about the motive.")
+                entries.append((marker.get("ticker"),
+                                f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it ended after {days} days; "
+                                "this is a timeline mismatch, not a verdict about the motive."))
             else:
                 voice = "原先推測" if inferred else "已記錄"
-                lines.append(f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，{days} 天後就出場；"
-                             "這是時間軸不一致，不替動機下定論。")
+                entries.append((marker.get("ticker"),
+                                f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，{days} 天後就出場；"
+                                "這是時間軸不一致，不替動機下定論。"))
         elif marker.get("kind") == "held_too_long":
             if en:
                 voice = "inferred" if inferred else "recorded"
-                lines.append(f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it is still open after {days} days; "
-                             "the horizon has drifted and needs clarification.")
+                entries.append((marker.get("ticker"),
+                                f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it is still open after {days} days; "
+                                "the horizon has drifted and needs clarification."))
             else:
                 voice = "原先推測" if inferred else "已記錄"
-                lines.append(f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，持有 {days} 天後仍未結束；"
-                             "時間軸已漂移，仍需釐清。")
-    return lines
+                entries.append((marker.get("ticker"),
+                                f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，持有 {days} 天後仍未結束；"
+                                "時間軸已漂移，仍需釐清。"))
+    return entries
 
 
-def _exit_followup_lines(bundle, copy):
+def _exit_followup_entries(bundle, copy):
+    """Exit follow-up facts for Block 2: per-revisit lines as (ticker, line)
+    pairs that attach to instrument rows, plus the portfolio-level backlog
+    cluster as loose lines (no single row can host it)."""
     plan = bundle.get("review_plan") or {}
     price_as_of = (((bundle.get("engine_state") or {}).get("price_snapshot") or {}).get("as_of"))
     questions = {(row.get("revisit_id"), str(row.get("checkpoint"))): row
                  for row in plan.get("question_queue") or [] if row.get("kind") == "due_revisit"}
     due_labels = copy.get("due_choices") or {}
     en = copy.get("language") == "en"
+    pairs = []
     lines = []
     for event in bundle.get("revisit_resolutions") or []:
         question = questions.get((event.get("revisit_id"), str(event.get("checkpoint"))))
@@ -1241,7 +1344,7 @@ def _exit_followup_lines(bundle, copy):
             when = f" using prices frozen on {price_as_of}" if en and price_as_of else (f"（以 {price_as_of} 凍結現價計）" if price_as_of else "")
             line += (f" Proceeds stayed idle while the original moved {_signed_pct(compare.get('orig_ret'))}{when}." if en else
                      f" 賣後資金閒置，原標的同期 {_signed_pct(compare.get('orig_ret'))}{when}。")
-        lines.append(line)
+        pairs.append((question.get("ticker"), line))
     backlog = (((plan.get("state_snapshot") or {}).get("exit_backlog")) or {})
     summary = backlog.get("summary") or {}
     if summary.get("count"):
@@ -1316,7 +1419,7 @@ def _exit_followup_lines(bundle, copy):
                     when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
                     detail += f" 原標的後續 {_signed_pct(compare.get('orig_ret'))}{when}。"
             lines.append(detail)
-    return lines
+    return pairs, lines
 
 
 def _problem_lines(bundle, copy):
@@ -1544,23 +1647,226 @@ def _card_facts(bundle, copy):
     }
 
 
+def _performance_block(bundle, card, copy, facts, honesty, snapshot):
+    """Block 1 (Performance): the ordered indicator items plus footnote texts.
+
+    Contract §2/§3: period label on top, then ① absolute P&L → ② annualized →
+    ③ vs market; a module whose prerequisite is missing renders one localized
+    neutral line, never silent omission. The stress line rides the exposure
+    indicator area unconditionally when its data exists (#265 intent: no
+    unrelated hole ever absorbs it — final placement is Block 1). Hosted
+    honesty sentences ride their numbers (§4); the leftovers become the
+    footnote. Returns ``(items, footnote_texts)``."""
+    language = copy["language"]
+    if snapshot:
+        # Snapshot route: position-structure baseline only (§3 last row); the
+        # agent-authored limitation sentences have no indicator hosts here and
+        # collapse into the footnote instead of a caveat wall.
+        items = [{"kind": "line", "tag": None, "text": text}
+                 for text in _snapshot_overview_lines(card, copy)]
+        footnote = [honesty.pop(key) for key in list(honesty)]
+        return items, footnote
+    missing = copy.get("block_missing") or {}
+    items = []
+    period = _period_line(bundle, copy)
+    if period:
+        items.append({"kind": "line", "tag": "period", "text": period})
+    perf = _performance_items(card, language)
+    if not any(item.get("tag") == "pnl" for item in perf):
+        perf.insert(0, {"kind": "line", "tag": None, "text": missing.get("absolute_pnl", "")})
+    if not any(item.get("tag") in ("account_hold", "account", "account_gate") for item in perf):
+        index = next((i for i, item in enumerate(perf)
+                      if item.get("tag") in ("cash", "benchmark")), len(perf))
+        perf.insert(index, {"kind": "line", "tag": None, "text": missing.get("annualized", "")})
+    if not any(item.get("tag") == "benchmark" for item in perf):
+        perf.append({"kind": "line", "tag": None, "text": missing.get("vs_market", "")})
+    items.extend(perf)
+    for text in facts["stress"]:
+        items.append({"kind": "line", "tag": "stress", "text": text})
+    items = _place_caveats(items, honesty)
+    footnote = [honesty.pop(key) for key in list(honesty)]
+    items = [item for item in items if item.get("text")]
+    return items, footnote
+
+
+def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
+    """Block 2 (Key trades): ranked instrument rows are the spine; motive
+    answers, exit records, follow-ups, horizon mirrors, and best/worst
+    realized trades attach as sub-lines under the row of the instrument they
+    concern. Facts no row can host stay as block-level lines, so nothing is
+    lost when the spine cannot render (§3: one neutral line instead)."""
+    language = copy["language"]
+    en = language == "en"
+    missing = copy.get("block_missing") or {}
+    row_tickers = {row["ticker"] for row in facts["instruments"]}
+    subs = {ticker: [] for ticker in row_tickers}
+    loose = []
+
+    def push(ticker, text):
+        if ticker and str(ticker) in subs:
+            subs[str(ticker)].append(text)
+        else:
+            loose.append(text)
+
+    if not snapshot:
+        for ticker, text in _decision_entries(bundle, copy):
+            push(ticker, text)
+        for ticker, text in _exit_entries(bundle, copy):
+            push(ticker, text)
+        followup_pairs, followup_loose = _exit_followup_entries(bundle, copy)
+        for ticker, text in followup_pairs:
+            push(ticker, text)
+        loose.extend(followup_loose)
+        for ticker, text in _horizon_entries(bundle, copy):
+            push(ticker, text)
+        trade_lines = _trade_lines(card, language)
+        for trade, text in zip((card.get("best_trade"), card.get("worst_trade")), trade_lines):
+            push((trade or {}).get("ticker"), text)
+
+    blocks = []
+    if facts["instruments"]:
+        rows = [{**row, "subs": subs.get(row["ticker"], [])} for row in facts["instruments"]]
+        blocks.append(("rows", rows))
+    else:
+        traded = [str(row.get("ticker")) for row in card.get("ticker_diagnosis") or []
+                  if isinstance(row, dict) and row.get("ticker")]
+        if not traded:
+            traded = [trade.get("ticker") for trade in (card.get("best_trade"), card.get("worst_trade"))
+                      if isinstance(trade, dict) and trade.get("ticker")]
+        traded = list(dict.fromkeys(traded))
+        note = None
+        if traded and missing.get("trades_traded"):
+            try:
+                note = missing["trades_traded"].format(
+                    tickers=(", " if en else "、").join(traded))
+            except (KeyError, IndexError, ValueError):
+                note = None
+        if not note:
+            note = missing.get("trades", "")
+        if note:
+            blocks.append(("paragraph", [note]))
+    if loose:
+        blocks.append(("bullets", loose))
+    if etf_lines:
+        blocks.append(("bullets", etf_lines))
+        if etf_honesty:
+            # §4: the etf_metadata sentence rides the ETF facts it qualifies.
+            blocks.append(("caveat", [etf_honesty]))
+    return blocks
+
+
+def _risks_block(bundle, card, copy, narrative, snapshot):
+    """Block 3 (Risks and problems): the [v] strength / [X] hole pair as
+    panels, with behavior patterns folded in below."""
+    language = copy["language"]
+    sections_copy = copy["sections"]
+    missing = copy.get("block_missing") or {}
+    holes = card.get("top_holes") or []
+    blocks = []
+    if not snapshot and not holes and not card.get("dims_raw"):
+        note = missing.get("risks", "")
+        return [("paragraph", [note])] if note else []
+    strength_label = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
+                      if snapshot else sections_copy["strength"])
+    strength_line = (_snapshot_strength_line(card, language) if snapshot else
+                     narrative.get("strength") or _best_strength(card, language))
+    blocks.append(("panel", {"style": "strength", "mark": "v", "label": strength_label,
+                             "blocks": [("paragraph", [strength_line])]}))
+    hole_label = (_copy_string(copy, "snapshot_hole", sections_copy["hole"])
+                  if snapshot else sections_copy["hole"])
+    hole_inner = []
+    if snapshot:
+        hole_inner.append(("paragraph", [_snapshot_hole_line(card, language)]))
+    elif holes:
+        hole_inner.append(("paragraph", [_hole_line(holes[0], language)]))
+    if not snapshot and narrative.get("counterfactual"):
+        hole_inner.append(("paragraph", [narrative["counterfactual"]]))
+    if hole_inner:
+        blocks.append(("panel", {"style": "hole", "mark": "X", "label": hole_label,
+                                 "blocks": hole_inner}))
+    problem_lines = [] if snapshot else _problem_lines(bundle, copy)
+    if problem_lines:
+        blocks.append(("bullets", problem_lines))
+    return blocks
+
+
+def _next_block(bundle, copy, facts, state, snapshot):
+    """Block 4 (Next step): improve rows plus exactly one committed rule.
+
+    §3: this block always lights — when the engine proposes no change it
+    restates the standing rule, and a truly empty review says so in one
+    neutral localized line instead of disappearing."""
+    language = copy["language"]
+    en = language == "en"
+    sections_copy = copy["sections"]
+    missing = copy.get("block_missing") or {}
+    commitment = bundle.get("commitment") or {}
+    blocks = []
+    if facts["improve"]:
+        blocks.append(("improve", facts["improve"]))
+    rule_inner = []
+    rule = commitment.get("rule")
+    if rule:
+        rule_inner.append(("paragraph", [rule]))
+        # #248: engine-owned sub-line grounding the committed rule in this
+        # period's actual positions; the canonical rule text stays generic.
+        grounding = commitment.get("grounding")
+        if isinstance(grounding, str) and grounding.strip():
+            rule_inner.append(("grounding", [grounding]))
+        rationale = (bundle.get("narrative") or {}).get("rule_rationale")
+        if rationale:
+            rule_inner.append(("paragraph", [rationale]))
+    elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
+        rule_inner.append(("paragraph", [
+            "你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if not en
+            else "You chose not to set a new commitment; the same baseline remains available next time."]))
+    elif snapshot:
+        rule_inner.append(("paragraph", [
+            "這次開場檢查先保留結構基線，不強迫設定承諾。" if not en
+            else "This opening check keeps the structural baseline without forcing a commitment."]))
+    elif state.get("insufficient_data"):
+        rule_inner.append(("paragraph", [
+            "樣本仍短，這次不硬塞承諾；先把它當基線。" if not en
+            else "The sample is still short, so this review sets a baseline without forcing a commitment."]))
+    else:
+        standing = state.get("rule")
+        text = None
+        if standing and missing.get("rule_standing"):
+            try:
+                text = missing["rule_standing"].format(rule=standing)
+            except (KeyError, IndexError, ValueError):
+                text = None
+        if not text:
+            text = missing.get("rule", "")
+        if text:
+            rule_inner.append(("paragraph", [text]))
+    if rule_inner:
+        blocks.append(("panel", {"style": "rule", "mark": "*", "label": sections_copy["rule"],
+                                 "blocks": rule_inner}))
+    return blocks
+
+
 def _card_structure(bundle):
     """Assemble the private card's structured content once (#225).
 
     Both ``render_private`` (canonical Markdown) and ``render_html`` (styled
     HTML artifact) consume this single assembly, so the two surfaces cannot
-    drift into different content-policy decisions.  Every displayed string is
-    produced by the same helpers the Markdown card has always used; section
-    blocks are ``("paragraph" | "bullets" | "grounding", [lines])`` tuples
-    (``grounding`` renders as a muted paragraph on the HTML surface)."""
+    drift into different content-policy decisions. The section skeleton is the
+    output contract's canonical shape (docs/output-contract.md §2): keynote
+    preamble plus exactly four blocks — Performance, Key trades, Risks and
+    problems, Next step — with block titles from ``copy.blocks``. Block
+    content is ``(kind, payload)`` tuples: ``paragraph`` / ``bullets`` /
+    ``grounding`` line lists, ``indicators`` (Block-1 items with caveat and
+    attr-row kinds), ``footnote`` (collapsed leftovers), ``rows`` (instrument
+    spine with attached sub-lines), ``panel`` (strength/hole/rule), and
+    ``improve`` (prescription rows)."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
     card = bundle.get("engine_card") or {}
     state = bundle.get("engine_state") or {}
     sections_copy = copy["sections"]
-    holes = card.get("top_holes") or []
-    commitment = bundle.get("commitment") or {}
+    blocks_copy = copy.get("blocks") or {}
     snapshot = bundle.get("route") == "snapshot_review"
     facts = _card_facts(bundle, copy)
 
@@ -1574,155 +1880,30 @@ def _card_structure(bundle):
         preamble.append(("paragraph", opening))
     preamble.append(("paragraph", [narrative["mirror"]]))
 
-    sections = []
-    context_lines = ([] if snapshot else
-                     _market_context_lines(bundle, copy["language"]) + _horizon_lines(bundle, copy))
-    if context_lines:
-        sections.append({"id": "context", "title": sections_copy["context"],
-                         "blocks": [("bullets", context_lines)]})
-
-    numbers_title = (_copy_string(copy, "snapshot_numbers", sections_copy["numbers"])
-                     if snapshot else sections_copy["numbers"])
-    numbers_blocks = []
-    if snapshot:
-        numbers_blocks.append(("paragraph", _snapshot_overview_lines(card, copy)))
-    else:
-        overview = _overview_lines(card, copy["language"])
-        currency_note = _currency_note(card, copy["language"])
-        if currency_note:
-            overview = overview + [currency_note]
-        numbers_blocks.append(("paragraph", overview))
-    # #82: honesty sentences are woven into the sections they qualify — never
-    # printed as a standalone checklist section.
+    # #82: honesty sentences are woven next to the numbers they qualify (§4) —
+    # never printed as a standalone checklist section. etf_metadata rides the
+    # ETF facts in Block 2 when they render; every unhosted sentence collapses
+    # into the Block-1 footnote so a triggered disclosure can never be dropped.
     honesty = _honesty_lines(bundle, copy)
     etf_lines = _etf_lines(card, copy["language"])
-    etf_honesty = honesty.pop("etf_metadata", None)
-    if snapshot:
-        # Snapshot caveats qualify the opening structure facts above.  Keep the
-        # agent-authored honesty contract visible even though history-only
-        # performance panels are intentionally suppressed for this route.
-        snapshot_honesty = [honesty.pop(key) for key in list(honesty)]
-        if snapshot_honesty:
-            numbers_blocks.append(("paragraph", snapshot_honesty))
-    performance = [] if snapshot else _performance_lines(card, copy["language"], honesty)
-    if etf_honesty:
-        (etf_lines if snapshot or etf_lines else performance).append(etf_honesty)
-    if performance:
-        numbers_blocks.append(("paragraph", performance))
-    if snapshot and honesty:
-        # Preview requires one agent-authored sentence for every triggered
-        # honesty key. Snapshot cards have no performance section to consume
-        # these entries, so keep them in the numbers/scope section instead of
-        # silently dropping validated limitations.
-        numbers_blocks.append(("paragraph", [honesty.pop(key) for key in list(honesty)]))
-    sections.append({"id": "numbers", "title": numbers_title, "blocks": numbers_blocks})
+    etf_honesty = honesty.pop("etf_metadata", None) if etf_lines else None
 
-    strength_title = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
-                      if snapshot else sections_copy["strength"])
-    strength_line = (_snapshot_strength_line(card, copy["language"]) if snapshot else
-                     narrative.get("strength") or _best_strength(card, copy["language"]))
-    sections.append({"id": "strength", "title": strength_title,
-                     "blocks": [("paragraph", [strength_line])]})
+    trades_blocks = _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot)
+    performance_items, footnote = _performance_block(bundle, card, copy, facts, honesty, snapshot)
+    performance_blocks = [("indicators", performance_items)]
+    if footnote:
+        performance_blocks.append(("footnote", footnote))
 
-    trades = [] if snapshot else _trade_lines(card, copy["language"])
-    en = copy["language"] == "en"
-    if facts["instruments"]:
-        # Full ranked instrument list (template layout); best/worst rows stay
-        # as the closing caption so no prior fact disappears.
-        wrap = (lambda tags: " (" + "; ".join(tags) + ")") if en else \
-               (lambda tags: "（" + "；".join(tags) + "）")
-        ranked = [row["ticker"] + " " + row["amount"]
-                  + (wrap(row["tags"]) if row["tags"] else "")
-                  for row in facts["instruments"]]
-        blocks = [("bullets", ranked)]
-        if trades:
-            blocks.append(("bullets", trades))
-        sections.append({"id": "instruments",
-                         "title": sections_copy.get("instruments", sections_copy["trades"]),
-                         "blocks": blocks})
-    elif trades:
-        sections.append({"id": "trades", "title": sections_copy["trades"],
-                         "blocks": [("bullets", trades)]})
-
-    hole_title = (_copy_string(copy, "snapshot_hole", sections_copy["hole"])
-                  if snapshot else sections_copy["hole"])
-    hole_blocks = []
-    if snapshot:
-        hole_blocks.append(("paragraph", [_snapshot_hole_line(card, copy["language"])]))
-    elif holes:
-        hole_blocks.append(("paragraph", [_hole_line(holes[0], copy["language"])]))
-    if not snapshot and narrative.get("counterfactual"):
-        hole_blocks.append(("paragraph", [narrative["counterfactual"]]))
-    # #263: the stress row qualifies a concentration leak (template provenance:
-    # the Stress hrow sits inside the oversized/one-bet hole panel).  A top
-    # hole from any other dimension must not absorb it; the row then keeps its
-    # own section below so the fact never disappears.
-    stress_in_hole = bool(facts["stress"] and not snapshot and holes and
-                          dimension_id((holes[0] or {}).get("dim")) in _CONCENTRATION_DIMS)
-    if stress_in_hole:
-        hole_blocks.append(("paragraph", facts["stress"]))
-    sections.append({"id": "hole", "title": hole_title, "blocks": hole_blocks})
-    if facts["stress"] and not stress_in_hole and sections_copy.get("stress"):
-        sections.append({"id": "stress", "title": sections_copy["stress"],
-                         "blocks": [("paragraph", facts["stress"])]})
-
-    attribution = facts["attribution"]
-    if attribution and sections_copy.get("attribution"):
-        rows = ["vs " + row["label"] + " " + row["pp"] for row in attribution["rows"]]
-        sections.append({"id": "attribution", "title": sections_copy["attribution"],
-                         "blocks": [("bullets", rows)]})
-
-    decisions = [] if snapshot else _decision_lines(bundle, copy)
-    if decisions:
-        sections.append({"id": "motive", "title": sections_copy["motive"],
-                         "blocks": [("bullets", decisions)]})
-    exits = [] if snapshot else _exit_lines(bundle, copy)
-    if exits:
-        sections.append({"id": "exit_capture", "title": sections_copy["exit_capture"],
-                         "blocks": [("bullets", exits)]})
-    exit_followup = [] if snapshot else _exit_followup_lines(bundle, copy)
-    if exit_followup:
-        sections.append({"id": "exit_followup", "title": sections_copy["exit_followup"],
-                         "blocks": [("bullets", exit_followup)]})
-    if etf_lines:
-        sections.append({"id": "etf", "title": sections_copy["etf"],
-                         "blocks": [("bullets", etf_lines)]})
-    problem_lines = [] if snapshot else _problem_lines(bundle, copy)
-    if problem_lines:
-        sections.append({"id": "patterns", "title": sections_copy["patterns"],
-                         "blocks": [("bullets", problem_lines)]})
-
-    if facts["improve"] and sections_copy.get("improve"):
-        joiner = ": " if en else "："
-        sections.append({"id": "improve", "title": sections_copy["improve"],
-                         "blocks": [("bullets",
-                                     [row["kind"] + joiner + row["text"] for row in facts["improve"]])]})
-
-    rule_blocks = []
-    rule = commitment.get("rule")
-    if rule:
-        rule_blocks.append(("paragraph", [rule]))
-        # #248: engine-owned sub-line grounding the committed rule in this
-        # period's actual positions; the canonical rule text stays generic.
-        grounding = commitment.get("grounding")
-        if isinstance(grounding, str) and grounding.strip():
-            rule_blocks.append(("grounding", [grounding]))
-        if narrative.get("rule_rationale"):
-            rule_blocks.append(("paragraph", [narrative["rule_rationale"]]))
-    elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
-        rule_blocks.append(("paragraph", [
-            "你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if copy["language"] != "en"
-            else "You chose not to set a new commitment; the same baseline remains available next time."]))
-    elif snapshot:
-        rule_blocks.append(("paragraph", [
-            "這次開場檢查先保留結構基線，不強迫設定承諾。" if copy["language"] != "en"
-            else "This opening check keeps the structural baseline without forcing a commitment."]))
-    elif state.get("insufficient_data"):
-        rule_blocks.append(("paragraph", [
-            "樣本仍短，這次不硬塞承諾；先把它當基線。" if copy["language"] != "en"
-            else "The sample is still short, so this review sets a baseline without forcing a commitment."]))
-    if rule_blocks:
-        sections.append({"id": "rule", "title": sections_copy["rule"], "blocks": rule_blocks})
+    performance_title = (_copy_string(copy, "snapshot_numbers", blocks_copy.get("performance", ""))
+                         if snapshot else blocks_copy.get("performance", ""))
+    sections = [
+        {"id": "performance", "title": performance_title, "blocks": performance_blocks},
+        {"id": "trades", "title": blocks_copy.get("trades", ""), "blocks": trades_blocks},
+        {"id": "risks", "title": blocks_copy.get("risks", ""),
+         "blocks": _risks_block(bundle, card, copy, narrative, snapshot)},
+        {"id": "next", "title": blocks_copy.get("next", ""),
+         "blocks": _next_block(bundle, copy, facts, state, snapshot)},
+    ]
 
     return {
         "session_id": bundle.get("session_id"),
@@ -1737,8 +1918,35 @@ def _card_structure(bundle):
     }
 
 
+def _caveat_md(text, en):
+    """One indented full-line parenthetical: the caveat shape S-3 recognizes."""
+    return f"  ({text})" if en else f"  （{text}）"
+
+
+def _panel_md(panel, en):
+    """[mark] label: first line, remaining lines plain, grounding indented —
+    the README text-card anchor shape ([v]/[X]/[*] lines)."""
+    joiner = ": " if en else "："
+    out = []
+    first = True
+    for kind, rows in panel["blocks"]:
+        for row in rows:
+            if not row:
+                continue
+            if first:
+                out.append(f"[{panel['mark']}] {panel['label']}{joiner}{row}")
+                first = False
+            elif kind == "grounding":
+                out.append(f"  └ {row}")
+            else:
+                out.append(row)
+    return out or [f"[{panel['mark']}] {panel['label']}"]
+
+
 def render_private(bundle):
     structure = _card_structure(bundle)
+    copy = structure["copy"]
+    en = structure["language"] == "en"
     lines = [
         "---",
         f"session_id: {structure['session_id']}",
@@ -1758,6 +1966,36 @@ def render_private(bundle):
         for kind, block in section["blocks"]:
             if kind == "bullets":
                 lines.extend([f"- {x}" for x in block] + [""])
+            elif kind == "rows":
+                wrap = ((lambda tags: " (" + "; ".join(tags) + ")") if en else
+                        (lambda tags: "（" + "；".join(tags) + "）"))
+                for row in block:
+                    lines.append("- " + row["ticker"] + " " + row["amount"]
+                                 + (wrap(row["tags"]) if row["tags"] else ""))
+                    lines.extend(f"  - {sub}" for sub in row.get("subs") or [])
+                lines.append("")
+            elif kind == "indicators":
+                for item in block:
+                    if item["kind"] == "caveat":
+                        lines.append(_caveat_md(item["text"], en))
+                    else:
+                        lines.append(item["text"])
+                lines.append("")
+            elif kind == "footnote":
+                label = copy.get("footnote_label", "")
+                joined = (" " if en else "").join(block)
+                lines.extend([f"{label}{': ' if en else '：'}{joined}", ""])
+            elif kind == "caveat":
+                # Rides the block right above it (e.g. the ETF facts): no
+                # blank line in between, so the sentence stays attached.
+                if lines and lines[-1] == "":
+                    lines.pop()
+                lines.extend([_caveat_md(x, en) for x in block if x] + [""])
+            elif kind == "panel":
+                lines.extend(_panel_md(block, en) + [""])
+            elif kind == "improve":
+                joiner = ": " if en else "："
+                lines.extend([f"- {row['kind']}{joiner}{row['text']}" for row in block] + [""])
             else:
                 lines.extend(list(block) + [""])
     return "\n".join(lines).rstrip() + "\n"
@@ -1949,17 +2187,20 @@ stroke-linejoin:round;opacity:.85}
 .rc .rx .desc{font-size:13px;color:var(--rc-text-secondary);line-height:1.55;margin:0}
 .rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-radius);padding:16px 18px}
+.rc .panel+.panel{margin-top:10px}
 .rc .panel-label{font-size:12px;font-weight:500;margin:0 0 8px}
 .rc .strength .panel-label{color:var(--rc-text-success)}
 .rc .hole .panel-label{color:var(--rc-text-danger)}
 .rc .rule .panel-label{color:var(--rc-text-accent)}
 .rc .rule .rmain{font-size:15px;color:var(--rc-text-primary);line-height:1.65;font-weight:500}
 .rc .rule .rground{font-size:13px;color:var(--rc-text-muted);line-height:1.6}
+.rc .cavt{font-size:12px;color:var(--rc-text-muted);line-height:1.6;padding-left:14px}
+.rc p+.cavt{margin-top:2px}
+.rc .rsub{font-size:12px;color:var(--rc-text-muted);line-height:1.55;margin:2px 0 8px;padding-left:14px}
+.rc .fnote{margin:12px 0 0}
+.rc .fnote summary{font-size:12px;color:var(--rc-text-muted);cursor:pointer}
+.rc .fnote p{font-size:12px;color:var(--rc-text-muted);margin:6px 0 0}
 .rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
-
-# Sections rendered as tinted panels with a semantic-color label instead of a
-# plain heading; a purely visual mapping that never changes section content.
-_HTML_PANEL_SECTIONS = {"strength", "hole", "rule"}
 
 
 def _sparkline_svg(card):
@@ -2061,22 +2302,22 @@ def render_html(bundle):
             tiles.append('<div class="m">' + "".join(parts) + "</div>")
         return '<div class="grid4">' + "".join(tiles) + "</div>" if tiles else ""
 
-    def instrument_bars(caption_rows):
-        rows = []
-        for row in facts["instruments"]:
+    def instrument_bars(rows):
+        parts = []
+        for row in rows:
             tone = f' {row["tone"]}' if row.get("tone") else ""
             fill = ' neg' if row.get("tone") == "neg" else ""
             tags = "".join(f'<span class="tag">{e(tag)}</span>' for tag in row["tags"])
-            rows.append(
+            parts.append(
                 '<div class="trow"><div class="ttop">'
                 f'<span class="tk">{e(row["ticker"])}</span>'
                 f'<span class="tamt{tone}">{e(row["amount"])}</span>'
                 + (f'<div class="ttags">{tags}</div>' if tags else "")
                 + f'</div><div class="track"><div class="fill{fill}" '
-                  f'style="width:{row["width_pct"]}%"></div></div></div>')
-        if caption_rows:
-            rows.append(f'<p class="cap">{e(" · ".join(caption_rows))}</p>')
-        return rows
+                  f'style="width:{row["width_pct"]}%"></div></div>'
+                + "".join(f'<p class="rsub">{e(sub)}</p>' for sub in row.get("subs") or [])
+                + "</div>")
+        return parts
 
     def attribution_bars():
         attribution = facts["attribution"]
@@ -2088,47 +2329,81 @@ def render_html(bundle):
                          f'<div class="abar"><div style="width:{row["width_pct"]}%"></div></div>')
         return parts
 
-    def improve_rows():
+    def improve_rows(rows):
         return ['<div class="rx">'
                 f'<p class="kind">{e(row["kind"])}</p><p class="desc">{e(row["text"])}</p></div>'
-                for row in facts["improve"]]
+                for row in rows]
+
+    def indicator_items(items):
+        parts = []
+        for item in items:
+            if item["kind"] == "caveat":
+                parts.append(f'<p class="cavt">{e(item["text"])}</p>')
+            elif item["kind"] == "attr_rows":
+                # The attribution bars carry these comparator rows on HTML.
+                continue
+            elif item.get("text"):
+                parts.append(f"<p>{e(item['text'])}</p>")
+        return parts
+
+    def panel_html(panel):
+        inner = []
+        first = True
+        for kind, rows in panel["blocks"]:
+            for row in rows:
+                if not row:
+                    continue
+                lead_class = ("rmain" if panel["style"] == "rule" and first else
+                              "rground" if kind == "grounding" else None)
+                attr = f' class="{lead_class}"' if lead_class else ""
+                inner.append(f"<p{attr}>{e(row)}</p>")
+                first = False
+        return (f'<div class="panel {panel["style"]}">'
+                f'<p class="panel-label">{e(panel["label"])}</p>'
+                + "".join(inner) + "</div>")
 
     for section in structure["sections"]:
         sid = section["id"]
         rendered = []
-        if sid == "instruments" and facts["instruments"]:
-            # blocks[0] is the ranked text list (Markdown form of the bars);
-            # blocks[1], when present, is the best/worst caption pair.
-            caption = section["blocks"][1][1] if len(section["blocks"]) > 1 else []
-            rendered = instrument_bars(caption)
-        elif sid == "attribution" and facts["attribution"]:
-            rendered = attribution_bars()
-        elif sid == "improve" and facts["improve"]:
-            rendered = improve_rows()
-        else:
-            for index, (kind, rows) in enumerate(section["blocks"]):
-                lead_class = ("rmain" if sid == "rule" and index == 0 else
-                              "rground" if kind == "grounding" else None)
-                chunk = _html_block(kind, rows, lead_class)
+        for kind, block in section["blocks"]:
+            if kind == "indicators":
+                rendered.extend(indicator_items(block))
+            elif kind == "footnote":
+                label = copy.get("footnote_label", "")
+                inner = "".join(f"<p>{e(text)}</p>" for text in block)
+                rendered.append(f'<details class="fnote"><summary>{e(label)}</summary>'
+                                f"{inner}</details>")
+            elif kind == "rows":
+                rendered.extend(instrument_bars(block))
+            elif kind == "panel":
+                rendered.append(panel_html(block))
+            elif kind == "improve":
+                rendered.extend(improve_rows(block))
+            elif kind == "caveat":
+                rendered.extend(f'<p class="cavt">{e(text)}</p>' for text in block if text)
+            else:
+                chunk = _html_block(kind, block)
                 if chunk:
                     rendered.append(chunk)
-            if sid == "numbers":
-                grid = kpi_grid()
-                if grid:
-                    # The tiles restate the opening sentences as the template's
-                    # KPI row; the sentences stay below as the story block.
-                    rendered.insert(0, grid)
-                    if spark and not any(t.get("spark") for t in facts["kpi"]):
-                        rendered.insert(1, spark)
-                elif spark:
-                    rendered.insert(1 if rendered else 0, spark)
-        if sid in _HTML_PANEL_SECTIONS:
-            body.append(f'<div class="sec {sid}"><div class="panel">'
-                        f'<p class="panel-label">{e(section["title"])}</p>'
-                        + "".join(rendered) + "</div></div>")
-        else:
-            body.append(f'<div class="sec"><h2>{e(section["title"])}</h2>'
-                        + "".join(rendered) + "</div>")
+        if sid == "performance":
+            # The attribution bars merge into Block 1 (contract §2), placed
+            # after the vs-market sentences and before the footnote.
+            if facts["attribution"]:
+                insert_at = next((index for index, chunk in enumerate(rendered)
+                                  if chunk.startswith('<details class="fnote"')),
+                                 len(rendered))
+                rendered[insert_at:insert_at] = attribution_bars()
+            grid = kpi_grid()
+            if grid:
+                # The tiles restate the opening indicator lines as the
+                # template's KPI row; the lines stay below as the story block.
+                rendered.insert(0, grid)
+                if spark and not any(t.get("spark") for t in facts["kpi"]):
+                    rendered.insert(1, spark)
+            elif spark:
+                rendered.insert(1 if rendered else 0, spark)
+        body.append(f'<div class="sec"><h2>{e(section["title"])}</h2>'
+                    + "".join(rendered) + "</div>")
     body.append('<div class="sec foot">'
                 f"session_id: {e(str(structure['session_id']))} · "
                 f"language: {e(structure['language'])}</div>")
