@@ -34,7 +34,11 @@ tests/test_doc_language.py    implementation/GTM language boundary
 tests/agent/check_card.py     legacy and artifact-level card invariants; the
                               S-series structure checks (block order, module
                               lighting, caveat placement, language rules) are
-                              specified by docs/output-contract.md section 8
+                              specified by docs/output-contract.md section 8;
+                              S-2's vs-market row honors the monthly gate
+                              signal frozen in engine_card.vs_market_gate
+                              (#284) and fails both a gated-but-rendered and
+                              an ungated-but-missing segment
 tests/agent/check_state.py    projection and trajectory helpers
 tests/agent/personas.md       scripted users and differential pairs
 tests/agent/cases/*.yaml      optional headless declarations
@@ -122,7 +126,7 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Uses only engine-owned numeric facts.
 - Shows a strength before the largest leak.
 - Converges on one largest leak and at most one rule.
-- Integrates every triggered honesty-ledger limitation.
+- Integrates every triggered honesty-ledger limitation, except keys hosted on the month-gated vs-market segment (`alpha_credibility`, `sector_attribution`), which are required only on the review that renders the segment (output contract section 3, #284).
 - Contains no raw question queue, internal field names, or five-dimension dashboard.
 - Gives no security recommendation.
 - Renders both a canonical Markdown artifact and a self-contained HTML artifact from one structured assembly, carrying identical engine numbers; the HTML makes no external request, exposes exactly one `WIDGET-FRAGMENT` block, and draws a P&L sparkline only when the curve has at least two finite points (missing or note-form curves omit it without a new caveat).

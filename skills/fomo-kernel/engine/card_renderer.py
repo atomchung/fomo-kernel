@@ -735,6 +735,26 @@ def _best_strength(card, language):
     return f"The cleanest part of this review was {localized_dimension(dim, language)}."
 
 
+# ── Monthly vs-market cadence (#284, output contract §3) ─────────────────────
+# The vs-market comparison (benchmark line, split, alpha interval, comparator
+# rows, excess/alpha KPI tiles) renders on the first full review of each
+# calendar month. review.py freezes that decision into the engine card at
+# prepare time (precedent: _apply_display_currency freezes display currency);
+# the renderer only reads the frozen decision. A card without the field
+# (legacy bundles, direct engine output) always renders the segment —
+# fail-closed toward showing. When the segment is gated out, the honesty keys
+# whose sentences ride its lines are not required from the agent and must not
+# leak into the footnote (review.py filters required_honesty_keys with the
+# same constant).
+VS_MARKET_HONESTY_KEYS = ("alpha_credibility", "sector_attribution")
+
+
+def vs_market_suppressed(card):
+    """True only when a prepare-time month-gate explicitly suppressed ③ vs market."""
+    gate = (card or {}).get("vs_market_gate")
+    return isinstance(gate, dict) and gate.get("render") is False
+
+
 def _honesty_lines(bundle, copy):
     """Sentence per triggered honesty key, agent-authored first (#82).
 
@@ -746,10 +766,16 @@ def _honesty_lines(bundle, copy):
     card = bundle.get("engine_card") or {}
     authored = (bundle.get("narrative") or {}).get("honesty") or {}
     fallback = copy.get("honesty") or {}
+    suppressed = vs_market_suppressed(card)
     lines = {}
     for entry in card.get("honesty_ledger") or []:
         key = entry.get("key")
         if key in lines:
+            continue
+        if suppressed and key in VS_MARKET_HONESTY_KEYS:
+            # #284: the sentences' host lines are month-gated out; the keys are
+            # not required from the agent and a copy fallback must not surface
+            # them in the footnote either.
             continue
         lines[key] = authored.get(key) or fallback.get(key) or key
     return lines
@@ -989,21 +1015,25 @@ def _performance_items(card, language):
                               if en else "有餘額錨點的帳戶現金（原幣）：" + "、".join(original) + "。"))
     # ③ vs market: benchmark rows, the winning split, the alpha interval, then
     # the alternative comparators the HTML bars show (md keeps them as one line).
-    ab = card.get("alpha_beta_breakdown") or {}
-    benchmark_rows = _benchmark_rows(card)
-    for market, bench, row in benchmark_rows:
-        line("benchmark", _private_benchmark_line(market, bench, row, language))
-        for text in _private_split_lines(market, row, language):
-            line("split", text)
-    if benchmark_rows:
-        alpha_line = _alpha_interval_line(ab, language)
-        if alpha_line:
-            line("alpha", alpha_line)
-    attribution = _attribution_facts(card)
-    if attribution:
-        items.append({"kind": "attr_rows", "tag": None,
-                      "text": " · ".join("vs " + row["label"] + " " + row["pp"]
-                                         for row in attribution["rows"])})
+    # Monthly cadence (#284, contract §3): a prepare-time gate suppresses the
+    # whole segment on later full reviews of the same month — the lines are
+    # simply absent, and _performance_block skips the gap note too.
+    if not vs_market_suppressed(card):
+        ab = card.get("alpha_beta_breakdown") or {}
+        benchmark_rows = _benchmark_rows(card)
+        for market, bench, row in benchmark_rows:
+            line("benchmark", _private_benchmark_line(market, bench, row, language))
+            for text in _private_split_lines(market, row, language):
+                line("split", text)
+        if benchmark_rows:
+            alpha_line = _alpha_interval_line(ab, language)
+            if alpha_line:
+                line("alpha", alpha_line)
+        attribution = _attribution_facts(card)
+        if attribution:
+            items.append({"kind": "attr_rows", "tag": None,
+                          "text": " · ".join("vs " + row["label"] + " " + row["pp"]
+                                             for row in attribution["rows"])})
     return items
 
 
@@ -1506,7 +1536,9 @@ def _kpi_tiles(card, context, copy):
     ab = card.get("alpha_beta_breakdown") or {}
     # Mixed-market cards keep their per-market text rows (#205); a synthetic
     # top-level figure would recreate the total-alpha the engine refuses.
-    single_scope = not ab.get("by_market")
+    # The excess and alpha tiles belong to the month-gated vs-market segment
+    # (#284): on a gated review they disappear with the rest of ③.
+    single_scope = not ab.get("by_market") and not vs_market_suppressed(card)
     excess = _finite_number(ab.get("excess_vs_spy")) if single_scope else None
     if excess is not None and kpi_copy.get("excess"):
         beta_text = _beta_text(ab.get("beta"))
@@ -1586,6 +1618,9 @@ def _attribution_facts(card):
     Single-scope cards only: a mixed-market card keeps its per-market rows
     (#205) and never synthesizes one comparable series.  Row order follows the
     engine's benchmark map; widths scale to the largest |excess|."""
+    if vs_market_suppressed(card):
+        # #284: the comparator bars are part of the month-gated segment.
+        return None
     ab = card.get("alpha_beta_breakdown") or {}
     if ab.get("by_market"):
         return None
@@ -1678,7 +1713,11 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
         index = next((i for i, item in enumerate(perf)
                       if item.get("tag") in ("cash", "benchmark")), len(perf))
         perf.insert(index, {"kind": "line", "tag": None, "text": missing.get("annualized", "")})
-    if not any(item.get("tag") == "benchmark" for item in perf):
+    if (not any(item.get("tag") == "benchmark" for item in perf)
+            and not vs_market_suppressed(card)):
+        # §3: a month-gated review renders no gap note — the vs-market lines
+        # are simply absent. The one-line note stays for genuinely missing
+        # benchmark data on a review whose monthly slot is open.
         perf.append({"kind": "line", "tag": None, "text": missing.get("vs_market", "")})
     items.extend(perf)
     for text in facts["stress"]:

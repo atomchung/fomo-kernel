@@ -2297,7 +2297,9 @@ def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
         bad_extra = _run("preview", "--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
-        assert bad_extra.returncode == 2 and "did not trigger" in json.loads(bad_extra.stdout)["error"]
+        # #284 wording: the exact-cover gate is against required_honesty_keys
+        # (untriggered or month-gated keys are equally "not required").
+        assert bad_extra.returncode == 2 and "does not require" in json.loads(bad_extra.stdout)["error"]
 
 
 def test_preview_finalize_atomic_bundle_redaction_and_retry():
@@ -4439,6 +4441,268 @@ def test_thesis_update_rejects_forged_engine_owned_identity():
         assert stored["revises"] == prior["last_event_id"]
         assert stored["event_id"].startswith("thesis-update-")
         assert stored["event_id"] != prior["event_id"]
+
+
+# ── #284 monthly vs-market cadence (output contract §3) ─────────────────────
+# The vs-market segment renders on the first full review of each calendar
+# month; other full reviews the same month render Block 1 without it and
+# without a gap note, and the segment-hosted honesty keys drop out of
+# required_honesty_keys. Light capture sessions never finalize, so they
+# neither consume nor reset the monthly slot; unreadable history fails
+# closed toward showing.
+
+_VS_MARKET_AB = {
+    "port_tot": 0.24, "spy_tot": 0.11, "excess_vs_spy": 0.13,
+    "bench": "SPY", "beta": 1.31, "alpha_ann": 0.09, "credible": False,
+    "excess_split": {"allocation": 0.05, "selection": 0.08},
+    "alpha_stat": {"alpha_ann": 0.09, "ci95": [-0.02, 0.2], "t": 1.2, "n_days": 40,
+                   "gate": {"reason": "short_window", "need": "longer history"}},
+    "benchmarks": {"SPY": {"excess": 0.13}, "QQQ": {"excess": 0.04}},
+}
+_VS_MARKET_LEDGER = [
+    {"key": "alpha_credibility", "status": "short_window",
+     "data": {"need": "longer history", "t": 1.2, "ci95": [-0.02, 0.2], "n_days": 40}},
+    {"key": "sector_attribution", "status": "partial",
+     "data": {"coverage": 0.8, "unproxied": ["SMALL"]}},
+]
+_VS_HONESTY_SENTENCES = {
+    "alpha_credibility": "alpha 樣本仍短，只能當假設，不能當能力定論。",
+    "sector_attribution": "板塊歸因不完整，配置拆帳只蓋到已分類的部位。",
+    "etf_metadata": "配置型 ETF 缺費用率資料，這裡把缺口講明，而不是把缺值當成零。",
+}
+_VS_ZH_COPY_HONESTY = {  # renderer fallback wording; must never leak on a gated card
+    "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
+    "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
+}
+_VS_NOTE_ZH = "本期無法比對大盤：缺可用的基準序列。"  # copy block_missing.vs_market
+
+
+def _prepare_vs_market(tmp, root, date_end, tag):
+    """Prepare with the shared fixtures plus a complete vs-market cluster."""
+    card_path, state_path = _artifacts(tmp)
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card["alpha_beta_breakdown"] = dict(_VS_MARKET_AB)
+    card["honesty_ledger"] = list(_VS_MARKET_LEDGER) + list(card["honesty_ledger"])
+    vs_card = pathlib.Path(tmp) / f"card_vs_{tag}.json"
+    vs_card.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["date_end"] = date_end
+    vs_state = pathlib.Path(tmp) / f"state_vs_{tag}.json"
+    vs_state.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    run = _run("prepare", "--root", root, "--language", "zh-TW",
+               "--card-json", vs_card, "--state-json", vs_state)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return _pending_plan(root, run.stdout)
+
+
+def _vs_narrative(plan, extra_honesty=None):
+    narrative = _narrative()
+    narrative["honesty"] = {key: _VS_HONESTY_SENTENCES.get(key, "這項限制先講明。")
+                            for key in plan["card_plan"]["required_honesty_keys"]}
+    narrative["honesty"].update(extra_honesty or {})
+    return narrative
+
+
+def _vs_preview(tmp, root, plan, tag, extra_honesty=None):
+    answers = _answer_queue(plan, _week1_choices, "skip")
+    answers.pop("commitment", None)
+    a_path = pathlib.Path(tmp) / f"answers_vs_{tag}.json"
+    a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    n_path = pathlib.Path(tmp) / f"narrative_vs_{tag}.json"
+    n_path.write_text(json.dumps(_vs_narrative(plan, extra_honesty), ensure_ascii=False),
+                      encoding="utf-8")
+    return _run("preview", "--root", root, "--session-id", plan["session_id"],
+                "--answers", a_path, "--narrative", n_path), a_path, n_path
+
+
+def _vs_finalize(root, plan, a_path, n_path, commitment="candidate_0"):
+    answers = json.loads(a_path.read_text(encoding="utf-8"))
+    answers["commitment"] = {"choice": commitment}
+    a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+               "--answers", a_path, "--narrative", n_path)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)
+
+
+def _s2_finding(card_text, engine_card):
+    findings = check_card(card_text, {"engine_card": engine_card})
+    return next(f for f in findings if f.assertion == "S-2")
+
+
+def test_vs_market_month_gate_first_second_and_next_month():
+    """#284 (a)(b)(c): the segment renders on the first full review of a
+    month, disappears without a gap note on the second, and returns with the
+    calendar month — with the segment-hosted honesty keys tracking it."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_vs_market(tmp, root, "2026-07-14", "w1")
+        gate1 = plan1["engine_card"]["vs_market_gate"]
+        assert gate1 == {"render": True, "basis": "first_full_review_of_month",
+                         "month": "2026-07"}
+        assert plan1["card_plan"]["required_honesty_keys"] == [
+            "alpha_credibility", "sector_attribution", "etf_metadata"]
+        preview1, a1, n1 = _vs_preview(tmp, root, plan1, "w1")
+        assert preview1.returncode == 0, preview1.stdout + preview1.stderr
+        card1 = json.loads(preview1.stdout)["private_card"]
+        assert "相差 +13 個百分點" in card1 and "β 1.31" in card1
+        assert "贏大盤的 +13 個百分點拆為" in card1 and "vs QQQ +4pp" in card1
+        assert "風險調整後 alpha" in card1
+        for sentence in (_VS_HONESTY_SENTENCES["alpha_credibility"],
+                         _VS_HONESTY_SENTENCES["sector_attribution"]):
+            assert sentence in card1, "hosted honesty sentences ride the rendered segment"
+        assert _VS_NOTE_ZH not in card1, "segment present -> no missing-data note"
+        finding1 = _s2_finding(card1, plan1["engine_card"])
+        assert finding1.passed, finding1.evidence
+        _vs_finalize(root, plan1, a1, n1)
+
+        plan2 = _prepare_vs_market(tmp, root, "2026-07-21", "w2")
+        assert plan2["state_snapshot"]["cadence"]["tier"] == "full"  # span 7 > threshold
+        gate2 = plan2["engine_card"]["vs_market_gate"]
+        assert gate2 == {"render": False, "basis": "already_rendered_this_month",
+                         "month": "2026-07"}
+        assert plan2["card_plan"]["required_honesty_keys"] == ["etf_metadata"], \
+            "segment-hosted honesty keys must not be required on a gated review"
+        # The exact-cover gate rejects a sentence for a month-gated key: its
+        # host lines do not exist, so it could only land in the footnote.
+        bad, _a, _n = _vs_preview(tmp, root, plan2, "w2bad",
+                                  extra_honesty={"alpha_credibility": "多寫的一句。"})
+        assert bad.returncode == 2
+        assert "does not require" in json.loads(bad.stdout)["error"]
+        preview2, a2, n2 = _vs_preview(tmp, root, plan2, "w2")
+        assert preview2.returncode == 0, preview2.stdout + preview2.stderr
+        payload2 = json.loads(preview2.stdout)
+        card2 = payload2["private_card"]
+        assert ("個百分點" not in card2 and "vs QQQ" not in card2
+                and "風險調整後 alpha" not in card2 and "同期 SPY" not in card2), \
+            "gated review renders no vs-market line"
+        assert _VS_NOTE_ZH not in card2, "§3: month-gated -> simply absent, no gap note"
+        assert "帳面總損益 $-300" in card2 and "本期算不出年化報酬" in card2, \
+            "absolute P&L and the annualized module keep their own behavior"
+        for sentence in list(_VS_ZH_COPY_HONESTY.values()) + [
+                _VS_HONESTY_SENTENCES["alpha_credibility"],
+                _VS_HONESTY_SENTENCES["sector_attribution"]]:
+            assert sentence not in card2, "gated honesty keys must not leak into the footnote"
+        html2 = pathlib.Path(payload2["private_card_html_path"]).read_text(encoding="utf-8")
+        assert "相對大盤" not in html2 and "vs QQQ" not in html2 and "年化 α" not in html2, \
+            "HTML surface drops the excess/alpha tiles and attribution bars too"
+        finding2 = _s2_finding(card2, plan2["engine_card"])
+        assert finding2.passed, finding2.evidence
+        # S-2 stays strict in both directions on the real renderer output:
+        # the gated card against an ungated context is a missing segment, and
+        # the ungated card against a gated context is a gate violation.
+        assert not _s2_finding(card2, plan1["engine_card"]).passed
+        assert not _s2_finding(card1, plan2["engine_card"]).passed
+        _vs_finalize(root, plan2, a2, n2, commitment="skip")
+
+        plan3 = _prepare_vs_market(tmp, root, "2026-08-03", "w3")
+        gate3 = plan3["engine_card"]["vs_market_gate"]
+        assert gate3 == {"render": True, "basis": "first_full_review_of_month",
+                         "month": "2026-08"}
+        assert plan3["card_plan"]["required_honesty_keys"] == [
+            "alpha_credibility", "sector_attribution", "etf_metadata"]
+        preview3, _a3, _n3 = _vs_preview(tmp, root, plan3, "w3")
+        assert preview3.returncode == 0, preview3.stdout + preview3.stderr
+        card3 = json.loads(preview3.stdout)["private_card"]
+        assert "相差 +13 個百分點" in card3, "next calendar month re-renders the segment"
+
+
+def test_vs_market_gate_light_capture_does_not_consume_slot():
+    """#284 (e): a light-tier capture session never finalizes a card, so it
+    neither consumes nor resets the monthly vs-market slot."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_vs_market(tmp, root, "2026-07-30", "y1")
+        _preview1, a1, n1 = _vs_preview(tmp, root, plan1, "y1")
+        _vs_finalize(root, plan1, a1, n1)
+
+        plan2 = _prepare_vs_market(tmp, root, "2026-08-02", "y2")
+        assert plan2["state_snapshot"]["cadence"]["tier"] == "light"  # span 3
+        entries = pathlib.Path(tmp) / "capture_entries.json"
+        entries.write_text(json.dumps(
+            [{"cycle_id": "PLTR#2026-01-01#1", "note": "加碼是因為財報超預期"}],
+            ensure_ascii=False), encoding="utf-8")
+        captured = _run("capture", "--session-id", plan2["session_id"], "--root", root,
+                        "--entries", entries)
+        assert captured.returncode == 0, captured.stdout + captured.stderr
+        assert json.loads(captured.stdout)["status"] == "captured"
+        # The invariant the gate relies on: capture leaves no canonical bundle
+        # and no log row, so the committed history cannot see the session.
+        assert not (pathlib.Path(root) / "sessions" / plan2["session_id"]).exists()
+        log_rows = [json.loads(line) for line in
+                    (pathlib.Path(root) / "log.jsonl").read_text(encoding="utf-8").splitlines()
+                    if line.strip()]
+        assert all(row.get("session_id") != plan2["session_id"] for row in log_rows)
+
+        plan3 = _prepare_vs_market(tmp, root, "2026-08-10", "y3")
+        assert plan3["state_snapshot"]["cadence"]["tier"] == "full"  # span 11 from y1
+        assert plan3["engine_card"]["vs_market_gate"] == {
+            "render": True, "basis": "first_full_review_of_month", "month": "2026-08"}
+        assert plan3["card_plan"]["required_honesty_keys"] == [
+            "alpha_credibility", "sector_attribution", "etf_metadata"]
+
+
+def _gate_bundle(root, session_id, date_end, route="weekly_review", persist=True):
+    final = pathlib.Path(root) / "sessions" / session_id
+    final.mkdir(parents=True)
+    (final / "bundle.json").write_text(json.dumps({
+        "session_id": session_id, "route": route,
+        "review_plan": {"persist": persist},
+        "engine_state": {"date_end": date_end},
+    }), encoding="utf-8")
+
+
+def test_vs_market_gate_slot_consumers_and_fail_closed():
+    """#284 (d) + consumer classification: only committed card-rendering
+    reviews consume the month; snapshot and demo sessions do not; unreadable
+    history or an unparseable review date renders the segment."""
+    gate = review_engine._vs_market_gate
+    with tempfile.TemporaryDirectory() as root:
+        assert gate(root, "2026-07-21") == {
+            "render": True, "basis": "first_full_review_of_month", "month": "2026-07"}
+        assert gate(root, None) == {"render": True, "basis": "no_review_date", "month": None}
+        assert gate(root, "not-a-date")["basis"] == "no_review_date"
+
+    with tempfile.TemporaryDirectory() as root:
+        _gate_bundle(root, "2026-07-14__w1", "2026-07-14")
+        assert gate(root, "2026-07-21") == {
+            "render": False, "basis": "already_rendered_this_month", "month": "2026-07"}
+        assert gate(root, "2026-08-03")["render"] is True, "month boundary reopens the slot"
+        assert gate(root, "2026-07-21", exclude_session_id="2026-07-14__w1")["render"] is True, \
+            "an idempotent re-prepare of the committed session cannot flip its own decision"
+
+    with tempfile.TemporaryDirectory() as root:
+        _gate_bundle(root, "2026-07-10__snap", "2026-07-10", route="snapshot_review")
+        assert gate(root, "2026-07-21")["render"] is True, \
+            "snapshot reviews suppress the segment by design and must not burn the month"
+        # The snapshot session's own log projection stays deduplicated by id.
+        (pathlib.Path(root) / "log.jsonl").write_text(
+            json.dumps({"date_end": "2026-07-10", "session_id": "2026-07-10__snap"}) + "\n",
+            encoding="utf-8")
+        assert gate(root, "2026-07-21")["render"] is True
+
+    with tempfile.TemporaryDirectory() as root:
+        _gate_bundle(root, "2026-07-12__demo", "2026-07-12", route="test_drive", persist=False)
+        assert gate(root, "2026-07-21")["render"] is True, "demo bundles never reach coach memory"
+
+    with tempfile.TemporaryDirectory() as root:
+        # Pre-v2 history: a legacy log row with no canonical bundle still counts.
+        (pathlib.Path(root) / "log.jsonl").write_text(
+            json.dumps({"date_end": "2026-07-05", "headline_dim": "x"}) + "\n",
+            encoding="utf-8")
+        assert gate(root, "2026-07-21")["render"] is False
+        assert gate(root, "2026-08-01")["render"] is True
+
+    if os.geteuid() != 0:  # root ignores permission bits; the guard keeps CI honest
+        with tempfile.TemporaryDirectory() as root:
+            sessions = pathlib.Path(root) / "sessions"
+            sessions.mkdir()
+            sessions.chmod(0)
+            try:
+                verdict = gate(root, "2026-07-21")
+            finally:
+                sessions.chmod(0o755)
+            assert verdict == {"render": True, "basis": "history_unreadable",
+                               "month": "2026-07"}, \
+                "unreadable history fails closed toward showing the segment"
 
 
 def main():

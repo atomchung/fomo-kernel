@@ -426,6 +426,69 @@ def _cadence(route, date_end, previous):
             "basis": "span", "override": None}
 
 
+# Monthly vs-market cadence (#284, output contract §3): the vs-market
+# comparison segment renders on the first full review of each calendar month.
+# "First this month" derives from committed-session history — canonical
+# bundles plus pre-v2 log.jsonl rows — judged by each review's own date_end,
+# never the wall clock. The decision is frozen into the engine card at
+# prepare time so preview/finalize retries and later re-renders stay
+# deterministic even after other sessions commit.
+
+
+def _month_key(value):
+    """`YYYY-MM` of an ISO date, or None when the date cannot be parsed."""
+    try:
+        date = dt.date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return f"{date.year:04d}-{date.month:02d}"
+
+
+def _vs_market_gate(root, date_end, exclude_session_id=None):
+    """Decide whether this review renders the vs-market segment (#284).
+
+    Consumers of the monthly slot are committed reviews that could have
+    rendered the segment: canonical persistent bundles on the trades routes
+    (snapshot reviews suppress the segment by design and must not burn the
+    month; test drives never touch coach memory; light-tier sessions never
+    finalize a card, so they neither consume nor reset the slot) plus pre-v2
+    ``log.jsonl`` rows not already represented by a canonical bundle. The
+    current session id is excluded so an idempotent re-prepare of an already
+    committed review cannot flip its own decision. Fail-closed toward
+    showing: an unreadable history or an unparseable review date renders the
+    segment — over-showing is safer than silently hiding the comparison.
+    """
+    month = _month_key(date_end)
+    if month is None:
+        return {"render": True, "basis": "no_review_date", "month": None}
+    try:
+        seen_sessions = set()
+        for dir_session_id, bundle in session.iter_canonical_bundles(root):
+            session_id = str(bundle.get("session_id") or dir_session_id)
+            seen_sessions.add(session_id)
+            if exclude_session_id and session_id == str(exclude_session_id):
+                continue
+            if bundle.get("route") == "snapshot_review":
+                continue
+            if _month_key((bundle.get("engine_state") or {}).get("date_end")) == month:
+                return {"render": False, "basis": "already_rendered_this_month",
+                        "month": month}
+        for row in _jsonl(os.path.join(root, "log.jsonl")):
+            session_id = row.get("session_id")
+            if session_id and str(session_id) in seen_sessions:
+                continue  # projection of a canonical bundle classified above
+            if exclude_session_id and session_id and str(session_id) == str(exclude_session_id):
+                continue
+            if _month_key(row.get("date_end")) == month:
+                return {"render": False, "basis": "already_rendered_this_month",
+                        "month": month}
+    except Exception:
+        # Fail-closed toward showing (#284): a gate helper must never crash
+        # prepare, and a history it cannot read must not hide the segment.
+        return {"render": True, "basis": "history_unreadable", "month": month}
+    return {"render": True, "basis": "first_full_review_of_month", "month": month}
+
+
 _CURRENT_VIEW_DIMS = {"position_sizing", "diversification"}
 _CURRENT_VIEW_METRICS = {
     "max_pos_pct", "max_pos_ticker", "ai_pct", "max_sector_pct", "top3_pct"
@@ -1514,6 +1577,18 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     previous = _previous_state(root)
     completed_reviews = _completed_review_count(root, exclude_session_id=session_id)
     cadence = _cadence(route, state.get("date_end"), previous)
+    if route != "snapshot_review":
+        # #284: freeze the monthly vs-market decision into the card artifact
+        # (precedent: _apply_display_currency). Snapshot cards keep their
+        # existing route-level suppression — no second gate layered on top.
+        card = {**card, "vs_market_gate": _vs_market_gate(
+            root, state.get("date_end"), exclude_session_id=session_id)}
+    required_honesty_keys = [x.get("key") for x in card.get("honesty_ledger") or []]
+    if card_renderer.vs_market_suppressed(card):
+        # The ledger keeps recording what the engine triggered; the agent is
+        # only asked to author sentences whose host lines render this month.
+        required_honesty_keys = [key for key in required_honesty_keys
+                                 if key not in card_renderer.VS_MARKET_HONESTY_KEYS]
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -1558,7 +1633,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
                       "question_limit": QUESTION_LIMIT,
                       "horizon_ids": ["weeks", "quarters", "years"],
-                      "required_honesty_keys": [x.get("key") for x in card.get("honesty_ledger") or []]},
+                      "required_honesty_keys": required_honesty_keys},
         "engine_card": card,
         "engine_state": state,
     }
@@ -2030,14 +2105,16 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
     rule_breach_decisions = _build_rule_breach_decisions(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
-    # #82 gate: every triggered honesty key must be covered by an agent-authored
-    # sentence, and no sentence may claim a key the engine did not trigger.
+    # #82 gate: every required honesty key must be covered by an agent-authored
+    # sentence, and no sentence may claim a key the plan does not require —
+    # either untriggered by the engine or month-gated out with its vs-market
+    # host lines (#284).
     required = set((plan.get("card_plan") or {}).get("required_honesty_keys") or [])
     provided = set((narrative.get("honesty") or {}).keys())
     if required - provided:
         raise ReviewError("narrative.honesty is missing required keys: " + ", ".join(sorted(required - provided)))
     if provided - required:
-        raise ReviewError("narrative.honesty has keys the ledger did not trigger: " + ", ".join(sorted(provided - required)))
+        raise ReviewError("narrative.honesty has keys this review does not require: " + ", ".join(sorted(provided - required)))
     commitment = _resolve_commitment(plan, answers) if require_commitment else None
     bundle = {
         "schema_version": 2,

@@ -13,7 +13,9 @@ card-spec.md);S 系列(結構檢)= docs/output-contract.md §8。改那些文件
 S 系列只對 v2 renderer 私卡生效(front matter 含 privacy: private + language);
 v1 人話卡 / 任意文字不出 S findings,舊 eval case 行為零變:
   S-1  keynote + 四大 block 標題齊且序正(標題取自 copy/<locale>.json blocks)
-  S-2  模組點亮與 §3 資料前提表一致(需 --context 給 card/state JSON;沒給則降級跳過)
+  S-2  模組點亮與 §3 資料前提表一致(需 --context 給 card/state JSON;沒給則降級跳過)。
+       vs_market 認月度 gate 訊號(engine_card.vs_market_gate,#284):gated 卡
+       整段不出且無 gap note 才過;未 gated 而前提在,段落必須真的上卡
   S-3  caveat 佈局:不得連續 caveat 段、Block 1 首指標前不得先出 caveat
   S-4  語言規則(output-language.md §5):禁 IRR token、單句內禁混用數字風格
 
@@ -163,7 +165,15 @@ def _s1_block_titles(body: str, copy: dict) -> "Finding":
     return Finding("S-1", ok and headline, "keynote + 四大 block 齊且序正", evidence)
 
 
-def _s2_module_lighting(body: str, copy: dict, context) -> "Finding":
+
+# vs-market 段落上卡的機檢 needle(S-2 用):鏡照 card_renderer._private_benchmark_line
+# 的 headline 句形——段落一出必有這行(單一與逐市場皆同款式)。與 _CAVEAT_LINE_RE
+# 同類的 renderer 契約形狀;改 renderer 句形要同步這裡。
+_VS_SEGMENT_ZH_RE = re.compile(r"相差 [+-]\d+ 個百分點")
+_VS_SEGMENT_EN_RE = re.compile(r"[+-]\d+ pp difference")
+
+
+def _s2_module_lighting(body: str, copy: dict, context, language) -> "Finding":
     card = _context_card(context)
     if card is None:
         return Finding("S-2", True, "模組點亮 vs 資料前提表(未給 context,降級跳過)")
@@ -201,7 +211,6 @@ def _s2_module_lighting(body: str, copy: dict, context) -> "Finding":
     problems = []
     for key, lit, note_key in (("absolute_pnl", has_abs, "absolute_pnl"),
                                ("annualized", has_ann, "annualized"),
-                               ("vs_market", has_vs, "vs_market"),
                                ("risks", has_diag, "risks")):
         note = missing_copy.get(note_key) or ""
         shown = bool(note) and note in body
@@ -209,6 +218,28 @@ def _s2_module_lighting(body: str, copy: dict, context) -> "Finding":
             problems.append(f"{key}: 前提缺但缺料 note 沒出(靜默省略)")
         if lit and shown:
             problems.append(f"{key}: 前提在但卡上出了缺料 note")
+    # vs_market 認月度 gate 訊號(#284,§3 monthly cadence):prepare 凍進
+    # engine_card.vs_market_gate。gated → 整段與缺料 note 都不得出(無 gap note);
+    # 未 gated → 缺料 note 兩向照舊,且前提在時段落必須真的上卡(嚴防靜默漏段)。
+    gate = card.get("vs_market_gate")
+    vs_gated = isinstance(gate, dict) and gate.get("render") is False
+    vs_note = missing_copy.get("vs_market") or ""
+    vs_note_shown = bool(vs_note) and vs_note in body
+    segment_re = (_VS_SEGMENT_EN_RE if str(language).lower().startswith("en")
+                  else _VS_SEGMENT_ZH_RE)
+    vs_segment_shown = bool(segment_re.search(body))
+    if vs_gated:
+        if vs_segment_shown:
+            problems.append("vs_market: 月度 gate 壓掉的段落仍上卡")
+        if vs_note_shown:
+            problems.append("vs_market: 月度 gate 期不得出缺料 note(§3:整段直接不出、無 gap note)")
+    else:
+        if not has_vs and not vs_note_shown:
+            problems.append("vs_market: 前提缺但缺料 note 沒出(靜默省略)")
+        if has_vs and vs_note_shown:
+            problems.append("vs_market: 前提在但卡上出了缺料 note")
+        if has_vs and not vs_segment_shown:
+            problems.append("vs_market: 前提在且未被 gate,但 vs-market 段沒上卡")
     # Both trades variants (with/without a traded-ticker list) share this stem.
     trades_needle = (missing_copy.get("trades") or "").rstrip("。.")
     trades_note_shown = bool(trades_needle) and trades_needle in body
@@ -266,7 +297,7 @@ def check_structure(text: str, context=None) -> list["Finding"]:
     copy = _load_copy(fm["language"])
     return [
         _s1_block_titles(body, copy),
-        _s2_module_lighting(body, copy, context),
+        _s2_module_lighting(body, copy, context, fm["language"]),
         _s3_caveat_placement(body),
         _s4_language_rules(body, fm["language"]),
     ]
