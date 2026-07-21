@@ -390,6 +390,26 @@ def test_cli_writes_trace_into_protected_state_root():
         assert nomode.returncode == 2 and "requires --mode" in nomode.stderr
 
 
+def test_cli_start_auto_declares_universal_fallbacks():
+    # #297: plain_text/markdown_inline are universal fallbacks every
+    # text-based client can render; a caller must not have to remember to
+    # pass them explicitly alongside a richer capability like native_options
+    # or widget.
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "session-297", "--state-root", tmp]
+        start = subprocess.run(
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "claude", "--route", "first_review",
+             "--question-mode", "native_options", "--card-mode", "widget"],
+            capture_output=True, text=True,
+        )
+        assert start.returncode == 0, start.stderr
+        receipt = pathlib.Path(tmp) / "ux" / "session-297.jsonl"
+        declared = json.loads(receipt.read_text(encoding="utf-8").splitlines()[0])
+        assert set(declared["question_modes"]) == {"native_options", "plain_text"}
+        assert set(declared["card_modes"]) == {"widget", "markdown_inline"}
+
+
 def test_cli_rejects_undeclared_stage_choice():
     # argparse choices constrains stage/mode/route/memory-kind at the CLI edge.
     with tempfile.TemporaryDirectory() as tmp:

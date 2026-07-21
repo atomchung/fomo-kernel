@@ -8,7 +8,7 @@ The engine already fail-closes on review content: `preview`/`finalize` reject a 
 
 ## Declare capabilities once
 
-Immediately after `prepare`, declare what the current host can do. `plain_text` and `markdown_inline` are universal fallbacks and must always be declared; add `native_options` or `widget` only when the current surface exposes them.
+Immediately after `prepare`, declare what the current host can do. `start` always adds `plain_text` and `markdown_inline` to the declaration itself — they are universal fallbacks every text-based client can render, so the caller does not need to pass them. Pass `--question-mode native_options` and/or `--card-mode widget` only when the current surface actually exposes that richer capability.
 
 ```bash
 python3 tools/ux_receipt.py start \
