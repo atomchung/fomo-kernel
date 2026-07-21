@@ -29,7 +29,7 @@ Keep claims, examples, and numeric values synchronized across locale variants. T
 
 User-visible product copy is stored by locale, such as `skills/fomo-kernel/copy/en.json` and `skills/fomo-kernel/copy/zh-TW.json`. Locale files are not implementation instructions and must remain separated rather than mixing languages in one contract.
 
-The engine, schemas, lifecycle, and policy remain locale-neutral. `--language` selects copy and rendering only.
+The engine, schemas, lifecycle, and policy remain locale-neutral. `--language` selects copy and rendering only. The runtime output-language contract — resolution order, neutrality obligations, known violations, and the new-locale checklist — lives in [docs/output-language.md](output-language.md).
 
 Stable dimension identifiers are English snake case, for example `position_sizing`, `averaging_down`, and `entry_style`. Localized dimension labels and card wording live only in `copy/<locale>.json`; lens configurations use the stable identifiers and English implementation text.
 
