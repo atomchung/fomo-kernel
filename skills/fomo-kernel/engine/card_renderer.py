@@ -31,6 +31,9 @@ DIMENSION_ID_BY_LEGACY_LABEL = {
     "alpha/beta": "alpha_beta",
     "進場": "entry_style",
 }
+# The what-if stress row argues a concentration exposure; only these hole
+# dimensions can absorb it as supporting evidence (#263).
+_CONCENTRATION_DIMS = {"position_sizing", "diversification"}
 MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
@@ -1527,9 +1530,18 @@ def _card_structure(bundle):
         hole_blocks.append(("paragraph", [_hole_line(holes[0], copy["language"])]))
     if not snapshot and narrative.get("counterfactual"):
         hole_blocks.append(("paragraph", [narrative["counterfactual"]]))
-    if facts["stress"]:
+    # #263: the stress row qualifies a concentration leak (template provenance:
+    # the Stress hrow sits inside the oversized/one-bet hole panel).  A top
+    # hole from any other dimension must not absorb it; the row then keeps its
+    # own section below so the fact never disappears.
+    stress_in_hole = bool(facts["stress"] and not snapshot and holes and
+                          dimension_id((holes[0] or {}).get("dim")) in _CONCENTRATION_DIMS)
+    if stress_in_hole:
         hole_blocks.append(("paragraph", facts["stress"]))
     sections.append({"id": "hole", "title": hole_title, "blocks": hole_blocks})
+    if facts["stress"] and not stress_in_hole and sections_copy.get("stress"):
+        sections.append({"id": "stress", "title": sections_copy["stress"],
+                         "blocks": [("paragraph", facts["stress"])]})
 
     attribution = facts["attribution"]
     if attribution and sections_copy.get("attribution"):
