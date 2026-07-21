@@ -126,6 +126,68 @@ def test_opportunity_is_engine_owned_and_limited_to_first_slice():
     )
 
 
+def _grounded_headline(ticker, pct):
+    raw = {"dim": "部位 sizing", "max_ticker": ticker, "max_pct": pct,
+           "risk_weights": {ticker: pct}}
+    card = {
+        "top_holes": [{"dim": "部位 sizing", "raw": raw}],
+        "ticker_diagnosis": [{"ticker": ticker, "impact": -100}],
+    }
+    return review_engine._question_queue(
+        card, {"holdings": {"positions": {}}}, {}, None, "en"
+    )[0]
+
+
+def test_headline_fallback_changes_with_engine_grounding_but_keeps_contract():
+    first = _grounded_headline("NVDA", 0.47)
+    second = _grounded_headline("AMD", 0.31)
+
+    for key in ("id", "kind", "required"):
+        assert first[key] == second[key], key
+    assert [row["value"] for row in first["options"]] == \
+        [row["value"] for row in second["options"]]
+
+    first_context = first["question_opportunity"]["context"]
+    second_context = second["question_opportunity"]["context"]
+    assert first_context["headline_dimension"] == second_context["headline_dimension"]
+    assert first_context["ticker"] == "NVDA"
+    assert second_context["ticker"] == "AMD"
+    assert "NVDA" in first_context["asked_because"] and "47%" in first_context["asked_because"]
+    assert "AMD" in second_context["asked_because"] and "31%" in second_context["asked_because"]
+    assert first["question"] != second["question"]
+    assert first_context["asked_because"] in first["question"]
+    assert second_context["asked_because"] in second["question"]
+
+    # A bounded private surface can cite the concrete engine fact through the
+    # existing grounding ref; no new schema field or free-form data lane is
+    # needed.
+    for question in (first, second):
+        plan = _plan(question)
+        fact = question["question_opportunity"]["context"]["asked_because"]
+        artifact = _surface_artifact(plan, question)
+        surface = artifact["surfaces"][0]
+        surface["stem"] = f"{fact} What mainly drove this behavior?"
+        surface["stem_grounding_refs"] = ["context.asked_because"]
+        validated = question_surface.validate_surfaces(plan, artifact)
+        presentation = question_surface.build_presentations(plan, validated)[0]
+        assert presentation["stem"] == surface["stem"]
+        assert presentation["stem_grounding_refs"] == ["context.asked_because"]
+
+
+def test_headline_fallback_without_citable_fact_stays_dimension_only():
+    question = review_engine._question_queue(
+        {"top_holes": [{"dim": "部位 sizing", "raw": {
+            "dim": "部位 sizing", "max_ticker": "NVDA", "max_pct": None,
+        }}], "dims_raw": [{"dim": "部位 sizing", "max_ticker": "NVDA", "max_pct": None}]},
+        {"holdings": {"positions": {}}}, {}, None, "en"
+    )[0]
+    assert question["question"] == "What mainly drove the behavior behind position sizing?"
+    assert "ticker" not in question and "asked_because" not in question
+    assert question["question_opportunity"]["context"] == {
+        "headline_dimension": {"id": "部位 sizing", "label": "position sizing"}
+    }
+
+
 def test_differential_personas_change_surface_not_engine_contract():
     first = _add_question("Enterprise demand is accelerating")
     second = _add_question("Margin recovery is the core thesis")

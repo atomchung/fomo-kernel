@@ -1351,7 +1351,8 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         candidates.append(row)
     candidates.extend(_rule_breach_questions(problem_stats, rule_history, language))
     if not candidates:
-        top = ((card.get("top_holes") or [{}])[0]).get("dim") or state.get("headline_dim")
+        top_hole = (card.get("top_holes") or [{}])[0]
+        top = top_hole.get("dim") or state.get("headline_dim")
         # An insufficient or quiet history can trigger no hole and carry
         # headline_dim=None (#227). With no dimension to anchor the motive
         # question to, asking would fabricate one; an empty queue is the same
@@ -1363,6 +1364,34 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             row = {"id": "headline_motive", "kind": "headline_motive", "required": True,
                    "question": question, "options": _generic_options(language),
                    "_importance": 0.0, "_tie": 2}
+            # Reuse the same deterministic, engine-owned fact selector as
+            # candidate-rule grounding.  The selected top-hole dimension must
+            # have both a renderable fact and at least one citable ticker; if
+            # either is absent, preserve the dimension-only safe fallback.
+            # This changes presentation grounding only—not ranking, choices,
+            # calculations, or the canonical answer contract.
+            top_dim_id = card_renderer.dimension_id(top)
+            grounding_card = card
+            top_raw = top_hole.get("raw")
+            if isinstance(top_raw, dict):
+                grounding_card = dict(card)
+                other_dims = [dim for dim in (card.get("dims_raw") or [])
+                              if (not isinstance(dim, dict)
+                                  or card_renderer.dimension_id(dim.get("dim")) != top_dim_id)]
+                # Keep other dimensions for facts such as diversification's
+                # sizing weights, while making this exact selected hole the
+                # authoritative row for its own dimension.
+                grounding_card["dims_raw"] = other_dims + [top_raw]
+            top_facts = card_renderer.rule_grounding_facts(grounding_card, top_dim_id)
+            grounding = card_renderer.localized_rule_grounding(
+                top, language, grounding_card
+            )
+            tickers = (top_facts or {}).get("tickers") or []
+            if (top_hole.get("dim") is not None and grounding and tickers
+                    and isinstance(tickers[0], str) and tickers[0]):
+                row["ticker"] = tickers[0]
+                row["asked_because"] = grounding
+                row["question"] = f"{grounding} {question}"
             row["question_opportunity"] = question_surface.build_opportunity(
                 row, language,
                 headline_dimension={"id": top, "label": top_label},
