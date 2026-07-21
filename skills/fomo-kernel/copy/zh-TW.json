@@ -98,6 +98,13 @@
     "price_only": "只有價格下跌／想攤低成本",
     "skip": "先跳過"
   },
+  "initial_thesis_choices": {
+    "planned_entry": "進場前就有明確論點",
+    "momentum_follow": "追了動能／FOMO",
+    "external_call": "別人推薦的",
+    "no_clear_thesis": "沒有明確論點",
+    "skip": "先跳過"
+  },
   "exit_choices": {
     "full": {
       "price_target": "到價了",

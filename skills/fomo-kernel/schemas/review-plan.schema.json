@@ -134,7 +134,8 @@
               "headline_motive",
               "revisit",
               "rule_breach",
-              "due_revisit"
+              "due_revisit",
+              "initial_thesis"
             ]
           },
           "ticker": {
@@ -256,6 +257,12 @@
               "null"
             ]
           },
+          "cost_basis": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "checkpoint": {
             "enum": [
               "30",
@@ -363,6 +370,63 @@
           "minItems": 3,
           "maxItems": 3,
           "uniqueItems": true
+        },
+        "question_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "The active route's maximum question count (#291). Kept for shape compatibility; the full band is in question_policy."
+        },
+        "question_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["route", "min", "max"],
+          "properties": {
+            "route": {"type": ["string", "null"]},
+            "min": {"type": "integer", "minimum": 0},
+            "max": {"type": "integer", "minimum": 0}
+          }
+        },
+        "question_selection": {
+          "type": "object",
+          "$comment": "Plan-internal QA/agent-facing report of how the density band was filled (#291); never rendered on the card.",
+          "additionalProperties": false,
+          "required": ["route", "min", "max", "eligible", "selected", "shortfall_reason", "rejected"],
+          "properties": {
+            "route": {"type": ["string", "null"]},
+            "min": {"type": "integer", "minimum": 0},
+            "max": {"type": "integer", "minimum": 0},
+            "eligible": {"type": "integer", "minimum": 0},
+            "selected": {"type": "integer", "minimum": 0},
+            "shortfall_reason": {
+              "enum": [null, "insufficient_eligible_candidates"]
+            },
+            "rejected": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "cycle_id", "reason"],
+                "properties": {
+                  "id": {"type": ["string", "null"]},
+                  "kind": {"type": ["string", "null"]},
+                  "cycle_id": {
+                    "type": ["string", "null"],
+                    "$comment": "Stable join key present whenever a cycle is known (initial_thesis, add_thesis, cycle-bearing over_max rows); null for rule_breach or headline_motive."
+                  },
+                  "reason": {
+                    "enum": [
+                      "over_max_capacity",
+                      "capture_limit",
+                      "rule_breach_limit",
+                      "initial_thesis_limit",
+                      "already_captured",
+                      "has_existing_thesis"
+                    ]
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
