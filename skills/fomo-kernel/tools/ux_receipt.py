@@ -20,9 +20,11 @@ answers_received.ts`. Verification treats `ts` as optional so traces written
 before this field existed still verify, but rejects a malformed value; row
 order, not `ts`, remains the ordering authority.
 
-The trace lives inside the protected state directory (default ~/.trade-coach),
-the same trust boundary as the canonical ledger: never committed and never
-published. Question-presentation rows are additionally restricted to mode,
+The trace lives inside the protected state directory, the same trust boundary
+as the canonical ledger: never committed and never published. The root resolves
+exactly like the engine CLIs (`--state-root` > `TRADE_COACH_HOME` >
+~/.trade-coach), so one `export TRADE_COACH_HOME=...` routes every tool in the
+lifecycle into the same root (#269). Question-presentation rows are additionally restricted to mode,
 surface source, and an opaque digest so cross-client evidence cannot copy the
 private question surface into the trace.
 """
@@ -41,6 +43,16 @@ from datetime import datetime, timezone
 
 VERSION = 2
 DEFAULT_STATE_ROOT = "~/.trade-coach"
+
+
+def _default_state_root() -> str:
+    """Mirror engine/session.default_root(): TRADE_COACH_HOME, else ~/.trade-coach.
+
+    This tool is deliberately stdlib-only, so the one-line resolution is
+    mirrored here instead of importing the engine. Resolved at invocation time
+    (not parser-build time) so the CLI honors the environment it runs in.
+    """
+    return os.environ.get("TRADE_COACH_HOME", DEFAULT_STATE_ROOT)
 QUESTION_MODES = ("native_options", "plain_text")
 SURFACE_SOURCES = ("validated_dynamic", "engine_fallback")
 CARD_MODES = ("widget", "markdown_inline")
@@ -95,6 +107,8 @@ def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
         raise ReceiptError("a session id is required")
     if session_id in {".", ".."} or any(ch in session_id for ch in ("/", "\\", "\x00")):
         raise ReceiptError("session id must be a bare identifier, not a path")
+    if state_root is None:  # direct-import callers may pass parser output unnormalized
+        state_root = _default_state_root()
     root = pathlib.Path(os.path.expanduser(state_root))
     return root / "ux" / f"{session_id}.jsonl"
 
@@ -399,8 +413,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_common(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--session-id", required=True)
-        sub.add_argument("--state-root", default=DEFAULT_STATE_ROOT,
-                         help="protected state directory (default ~/.trade-coach)")
+        sub.add_argument("--state-root", default=None,
+                         help="protected state directory (default: $TRADE_COACH_HOME, else ~/.trade-coach)")
 
     start = subparsers.add_parser("start", help="declare one host adapter's capabilities")
     add_common(start)
@@ -435,6 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.state_root is None:
+        args.state_root = _default_state_root()
     try:
         args.handler(args)
     except ReceiptError as exc:

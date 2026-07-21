@@ -6,6 +6,8 @@
 
 Trigger when a user asks for a trade review, transaction postmortem, brokerage-statement review, or provides a trade CSV or position snapshot.
 
+**Maintainer QA is a different route.** If the task is dogfooding or QA-verifying this repository itself (rather than reviewing a real user's trades), follow [docs/qa-runbook.md](docs/qa-runbook.md): latest-main version gate, isolated `TRADE_COACH_HOME` root, a `ux_receipt` through the walk, an archived manifest, and `tools/privacy_lint.py` on real-data findings before posting them publicly. A run that skips those gates does not count as a QA run.
+
 ## Workflow
 
 1. Read `skills/fomo-kernel/SKILL.md` completely.

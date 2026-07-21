@@ -1414,6 +1414,11 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
                         "--card-json", card, "--state-json", state)
         plan = json.loads(prepared.stdout)["review_plan"]
         assert plan["route"] == "test_drive" and plan["persist"] is False
+        # #273: cross-client test-drive artifacts must stay attributable — the
+        # engine_version provenance stamp (#250) covers this route too.
+        version = plan.get("engine_version")
+        assert isinstance(version, dict) and version.get("id"), \
+            "test_drive plan missing engine_version provenance"
         answers = pathlib.Path(tmp) / "answers.json"
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
