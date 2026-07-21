@@ -295,6 +295,117 @@ def localized_rule_grounding(dim, language, card):
         return None
 
 
+# ── Stable-code → copy resolution (#279 i18n phase 1) ────────────────────────
+# The engine emits locale-neutral snake_case codes plus raw params for behavior
+# tags, prescription rows, and the stress scenario; all localized wording lives
+# in copy/<locale>.json. Legacy bundles that persisted zh literals (pre-#279)
+# keep today's behavior by design — zh renders them verbatim, en omits them —
+# with no migration layer (owner ruling on #279: dev-phase, no compat mapping).
+
+
+def _tag_format_values(params):
+    """Presentation formatting for raw tag params, shared by every locale."""
+    values = {}
+    for key in ("n_adds", "win_early", "win_n"):
+        number = _finite_number((params or {}).get(key))
+        if number is not None:
+            values[key] = int(number)
+    cur = _finite_number((params or {}).get("cur"))
+    if cur is not None:
+        values["cur_pct"] = f"{cur * 100:.0f}%"
+        values["cur_abs_pct"] = f"{abs(cur) * 100:.0f}%"
+        values["cur_signed_pct"] = f"{cur * 100:+.0f}%"
+    wpct = _finite_number((params or {}).get("wpct"))
+    if wpct is not None:
+        values["wpct_pct"] = f"{wpct * 100:.0f}%"
+    return values
+
+
+def localized_instrument_tag(tag, language):
+    """Resolve one engine behavior tag to display text, or ``None`` to omit.
+
+    Coded tags ({"code", "params"}) resolve through copy ``instrument_tags``.
+    Legacy string tags (persisted zh literals) render verbatim on zh only."""
+    if isinstance(tag, str):
+        return (tag or None) if language != "en" else None
+    if not isinstance(tag, dict):
+        return None
+    template = (load_copy(language).get("instrument_tags") or {}).get(tag.get("code"))
+    if not template:
+        return None
+    try:
+        return template.format(**_tag_format_values(tag.get("params")))
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def localized_prescription(item, language):
+    """Resolve one prescription row to ``{"kind", "text"}``, or ``None``.
+
+    Coded rows resolve kind + sentence template through copy; legacy rows
+    (persisted zh ``kind``/``text``) render verbatim on zh only."""
+    if not isinstance(item, dict):
+        return None
+    copy = load_copy(language)
+    code = item.get("code")
+    if not code:
+        kind = str(item.get("kind") or "").strip()
+        text = str(item.get("text") or "").strip()
+        return {"kind": kind, "text": text} if language != "en" and kind and text else None
+    kind = (copy.get("prescription_kinds") or {}).get(item.get("kind"))
+    template = (copy.get("prescription_texts") or {}).get(code)
+    if not kind or not template:
+        return None
+    params = item.get("params") or {}
+    values = {}
+    for key, target in (("excess", "excess_pp"), ("allocation", "alloc_pp"),
+                        ("selection", "sel_pp")):
+        number = _finite_number(params.get(key))
+        if number is not None:
+            values[target] = f"{number * 100:+.0f}"
+    count = _finite_number(params.get("count"))
+    if count is not None:
+        values["count"] = int(count)
+    max_pct = _finite_number(params.get("max_pct"))
+    if max_pct is not None:
+        values["max_pct_pct"] = f"{max_pct * 100:.0f}%"
+    if params.get("ticker") is not None:
+        values["ticker"] = str(params["ticker"])
+    if code == "selection_inconclusive":
+        texts = copy.get("prescription_texts") or {}
+        t = _finite_number(params.get("t"))
+        if t is not None:
+            note_template = texts.get("selection_inconclusive_t_wide") or ""
+            values["t_note"] = note_template.format(t=f"{t:.1f}")
+        else:
+            values["t_note"] = texts.get("selection_inconclusive_t_unstable") or ""
+    try:
+        return {"kind": kind, "text": template.format(**values)}
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def localized_stress_label(stress, language):
+    """Resolve the stress scenario to its localized subject label, or ``None``.
+
+    Coded scenarios resolve through copy ``stress_test.labels``; the legacy
+    persisted ``label`` zh literal renders verbatim on zh only."""
+    scenario = (stress or {}).get("scenario")
+    if isinstance(scenario, dict):
+        labels = (load_copy(language).get("stress_test") or {}).get("labels") or {}
+        template = labels.get(scenario.get("kind"))
+        if not template:
+            return None
+        try:
+            label = template.format(sector=scenario.get("sector") or "",
+                                    ticker=scenario.get("ticker") or "")
+        except (KeyError, IndexError, ValueError):
+            return None
+        return label.strip() or None
+    legacy = str((stress or {}).get("label") or "").strip()
+    return (legacy or None) if language != "en" else None
+
+
 def _currency(card):
     return ((card.get("currency_meta") or {}).get("aggregate_currency") or "USD").upper()
 
@@ -579,8 +690,9 @@ def _alpha_interval_line(ab, language):
         return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
                 f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
                 "the interval controls how strong the conclusion may be.")
+    # #272: Arabic digits for the interval level — one digit style per sentence.
     return (f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，"
-            f"九十五％區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
+            f"95% 區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
             "定論強度以這個區間為準。")
 
 
@@ -762,7 +874,8 @@ def _performance_lines(card, language, honesty=None):
             if en:
                 line = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
                 if ap.get("irr_annual") is not None:
-                    line += f"; annualized IRR was {_pct(ap.get('irr_annual'))}"
+                    # Output contract: plain phrase, not the IRR jargon token.
+                    line += f"; annualized return was {_pct(ap.get('irr_annual'))}"
                 if ap.get("cash_drag") is not None:
                     line += (f"; the gap versus the holdings pillar, {_pct(ap.get('cash_drag'))}, "
                              "is explained by holding cash — an observation, not a verdict")
@@ -770,7 +883,8 @@ def _performance_lines(card, language, honesty=None):
             else:
                 line = f"帳戶級時間加權報酬為 {_pct(ap.get('acct_twr'))}"
                 if ap.get("irr_annual") is not None:
-                    line += f"，年化 IRR {_pct(ap.get('irr_annual'))}"
+                    # Output contract: plain phrase, not the IRR jargon token.
+                    line += f"，年化報酬 {_pct(ap.get('irr_annual'))}"
                 if ap.get("cash_drag") is not None:
                     line += f"；與持倉柱的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
                 lines.append(line + "。")
@@ -1312,8 +1426,8 @@ def _instrument_rows(card, context, language):
     Amounts are the engine's aggregate-view impacts converted like every other
     aggregate figure; bar widths are pure presentation geometry (share of the
     largest |impact|), the same class of scaling the sparkline already does.
-    Behavior tags are engine zh vocabulary, so they ride only on the zh card
-    until the engine grows localized tags."""
+    Behavior tags are stable engine codes resolved through copy (#279); legacy
+    persisted zh literals stay on the zh card only."""
     diagnosis = card.get("ticker_diagnosis") or []
     if not context.get("currency") or len(diagnosis) < 2:
         return []
@@ -1327,7 +1441,8 @@ def _instrument_rows(card, context, language):
         ticker = str(row.get("ticker") or "").strip()
         if impact is None or not amount or not ticker:
             continue
-        tags = [str(tag) for tag in (row.get("tags") or []) if tag] if language != "en" else []
+        tags = [text for text in (localized_instrument_tag(tag, language)
+                                  for tag in (row.get("tags") or [])) if text]
         rows.append({"ticker": ticker, "amount": amount,
                      "tone": "neg" if impact < 0 else "pos",
                      "tags": tags,
@@ -1336,20 +1451,27 @@ def _instrument_rows(card, context, language):
 
 
 def _stress_lines(card, context, language):
-    """The what-if concentration stress row (engine ``what_if``); zh only —
-    the scenario label is engine zh vocabulary."""
+    """The what-if concentration stress row (engine ``what_if``).
+
+    The engine emits a locale-neutral scenario code (#279); the label and the
+    sentence template come from copy ``stress_test``. Legacy bundles that
+    persisted a zh ``label`` literal keep rendering it on the zh card only."""
     stress = card.get("what_if") or {}
-    if language == "en" or not stress:
+    if not stress:
         return []
     exposure = _display_money(_finite_number(stress.get("mval")), context, absolute=True)
     drop30 = _display_money(_finite_number(stress.get("drop30")), context, absolute=True)
     drop50 = _display_money(_finite_number(stress.get("drop50")), context, absolute=True)
-    label = str(stress.get("label") or "").strip()
+    label = localized_stress_label(stress, language)
     pct = _finite_number(stress.get("pct"))
-    if not (exposure and drop30 and drop50 and label) or pct is None:
+    template = (load_copy(language).get("stress_test") or {}).get("line")
+    if not (exposure and drop30 and drop50 and label and template) or pct is None:
         return []
-    return [f"你 {label} 暴險約 {exposure}（佔 {_pct(pct)}）；"
-            f"回檔 30% → 帳面 −{drop30}、回檔 50% → −{drop50}，撐得住嗎？"]
+    try:
+        return [template.format(label=label, exposure=exposure, pct=_pct(pct),
+                                drop30=drop30, drop50=drop50)]
+    except (KeyError, IndexError, ValueError):
+        return []
 
 
 def _attribution_facts(card):
@@ -1391,15 +1513,13 @@ def _attribution_facts(card):
 
 
 def _improve_rows(card, language):
-    """Prescription rows (preserve / test / cut); engine zh text, zh card only."""
-    if language == "en":
-        return []
+    """Prescription rows (amplify / outsource / cut). Coded rows resolve
+    through copy (#279); legacy persisted zh rows stay on the zh card only."""
     rows = []
     for item in card.get("prescriptions") or []:
-        kind = str((item or {}).get("kind") or "").strip()
-        text = str((item or {}).get("text") or "").strip()
-        if kind and text:
-            rows.append({"kind": kind, "text": text})
+        resolved = localized_prescription(item, language)
+        if resolved and resolved["kind"] and resolved["text"]:
+            rows.append(resolved)
     return rows
 
 
@@ -1502,11 +1622,14 @@ def _card_structure(bundle):
                      "blocks": [("paragraph", [strength_line])]})
 
     trades = [] if snapshot else _trade_lines(card, copy["language"])
+    en = copy["language"] == "en"
     if facts["instruments"]:
         # Full ranked instrument list (template layout); best/worst rows stay
         # as the closing caption so no prior fact disappears.
+        wrap = (lambda tags: " (" + "; ".join(tags) + ")") if en else \
+               (lambda tags: "（" + "；".join(tags) + "）")
         ranked = [row["ticker"] + " " + row["amount"]
-                  + ("（" + "；".join(row["tags"]) + "）" if row["tags"] else "")
+                  + (wrap(row["tags"]) if row["tags"] else "")
                   for row in facts["instruments"]]
         blocks = [("bullets", ranked)]
         if trades:
@@ -1558,9 +1681,10 @@ def _card_structure(bundle):
                          "blocks": [("bullets", problem_lines)]})
 
     if facts["improve"] and sections_copy.get("improve"):
+        joiner = ": " if en else "："
         sections.append({"id": "improve", "title": sections_copy["improve"],
                          "blocks": [("bullets",
-                                     [row["kind"] + "：" + row["text"] for row in facts["improve"]])]})
+                                     [row["kind"] + joiner + row["text"] for row in facts["improve"]])]})
 
     rule_blocks = []
     rule = commitment.get("rule")

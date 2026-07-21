@@ -264,12 +264,92 @@ def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
 
 
 def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
-    """Engine zh vocabulary (tags, stress, prescriptions) must not leak onto
-    the English card; language-neutral blocks (grid, bars) still render."""
+    """Legacy persisted zh literals (pre-#279 bundles) must not leak onto the
+    English card; language-neutral blocks (grid, bars) still render. There is
+    no read-time migration for these by owner ruling on #279 — zh renders them
+    verbatim, en omits them."""
     html = card_renderer.render_html(_rich_bundle("en"))
     assert 'class="grid4"' in html and 'class="trow"' in html
     assert "押太重" not in html and "撐得住嗎" not in html
     assert 'class="rx"' not in html
+
+
+# #279 i18n phase 1: the engine now emits stable codes + raw params for tags,
+# the stress scenario, and prescriptions. Shaped exactly like the new
+# trade_recap output; semantic values mirror _RICH_CARD_FIELDS so the zh
+# resolution can be compared byte-for-byte against the legacy literals.
+_RICH_CARD_FIELDS_CODED = {
+    "ticker_diagnosis": [
+        {"ticker": "PLTR", "impact": 76647.0,
+         "tags": [{"code": "too_heavy", "params": {"wpct": 0.49}}]},
+        {"ticker": "NVDA", "impact": 58524.0,
+         "tags": [{"code": "disciplined_hold", "params": {"cur": 1.50}}]},
+        {"ticker": "AMD", "impact": -1000.0,
+         "tags": [{"code": "roughly_neutral", "params": {}}]},
+    ],
+    "what_if": {"scenario": {"kind": "ai_thematic"}, "mval": 170963.0, "pct": 0.983,
+                "drop30": 51289.0, "drop50": 85482.0},
+    "prescriptions": [
+        {"code": "cut_averaging_down", "kind": "cut_loss", "dim": "加碼攤平",
+         "params": {"count": 12}, "verify": "虧損加碼次數(降→好)"},
+        {"code": "cut_oversize", "kind": "cut_loss", "dim": "部位 sizing",
+         "params": {"ticker": "PLTR", "max_pct": 0.49}, "verify": "單筆最大佔比(降→好)"},
+    ],
+    "alpha_beta_breakdown": copy.deepcopy(_RICH_CARD_FIELDS["alpha_beta_breakdown"]),
+}
+
+
+def _coded_bundle(language):
+    bundle = copy.deepcopy(_session(language)["bundle"])
+    bundle["engine_card"].update(copy.deepcopy(_RICH_CARD_FIELDS_CODED))
+    return bundle
+
+
+def test_coded_fields_resolve_zh_byte_identical_to_legacy_literals():
+    """#279: for the fields whose legacy literals and coded forms describe the
+    same facts (tags, stress), the zh card must render byte-identically from
+    either shape — the copy templates inherit the engine wording verbatim.
+    Prescriptions are excluded here because the legacy fixture's rows are
+    synthetic strings, not engine output; their coded resolution is asserted
+    in the English-card test below and in the zh tokens it shares."""
+    legacy = _rich_bundle("zh-TW")
+    coded = _coded_bundle("zh-TW")
+    for bundle in (legacy, coded):
+        bundle["engine_card"]["prescriptions"] = []
+    assert card_renderer.render_private(legacy) == card_renderer.render_private(coded), \
+        "coded tags/stress must resolve to the exact legacy zh wording (Markdown)"
+    assert card_renderer.render_html(legacy) == card_renderer.render_html(coded), \
+        "coded tags/stress must resolve to the exact legacy zh wording (HTML)"
+
+
+def test_coded_fields_render_zh_prescriptions_from_copy():
+    markdown = card_renderer.render_private(_coded_bundle("zh-TW"))
+    assert "砍損耗：虧損中加碼 12 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。" in markdown
+    assert "砍損耗：最大一筆 PLTR 佔 49%,單一押注過重。" in markdown
+
+
+def test_coded_fields_render_localized_english_blocks():
+    """#279 acceptance: the en card gains the stress line, improve rows, and
+    instrument behavior tags from copy/en.json — with zero zh leakage."""
+    bundle = _coded_bundle("en")
+    html = card_renderer.render_html(bundle)
+    markdown = card_renderer.render_private(bundle)
+    for surface, name in ((html, "HTML"), (markdown, "Markdown")):
+        for token in ("too heavy: 49% of the portfolio",
+                      "disciplined hold: +150%",
+                      "roughly neutral",
+                      "could you sit through that?",
+                      "Cut the leak",
+                      "Adding to losing positions 12 times",
+                      "Your largest position PLTR holds 49% of the portfolio"):
+            assert token in surface, f"missing from en {name}: {token}"
+        for zh_token in ("押太重", "紀律持有", "大致中性", "撐得住嗎", "砍損耗"):
+            assert zh_token not in surface, f"zh vocabulary leaked into en {name}: {zh_token}"
+    assert 'class="rx"' in html, "en card must now render prescription rows"
+    # Markdown-only joins: halfwidth punctuation on the en card.
+    assert "Cut the leak: Adding to losing positions 12 times" in markdown
+    assert "(too heavy: 49% of the portfolio)" in markdown, \
+        "en Markdown must join tags with halfwidth punctuation"
 
 
 def test_preview_emits_html_and_finalize_cleans_pending():
@@ -358,6 +438,30 @@ def test_resume_exposes_preview_html_path_not_blob():
             "resume must not dump the HTML blob into stdout"
 
 
+def _copy_key_paths(node, prefix=""):
+    paths = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            paths.add(path)
+            paths |= _copy_key_paths(value, path)
+    return paths
+
+
+def test_locale_copy_files_keep_key_parity():
+    """#279: every locale ships the same key set (recursively), so a renderer
+    resolution that works in one locale can never silently miss in another."""
+    locales = {}
+    for name in ("en", "zh-TW"):
+        with open(SKILL / "copy" / f"{name}.json", encoding="utf-8") as f:
+            locales[name] = _copy_key_paths(json.load(f))
+    missing_in_zh = locales["en"] - locales["zh-TW"]
+    missing_in_en = locales["zh-TW"] - locales["en"]
+    assert not missing_in_zh and not missing_in_en, \
+        f"copy key parity broken; missing in zh-TW: {sorted(missing_in_zh)}; " \
+        f"missing in en: {sorted(missing_in_en)}"
+
+
 def test_delivery_contract_exists_and_is_routed():
     contract = SKILL / "references" / "card-delivery.md"
     assert contract.is_file(), "references/card-delivery.md must exist"
@@ -390,6 +494,10 @@ def main():
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
+        test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
+        test_coded_fields_render_zh_prescriptions_from_copy,
+        test_coded_fields_render_localized_english_blocks,
+        test_locale_copy_files_keep_key_parity,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,

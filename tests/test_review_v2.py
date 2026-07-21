@@ -3310,10 +3310,28 @@ def test_account_performance_pillar_gate_and_full_render():
     full = {"acct_perf": {"hold_twr": 0.12, "acct_twr": 0.10, "irr_annual": 0.15,
                           "cash_drag": -0.02, "note": None, "window": {"days": 30}}}
     zh = card_renderer._performance_lines(full, "zh-TW", {})
-    assert any("帳戶級時間加權報酬為 10%" in x and "IRR 15%" in x for x in zh)
+    assert any("帳戶級時間加權報酬為 10%" in x and "年化報酬 15%" in x for x in zh)
+    assert not any("IRR" in x for x in zh), \
+        "#279/#272 output contract: the IRR jargon token is banned from the zh card"
+    en_full = card_renderer._performance_lines(full, "en", {})
+    assert any("annualized return was 15%" in x for x in en_full)
+    assert not any("IRR" in x for x in en_full), \
+        "#279/#272 output contract: the IRR jargon token is banned from the en card"
     assert any("不是對錯判定" in x for x in zh), "#179: cash drag stays neutral, never a verdict"
     assert card_renderer._performance_lines({"acct_perf": {"note": "offline"}}, "en", {}) == [], \
         "no holdings pillar computed -> no account section"
+
+
+def test_alpha_interval_line_uses_arabic_digits_for_the_interval_level():
+    """#272/#279: one digit style per sentence — the zh alpha-interval line
+    prints the 95% level with Arabic digits, not a spelled-out zh numeral."""
+    import card_renderer
+    ab = {"alpha_stat": {"alpha_ann": 0.33, "ci95": [0.10, 0.56]}}
+    line = card_renderer._alpha_interval_line(ab, "zh-TW")
+    assert line and "95% 區間" in line, f"expected Arabic 95% interval wording, got: {line}"
+    assert "九十五" not in line, "spelled-out zh numeral must not mix with Arabic percentages"
+    en_line = card_renderer._alpha_interval_line(ab, "en")
+    assert en_line and "95% interval" in en_line
 
 
 def test_horizon_plan_join_ranks_full_exits_and_never_closes_a_reduction():

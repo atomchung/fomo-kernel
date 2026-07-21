@@ -32,3 +32,5 @@ User-visible product copy is stored by locale, such as `skills/fomo-kernel/copy/
 The engine, schemas, lifecycle, and policy remain locale-neutral. `--language` selects copy and rendering only.
 
 Stable dimension identifiers are English snake case, for example `position_sizing`, `averaging_down`, and `entry_style`. Localized dimension labels and card wording live only in `copy/<locale>.json`; lens configurations use the stable identifiers and English implementation text.
+
+The same rule covers every coded engine emission: behavior tags, stress-test scenarios, and prescription rows travel as stable English snake_case codes plus raw params (#279), and the renderers resolve them through `copy/<locale>.json`. Adding a locale for these surfaces requires only a new copy file, not an engine change.

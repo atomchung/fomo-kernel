@@ -1294,27 +1294,34 @@ def what_if(held, last_px, threshold=0.25):
     max_t, max_t_mv = max(risk_mv.items(), key=lambda x: x[1])
     max_t_pct = max_t_mv / tot
 
-    # 候選清單(只收 ≥ threshold 的;label/mval/pct)
+    # Candidate list (only >= threshold). #279 i18n phase 1: the engine emits a
+    # locale-neutral ``scenario`` (stable kind code + data subject); localized
+    # labels live in copy/<locale>.json and are resolved by the renderers.
+    # Sector names stay as data — they come from the user's driver map.
     cands = []
     if ai_pct >= threshold:
-        cands.append(("AI 概念股(跨板塊)", ai_mv, ai_pct, "AI 概念股回檔"))
+        cands.append((dict(kind="ai_thematic"), ai_mv, ai_pct))
     if max_sec and max_sec_pct >= threshold:
         # 若 AI thematic 已是候選且涵蓋了這個 sector,避免重複(AI 通常 ≥ max_sec)
         if not (ai_pct >= threshold and ai_pct >= max_sec_pct):
-            cands.append((f"「{max_sec}」板塊", max_sec_mv, max_sec_pct, f"{max_sec}回檔"))
+            cands.append((dict(kind="sector", sector=max_sec), max_sec_mv, max_sec_pct))
     if max_t_pct >= threshold:
         # 若 AI 或 sector 已涵蓋且佔比更高,個股不再重複(避免「單檔 NVDA 50%」與「半導體 50%」並列)
         if max_t_pct > max(ai_pct, max_sec_pct):
-            cands.append((f"單檔 {max_t}", max_t_mv, max_t_pct, f"{max_t} 個股回檔"))
+            cands.append((dict(kind="single_ticker", ticker=max_t), max_t_mv, max_t_pct))
 
     if not cands: return None
-    label, mval, pct, scenario_prefix = max(cands, key=lambda x: x[2])  # 取佔比最高那個
-    return dict(label=label, mval=mval, pct=pct, scenario_prefix=scenario_prefix,
+    scenario, mval, pct = max(cands, key=lambda x: x[2])  # 取佔比最高那個
+    return dict(scenario=scenario, mval=mval, pct=pct,
                 drop30=mval * 0.30, drop50=mval * 0.50)
 
 def prescribe(ab, dims, overview):
     """處方層:從歸因 + 診斷生成優化路徑——揚長 edge / 外包短板 / 砍損耗。每條盡量附可驗 metric。
     關鍵:處方是『放大你強的 + 外包你弱的』,不是通用避短。力量來自歸因精確(ChatGPT 沒你的數字不敢這樣說)。"""
+    # #279 i18n phase 1: prescription rows carry stable codes plus raw params.
+    # ``code`` selects the sentence template and ``kind`` the category label in
+    # copy/<locale>.json; the renderers format the numbers. ``verify``/``rule``
+    # remain v1-only zh fields (v2 resolves rule wording via copy "rules").
     dd = {d["dim"]: d for d in dims}
     rx = []
     bs = (ab or {}).get("benchmarks", {})
@@ -1325,35 +1332,31 @@ def prescribe(ab, dims, overview):
         spy = bs[bench_main]
         alloc, sel = sp["allocation"], sp["selection"]
         if spy["excess"] > 0.10 and alloc >= max(sel, 0.0):  # 贏大盤且賽道佔大頭 → 揚長是「假設」不是「定論」
-            rx.append(dict(kind="揚長(假設,待驗證)", verify="記錄『下一個賽道』判斷,事後對帳",
-                           text=(f"你贏大盤 {spy['excess']*100:+.0f}pp 裡,押對賽道佔 {alloc*100:+.0f}pp(拆帳)。"
-                                 "但這只是『假設你有方向判斷力』,不是已證實的 edge——押對 AI 也可能只是站到風口。"
-                                 "壓測它:寫下你『下一個看好的賽道』、記時間,看未來兩三次準不準,對了才叫 edge。")))
+            rx.append(dict(code="amplify_hypothesis", kind="amplify_hypothesis",
+                           params={"excess": spy["excess"], "allocation": alloc},
+                           verify="記錄『下一個賽道』判斷,事後對帳"))
         if not ab.get("credible"):                           # t 不顯著 → 不下選股能力定論(外包/真 edge)
-            t_note = (f"α 的 95% 區間還太寬(t={st['t']:.1f})" if st.get("t") is not None
-                      else "α 統計量還算不穩")
-            rx.append(dict(kind="選股:資料不足以判定", text=(
-                f"拆帳看,板塊內選股貢獻 {sel*100:+.0f}pp(描述性、這數字站得住);但 {t_note},"
-                f"統計上還分不出選股是本事還是運氣——別急著外包、也別自滿。")))
+            rx.append(dict(code="selection_inconclusive", kind="selection_inconclusive",
+                           params={"selection": sel, "t": st.get("t")}))
         elif sel < -0.05 or st.get("alpha_ann", 0) < 0:      # 統計站得住且選股在虧 → 外包
-            rx.append(dict(kind="外包短板(漸進)", verify="被動部位佔比(升→好)",
-                           text=(f"扣掉賽道,你板塊內選股貢獻 {sel*100:+.0f}pp、α 統計上站得住地差——"
-                                 "優化不是『別選股』(你享受它、ETF 也會錯過妖股),"
-                                 "是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)")))
+            rx.append(dict(code="outsource_selection", kind="outsource",
+                           params={"selection": sel},
+                           verify="被動部位佔比(升→好)"))
         elif sel > 0.05:                                      # 統計站得住且選股在賺 → 真 edge
-            rx.append(dict(kind="揚長", text=(
-                f"扣掉賽道紅利,你板塊內選股仍貢獻 {sel*100:+.0f}pp、α 統計顯著——"
-                "這是真 edge,別讓 sizing/紀律稀釋它。")))
+            rx.append(dict(code="amplify_selection_edge", kind="amplify",
+                           params={"selection": sel}))
     ad = dd.get("加碼攤平", {})
     if ad.get("count", 0) >= 10 or ad.get("breach", 0) >= 1:
-        rx.append(dict(kind="砍損耗", dim="加碼攤平", verify="虧損加碼次數(降→好)",
-                       rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)",
-                       text=f"虧損中加碼 {ad.get('count', 0)} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"))
+        rx.append(dict(code="cut_averaging_down", kind="cut_loss", dim="加碼攤平",
+                       params={"count": ad.get("count", 0)},
+                       verify="虧損加碼次數(降→好)",
+                       rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)"))
     sz = dd.get("部位 sizing", {})
     if sz.get("max_pct", 0) > 0.30:                          # #29:解開互斥 gate,攤平與 sizing 可同時成候選(讓 candidate_rules 能 2-3 條)
-        rx.append(dict(kind="砍損耗", dim="部位 sizing", verify="單筆最大佔比(降→好)",
-                       rule=f"單筆部位上限定死 20%,超過就減",
-                       text=f"最大一筆 {sz.get('max_ticker')} 佔 {sz.get('max_pct', 0)*100:.0f}%,單一押注過重。"))
+        rx.append(dict(code="cut_oversize", kind="cut_loss", dim="部位 sizing",
+                       params={"ticker": sz.get("max_ticker"), "max_pct": sz.get("max_pct", 0)},
+                       verify="單筆最大佔比(降→好)",
+                       rule="單筆部位上限定死 20%,超過就減"))
     return rx
 
 def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
@@ -1384,25 +1387,30 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
         cur, wpct, tags = a["cur_ret"], a["mval"] / tot_mval, []
         ac = adds_class.get(t) or {}
         cls, n_adds = ac.get("cls"), ac.get("n_adds", 0)
+        # #279 i18n phase 1: tags are stable codes + raw params; localized
+        # wording lives in copy/<locale>.json and is resolved by the renderers.
         if cls == "疑似凹單":                         # 主從分類:只在虧損買 + 金額加速
             if cur is not None and cur < -0.10:
-                tags.append(f"✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur*100:.0f}%(待你確認 thesis)")
+                tags.append({"code": "suspected_averaging_down_losing",
+                             "params": {"n_adds": n_adds, "cur": cur}})
             else:
-                tags.append(f"⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣,不是紀律")
+                tags.append({"code": "suspected_averaging_down_recovered",
+                             "params": {"n_adds": n_adds}})
         elif cls == "待確認" and n_adds >= 4:
-            tags.append(f"？加碼 {n_adds} 次待確認:是定投還是凹單,要你定")
+            tags.append({"code": "adds_pending_confirmation", "params": {"n_adds": n_adds}})
         elif cls == "疑似定投":
-            tags.append(f"✓疑似定投:漲跌都買/規律 {n_adds} 次,不是凹單")
+            tags.append({"code": "suspected_dca", "params": {"n_adds": n_adds}})
         if cls != "疑似凹單" and cur is not None and cur < -0.40:
-            tags.append(f"✗套牢:{cur*100:.0f}% 還抱著沒處理")
+            tags.append({"code": "deep_underwater", "params": {"cur": cur}})
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
-            tags.append(f"賣後機會成本:{a['win_early']}/{a['win_n']} 筆賣完它還漲(非審判,看你出場規則一致嗎)")
+            tags.append({"code": "sold_winner_early",
+                         "params": {"win_early": a["win_early"], "win_n": a["win_n"]}})
         if wpct > 0.25 and not instrument_policy.is_diversified_allocation(t):
-            tags.append(f"⚠押太重:佔組合 {wpct*100:.0f}%")
+            tags.append({"code": "too_heavy", "params": {"wpct": wpct}})
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
-            tags.append(f"✓紀律持有:賺 {cur*100:.0f}%")
+            tags.append({"code": "disciplined_hold", "params": {"cur": cur}})
         if not tags:
-            tags.append("— 大致中性")
+            tags.append({"code": "roughly_neutral", "params": {}})
         thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問;配置型 ETF 定投也不問)
         if cls in ("疑似凹單", "待確認") and n_adds >= 4 and cur is not None \
                 and not instrument_policy.is_diversified_allocation(t):
@@ -1859,7 +1867,7 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                                        (currency_meta or {}).get("aggregate_currency") or "USD")}
                         if worst else None),
         "what_if": wi,
-        "ticker_diagnosis": tdiag,                          # tags 已是人話
+        "ticker_diagnosis": tdiag,                          # tags = stable codes + params (#279); renderers resolve via copy
         "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
         "top_holes": top_holes,                             # top 1-2,Claude 寫敘事用
         "candidate_rules": candidate_rules,                 # 2-3 條候選,讓用戶挑/改一條
