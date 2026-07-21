@@ -12,18 +12,27 @@ dogfood session touched real trade data.
 What it detects, derived from the four real leaks in #274:
 
 - ticker:      any Symbol value from the reference CSVs appearing in the draft
-               (word-bounded, case-insensitive; `2330.TW` also matches `2330`)
-- amount:      any reference CSV numeric value with an integer part of 4+
-               digits, in plain or thousands-separated form (`13500`,
-               `13,500.00`) — deposit/position amounts, not everyday numbers
+               (word-bounded, case-insensitive; suffixed symbols such as
+               `2330.TW`, `0700.HK`, or `BRK-B` also match their bare stem)
+- amount:      any reference numeric value with an integer part of 4+ digits,
+               in plain or thousands-separated form (`13500`, `13,500.00`).
+               Cell values AND per-row quantity x price products both count,
+               because broker exports often store only quantity and price
+               while the leakable "total amount" is their product.
+- date:        any trade date present in the reference CSVs, in ISO
+               (`2023-01-10`) or slash (`1/10/2023`, `01/10/2023`) form
 - position-id: the internal `TICKER#YYYY-MM-DD#n` position identifier format,
                reported regardless of the reference set (the format itself
                implies a real ledger row)
 
+Sub-4-digit numbers (e.g. a bare share price like `550`) are intentionally
+not flagged — they would flood prose with false positives. De-identify those
+by hand; the runbook documents this limit.
+
 Behavior is fail-closed: an unreadable reference CSV, or a reference set that
 yields no tokens at all, is an error (exit 2) — never a silent pass. Findings
-are printed MASKED (first/last characters only) so the lint output itself is
-safe to share. Exit codes: 0 clean, 1 findings, 2 usage/reference error.
+are printed MASKED so the lint output itself is safe to share. Exit codes:
+0 clean, 1 findings, 2 usage/reference error.
 
 Usage:
   python3 tools/privacy_lint.py --against ~/private/trades.csv draft.md
@@ -42,17 +51,27 @@ import pathlib
 import re
 import sys
 
-TICKER_US = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
-TICKER_TW = re.compile(r"^\d{4,6}(\.TWO?)?$")
+# At least one letter (NVDA, BRK-B, F, 0700.HK's HK part comes via suffix)...
+TICKER_ALPHA = re.compile(r"^(?=.*[A-Z])[A-Z0-9]{1,7}([.-][A-Z0-9]{1,4})?$")
+# ...or a 4-6 digit numeric code with optional exchange suffix (2330, 2330.TW, 0700.HK).
+TICKER_NUMERIC = re.compile(r"^\d{4,6}([.-][A-Z]{1,4})?$")
 NUMERIC_CELL = re.compile(r"^-?\d[\d,]*(\.\d+)?$")
-POSITION_ID = re.compile(r"[A-Za-z0-9.]{1,10}#\d{4}-\d{2}-\d{2}#\d+")
+DATE_CELL = re.compile(r"^(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{4}))$")
+DRAFT_DATE = re.compile(r"(?<!\d)(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{4}))(?!\d)")
+POSITION_ID = re.compile(r"[A-Za-z0-9.\-]{1,12}#\d{4}-\d{2}-\d{2}#\d+")
 SYMBOL_HEADERS = {"symbol", "ticker", "code"}
+QUANTITY_HEADERS = {"quantity", "qty", "shares"}
+PRICE_HEADERS = {"price", "unit price", "unit_price"}
 
 
 def _mask(value: str) -> str:
-    """First and last character kept, everything between starred out."""
+    """First and last character kept, everything between starred out.
+
+    One- and two-character values are fully starred: echoing `F*` for the
+    ticker `F` would leak the whole secret.
+    """
     if len(value) <= 2:
-        return value[:1] + "*"
+        return "**"
     return value[0] + "*" * (len(value) - 2) + value[-1]
 
 
@@ -61,22 +80,40 @@ def _mask_position_id(value: str) -> str:
     return f"{_mask(head)}#****-**-**#*"
 
 
-def _load_reference(path: pathlib.Path) -> tuple[set[str], set[str]]:
-    """Extract ticker and amount tokens from one reference CSV.
+def _date_key(match: re.Match) -> tuple[int, int, int]:
+    groups = match.groups()
+    if groups[0] is not None:  # ISO YYYY-MM-DD
+        return int(groups[0]), int(groups[1]), int(groups[2])
+    return int(groups[5]), int(groups[3]), int(groups[4])  # M/D/YYYY
+
+
+def _big_digits(raw: str) -> str | None:
+    """Integer-part digits of a numeric string when 4+ digits long, else None."""
+    integer_part = raw.replace(",", "").split(".", 1)[0].lstrip("-")
+    return integer_part if len(integer_part) >= 4 and integer_part.isdigit() else None
+
+
+def _load_reference(path: pathlib.Path) -> tuple[set[str], set[str], set[tuple[int, int, int]]]:
+    """Extract ticker, amount, and trade-date tokens from one reference CSV.
 
     Tickers come from a Symbol-like column when a header row names one, else
     from any cell matching a ticker shape. Amounts come from any numeric cell
-    whose integer part has 4+ digits — long enough that a hit in prose almost
-    certainly came from the ledger, short enough to catch deposits and costs.
+    whose integer part has 4+ digits, plus each row's |quantity x price|
+    product (broker exports often omit a total-amount column, yet the product
+    is exactly the figure a draft would leak). Dates come from date-shaped
+    cells in either ISO or slash form.
     """
     tickers: set[str] = set()
     amounts: set[str] = set()
+    dates: set[tuple[int, int, int]] = set()
     with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
         rows = list(csv.reader(handle))
     if not rows:
-        return tickers, amounts
+        return tickers, amounts, dates
     header = [cell.strip().lower() for cell in rows[0]]
     symbol_columns = [index for index, name in enumerate(header) if name in SYMBOL_HEADERS]
+    quantity_columns = [index for index, name in enumerate(header) if name in QUANTITY_HEADERS]
+    price_columns = [index for index, name in enumerate(header) if name in PRICE_HEADERS]
     body = rows[1:] if symbol_columns else rows
     for row in body:
         cells = (
@@ -87,18 +124,37 @@ def _load_reference(path: pathlib.Path) -> tuple[set[str], set[str]]:
             cell = cell.strip()
             if not cell:
                 continue
-            if TICKER_US.fullmatch(cell) or TICKER_TW.fullmatch(cell):
+            if TICKER_ALPHA.fullmatch(cell) or TICKER_NUMERIC.fullmatch(cell):
                 tickers.add(cell.upper())
-                if "." in cell:  # `2330.TW` is also leakable as bare `2330`
-                    tickers.add(cell.split(".", 1)[0].upper())
+                stem = re.split(r"[.-]", cell, maxsplit=1)[0]
+                if stem != cell:  # `2330.TW` / `BRK-B` are also leakable bare
+                    tickers.add(stem.upper())
         for cell in row:
-            cell = cell.strip().lstrip("-")
-            if not cell or not NUMERIC_CELL.fullmatch(cell):
+            cell = cell.strip()
+            if not cell:
                 continue
-            integer_part = cell.replace(",", "").split(".", 1)[0]
-            if len(integer_part) >= 4:
-                amounts.add(integer_part)
-    return tickers, amounts
+            date_match = DATE_CELL.fullmatch(cell)
+            if date_match:
+                dates.add(_date_key(date_match))
+                continue
+            stripped = cell.lstrip("-")
+            if NUMERIC_CELL.fullmatch(stripped):
+                digits = _big_digits(stripped)
+                if digits:
+                    amounts.add(digits)
+        for q_index in quantity_columns:
+            for p_index in price_columns:
+                if q_index >= len(row) or p_index >= len(row):
+                    continue
+                try:
+                    product = abs(float(row[q_index].replace(",", "")) *
+                                  float(row[p_index].replace(",", "")))
+                except ValueError:
+                    continue
+                digits = _big_digits(f"{product:.2f}")
+                if digits:
+                    amounts.add(digits)
+    return tickers, amounts, dates
 
 
 def _amount_pattern(amounts: set[str]) -> re.Pattern | None:
@@ -117,11 +173,14 @@ def _ticker_pattern(tickers: set[str]) -> re.Pattern | None:
     if not tickers:
         return None
     variants = sorted((re.escape(ticker) for ticker in tickers), key=len, reverse=True)
-    return re.compile(r"(?<![A-Za-z0-9.])(" + "|".join(variants) + r")(?![A-Za-z0-9])",
+    # No `.` in the lookbehind: `Issuer.AAPL` must still flag AAPL. Suffixed
+    # forms sort longer, so `2330.TW` consumes before bare `2330` can match.
+    return re.compile(r"(?<![A-Za-z0-9])(" + "|".join(variants) + r")(?![A-Za-z0-9])",
                       re.IGNORECASE)
 
 
-def scan(text: str, tickers: set[str], amounts: set[str]) -> list[tuple[int, str, str]]:
+def scan(text: str, tickers: set[str], amounts: set[str],
+         dates: set[tuple[int, int, int]]) -> list[tuple[int, str, str]]:
     """Return (line_number, kind, masked_value) findings for the draft text."""
     findings: list[tuple[int, str, str]] = []
     ticker_re = _ticker_pattern(tickers)
@@ -141,6 +200,9 @@ def scan(text: str, tickers: set[str], amounts: set[str]) -> list[tuple[int, str
             for match in amount_re.finditer(line):
                 if not _inside_position_id(match.span()):
                     findings.append((line_number, "amount", _mask(match.group(1))))
+        for match in DRAFT_DATE.finditer(line):
+            if _date_key(match) in dates and not _inside_position_id(match.span()):
+                findings.append((line_number, "date", "<reference trade date>"))
     return findings
 
 
@@ -154,18 +216,20 @@ def main() -> int:
 
     tickers: set[str] = set()
     amounts: set[str] = set()
+    dates: set[tuple[int, int, int]] = set()
     for raw in args.against:
         path = pathlib.Path(raw).expanduser()
         if not path.is_file():
             print(f"ERROR: reference CSV not found: {path}", file=sys.stderr)
             return 2
         try:
-            file_tickers, file_amounts = _load_reference(path)
+            file_tickers, file_amounts, file_dates = _load_reference(path)
         except OSError as exc:
             print(f"ERROR: cannot read reference CSV {path}: {exc}", file=sys.stderr)
             return 2
         tickers |= file_tickers
         amounts |= file_amounts
+        dates |= file_dates
     if not tickers and not amounts:
         print("ERROR: reference CSVs yielded no tickers or amounts — wrong file? "
               "Refusing to pass an empty reference set.", file=sys.stderr)
@@ -180,16 +244,16 @@ def main() -> int:
             return 2
         text = draft_path.read_text(encoding="utf-8", errors="replace")
 
-    findings = scan(text, tickers, amounts)
+    findings = scan(text, tickers, amounts, dates)
     if findings:
         for line_number, kind, masked in findings:
             print(f"line {line_number}: {kind} \"{masked}\"")
         print(f"FAIL: {len(findings)} finding(s) matching the reference trade data. "
               "De-identify each before posting anywhere public (see #274).")
         return 1
-    print(f"PASS: no reference tickers, amounts, or position ids found "
+    print(f"PASS: no reference tickers, amounts, dates, or position ids found "
           f"({len(args.against)} reference file(s), {len(tickers)} tickers, "
-          f"{len(amounts)} amounts checked)")
+          f"{len(amounts)} amounts, {len(dates)} dates checked)")
     return 0
 
 

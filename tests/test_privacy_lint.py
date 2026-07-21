@@ -18,6 +18,9 @@ TOOL = ROOT / "skills" / "fomo-kernel" / "tools" / "privacy_lint.py"
 REFERENCE_CSV = """Symbol,Quantity,Price,Action,Description,TradeDate,Amount,RecordType
 ZZZT,10,150.00,BUY,BOUGHT SYNTHETIC CORP,2023-01-10,-98765.00,Trade
 9876.TW,1000,550.00,BUY,BOUGHT SYNTHETIC TW,2023-03-01,-4321.00,Trade
+ZZZ-B,5,2000.00,BUY,BOUGHT SYNTHETIC CLASS B,2023-04-01,-10000.00,Trade
+0999.HK,100,88.00,BUY,BOUGHT SYNTHETIC HK,2023-05-01,-8800.00,Trade
+Q,50,30.00,BUY,BOUGHT SINGLE LETTER,2023-06-01,-1500.00,Trade
 ,,,,DEPOSIT USD FUNDING,2023-03-10,55443322.00,Deposit
 """
 
@@ -97,6 +100,58 @@ def test_short_numbers_are_not_flagged():
     def check(_tmp, reference):
         done = run_lint("Bought at 550 and sold at 150.\n", reference)
         assert done.returncode == 0, done.stdout + done.stderr
+    with_reference(check)
+
+
+def test_hyphen_and_hk_symbols_match_with_bare_stems():
+    # Codex review of #275: BRK-B / 0700.HK shapes were silently unmatched.
+    def check(_tmp, reference):
+        for text in ("Sold ZZZ-B early.", "Trimmed ZZZ class shares.",
+                     "Bought 0999.HK again.", "Concentration in 0999 is high."):
+            done = run_lint(text + "\n", reference)
+            assert done.returncode == 1, f"{text!r}: {done.stdout}{done.stderr}"
+            assert "ticker" in done.stdout, text
+    with_reference(check)
+
+
+def test_dotted_prefix_still_flags_ticker():
+    # Codex review of #275: `Issuer.ZZZT` slipped through the old lookbehind.
+    def check(_tmp, reference):
+        done = run_lint("See Issuer.ZZZT for details.\n", reference)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "ticker" in done.stdout
+    with_reference(check)
+
+
+def test_single_char_ticker_masked_fully():
+    # Codex review of #275: masking `F` as `F*` leaks the whole secret.
+    def check(_tmp, reference):
+        done = run_lint("Traded Q that week.\n", reference)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert '"**"' in done.stdout
+        assert '"Q"' not in done.stdout and '"Q*"' not in done.stdout
+    with_reference(check)
+
+
+def test_reference_dates_flagged_in_both_forms():
+    # Codex review of #275: runbook promised dates, the tool never scanned them.
+    def check(_tmp, reference):
+        for text in ("Entered on 2023-03-01 originally.", "Entered on 3/1/2023 originally."):
+            done = run_lint(text + "\n", reference)
+            assert done.returncode == 1, f"{text!r}: {done.stdout}{done.stderr}"
+            assert "date" in done.stdout, text
+        clean = run_lint("Reviewed on 2026-07-21 as usual.\n", reference)
+        assert clean.returncode == 0, clean.stdout + clean.stderr
+    with_reference(check)
+
+
+def test_quantity_price_product_flagged():
+    # Real broker exports may have no Amount column: the leakable total is
+    # quantity x price (1000 x 550 = 550000 here), absent from every cell.
+    def check(_tmp, reference):
+        done = run_lint("That position cost 550,000 back then.\n", reference)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "amount" in done.stdout
     with_reference(check)
 
 

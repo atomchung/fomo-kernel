@@ -107,6 +107,8 @@ def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
         raise ReceiptError("a session id is required")
     if session_id in {".", ".."} or any(ch in session_id for ch in ("/", "\\", "\x00")):
         raise ReceiptError("session id must be a bare identifier, not a path")
+    if state_root is None:  # direct-import callers may pass parser output unnormalized
+        state_root = _default_state_root()
     root = pathlib.Path(os.path.expanduser(state_root))
     return root / "ux" / f"{session_id}.jsonl"
 

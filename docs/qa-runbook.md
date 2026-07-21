@@ -44,11 +44,21 @@ issues it produces must say so.
    text destined for a public surface passed `tools/privacy_lint.py` first
    (see below).
 
-Each rule doubles as early detection: `verify` fails on missing or out-of-order
-events, archiving fails without a receipt, the version gate fails on a stale
-checkout, and the privacy lint fails on real identifiers — so a run that
-drifted off the standard flow surfaces the drift *before* its results are
-trusted or posted, not in a post-hoc audit.
+Each rule doubles as early detection, and each is honest about where it is
+machine-enforced versus procedural:
+
+| Gate | Machine-enforced by | Procedural part |
+|---|---|---|
+| 1. Version | — | record the sha yourself before starting (the owner's `/fomo-qa` skill automates this) |
+| 2. Isolation | engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | exporting it, and not overriding it per-command |
+| 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, or a missing weekly opener | recording every event honestly, right after the user sees it |
+| 4. Verdict | `verify --require-owner-verdict` fails without a passing verdict | running verify with that flag on human-graded runs |
+| 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
+| 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
+
+A drifted run therefore surfaces *before* its results are trusted or posted,
+not in a post-hoc audit — but only the checks in the middle column are
+self-executing; the right column is on the runner.
 
 ## Hard guardrails
 
@@ -151,10 +161,19 @@ python3 tools/privacy_lint.py --against <real-trades.csv> draft.md
 ```
 
 Exit 0 is the only pass. Findings are printed masked; fix the draft (replace
-tickers/amounts/position ids with de-identified descriptions) and re-run until
-clean. The tool fails closed: an unreadable or empty reference CSV is an
-error, never a silent pass. Mock-data sessions do not need the lint, but the
-`TICKER#date#seq` format should still never be pasted verbatim.
+tickers/amounts/dates/position ids with de-identified descriptions) and re-run
+until clean. The tool fails closed: an unreadable or empty reference CSV is an
+error, never a silent pass.
+
+What the lint machine-checks: reference tickers (including bare stems of
+suffixed symbols like `2330.TW` / `BRK-B`), reference trade dates (ISO and
+slash forms), amounts with a 4+ digit integer part (cell values and per-row
+quantity x price products), and the `TICKER#date#seq` position-id format.
+What it cannot see — smaller numbers (a bare share price), prose that
+describes a position without naming it, percentages — you de-identify by
+hand; a passing lint is necessary, not sufficient. Mock-data sessions do not
+need the lint, but the `TICKER#date#seq` format should still never be pasted
+verbatim.
 
 ## Per-client notes
 
