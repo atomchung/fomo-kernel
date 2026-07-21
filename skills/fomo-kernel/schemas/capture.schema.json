@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/capture.schema.json",
+  "title": "Fomo Kernel Light-Tier Capture Entries",
+  "description": "Append-only motive/emotion capture for a cadence.tier=light review (issue #237 #4). Not agent narrative prose, so the digit-ban in narrative.schema.json does not apply here. Each entry either attaches a lightweight thesis_decision to an already-established cycle, or — when the cycle has no thesis yet (see review_plan.state_snapshot.missing_thesis_positions) — seeds a minimal inferred thesis, in which case why and exit_trigger become required so the entry is never silently dropped by thesis.reconstruct_states.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["cycle_id", "note"],
+    "properties": {
+      "cycle_id": {"type": "string", "minLength": 1},
+      "note": {"type": "string", "minLength": 1, "maxLength": 600},
+      "why": {"type": "string", "minLength": 1},
+      "exit_trigger": {"type": "string", "minLength": 1},
+      "source_type": {"enum": ["kol", "research", "self", "other"]},
+      "source_name": {"type": "string"},
+      "source_confidence": {"enum": ["candidate", "confirmed"]},
+      "emotion": {"enum": ["fomo", "composed", "forced", "planned"]},
+      "emotion_inferred": {"type": "boolean"},
+      "confidence": {"enum": ["high", "medium", "low"]},
+      "confidence_inferred": {"type": "boolean"}
+    }
+  }
+}

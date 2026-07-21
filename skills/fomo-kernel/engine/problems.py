@@ -190,6 +190,70 @@ def compute_stats(events, today, recent_weeks=4):
     return per, top
 
 
+def compute_stats_by_marks(events, marks, min_marks=3):
+    """Span-aware variant of `compute_stats` (#237 #5): compare the two most
+    recent *actual* review periods (mark-to-mark) instead of a fixed 4-week
+    window anchored to wall-clock/state "today". Two periods of different
+    length are compared by per-day rate, not raw count, so an irregular review
+    cadence cannot read as a behavior change.
+
+    Needs the last 3 marks to define 2 comparable periods — (marks[-3], marks[-2]]
+    is "prior", (marks[-2], marks[-1]] is "recent". Returns None when fewer than
+    `min_marks` marks exist yet (too little review history for a span-aware
+    trend); the caller should fall back to `compute_stats`'s fixed window.
+
+    A light-tier review never appends a `review_mark` (#237 #4's capture-only
+    path skips it entirely), so light-tier events are structurally excluded
+    from both periods here without any special-casing — they simply have no
+    mark boundary to fall inside.
+    """
+    marks_sorted = sorted((m for m in marks if m.get("week")), key=lambda m: m["week"])
+    if len(marks_sorted) < min_marks:
+        return None
+    prior_from, recent_from, recent_to = (marks_sorted[-3]["week"], marks_sorted[-2]["week"],
+                                          marks_sorted[-1]["week"])
+    recent_days = max(1, (dt.date.fromisoformat(recent_to) - dt.date.fromisoformat(recent_from)).days)
+    prior_days = max(1, (dt.date.fromisoformat(recent_from) - dt.date.fromisoformat(prior_from)).days)
+    per = {}
+    for e in events:
+        try:
+            d = str(dt.date.fromisoformat(str(e["week"])))
+        except ValueError:
+            continue
+        k = e["key"]
+        s = per.setdefault(k, {"total": 0, "recent_count": 0, "prev_count": 0,
+                               "recent_amount": 0.0, "total_amount": 0.0,
+                               "last_week": None, "recent_events": []})
+        s["total"] += 1
+        amt = e.get("amount")
+        if isinstance(amt, (int, float)):
+            s["total_amount"] += amt
+        if s["last_week"] is None or e["week"] > s["last_week"]:
+            s["last_week"] = e["week"]
+        if recent_from < d <= recent_to:
+            s["recent_count"] += 1
+            if isinstance(amt, (int, float)):
+                s["recent_amount"] += amt
+            s["recent_events"].append(e)
+        elif prior_from < d <= recent_from:
+            s["prev_count"] += 1
+    for k, s in per.items():
+        recent_rate = s["recent_count"] / recent_days
+        prev_rate = s["prev_count"] / prior_days
+        s["trend"] = ("worse" if recent_rate > prev_rate else
+                      "better" if recent_rate < prev_rate else "flat")
+        s["recent_amount"] = round(s["recent_amount"], 2)
+        s["total_amount"] = round(s["total_amount"], 2)
+        mult = TREND_MULT[s["trend"]]
+        s["_sort"] = (-s["recent_amount"] * mult, -s["recent_count"] * mult, k)
+    top = [k for k, s in sorted(per.items(), key=lambda kv: kv[1]["_sort"])
+           if s["recent_count"] > 0][:3]
+    for s in per.values():
+        del s["_sort"]
+    return per, top, {"recent_from": recent_from, "recent_to": recent_to,
+                      "prior_from": prior_from, "recent_days": recent_days, "prior_days": prior_days}
+
+
 def load_rules(path):
     """rules.jsonl → (active_tracking[], muted[])。append-only:revises 指回舊 rule_id →
     舊的 superseded;每條規矩線取 latest;status muted 不進對位但列出(呈現「靜默統計中」)。"""
@@ -278,21 +342,35 @@ def check_rules(tracking, events, marks):
     return out
 
 
-def snapshot(book_path, rules_path=None, today=None, recent_weeks=4):
+def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=False):
     """Assemble the review-ready stats payload (single source for CLI and review v2).
 
     rules_path=None keeps the CLI's opt-in semantics (rules_check/muted None);
-    a given path always computes the rule reconciliation, even when empty."""
+    a given path always computes the rule reconciliation, even when empty.
+
+    span_aware=True (#237 #5) opts into `compute_stats_by_marks` — trend
+    compared over actual review-boundary periods by rate, not a fixed 4-week
+    window — falling back to the classic `compute_stats` window when fewer
+    than 3 marks exist yet. Defaults to False so the standalone `problems.py
+    stats` CLI keeps its documented fixed-window contract unless asked
+    otherwise; `engine/review.py`'s `_problem_snapshot` opts in by default."""
     events, marks, skipped = load_book(book_path)
     today = today or dt.date.today().isoformat()
-    per, top = compute_stats(events, today, recent_weeks)
+    window = None
+    per = top = None
+    if span_aware:
+        by_marks = compute_stats_by_marks(events, marks)
+        if by_marks is not None:
+            per, top, window = by_marks
+    if per is None:
+        per, top = compute_stats(events, today, recent_weeks)
     rules_check = muted = None
     if rules_path:
         tracking, muted_rules = load_rules(rules_path)
         rules_check = check_rules(tracking, events, marks)
         muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
                   "problem_key": r.get("problem_key")} for r in muted_rules]
-    return {"as_of": today, "recent_weeks": recent_weeks,
+    return {"as_of": today, "recent_weeks": recent_weeks, "window": window,
             "per_key": per, "top": top,
             "rules_check": rules_check, "muted_rules": muted,
             "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}

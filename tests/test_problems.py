@@ -138,6 +138,77 @@ def test_stats_amount_first_and_trend_weight():
     assert per2["avgdown_breach"]["total"] == 4, "總帳仍在"
 
 
+# ─────────────── B2. compute_stats_by_marks (#237 #5, span-aware trend) ───────────────
+
+def _mark(week):
+    return {"type": "review_mark", "week": week, "opportunities": {}}
+
+
+def test_compute_stats_by_marks_compares_rate_not_raw_count():
+    """#237 #5: two unequal-length real review periods must compare by per-day
+    rate, or an irregular cadence reads as a behavior change that isn't real.
+    Prior period is 30 days with 3 events (rate 0.1/day); recent period is only
+    10 days with 2 events (rate 0.2/day). Raw count alone (2 < 3) would call
+    this "better"; the actual per-day rate is worse."""
+    marks = [_mark("2026-05-01"), _mark("2026-05-31"), _mark("2026-06-10")]
+    events = [_ev("avgdown_breach", w, "PLTR") for w in
+             ("2026-05-05", "2026-05-15", "2026-05-25")] + \
+             [_ev("avgdown_breach", w, "PLTR") for w in ("2026-06-02", "2026-06-08")]
+    result = pb.compute_stats_by_marks(events, marks)
+    assert result is not None
+    per, top, window = result
+    assert per["avgdown_breach"]["recent_count"] == 2 and per["avgdown_breach"]["prev_count"] == 3
+    assert per["avgdown_breach"]["trend"] == "worse", "0.2/day recent vs 0.1/day prior, despite fewer raw events"
+    assert top == ["avgdown_breach"]
+    assert window == {"recent_from": "2026-05-31", "recent_to": "2026-06-10",
+                      "prior_from": "2026-05-01", "recent_days": 10, "prior_days": 30}
+
+
+def test_compute_stats_by_marks_needs_three_marks():
+    """Fewer than 3 marks cannot define two comparable periods; the caller must
+    fall back to the fixed-window compute_stats instead of guessing."""
+    events = [_ev("avgdown_breach", "2026-06-05", "PLTR")]
+    assert pb.compute_stats_by_marks(events, []) is None
+    assert pb.compute_stats_by_marks(events, [_mark("2026-06-01")]) is None
+    assert pb.compute_stats_by_marks(events, [_mark("2026-06-01"), _mark("2026-06-10")]) is None
+    assert pb.compute_stats_by_marks(
+        events, [_mark("2026-05-01"), _mark("2026-06-01"), _mark("2026-06-10")]) is not None
+
+
+def test_compute_stats_by_marks_excludes_events_outside_both_periods():
+    """An event older than the prior period's start counts toward the all-time
+    total but neither period — it is not silently folded into "prior"."""
+    marks = [_mark("2026-05-01"), _mark("2026-05-31"), _mark("2026-06-10")]
+    events = [_ev("avgdown_breach", "2026-01-01", "PLTR"),   # long before any period
+             _ev("avgdown_breach", "2026-06-05", "PLTR")]    # inside the recent period
+    per, top, window = pb.compute_stats_by_marks(events, marks)
+    assert per["avgdown_breach"]["total"] == 2, "all-time total still counts every event"
+    assert per["avgdown_breach"]["recent_count"] == 1 and per["avgdown_breach"]["prev_count"] == 0
+
+
+def test_snapshot_span_aware_falls_back_below_three_marks_and_opts_in_above():
+    book, rules = _mk()
+    # Only two marks yet: span_aware must fall back to the classic fixed window,
+    # matching span_aware=False exactly (same "today", same recent_weeks).
+    pb.append_book(book, [_ev("avgdown_breach", "2026-06-25", "PLTR")],
+                   {"week": "2026-06-20", "opportunities": {}})
+    pb.append_book(book, [], {"week": "2026-06-27", "opportunities": {}})
+    classic = pb.snapshot(book, today="2026-06-27", span_aware=False)
+    spanning = pb.snapshot(book, today="2026-06-27", span_aware=True)
+    assert spanning["window"] is None
+    assert spanning["per_key"] == classic["per_key"] and spanning["top"] == classic["top"]
+
+    # A third mark unlocks the span-aware path with a populated window.
+    pb.append_book(book, [_ev("avgdown_breach", "2026-07-05", "PLTR")],
+                   {"week": "2026-07-07", "opportunities": {}})
+    spanning2 = pb.snapshot(book, today="2026-07-07", span_aware=True)
+    assert spanning2["window"] is not None
+    assert spanning2["window"]["recent_from"] == "2026-06-27" and spanning2["window"]["recent_to"] == "2026-07-07"
+    classic2 = pb.snapshot(book, today="2026-07-07", span_aware=False)
+    assert spanning2["per_key"] != classic2["per_key"], \
+        "once 3 marks exist, span-aware must diverge from the fixed 4-week window, not silently match it"
+
+
 def test_rules_revises_and_muted():
     _, rules = _mk()
     rows = [

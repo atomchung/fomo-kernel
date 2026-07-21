@@ -4092,7 +4092,7 @@ def test_repair_projections_never_regresses_a_newer_last_state():
 def test_all_json_schemas_parse():
     names = {"review-plan.schema.json", "answers.schema.json", "narrative.schema.json",
              "session-bundle.schema.json", "question-opportunity.schema.json",
-             "question-surface.schema.json"}
+             "question-surface.schema.json", "capture.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
@@ -4150,6 +4150,241 @@ def test_cadence_tier_is_wired_into_the_review_plan():
         assert plan2["route"] == "weekly_review"
         cad2 = plan2["state_snapshot"]["cadence"]
         assert cad2["tier"] == "light" and cad2["basis"] == "span" and cad2["span_days"] == 3
+
+
+def _prepare_dated_with_position(tmp, root, date_end, tag, extra_position=None, language="zh-TW"):
+    """Like `_prepare_dated`, but can inject one additional holdings position
+    so a test can exercise a cycle with no established thesis alongside one
+    that already has one."""
+    card_path, state_path = _artifacts(tmp)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["date_end"] = date_end
+    if extra_position:
+        ticker, row = extra_position
+        state["holdings"]["positions"][ticker] = row
+    dated = pathlib.Path(tmp) / f"state_{tag}.json"
+    dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    csv_path = _trade_csv(tmp)
+    run = _run("prepare", csv_path, "--root", root, "--language", language,
+               "--card-json", card_path, "--state-json", dated)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return _pending_plan(root, run.stdout)
+
+
+def test_capture_light_tier_two_cycle_entries_end_to_end():
+    """#237 #4: a light-tier capture attaches a note to a cycle that already
+    has a thesis via a non-destructive `thesis_decision`, and seeds a minimal
+    inferred thesis (why/exit_trigger required, else rejected rather than
+    silently dropped) for a cycle that has none yet — without touching any of
+    the shared full-review books, and cleaning up its own pending entry."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "capw1")
+        assert plan1["route"] == "first_review"
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "capw1")
+        # PLTR#2026-01-01#1 now has an established thesis from _base_thesis_update().
+
+        newco = ("NEWCO", {"shares": 5, "cost": 500, "avg_cost": 100,
+                           "cycle_start": "2026-07-16", "cycle_id": "NEWCO#2026-07-16#1",
+                           "add_count": 1, "decision_cursor": "NEWCO#2026-07-16#1#add#1"})
+        plan2 = _prepare_dated_with_position(tmp, root, "2026-07-17", "capw2", extra_position=newco)
+        assert plan2["route"] == "weekly_review"
+        assert plan2["state_snapshot"]["cadence"]["tier"] == "light"
+
+        active_ids = {row["cycle_id"] for row in plan2["state_snapshot"]["active_theses"]}
+        assert "PLTR#2026-01-01#1" in active_ids
+        missing_ids = {row["cycle_id"] for row in plan2["missing_thesis_positions"]}
+        assert "NEWCO#2026-07-16#1" in missing_ids
+
+        theses_path = pathlib.Path(root) / "theses.jsonl"
+        watched = {p: p.read_text(encoding="utf-8") for p in
+                  (pathlib.Path(root) / "log.jsonl", pathlib.Path(root) / "rules.jsonl",
+                   pathlib.Path(root) / "problems.jsonl", pathlib.Path(root) / "last_state.json")
+                  if p.exists()}
+
+        # A brand-new cycle without why/exit_trigger is rejected outright, not
+        # silently dropped by thesis.reconstruct_states's `if not current: continue`.
+        bad_path = pathlib.Path(tmp) / "entries_bad.json"
+        bad_path.write_text(json.dumps(
+            [{"cycle_id": "NEWCO#2026-07-16#1", "note": "先追一小筆試試"}],
+            ensure_ascii=False), encoding="utf-8")
+        bad_run = _run("capture", "--session-id", plan2["session_id"], "--root", root,
+                       "--entries", bad_path)
+        assert bad_run.returncode != 0
+        assert "why and exit_trigger" in json.loads(bad_run.stdout)["error"]
+        # A rejected call must not have consumed the pending entry.
+        assert (pathlib.Path(root) / ".pending" / plan2["session_id"]).exists()
+
+        good_path = pathlib.Path(tmp) / "entries_good.json"
+        good_path.write_text(json.dumps([
+            {"cycle_id": "PLTR#2026-01-01#1", "note": "加碼是因為財報超預期", "emotion": "planned"},
+            {"cycle_id": "NEWCO#2026-07-16#1", "note": "先追一小筆試試",
+             "why": "看到帶量突破先小注跟", "exit_trigger": "跌破昨低就出"},
+        ], ensure_ascii=False), encoding="utf-8")
+        good_run = _run("capture", "--session-id", plan2["session_id"], "--root", root,
+                        "--entries", good_path)
+        assert good_run.returncode == 0, good_run.stdout + good_run.stderr
+        out = json.loads(good_run.stdout)
+        assert out["status"] == "captured" and out["entries"] == 2
+        capture_session_id = out["capture_session_id"]
+        assert capture_session_id == f"{plan2['session_id']}--capture"
+
+        rows = [json.loads(l) for l in theses_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        captured = {r["cycle_id"]: r for r in rows if r.get("session_id") == capture_session_id}
+        assert set(captured) == {"PLTR#2026-01-01#1", "NEWCO#2026-07-16#1"}
+        assert captured["PLTR#2026-01-01#1"]["event"] == "thesis_decision"
+        assert captured["PLTR#2026-01-01#1"]["note"] == "加碼是因為財報超預期"
+        assert captured["PLTR#2026-01-01#1"]["emotion"] == "planned"
+        # The decision-kind row must never carry a full thesis payload that
+        # could shadow the established why/exit_trigger at reconstruct time.
+        assert "why" not in captured["PLTR#2026-01-01#1"]
+        new_row = captured["NEWCO#2026-07-16#1"]
+        assert "event" not in new_row
+        assert new_row["maturity"] == "inferred"
+        assert new_row["why"] == "看到帶量突破先小注跟"
+        assert new_row["exit_trigger"] == "跌破昨低就出"
+        assert new_row["ticker"] == "NEWCO"
+
+        # Neither book untouched by a full review, nor the established PLTR
+        # thesis content, may be disturbed by a capture.
+        for path, content in watched.items():
+            assert path.read_text(encoding="utf-8") == content, f"{path} changed"
+        reconstructed = thesis_engine.reconstruct_states(rows)
+        pltr = next(r for r in reconstructed if r["cycle_id"] == "PLTR#2026-01-01#1")
+        assert pltr["why"] == "Enterprise adoption may still be underpriced"
+
+        # A successful call cleans up its own pending entry.
+        assert not (pathlib.Path(root) / ".pending" / plan2["session_id"]).exists()
+
+
+def test_capture_rejects_full_tier_session():
+    """#237 #4: capture is only valid for a light-tier session; a full review
+    must go through preview/finalize, not the capture-only shortcut."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "capfull")
+        assert plan1["state_snapshot"]["cadence"]["tier"] == "full"
+        entries_path = pathlib.Path(tmp) / "entries.json"
+        entries_path.write_text(json.dumps(
+            [{"cycle_id": "PLTR#2026-01-01#1", "note": "n/a"}], ensure_ascii=False),
+            encoding="utf-8")
+        run = _run("capture", "--session-id", plan1["session_id"], "--root", root,
+                   "--entries", entries_path)
+        assert run.returncode != 0
+        assert "light-tier" in json.loads(run.stdout)["error"]
+
+
+def test_capture_retry_after_pending_cleanup_is_idempotent():
+    """#237 #4: an interrupted agent turn must be able to repeat the identical
+    `capture` call after the first attempt already succeeded and cleaned up
+    its pending entry, and get the same answer instead of a crash."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "capretry1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "capretry1")
+        plan2 = _prepare_dated(tmp, root, "2026-07-17", "capretry2")
+        assert plan2["state_snapshot"]["cadence"]["tier"] == "light"
+
+        entries_path = pathlib.Path(tmp) / "entries.json"
+        entries_path.write_text(json.dumps(
+            [{"cycle_id": "PLTR#2026-01-01#1", "note": "情緒性加碼"}], ensure_ascii=False),
+            encoding="utf-8")
+        first = _run("capture", "--session-id", plan2["session_id"], "--root", root,
+                     "--entries", entries_path)
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert not (pathlib.Path(root) / ".pending" / plan2["session_id"]).exists()
+
+        retry = _run("capture", "--session-id", plan2["session_id"], "--root", root,
+                     "--entries", entries_path)
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        retry_out = json.loads(retry.stdout)
+        assert retry_out["status"] == "captured" and retry_out["entries"] == 1
+        assert retry_out["capture_session_id"] == json.loads(first.stdout)["capture_session_id"]
+
+        theses_path = pathlib.Path(root) / "theses.jsonl"
+        rows = [json.loads(l) for l in theses_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        matching = [r for r in rows if r.get("session_id") == retry_out["capture_session_id"]]
+        assert len(matching) == 1, "a retry after cleanup must not duplicate the captured row"
+
+
+def test_capture_serializes_with_finalize_on_the_shared_projection_lock():
+    """#237 #4: `capture` must share the same root-wide projection lock as
+    `finalize`'s legacy-book writers, or a concurrent capture/finalize pair can
+    defeat `_append_session_rows`'s idempotency guarantee on `theses.jsonl`.
+
+    Monkeypatching only affects code running in this test process, so both
+    sides must call `review_engine.cmd_capture`/`cmd_finalize` directly
+    in-process (an `argparse.Namespace` stand-in for parsed CLI args) rather
+    than through `_run`'s subprocess, which would import a fresh, unpatched
+    `session` module and never observe the gate at all."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan1 = _prepare_dated(tmp, root, "2026-07-14", "caplockw1")
+        _finalize(tmp, root, plan1, _answer_queue(plan1, _week1_choices, "skip"), "caplockw1")
+        plan2 = _prepare_dated(tmp, root, "2026-07-17", "caplockw2")
+        assert plan2["state_snapshot"]["cadence"]["tier"] == "light"
+        entries_path = pathlib.Path(tmp) / "entries.json"
+        entries_path.write_text(json.dumps(
+            [{"cycle_id": "PLTR#2026-01-01#1", "note": "情緒性加碼"}], ensure_ascii=False),
+            encoding="utf-8")
+
+        real_append = session_engine._append_session_rows
+        capture_entered = threading.Event()
+        finalize_entered = threading.Event()
+        release_capture = threading.Event()
+        theses_calls = {"value": 0}
+        call_lock = threading.Lock()
+
+        def gated_append(path, *args, **kwargs):
+            # finalize's projection makes several _append_session_rows calls
+            # (log.jsonl, theses.jsonl, thesis_decisions.jsonl, revisit.jsonl,
+            # rules.jsonl) per invocation; only the theses.jsonl calls are
+            # meaningful here, so they get their own counter rather than a
+            # global one that could misattribute an unrelated book's call.
+            if str(path).endswith("theses.jsonl"):
+                with call_lock:
+                    theses_calls["value"] += 1
+                    index = theses_calls["value"]
+                if index == 1:
+                    capture_entered.set()
+                    if not release_capture.wait(5):
+                        raise RuntimeError("timed out waiting to release the shared projection lock")
+                else:
+                    finalize_entered.set()
+            return real_append(path, *args, **kwargs)
+
+        session_engine._append_session_rows = gated_append
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+        class _Args:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        def _run_capture():
+            review_engine.cmd_capture(_Args(session_id=plan2["session_id"], root=root,
+                                            entries=str(entries_path)))
+
+        def _run_finalize():
+            plan3 = _prepare_dated(tmp, root, "2026-07-24", "caplockw3")
+            answers = _answer_queue(plan3, _week1_choices, "skip")
+            a_path = pathlib.Path(tmp) / "answers_caplockw3.json"
+            a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+            n_path = pathlib.Path(tmp) / "narrative_caplockw3.json"
+            n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+            review_engine.cmd_finalize(_Args(session_id=plan3["session_id"], root=root,
+                                             answers=str(a_path), narrative=str(n_path)))
+
+        try:
+            capture_future = pool.submit(_run_capture)
+            assert capture_entered.wait(5), "capture never reached the shared projection lock"
+
+            finalize_future = pool.submit(_run_finalize)
+            assert not finalize_entered.wait(0.5), \
+                "finalize's theses.jsonl projection must not enter while capture holds the lock"
+            release_capture.set()
+
+            capture_future.result(timeout=5)
+            finalize_future.result(timeout=5)
+        finally:
+            release_capture.set()
+            pool.shutdown(wait=True)
+            session_engine._append_session_rows = real_append
 
 
 def test_thesis_update_rejects_forged_engine_owned_identity():
