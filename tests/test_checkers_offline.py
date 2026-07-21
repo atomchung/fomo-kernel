@@ -163,9 +163,87 @@ def test_state_differential_and_append():
     ok(not append_only(5, 3).passed, "A-7 行數縮(5→3)判 append-only 失敗(斷言活著)")
 
 
+# ─────────────────── check_card S 系列(output-contract §8)───────────────────
+
+_COPY = json.loads((ROOT / "skills" / "fomo-kernel" / "copy" / "zh-TW.json")
+                   .read_text(encoding="utf-8"))
+_BLOCKS = _COPY["blocks"]
+_MISSING = _COPY["block_missing"]
+
+
+def _v2_card(titles=None, block1=None, block2=None, block3=None, tail=""):
+    """手工組一張最小 v2 私卡(front matter + keynote + 四 block)。"""
+    titles = titles if titles is not None else [
+        _BLOCKS[key] for key in ("performance", "trades", "risks", "next")]
+    block1 = block1 if block1 is not None else [
+        "復盤區間 2026-01-01 → 2026-07-14",
+        "帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+        _MISSING["annualized"], _MISSING["vs_market"]]
+    block2 = block2 if block2 is not None else [_MISSING["trades"]]
+    block3 = block3 if block3 is not None else ["[X] 最大的行為漏洞：INTC 虧 $1,240 仍加碼"]
+    bodies = [block1, block2, block3, ["[*] 下次只改這一件：單筆上限 20%"]]
+    lines = ["---", "session_id: probe", "privacy: private", "language: zh-TW", "---",
+             "", "# 帳面賺的靠 beta，操作靠紀律", ""]
+    for title, body in zip(titles, bodies):
+        lines.extend([f"## {title}", ""] + body + [""])
+    return "\n".join(lines) + tail + "\n"
+
+
+_S2_CONTEXT = {  # overview 亮、其餘模組全暗、診斷有 → 對應 _v2_card 預設缺料 note 佈局
+    "engine_card": {"overview": {"total_pnl": -300, "realized": 200, "unrealized": -500},
+                    "acct_perf": {"note": "offline"}, "alpha_beta_breakdown": {},
+                    "ticker_diagnosis": [], "top_holes": [{"dim": "加碼攤平"}],
+                    "currency_meta": {"aggregate_currency": "USD"}}}
+
+
+def test_card_structure_series_alive():
+    """S-1..S-4 逐條:乾淨 v2 卡全過;亂序 / 刪 block / 疊 caveat / 越序 caveat /
+    IRR token / 混數字風格 / S-2 兩向(靜默省略、多印缺料 note)各自踩紅;
+    非 v2 文字完全不出 S findings(v1 eval case 零影響)。"""
+    clean = _v2_card()
+    ok(not {f.assertion for f in check_card(clean, _S2_CONTEXT) if not f.passed},
+       "v2 乾淨卡 S 系列全過",
+       str({f.assertion: f.evidence for f in check_card(clean, _S2_CONTEXT) if not f.passed}))
+
+    shuffled = _v2_card(titles=[_BLOCKS["trades"], _BLOCKS["performance"],
+                                _BLOCKS["risks"], _BLOCKS["next"]])
+    ok("S-1" in _card_fail_ids(shuffled), "S-1 抓 block 亂序")
+    dropped = _v2_card(titles=[_BLOCKS["performance"], _BLOCKS["risks"], _BLOCKS["next"]])
+    ok("S-1" in _card_fail_ids(dropped), "S-1 抓少一個 block")
+
+    stacked = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+                               "  （caveat 甲）", "  （caveat 乙）", "  （caveat 丙）",
+                               _MISSING["annualized"], _MISSING["vs_market"]])
+    ok("S-3" in _card_fail_ids(stacked), "S-3 抓三連發 caveat 牆")
+    early = _v2_card(block1=["  （caveat 先於任何指標）",
+                             "帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+                             _MISSING["annualized"], _MISSING["vs_market"]])
+    ok("S-3" in _card_fail_ids(early), "S-3 抓 Block 1 首行 caveat")
+
+    irr = _v2_card(tail="\n年化 IRR 15% 不該這樣寫。")
+    ok("S-4" in _card_fail_ids(irr), "S-4 抓 IRR token")
+    mixed = _v2_card(tail="\n這期贏三成，數字是 30%。")
+    ok("S-4" in _card_fail_ids(mixed), "S-4 抓單句混用拼寫數與阿拉伯數")
+
+    silent = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）"])
+    ok("S-2" in {f.assertion for f in check_card(silent, _S2_CONTEXT) if not f.passed},
+       "S-2 抓靜默省略(前提缺但缺料 note 沒出)")
+    over = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+                            _MISSING["absolute_pnl"],
+                            _MISSING["annualized"], _MISSING["vs_market"]])
+    ok("S-2" in {f.assertion for f in check_card(over, _S2_CONTEXT) if not f.passed},
+       "S-2 抓多印缺料 note(前提在卻說算不出)")
+    ok(not any(f.assertion == "S-2" and not f.passed for f in check_card(clean)),
+       "S-2 沒給 context 時降級跳過,不誤殺")
+
+    ok(not any(f.assertion.startswith("S-") for f in check_card("INTC 這半年虧 $1,240")),
+       "非 v2 文字不出 S findings(v1 eval case 零影響)")
+
+
 def main():
     test_card_fixtures()
     test_card_each_assertion_alive()
+    test_card_structure_series_alive()
     test_state_oracle_good()
     test_state_each_assertion_alive()
     test_state_differential_and_append()

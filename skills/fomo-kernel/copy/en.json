@@ -27,6 +27,29 @@
     "etf": "ETF and portfolio structure",
     "rule": "Change only this next time"
   },
+  "blocks": {
+    "performance": "Performance",
+    "trades": "Key trades · ranked by money impact",
+    "risks": "Risks and problems",
+    "next": "Next step"
+  },
+  "period": {
+    "span": "Review period {start} → {end}",
+    "as_of": "As of {end}",
+    "spy": "SPY window {ret}",
+    "vix": "VIX {value}"
+  },
+  "block_missing": {
+    "absolute_pnl": "Absolute P&L is not computable this period: no trades or valuation basis.",
+    "annualized": "Annualized return is not computable this period: the cash-flow anchor is incomplete.",
+    "vs_market": "Benchmark comparison is not computable this period: no resolvable benchmark series.",
+    "trades": "No ranked instrument diagnosis this period.",
+    "trades_traded": "No ranked instrument diagnosis this period; traded: {tickers}.",
+    "risks": "No behavioral diagnosis this period: the engine scored no dimension.",
+    "rule": "No new rule commitment this time; you can pick one at the next review.",
+    "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\""
+  },
+  "footnote_label": "Data notes",
   "kpi": {
     "pnl": "Total P&L",
     "pnl_sub": "Realized {realized} · unrealized {unrealized}",

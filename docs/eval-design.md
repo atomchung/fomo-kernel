@@ -31,7 +31,10 @@ Non-deterministic agent runs should be repeated when measuring adherence. Determ
 ```text
 tests/test_review_v2.py       lifecycle, evidence, ETF, language, privacy, recovery
 tests/test_doc_language.py    implementation/GTM language boundary
-tests/agent/check_card.py     legacy and artifact-level card invariants
+tests/agent/check_card.py     legacy and artifact-level card invariants; the
+                              S-series structure checks (block order, module
+                              lighting, caveat placement, language rules) are
+                              specified by docs/output-contract.md section 8
 tests/agent/check_state.py    projection and trajectory helpers
 tests/agent/personas.md       scripted users and differential pairs
 tests/agent/cases/*.yaml      optional headless declarations
