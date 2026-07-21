@@ -364,6 +364,23 @@ def test_sparkline_tone_treats_negative_zero_as_loss():
     assert 'class="spark neg"' in html, "a -0.0 final return must render as a loss"
 
 
+def test_rule_grounding_sub_line_private_surfaces_only():
+    """#248: the chosen candidate's engine-authored grounding renders as a
+    muted sub-line under the committed rule on BOTH private surfaces (one
+    _card_structure source), and never reaches the share-safe public card."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        grounding = (run["bundle"].get("commitment") or {}).get("grounding")
+        assert grounding and "PLTR" in grounding, \
+            "the chosen candidate must carry its engine-authored grounding"
+        assert grounding in run["markdown"], "grounding sub-line missing from the Markdown card"
+        assert 'class="rground"' in run["html"], "HTML grounding must use the muted rule sub-line class"
+        assert grounding in run["html"], "grounding sentence missing from the HTML card"
+        public_md = card_renderer.render_public(run["bundle"])
+        assert grounding not in public_md and "PLTR" not in public_md, \
+            "grounding must never reach the share-safe public card"
+
+
 def test_resume_exposes_preview_html_path_not_blob():
     """After preview, resume must surface the styled preview by the same
     private_card_html_path key the delivery contract names, and must not dump
@@ -423,6 +440,7 @@ def main():
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_row_detaches_from_non_concentration_hole,
         test_stress_row_stays_inside_concentration_hole_panel,
+        test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
         test_delivery_contract_exists_and_is_routed,

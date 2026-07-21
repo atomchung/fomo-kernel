@@ -20,6 +20,7 @@ REVIEW = ENGINE_DIR / "review.py"
 SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
+import card_renderer  # noqa: E402
 import instruments  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
 import review as review_engine  # noqa: E402
@@ -1413,6 +1414,11 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
                         "--card-json", card, "--state-json", state)
         plan = json.loads(prepared.stdout)["review_plan"]
         assert plan["route"] == "test_drive" and plan["persist"] is False
+        # #273: cross-client test-drive artifacts must stay attributable — the
+        # engine_version provenance stamp (#250) covers this route too.
+        version = plan.get("engine_version")
+        assert isinstance(version, dict) and version.get("id"), \
+            "test_drive plan missing engine_version provenance"
         answers = pathlib.Path(tmp) / "answers.json"
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
@@ -2222,6 +2228,49 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             "identical concurrent finalize must not duplicate problem events or marks"
 
 
+def test_rule_grounding_facts_and_localization():
+    """#248 unit: candidate-rule grounding selects deterministic tickers from
+    existing engine-card facts, localizes through the copy templates in both
+    languages, and stays silent when a dimension has nothing citable."""
+    card = {
+        "dims_raw": [
+            {"dim": "加碼攤平", "count": 6, "breach": 2, "tickers": ["CVS", "INTC", "PYPL"]},
+            {"dim": "部位 sizing", "max_ticker": "INTC", "max_pct": 0.431,
+             "risk_weights": {"INTC": 0.431, "CVS": 0.2, "PYPL": 0.15, "F": 0.1}},
+            {"dim": "分散", "top3": 0.784},
+            {"dim": "持有時間", "incon_tickers": ["ABNB", "SHOP", "UBER"], "n_incon": 3},
+            {"dim": "出場紀律", "disp_gap": 40.0},
+        ],
+        "ticker_diagnosis": [{"ticker": "INTC", "impact": -900.0},
+                             {"ticker": "PYPL", "impact": 300.0}],
+    }
+    zh = card_renderer.localized_rule_grounding("加碼攤平", "zh-TW", card)
+    assert "INTC、PYPL" in zh and "6 次" in zh and "CVS" not in zh, zh  # |impact| order, capped at 2
+    en = card_renderer.localized_rule_grounding("averaging_down", "en", card)
+    assert "INTC, PYPL" in en and "6 times" in en, en
+    size = card_renderer.localized_rule_grounding("部位 sizing", "zh-TW", card)
+    assert "INTC" in size and "43%" in size, size
+    div = card_renderer.localized_rule_grounding("diversification", "en", card)
+    assert "INTC, CVS, PYPL" in div and "78%" in div, div  # top 3 by sizing risk weight
+    hold = card_renderer.localized_rule_grounding("持有時間", "zh-TW", card)
+    assert "ABNB、SHOP" in hold and "UBER" not in hold, hold  # capped at 2
+    # exit_discipline has no per-ticker fact in the engine card -> no grounding
+    assert card_renderer.localized_rule_grounding("出場紀律", "zh-TW", card) is None
+    # Graceful absence: missing or empty facts never produce an empty shell.
+    assert card_renderer.localized_rule_grounding(
+        "加碼攤平", "zh-TW",
+        {"dims_raw": [{"dim": "加碼攤平", "count": 0, "breach": 0, "tickers": []}]}) is None
+    assert card_renderer.localized_rule_grounding("部位 sizing", "en", {}) is None
+    assert card_renderer.localized_rule_grounding(
+        "分散", "en", {"dims_raw": [{"dim": "分散", "top3": 0.7}]}) is None
+    # Payload contract: _candidate_rules attaches grounding only when citable.
+    bare = {"candidate_rules": [{"dim": "加碼攤平", "rule": "r"}], "top_holes": []}
+    rows = review_engine._candidate_rules(bare, {"metrics": {"avgdown_count": 2}}, "zh-TW")
+    assert rows and rows[0]["dim"] == "averaging_down" and "grounding" not in rows[0], rows
+    grounded = review_engine._candidate_rules(card | bare, {"metrics": {"avgdown_count": 6}}, "en")
+    assert grounded and "INTC, PYPL" in grounded[0]["grounding"], grounded
+
+
 def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
@@ -2267,6 +2316,11 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         payload = json.loads(preview.stdout)
         assert preview.returncode == 0 and payload["status"] == "previewed"
         assert payload["candidate_rules"][0]["id"] == "candidate_0"
+        # #248: the payload row keeps the reusable canonical rule text and adds
+        # an engine-authored grounding sentence citing this period's positions.
+        candidate = payload["candidate_rules"][0]
+        assert candidate["rule"] == card_renderer.localized_rule("加碼攤平", "zh-TW")
+        assert "PLTR" in candidate["grounding"] and "3 次" in candidate["grounding"], candidate
 
         answers_path.write_text(json.dumps(_answers(plan, commitment="candidate_0"), ensure_ascii=False),
                                 encoding="utf-8")
@@ -2291,6 +2345,18 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         assert all(f.passed for f in check_card(private)), "v2 private renderer must satisfy card iron rules"
         assert "PLTR" not in public and "$" not in public and "2026" not in public and "session_id" not in public
         assert (root / "thesis_decisions.jsonl").exists() and (root / "log.jsonl").exists()
+        # #248: the chosen candidate carries its grounding onto the private card
+        # only; rules.jsonl keeps the generic canonical text for cross-week
+        # tracking, with no single-period tickers baked in.
+        bundle = json.loads((session_dir / "bundle.json").read_text(encoding="utf-8"))
+        assert bundle["commitment"]["grounding"] == candidate["grounding"]
+        assert candidate["grounding"] in private, "grounding sub-line missing from the private card"
+        rule_rows = [json.loads(line)
+                     for line in (root / "rules.jsonl").read_text(encoding="utf-8").splitlines()
+                     if line.strip()]
+        assert rule_rows and rule_rows[0]["text"] == candidate["rule"]
+        assert all("grounding" not in row and "PLTR" not in row["text"] for row in rule_rows), \
+            "rules.jsonl must keep the canonical rule text free of period tickers"
         retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] == "no-op"
@@ -3960,6 +4026,14 @@ def test_authoring_contract_mirrors_validation_constants():
         assert narrative_contract["allowed_fields"] == \
             sorted(review_engine.card_renderer.ALLOWED_NARRATIVE)
         assert narrative_contract["required"] == ["headline", "mirror"]
+        # #260: gaps the engine chose not to ask about must stay neutral
+        # coverage facts — the clause is contract surface, so pin its wording.
+        assert narrative_contract["unprompted_gaps"] == (
+            "coverage gaps the engine chose not to ask about "
+            "(e.g. missing_thesis_positions) may appear only as neutral coverage "
+            "facts; do not frame them as the user's negligence, and do not make "
+            "them the central judgment of the headline or mirror"
+        )
 
 
 def test_repair_projections_never_regresses_a_newer_last_state():

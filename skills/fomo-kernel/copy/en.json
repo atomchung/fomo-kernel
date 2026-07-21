@@ -62,6 +62,12 @@
     "holding_period": "Label the trade as short-term, swing, or long-term at entry. Exit only for a reason from the same horizon.",
     "averaging_down": "Before averaging down, write one piece of evidence you did not know at entry. If you cannot, do not add."
   },
+  "rule_grounding": {
+    "position_sizing": "This period: your largest single position {ticker} is {pct} of the portfolio.",
+    "diversification": "This period: your top positions {tickers} together hold {pct}.",
+    "holding_period": "This period: {tickers} mixed quick exits and long holds within the same position.",
+    "averaging_down": "This period: you averaged down {count} times into losing positions, including {tickers}."
+  },
   "add_choices": {
     "planned_tranche": "A pre-planned tranche",
     "new_evidence": "New testable evidence",

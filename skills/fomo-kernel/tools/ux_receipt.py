@@ -9,9 +9,22 @@ presented the preview/final card inline, whether a declared widget silently
 degraded to a file link, and how required questions or the weekly opening
 memory were surfaced.
 
-The trace lives inside the protected state directory (default ~/.trade-coach),
-the same trust boundary as the canonical ledger: never committed and never
-published. Question-presentation rows are additionally restricted to mode,
+Every appended row is stamped with a UTC `ts` (ISO-8601 seconds, e.g.
+2026-07-20T13:46:02Z) at write time. Two content-free marker events make
+user-visible latency measurable: `answers_received` (the user's final required
+answer arrived, recorded just before calling `preview`) and
+`rule_choice_presented` (the rule choice — candidate rules, custom, or skip —
+was shown to the user after the preview card). The machine wait between
+answering and seeing the preview card is `card_presented(stage=preview).ts -
+answers_received.ts`. Verification treats `ts` as optional so traces written
+before this field existed still verify, but rejects a malformed value; row
+order, not `ts`, remains the ordering authority.
+
+The trace lives inside the protected state directory, the same trust boundary
+as the canonical ledger: never committed and never published. The root resolves
+exactly like the engine CLIs (`--state-root` > `TRADE_COACH_HOME` >
+~/.trade-coach), so one `export TRADE_COACH_HOME=...` routes every tool in the
+lifecycle into the same root (#269). Question-presentation rows are additionally restricted to mode,
 surface source, and an opaque digest so cross-client evidence cannot copy the
 private question surface into the trace.
 """
@@ -25,10 +38,21 @@ import pathlib
 import re
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 
 
 VERSION = 2
 DEFAULT_STATE_ROOT = "~/.trade-coach"
+
+
+def _default_state_root() -> str:
+    """Mirror engine/session.default_root(): TRADE_COACH_HOME, else ~/.trade-coach.
+
+    This tool is deliberately stdlib-only, so the one-line resolution is
+    mirrored here instead of importing the engine. Resolved at invocation time
+    (not parser-build time) so the CLI honors the environment it runs in.
+    """
+    return os.environ.get("TRADE_COACH_HOME", DEFAULT_STATE_ROOT)
 QUESTION_MODES = ("native_options", "plain_text")
 SURFACE_SOURCES = ("validated_dynamic", "engine_fallback")
 CARD_MODES = ("widget", "markdown_inline")
@@ -38,13 +62,17 @@ MEMORY_KINDS = ("prior_commitment", "prior_skip", "exit_reason", "due_revisit")
 WEEKLY_OPENERS = ("prior_commitment", "prior_skip")
 EVENT_KINDS = (
     "question_presented",
+    "answers_received",
     "artifact_generated",
     "card_presented",
+    "rule_choice_presented",
     "memory_presented",
     "widget_attempt_failed",
     "owner_verdict",
 )
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 class ReceiptError(ValueError):
@@ -53,6 +81,20 @@ class ReceiptError(ValueError):
 
 def _compact_json(value: dict) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime(TS_FORMAT)
+
+
+def _valid_ts(value: object) -> bool:
+    if not isinstance(value, str) or not TS_PATTERN.fullmatch(value):
+        return False
+    try:
+        datetime.strptime(value, TS_FORMAT)
+    except ValueError:
+        return False
+    return True
 
 
 def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
@@ -65,6 +107,8 @@ def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
         raise ReceiptError("a session id is required")
     if session_id in {".", ".."} or any(ch in session_id for ch in ("/", "\\", "\x00")):
         raise ReceiptError("session id must be a bare identifier, not a path")
+    if state_root is None:  # direct-import callers may pass parser output unnormalized
+        state_root = _default_state_root()
     root = pathlib.Path(os.path.expanduser(state_root))
     return root / "ux" / f"{session_id}.jsonl"
 
@@ -89,6 +133,9 @@ def _read_rows(path: pathlib.Path) -> list[dict]:
 
 
 def _append(path: pathlib.Path, row: dict) -> None:
+    # Write-time stamp on every persisted row: latency between user-visible
+    # moments is measurable from the trace while verify keeps ts optional.
+    row = {**row, "ts": _utc_now()}
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
@@ -116,12 +163,13 @@ def start_receipt(args: argparse.Namespace) -> None:
 
 def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
     row = {"version": VERSION, "event": args.event, "session_id": declaration["session_id"]}
-    if args.event == "question_presented":
+    if args.event in ("question_presented", "rule_choice_presented"):
         if not args.mode:
-            raise ReceiptError("question_presented requires --mode")
+            raise ReceiptError(f"{args.event} requires --mode")
         if args.mode not in QUESTION_MODES:
             raise ReceiptError(f"question mode must be one of {QUESTION_MODES}")
         row["mode"] = args.mode
+    if args.event == "question_presented":
         has_source = bool(args.surface_source)
         has_digest = bool(args.surface_digest)
         if has_source != has_digest:
@@ -191,6 +239,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
     Scope is deliberately narrow: prove that each engine-rendered card actually
     reached the user, in order, plus the weekly opening memory. Answer and
     commitment completeness belong to the engine and are not re-verified here.
+    `ts` is optional metadata (legacy traces predate it) validated only for
+    format when present; row order, not `ts`, is the ordering authority.
     """
     errors: list[str] = []
     if _positions(rows, "capabilities_declared") != [0]:
@@ -210,12 +260,17 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append(f"row {index} has unsupported event {event!r}")
         if row.get("version") != VERSION:
             errors.append(f"row {index} has unsupported version {row.get('version')!r}")
+        if "ts" in row and not _valid_ts(row["ts"]):
+            errors.append(
+                f"row {index} has invalid ts {row.get('ts')!r}"
+                " (expected UTC seconds like 2026-07-20T13:46:02Z)"
+            )
         if event in {"artifact_generated", "card_presented", "widget_attempt_failed"} and row.get("stage") not in STAGES:
             errors.append(f"row {index} has unsupported stage {row.get('stage')!r}")
         if event == "memory_presented" and row.get("memory_kind") not in MEMORY_KINDS:
             errors.append(f"row {index} has unsupported memory kind {row.get('memory_kind')!r}")
         if event == "question_presented":
-            allowed = {"version", "event", "session_id", "mode", "surface_source", "surface_digest"}
+            allowed = {"version", "event", "session_id", "ts", "mode", "surface_source", "surface_digest"}
             extra = sorted(set(row) - allowed)
             if extra:
                 errors.append(
@@ -230,6 +285,20 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
                     errors.append(f"row {index} has unsupported surface source {source!r}")
                 if not isinstance(digest, str) or not SURFACE_DIGEST.fullmatch(digest):
                     errors.append(f"row {index} has invalid surface digest")
+        # The latency markers are pure timestamps: any extra key is rejected so
+        # they can never grow into a content side channel.
+        if event == "answers_received":
+            extra = sorted(set(row) - {"version", "event", "session_id", "ts"})
+            if extra:
+                errors.append(
+                    f"row {index} answers_received contains unsupported fields: {', '.join(extra)}"
+                )
+        if event == "rule_choice_presented":
+            extra = sorted(set(row) - {"version", "event", "session_id", "ts", "mode"})
+            if extra:
+                errors.append(
+                    f"row {index} rule_choice_presented contains unsupported fields: {', '.join(extra)}"
+                )
 
     question_modes = set(declaration.get("question_modes") or [])
     card_modes = set(declaration.get("card_modes") or [])
@@ -240,6 +309,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
     for row in rows:
         if row.get("event") == "question_presented" and row.get("mode") not in question_modes:
             errors.append(f"question used undeclared mode {row.get('mode')!r}")
+        if row.get("event") == "rule_choice_presented" and row.get("mode") not in question_modes:
+            errors.append(f"rule choice used undeclared mode {row.get('mode')!r}")
 
     # Presentation is the whole point: each stage must show its engine artifact
     # actually reached the user inline, in order.
@@ -342,8 +413,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_common(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--session-id", required=True)
-        sub.add_argument("--state-root", default=DEFAULT_STATE_ROOT,
-                         help="protected state directory (default ~/.trade-coach)")
+        sub.add_argument("--state-root", default=None,
+                         help="protected state directory (default: $TRADE_COACH_HOME, else ~/.trade-coach)")
 
     start = subparsers.add_parser("start", help="declare one host adapter's capabilities")
     add_common(start)
@@ -378,6 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.state_root is None:
+        args.state_root = _default_state_root()
     try:
         args.handler(args)
     except ReceiptError as exc:

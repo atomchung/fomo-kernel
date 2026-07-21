@@ -35,6 +35,10 @@ The default suite is offline, deterministic, and does not require pytest. It cov
 
 Do not commit after changing engine output, price handling, sorting, or orchestration unless the complete offline suite passes.
 
+## Dogfood QA
+
+Maintainer dogfood QA on every client (Claude Code, Codex, Antigravity, ...) follows [docs/qa-runbook.md](docs/qa-runbook.md): latest-main version gate, isolated `TRADE_COACH_HOME` root, `ux_receipt` coverage, an archived manifest, and `tools/privacy_lint.py` on any real-data text before it is posted to this public repository (#274). A run that skips any gate is not a QA run and its results are not citable as QA evidence.
+
 ## Claude Code hooks
 
 Committed hooks in `.claude/` enforce the test gate. Hook `if:` filters have been observed to be unreliable in the supported Claude Code setup. Every hook script must inspect `tool_input.command` from stdin and exit immediately for unrelated commands. Follow the self-filtering pattern in `pre_commit_test_gate.sh`.
@@ -66,6 +70,7 @@ When multiple sessions are active:
 
 | Fact | Surfaces that must stay synchronized |
 |---|---|
+| Output structure & language | `docs/output-contract.md` (single authority on section order) and `docs/output-language.md` (locale contract) ↔ `card_renderer.py` ↔ `references/card-policy.md` / `card-spec.md` (subordinated: wording and in-block ranking only) |
 | Runtime behavior | engine ↔ `SKILL.md` and routed flows/references ↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
 | Demo card values | English README ↔ English demo HTML/image; Traditional Chinese README ↔ Traditional Chinese demo HTML/image. Values must match; only wording differs. |
 | GTM documentation | `README.md` is the English default; `README.zh-TW.md` is the complete Traditional Chinese counterpart. Keep language links and substantive product claims synchronized. |

@@ -1,6 +1,6 @@
 # Review card content specification
 
-> Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
+> Structure authority is [docs/output-contract.md](../../docs/output-contract.md): its keynote + four-block order outranks the display priorities below, which now rank numbers *inside* the performance block only. Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
 
 ## Purpose
 
@@ -96,7 +96,7 @@ The product coaches process rather than selecting securities. A prescription may
 - outsource a decision layer that consistently destroys value
 - remove a measurable behavioral leak with a mechanical rule
 
-It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule.
+It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule. A candidate may carry an engine-authored `grounding` sentence citing this period's actual positions; the reusable rule text stays generic (it is what rules.jsonl tracks across weeks), and the grounding renders only on private surfaces, never on the share-safe card.
 
 ## Rendering
 
