@@ -26,7 +26,7 @@ Every committed review card renders, in this order:
 | # | Block | Content | Demo-card anchor |
 |---|---|---|---|
 | 0 | **Keynote** | One sentence that states the period's most important judgment. | "On paper you're up +$138k, but almost all of it is 'held and never sold'" |
-| 1 | **Performance** | Fixed internal order: ① absolute P&L for the period (realized + unrealized) → ② the period's rate of return, annualized (engine: IRR; **presentation must never print the token "IRR"** — use the plain phrase "annualized return" in the card's locale) → ③ comparison vs market: excess in pp, β, what the benchmark did. Period label (date span) is one line at the top of this block — the former market-timeline section collapses into one or two indicators here and is **not** a standalone block. The concentration stress line ("drop 30% → −$X") rides the exposure indicator (final placement follows PR #265). | Total P&L line, win/loss ratio, "Beat the market +247pp · β 2.04 · 30% drawdown = −$50k", α split indent |
+| 1 | **Performance** | Fixed internal order: ① absolute P&L for the period (realized + unrealized) → ② the period's rate of return, annualized (engine: IRR; **presentation must never print the token "IRR"** — use the plain phrase "annualized return" in the card's locale) → ③ comparison vs market: excess in pp, β, what the benchmark did (monthly cadence — §3). Period label (date span) is one line at the top of this block — the former market-timeline section collapses into one or two indicators here and is **not** a standalone block. The concentration stress line ("drop 30% → −$X") rides the exposure indicator (final placement follows PR #265). | Total P&L line, win/loss ratio, "Beat the market +247pp · β 2.04 · 30% drawdown = −$50k", α split indent |
 | 2 | **Key trades** | Instruments ranked by \|money impact\|, each row = ticker + amount + verdict tag. Motive answers (from Step-2 questions) and exit records attach to the row of the instrument they concern; they are not standalone sections. | "PLTR +$74,058 [v] likely DCA · [!] too heavy 50%" |
 | 3 | **Risks & problems** | `[v]` what you did right (top strength) paired with `[X]` the biggest hole. Behavior patterns fold in here. | "[v] averaged down but stayed within cap / [X] position sizing — PLTR 50%" |
 | 4 | **Next step** | Exactly one rule to change next period. | "[*] hard-cap any single position at 20%" |
@@ -57,9 +57,20 @@ never silent omission.
 | 4 next step | always — falls back to restating the standing rule when the engine proposes no change | — |
 | snapshot route | suppresses history-performance modules by design (`card_renderer.py:1411`) | Block 1 = position-structure baseline only |
 
-Cadence tiers (#237 / PR #277): a tier selects **depth caps** per block (rows
-shown, questions asked, whether ③ renders this time) on top of this same
-table. Tier semantics land here once #277 merges — TBD marker, do not invent.
+Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
+
+- **light** (review span ≤5 trading days; auto-detected per #240): capture
+  only — no card, no counted question budget, no commitment. The `capture`
+  CLI appends motive/emotion facts to the thesis book under a derived
+  session id; they reconcile at the next full review. Because no card
+  renders, none of this contract's block rules apply to a light session.
+- **full**: the keynote + four-block card defined here.
+- **Monthly vs-market cadence** (owner ruling 2026-07-21, closing #237
+  item 3): the vs-market comparison (excess pp, α, β, attribution split)
+  renders on the **first full review of each calendar month**; other full
+  reviews render Block 1 with absolute P&L and annualized return only.
+  Short windows never render long-window cumulative α/β (the #277 trigger
+  defect). Implementation: #284 (after #283).
 
 ## 4. Honesty / caveat placement
 
@@ -137,3 +148,4 @@ LLM judge and dogfood verdicts: structure is mechanical, prose is judged.
 | 2026-07-21 | language | Resolution order confirmed: conversation-first; stored preference is the non-interactive fallback (`output-language.md` §1). |
 | 2026-07-21 | language | Internal canonical language is English; user language exists only at presentation and interaction layers. Check logic must split from language data — parked as #281. |
 | 2026-07-21 | language | Dev-phase: persisted zh literals get no compatibility mapping; clean up on demand. |
+| 2026-07-21 | axis 3 | Cadence tiers finalized: light (≤5 trading days) = capture-only with no card; full = the four-block card. Vs-market segment renders monthly (first full review each calendar month) — closes #237 item 3; implementation #284. |
