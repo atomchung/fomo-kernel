@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "intent": {
-      "enum": ["classify_losing_position_add", "classify_headline_motive"]
+      "enum": ["classify_losing_position_add", "classify_headline_motive", "classify_initial_thesis"]
     },
     "context": {
       "type": "object",

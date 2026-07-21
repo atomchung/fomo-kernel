@@ -37,7 +37,8 @@ def _add_question(prior_text="Enterprise demand is accelerating", maturity="test
     card = {"thesis_questions": [{"ticker": "NVDA"}]}
     active = {cycle_id: {"why": prior_text, "maturity": maturity,
                          "session_date": "2026-07-01"}}
-    return review_engine._question_queue(card, state, active, None, "en")[0]
+    queue, _report = review_engine._question_queue(card, state, active, None, "en")
+    return queue[0]
 
 
 def _plan(question, session_id="2026-07-19__surface"):
@@ -108,10 +109,11 @@ def test_opportunity_is_engine_owned_and_limited_to_first_slice():
         ["evidence_delta.claim", "evidence_delta.source"]
     assert opportunity["answer_contract"]["max_clarifications"] == 1
 
-    headline = review_engine._question_queue(
+    headline_queue, _headline_report = review_engine._question_queue(
         {"top_holes": [{"dim": "averaging_down"}]}, {"holdings": {"positions": {}}},
         {}, None, "en"
-    )[0]
+    )
+    headline = headline_queue[0]
     assert headline["kind"] == "headline_motive"
     assert headline["question_opportunity"]["intent"] == "classify_headline_motive"
 
@@ -133,9 +135,10 @@ def _grounded_headline(ticker, pct):
         "top_holes": [{"dim": "部位 sizing", "raw": raw}],
         "ticker_diagnosis": [{"ticker": ticker, "impact": -100}],
     }
-    return review_engine._question_queue(
+    queue, _report = review_engine._question_queue(
         card, {"holdings": {"positions": {}}}, {}, None, "en"
-    )[0]
+    )
+    return queue[0]
 
 
 def test_headline_fallback_changes_with_engine_grounding_but_keeps_contract():
@@ -175,12 +178,13 @@ def test_headline_fallback_changes_with_engine_grounding_but_keeps_contract():
 
 
 def test_headline_fallback_without_citable_fact_stays_dimension_only():
-    question = review_engine._question_queue(
+    queue, _report = review_engine._question_queue(
         {"top_holes": [{"dim": "部位 sizing", "raw": {
             "dim": "部位 sizing", "max_ticker": "NVDA", "max_pct": None,
         }}], "dims_raw": [{"dim": "部位 sizing", "max_ticker": "NVDA", "max_pct": None}]},
         {"holdings": {"positions": {}}}, {}, None, "en"
-    )[0]
+    )
+    question = queue[0]
     assert question["question"] == "What mainly drove the behavior behind position sizing?"
     assert "ticker" not in question and "asked_because" not in question
     assert question["question_opportunity"]["context"] == {
@@ -260,10 +264,11 @@ def test_surface_mutations_fail_closed():
 
 def test_surface_list_order_cannot_change_engine_queue_order():
     add = _add_question()
-    headline = review_engine._question_queue(
+    headline_queue, _headline_report = review_engine._question_queue(
         {"top_holes": [{"dim": "averaging_down"}]}, {"holdings": {"positions": {}}},
         {}, None, "en"
-    )[0]
+    )
+    headline = headline_queue[0]
     plan = {"session_id": "2026-07-19__two-surfaces",
             "question_queue": [add, headline]}
     add_surface = _surface_artifact(plan, add)["surfaces"][0]
