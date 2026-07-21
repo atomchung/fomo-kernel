@@ -107,6 +107,42 @@
     "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
     "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero."
   },
+  "instrument_tags": {
+    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct} (confirm the thesis)",
+    "suspected_averaging_down_recovered": "likely averaged a loser, now green: {n_adds} adds only while losing — the recovery looks like luck, not discipline",
+    "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
+    "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
+    "deep_underwater": "down {cur_abs_pct} and still held without a decision",
+    "sold_winner_early": "kept rising after the sell: {win_early}/{win_n} exits (not a verdict; check exit-rule consistency)",
+    "too_heavy": "too heavy: {wpct_pct} of the portfolio",
+    "disciplined_hold": "disciplined hold: {cur_signed_pct}",
+    "roughly_neutral": "roughly neutral"
+  },
+  "stress_test": {
+    "labels": {
+      "ai_thematic": "AI theme stocks (across sectors)",
+      "sector": "the {sector} sector",
+      "single_ticker": "a single name ({ticker})"
+    },
+    "line": "Your exposure to {label} is about {exposure} ({pct} of the portfolio); a 30% drawdown would mean −{drop30} on paper, a 50% drawdown −{drop50} — could you sit through that?"
+  },
+  "prescription_kinds": {
+    "amplify": "Amplify the edge",
+    "amplify_hypothesis": "Amplify (a hypothesis, still unverified)",
+    "selection_inconclusive": "Stock picking: not enough data to judge",
+    "outsource": "Outsource the weak side (gradually)",
+    "cut_loss": "Cut the leak"
+  },
+  "prescription_texts": {
+    "amplify_hypothesis": "Of your {excess_pp}pp lead over the benchmark, {alloc_pp}pp came from being in the right theme. That is a hypothesis about direction-picking, not proven skill — a right call on AI can simply be standing in the wind. Test it: write down your next favored theme with a date, and check the next few calls before treating it as an edge.",
+    "selection_inconclusive": "Within sectors, stock selection contributed {sel_pp}pp (descriptive; that number stands). But {t_note}, so the data cannot yet separate skill from luck — do not rush to outsource it, and do not get comfortable either.",
+    "selection_inconclusive_t_wide": "the alpha 95% interval is still too wide (t={t})",
+    "selection_inconclusive_t_unstable": "the alpha statistic is still unstable",
+    "outsource_selection": "Net of theme exposure, your in-sector stock selection contributed {sel_pp}pp and the shortfall is statistically solid. The fix is not to stop picking stocks — it is moving part of the money to a passive base while stock picks stay the satellite. (A process suggestion, not a ticker recommendation.)",
+    "amplify_selection_edge": "Net of theme tailwinds, your in-sector stock selection still contributed {sel_pp}pp with statistically significant alpha — a real edge. Do not let sizing or discipline leaks dilute it.",
+    "cut_averaging_down": "Adding to losing positions {count} times is the biggest pure leak in this record — the first behavior to remove.",
+    "cut_oversize": "Your largest position {ticker} holds {max_pct_pct} of the portfolio — a single oversized bet."
+  },
   "due_choices": {
     "still_valid": "Still valid",
     "modified": "Partly right",

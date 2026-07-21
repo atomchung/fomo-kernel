@@ -130,17 +130,22 @@ def test_last_px_covers_held_only_tickers():
         f"unrealized 應為 +300(修前 BBB 無現價 → 0),實得 {ov.get('unrealized')}"
 
     # 下游②:what_if 壓測候選要看得到 held-only 的最大倉位
+    #(#279 i18n:引擎輸出 locale-neutral scenario code,不再是 zh label)
     wi = tr.what_if(held, last_px)
-    assert wi and "BBB" in wi["label"], f"what_if 應鎖定 BBB,實得 {wi}"
+    assert wi and wi["scenario"] == {"kind": "single_ticker", "ticker": "BBB"}, \
+        f"what_if 應鎖定 BBB,實得 {wi}"
 
     # 下游③:ticker_diagnosis 對 held-only 倉位給得出現價相關診斷
-    #(impact=未實現 +300;tags 的「押太重 wpct」「賺 60%」都得靠 last_px 才算得出)
+    #(impact=未實現 +300;too_heavy wpct / disciplined_hold cur 都得靠 last_px 才算得出)
     td = tr.ticker_diagnosis(rts, {}, held, last_px)
     bbb = next((d for d in td if d["ticker"] == "BBB"), None)
     assert bbb is not None and abs(bbb["impact"] - 300.0) < 1e-9, \
         f"BBB 的 impact 應為未實現 +300,實得 {bbb}"
-    assert any("押太重" in t for t in bbb["tags"]) and any("60%" in t for t in bbb["tags"]), \
-        f"BBB 應有現價相關 tags(押太重/賺 60%),實得 {bbb['tags']}"
+    codes = {t["code"]: t["params"] for t in bbb["tags"]}
+    assert "too_heavy" in codes and "disciplined_hold" in codes, \
+        f"BBB 應有現價相關 tags(too_heavy/disciplined_hold),實得 {bbb['tags']}"
+    assert abs(codes["disciplined_hold"]["cur"] - 0.6) < 1e-9, \
+        f"disciplined_hold 應帶 cur=+60%,實得 {codes['disciplined_hold']}"
 
 
 # ─────────────── B. β / Jensen α:合成序列的回歸恆等式 ───────────────
@@ -489,33 +494,37 @@ def _kinds(rx):
     return [r["kind"] for r in rx]
 
 
+# #279 i18n:prescribe 輸出 stable kind codes(zh 文案移到 copy/zh-TW.json,由
+# renderer 解析;文案本身的回歸由 tests/test_card_html.py 的 copy-resolution 測試釘)。
+
+
 def test_prescribe_not_credible_branch():
     rx = tr.prescribe(_ab(0.02, 0.01, 0.01, credible=False), [], {})
-    assert "選股:資料不足以判定" in _kinds(rx), f"不 credible 必須誠實說判不出:{_kinds(rx)}"
-    assert "外包短板(漸進)" not in _kinds(rx) and "揚長" not in _kinds(rx), \
+    assert "selection_inconclusive" in _kinds(rx), f"不 credible 必須誠實說判不出:{_kinds(rx)}"
+    assert "outsource" not in _kinds(rx) and "amplify" not in _kinds(rx), \
         "不 credible 不准下外包/真 edge 定論"
 
 
 def test_prescribe_outsource_branch():
     rx = tr.prescribe(_ab(0.02, 0.10, -0.08, credible=True, t=2.5, alpha_ann=-0.05), [], {})
-    assert "外包短板(漸進)" in _kinds(rx), f"統計站得住且板塊內選股 −8pp 應給外包處方:{_kinds(rx)}"
+    assert "outsource" in _kinds(rx), f"統計站得住且板塊內選股 −8pp 應給外包處方:{_kinds(rx)}"
 
 
 def test_prescribe_true_edge_branch():
     rx = tr.prescribe(_ab(0.10, 0.02, 0.08, credible=True, t=2.5, alpha_ann=0.06), [], {})
-    assert "揚長" in _kinds(rx), f"統計顯著且扣掉賽道仍 +8pp 是真 edge:{_kinds(rx)}"
+    assert "amplify" in _kinds(rx), f"統計顯著且扣掉賽道仍 +8pp 是真 edge:{_kinds(rx)}"
 
 
 def test_prescribe_excess_hypothesis_branch():
     rx = tr.prescribe(_ab(0.15, 0.12, 0.03, credible=True, t=2.5, alpha_ann=0.02), [], {})
-    assert "揚長(假設,待驗證)" in _kinds(rx), f"贏大盤 +15pp 且賽道佔大頭應給『押賽道假設』:{_kinds(rx)}"
+    assert "amplify_hypothesis" in _kinds(rx), f"贏大盤 +15pp 且賽道佔大頭應給『押賽道假設』:{_kinds(rx)}"
 
 
 def test_prescribe_small_selection_no_forced_verdict():
     """統計顯著但選股影響小(|sel|≤5pp 且 α≥0)→ 不硬下選股處方(揚長/外包都不出,誠實留白)。"""
     rx = tr.prescribe(_ab(0.06, 0.04, 0.02, credible=True, t=2.2, alpha_ann=0.03), [], {})
     ks = _kinds(rx)
-    assert "外包短板(漸進)" not in ks and "揚長" not in ks and "選股:資料不足以判定" not in ks, \
+    assert "outsource" not in ks and "amplify" not in ks and "selection_inconclusive" not in ks, \
         f"選股影響小不該硬下定論:{ks}"
 
 
@@ -524,7 +533,8 @@ def test_prescribe_small_selection_no_forced_verdict():
 def test_what_if_concentration_positive_and_negative():
     """單一 AI 標的 100% → AI 集中度情境(drop30 = 市值×0.3);五檔未分類 20% → None。"""
     wi = tr.what_if({"NVDA": (10.0, 1000.0)}, {"NVDA": 200.0})
-    assert wi is not None and wi["label"].startswith("AI"), f"NVDA 100% 應觸發 AI 集中度:{wi}"
+    assert wi is not None and wi["scenario"] == {"kind": "ai_thematic"}, \
+        f"NVDA 100% 應觸發 AI 集中度:{wi}"
     assert abs(wi["pct"] - 1.0) < 1e-9 and abs(wi["drop30"] - 600.0) < 1e-9, \
         f"mval=2000 → drop30=600,實得 {wi}"
     held = {t: (10.0, 1000.0) for t in ("ZZA", "ZZB", "ZZC", "ZZD", "ZZE")}

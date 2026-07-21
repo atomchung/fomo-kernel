@@ -107,6 +107,42 @@
     "snapshot_reconciliation": "這份持倉宣告已與帳本推導持倉對帳；一致即標記為已對帳，若有差異則以明確的調整事件保留紀錄，並改以較新宣告為記帳錨點，不猜測差異原因。",
     "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
   },
+  "instrument_tags": {
+    "suspected_averaging_down_losing": "✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur_pct}(待你確認 thesis)",
+    "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣,不是紀律",
+    "adds_pending_confirmation": "？加碼 {n_adds} 次待確認:是定投還是凹單,要你定",
+    "suspected_dca": "✓疑似定投:漲跌都買/規律 {n_adds} 次,不是凹單",
+    "deep_underwater": "✗套牢:{cur_pct} 還抱著沒處理",
+    "sold_winner_early": "賣後機會成本:{win_early}/{win_n} 筆賣完它還漲(非審判,看你出場規則一致嗎)",
+    "too_heavy": "⚠押太重:佔組合 {wpct_pct}",
+    "disciplined_hold": "✓紀律持有:賺 {cur_pct}",
+    "roughly_neutral": "— 大致中性"
+  },
+  "stress_test": {
+    "labels": {
+      "ai_thematic": "AI 概念股(跨板塊)",
+      "sector": "「{sector}」板塊",
+      "single_ticker": "單檔 {ticker}"
+    },
+    "line": "你 {label} 暴險約 {exposure}（佔 {pct}）；回檔 30% → 帳面 −{drop30}、回檔 50% → −{drop50}，撐得住嗎？"
+  },
+  "prescription_kinds": {
+    "amplify": "揚長",
+    "amplify_hypothesis": "揚長(假設,待驗證)",
+    "selection_inconclusive": "選股:資料不足以判定",
+    "outsource": "外包短板(漸進)",
+    "cut_loss": "砍損耗"
+  },
+  "prescription_texts": {
+    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡,押對賽道佔 {alloc_pp}pp(拆帳)。但這只是『假設你有方向判斷力』,不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,看未來兩三次準不準,對了才叫 edge。",
+    "selection_inconclusive": "拆帳看,板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note},統計上還分不出選股是本事還是運氣——別急著外包、也別自滿。",
+    "selection_inconclusive_t_wide": "α 的 95% 區間還太寬(t={t})",
+    "selection_inconclusive_t_unstable": "α 統計量還算不穩",
+    "outsource_selection": "扣掉賽道,你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差——優化不是『別選股』(你享受它、ETF 也會錯過妖股),是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)",
+    "amplify_selection_edge": "扣掉賽道紅利,你板塊內選股仍貢獻 {sel_pp}pp、α 統計顯著——這是真 edge,別讓 sizing/紀律稀釋它。",
+    "cut_averaging_down": "虧損中加碼 {count} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。",
+    "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct},單一押注過重。"
+  },
   "due_choices": {
     "still_valid": "還成立",
     "modified": "部分對，要調",

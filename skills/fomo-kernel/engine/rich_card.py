@@ -11,7 +11,13 @@ HEADLINE_TIER_W / MIN_ENTRY_BUYS)。trade_recap 不得於頂部 import rich_card
 用延遲 import 呼叫本檔,避免 import 環,並讓「純函式引擎」名實相符(頂部零 rich 依賴)。
 隱私:本檔不含任何真實帳戶路徑,只渲染引擎已算好的結構。
 """
+import card_renderer
 import trade_recap
+
+# #279 i18n phase 1: the engine emits stable codes for tags, prescriptions,
+# and the stress scenario. This v1 card is zh-only by contract, so it resolves
+# codes through the shared copy layer pinned to zh-TW at display time.
+_V1_LANGUAGE = "zh-TW"
 
 try:
     from rich.console import Console, Group
@@ -258,7 +264,8 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, r
         parts.append(Rule(style="dim cyan"))
         wif = Text()
         wif.append("what if · 最大集中暴險壓測", style="bold yellow")
-        wif.append(f"\n你 {wi['label']} 暴險約 ${wi['mval']:,.0f}  (佔 ")
+        wi_label = card_renderer.localized_stress_label(wi, _V1_LANGUAGE) or ""
+        wif.append(f"\n你 {wi_label} 暴險約 ${wi['mval']:,.0f}  (佔 ")
         wif.append(f"{wi['pct']*100:.0f}%", style="bold")
         wif.append(")")
         wif.append("\n  回檔 30% (一般修正)  → 帳面 ")
@@ -280,7 +287,9 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, r
             tbl.add_row(
                 Text(d['ticker'], style="bold"),
                 _money(d['impact']),
-                '  '.join(d['tags'])
+                '  '.join(text for text in
+                          (card_renderer.localized_instrument_tag(tag, _V1_LANGUAGE)
+                           for tag in d['tags']) if text)
             )
         parts.append(Padding(tbl, (0, 1)))
         # thesis_q 不印在卡上 → Step 2 對話用(SKILL L77-79「確認在出卡之前」);
@@ -346,9 +355,12 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, r
         rx_tbl.add_column(width=2, no_wrap=True)
         rx_tbl.add_column(overflow="fold")
         for r in rx:
+            resolved = card_renderer.localized_prescription(r, _V1_LANGUAGE) or {}
+            if not resolved.get("kind") or not resolved.get("text"):
+                continue
             cell = Text()
-            cell.append(f"{r['kind']}:", style="bold")
-            cell.append(r['text'])
+            cell.append(f"{resolved['kind']}:", style="bold")
+            cell.append(resolved['text'])
             if r.get("verify"):
                 cell.append(f"  〔下次驗:{r['verify']}〕", style="dim italic")
             rx_tbl.add_row(Text("▸", style="bold"), cell)
