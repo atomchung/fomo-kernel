@@ -104,6 +104,12 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
         intent = "classify_initial_thesis"
         requirements = _INITIAL_THESIS_REQUIREMENTS
     else:
+        # headline_motive can now expose the selected top hole's engine-owned
+        # facts through existing grounding refs, without expanding the schema.
+        if question.get("ticker"):
+            context["ticker"] = question["ticker"]
+        if question.get("asked_because"):
+            context["asked_because"] = question["asked_because"]
         if isinstance(headline_dimension, dict):
             context["headline_dimension"] = {
                 "id": headline_dimension.get("id"),
