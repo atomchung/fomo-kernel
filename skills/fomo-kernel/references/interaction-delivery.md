@@ -4,6 +4,8 @@ Claude, Codex, Cursor, and future hosts use the same Review Plan, schemas, valid
 
 The engine already fail-closes on review content: `preview`/`finalize` reject a missing required answer, invalid private motive provenance, or an absent commitment. This contract also covers what the engine cannot see — whether the host actually *presented* each question, card, and weekly opening memory to the user. That evidence is recorded in a local presentation trace.
 
+**Scope: full-tier reviews only.** A light-tier capture (`state_snapshot.cadence.tier == "light"`, `flows/light-capture.md`) never renders a card and never asks more than one plain-text question, so there is nothing for this contract to verify. Do not call `ux_receipt.py start`/`event`/`verify` for a light-tier session — its `ROUTES` and `verify_rows` checks are defined for `first_review`/`weekly_review`/`snapshot_review`/`test_drive` presenting at least one card, which a capture-only action by design never does.
+
 ## Declare capabilities once
 
 Immediately after `prepare`, declare what the current host can do. `plain_text` and `markdown_inline` are universal fallbacks and must always be declared; add `native_options` or `widget` only when the current surface exposes them.

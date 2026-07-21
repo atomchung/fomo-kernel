@@ -15,9 +15,10 @@ Turn transaction history into one focused behavior-review card, or a position sn
 4. A card has exactly one final commitment at most. The user may choose a candidate, provide a custom rule, or skip.
 5. Keep trade data and derived state local. Show the review card (`card-private.*`) by default, following the delivery contract in `references/card-delivery.md`; use only `card-public.md` as a share-safe artifact. The product does not publish or upload it.
 6. Treat `sessions/<session_id>/bundle.json` as the canonical completed result. Never hand-edit projections as if they were authoritative.
-7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
+7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 8. For a position table or screenshot, transcribe only the broker-declared facts into the normalized snapshot JSON envelope and keep that temporary file outside the repository, such as under `/tmp`. Do not calculate weights, P&L, cycle IDs, metrics, or ETF classifications, and do not use a cloud OCR service.
 9. An incomplete snapshot may produce a bounded review, but it must not become an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and any claim about an unreconciled current broker view must fail closed.
+10. When `review_plan.state_snapshot.cadence.tier == "light"`, the review is a capture-only action, not a full review: follow `flows/light-capture.md` instead of the route's normal flow. No card, no commitment, no `preview`/`finalize` — see the fixed lifecycle's light-tier note below.
 
 ## Canonical entry point
 
@@ -56,6 +57,8 @@ Then read the shared rules:
 3. `preview`: validate answers, evidence, theses, and narrative; then render private and public previews.
 4. Show the complete review-card preview inline, record the actual delivery mode, then ask the user to choose a candidate rule, provide a custom rule, or skip. Artifact generation alone is not card delivery.
 5. `finalize`: validate the final commitment, atomically commit the canonical session bundle, then rebuild compatibility projections.
+
+**Light-tier exception:** when `review_plan.state_snapshot.cadence.tier == "light"` (short span since the last review), steps 2–5 above do not apply. Follow `flows/light-capture.md` instead: ask at most one light question, then call `capture` to append the motive/emotion fact and stop. No preview, no card, no commitment.
 
 ```bash
 python3 engine/review.py preview \

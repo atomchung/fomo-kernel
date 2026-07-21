@@ -20,6 +20,7 @@ import json
 import math
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1359,7 +1360,7 @@ def _problem_snapshot(root, state):
     """
     payload = problems.snapshot(os.path.join(root, "problems.jsonl"),
                                 os.path.join(root, "rules.jsonl"),
-                                today=_review_date(state).isoformat())
+                                today=_review_date(state).isoformat(), span_aware=True)
     if not payload["events_n"] and not payload["marks_n"]:
         return None
     return payload
@@ -2076,6 +2077,132 @@ def _load_interaction(args, pending):
     return answers, narrative
 
 
+CAPTURE_INFERENCE_FIELDS = ("source_type", "source_name", "source_confidence",
+                           "emotion", "emotion_inferred", "confidence", "confidence_inferred")
+
+
+def _load_capture_entries(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise ReviewError(f"cannot read entries: {exc}") from exc
+    if not isinstance(value, list) or not value:
+        raise ReviewError("entries must be a non-empty JSON array")
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise ReviewError("each capture entry must be a JSON object")
+        if not entry.get("cycle_id"):
+            raise ReviewError("each capture entry requires cycle_id")
+        if not entry.get("note"):
+            raise ReviewError("each capture entry requires note")
+        for key in ("emotion", "confidence", "source_type", "source_confidence"):
+            if key in entry and entry[key] not in thesis.INFERENCE_ENUMS[key]:
+                raise ReviewError(f"invalid {key}: {entry[key]!r}")
+    return value
+
+
+def _capture_rows(entries, plan, capture_session_id):
+    """Turn validated capture entries into `theses.jsonl`-safe rows (#237 #4).
+
+    `thesis.reconstruct_states` treats a row with no ``event`` (or
+    ``thesis_cycle_relink``) as a full-content replace of that cycle's thesis —
+    the only carried-forward keys from the prior state are decision_cursor/
+    last_decision/last_exit/final_outcome/evidence_history/last_evidence/
+    source_state, never why/exit_trigger/horizon/etc. A capture entry for a
+    cycle that already has an established thesis must never take that path, or
+    it silently wipes the cycle's existing why/exit_trigger. It goes through a
+    `thesis_decision` event instead, which only ever attaches to (never
+    replaces) the cycle's content. A cycle with no established thesis yet takes
+    the opposite risk: `thesis_decision` for a cycle with no current state is
+    dropped entirely (`if not current: continue`), so it must go through the
+    full-content path, which requires an honest why/exit_trigger the same way a
+    full review's inferred-thesis path does — otherwise the capture is silently
+    lost, exactly what #237's #4 is meant to prevent.
+
+    Every row carries `session_id: capture_session_id` — `_append_session_rows`
+    only uses its `session_id` argument to *filter* existing rows for dedup; it
+    never stamps the tag onto what it writes, so the caller must.
+    """
+    active_cycle_ids = {row.get("cycle_id") for row in
+                        (plan.get("state_snapshot") or {}).get("active_theses") or []}
+    # missing_thesis_positions is plan-top-level, not under state_snapshot (see _build_plan).
+    missing_by_cycle = {row.get("cycle_id"): row for row in plan.get("missing_thesis_positions") or []}
+    rows = []
+    for entry in entries:
+        cycle_id = entry["cycle_id"]
+        inference = {key: entry[key] for key in CAPTURE_INFERENCE_FIELDS if key in entry}
+        if cycle_id in active_cycle_ids:
+            rows.append({"event": "thesis_decision", "cycle_id": cycle_id,
+                        "session_id": capture_session_id,
+                        "note": entry["note"], **inference})
+            continue
+        missing = missing_by_cycle.get(cycle_id)
+        if missing is None:
+            raise ReviewError(
+                f"cycle_id {cycle_id!r} is neither an active thesis nor a missing "
+                "thesis position in this Review Plan; cannot capture against it")
+        if not entry.get("why") or not entry.get("exit_trigger"):
+            raise ReviewError(
+                f"cycle_id {cycle_id!r} has no established thesis yet; capture "
+                "entries for a new cycle must include why and exit_trigger, the "
+                "same as a full review's inferred thesis")
+        row = {"cycle_id": cycle_id, "ticker": missing.get("ticker"), "maturity": "inferred",
+              "session_id": capture_session_id,
+              "why": entry["why"], "exit_trigger": entry["exit_trigger"],
+              "note": entry["note"], **inference}
+        if missing.get("origin"):
+            row["origin"] = missing["origin"]
+        rows.append(row)
+    return rows
+
+
+def cmd_capture(args):
+    """Light-tier capture-only action (#237 #4): no finalize, no review_mark,
+    no commitment, no counted question budget. Appends directly to
+    `theses.jsonl` under a distinct session id so a later real `finalize` for
+    the same underlying state can never collide with what capture wrote (see
+    `_capture_rows` for why the row shape itself must also stay non-destructive).
+
+    Cleans up its `.pending/<session_id>/` entry once appended, so repeated
+    captures do not grow `_pending_by_fingerprint`'s scan forever the way an
+    abandoned full review already does today. That cleanup would otherwise
+    break retry safety — an interrupted agent turn that is unsure whether its
+    first `capture` call actually landed must be able to repeat the identical
+    call and get the same answer, not a "pending session not found" crash — so
+    a missing pending dir is first checked against `theses.jsonl` for rows
+    already tagged with this session's derived capture id before it is treated
+    as an error."""
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    capture_session_id = f"{args.session_id}--capture"
+    theses_path = os.path.join(root, "theses.jsonl")
+    try:
+        pending = session.load_pending(root, args.session_id)
+    except session.SessionError:
+        already = [row for row in thesis.read_jsonl(theses_path)
+                  if row.get("session_id") == capture_session_id]
+        if not already:
+            raise
+        _emit({"status": "captured", "session_id": args.session_id,
+              "capture_session_id": capture_session_id, "entries": len(already),
+              "report": {"status": "no-op (already captured)"}})
+        return
+    plan = pending.get("plan") or {}
+    tier = ((plan.get("state_snapshot") or {}).get("cadence") or {}).get("tier")
+    if tier != "light":
+        raise ReviewError(
+            f"capture is only valid for a light-tier session (cadence.tier={tier!r}); "
+            "a full-tier review must go through preview/finalize")
+    entries = _load_capture_entries(args.entries)
+    rows = _capture_rows(entries, plan, capture_session_id)
+    with session.projection_transaction(root) as locked_root:
+        report = session._append_session_rows(theses_path, capture_session_id, rows)
+    shutil.rmtree(session.pending_dir(root, args.session_id), ignore_errors=True)
+    _emit({"status": "captured", "session_id": args.session_id,
+          "capture_session_id": capture_session_id, "entries": len(rows),
+          "report": report})
+
+
 def cmd_preview(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     pending = session.load_pending(root, args.session_id)
@@ -2235,6 +2362,11 @@ def build_parser():
         p.add_argument("--answers")
         p.add_argument("--narrative")
         p.set_defaults(func=func)
+    capture = sub.add_parser("capture", help="light-tier capture-only action (#237)")
+    capture.add_argument("--session-id", required=True)
+    capture.add_argument("--root")
+    capture.add_argument("--entries", required=True)
+    capture.set_defaults(func=cmd_capture)
     resume = sub.add_parser("resume")
     resume.add_argument("--session-id")
     resume.add_argument("--root")

@@ -373,7 +373,11 @@ def test_delivery_contract_exists_and_is_routed():
     assert "references/card-delivery.md" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "references/card-delivery.md" in (SKILL / "card-spec.md").read_text(encoding="utf-8")
     assert FLOW_FILES, "at least one flow file must exist to route card delivery"
-    for name in FLOW_FILES:
+    # light-capture.md is the one deliberate exception (#237 #4): a light-tier
+    # session never reaches preview/finalize, so it never renders a card and has
+    # nothing to route through the delivery contract.
+    card_routing_flows = tuple(name for name in FLOW_FILES if name != "light-capture.md")
+    for name in card_routing_flows:
         flow = (SKILL / "flows" / name).read_text(encoding="utf-8")
         assert "references/card-delivery.md" in flow, f"flows/{name} must route card delivery"
 
