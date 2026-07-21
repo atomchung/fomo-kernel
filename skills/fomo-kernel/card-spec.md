@@ -1,6 +1,6 @@
 # Review card content specification
 
-> Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
+> Structure authority is [docs/output-contract.md](../../docs/output-contract.md): its keynote + four-block order outranks the display priorities below, which now rank numbers *inside* the performance block only. Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
 
 ## Purpose
 

@@ -1,5 +1,10 @@
 # Card policy
 
+> Section order and section set are governed by
+> [docs/output-contract.md](../../../docs/output-contract.md) (keynote + four
+> blocks). Where this file implies a different order, the contract wins. This
+> file keeps wording, redaction, and narrative rules.
+
 A card is a story, not a dashboard.
 
 The private card follows this order when data exists: mirror, frozen market/timeline context, primary account numbers, one strength, largest leak, qualitative motive or thesis, exit follow-up and recurring problem memory, ETF structure, and one rule. Honesty sentences are not a section: each triggered ledger key renders inside the section it qualifies, using the agent-authored wording from `narrative.honesty`. Omit unavailable sections instead of filling them with generic prose.

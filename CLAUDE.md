@@ -70,6 +70,7 @@ When multiple sessions are active:
 
 | Fact | Surfaces that must stay synchronized |
 |---|---|
+| Output structure & language | `docs/output-contract.md` (single authority on section order) and `docs/output-language.md` (locale contract) ↔ `card_renderer.py` ↔ `references/card-policy.md` / `card-spec.md` (subordinated: wording and in-block ranking only) |
 | Runtime behavior | engine ↔ `SKILL.md` and routed flows/references ↔ `docs/eval-design.md` ↔ `evals/EVALS.md` |
 | Demo card values | English README ↔ English demo HTML/image; Traditional Chinese README ↔ Traditional Chinese demo HTML/image. Values must match; only wording differs. |
 | GTM documentation | `README.md` is the English default; `README.zh-TW.md` is the complete Traditional Chinese counterpart. Keep language links and substantive product claims synchronized. |
