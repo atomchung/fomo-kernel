@@ -33,6 +33,7 @@ SUITES = [
     ("Validated private question surfaces", "tests/test_question_surfaces.py"),
     ("Card HTML and delivery contract", "tests/test_card_html.py"),
     ("Cross-client interaction trajectory", "tests/test_interaction_trajectory.py"),
+    ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
 ]
 

@@ -9,6 +9,7 @@ deliberately not re-tested here.
 
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -475,6 +476,38 @@ def test_cli_rejects_session_id_path_traversal():
             capture_output=True, text=True,
         )
         assert bad.returncode == 2 and "not a path" in bad.stderr
+
+
+def test_cli_state_root_defaults_to_trade_coach_home():
+    # #269: one `export TRADE_COACH_HOME=...` must route this tool too —
+    # omitting --state-root must not fall through to the real ~/.trade-coach.
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "TRADE_COACH_HOME": tmp}
+        start = subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "isolated",
+             "--client", "c", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, env=env,
+        )
+        assert start.returncode == 0, start.stderr
+        assert (pathlib.Path(tmp) / "ux" / "isolated.jsonl").is_file(), \
+            "trace must land in TRADE_COACH_HOME when --state-root is omitted"
+
+
+def test_cli_explicit_state_root_overrides_trade_coach_home():
+    # Resolution order matches the engine CLIs: --state-root > TRADE_COACH_HOME.
+    with tempfile.TemporaryDirectory() as explicit, tempfile.TemporaryDirectory() as env_root:
+        env = {**os.environ, "TRADE_COACH_HOME": env_root}
+        start = subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "explicit-wins",
+             "--state-root", explicit,
+             "--client", "c", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, env=env,
+        )
+        assert start.returncode == 0, start.stderr
+        assert (pathlib.Path(explicit) / "ux" / "explicit-wins.jsonl").is_file()
+        assert not (pathlib.Path(env_root) / "ux" / "explicit-wins.jsonl").exists()
 
 
 def main():
