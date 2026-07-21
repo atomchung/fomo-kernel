@@ -51,6 +51,7 @@ HORIZON_MARKER_LIMIT = 2
 RULE_BREACH_LIMIT = 2
 EXIT_DECISIONS = {"price_target", "thesis_broken", "swap", "anxiety", "other", "skip"}
 RULE_BREACH_CHOICES = {"keep_tracking", "revise_rule", "exception"}
+HEADLINE_MOTIVE_CHOICES = {"deliberate_plan", "emotional_reaction", "external_constraint"}
 
 
 class ReviewError(ValueError):
@@ -821,6 +822,22 @@ def _rule_breach_history(root):
     return latest
 
 
+def _headline_motive_history(root):
+    """Reconstruct typed headline-motive decisions from canonical bundles.
+
+    The JSONL file is only a compatibility projection.  Canonical bundles win
+    for their session, so deleting or partially rebuilding projections cannot
+    erase the user's recorded classification from a later Review Plan.
+    """
+    legacy = _jsonl(os.path.join(root, "headline_motives.jsonl"))
+    canonical_sessions = set()
+    rows = []
+    for session_id, bundle in session.iter_canonical_bundles(root, sort_by_date=True):
+        canonical_sessions.add(session_id)
+        rows.extend(bundle.get("headline_motive_events") or [])
+    return [row for row in legacy if row.get("session_id") not in canonical_sessions] + rows
+
+
 def _prepare_exit_capture(root, state, persist):
     """Enqueue ledger exits and return capture, due-checkpoint, and backlog signals.
 
@@ -1572,6 +1589,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     horizon_markers = ([] if route == "snapshot_review" else
                        _horizon_markers(state, thesis_states, cycle_ids, recent_exits))
     rule_history = {} if route == "snapshot_review" else _rule_breach_history(root)
+    headline_motive_events = ([] if route == "snapshot_review" else
+                              _headline_motive_history(root))
     missing = [_missing_thesis_entry(ticker, row)
                for ticker, row in sorted(positions.items()) if row.get("cycle_id") not in active]
     previous = _previous_state(root)
@@ -1621,6 +1640,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            "recent_exits": list(recent_exits or []),
                            "exit_backlog": exit_backlog,
                            "problem_stats": problem_stats,
+                           "headline_motive_events": headline_motive_events,
                            "market_context": state.get("market_context"),
                            "horizon_markers": horizon_markers,
                            "revisit_ingest": revisit_ingest},
@@ -2035,6 +2055,50 @@ def _build_rule_breach_decisions(plan, answers, amap=None):
     return events
 
 
+def _build_headline_motive_events(plan, answers, amap=None):
+    """Consume a headline-motive answer into one typed canonical event.
+
+    Only the canonical non-skip choice and engine-owned question context are
+    persisted.  In particular, ticker/fact grounding is copied from the
+    validated question opportunity when present; this function never derives
+    or invents either.  A skip remains explicit in ``answers`` and deliberately
+    creates no motive event.
+    """
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "headline_motive":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        if choice == "skip":
+            continue
+        offered = {option.get("value") for option in question.get("options") or []}
+        if choice not in HEADLINE_MOTIVE_CHOICES or choice not in offered:
+            raise ReviewError(f"unsupported headline motive decision: {choice}")
+        if answer.get("evidence_delta") is not None:
+            raise ReviewError(
+                f"{question['id']}: evidence_delta is not valid for a headline motive")
+        opportunity = question.get("question_opportunity") or {}
+        context = opportunity.get("context") or {}
+        event = {
+            "event": "headline_motive_decision",
+            "schema_version": 1,
+            "session_id": plan.get("session_id"),
+            "question_id": question.get("id"),
+            "decision": choice,
+            "context": json.loads(json.dumps(context, ensure_ascii=False, sort_keys=True)),
+            "review_date": (plan.get("engine_state") or {}).get("date_end"),
+        }
+        identity = session.canonical(event)
+        event["event_id"] = (
+            "headline-motive-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        )
+        events.append(event)
+    return events
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
@@ -2104,6 +2168,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     exit_narratives = _build_exit_narratives(plan, answers, amap)
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
     rule_breach_decisions = _build_rule_breach_decisions(plan, answers, amap)
+    headline_motive_events = _build_headline_motive_events(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every required honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the plan does not require —
@@ -2129,6 +2194,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
         "narrative": narrative,
         "thesis_updates": updates,
         "thesis_decisions": decisions,
+        "headline_motive_events": headline_motive_events,
         "exit_narratives": exit_narratives,
         "commitment": commitment,
         "observations": list(answers.get("observations") or []),

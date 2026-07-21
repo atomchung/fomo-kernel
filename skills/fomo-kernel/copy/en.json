@@ -98,6 +98,11 @@
     "price_only": "Only the price fell / lower the cost basis",
     "skip": "Skip for now"
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "Deliberate plan",
+    "emotional_reaction": "Emotional reaction",
+    "external_constraint": "External constraint"
+  },
   "exit_choices": {
     "full": {
       "price_target": "The target was reached",

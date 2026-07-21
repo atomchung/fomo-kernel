@@ -151,6 +151,34 @@ def test_reset_and_status_cover_ux_trace_dir():
         assert not os.path.exists(os.path.join(tmp, "ux")), "reset --confirm must clear the ux/ trace"
 
 
+def test_headline_motive_projection_is_status_export_and_reset_managed():
+    """#294: the durable motive projection is private user data, so every
+    data-control operation must discover it from coach.DATA_FILES."""
+    with tempfile.TemporaryDirectory() as tmp:
+        motive_path = os.path.join(tmp, "headline_motives.jsonl")
+        with open(motive_path, "w", encoding="utf-8") as f:
+            f.write('{"event":"headline_motive_decision","decision":"deliberate_plan"}\n')
+
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {entry["name"]: entry for entry in status["files"]}
+        assert status["present_count"] == 1
+        assert by_name["headline_motives.jsonl"]["exists"]
+        assert by_name["headline_motives.jsonl"]["lines"] == 1
+
+        out_zip = os.path.join(tmp, "backup.zip")
+        exported = _run("data-export", "--root", tmp, "--out", out_zip)
+        assert exported.returncode == 0, exported.stderr
+        payload = json.loads(exported.stdout)
+        assert payload["included"] == ["headline_motives.jsonl"]
+        with zipfile.ZipFile(out_zip) as zf:
+            assert zf.namelist() == ["headline_motives.jsonl"]
+
+        reset = _run("data-reset", "--root", tmp, "--confirm")
+        assert reset.returncode == 0, reset.stderr
+        assert json.loads(reset.stdout)["deleted"] == [motive_path]
+        assert not os.path.exists(motive_path)
+
+
 # ─────────────── D. --root 覆寫隔離(不誤觸真正的 ~/.trade-coach/)───────────────
 
 def test_root_override_reported_exactly_as_passed():

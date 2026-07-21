@@ -3533,6 +3533,149 @@ def _prepare_dated(tmp, root, date_end, tag, language="zh-TW"):
     return _pending_plan(root, run.stdout)
 
 
+def _prepare_headline_motive(tmp, root, tag, language="zh-TW"):
+    """Prepare the fallback motive path with identical engine facts per tag."""
+    card_path, state_path = _artifacts(tmp)
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card["thesis_questions"] = []
+    headline_card = pathlib.Path(tmp) / f"headline_card_{tag}.json"
+    headline_card.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    run = _run("prepare", "--root", root, "--language", language,
+               "--card-json", headline_card, "--state-json", state_path,
+               "--session-nonce", tag)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = _pending_plan(root, run.stdout)
+    assert [row["kind"] for row in plan["question_queue"]] == ["headline_motive"]
+    return plan
+
+
+def _headline_answers(plan, choice):
+    return {
+        "session_id": plan["session_id"],
+        "answers": [{"question_id": "headline_motive", "choice": choice}],
+        "thesis_updates": [_base_thesis_update()],
+        "observations": [],
+        "commitment": {"choice": "skip"},
+    }
+
+
+def _write_headline_interaction(tmp, plan, choice, tag):
+    answers_path = pathlib.Path(tmp) / f"headline_answers_{tag}.json"
+    narrative_path = pathlib.Path(tmp) / f"headline_narrative_{tag}.json"
+    answers_path.write_text(
+        json.dumps(_headline_answers(plan, choice), ensure_ascii=False), encoding="utf-8")
+    narrative_path.write_text(
+        json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+    return answers_path, narrative_path
+
+
+def test_headline_motive_choice_changes_private_card_and_persists_canonically():
+    """#294: the required answer is consumed, durable, private, and replay-safe."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_headline_motive(tmp, root, "headline")
+        deliberate_a, narrative = _write_headline_interaction(
+            tmp, plan, "deliberate_plan", "deliberate")
+        emotional_a, _ = _write_headline_interaction(
+            tmp, plan, "emotional_reaction", "emotional")
+
+        deliberate = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                          "--answers", deliberate_a, "--narrative", narrative)
+        emotional = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", emotional_a, "--narrative", narrative)
+        assert deliberate.returncode == emotional.returncode == 0
+        deliberate_payload = json.loads(deliberate.stdout)
+        emotional_payload = json.loads(emotional.stdout)
+        assert deliberate_payload["private_card"] != emotional_payload["private_card"]
+        assert "動機記為：事先規劃" in deliberate_payload["private_card"]
+        assert "動機記為：情緒反應" in emotional_payload["private_card"]
+        assert deliberate_payload["public_card"] == emotional_payload["public_card"], \
+            "a private motive choice must not affect or leak into the public card"
+        for secret in ("事先規劃", "情緒反應", "headline_motive"):
+            assert secret not in deliberate_payload["public_card"]
+            assert secret not in emotional_payload["public_card"]
+
+        skipped_a, _ = _write_headline_interaction(tmp, plan, "skip", "skip")
+        skipped = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", skipped_a, "--narrative", narrative)
+        assert skipped.returncode == 0, skipped.stdout + skipped.stderr
+        assert "動機記為：" not in json.loads(skipped.stdout)["private_card"], \
+            "skip must not fabricate a motive classification"
+
+        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", deliberate_a, "--narrative", narrative)
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        session_dir = pathlib.Path(json.loads(finalized.stdout)["path"])
+        bundle_path = session_dir / "bundle.json"
+        before_retry = bundle_path.read_text(encoding="utf-8")
+        bundle = json.loads(before_retry)
+        assert len(bundle["headline_motive_events"]) == 1
+        event = bundle["headline_motive_events"][0]
+        assert event["event"] == "headline_motive_decision"
+        assert event["decision"] == "deliberate_plan"
+        assert event["context"]["headline_dimension"]["id"] == "加碼攤平"
+        assert event["event_id"].startswith("headline-motive-")
+
+        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", deliberate_a, "--narrative", narrative)
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        assert json.loads(retry.stdout)["status"] == "no-op"
+        assert bundle_path.read_text(encoding="utf-8") == before_retry
+
+        projection = pathlib.Path(root) / "headline_motives.jsonl"
+        projected = [json.loads(line) for line in projection.read_text(encoding="utf-8").splitlines()]
+        assert projected == [event]
+        projection.unlink()
+
+        later = _prepare_headline_motive(tmp, root, "later")
+        assert later["state_snapshot"]["headline_motive_events"] == [event], \
+            "later state reconstruction must use the canonical bundle, not the projection"
+
+        repaired = _run("repair-projections", "--root", root)
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        repaired_rows = [json.loads(line) for line in
+                         projection.read_text(encoding="utf-8").splitlines()]
+        assert repaired_rows == [event]
+        assert bundle_path.read_text(encoding="utf-8") == before_retry
+
+
+def test_headline_motive_event_copies_only_engine_context_and_routes_ticker_row():
+    """#294/#288 boundary: consume existing context keys without inventing them."""
+    question = {
+        "id": "headline_motive", "kind": "headline_motive", "required": True,
+        "options": [{"value": value} for value in
+                    ("deliberate_plan", "emotional_reaction", "external_constraint", "skip")],
+        "question_opportunity": {"context": {
+            "ticker": "PLTR",
+            "asked_because": "PLTR is the largest engine-ranked risk position",
+            "headline_dimension": {"id": "position_sizing", "label": "Position sizing"},
+        }},
+    }
+    plan = {"session_id": "2026-07-21__headline", "question_queue": [question],
+            "engine_state": {"date_end": "2026-07-21"}}
+    answers = {"answers": [{"question_id": "headline_motive",
+                             "choice": "external_constraint"}]}
+    events = review_engine._build_headline_motive_events(plan, answers)
+    assert len(events) == 1
+    event = events[0]
+    assert event["context"] == question["question_opportunity"]["context"]
+    assert "note" not in event and "evidence_delta" not in event
+    assert review_engine._build_headline_motive_events(
+        plan, {"answers": [{"question_id": "headline_motive", "choice": "skip"}]}) == []
+
+    bundle = {"headline_motive_events": events}
+    copy = card_renderer.load_copy("en")
+    facts = {"instruments": [{"ticker": "PLTR"}]}
+    trades = card_renderer._trades_block(bundle, {}, copy, facts, [], None, False)
+    rows = next(payload for kind, payload in trades if kind == "rows")
+    assert "External constraint" in rows[0]["subs"][0]
+    risks = card_renderer._risks_block(
+        bundle, {"top_holes": [{"dim": "position_sizing"}]}, copy,
+        {"strength": "Process strength", "counterfactual": "Counterfactual"}, False,
+        trade_tickers=["PLTR"])
+    assert all("External constraint" not in str(payload) for _kind, payload in risks), \
+        "an engine-grounded ticker motive must render once under its existing trade row"
+
+
 def _finalize(tmp, root, plan, answers, tag):
     a_path = pathlib.Path(tmp) / f"answers_{tag}.json"
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
@@ -3899,6 +4042,13 @@ def test_schemas_cover_due_revisit_and_resolutions():
     assert set(breach["items"]["properties"]["decision"]["enum"]) == \
         {"keep_tracking", "revise_rule", "exception"}
     assert "rule_breach_decisions" not in bundle_schema["required"]
+    motive = bundle_schema["properties"]["headline_motive_events"]["items"]
+    assert motive["properties"]["event"]["const"] == "headline_motive_decision"
+    assert set(motive["properties"]["decision"]["enum"]) == \
+        {"deliberate_plan", "emotional_reaction", "external_constraint"}
+    assert motive["properties"]["context"]["$ref"].endswith("#/properties/context")
+    assert "headline_motive_events" not in bundle_schema["required"], \
+        "older canonical bundles must remain replay-compatible"
     # #250: engine_version provenance is a published top-level metadata key on
     # both the plan and the bundle. It must stay optional — older artifacts
     # predate it, so it is off the required list for replay compatibility.

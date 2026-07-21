@@ -98,6 +98,11 @@
     "price_only": "只有價格下跌／想攤低成本",
     "skip": "先跳過"
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "事先規劃",
+    "emotional_reaction": "情緒反應",
+    "external_constraint": "外部限制"
+  },
   "exit_choices": {
     "full": {
       "price_target": "到價了",

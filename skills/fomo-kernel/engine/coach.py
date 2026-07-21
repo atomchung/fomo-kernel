@@ -402,6 +402,7 @@ DATA_FILES = [
     ("log.jsonl", "jsonl", "每次復盤的規矩承諾 + metric 快照"),
     ("theses.jsonl", "jsonl", "每筆持倉的持股假設與出場敘事"),
     ("thesis_decisions.jsonl", "jsonl", "每次加碼的 thesis 決策與 evidence delta"),
+    ("headline_motives.jsonl", "jsonl", "headline 行為的使用者動機分類"),
     ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
