@@ -18,7 +18,7 @@ python3 tools/ux_receipt.py start \
 
 The tool writes the trace inside the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`) — the same trust boundary as the canonical ledger. It is never committed and never published. Question events are also mechanically restricted to mode, surface source, and an opaque digest; they cannot carry the stem, options, ticker, thesis, user statement, or interpretation. After an interruption, append to the existing trace with the same `--session-id`; do not start a new one. (Tests and inspection pass `--state-root` to redirect it.)
 
-Every row the tool writes is stamped with a UTC ISO-8601 `ts` (seconds, e.g. `2026-07-20T13:46:02Z`) at write time. `verify` accepts legacy traces written before `ts` existed, but fails on a malformed value; row order, not `ts`, remains the ordering authority.
+Every row the tool writes is stamped with a UTC ISO-8601 `ts` (seconds, e.g. `2026-07-20T13:46:02Z`) at write time. `verify` accepts legacy traces written before `ts` existed, but fails on a malformed value; row order, not `ts`, remains the ordering authority. For a complete multi-stage trace ending in `owner_verdict`, `verify` also emits a `timing_integrity` object. Its status is `credible`, `suspect`, or `not_assessed`; `owner_live_eligible` is `false` for suspect timing and `null` when legacy or incomplete timestamps cannot be assessed.
 
 ## Bind a private surface or the engine fallback
 
@@ -78,6 +78,8 @@ python3 tools/ux_receipt.py event --session-id <session_id> --event answers_rece
 
 This content-free marker makes the "answered → card" machine wait (#236) measurable from the trace as `card_presented(stage=preview).ts - answers_received.ts`.
 
+Every event must be appended immediately after the action it records. After an interruption, continue the existing trace; never replace it or reconstruct earlier events at wrap-up time. Timestamp reversal and a complete owner-verdict walk stamped in less than three seconds are reported as suspect timing because they cannot support interaction-latency or owner-live UX claims without an audit or re-run.
+
 ## Artifact generation is not presentation
 
 After a successful `preview`, record `artifact_generated`, then present the complete card inline following `card-delivery.md`, and only then record `card_presented`. A file path or attachment without inline card content is not presentation. Ask for the one commitment only after the preview card is visible. Apply the same generated-versus-presented distinction to the final card.
@@ -106,4 +108,8 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 python3 tools/ux_receipt.py verify --session-id <id>
 ```
 
-`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. `answers_received` and `rule_choice_presented` are content-free latency markers: `verify` enforces their field whitelists and the `ts` format but imposes no ordering rules on them. For owner dogfood, append `owner_verdict` after the final card and verify with `--require-owner-verdict`; a weekly pass requires controls, card visibility, and remembered context all to pass. When a validated dynamic surface was presented, the verdict must also record whether the question felt specific and whether an available answer fit, using `--question-specificity` and `--answer-fit`. These owner judgments are product gates, not schema-derived claims.
+`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget silently degraded to Markdown without a recorded failure, or when a weekly opening memory was not surfaced before the first card. It does not re-verify answered questions or the commitment — the engine owns those. `answers_received` and `rule_choice_presented` are content-free latency markers: `verify` enforces their field whitelists; row order remains the presentation authority.
+
+Timing plausibility is a separate integrity signal. Default verification remains compatible with legacy receipts and exits successfully with a `WARN` plus `timing_integrity.status=suspect` when fully stamped rows reverse or the entire owner-verdict trace was recorded in a sub-three-second burst. A suspect result has `owner_live_eligible=false` and must not be cited directly as owner-live UX ground truth. Audit contemporaneous evidence or re-run the walkthrough. Human-graded QA must add `--require-timing-integrity`, which accepts only `credible` timing; legacy no-`ts` receipts still pass ordinary verification but are `not_assessed`, not fresh owner-live evidence.
+
+For owner dogfood, append `owner_verdict` after the final card and verify with both `--require-owner-verdict` and `--require-timing-integrity`; a weekly pass requires controls, card visibility, and remembered context all to pass. When a validated dynamic surface was presented, the verdict must also record whether the question felt specific and whether an available answer fit, using `--question-specificity` and `--answer-fit`. These owner judgments are product gates, not schema-derived claims: a timing warning limits how the receipt may be used but does not erase the owner's stated verdict.

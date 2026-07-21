@@ -63,6 +63,27 @@ def weekly_rows():
     return rows
 
 
+def owner_rows():
+    rows = good_markdown_rows()
+    rows.insert(1, row("question_presented", mode="plain_text"))
+    rows.insert(2, row("answers_received"))
+    # #293 (merged after this fixture was authored): rule_choice_presented now
+    # requires machine-checked grounding-fidelity evidence. No candidate in
+    # this synthetic fixture carries an engine grounding, so the trivially
+    # satisfied state applies (mirrors _grounding_fidelity's no-candidates path).
+    rows.insert(5, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=False, grounding_verbatim=True))
+    rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
+    return rows
+
+
+def stamp(rows, timestamps):
+    assert len(rows) == len(timestamps)
+    for value, timestamp in zip(rows, timestamps):
+        value["ts"] = timestamp
+    return rows
+
+
 def assert_has(errors, fragment):
     assert any(fragment in error for error in errors), errors
 
@@ -444,6 +465,70 @@ def test_malformed_ts_fails():
         assert_has(ux_receipt.verify_rows(rows), "invalid ts")
 
 
+def test_normal_owner_trace_has_credible_timing_integrity():
+    rows = stamp(owner_rows(), [
+        "2026-07-20T13:46:00Z",
+        "2026-07-20T13:46:05Z",
+        "2026-07-20T13:46:12Z",
+        "2026-07-20T13:46:15Z",
+        "2026-07-20T13:46:17Z",
+        "2026-07-20T13:46:22Z",
+        "2026-07-20T13:46:31Z",
+        "2026-07-20T13:46:34Z",
+        "2026-07-20T13:46:40Z",
+    ])
+    integrity = ux_receipt.timing_integrity(rows)
+    assert integrity["status"] == "credible"
+    assert integrity["owner_live_eligible"] is True
+    assert integrity["span_seconds"] == 40
+    assert integrity["findings"] == []
+
+
+def test_same_second_owner_trace_is_suspect_one_burst_backfill():
+    rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 9)
+    integrity = ux_receipt.timing_integrity(rows)
+    assert integrity["status"] == "suspect"
+    assert integrity["owner_live_eligible"] is False
+    assert integrity["span_seconds"] == 0
+    assert [finding["code"] for finding in integrity["findings"]] == [
+        "implausible_one_burst_backfill"
+    ]
+
+
+def test_reversed_owner_trace_timestamp_is_suspect():
+    rows = stamp(owner_rows(), [
+        "2026-07-20T13:46:00Z",
+        "2026-07-20T13:46:05Z",
+        "2026-07-20T13:46:12Z",
+        "2026-07-20T13:46:11Z",  # preview artifact timestamp reverses
+        "2026-07-20T13:46:17Z",
+        "2026-07-20T13:46:22Z",
+        "2026-07-20T13:46:31Z",
+        "2026-07-20T13:46:34Z",
+        "2026-07-20T13:46:40Z",
+    ])
+    integrity = ux_receipt.timing_integrity(rows)
+    assert integrity["status"] == "suspect"
+    assert integrity["owner_live_eligible"] is False
+    assert [finding["code"] for finding in integrity["findings"]] == [
+        "timestamp_reversal"
+    ]
+    assert integrity["findings"][0] == {
+        "code": "timestamp_reversal",
+        "row": 4,
+        "previous_row": 3,
+    }
+
+
+def test_legacy_owner_trace_without_ts_remains_compatible_and_not_assessed():
+    rows = owner_rows()
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
+    integrity = ux_receipt.timing_integrity(rows)
+    assert integrity["status"] == "not_assessed"
+    assert integrity["owner_live_eligible"] is None
+    assert "legacy receipt remains compatible" in integrity["reason"]
+
+
 def test_cli_verifies_legacy_trace_without_ts():
     # A receipt written before ts existed must keep verifying end to end.
     with tempfile.TemporaryDirectory() as tmp:
@@ -458,6 +543,34 @@ def test_cli_verifies_legacy_trace_without_ts():
             capture_output=True, text=True,
         )
         assert done.returncode == 0, done.stderr
+
+
+def test_cli_warns_by_default_and_strict_timing_gate_fails_suspect_trace():
+    with tempfile.TemporaryDirectory() as tmp:
+        receipt = pathlib.Path(tmp) / "ux" / "burst.jsonl"
+        receipt.parent.mkdir(parents=True)
+        rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 9)
+        for value in rows:
+            value["session_id"] = "burst"
+        receipt.write_text("".join(json.dumps(value) + "\n" for value in rows), encoding="utf-8")
+
+        common = ["--session-id", "burst", "--state-root", tmp, "--require-owner-verdict"]
+        warned = subprocess.run(
+            [sys.executable, str(TOOL), "verify", *common],
+            capture_output=True, text=True,
+        )
+        assert warned.returncode == 0, warned.stderr
+        assert "WARN: timing_integrity implausible_one_burst_backfill" in warned.stderr
+        payload = json.loads(warned.stdout)
+        assert payload["timing_integrity"]["status"] == "suspect"
+        assert payload["timing_integrity"]["owner_live_eligible"] is False
+
+        strict = subprocess.run(
+            [sys.executable, str(TOOL), "verify", *common, "--require-timing-integrity"],
+            capture_output=True, text=True,
+        )
+        assert strict.returncode == 1
+        assert "cannot be used as owner_live UX ground truth" in strict.stderr
 
 
 # --- Weekly opening memory ordering ------------------------------------------
@@ -668,6 +781,9 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "rule_choice_presented",
         "stamped with a UTC ISO-8601 `ts`",
         "--grounding-check-file",
+        "--require-timing-integrity",
+        "owner_live_eligible=false",
+        "never replace it or reconstruct earlier events",
     ):
         assert fragment in text, fragment
 

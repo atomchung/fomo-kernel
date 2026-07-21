@@ -18,7 +18,12 @@ was shown to the user after the preview card). The machine wait between
 answering and seeing the preview card is `card_presented(stage=preview).ts -
 answers_received.ts`. Verification treats `ts` as optional so traces written
 before this field existed still verify, but rejects a malformed value; row
-order, not `ts`, remains the ordering authority.
+order, not `ts`, remains the ordering authority. For a fully timestamped,
+multi-stage trace ending in an owner verdict, verification also reports a
+machine-readable timing-integrity assessment. Timestamp reversal or a trace
+backfilled inside a few seconds is suspect: normal verification warns for
+compatibility, while human-graded QA can fail closed with
+`--require-timing-integrity`.
 
 The trace lives inside the protected state directory, the same trust boundary
 as the canonical ledger: never committed and never published. The root resolves
@@ -81,6 +86,7 @@ EVENT_KINDS = (
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
 TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+MIN_OWNER_TRACE_SPAN_SECONDS = 3
 
 
 class ReceiptError(ValueError):
@@ -103,6 +109,10 @@ def _valid_ts(value: object) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.strptime(value, TS_FORMAT).replace(tzinfo=timezone.utc)
 
 
 def _receipt_path(session_id: str, state_root: str) -> pathlib.Path:
@@ -315,6 +325,68 @@ def _positions(rows: list[dict], event: str, **matches) -> list[int]:
     ]
 
 
+def timing_integrity(rows: list[dict]) -> dict:
+    """Assess timestamp plausibility without invalidating legacy receipts.
+
+    Only a structurally complete, owner-verdict, preview-and-final trace is
+    eligible for the assessment. Missing timestamps therefore remain
+    compatible and machine-visible as ``not_assessed``. A fully timestamped
+    trace is ``suspect`` when row timestamps reverse or the complete walk was
+    recorded in less than ``MIN_OWNER_TRACE_SPAN_SECONDS``. These checks do not
+    assert what happened in the host; they prevent implausible self-attestation
+    from being cited directly as owner-live ground truth.
+    """
+    required_positions = (
+        _positions(rows, "artifact_generated", stage="preview"),
+        _positions(rows, "card_presented", stage="preview"),
+        _positions(rows, "artifact_generated", stage="final"),
+        _positions(rows, "card_presented", stage="final"),
+        _positions(rows, "owner_verdict"),
+    )
+    complete = all(len(positions) == 1 for positions in required_positions)
+    base = {
+        "status": "not_assessed",
+        "owner_live_eligible": None,
+        "minimum_span_seconds": MIN_OWNER_TRACE_SPAN_SECONDS,
+        "span_seconds": None,
+        "findings": [],
+    }
+    if not complete:
+        base["reason"] = "complete owner-verdict multi-stage trace required"
+        return base
+
+    if not all(_valid_ts(row.get("ts")) for row in rows):
+        base["reason"] = "complete valid timestamps required; legacy receipt remains compatible"
+        return base
+
+    timestamps = [_parse_ts(row["ts"]) for row in rows]
+    findings = []
+    for index in range(1, len(timestamps)):
+        if timestamps[index] < timestamps[index - 1]:
+            findings.append({
+                "code": "timestamp_reversal",
+                "row": index + 1,
+                "previous_row": index,
+            })
+
+    owner_position = required_positions[-1][0]
+    span_seconds = int((timestamps[owner_position] - timestamps[0]).total_seconds())
+    if 0 <= span_seconds < MIN_OWNER_TRACE_SPAN_SECONDS:
+        findings.append({
+            "code": "implausible_one_burst_backfill",
+            "span_seconds": span_seconds,
+            "minimum_span_seconds": MIN_OWNER_TRACE_SPAN_SECONDS,
+        })
+
+    return {
+        **base,
+        "status": "suspect" if findings else "credible",
+        "owner_live_eligible": not findings,
+        "span_seconds": span_seconds,
+        "findings": findings,
+    }
+
+
 def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
@@ -516,7 +588,23 @@ def verify_receipt(args: argparse.Namespace) -> None:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)
         raise SystemExit(1)
-    print(_compact_json({"status": "pass", "events": len(rows), "session_id": rows[0]["session_id"]}))
+    integrity = timing_integrity(rows)
+    if integrity["status"] == "suspect":
+        for finding in integrity["findings"]:
+            print(f"WARN: timing_integrity {finding['code']}", file=sys.stderr)
+    if args.require_timing_integrity and integrity["status"] != "credible":
+        print(
+            f"FAIL: receipt timing integrity is {integrity['status']} and cannot be used as "
+            "owner_live UX ground truth; audit or re-run the walkthrough",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print(_compact_json({
+        "status": "pass",
+        "events": len(rows),
+        "session_id": rows[0]["session_id"],
+        "timing_integrity": integrity,
+    }))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -561,6 +649,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="confirm each card actually reached the user")
     add_common(verify)
     verify.add_argument("--require-owner-verdict", action="store_true")
+    verify.add_argument(
+        "--require-timing-integrity",
+        action="store_true",
+        help="fail when a complete owner-verdict trace has reversed or implausibly burst timestamps",
+    )
     verify.set_defaults(handler=verify_receipt)
     return parser
 
