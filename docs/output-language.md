@@ -17,10 +17,8 @@
    (coach state) is phase 2 — not yet implemented.*
 3. **Default `zh-TW`** only when neither signal exists.
 
-> Owner-confirmation pending: the owner recalls "follow the user's default /
-> preference". Recommended interpretation (encoded above): conversation is
-> the strongest live signal; the stored preference serves non-interactive
-> runs. Reverse 1↔2 only with an explicit owner ruling.
+> Ruled 2026-07-21: owner confirmed conversation-first; the stored preference
+> serves non-interactive runs only.
 
 ## 2. Architecture rule (existing policy, restated with teeth)
 
@@ -31,6 +29,12 @@ identifiers are English snake_case; localized wording lives only in
 
 Consequences this contract makes explicit:
 
+- **Internal canonical language is English** (owner ruling 2026-07-21).
+  Everything produced internally — codes, identifiers, intermediate
+  artifacts, logs — is English; the user's language exists only at the
+  presentation layer (cards) and the interaction layer (questions shown,
+  answers collected). Every locale, zh-TW included, renders from the same
+  English-baseline internals.
 - **No user-visible string may be baked into engine data values.** Engine
   output carries stable codes; the renderer's copy layer localizes them.
 - **A locale gap is a defect, not a reduction.** The four-block skeleton
@@ -55,9 +59,9 @@ lose content (all line refs at main `08a5606`):
 
 Repair direction: engine emits stable codes (`averaging_in`, `oversized`,
 scenario/prescription kinds); `copy/<locale>.json` gains the label strings;
-renderer resolves codes → copy. Persisted artifacts (state/cards) that
-already store zh literals need a read-time mapping so old sessions replay
-cleanly — audit before coding.
+renderer resolves codes → copy. Persisted artifacts that already store zh
+literals need no compatibility mapping — dev-phase ruling (owner
+2026-07-21): stale data is cleaned up on demand, not migrated.
 
 ## 4. Out of scope for this contract
 
@@ -75,7 +79,9 @@ cleanly — audit before coding.
    style; digit-ban quantifier rules are zh-specific — decide the locale's
    equivalent or mark n/a).
 3. Checker review: language-targeted assertions (e.g. A-13 CJK punctuation)
-   are per-locale; add or waive explicitly.
+   are per-locale; add or waive explicitly. Splitting check logic from
+   language data is tracked in
+   [#281](https://github.com/atomchung/fomo-kernel/issues/281) (parked).
 4. HTML font stack covers the locale's script.
 5. One mock-persona QA run in that locale; card must pass the S-series
    structure checks (`docs/output-contract.md` §8).

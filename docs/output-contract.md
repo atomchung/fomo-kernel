@@ -134,3 +134,6 @@ LLM judge and dogfood verdicts: structure is mechanical, prose is judged.
 | 2026-07-21 | axis 4 | Text card is self-sufficient (README text mock is the floor); missing prerequisites render one-line notes. |
 | 2026-07-21 | axis 5 | Four owner principles adopted (§5); three small fixes (95% literal, %/pp bridge, option-copy jargon scan) approved in direction. |
 | 2026-07-21 | axis 6 | Red lines stay contract + LLM-judge (soft); no preview hard-check for now. |
+| 2026-07-21 | language | Resolution order confirmed: conversation-first; stored preference is the non-interactive fallback (`output-language.md` §1). |
+| 2026-07-21 | language | Internal canonical language is English; user language exists only at presentation and interaction layers. Check logic must split from language data — parked as #281. |
+| 2026-07-21 | language | Dev-phase: persisted zh literals get no compatibility mapping; clean up on demand. |
