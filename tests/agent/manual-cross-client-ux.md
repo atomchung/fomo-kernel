@@ -5,13 +5,18 @@ Use this owner-only gate for Claude, Codex, or another interactive host. It test
 ## First-review pass
 
 1. Prepare one local case through `engine/review.py`. For a same-input cross-client comparison, give each host the same prepared Review Plan for presentation inspection. Do not let two hosts preview or finalize the same pending session; use separate isolated state roots for full lifecycle runs.
-2. Start one presentation trace per host with `ux_receipt.py start` (it is written under `~/.trade-coach/ux/`, outside the repository). Declare `plain_text` and `markdown_inline` unconditionally; add `native_options` and `widget` only if the host exposes them.
+2. Start one presentation trace per host with `ux_receipt.py start` (it is written under `~/.trade-coach/ux/`, outside the repository). Begin every unknown host with `--adapter plain_text`; it declares the universal text and Markdown fallbacks. Declare `native_options` or `validated_widget` only when the current host has actually proven that profile.
 3. When the plan contains `add_thesis` or `headline_motive`, bind a private surface through `review.py resume --question-surfaces` before display. Confirm the returned source and digest are recorded without copying any question content into the trace. Exercise the unchanged engine fallback in a separate isolated session.
-4. Confirm each required question appears once, in order. Native controls must be single-choice. A host without them must use the exact lettered fallback from `references/interaction-delivery.md`; that is a supported mode, not a failed review.
+4. Confirm each required question appears once, in order. Native controls must be single-choice. A host without them must use the exact lettered fallback from `references/interaction-delivery.md`; that is a supported mode, not a failed review. For the text route, verify the complete question survives every interruption, the option set is not duplicated, and the next question is complete after a valid reply.
 5. For a validated dynamic surface, rate whether the stem felt specific to the supplied context and whether one of the available answers fit. Confirm a valid choice is captured once. Ambiguous input may use only the frozen clarification inside the same question and must not cause the option set to be displayed again.
 6. Confirm the full private preview appears inline before any commitment prompt. A path, attachment, or message saying that a card exists fails this gate.
 7. Choose one candidate, provide one custom rule, or skip. Confirm the final private card appears inline and contains at most that one user choice.
 8. Append `owner_verdict` with controls and card set from the owner's direct experience. For a dynamic surface also pass `--question-specificity` and `--answer-fit`, then run trace verification with `--require-owner-verdict`.
+
+Run this gate once for the universal `plain_text` route on an unknown or
+plugin-absent host. Run it again for each proposed `validated_widget` adapter;
+the latter does not promote the adapter until the owner observes direct choice
+submission and card rendering in the actual host.
 
 ## Weekly-memory pass
 

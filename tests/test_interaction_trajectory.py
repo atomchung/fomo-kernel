@@ -35,6 +35,7 @@ def declaration(**overrides):
         "session_id": "session-230",
         "client": "codex-desktop",
         "route": "first_review",
+        "adapter": "plain_text",
         "question_modes": ["plain_text"],
         "card_modes": ["markdown_inline"],
     }
@@ -90,13 +91,17 @@ def assert_has(errors, fragment):
 
 # --- Happy paths --------------------------------------------------------------
 
-def test_known_good_text_fallback_passes():
+def test_unknown_host_defaults_to_a_first_class_text_fallback():
+    # No optional adapter is declared or failed: plain text is the normal
+    # unknown-host route, rather than a degraded widget delivery.
+    assert good_markdown_rows()[0]["adapter"] == "plain_text"
     assert ux_receipt.verify_rows(good_markdown_rows()) == []
 
 
 def test_native_controls_and_widget_pass():
     rows = good_markdown_rows()
     rows[0] = declaration(
+        adapter="validated_widget",
         question_modes=["plain_text", "native_options"],
         card_modes=["markdown_inline", "widget"],
     )
@@ -153,13 +158,21 @@ def test_final_card_before_preview_card_fails():
 
 def test_declared_widget_silent_markdown_fails():
     rows = good_markdown_rows()
-    rows[0] = declaration(card_modes=["markdown_inline", "widget"])
+    rows[0] = declaration(
+        adapter="validated_widget",
+        question_modes=["plain_text", "native_options"],
+        card_modes=["markdown_inline", "widget"],
+    )
     assert_has(ux_receipt.verify_rows(rows), "without recording a failed widget attempt")
 
 
 def test_declared_widget_with_recorded_failure_passes():
     rows = good_markdown_rows()
-    rows[0] = declaration(card_modes=["markdown_inline", "widget"])
+    rows[0] = declaration(
+        adapter="validated_widget",
+        question_modes=["plain_text", "native_options"],
+        card_modes=["markdown_inline", "widget"],
+    )
     rows.insert(1, row("widget_attempt_failed", stage="preview"))
     assert ux_receipt.verify_rows(rows) == []
 
@@ -174,7 +187,9 @@ def test_widget_failure_without_capability_fails():
 
 def test_missing_universal_fallbacks_fail():
     rows = good_markdown_rows()
-    rows[0] = declaration(question_modes=["native_options"], card_modes=["widget"])
+    rows[0] = declaration(
+        adapter="validated_widget", question_modes=["native_options"], card_modes=["widget"]
+    )
     errors = ux_receipt.verify_rows(rows)
     assert_has(errors, "plain_text as the universal question fallback")
     assert_has(errors, "markdown_inline as the universal card fallback")
@@ -190,6 +205,30 @@ def test_undeclared_question_mode_fails():
     rows = good_markdown_rows()
     rows.insert(1, row("question_presented", mode="native_options"))  # not declared
     assert_has(ux_receipt.verify_rows(rows), "question used undeclared mode")
+
+
+def test_adapter_profile_rejects_unverified_capability_claims():
+    rows = good_markdown_rows()
+    rows[0] = declaration(
+        adapter="plain_text",
+        question_modes=["plain_text", "native_options"],
+        card_modes=["markdown_inline"],
+    )
+    assert_has(ux_receipt.verify_rows(rows), "plain_text adapter may declare only")
+
+    rows = good_markdown_rows()
+    rows[0] = declaration(
+        adapter="validated_widget",
+        question_modes=["plain_text", "native_options"],
+        card_modes=["markdown_inline"],
+    )
+    assert_has(ux_receipt.verify_rows(rows), "requires card modes")
+
+
+def test_legacy_trace_without_adapter_still_verifies():
+    rows = good_markdown_rows()
+    rows[0].pop("adapter")
+    assert ux_receipt.verify_rows(rows) == []
 
 
 # --- Latency markers: answers_received / rule_choice_presented (#236, #230) ---
@@ -717,6 +756,7 @@ def test_cli_writes_trace_into_protected_state_root():
         # Every persisted row is stamped with a UTC ts at write time (#236).
         written = [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()]
         assert all(ux_receipt.TS_PATTERN.fullmatch(value.get("ts", "")) for value in written), written
+        assert written[0]["adapter"] == "plain_text"
 
         nomode = subprocess.run(
             [sys.executable, str(TOOL), "event", *common, "--event", "rule_choice_presented"],
@@ -729,12 +769,17 @@ def test_cli_start_auto_declares_universal_fallbacks():
     # #297: plain_text/markdown_inline are universal fallbacks every
     # text-based client can render; a caller must not have to remember to
     # pass them explicitly alongside a richer capability like native_options
-    # or widget.
+    # or widget. Post-#304, a caller declaring both extra capabilities must
+    # also name the matching resolved adapter (validated_widget requires both
+    # native_options and widget together); the default plain_text adapter
+    # accepts only the universal fallbacks by design (see the "adapter
+    # capability errors" tests below).
     with tempfile.TemporaryDirectory() as tmp:
         common = ["--session-id", "session-297", "--state-root", tmp]
         start = subprocess.run(
             [sys.executable, str(TOOL), "start", *common,
              "--client", "claude", "--route", "first_review",
+             "--adapter", "validated_widget",
              "--question-mode", "native_options", "--card-mode", "widget"],
             capture_output=True, text=True,
         )
@@ -743,6 +788,37 @@ def test_cli_start_auto_declares_universal_fallbacks():
         declared = json.loads(receipt.read_text(encoding="utf-8").splitlines()[0])
         assert set(declared["question_modes"]) == {"native_options", "plain_text"}
         assert set(declared["card_modes"]) == {"widget", "markdown_inline"}
+
+
+def test_cli_unknown_host_needs_no_optional_mode_flags():
+    with tempfile.TemporaryDirectory() as tmp:
+        started = subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "unknown-host",
+             "--state-root", tmp, "--client", "future-agent", "--route", "first_review"],
+            capture_output=True, text=True,
+        )
+        assert started.returncode == 0, started.stderr
+        trace = pathlib.Path(tmp) / "ux" / "unknown-host.jsonl"
+        declaration_row = json.loads(trace.read_text(encoding="utf-8").splitlines()[0])
+        assert declaration_row["adapter"] == "plain_text"
+        assert declaration_row["question_modes"] == ["plain_text"]
+        assert declaration_row["card_modes"] == ["markdown_inline"]
+
+
+def test_cli_native_options_profile_requires_and_records_its_extra_mode():
+    with tempfile.TemporaryDirectory() as tmp:
+        started = subprocess.run(
+            [sys.executable, str(TOOL), "start", "--session-id", "known-host",
+             "--state-root", tmp, "--client", "known-agent", "--route", "first_review",
+             "--adapter", "native_options", "--question-mode", "native_options"],
+            capture_output=True, text=True,
+        )
+        assert started.returncode == 0, started.stderr
+        trace = pathlib.Path(tmp) / "ux" / "known-host.jsonl"
+        declaration_row = json.loads(trace.read_text(encoding="utf-8").splitlines()[0])
+        assert declaration_row["adapter"] == "native_options"
+        assert declaration_row["question_modes"] == ["plain_text", "native_options"]
+        assert declaration_row["card_modes"] == ["markdown_inline"]
 
 
 def test_cli_rejects_undeclared_stage_choice():
@@ -779,6 +855,9 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "--answer-fit",
         "answers_received",
         "rule_choice_presented",
+        "Capability resolution",
+        "validated_widget",
+        "Unknown hosts",
         "stamped with a UTC ISO-8601 `ts`",
         "--grounding-check-file",
         "--require-timing-integrity",

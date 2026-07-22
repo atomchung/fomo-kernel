@@ -69,6 +69,18 @@ def _default_state_root() -> str:
 QUESTION_MODES = ("native_options", "plain_text")
 SURFACE_SOURCES = ("validated_dynamic", "engine_fallback")
 CARD_MODES = ("widget", "markdown_inline")
+# An adapter is the single runtime route selected by the host.  It is not the
+# host name and must never be guessed from one (for example, "Codex" does not
+# prove an AppBridge widget is installed or usable in this task).
+ADAPTERS = ("plain_text", "native_options", "validated_widget")
+ADAPTER_REQUIREMENTS = {
+    "plain_text": ({"plain_text"}, {"markdown_inline"}),
+    "native_options": ({"plain_text", "native_options"}, {"markdown_inline"}),
+    "validated_widget": (
+        {"plain_text", "native_options"},
+        {"markdown_inline", "widget"},
+    ),
+}
 ROUTES = ("first_review", "weekly_review", "snapshot_review", "test_drive")
 STAGES = ("preview", "final")
 MEMORY_KINDS = ("prior_commitment", "prior_skip", "exit_reason", "due_revisit")
@@ -172,14 +184,18 @@ def start_receipt(args: argparse.Namespace) -> None:
     # Guarantee them here instead of leaving it to the caller to remember —
     # a caller only needs to additionally declare native_options/widget when
     # the host actually exposes them.
-    question_modes = list(dict.fromkeys([*args.question_mode, "plain_text"]))
-    card_modes = list(dict.fromkeys([*args.card_mode, "markdown_inline"]))
+    question_modes = list(dict.fromkeys(["plain_text", *args.question_mode]))
+    card_modes = list(dict.fromkeys(["markdown_inline", *args.card_mode]))
+    errors = _adapter_capability_errors(args.adapter, set(question_modes), set(card_modes))
+    if errors:
+        raise ReceiptError("; ".join(errors))
     row = {
         "version": VERSION,
         "event": "capabilities_declared",
         "session_id": args.session_id,
         "client": args.client,
         "route": args.route,
+        "adapter": args.adapter,
         "question_modes": question_modes,
         "card_modes": card_modes,
     }
@@ -387,6 +403,30 @@ def timing_integrity(rows: list[dict]) -> dict:
     }
 
 
+def _adapter_capability_errors(
+    adapter: object, question_modes: set[str], card_modes: set[str]
+) -> list[str]:
+    """Return errors for a newly declared adapter without naming any host.
+
+    Missing ``adapter`` is intentionally accepted by ``verify_rows`` so traces
+    created before this contract extension stay readable.  New CLI traces always
+    include one, and therefore make unknown-host text fallback observable.
+    """
+    if adapter not in ADAPTERS:
+        return [f"unsupported adapter: {adapter!r}"]
+    required_questions, required_cards = ADAPTER_REQUIREMENTS[adapter]
+    errors = []
+    if not required_questions <= question_modes:
+        errors.append(f"adapter {adapter!r} requires question modes {sorted(required_questions)}")
+    if not required_cards <= card_modes:
+        errors.append(f"adapter {adapter!r} requires card modes {sorted(required_cards)}")
+    if adapter == "plain_text" and (
+        question_modes != required_questions or card_modes != required_cards
+    ):
+        errors.append("plain_text adapter may declare only the universal text and Markdown fallbacks")
+    return errors
+
+
 def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
@@ -490,6 +530,11 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
         errors.append("capabilities must declare plain_text as the universal question fallback")
     if not card_modes <= set(CARD_MODES) or "markdown_inline" not in card_modes:
         errors.append("capabilities must declare markdown_inline as the universal card fallback")
+    # Adapter was introduced after the first trace version.  Keep old receipts
+    # verifiable, but require every new declaration written by this CLI to bind
+    # its actual capability set to one host-agnostic adapter profile.
+    if "adapter" in declaration:
+        errors.extend(_adapter_capability_errors(declaration["adapter"], question_modes, card_modes))
     for row in rows:
         if row.get("event") == "question_presented" and row.get("mode") not in question_modes:
             errors.append(f"question used undeclared mode {row.get('mode')!r}")
@@ -616,12 +661,16 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--state-root", default=None,
                          help="protected state directory (default: $TRADE_COACH_HOME, else ~/.trade-coach)")
 
-    start = subparsers.add_parser("start", help="declare one host adapter's capabilities")
+    start = subparsers.add_parser("start", help="declare one resolved host adapter and its capabilities")
     add_common(start)
     start.add_argument("--client", required=True)
     start.add_argument("--route", required=True, choices=ROUTES)
-    start.add_argument("--question-mode", action="append", choices=QUESTION_MODES, required=True)
-    start.add_argument("--card-mode", action="append", choices=CARD_MODES, required=True)
+    start.add_argument("--adapter", choices=ADAPTERS, default="plain_text",
+                       help="resolved runtime route; default is the universal unknown-host fallback")
+    start.add_argument("--question-mode", action="append", choices=QUESTION_MODES, default=[],
+                       help="extra capability beyond the universal plain_text fallback")
+    start.add_argument("--card-mode", action="append", choices=CARD_MODES, default=[],
+                       help="extra capability beyond the universal markdown_inline fallback")
     start.set_defaults(handler=start_receipt)
 
     event = subparsers.add_parser("event", help="append a presentation fact after the user-visible action")
