@@ -981,13 +981,17 @@ def test_next_step_reconciles_a_rule_that_contradicts_a_strength():
 
 def test_rule_names_the_positions_it_would_act_on():
     """#302: the rule cites this period's actual positions or behavior counts,
-    at sub-line level under the rule rather than as a detached footnote."""
+    at sub-line level under the rule rather than as a detached footnote.
+    PLTR/NVDA (49%/46%) sit above both POSITION_CAP and OVERSIZE_TRIGGER, and
+    ORCL/AMD (12%/3%) sit below both, so this fixture does not itself pin
+    which of the two thresholds gates the list — see
+    test_rule_targets_filter_on_the_trigger_not_the_coach_cap for that."""
     sizing = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("zh-TW", "position_sizing")))
     assert "PLTR 49%" in sizing and "NVDA 46%" in sizing, \
-        "the sizing rule must name every position over the cap"
+        "the sizing rule must name every position over the trigger"
     assert "ORCL" not in sizing and "AMD" not in sizing, \
-        "positions inside the cap are not what the rule would catch"
+        "positions under the trigger are not what the rule would catch"
     avgdown = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("zh-TW", "averaging_down")))
     assert "PLTR 7 次" in avgdown and "NVDA 5 次" in avgdown, \
@@ -995,6 +999,88 @@ def test_rule_names_the_positions_it_would_act_on():
     en = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("en", "position_sizing")))
     assert "PLTR 49%, NVDA 46%" in en, "en must join targets with halfwidth punctuation"
+
+
+def test_rule_targets_filter_on_the_trigger_not_the_coach_cap():
+    """#328: a holding between POSITION_CAP (20%, the coach's suggested target)
+    and OVERSIZE_TRIGGER (25%, the diagnostic line that actually opens the
+    cut_oversize prescription) was never judged a problem by any engine path.
+    Listing it under "what this rule would catch" made the card stricter than
+    the engine's own judgment (the literal owner-verified repro: 27/22/21)."""
+    for language, over, between in (("zh-TW", "AAA 27%", ("BBB 22%", "CCC 21%")),
+                                     ("en", "AAA 27%", ("BBB 22%", "CCC 21%"))):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+            "AAA": 0.27, "BBB": 0.22, "CCC": 0.21, "DDD": 0.03}
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        assert over in block4, \
+            f"{language}: a holding above the trigger must still be named"
+        for name in between:
+            assert name not in block4, \
+                f"{language}: {name} sits between the cap and the trigger and " \
+                "must not appear — the engine never flagged it as a hole"
+        assert "DDD" not in block4, f"{language}: a holding under both lines stays absent"
+
+    # A custom single-position cap override (#324) moves the trigger and the
+    # cap to the same user-set value, per effective_oversize_trigger/
+    # effective_position_cap: a holding that clears the override must show,
+    # one that does not must be absent, matching the standing contract that
+    # an override collapses the two thresholds into one.
+    bundle = _conflicted_bundle("en", "position_sizing")
+    bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+        "AAA": 0.35, "BBB": 0.28, "CCC": 0.22}
+    bundle["engine_state"]["max_position_pct"] = 0.30
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    assert "AAA 35%" in block4, "a holding above the 30% override must show"
+    assert "BBB" not in block4 and "CCC" not in block4, \
+        "holdings below a 30% override must not show, even though both clear the universal 25% default"
+
+
+def test_rule_targets_truncate_past_the_display_limit():
+    """#349: past RULE_TARGETS_DISPLAY_LIMIT (4) named entries, the targets
+    line reads as a raw data dump rather than a point of view (owner dogfood
+    finding). The remainder collapses into one localized "+N more" tail, and
+    the items shown are still the top-impact ones (already ranked upstream)."""
+    weights = {"AAA": 0.40, "BBB": 0.35, "CCC": 0.30, "DDD": 0.29,
+               "EEE": 0.28, "FFF": 0.26}
+    for language, tail in (("zh-TW", "、及其他 2 檔"), ("en", ", and 2 more")):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        bundle["engine_card"]["dims_raw"][0]["risk_weights"] = weights
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        for shown in ("AAA 40%", "BBB 35%", "CCC 30%", "DDD 29%"):
+            assert shown in block4, f"{language}: top-impact entry {shown} must still be named"
+        for hidden in ("EEE 28%", "FFF 26%"):
+            assert hidden not in block4, \
+                f"{language}: {hidden} is past the display limit and must fold into the tail"
+        assert tail in block4, f"{language}: overflow must render as the localized '+N more' tail"
+
+    # Exactly at the limit: no overflow, no tail, every entry named.
+    bundle = _conflicted_bundle("en", "position_sizing")
+    bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+        "AAA": 0.40, "BBB": 0.35, "CCC": 0.30, "DDD": 0.26}
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    assert all(t in block4 for t in ("AAA 40%", "BBB 35%", "CCC 30%", "DDD 26%")), \
+        "exactly four entries must all be named"
+    assert "more" not in block4, "four entries (the limit) must not trigger the overflow tail"
+
+    # The truncation is generic across dims/kinds, not special-cased to pct:
+    # averaging_down's "count" items must also fold past the limit.
+    bundle = _conflicted_bundle("zh-TW", "averaging_down")
+    bundle["engine_card"]["dims_raw"][1]["ticker_counts"] = {
+        "AAA": 9, "BBB": 8, "CCC": 7, "DDD": 6, "EEE": 5}
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    for shown in ("AAA 9 次", "BBB 8 次", "CCC 7 次", "DDD 6 次"):
+        assert shown in block4, f"averaging_down: {shown} must still be named"
+    assert "EEE" not in block4, "averaging_down: the fifth ticker must fold into the tail"
+    assert "、及其他 1 檔" in block4, "averaging_down: overflow tail must use the same copy contract"
+
+
+def test_renderer_oversize_trigger_matches_the_engine_constant():
+    """#328: the renderer keeps its own stdlib copy of the trigger, same
+    reason and same boundary as POSITION_CAP. Pin them together."""
+    import trade_recap  # engine path already on sys.path via test_review_v2
+    assert card_renderer.OVERSIZE_TRIGGER == trade_recap.OVERSIZE_TRIGGER, \
+        "card_renderer.OVERSIZE_TRIGGER and trade_recap.OVERSIZE_TRIGGER must stay in sync"
 
 
 def test_exit_opportunity_cost_collects_into_one_read_only_panel():
@@ -1121,6 +1207,9 @@ def main():
         test_next_step_renders_exactly_one_action,
         test_next_step_reconciles_a_rule_that_contradicts_a_strength,
         test_rule_names_the_positions_it_would_act_on,
+        test_rule_targets_filter_on_the_trigger_not_the_coach_cap,
+        test_rule_targets_truncate_past_the_display_limit,
+        test_renderer_oversize_trigger_matches_the_engine_constant,
         test_exit_opportunity_cost_collects_into_one_read_only_panel,
         test_exit_opportunity_cost_is_no_longer_scattered_across_key_trades,
         test_exit_consistency_panel_yields_to_the_question_when_asked,
