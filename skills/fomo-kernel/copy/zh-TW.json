@@ -5,6 +5,10 @@
   "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
   "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
   "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
+  "markdown_summary": {
+    "risk": "主要風險",
+    "next": "下次規則"
+  },
   "snapshot_numbers": "第一次持倉結構",
   "snapshot_strength": "這份快照建立了什麼",
   "snapshot_hole": "主要結構風險",

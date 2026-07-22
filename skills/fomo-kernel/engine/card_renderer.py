@@ -2440,6 +2440,29 @@ def _panel_md(panel, en):
     return out or [f"[{panel['mark']}] {panel['label']}"]
 
 
+def _read_first_panels(structure):
+    """Return existing leading risk/rule lines for a text-first scan.
+
+    Markdown hosts have no visual KPI grid to keep the conclusion in view.
+    The compact blockquote rendered by ``render_private`` therefore repeats
+    only the lead line from the canonical Risk and Next-step panels before
+    the detailed four-block card. It is not a second diagnosis, calculation,
+    or rule.
+    """
+    copy = structure["copy"]
+    en = structure["language"] == "en"
+    sections = {section["id"]: section for section in structure["sections"]}
+    entries = []
+    for section_id, style, label_key in (("risks", "hole", "risk"),
+                                         ("next", "rule", "next")):
+        section = sections.get(section_id) or {}
+        panel = next((block for kind, block in section.get("blocks") or []
+                      if kind == "panel" and block.get("style") == style), None)
+        if panel:
+            entries.append((copy["markdown_summary"][label_key], _panel_md(panel, en)[0]))
+    return entries
+
+
 def render_private(bundle):
     structure = _card_structure(bundle)
     copy = structure["copy"]
@@ -2458,6 +2481,11 @@ def render_private(bundle):
         lines.extend([f"> {badge}", ""])
     for _kind, block in structure["preamble"]:
         lines.extend(list(block) + [""])
+    # #325: plain-text reader path. The title remains the keynote; the leading
+    # risk and rule are visible before performance detail while the complete
+    # four-block narrative remains in its fixed order below.
+    for label, value in _read_first_panels(structure):
+        lines.extend([f"> **{label}**", ">", f"> {value}", ""])
     for section in structure["sections"]:
         lines.extend([f"## {section['title']}", ""])
         for kind, block in section["blocks"]:

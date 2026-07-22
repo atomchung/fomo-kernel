@@ -5,6 +5,10 @@
   "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
   "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
   "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
+  "markdown_summary": {
+    "risk": "Key risk",
+    "next": "Next rule"
+  },
   "snapshot_numbers": "Opening portfolio structure",
   "snapshot_strength": "What this snapshot establishes",
   "snapshot_hole": "The leading structural risk",

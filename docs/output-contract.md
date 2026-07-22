@@ -65,6 +65,17 @@ Renderer sections not mapped above (standalone market timeline, standalone
 motive/exit/ETF sections, …) merge into the blocks as described or disappear;
 they are the accumulation the owner flagged as "each iteration got worse".
 
+### Markdown reader path
+
+The canonical private Markdown puts a small read-first blockquote after the
+keynote and before Block 1: the already-rendered lead line of the Block-3
+`[X]` panel and the lead line of the Block-4 `[*]` panel. It is a presentation
+projection for conversation-only and CLI fallback, not a fifth content block:
+it repeats no calculation, does not create an additional recommendation, and
+does not change the four-block order below. This lets a reader find the
+headline, one key risk, and the one next rule before scanning performance
+detail. Missing diagnostics do not get a synthetic risk summary.
+
 ## 3. Module × data-prerequisite table
 
 Owner ruling: **the skeleton is constant — constraints cut depth inside a
