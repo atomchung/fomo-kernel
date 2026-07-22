@@ -43,7 +43,24 @@ NON_NEGOTIABLE_SECTIONS = {
     Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
     Path("skills/fomo-kernel/references/agent-boundaries.md"): "The agent may not:",
 }
-REVIEW_COMMANDS = ("prepare", "resume", "preview", "finalize", "repair-projections")
+def _cli_review_commands():
+    """Derive the boundary whitelist from build_parser() itself, so a new
+    review.py subcommand that is missing from any non-negotiable section
+    fails this suite instead of silently drifting (the hardcoded baseline
+    missed `capture`/`set-cap` for weeks)."""
+    import argparse
+    import sys
+    engine_dir = str(ROOT / "skills" / "fomo-kernel" / "engine")
+    if engine_dir not in sys.path:
+        sys.path.insert(0, engine_dir)
+    import review as _review
+    for action in _review.build_parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return tuple(sorted(action.choices))
+    raise AssertionError("build_parser() registered no subcommands")
+
+
+REVIEW_COMMANDS = _cli_review_commands()
 LOCAL_FILE_REFERENCE = re.compile(
     r"`(?P<code_path>[^`\n]+\.(?:md|json))`"
     r"|\[[^\]]*\]\((?P<link_path>[^)\s]+\.(?:md|json)(?:#[^)]*)?)\)"
