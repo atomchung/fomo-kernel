@@ -1604,6 +1604,49 @@ def test_prepare_completes_when_no_hole_and_no_headline_dimension():
             assert "None" not in queue[0]["question"]
 
 
+def test_review_tier_frozen_into_plan_and_span_is_soft():
+    """#306: the engine freezes a deterministic review_tier into the plan's
+    state_snapshot. Round-trip COUNT decides behavioral vs structural; calendar
+    span is advisory only (durability_short), so a high-frequency short-window
+    file is NOT demoted the way the old ``rts<3 or span<84`` OR-gate would.
+    Nothing consumes the field yet, so user-visible behavior is unchanged."""
+    # 1) Direct classifier coverage, including the empty edge no fixture has.
+    def _tier(**state):
+        return review_engine._review_tier(state)
+    assert _tier(n_round_trips=0, n_held=0)["tier"] == "empty"
+    assert _tier(n_round_trips=0, n_held=3)["tier"] == "structural"
+    assert _tier(n_round_trips=2, n_held=0)["tier"] == "structural"
+    assert _tier(n_round_trips=3, n_held=0)["tier"] == "behavioral"
+    # span is soft: 14 round trips in a 15-day window still promotes to behavioral
+    short = _tier(n_round_trips=14, n_held=0, date_start="2026-01-01", date_end="2026-01-16")
+    assert short["tier"] == "behavioral" and short["durability_short"] is True
+    long_ = _tier(n_round_trips=8, n_held=4, date_start="2026-01-01", date_end="2026-12-01")
+    assert long_["tier"] == "behavioral" and long_["durability_short"] is False
+    # missing dates -> no span, fail-closed to not-short
+    assert _tier(n_round_trips=0, n_held=0)["durability_short"] is False
+
+    # 2) End-to-end: the tier is frozen into the plan. sample_insufficient has 2
+    #    round trips over a 41-day span -> structural + durability_short.
+    mock = ROOT / "skills" / "fomo-kernel" / "mock"
+    with tempfile.TemporaryDirectory() as tmp:
+        stub_dir = pathlib.Path(tmp) / "stubs"
+        stub_dir.mkdir()
+        (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n',
+                                              encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+        run = _run("prepare", mock / "sample_insufficient.csv", "--test-drive",
+                   "--root", pathlib.Path(tmp) / "root", "--language", "en",
+                   "--driver-map", mock / "sample_insufficient.driver_map.json",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        tier = json.loads(run.stdout)["review_plan"]["state_snapshot"]["review_tier"]
+        assert tier["tier"] == "structural", tier
+        assert tier["n_round_trips"] == 2 and tier["durability_short"] is True, tier
+        assert tier["min_round_trips"] == 3 and tier["min_span_days"] == 84, tier
+
+
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
     """#194A: files and staging dir land before rename; parent dir lands after."""
     with tempfile.TemporaryDirectory() as root:

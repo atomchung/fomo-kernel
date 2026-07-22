@@ -17,6 +17,7 @@ DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades
 
 N_FWD = 30          # 賣出後 N 交易日看續漲（tunable）
 MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交易跨度短於此 → insufficient(§4.4, #21.4)
+MIN_ROUND_TRIPS = 3  # 完整買賣回合 < 此 → 已實現行為太薄;review._review_tier 的 behavioral 門檻同源(#306)
 CURVE_MAX_POINTS = 52  # pnl_curve 逐日序列長於此 → 降成週頻(W-FRI),卡片 sparkline 不需要逐日精度
 
 # cycle_id 契約(單一事實源,#61):SKILL 對帳、theses.jsonl 綁定、測試斷言都以這兩條為準。
@@ -1650,7 +1651,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 不綁 α 樣本(ab.n):離線/無價格時 ab.n=0,但行為維(sizing/攤平/分散)仍可承諾;
     # α 是否可信另由 alpha_credible 表示,別讓「沒價格」誤殺行為層的 commitment(codex review)。
     span_days = (rows[-1]["date"] - rows[0]["date"]).days if rows else 0
-    insufficient = len(rts) < 3 or span_days < MIN_SPAN_DAYS
+    insufficient = len(rts) < MIN_ROUND_TRIPS or span_days < MIN_SPAN_DAYS
     # commitment = 下次要對帳的「規矩 + 它對應的可追蹤 metric」。對帳必須查這一維(用戶真承諾的),
     # 不是查 headline(否則第二張卡拿 sizing 比、用戶卻承諾攤平 = 對錯帳)。rule 關鍵字 → metric。
     commitment = None

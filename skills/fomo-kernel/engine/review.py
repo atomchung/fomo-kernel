@@ -34,6 +34,7 @@ import revisit
 import session
 import snapshot_adapter
 import thesis
+import trade_recap
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -466,6 +467,68 @@ def _cadence(route, date_end, previous):
     tier = "light" if span <= threshold else "full"
     return {"tier": tier, "span_days": span, "threshold_days": threshold,
             "basis": "span", "override": None}
+
+
+def _trade_span_days(date_start, date_end):
+    """Calendar-day span of the trade file itself (first row to last).
+
+    Mirrors ``trade_recap.build_state``'s own span basis; used only for the
+    advisory ``durability_short`` flag in :func:`_review_tier`. Returns None when
+    either boundary is missing or unparseable. Distinct from
+    ``_review_span_days``, which measures the gap *between* reviews.
+    """
+    if not date_start or not date_end:
+        return None
+    try:
+        start = dt.date.fromisoformat(str(date_start))
+        end = dt.date.fromisoformat(str(date_end))
+    except (TypeError, ValueError):
+        return None
+    return max(0, (end - start).days)
+
+
+def _review_tier(state):
+    """Engine-owned classification of how much a file can support (#306).
+
+    Additive Review Plan metadata (frozen into ``state_snapshot``), deterministic
+    and fail-closed. It records the entry decision in one place so later
+    consumers — routing, question density, card framing — read a single
+    engine-owned source instead of re-deriving thresholds in agent prose:
+
+    - ``empty``:       no current holdings and no closed round trips — nothing to
+                       diagnose; the flow must tell the user exactly what to add.
+    - ``behavioral``:  at least ``MIN_ROUND_TRIPS`` closed round trips — enough
+                       realized history for a full behavioral review.
+    - ``structural``:  holdings exist but fewer round trips — an opening
+                       structural check.
+
+    Per #306 the calendar span is advisory only: ``durability_short`` flags a
+    short trade window for a later note, but round-trip *count* — never span —
+    decides ``behavioral``, so a high-frequency short-window file is not demoted
+    the way the ``rts<3 or span<MIN_SPAN_DAYS`` commitment gate would demote it.
+    Nothing consumes this field yet; emitting it first keeps the tier a single
+    source of truth for the follow-up routing/rendering changes.
+    """
+    n_rt = state.get("n_round_trips") or 0
+    n_held = state.get("n_held")
+    if n_held is None:
+        n_held = len(((state.get("holdings") or {}).get("positions")) or {})
+    span_days = _trade_span_days(state.get("date_start"), state.get("date_end"))
+    if n_held == 0 and n_rt == 0:
+        tier = "empty"
+    elif n_rt >= trade_recap.MIN_ROUND_TRIPS:
+        tier = "behavioral"
+    else:
+        tier = "structural"
+    return {
+        "tier": tier,
+        "n_round_trips": n_rt,
+        "n_held": n_held,
+        "span_days": span_days,
+        "min_round_trips": trade_recap.MIN_ROUND_TRIPS,
+        "min_span_days": trade_recap.MIN_SPAN_DAYS,
+        "durability_short": span_days is not None and span_days < trade_recap.MIN_SPAN_DAYS,
+    }
 
 
 # Monthly vs-market cadence (#284, output contract §3): the vs-market
@@ -1976,6 +2039,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                                "returning": completed_reviews > 0,
                            },
                            "cadence": cadence,
+                           "review_tier": _review_tier(state),
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single
