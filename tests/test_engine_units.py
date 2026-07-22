@@ -566,6 +566,81 @@ def test_prescribe_rx_entries_tagged_with_dim():
     assert tagged.keys() == {"加碼攤平", "部位 sizing"}, f"兩條 rule 應各自帶對應 dim,實得 {list(tagged.keys())}"
 
 
+# ─────────────────── J2. sizing 閾值對齊 + 用戶自訂上限(#324)───────────────────
+
+def test_sizing_diagnosis_and_prescription_fire_on_one_line():
+    """#324 核心 bug 修:最大部位落在 25%–30% 之間 → 診斷標成洞『且』處方開 cut_oversize。
+    對齊前這段是死區:dim_size 標洞(>25%)但 prescribe 沉默(>30%),用戶看到問題卻拿不到規矩。"""
+    held = {"BIG": (1, 27.0), "S1": (1, 25.0), "S2": (1, 25.0), "S3": (1, 23.0)}  # 成本權重 BIG=27%
+    d_size = tr.dim_size([], held, None)
+    assert d_size["max_ticker"] == "BIG" and abs(d_size["max_pct"] - 0.27) < 1e-9
+    assert d_size["triggered"] is True, "27% > 25% 觸發線 → 應標成洞"
+    rx = tr.prescribe(None, [d_size], {})
+    oversize = [r for r in rx if r.get("code") == "cut_oversize"]
+    assert oversize, "#324:對齊後 27% 也必須拿到 cut_oversize 處方(對齊前要 >30% 才給 → 死區)"
+    assert "20%" in oversize[0]["rule"], "無覆寫 → 規矩建議壓到通用預設 20%"
+
+
+def test_sizing_severity_anchored_at_trigger_line():
+    """#324:severity 從觸發線起算——恰在觸發線 severity=0,越線才 >0(不再從 0.20 起算,
+    避免 22% 的倉 severity>0 卻不 triggered 這種各說各話)。"""
+    at_line = tr.dim_size([], {"S1": (1, 25.0), "S2": (1, 25.0),
+                               "S3": (1, 25.0), "S4": (1, 25.0)}, None)   # 每檔 25%
+    assert abs(at_line["max_pct"] - 0.25) < 1e-9
+    assert at_line["severity"] == 0.0, "恰在 25% 觸發線 → severity 0"
+    assert at_line["triggered"] is False, "恰在線上不算越線(嚴格 > 才觸發)"
+    full = tr.dim_size([], {"BIG": (1, 50.0), "S1": (1, 30.0), "S2": (1, 20.0)}, None)  # BIG 50%
+    assert abs(full["max_pct"] - 0.50) < 1e-9 and full["severity"] == 1.0, \
+        "觸發線 + span(25%+25%)=50% → severity 滿格"
+
+
+def test_position_cap_override_shifts_diagnosis_and_prescription():
+    """#324:用戶自訂上限『同時』改「標成洞」與「開處方」兩條判準——個人化來自承諾,不是歷史平均。"""
+    held = {"BIG": (1, 27.0), "S1": (1, 25.0), "S2": (1, 25.0), "S3": (1, 23.0)}  # 27%
+    loose = tr.dim_size([], held, None, max_pos_override=0.30)                    # 放寬到 30%
+    assert loose["triggered"] is False, "27% < 用戶 30% 上限 → 不標洞"
+    assert [r for r in tr.prescribe(None, [loose], {}, max_pos_override=0.30)
+            if r.get("code") == "cut_oversize"] == [], "27% < 用戶 30% 上限 → 不開處方"
+    tight = tr.dim_size([], held, None, max_pos_override=0.15)                    # 收緊到 15%
+    assert tight["triggered"] is True, "27% > 用戶 15% 上限 → 標洞"
+    oversize = [r for r in tr.prescribe(None, [tight], {}, max_pos_override=0.15)
+                if r.get("code") == "cut_oversize"]
+    assert oversize and "15%" in oversize[0]["rule"], "收緊上限 → 規矩文案帶用戶的 15%"
+
+
+def test_position_cap_override_rejected_when_invalid():
+    """#324 fail-closed:<=0 / >=1 / NaN / inf / 非數字 → 退回通用預設,不污染診斷。"""
+    for bad in (0, -0.1, 1, 1.5, float("nan"), float("inf"), "abc", None, ""):
+        assert tr.valid_position_cap(bad) is None, f"{bad!r} 應被拒收(回 None)"
+    for good, want in ((0.25, 0.25), ("0.3", 0.3), (0.01, 0.01), (0.99, 0.99)):
+        assert tr.valid_position_cap(good) == want, f"{good!r} 合法應保留"
+    assert tr.effective_oversize_trigger("junk") == tr.OVERSIZE_TRIGGER, "壞值 → 通用觸發線"
+    assert tr.effective_position_cap(0) == tr.POSITION_CAP, "壞值 → 通用規矩上限"
+    held = {"BIG": (1, 27.0), "S1": (1, 25.0), "S2": (1, 25.0), "S3": (1, 23.0)}
+    assert tr.dim_size([], held, None, max_pos_override=1.5)["triggered"] is True, \
+        "壞覆寫值 → 退回 25% 觸發線 → 27% 仍越線"
+
+
+def test_build_state_echoes_position_cap_override():
+    """#324:build_state 把本次採用的用戶自訂上限回填 state(renderer 規矩文案 + 下次對帳讀它);
+    無覆寫=None(通用預設),壞值 fail-closed 也回 None。"""
+    rows = tr.load([os.path.join(MOCK, "mock_trades.csv")])
+    ab = dict(note="無價格")
+    rts, _ = tr.round_trips(rows)
+    held, avg_down = tr.positions(rows)
+    d_size = tr.dim_size(rows, held, None, 0.25)
+    dims = [tr.dim_exit(rts, None), d_size, tr.dim_diversify(held, None),
+            tr.dim_hold(rts), tr.dim_avgdown(avg_down, held, None, d_size)]
+    ov = tr.overview_stats(rts, ab, held, None)
+    rx = tr.prescribe(ab, dims, ov, 0.25)
+    assert tr.build_state(rows, rts, held, dims, ov, ab, rx,
+                          max_pos_override=0.25)["max_position_pct"] == 0.25
+    assert tr.build_state(rows, rts, held, dims, ov, ab, rx)["max_position_pct"] is None, \
+        "無覆寫 → None(用通用預設)"
+    assert tr.build_state(rows, rts, held, dims, ov, ab, rx,
+                          max_pos_override=5)["max_position_pct"] is None, "壞值 fail-closed → None"
+
+
 # ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
 
 def _card_from(dims, rx):

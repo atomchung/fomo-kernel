@@ -5602,6 +5602,35 @@ def test_add_thesis_already_captured_rejection_carries_join_keys():
     assert set(dedup[0]) == {"id", "kind", "cycle_id", "reason"}
 
 
+def test_set_cap_persists_override_and_engine_plumbing_reads_it():
+    """#324: `review.py set-cap` writes a validated single-position override to
+    profile.json (fail-closed on out-of-range); the engine plumbing reads it back
+    and the prepared sizing candidate rule interpolates the user's number."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "root")
+        run = _run("set-cap", "--root", root, "--pct", "0.30")
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert json.loads(run.stdout)["max_position_pct"] == 0.30
+        assert json.loads(pathlib.Path(root, "profile.json").read_text())["max_position_pct"] == 0.30
+        assert review_engine._position_cap_override(root) == 0.30, "engine reader agrees with the store"
+        # Out-of-range is rejected and must not corrupt the stored value.
+        bad = _run("set-cap", "--root", root, "--pct", "1.5")
+        assert bad.returncode == 2 and json.loads(bad.stdout)["status"] == "error", bad.stdout
+        assert review_engine._position_cap_override(root) == 0.30, "a rejected write keeps the prior cap"
+        # The sizing candidate rule interpolates the override (state → localized_rule).
+        card = {"candidate_rules": [], "ticker_diagnosis": [],
+                "top_holes": [{"dim": "部位 sizing", "lens_rule": "fallback"}]}
+        state = {"metrics": {"max_pos_pct": 0.42}, "max_position_pct": 0.30}
+        sizing = [r for r in review_engine._candidate_rules(card, state, "en")
+                  if r["dim"] == "position_sizing"]
+        assert sizing and "30%" in sizing[0]["rule"], \
+            "candidate sizing rule must carry the user's cap, not the 20% default"
+        # Clear reverts to the universal default.
+        cleared = _run("set-cap", "--root", root, "--clear")
+        assert cleared.returncode == 0 and json.loads(cleared.stdout)["status"] == "cleared"
+        assert review_engine._position_cap_override(root) is None, "clear falls back to the universal default"
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0

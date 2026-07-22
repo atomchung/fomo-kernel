@@ -295,6 +295,30 @@ def _previous_state(root):
         return None
 
 
+def _profile_path(root):
+    return os.path.join(root, "profile.json")
+
+
+def _position_cap_override(root):
+    """The user's standing single-position cap from ``profile.json`` (#324).
+
+    Validated to a (0,1) fraction or ``None`` (fail-closed): a missing,
+    unreadable, or out-of-range profile silently falls back to the universal
+    default rather than poisoning diagnosis. This is a standing preference, not
+    per-session state, so it lives outside ``last_state.json`` (which the engine
+    overwrites every run)."""
+    path = _profile_path(root)
+    if not os.path.exists(path):
+        return None
+    try:
+        profile = session.read_json(path)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(profile, dict):
+        return None
+    return card_renderer.valid_position_cap(profile.get("max_position_pct"))
+
+
 def _positive_fx_rate(value):
     try:
         rate = float(value)
@@ -920,6 +944,9 @@ def _run_engine(paths, root, args):
             # instead of aliasing prev_end to its own date_end (#166).
             if previous.get("prev_end"):
                 env["TR_PREV_PREV_END"] = str(previous["prev_end"])
+        cap_override = _position_cap_override(root)          # #324:標準版單一部位上限,通用預設可被覆寫
+        if cap_override is not None:
+            env["TR_MAX_POSITION_PCT"] = repr(cap_override)
         for arg_name, env_name in (("driver_map", "TR_DRIVER_MAP"),
                                    ("instrument_map", "TR_INSTRUMENT_MAP"),
                                    ("cash", "TR_CASH")):
@@ -1614,13 +1641,14 @@ def _candidate_rules(card, state, language):
     for hole in card.get("top_holes") or []:
         source.append({"dim": hole.get("dim"), "rule": hole.get("lens_rule")})
     metrics = state.get("metrics") or {}
+    cap_override = (state or {}).get("max_position_pct")  # #324:sizing 規矩文案帶用戶自訂上限(engine 已回填 state)
     for row in source:
         dim = row.get("dim") or row.get("kind")
         dim_id = card_renderer.dimension_id(dim)
         metric = DIM_METRIC.get(dim_id)
         if not dim or dim in seen or metric not in metrics:
             continue
-        rule = card_renderer.localized_rule(dim, language) or row.get("rule")
+        rule = card_renderer.localized_rule(dim, language, cap=cap_override) or row.get("rule")
         if not rule:
             continue
         seen.add(dim)
@@ -2814,6 +2842,39 @@ def cmd_repair(args):
     _emit({"status": "repaired" if not outcome["errors"] else "partially_repaired", **outcome})
 
 
+def cmd_set_cap(args):
+    """Record (or clear) the user's standing single-position cap (#324).
+
+    Persists to ``profile.json`` so diagnosis, prescription, and the rule text
+    all reconcile against the user's own number next review. Fail-closed: a cap
+    outside (0,1) is rejected, never silently stored. The write is a whole-file
+    atomic replace that preserves any other profile keys."""
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    os.makedirs(root, exist_ok=True)
+    path = _profile_path(root)
+    profile = {}
+    if os.path.exists(path):
+        try:
+            loaded = session.read_json(path)
+            if isinstance(loaded, dict):
+                profile = loaded
+        except (OSError, ValueError):
+            profile = {}
+    if args.clear:
+        profile.pop("max_position_pct", None)
+        ledger.atomic_write_text(path, session.pretty(profile))
+        _emit({"status": "cleared", "root": root, "max_position_pct": None})
+        return
+    cap = card_renderer.valid_position_cap(args.pct)
+    if cap is None:
+        raise ReviewError(
+            "max position cap must be a fraction strictly between 0 and 1 "
+            "(for example 0.25 for 25%), not a percentage or an out-of-range value")
+    profile["max_position_pct"] = cap
+    ledger.atomic_write_text(path, session.pretty(profile))
+    _emit({"status": "set", "root": root, "max_position_pct": cap})
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="fomo-kernel stable review orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2860,6 +2921,15 @@ def build_parser():
     repair = sub.add_parser("repair-projections")
     repair.add_argument("--root")
     repair.set_defaults(func=cmd_repair)
+    setcap = sub.add_parser("set-cap",
+                            help="record the user's standing single-position cap (#324)")
+    setcap.add_argument("--root")
+    cap_group = setcap.add_mutually_exclusive_group(required=True)
+    cap_group.add_argument("--pct",
+                           help="single-position cap as a fraction in (0,1), e.g. 0.25 for 25%%")
+    cap_group.add_argument("--clear", action="store_true",
+                           help="remove the override and revert to the universal default")
+    setcap.set_defaults(func=cmd_set_cap)
     return parser
 
 
