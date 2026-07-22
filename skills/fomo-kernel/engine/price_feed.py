@@ -46,6 +46,34 @@ _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _MAX_ROWS = 500                     # a real portfolio plus benchmarks; a runaway file is an input error
 _MAX_HISTORY = 2000                 # ~8 trading years per instrument
 
+# #330: soft plausibility cross-check against the ticker's own trade history.
+# Structural validation above (positive, finite, currency-matched, no
+# duplicates, date <= as_of) accepts any number that merely looks like a
+# price -- a hallucinated-but-plausible close passes it outright and would
+# otherwise be priced and disclosed as genuine. Comparing the supplied close
+# to the last price the user actually transacted at is the one anchor the
+# engine already holds without a network call.
+#
+# The band is deliberately wide (20x, either direction) and deliberately
+# NOT scaled by the elapsed time since that last trade:
+#   * A genuine long-held multi-bagger is real and must still price
+#     normally -- this check only ever adds a disclosure, never blocks --
+#     so the band is set to comfortably clear the kind of move retail
+#     investors call a "ten-bagger" (2x headroom above it), not to chase
+#     the last percentage point of specificity.
+#   * A fabricated close is not reliably "more wrong" the older the last
+#     trade is -- a mis-transcribed digit or a wrong-ticker mix-up is just
+#     as likely against a last trade from yesterday as one from three years
+#     ago -- so scaling the band by elapsed time would buy little real
+#     protection while adding a second guessed constant (a growth-rate
+#     assumption) on top of this one, for a check that is a soft,
+#     best-effort caveat rather than a gate.
+#   * Splits are handled upstream (adjust_for_splits already rebases trade
+#     rows onto today's split-adjusted terms before this check ever runs),
+#     so an undisclosed split still surfaces here -- correctly, since the
+#     source failed to report it.
+PLAUSIBILITY_BAND = 20.0
+
 
 class PriceFeedError(ValueError):
     """Raised when a supplied price envelope cannot be trusted as-is."""
@@ -300,6 +328,46 @@ def currency_conflicts(feed, currency_by_ticker):
             conflicts.append({"ticker": ticker, "feed": row["currency"],
                               "trades": str(declared).upper()})
     return sorted(conflicts, key=lambda row: row["ticker"])
+
+
+def plausibility_flags(feed, last_trade_price, *, band=PLAUSIBILITY_BAND):
+    """Tickers whose supplied close deviates sharply from their last trade.
+
+    A soft cross-check (#330), never a rejection: the caller discloses this
+    on the card as an honesty caveat and still prices the position normally.
+    See ``PLAUSIBILITY_BAND`` above for the chosen multiple and why it is not
+    scaled by elapsed time.
+
+    ``last_trade_price`` is ``{ticker: (price, date)}`` from the caller's own
+    trade rows, taken *after* split adjustment so a disclosed split does not
+    read as a false deviation. A ticker with no trade row (a benchmark) has
+    no anchor to compare against and is silently skipped -- this check only
+    ever concerns instruments the portfolio actually holds.
+
+    Returns a list of ``{ticker, feed_close, feed_date, last_trade_price,
+    last_trade_date, ratio}`` sorted by ticker. Never raises.
+    """
+    flags = []
+    for ticker, row in (feed or {}).get("prices", {}).items():
+        anchor = (last_trade_price or {}).get(ticker)
+        if not anchor:
+            continue
+        price, last_date = anchor
+        if not price or price <= 0:
+            continue
+        close = row["close"]
+        ratio = close / price if close >= price else price / close
+        if ratio > band:
+            flags.append({
+                "ticker": ticker,
+                "feed_close": close,
+                "feed_date": row["date"],
+                "last_trade_price": round(float(price), 6),
+                "last_trade_date": (last_date.isoformat() if hasattr(last_date, "isoformat")
+                                    else str(last_date)),
+                "ratio": round(ratio, 2),
+            })
+    return sorted(flags, key=lambda row: row["ticker"])
 
 
 # ─────────────────────── request manifest and provenance ───────────────────────

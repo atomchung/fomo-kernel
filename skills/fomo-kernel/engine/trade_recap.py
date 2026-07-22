@@ -1854,6 +1854,15 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                            "priced_n": cov_pp.get("priced_n"),
                            "requested_n": cov_pp.get("requested_n"),
                            "missing": cov_pp.get("missing")}})
+    # 供給價合理性複核(#330):排在 price_source 之後——這是「這批供給價裡有一筆可疑」
+    # 的細節,附屬於「這批價是供給的」那個因,不是獨立新因,也不該疊在它之前搶讀序。
+    # 結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住「看起來合理但其實錯」的假數字;
+    # 這裡只加揭露、絕不擋跑——真的十倍腰斬或十倍飆漲都存在,不能因為「看起來誇張」
+    # 就讓復盤跑不完(band 選擇見 price_feed.PLAUSIBILITY_BAND)。
+    if di.get("price_plausibility"):
+        L.append({"key": "price_plausibility", "status": "suspect",
+                  "data": {"tickers": [row["ticker"] for row in di["price_plausibility"]],
+                           "details": di["price_plausibility"]}})
     # 未實現非全覆蓋:部分持倉沒抓到現價,帳面看似完整實則漏算(#82 原症)
     cov = (overview or {}).get("unrealized_coverage") or {}
     if cov.get("unpriced"):
@@ -2040,6 +2049,14 @@ def main():
             sys.exit(1)
     splits = fetch_splits({r["ticker"] for r in rows}, feed=feed)
     n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
+    # #330:供給價的軟性合理性複核——結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住
+    # 「看起來合理但其實錯」的假數字。用這檔自己「最近一次真實成交價」(分割調整後,
+    # 與供給收盤價同一基準)當唯一不必連網的錨點;rows 已按日期排序,同檔後面的列
+    # 覆蓋前面的 → 留下的就是最近一筆。只加揭露、不擋跑(band 選擇見 price_feed.py)。
+    last_trade_price = {}
+    for r in rows:
+        last_trade_price[r["ticker"]] = (r["price"], r["date"])
+    price_plausibility = price_feed.plausibility_flags(feed, last_trade_price)
     rts, open_lots = round_trips(rows)
     _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
     held = fifo_held(open_lots)        # #162:未實現改 FIFO 剩餘,與 realized 同基礎,加總=真值
@@ -2146,6 +2163,8 @@ def main():
         data_integrity["fx_gaps"] = fx_gaps                # 混幣但缺匯率:聚合按原幣近似(因子=1),卡面必須明示
     if cur_conflicts:
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
+    if price_plausibility:
+        data_integrity["price_plausibility"] = price_plausibility   # #330:供給價與最近成交價落差過大,只揭露不擋跑
     # #92:有 driver 標籤但 SECTOR_BENCH 查無板塊 ETF 對照 → 該檔超額被全歸「選股」、賽道效應漏記。
     # 原本只在 α 面板(需 SPY + ≥60 交易日對齊 + coverage<0.995 那行 if)才揭露 → 併入永遠顯示的
     # data_integrity,與「未分類 driver」同語意(板塊歸因不可靠)的第二個揭露缺口,不再只靠自律。

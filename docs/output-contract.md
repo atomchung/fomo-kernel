@@ -136,10 +136,11 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
   bulleted line per sentence on text (demo-card anchor: the "Data notes"
   footnote after the vs-market indicators; 2026-07-22 owner bullet-pass
   ruling, §9). None of them ride an individual indicator line anymore.
-- Hard rule: no caveat prose block in the opening; the 12-key ledger never
-  renders as consecutive paragraphs mid-block (root cause B in #276) or as a
-  wall of per-number interruptions (2026-07-22 reversal, same root cause,
-  reached from real high-density data instead). Per-key disclosure
+- Hard rule: no caveat prose block in the opening; the full honesty ledger
+  (the key count grows over time; see `build_honesty_ledger()` for the
+  current set) never renders as consecutive paragraphs mid-block (root
+  cause B in #276) or as a wall of per-number interruptions (2026-07-22
+  reversal, same root cause, reached from real high-density data instead). Per-key disclosure
   *conditions* live in `build_honesty_ledger()` (CLAUDE.md "Honesty decisions
   belong in code"), not new SKILL.md prose — placement itself is now a
   single rule with no per-key table to maintain.
