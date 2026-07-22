@@ -80,7 +80,7 @@
   },
   "rules": {
     "exit_discipline": "出場前先寫下 thesis 已完成或失效的事實；只因害怕回吐，不賣。",
-    "position_sizing": "下單前先檢查單一風險部位上限；超過上限，不新增。",
+    "position_sizing": "單筆部位上限定死 {cap}；超過就減，不新增。",
     "diversification": "新增部位前先看是否仍是同一個 driver；同一注已過重，不新增。",
     "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
     "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。"
@@ -90,6 +90,18 @@
     "diversification": "本期實況：前幾大部位 {tickers} 合計佔 {pct}。",
     "holding_period": "本期實況：{tickers} 同一檔既有短進短出、也有長抱。",
     "averaging_down": "本期實況：你在虧損部位往下加碼 {count} 次，包括 {tickers}。"
+  },
+  "rule_targets": {
+    "line": "本期會被它攔下的：{items}",
+    "count_unit": " 次"
+  },
+  "rule_tradeoff": {
+    "sizing_vs_proven_edge": "上限管的是單筆爆掉，不跟「選股是真 edge」衝突。",
+    "sizing_vs_hypothesis": "上限管的是單筆爆掉；押對賽道還沒驗證，更不該靠加大單注押它。"
+  },
+  "patterns_panel": {
+    "label": "一個模式，還沒下判斷（不用回答）",
+    "sold_winner_early": "這期賣掉的 {total} 筆有 {early} 筆賣完還漲，最明顯是 {tickers}。"
   },
   "add_choices": {
     "planned_tranche": "事先規劃的分批",
@@ -169,12 +181,12 @@
     "cut_loss": "砍損耗"
   },
   "prescription_texts": {
-    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡,押對賽道佔 {alloc_pp}pp(拆帳)。但這只是『假設你有方向判斷力』,不是已證實的 edge——押對 AI 也可能只是站到風口。壓測它:寫下你『下一個看好的賽道』、記時間,看未來兩三次準不準,對了才叫 edge。",
-    "selection_inconclusive": "拆帳看,板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note},統計上還分不出選股是本事還是運氣——別急著外包、也別自滿。",
+    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡,押對賽道佔 {alloc_pp}pp(拆帳)。那還只是假設,不是已證實的 edge——押對 AI 也可能只是站到風口,要靠下次的賽道判斷才驗得出來。",
+    "selection_inconclusive": "拆帳看,板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note},統計上還分不出選股是本事還是運氣。",
     "selection_inconclusive_t_wide": "α 的 95% 區間還太寬(t={t})",
     "selection_inconclusive_t_unstable": "α 統計量還算不穩",
-    "outsource_selection": "扣掉賽道,你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差——優化不是『別選股』(你享受它、ETF 也會錯過妖股),是『撥一部分資金被動化托底』,選股當衛星。(流程建議,非標的建議)",
-    "amplify_selection_edge": "扣掉賽道紅利,你板塊內選股仍貢獻 {sel_pp}pp、α 統計顯著——這是真 edge,別讓 sizing/紀律稀釋它。",
+    "outsource_selection": "扣掉賽道,你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差。這不是說『別選股』(你享受它、ETF 也會錯過妖股),而是可以撥一部分資金被動化托底,選股當衛星。(流程觀察,非標的建議)",
+    "amplify_selection_edge": "扣掉賽道紅利,你板塊內選股仍貢獻 {sel_pp}pp、α 統計上站得住——這是真 edge。",
     "cut_averaging_down": "虧損中加碼 {count} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。",
     "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct},單一押注過重。"
   },

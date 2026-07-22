@@ -80,7 +80,7 @@
   },
   "rules": {
     "exit_discipline": "Before exiting, name the fact that completed or broke the thesis. Fear of giving back gains is not enough.",
-    "position_sizing": "Check the single-risk-position cap before placing the order. If it is already over the cap, do not add.",
+    "position_sizing": "Cap any single position at {cap}. Trim if it goes over, and do not add.",
     "diversification": "Before adding a position, check whether it is still the same underlying driver. If that bet is already too large, do not add.",
     "holding_period": "Label the trade as short-term, swing, or long-term at entry. Exit only for a reason from the same horizon.",
     "averaging_down": "Before averaging down, write one piece of evidence you did not know at entry. If you cannot, do not add."
@@ -90,6 +90,18 @@
     "diversification": "This period: your top positions {tickers} together hold {pct}.",
     "holding_period": "This period: {tickers} mixed quick exits and long holds within the same position.",
     "averaging_down": "This period: you averaged down {count} times into losing positions, including {tickers}."
+  },
+  "rule_targets": {
+    "line": "What this rule would catch this period: {items}",
+    "count_unit": "x"
+  },
+  "rule_tradeoff": {
+    "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge.",
+    "sizing_vs_hypothesis": "The cap limits what a single position can cost you, and the sector call is still unverified — not something to back with a bigger single bet."
+  },
+  "patterns_panel": {
+    "label": "A pattern, not yet judged (no answer needed)",
+    "sold_winner_early": "{early} of the {total} positions you sold kept rising afterwards, most clearly {tickers}."
   },
   "add_choices": {
     "planned_tranche": "A pre-planned tranche",
@@ -169,12 +181,12 @@
     "cut_loss": "Cut the leak"
   },
   "prescription_texts": {
-    "amplify_hypothesis": "Of your {excess_pp}pp lead over the benchmark, {alloc_pp}pp came from being in the right theme. That is a hypothesis about direction-picking, not proven skill — a right call on AI can simply be standing in the wind. Test it: write down your next favored theme with a date, and check the next few calls before treating it as an edge.",
-    "selection_inconclusive": "Within sectors, stock selection contributed {sel_pp}pp (descriptive; that number stands). But {t_note}, so the data cannot yet separate skill from luck — do not rush to outsource it, and do not get comfortable either.",
+    "amplify_hypothesis": "Of your {excess_pp}pp lead over the benchmark, {alloc_pp}pp came from being in the right theme. That is still a hypothesis rather than proven skill — a right call on AI can simply be standing in the wind, and only the next few calls can tell.",
+    "selection_inconclusive": "Within sectors, stock selection contributed {sel_pp}pp (descriptive; that number stands). But {t_note}, so the data cannot yet separate skill from luck.",
     "selection_inconclusive_t_wide": "the alpha 95% interval is still too wide (t={t})",
     "selection_inconclusive_t_unstable": "the alpha statistic is still unstable",
-    "outsource_selection": "Net of theme exposure, your in-sector stock selection contributed {sel_pp}pp and the shortfall is statistically solid. The fix is not to stop picking stocks — it is moving part of the money to a passive base while stock picks stay the satellite. (A process suggestion, not a ticker recommendation.)",
-    "amplify_selection_edge": "Net of theme tailwinds, your in-sector stock selection still contributed {sel_pp}pp with statistically significant alpha — a real edge. Do not let sizing or discipline leaks dilute it.",
+    "outsource_selection": "Net of theme exposure, your in-sector stock selection contributed {sel_pp}pp and the shortfall is statistically solid. That does not mean giving up stock picking — part of the money can sit in a passive base with stock picks as the satellite. (A process observation, not a ticker recommendation.)",
+    "amplify_selection_edge": "Net of theme tailwinds, your in-sector stock selection still contributed {sel_pp}pp with statistically significant alpha — a real edge.",
     "cut_averaging_down": "Adding to losing positions {count} times is the biggest pure leak in this record — the first behavior to remove.",
     "cut_oversize": "Your largest position {ticker} holds {max_pct_pct} of the portfolio — a single oversized bet."
   },

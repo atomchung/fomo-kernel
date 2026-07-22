@@ -191,7 +191,19 @@ def localized_dimension(dim, language):
 
 
 def localized_rule(dim, language):
-    return (load_copy(language).get("rules") or {}).get(dimension_id(dim))
+    """The canonical rule text for a dimension.
+
+    #317: templates may carry ``{cap}`` so the user reads the threshold in the
+    rule itself instead of having to remember it. The cap is a constant, not a
+    per-period fact, so the text stays stable across weeks and rules.jsonl
+    tracking (which keys on rule_id) is unaffected."""
+    template = (load_copy(language).get("rules") or {}).get(dimension_id(dim))
+    if not isinstance(template, str):
+        return template
+    try:
+        return template.format(cap=f"{POSITION_CAP:.0%}")
+    except (KeyError, IndexError, ValueError):
+        return template
 
 
 # ── Candidate-rule grounding (#248) ──────────────────────────────────────────
@@ -203,6 +215,10 @@ def localized_rule(dim, language):
 # computation, and a dimension without citable facts omits the sentence
 # rather than printing an empty shell.
 RULE_GROUNDING_TICKER_LIMIT = 2
+# 與 trade_recap.POSITION_CAP 同一條契約:card_renderer 刻意不 import trade_recap
+# (與 coach/horizon 前例同語意 — 保持純標準庫、免 pandas),兩處常數由
+# test_tr_json_contract 斷言同步。改一處必改另一處。#324 追蹤口徑對齊與用戶自訂。
+POSITION_CAP = 0.20
 
 
 def _grounding_dims(card):
@@ -268,6 +284,153 @@ def rule_grounding_facts(card, dim_id):
     # exit_discipline (and any future dimension) has no per-ticker fact in the
     # engine card yet; stay silent rather than inventing a reference.
     return None
+
+
+def rule_grounding_items(card, dim_id):
+    """The positions or behavior counts the committed rule would act on this
+    period (#302), ranked, or ``[]`` when nothing is citable.
+
+    Deliberately separate from ``rule_grounding_facts``: that sentence is also
+    consumed by the question layer, so widening it there would change wording
+    users answer against. These items only ever render inside Block 4. Facts
+    come from the same engine card — no new computation, no event detail (dates
+    and prices stay in ``problem_events``); the card needs names the reader can
+    match against their own positions, not a transaction log.
+    """
+    dims = _grounding_dims(card)
+    dim = dims.get(dim_id)
+    if not isinstance(dim, dict):
+        return []
+    if dim_id == "position_sizing":
+        # Only the positions actually over the cap: a rule that lists compliant
+        # holdings reads as noise, which is the Block-4 bloat #301 is undoing.
+        weights = dim.get("risk_weights")
+        if not isinstance(weights, dict):
+            return []
+        over = [(t, _positive_rate(w)) for t, w in weights.items()
+                if isinstance(t, str) and t and _positive_rate(w) is not None
+                and float(w) > POSITION_CAP]
+        return [{"ticker": t, "kind": "pct", "value": v}
+                for t, v in sorted(over, key=lambda item: (-item[1], item[0]))]
+    if dim_id == "averaging_down":
+        counts = dim.get("ticker_counts")
+        if not isinstance(counts, dict):
+            return []
+        ranked = [(t, int(n)) for t, n in counts.items()
+                  if isinstance(t, str) and t and isinstance(n, (int, float)) and n >= 1]
+        return [{"ticker": t, "kind": "count", "value": n}
+                for t, n in sorted(ranked, key=lambda item: (-item[1], item[0]))]
+    if dim_id == "diversification":
+        # The concentration rule acts on the cluster, so name the top weights
+        # rather than only the single largest one.
+        weights = (dims.get("position_sizing") or {}).get("risk_weights")
+        if not isinstance(weights, dict):
+            return []
+        ranked = [(t, _positive_rate(w)) for t, w in weights.items()
+                  if isinstance(t, str) and t and _positive_rate(w) is not None]
+        return [{"ticker": t, "kind": "pct", "value": v}
+                for t, v in sorted(ranked, key=lambda item: (-item[1], item[0]))[:3]]
+    if dim_id == "holding_period":
+        tickers = [t for t in dim.get("incon_tickers") or [] if isinstance(t, str) and t]
+        return [{"ticker": t, "kind": "bare", "value": None} for t in tickers[:3]]
+    return []
+
+
+def localized_rule_targets(dim, language, card):
+    """The one-line "what this rule would catch this period" list (#302), or
+    ``None`` when the dimension has nothing citable."""
+    items = rule_grounding_items(card, dimension_id(dim))
+    if not items:
+        return None
+    copy = load_copy(language)
+    template = (copy.get("rule_targets") or {}).get("line")
+    if not template:
+        return None
+    joiner = ", " if copy["language"] == "en" else "、"
+    parts = []
+    for item in items:
+        if item["kind"] == "pct":
+            parts.append(f"{item['ticker']} {item['value'] * 100:.0f}%")
+        elif item["kind"] == "count":
+            unit = (copy.get("rule_targets") or {}).get("count_unit", "")
+            parts.append(f"{item['ticker']} {item['value']}{unit}")
+        else:
+            parts.append(item["ticker"])
+    try:
+        return template.format(items=joiner.join(parts))
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+# ── Strength / rule trade-off reconciliation (#301) ──────────────────────────
+# A card can hold a demonstrated strength and a concentration risk that point
+# at the same position: "don't let sizing dilute your edge" beside "PLTR is
+# 49%, too heavy" reads as two contradictory orders. The engine already ranks
+# them — only ``cut_loss`` prescriptions carry a ``rule`` and can be committed;
+# ``amplify`` rows never can. Block 4 therefore renders exactly one action and
+# states the relationship, instead of listing both as peers.
+# Ranked strongest claim first: a card states one thing the period proved, not
+# a list. "Proven edge" outranks "still a hypothesis" outranks "can't tell yet".
+_AMPLIFY_KINDS = ("amplify", "amplify_hypothesis", "selection_inconclusive")
+_TRADEOFF_DIMS = ("position_sizing", "diversification")
+
+
+def amplify_row(card, language):
+    """The single strongest strength claim among the prescription rows, or
+    ``None``.
+
+    These rows describe what the period proved rather than something to do, so
+    they belong beside the ``[v]`` strength in Block 3, not in Block 4. Only
+    one renders: stacking all three restates the same attribution split three
+    ways, which is the caveat pile-up #276 is unwinding."""
+    by_kind = {}
+    for item in (card or {}).get("prescriptions") or []:
+        if not isinstance(item, dict) or item.get("kind") not in _AMPLIFY_KINDS:
+            continue
+        by_kind.setdefault(item["kind"], item)
+    for kind in _AMPLIFY_KINDS:
+        if kind not in by_kind:
+            continue
+        resolved = localized_prescription(by_kind[kind], language)
+        if resolved and resolved["text"]:
+            return resolved
+    return None
+
+
+def outsource_row(card, language):
+    """The ``outsource`` prescription, which reads as a weakness finding rather
+    than a strength: it fires when selection alpha is credibly negative.
+
+    It belongs under the ``[X]`` hole, not next to the strength, and never in
+    Block 4 — it carries no committable rule, so rendering it there would put a
+    second imperative beside the one committed rule (#301)."""
+    for item in (card or {}).get("prescriptions") or []:
+        if isinstance(item, dict) and item.get("kind") == "outsource":
+            resolved = localized_prescription(item, language)
+            if resolved and resolved["text"]:
+                return resolved
+    return None
+
+
+def rule_tradeoff_line(card, dim, language):
+    """One engine-owned sentence reconciling the committed rule with a strength
+    the same card claims, or ``None`` when the two do not collide.
+
+    Collision means the rule asks the user to shrink a position while an
+    ``amplify`` row credits the very selection that built it. Silence when the
+    rule targets another dimension: an unconditional sentence here would be the
+    caveat-noise #301 exists to remove."""
+    if dimension_id(dim) not in _TRADEOFF_DIMS:
+        return None
+    kinds = {item.get("kind") for item in (card or {}).get("prescriptions") or []
+             if isinstance(item, dict)}
+    if "amplify" in kinds:
+        code = "sizing_vs_proven_edge"
+    elif "amplify_hypothesis" in kinds:
+        code = "sizing_vs_hypothesis"
+    else:
+        return None
+    return ((load_copy(language).get("rule_tradeoff") or {}).get(code)) or None
 
 
 def localized_rule_grounding(dim, language, card):
@@ -1687,32 +1850,27 @@ def _attribution_facts(card):
             "rows": rows}
 
 
-def _improve_rows(card, language):
-    """Prescription rows (amplify / outsource / cut). Coded rows resolve
-    through copy (#279); legacy persisted zh rows stay on the zh card only."""
-    rows = []
-    for item in card.get("prescriptions") or []:
-        resolved = localized_prescription(item, language)
-        if resolved and resolved["kind"] and resolved["text"]:
-            rows.append(resolved)
-    return rows
-
-
 def _card_facts(bundle, copy):
-    """Assemble the rich-layout facts shared by both surfaces (#247)."""
+    """Assemble the rich-layout facts shared by both surfaces (#247).
+
+    #301 removed the ``improve`` prescription rows: ``amplify`` rows now render
+    beside the Block-3 strength, ``outsource`` under the Block-3 hole, and
+    ``cut_loss`` rows are already carried by the rule the engine derived from
+    them, so listing them again in Block 4 only produced competing imperatives.
+    The v1 rich card (``rich_card.py``) still renders the full prescription
+    layer through ``localized_prescription``."""
     card = bundle.get("engine_card") or {}
     language = copy["language"]
     context = _display_context(card, language)
     if bundle.get("route") == "snapshot_review":
         # Snapshot cards intentionally suppress history-performance panels; the
         # rich layout has nothing honest to add there yet.
-        return {"kpi": [], "instruments": [], "stress": [], "attribution": None, "improve": []}
+        return {"kpi": [], "instruments": [], "stress": [], "attribution": None}
     return {
         "kpi": _kpi_tiles(card, context, copy),
         "instruments": _instrument_rows(card, context, language),
         "stress": _stress_lines(card, context, language),
         "attribution": _attribution_facts(card),
-        "improve": _improve_rows(card, language),
     }
 
 
@@ -1834,9 +1992,59 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     return blocks
 
 
+def _pattern_panel(card, copy, snapshot):
+    """Block 3 ``[?]`` panel (#303): read-only patterns the engine detected but
+    has not judged, collected in one place.
+
+    Exit opportunity-cost tags used to sit scattered across the instrument rows,
+    where a reader could not tell whether a reply was expected. The panel names
+    the instruments so the pattern is checkable, and its label says outright
+    that no answer is wanted. Returns ``None`` when nothing fired."""
+    if snapshot:
+        return None
+    language = copy["language"]
+    entries = []
+    for row in card.get("ticker_diagnosis") or []:
+        if not isinstance(row, dict):
+            continue
+        for tag in row.get("tags") or []:
+            code = tag.get("code") if isinstance(tag, dict) else None
+            if code != "sold_winner_early":
+                continue
+            params = tag.get("params") or {}
+            early, total = params.get("win_early"), params.get("win_n")
+            if not isinstance(early, (int, float)) or not isinstance(total, (int, float)):
+                continue
+            entries.append({"ticker": row.get("ticker"), "early": int(early), "total": int(total)})
+    entries = [e for e in entries if e["ticker"] and e["total"]]
+    if not entries:
+        return None
+    pattern_copy = copy.get("patterns_panel") or {}
+    template = pattern_copy.get("sold_winner_early")
+    label = pattern_copy.get("label")
+    if not template or not label:
+        return None
+    entries.sort(key=lambda e: (-(e["early"] / e["total"]), -e["early"], e["ticker"]))
+    joiner = ", " if copy["language"] == "en" else "、"
+    named = joiner.join(f"{e['ticker']} {e['early']}/{e['total']}" for e in entries[:3])
+    try:
+        line = template.format(early=sum(e["early"] for e in entries),
+                               total=sum(e["total"] for e in entries),
+                               tickers=named)
+    except (KeyError, IndexError, ValueError):
+        return None
+    return ("panel", {"style": "pattern", "mark": "?", "label": label,
+                      "blocks": [("paragraph", [line])]})
+
+
 def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
-    """Block 3 (Risks and problems): the [v] strength / [X] hole pair as
-    panels, with behavior patterns folded in below."""
+    """Block 3 (Risks and problems): the [v] strength / [X] hole / [?] pattern
+    panels, with behavior patterns folded in below.
+
+    #301: the ``[v]`` panel also carries the ``amplify`` prescription rows.
+    They describe what the period proved, not an action, so listing them beside
+    the one committed rule in Block 4 made the card read as several competing
+    orders. Here they sit next to the strength they qualify."""
     language = copy["language"]
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
@@ -1844,16 +2052,22 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     trade_tickers = set(trade_tickers or [])
     motive_lines = [text for ticker, text in _headline_motive_entries(bundle, copy)
                     if not ticker or str(ticker) not in trade_tickers]
+    pattern_panel = _pattern_panel(card, copy, snapshot)
     blocks = []
-    if not snapshot and not holes and not card.get("dims_raw") and not motive_lines:
+    if (not snapshot and not holes and not card.get("dims_raw")
+            and not motive_lines and not pattern_panel):
         note = missing.get("risks", "")
         return [("paragraph", [note])] if note else []
     strength_label = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
                       if snapshot else sections_copy["strength"])
     strength_line = (_snapshot_strength_line(card, language) if snapshot else
                      narrative.get("strength") or _best_strength(card, language))
+    strength_inner = [("paragraph", [strength_line])]
+    amplify = None if snapshot else amplify_row(card, language)
+    if amplify:
+        strength_inner.append(("paragraph", [amplify["text"]]))
     blocks.append(("panel", {"style": "strength", "mark": "v", "label": strength_label,
-                             "blocks": [("paragraph", [strength_line])]}))
+                             "blocks": strength_inner}))
     hole_label = (_copy_string(copy, "snapshot_hole", sections_copy["hole"])
                   if snapshot else sections_copy["hole"])
     hole_inner = []
@@ -1861,11 +2075,17 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
         hole_inner.append(("paragraph", [_snapshot_hole_line(card, language)]))
     elif holes:
         hole_inner.append(("paragraph", [_hole_line(holes[0], language)]))
+    if not snapshot:
+        outsource = outsource_row(card, language)
+        if outsource:
+            hole_inner.append(("paragraph", [outsource["text"]]))
     if not snapshot and narrative.get("counterfactual"):
         hole_inner.append(("paragraph", [narrative["counterfactual"]]))
     if hole_inner:
         blocks.append(("panel", {"style": "hole", "mark": "X", "label": hole_label,
                                  "blocks": hole_inner}))
+    if pattern_panel:
+        blocks.append(pattern_panel)
     problem_lines = [] if snapshot else _problem_lines(bundle, copy)
     if problem_lines:
         blocks.append(("bullets", problem_lines))
@@ -1875,7 +2095,23 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
 
 
 def _next_block(bundle, copy, facts, state, snapshot):
-    """Block 4 (Next step): improve rows plus exactly one committed rule.
+    """Block 4 (Next step): exactly one committed rule — nothing else.
+
+    §2 of the output contract, and the README demo card it is anchored to,
+    allow a single action here. #301: the ``improve`` prescription rows used to
+    render above the rule, so the block issued up to five imperatives at once,
+    some of them opposing ("don't let sizing dilute your edge" beside "PLTR is
+    too heavy at 49%"). ``amplify`` rows now belong to Block 3's ``[v]`` panel;
+    the remaining ``cut_loss`` rows are already represented by the rule the
+    engine derived from them. What survives here is the rule, the positions it
+    would act on (#302), and — only when the card also claims a strength the
+    rule appears to contradict — one engine-owned sentence stating the order of
+    operations (#301).
+
+    ``narrative.rule_rationale`` is deliberately no longer rendered: it is the
+    agent's free-text restatement of why the rule matters, and it overlapped
+    with the engine-owned trade-off line. Between an authored sentence and a
+    derived one, the card keeps the derived one.
 
     §3: this block always lights — when the engine proposes no change it
     restates the standing rule, and a truly empty review says so in one
@@ -1885,21 +2121,32 @@ def _next_block(bundle, copy, facts, state, snapshot):
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
     commitment = bundle.get("commitment") or {}
+    card = bundle.get("engine_card") or {}
     blocks = []
-    if facts["improve"]:
-        blocks.append(("improve", facts["improve"]))
     rule_inner = []
     rule = commitment.get("rule")
     if rule:
         rule_inner.append(("paragraph", [rule]))
-        # #248: engine-owned sub-line grounding the committed rule in this
-        # period's actual positions; the canonical rule text stays generic.
+        # #302: name the positions or behavior counts this rule would act on,
+        # at the same level as the rule itself. The aggregate grounding
+        # sentence (#248) is the fallback when the dimension has no per-position
+        # facts, so a rule is never left unanchored.
+        # Only the commitment's own dimension: build_state warns that the rule
+        # need not match headline_dim, so falling back to it would list the
+        # wrong positions under the rule. A custom rule without a dimension
+        # keeps the aggregate grounding sentence instead.
+        dim = commitment.get("dim")
+        targets = localized_rule_targets(dim, language, card) if dim else None
         grounding = commitment.get("grounding")
-        if isinstance(grounding, str) and grounding.strip():
+        if targets:
+            rule_inner.append(("grounding", [targets]))
+        elif isinstance(grounding, str) and grounding.strip():
             rule_inner.append(("grounding", [grounding]))
-        rationale = (bundle.get("narrative") or {}).get("rule_rationale")
-        if rationale:
-            rule_inner.append(("paragraph", [rationale]))
+        tradeoff = rule_tradeoff_line(card, dim, language) if dim else None
+        if tradeoff:
+            # Same sub-line level as the targets: both qualify the rule above
+            # them rather than introducing anything new.
+            rule_inner.append(("grounding", [tradeoff]))
     elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
         rule_inner.append(("paragraph", [
             "你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if not en
@@ -2078,9 +2325,6 @@ def render_private(bundle):
                 lines.extend([_caveat_md(x, en) for x in block if x] + [""])
             elif kind == "panel":
                 lines.extend(_panel_md(block, en) + [""])
-            elif kind == "improve":
-                joiner = ": " if en else "："
-                lines.extend([f"- {row['kind']}{joiner}{row['text']}" for row in block] + [""])
             else:
                 lines.extend(list(block) + [""])
     return "\n".join(lines).rstrip() + "\n"
@@ -2266,16 +2510,13 @@ stroke-linejoin:round;opacity:.85}
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace}
 .rc .abar{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
-.rc .rx{display:flex;flex-direction:column;gap:2px;padding:11px 0;border-top:0.5px solid var(--rc-border)}
-.rc .rx:first-of-type{border-top:none;padding-top:2px}
-.rc .rx .kind{font-size:13px;font-weight:500;margin:0;color:var(--rc-text-primary)}
-.rc .rx .desc{font-size:13px;color:var(--rc-text-secondary);line-height:1.55;margin:0}
 .rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-radius);padding:16px 18px}
 .rc .panel+.panel{margin-top:10px}
 .rc .panel-label{font-size:12px;font-weight:500;margin:0 0 8px}
 .rc .strength .panel-label{color:var(--rc-text-success)}
 .rc .hole .panel-label{color:var(--rc-text-danger)}
+.rc .pattern .panel-label{color:var(--rc-text-muted)}
 .rc .rule .panel-label{color:var(--rc-text-accent)}
 .rc .rule .rmain{font-size:15px;color:var(--rc-text-primary);line-height:1.65;font-weight:500}
 .rc .rule .rground{font-size:13px;color:var(--rc-text-muted);line-height:1.6}
@@ -2414,11 +2655,6 @@ def render_html(bundle):
                          f'<div class="abar"><div style="width:{row["width_pct"]}%"></div></div>')
         return parts
 
-    def improve_rows(rows):
-        return ['<div class="rx">'
-                f'<p class="kind">{e(row["kind"])}</p><p class="desc">{e(row["text"])}</p></div>'
-                for row in rows]
-
     def indicator_items(items):
         parts = []
         for item in items:
@@ -2462,8 +2698,6 @@ def render_html(bundle):
                 rendered.extend(instrument_bars(block))
             elif kind == "panel":
                 rendered.append(panel_html(block))
-            elif kind == "improve":
-                rendered.extend(improve_rows(block))
             elif kind == "caveat":
                 rendered.extend(f'<p class="cavt">{e(text)}</p>' for text in block if text)
             else:

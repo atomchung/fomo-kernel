@@ -234,8 +234,12 @@ def _rich_bundle(language):
 
 def test_rich_layout_renders_template_blocks_from_shared_facts():
     """#247: engine facts render as the card-template layout — KPI grid, ranked
-    instrument bars, stress row, attribution bars, improve rows — and every
-    rich number appears in BOTH surfaces (one _card_structure facts source)."""
+    instrument bars, stress row, attribution bars — and every rich number
+    appears in BOTH surfaces (one _card_structure facts source).
+
+    #301 retired the improve/prescription rows: the legacy zh rows in this
+    fixture carry no stable ``kind`` code, so they resolve to nothing and the
+    card no longer prints a prescription list anywhere."""
     bundle = _rich_bundle("zh-TW")
     html = card_renderer.render_html(bundle)
     markdown = card_renderer.render_private(bundle)
@@ -243,11 +247,14 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     assert html.count('<div class="trow">') == 3
     assert html.count('class="track"') == 3
     assert 'class="attr-head"' in html and html.count('<div class="arow">') == 2
-    assert html.count('<div class="rx">') == 2
+    assert '<div class="rx">' not in html, \
+        "#301: the improve prescription list must not render on the card"
+    assert "砍損耗" not in html and "砍損耗" not in markdown, \
+        "#301: cut_loss rows are carried by the committed rule, not listed"
     # The headline already carries the primary-benchmark excess; comparator
     # rows are the alternatives only.
     assert "vs SPY" not in html and "vs QQQ" in html and "vs SOXX" in html
-    for token in ("$+76,647", "$-1,000", "+243pp", "+96pp", "撐得住嗎", "砍損耗"):
+    for token in ("$+76,647", "$-1,000", "+243pp", "+96pp", "撐得住嗎"):
         assert token in html, f"missing from HTML: {token}"
         assert token in markdown, f"missing from Markdown: {token}"
     # Alpha below the credibility gate stays starred with its caveat.
@@ -434,16 +441,32 @@ def test_coded_fields_resolve_zh_byte_identical_to_legacy_literals():
         "coded tags/stress must resolve to the exact legacy zh wording (HTML)"
 
 
-def test_coded_fields_render_zh_prescriptions_from_copy():
-    markdown = card_renderer.render_private(_coded_bundle("zh-TW"))
-    assert "砍損耗：虧損中加碼 12 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。" in markdown
-    assert "砍損耗：最大一筆 PLTR 佔 49%,單一押注過重。" in markdown
+def test_coded_fields_resolve_zh_prescriptions_from_copy():
+    """#279 i18n: coded prescription rows resolve to the zh copy wording.
+
+    Asserted on ``localized_prescription`` directly rather than through the
+    card: #301 stopped rendering cut_loss rows on the v2 card (the committed
+    rule carries them), while ``rich_card.py`` still resolves the full
+    prescription layer through this same function."""
+    rows = [{"code": "cut_averaging_down", "kind": "cut_loss", "params": {"count": 12}},
+            {"code": "cut_oversize", "kind": "cut_loss",
+             "params": {"ticker": "PLTR", "max_pct": 0.49}}]
+    resolved = [card_renderer.localized_prescription(row, "zh-TW") for row in rows]
+    assert resolved[0]["kind"] == "砍損耗"
+    assert resolved[0]["text"] == "虧損中加碼 12 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"
+    assert resolved[1]["text"] == "最大一筆 PLTR 佔 49%,單一押注過重。"
 
 
 def test_coded_fields_render_localized_english_blocks():
-    """#279 acceptance: the en card gains the stress line, improve rows, and
-    instrument behavior tags from copy/en.json — with zero zh leakage."""
+    """#279 acceptance: the en card gains the stress line, the strength claim,
+    and instrument behavior tags from copy/en.json — with zero zh leakage.
+
+    The amplify row is the prescription content that still reaches the card
+    after #301; it renders beside the Block-3 strength, not in Next step."""
     bundle = _coded_bundle("en")
+    bundle["engine_card"]["prescriptions"] = list(
+        bundle["engine_card"]["prescriptions"]) + [
+        {"code": "amplify_selection_edge", "kind": "amplify", "params": {"selection": 1.81}}]
     html = card_renderer.render_html(bundle)
     markdown = card_renderer.render_private(bundle)
     for surface, name in ((html, "HTML"), (markdown, "Markdown")):
@@ -451,15 +474,11 @@ def test_coded_fields_render_localized_english_blocks():
                       "disciplined hold: +150%",
                       "roughly neutral",
                       "could you sit through that?",
-                      "Cut the leak",
-                      "Adding to losing positions 12 times",
-                      "Your largest position PLTR holds 49% of the portfolio"):
+                      "in-sector stock selection still contributed +181pp"):
             assert token in surface, f"missing from en {name}: {token}"
-        for zh_token in ("押太重", "紀律持有", "大致中性", "撐得住嗎", "砍損耗"):
+        for zh_token in ("押太重", "紀律持有", "大致中性", "撐得住嗎", "砍損耗", "揚長"):
             assert zh_token not in surface, f"zh vocabulary leaked into en {name}: {zh_token}"
-    assert 'class="rx"' in html, "en card must now render prescription rows"
     # Markdown-only joins: halfwidth punctuation on the en card.
-    assert "Cut the leak: Adding to losing positions 12 times" in markdown
     assert "(too heavy: 49% of the portfolio)" in markdown, \
         "en Markdown must join tags with halfwidth punctuation"
 
@@ -598,6 +617,137 @@ def test_delivery_contract_exists_and_is_routed():
         assert "references/card-delivery.md" in flow, f"flows/{name} must route card delivery"
 
 
+# ── Next-step coherence (#301 #302 #303 #317) ────────────────────────────────
+# A card can hold a proven strength and a concentration risk that point at the
+# same position. The regression these tests guard is the card presenting both
+# as peer instructions and leaving the reader to arbitrate.
+
+
+def _conflicted_bundle(language, dim):
+    """A card that simultaneously claims a proven selection edge and an
+    oversized position — the #301 QA scenario — committed to ``dim``."""
+    bundle = copy.deepcopy(_session(language)["bundle"])
+    card = bundle["engine_card"]
+    card.update(copy.deepcopy(_RICH_CARD_FIELDS_CODED))
+    card["prescriptions"] = [
+        {"code": "amplify_hypothesis", "kind": "amplify_hypothesis",
+         "params": {"excess": 2.47, "allocation": 0.67}},
+        {"code": "amplify_selection_edge", "kind": "amplify", "params": {"selection": 1.81}},
+        {"code": "cut_oversize", "kind": "cut_loss", "dim": "部位 sizing",
+         "params": {"ticker": "PLTR", "max_pct": 0.49}, "rule": "cap"},
+    ]
+    card["dims_raw"] = [
+        {"dim": "部位 sizing", "triggered": True, "max_ticker": "PLTR", "max_pct": 0.49,
+         "risk_weights": {"PLTR": 0.49, "NVDA": 0.46, "ORCL": 0.12, "AMD": 0.03}},
+        {"dim": "加碼攤平", "triggered": True, "count": 12, "breach": 2,
+         "tickers": ["NVDA", "PLTR"], "ticker_counts": {"PLTR": 7, "NVDA": 5}},
+    ]
+    card["ticker_diagnosis"] = [
+        {"ticker": "PLTR", "impact": 76647.0,
+         "tags": [{"code": "too_heavy", "params": {"wpct": 0.49}}]},
+        {"ticker": "TSLA", "impact": 8200.0,
+         "tags": [{"code": "sold_winner_early", "params": {"win_early": 3, "win_n": 4}}]},
+        {"ticker": "AMD", "impact": -1000.0,
+         "tags": [{"code": "sold_winner_early", "params": {"win_early": 2, "win_n": 3}}]},
+    ]
+    bundle["commitment"] = {
+        "rule": card_renderer.localized_rule(dim, language), "dim": dim,
+        "metric_key": "max_pos_pct", "goal": "down",
+        "grounding": card_renderer.localized_rule_grounding(dim, language, card),
+    }
+    return bundle
+
+
+def _next_step_text(markdown):
+    """The Next-step block only, on either locale."""
+    parts = re.split(r"\n## ", markdown)
+    return parts[-1]
+
+
+def test_next_step_renders_exactly_one_action(self_check=None):
+    """#301: Block 4 issues one instruction. The strength claims move to the
+    Block-3 [v] panel; no prescription row may sit beside the rule."""
+    for language in ("zh-TW", "en"):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        markdown = card_renderer.render_private(bundle)
+        block4 = _next_step_text(markdown)
+        assert block4.count("[*]") == 1, f"{language}: Next step must hold one rule"
+        for stray in ("揚長", "Amplify the edge", "砍損耗", "Cut the leak"):
+            assert stray not in block4, \
+                f"{language}: prescription row leaked back into Next step: {stray}"
+        # The strength claim is still on the card — relocated, not dropped.
+        edge = ("這是真 edge" if language == "zh-TW"
+                else "in-sector stock selection still contributed")
+        assert edge in markdown, f"{language}: the strength claim must survive"
+        assert edge not in block4, f"{language}: the strength claim must not sit in Next step"
+
+
+def test_next_step_reconciles_a_rule_that_contradicts_a_strength():
+    """#301: when the rule shrinks a position the same card credits, the card
+    states the relationship instead of leaving two opposing orders."""
+    for language, marker in (("zh-TW", "不跟「選股是真 edge」衝突"),
+                             ("en", "does not contradict the stock-picking edge")):
+        block4 = _next_step_text(card_renderer.render_private(
+            _conflicted_bundle(language, "position_sizing")))
+        assert marker in block4, f"{language}: missing the trade-off reconciliation"
+    # A rule on an unrelated dimension gets no such sentence: an unconditional
+    # one would be exactly the caveat noise this change removes.
+    block4 = _next_step_text(card_renderer.render_private(
+        _conflicted_bundle("zh-TW", "averaging_down")))
+    assert "衝突" not in block4, \
+        "the reconciliation must not fire for a rule that shrinks nothing"
+
+
+def test_rule_names_the_positions_it_would_act_on():
+    """#302: the rule cites this period's actual positions or behavior counts,
+    at sub-line level under the rule rather than as a detached footnote."""
+    sizing = _next_step_text(card_renderer.render_private(
+        _conflicted_bundle("zh-TW", "position_sizing")))
+    assert "PLTR 49%" in sizing and "NVDA 46%" in sizing, \
+        "the sizing rule must name every position over the cap"
+    assert "ORCL" not in sizing and "AMD" not in sizing, \
+        "positions inside the cap are not what the rule would catch"
+    avgdown = _next_step_text(card_renderer.render_private(
+        _conflicted_bundle("zh-TW", "averaging_down")))
+    assert "PLTR 7 次" in avgdown and "NVDA 5 次" in avgdown, \
+        "the averaging-down rule must name per-ticker counts"
+    en = _next_step_text(card_renderer.render_private(
+        _conflicted_bundle("en", "position_sizing")))
+    assert "PLTR 49%, NVDA 46%" in en, "en must join targets with halfwidth punctuation"
+
+
+def test_exit_opportunity_cost_collects_into_one_read_only_panel():
+    """#303: the scattered sold-winner tags become one [?] panel that names the
+    instruments and says outright that no answer is expected."""
+    for language, label, ticker in (("zh-TW", "不用回答", "TSLA 3/4"),
+                                    ("en", "no answer needed", "TSLA 3/4")):
+        markdown = card_renderer.render_private(_conflicted_bundle(language, "position_sizing"))
+        risks = re.split(r"\n## ", markdown)[-2]
+        assert "[?]" in risks, f"{language}: the pattern panel belongs in Risks and problems"
+        assert label in risks, f"{language}: the panel must state that no answer is expected"
+        assert ticker in risks, f"{language}: the panel must name the instruments"
+        assert "[?]" not in _next_step_text(markdown), \
+            f"{language}: an unjudged pattern is not a next step"
+
+
+def test_committed_rule_carries_its_threshold():
+    """#317: the sizing rule prints the cap, so the reader is not left trying to
+    remember what "the cap" was. The value tracks the renderer constant."""
+    cap = f"{card_renderer.POSITION_CAP:.0%}"
+    for language in ("zh-TW", "en"):
+        block4 = _next_step_text(card_renderer.render_private(
+            _conflicted_bundle(language, "position_sizing")))
+        assert cap in block4, f"{language}: the rule must state its threshold"
+
+
+def test_renderer_position_cap_matches_the_engine_constant():
+    """The renderer keeps its own copy of the cap so it stays stdlib-only (same
+    reason coach.py duplicates CYCLE_ID_RE). Pin them together."""
+    import trade_recap  # engine path already on sys.path via test_review_v2
+    assert card_renderer.POSITION_CAP == trade_recap.POSITION_CAP, \
+        "card_renderer.POSITION_CAP and trade_recap.POSITION_CAP must stay in sync"
+
+
 def main():
     tests = [
         test_finalize_html_is_structured_not_a_pre_dump,
@@ -615,7 +765,7 @@ def main():
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
         test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
-        test_coded_fields_render_zh_prescriptions_from_copy,
+        test_coded_fields_resolve_zh_prescriptions_from_copy,
         test_coded_fields_render_localized_english_blocks,
         test_locale_copy_files_keep_key_parity,
         test_rule_grounding_sub_line_private_surfaces_only,
@@ -623,6 +773,12 @@ def main():
         test_card_template_is_deorphaned,
         test_delivery_contract_exists_and_is_routed,
         test_engine_version_stamped_on_private_card_not_public,
+        test_next_step_renders_exactly_one_action,
+        test_next_step_reconciles_a_rule_that_contradicts_a_strength,
+        test_rule_names_the_positions_it_would_act_on,
+        test_exit_opportunity_cost_collects_into_one_read_only_panel,
+        test_committed_rule_carries_its_threshold,
+        test_renderer_position_cap_matches_the_engine_constant,
     ]
     for test in tests:
         test()
