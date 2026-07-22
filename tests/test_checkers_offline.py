@@ -177,7 +177,7 @@ def _v2_card(titles=None, block1=None, block2=None, block3=None, tail=""):
         _BLOCKS[key] for key in ("performance", "trades", "risks", "next")]
     block1 = block1 if block1 is not None else [
         "復盤區間 2026-01-01 → 2026-07-14",
-        "帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+        "帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
         _MISSING["annualized"], _MISSING["vs_market"]]
     block2 = block2 if block2 is not None else [_MISSING["trades"]]
     block3 = block3 if block3 is not None else ["[X] 最大的行為漏洞：INTC 虧 $1,240 仍加碼"]
@@ -212,12 +212,12 @@ def test_card_structure_series_alive():
     dropped = _v2_card(titles=[_BLOCKS["performance"], _BLOCKS["risks"], _BLOCKS["next"]])
     ok("S-1" in _card_fail_ids(dropped), "S-1 抓少一個 block")
 
-    stacked = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+    stacked = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                                "  （caveat 甲）", "  （caveat 乙）", "  （caveat 丙）",
                                _MISSING["annualized"], _MISSING["vs_market"]])
     ok("S-3" in _card_fail_ids(stacked), "S-3 抓三連發 caveat 牆")
     early = _v2_card(block1=["  （caveat 先於任何指標）",
-                             "帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+                             "帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                              _MISSING["annualized"], _MISSING["vs_market"]])
     ok("S-3" in _card_fail_ids(early), "S-3 抓 Block 1 首行 caveat")
     # 2026-07-22 ruling (#276): caveats no longer ride Block-1 indicators at
@@ -234,10 +234,10 @@ def test_card_structure_series_alive():
     mixed = _v2_card(tail="\n這期贏三成，數字是 30%。")
     ok("S-4" in _card_fail_ids(mixed), "S-4 抓單句混用拼寫數與阿拉伯數")
 
-    silent = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）"])
+    silent = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）"])
     ok("S-2" in {f.assertion for f in check_card(silent, _S2_CONTEXT) if not f.passed},
        "S-2 抓靜默省略(前提缺但缺料 note 沒出)")
-    over = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+    over = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                             _MISSING["absolute_pnl"],
                             _MISSING["annualized"], _MISSING["vs_market"]])
     ok("S-2" in {f.assertion for f in check_card(over, _S2_CONTEXT) if not f.passed},
@@ -258,11 +258,11 @@ def test_card_structure_series_alive():
                                      vs_market_gate={"render": False,
                                                      "basis": "already_rendered_this_month",
                                                      "month": "2026-07"})}
-    with_segment = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+    with_segment = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                                     _MISSING["annualized"], _vs_line])
-    without_segment = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+    without_segment = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                                        _MISSING["annualized"]])
-    gap_note_while_gated = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+    gap_note_while_gated = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                                             _MISSING["annualized"], _MISSING["vs_market"]])
     ok(not any(f.assertion == "S-2" and not f.passed
                for f in check_card(with_segment, ungated_ctx)),

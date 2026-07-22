@@ -630,10 +630,17 @@ def _display_context(card, language):
 
 
 def _money(value, currency):
+    """Signed money, sign-before-symbol (#311): +$10,960 / -$3,000 / +TWD 1,234.
+
+    ``f"{value:+,.0f}"`` always starts with a forced '+' or '-' (Python's sign
+    format spec); slicing that leading character off and re-prepending it
+    before the currency symbol reorders "$+10,960" into "+$10,960" without
+    touching the grouping/rounding behavior underneath."""
     if value is None:
         return "—"
     symbol = "$" if currency == "USD" else currency + " "
-    return f"{symbol}{float(value):+,.0f}"
+    signed = f"{float(value):+,.0f}"
+    return f"{signed[0]}{symbol}{signed[1:]}"
 
 
 def _money_abs(value, currency):
@@ -2643,14 +2650,21 @@ border-radius:var(--rc-radius);padding:16px 18px}
 .rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
 
 
-def _sparkline_svg(card):
-    """Inline-SVG cumulative P&L sparkline from engine ``pnl_curve.points``.
+def _sparkline_svg(card, copy=None):
+    """Inline-SVG cumulative P&L sparkline from engine ``pnl_curve.points``,
+    with a minimal date-range / peak-trough caption riding under it (#312).
 
     Renders only when at least two finite points exist.  Note-form or missing
     curve data omits the sparkline silently: card-spec forbids inventing a new
     user-facing caveat for it.  One thin line, colored only by the final sign,
     per the card-template design reference.  No external references, so the
-    artifact stays request-free."""
+    artifact stays request-free.
+
+    The caption is a second, independent fail-soft layer on top of that: a
+    missing/malformed ``date`` on the points never blocks the line itself, it
+    only drops the caption (no full axis, just enough context — the start and
+    end dates plus the peak/trough the line already traces — for the shape to
+    be interpretable without inventing a number the engine did not supply)."""
     # Decorative field, fail-soft contract: any wrong-typed curve (adapter or
     # --card-json input) must omit the sparkline, never abort the render.
     curve = (card or {}).get("pnl_curve")
@@ -2660,12 +2674,16 @@ def _sparkline_svg(card):
     if not isinstance(points, list):
         return None
     values = []
+    dates = []
     for point in points:
         if not isinstance(point, dict):
             continue
         number = _finite_number(point.get("cum_ret"))
-        if number is not None:
-            values.append(number)
+        if number is None:
+            continue
+        values.append(number)
+        date = point.get("date")
+        dates.append(date if isinstance(date, str) and date.strip() else None)
     if len(values) < 2:
         return None
     width, height, pad = 120.0, 28.0, 2.0
@@ -2679,8 +2697,19 @@ def _sparkline_svg(card):
         coords.append(f"{x:.1f},{y:.1f}")
     tone = "neg" if math.copysign(1.0, values[-1]) < 0 else "pos"  # -0.0 counts as a loss
     path = "M" + " L".join(coords)
-    return (f'<svg class="spark {tone}" viewBox="0 0 {width:.0f} {height:.0f}" '
-            f'preserveAspectRatio="none" aria-hidden="true"><path d="{path}"/></svg>')
+    svg = (f'<svg class="spark {tone}" viewBox="0 0 {width:.0f} {height:.0f}" '
+           f'preserveAspectRatio="none" aria-hidden="true"><path d="{path}"/></svg>')
+    start_date, end_date = dates[0], dates[-1]
+    template = ((copy or {}).get("kpi") or {}).get("spark_caption")
+    if not (start_date and end_date and template):
+        return svg
+    try:
+        caption = template.format(start=start_date, end=end_date,
+                                   peak=_signed_pct(high, digits=0),
+                                   trough=_signed_pct(low, digits=0))
+    except (KeyError, IndexError, ValueError):
+        return svg
+    return svg + f'<p class="cap">{html.escape(caption)}</p>'
 
 
 def _html_block(kind, rows, lead_class=None):
@@ -2724,7 +2753,7 @@ def render_html(bundle):
     # Snapshot cards have no performance panel, and their engine card carries no
     # pnl_curve; the route guard keeps that existing conditional explicit.
     spark = (None if structure["route"] == "snapshot_review"
-             else _sparkline_svg(bundle.get("engine_card") or {}))
+             else _sparkline_svg(bundle.get("engine_card") or {}, copy))
     facts = structure["facts"]
 
     def kpi_grid():
