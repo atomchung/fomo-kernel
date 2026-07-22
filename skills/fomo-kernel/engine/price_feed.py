@@ -332,6 +332,53 @@ def build_request(*, tickers, benchmarks=(), currencies=(), window=None, as_of=N
     return request
 
 
+# A retrieval failure is classified into one of these stable reason codes. The
+# needles are matched (case-insensitively, first table row wins) against the raw
+# transport/yfinance string; see ``classify_error``.
+_ERROR_SIGNATURES = (
+    # DNS / host resolution — the #289 canonical sandbox failure.
+    ("dns_failure", ("could not resolve", "resolve host", "name or service not known",
+                     "nodename nor servname", "getaddrinfo", "failed to resolve",
+                     "nameresolutionerror", "name resolution", "temporary failure in name",
+                     "curl error 6", "curl: (6)")),
+    # Connection or read timed out.
+    ("timeout", ("timed out", "timeout", "etimedout", "curl error 28", "curl: (28)")),
+    # Reachable host, transport- or HTTP-level rejection.
+    ("http_error", ("http error", "httperror", "status code", "too many requests",
+                    "connection reset", "connection refused", "connection aborted",
+                    "remote end closed", "remote disconnected", "bad gateway",
+                    "service unavailable", "ssl", "certificate", "curl error 7", "curl: (7)")),
+    # Retrieval succeeded but returned nothing usable (empty frame, or a supplied
+    # feed that matched none of the requested instruments).
+    ("no_data", ("無資料", "no data", "empty", "covers none", "carries no prices",
+                 "none of the requested")),
+    # The retrieval client itself is absent (offline shim / uninstalled dep).
+    ("client_missing", ("未安裝", "not installed", "no module named", "cannot be applied")),
+)
+
+
+def classify_error(error):
+    """Collapse a raw retrieval error into a stable, non-volatile reason code.
+
+    The raw yfinance/transport string can embed volatile object reprs (memory
+    addresses, per-attempt hostnames), and ``price_provenance`` enters engine
+    state, whose sha256 fixes ``ledger.session_id_from_state()``. Two degraded
+    runs that failed for the *same* reason must produce byte-identical state so
+    a finalized degraded session stays re-detectable (#289 review finding 4).
+    Only the code enters state; the verbose text travels to stderr for a human.
+
+    Returns ``None`` for no error, a code from ``_ERROR_SIGNATURES`` on a match,
+    or ``"unknown"`` for an unrecognized non-empty string (never the raw text).
+    """
+    if not error:
+        return None
+    text = str(error).lower()
+    for code, needles in _ERROR_SIGNATURES:
+        if any(needle in text for needle in needles):
+            return code
+    return "unknown"
+
+
 def provenance(*, mode, feed=None, error=None, requested=(), priced=(),
                benchmarks_priced=(), fx_mode="not_needed", splits_applied=False, as_of=None):
     """Machine-readable record of where this run's prices came from.
@@ -339,6 +386,12 @@ def provenance(*, mode, feed=None, error=None, requested=(), priced=(),
     ``mode`` is ``engine_fetch`` (the engine's own retrieval worked),
     ``agent_feed`` (an operator-supplied envelope was applied), or
     ``unavailable`` (retrieval failed and no envelope was supplied).
+
+    ``error`` is stored as a stable reason code (``classify_error``), not the
+    raw string: the record enters engine state, and a volatile string there
+    would shift ``session_id_from_state()`` between two same-cause degraded
+    runs. The verbose original stays on stderr (the engine's price-status meta
+    line), never in state.
     """
     requested = sorted({str(t) for t in requested if t})
     priced = sorted({str(t) for t in priced if t})
@@ -353,7 +406,7 @@ def provenance(*, mode, feed=None, error=None, requested=(), priced=(),
         "benchmarks_priced": sorted({str(b) for b in benchmarks_priced if b}),
         "fx": fx_mode,
         "splits_applied": bool(splits_applied),
-        "error": error,
+        "error": classify_error(error),
     }
     if mode == "agent_feed" and feed:
         record["source"] = feed.get("source")

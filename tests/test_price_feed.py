@@ -402,6 +402,54 @@ def test_card_names_price_availability_as_the_blocker():
         ok(copy["honesty"].get("price_source"), f"{language}: price_source 有 fallback 文案")
 
 
+# ─────────── 6. degraded session_id 決定性:error 存穩定代碼、不存原文 ───────────
+
+def test_degraded_error_normalizes_so_session_id_stays_deterministic():
+    """#289 review finding 4:price_provenance['error'] 不可把 yfinance 原文帶進 state。
+    原文常含 volatile object repr(記憶體位址、每次重試不同的 host),而 price_provenance
+    進 engine state、state 的 sha256 決定 session_id_from_state();同一種失敗的兩次
+    degraded 收尾若算出不同 id,already_committed 重偵測就失效。provenance() 只存穩定
+    reason code,原文只走 stderr。"""
+    import ledger  # noqa: E402  (ENGINE 已在 sys.path)
+
+    # 同一類(HTTP transport 失敗),volatile 細節不同(object repr + host + 狀態碼)。
+    err_a = ("yfinance 下載失敗: HTTPError('query1.finance.yahoo.com', 503, "
+             "<urllib3.connectionpool.HTTPSConnectionPool object at 0x10a3f9d80>)")
+    err_b = ("yfinance 下載失敗: HTTPError('query2.finance.yahoo.com', 502, "
+             "<urllib3.connectionpool.HTTPSConnectionPool object at 0x7fb2c1e40>)")
+    prov_a = pf.provenance(mode="unavailable", error=err_a, requested=["AMD", "NVDA"])
+    prov_b = pf.provenance(mode="unavailable", error=err_b, requested=["AMD", "NVDA"])
+    ok(prov_a["error"] == prov_b["error"] == "http_error",
+       "同類失敗(不同 volatile 原文)→ 同一穩定代碼", f"{prov_a['error']} vs {prov_b['error']}")
+    ok(prov_a == prov_b, "整個 provenance 記錄逐 byte 相同,volatile 原文不入 state")
+
+    def state_with(prov):
+        return {"date_end": "2024-03-15", "schema_version": 5, "price_provenance": prov}
+    ok(ledger.session_id_from_state(state_with(prov_a))
+       == ledger.session_id_from_state(state_with(prov_b)),
+       "→ 兩次 degraded 收尾 session_id_from_state 判為同一 session",
+       f"{ledger.session_id_from_state(state_with(prov_a))} vs "
+       f"{ledger.session_id_from_state(state_with(prov_b))}")
+    # 反向:真的不同類的失敗仍算出不同 id(正規化沒有把所有失敗抹成同一個)。
+    prov_dns = pf.provenance(mode="unavailable", error="could not resolve host guce.yahoo.com",
+                             requested=["AMD", "NVDA"])
+    ok(ledger.session_id_from_state(state_with(prov_dns))
+       != ledger.session_id_from_state(state_with(prov_a)),
+       "不同類失敗(dns vs http)→ 不同 id,代碼有區辨力")
+
+    # 各類 canonical 失敗各自對到自己的代碼;無法辨識的字串是 'unknown',絕不外洩原文。
+    ok(pf.classify_error("curl error 6: Could not resolve host guce.yahoo.com") == "dns_failure",
+       "could not resolve host → dns_failure")
+    ok(pf.classify_error("HTTPSConnectionPool: Read timed out. (read timeout=10)") == "timeout",
+       "read timed out → timeout")
+    ok(pf.classify_error("yfinance 未安裝") == "client_missing", "缺 client → client_missing")
+    ok(pf.classify_error("price feed covers none of the requested instruments") == "no_data",
+       "envelope 對不上 → no_data")
+    ok(pf.classify_error("some brand-new failure nobody has a rule for") == "unknown",
+       "未知字串 → 'unknown'(不外洩原文)")
+    ok(pf.classify_error(None) is None, "沒有 error → None")
+
+
 def main():
     for fn in (test_parse_contract, test_parse_fails_closed, test_adapters,
                test_engine_without_prices_stays_observable,
@@ -410,7 +458,8 @@ def main():
                test_engine_does_not_claim_supply_that_covered_nothing,
                test_engine_fails_closed_on_bad_feed,
                test_prepare_surfaces_and_consumes_the_manifest,
-               test_card_names_price_availability_as_the_blocker):
+               test_card_names_price_availability_as_the_blocker,
+               test_degraded_error_normalizes_so_session_id_stays_deterministic):
         print(f"\n── {fn.__name__} ──")
         fn()
     failed = [row for row in _RESULTS if not row[0]]

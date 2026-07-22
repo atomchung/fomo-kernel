@@ -4,7 +4,7 @@ The engine retrieves its own prices. Some hosts block that retrieval — a sandb
 
 This is a data-availability failure, not a verdict. A missing price never means a security is delisted and never means a zero return.
 
-When the agent has a retrieval path the engine lacks, it may look the closes up and hand them back through the envelope below. The division of labour is the same as the position snapshot: the agent transcribes declared facts from a market-data source, and the engine keeps every calculation. Do not compute a return, a weight, a P&L figure, or an average cost.
+When the host blocks the engine's own retrieval, recovering the prices is your first move, not an optional extra: look the closes up yourself from a recognized market-data source and hand them back through the envelope below **before** you surface the gap to the user or deliver a degraded card. The division of labour is the same as the position snapshot: the agent transcribes declared facts from a market-data source, and the engine keeps every calculation. Do not compute a return, a weight, a P&L figure, or an average cost.
 
 ## When this applies
 
@@ -16,7 +16,7 @@ When the agent has a retrieval path the engine lacks, it may look the closes up 
 
 Only act on this when `request` is present. Unpriced instruments in `request.tickers` remove P&L itself; unpriced symbols in `request.benchmarks` only remove the benchmark comparison.
 
-A degraded review still completes. Supplying prices is a recovery path, not a precondition — never stall the review waiting for a price you cannot find.
+Attempt recovery yourself first; the degraded card is the fallback for when recovery genuinely fails, not the default. A degraded review still completes, so never stall the review waiting for a price you cannot find — if the source does not publish it, omit that instrument and deliver the degraded card rather than blocking.
 
 ## Sources
 
