@@ -850,14 +850,24 @@ def _alpha_interval_line(ab, language):
     market = ab.get("scope") if isinstance(ab.get("by_market"), dict) else None
     scope_en = f" for {market} holdings" if market in MARKET_BENCHMARKS else ""
     scope_zh = f"（{market} 部位）" if market in MARKET_BENCHMARKS else ""
+    # #313: a lower bound below zero is statistically opaque to a retail reader
+    # ("95% interval from -10% to +74%" does not by itself say whether that is
+    # good or bad news). Append one plain-language sentence, both locales, only
+    # when the condition holds -- the card stays a coherent story rather than
+    # printing a caveat nobody needs when the interval is comfortably positive.
     if language == "en":
+        plain = (" (The interval includes a negative value, meaning this period's "
+                  "stock-picking edge is not yet statistically confirmed as a "
+                  "durable skill.)" if low < 0 else "")
         return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
                 f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
-                "the interval controls how strong the conclusion may be.")
+                "the interval controls how strong the conclusion may be." + plain)
+    plain_zh = ("（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）"
+                if low < 0 else "")
     # #272: Arabic digits for the interval level — one digit style per sentence.
     return (f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，"
             f"95% 區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
-            "定論強度以這個區間為準。")
+            "定論強度以這個區間為準。" + plain_zh)
 
 
 def _hole_line(hole, language):
@@ -1143,7 +1153,7 @@ def _performance_items(card, language):
             line("account_hold", f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}"
                  + (f" over the {int(window)}-day window." if window else "."))
         else:
-            line("account_hold", f"持倉柱的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
+            line("account_hold", f"僅計持倉的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
                  + (f"（{int(window)} 天窗口）。" if window else "。"))
         if ap.get("acct_twr") is not None:
             if en:
@@ -1161,13 +1171,13 @@ def _performance_items(card, language):
                     # Output contract: plain phrase, not the IRR jargon token.
                     text += f"，年化報酬 {_pct(ap.get('irr_annual'))}"
                 if ap.get("cash_drag") is not None:
-                    text += f"；與持倉柱的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
+                    text += f"；與僅計持倉的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
                 line("account", text + "。")
         elif ap.get("note"):
             line("account_gate",
                  "Account-level return stays locked until cash has a complete anchor; "
                  "the holdings pillar above is unaffected." if en else
-                 "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的持倉柱不受影響。")
+                 "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的僅計持倉不受影響。")
     cash = card.get("cash") or {}
     if cash.get("reliable") and cash.get("balance") is not None:
         display_cash = _display_money(cash.get("balance"), display)

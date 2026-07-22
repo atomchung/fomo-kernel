@@ -19,7 +19,7 @@
     "improve": "改進 · 保留強項、移除損耗",
     "strength": "你做對的一件事",
     "hole": "最大的行為漏洞",
-    "motive": "這次加碼的 thesis 判斷",
+    "motive": "這次加碼的交易論述",
     "exit_capture": "這次記下的出場理由",
     "exit_followup": "出場後對帳",
     "patterns": "問題帳記得的模式",
@@ -35,7 +35,7 @@
   "period": {
     "span": "復盤區間 {start} → {end}",
     "as_of": "截至 {end}",
-    "spy": "SPY 區間 {ret}",
+    "spy": "SPY 同期 {ret}",
     "vix": "VIX {value}"
   },
   "block_missing": {
@@ -78,9 +78,9 @@
     "entry_style": "這次浮現的模式，關乎進場時點與近期價格移動的關係。"
   },
   "rules": {
-    "exit_discipline": "出場前先寫下 thesis 已完成或失效的事實；只因害怕回吐，不賣。",
+    "exit_discipline": "出場前先寫下交易論述已完成或失效的事實；只因害怕回吐，不賣。",
     "position_sizing": "單筆部位上限定死 {cap}；超過就減，不新增。",
-    "diversification": "新增部位前先看是否仍是同一個 driver；同一注已過重，不新增。",
+    "diversification": "新增部位前先看是否仍是同一個驅動因子；同一注已過重，不新增。",
     "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
     "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。"
   },
@@ -155,7 +155,7 @@
     "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。"
   },
   "instrument_tags": {
-    "suspected_averaging_down_losing": "✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur_pct}(待你確認 thesis)",
+    "suspected_averaging_down_losing": "✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur_pct}(待你確認交易論述)",
     "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣,不是紀律",
     "adds_pending_confirmation": "？加碼 {n_adds} 次待確認:是定投還是凹單,要你定",
     "suspected_dca": "✓疑似定投:漲跌都買/規律 {n_adds} 次,不是凹單",
@@ -215,11 +215,11 @@
     "avgdown_breach": "攤平越過部位界線",
     "sell_winner_early": "賣出贏家的機會成本",
     "oversize": "單一部位過重",
-    "concentration": "同一 driver 集中",
+    "concentration": "同一驅動因子集中",
     "hold_inconsistency": "持有時間軸混用",
     "exit_anxiety": "焦慮驅動出場",
     "fomo_entry": "FOMO 進場",
-    "horizon_break": "thesis 時間軸破戒"
+    "horizon_break": "交易論述時間軸破戒"
   },
   "trends": {
     "worse": "惡化",
