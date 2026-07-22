@@ -27,11 +27,19 @@ exactly like the engine CLIs (`--state-root` > `TRADE_COACH_HOME` >
 lifecycle into the same root (#269). Question-presentation rows are additionally restricted to mode,
 surface source, and an opaque digest so cross-client evidence cannot copy the
 private question surface into the trace.
+
+`rule_choice_presented` additionally carries machine-checked grounding
+fidelity (#293): whether the engine's candidate `grounding` text, if any, was
+shown to the user verbatim. The comparison is computed once from a transient
+`--grounding-check-file` (raw candidate groundings plus the exact presented
+text) and only the boolean result and a sha256 hash of the grounding text are
+persisted; the raw strings never reach the trace. See `_grounding_fidelity`.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -161,6 +169,71 @@ def start_receipt(args: argparse.Namespace) -> None:
     _append(path, row)
 
 
+def _grounding_fidelity(path: str | None) -> dict:
+    """Compute privacy-safe grounding-fidelity evidence for `rule_choice_presented`.
+
+    `path` points at a transient, never-persisted JSON file (analogous to
+    `--question-surfaces`, kept outside the repository and outside the trace)
+    shaped as::
+
+        {"candidates": [{"id": "candidate_0", "grounding": "<engine text>"},
+                         {"id": "candidate_1"}],
+         "presented_text": "<the exact text shown to the user>"}
+
+    Each candidate's `grounding` is the engine-authored
+    `card_plan.candidate_rules[].grounding` string when the candidate carries
+    one, omitted otherwise. This function performs the verbatim-containment
+    comparison itself — a machine fact, not a self-reported claim — and
+    returns only a boolean-plus-hash summary. The raw grounding text and the
+    raw presented text are read once, used for this one comparison, and
+    discarded: neither this function's return value nor the caller may persist
+    them (#293's privacy constraint: receipts may be archived or posted
+    publicly, so no candidate grounding, however short, may enter the trace).
+    """
+    if not path:
+        raise ReceiptError("rule_choice_presented requires --grounding-check-file")
+    try:
+        raw = pathlib.Path(os.path.expanduser(path)).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReceiptError(f"cannot read --grounding-check-file: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(f"--grounding-check-file is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReceiptError("--grounding-check-file must contain a JSON object")
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        raise ReceiptError("--grounding-check-file candidates must be a list")
+    presented_text = payload.get("presented_text")
+    if not isinstance(presented_text, str) or not presented_text.strip():
+        raise ReceiptError("--grounding-check-file presented_text must be a non-empty string")
+
+    groundings = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise ReceiptError("--grounding-check-file candidates entries must be objects")
+        grounding = candidate.get("grounding")
+        if grounding is None:
+            continue
+        if not isinstance(grounding, str) or not grounding.strip():
+            raise ReceiptError(
+                "--grounding-check-file candidate grounding must be a non-empty string when present"
+            )
+        groundings.append(grounding)
+
+    if not groundings:
+        # Nothing the engine asked to be cited verbatim: trivially satisfied.
+        # This cannot detect a candidate that had no grounding but was
+        # presented with a fabricated one (there is no engine text to compare
+        # against) — that half of #293 remains an accepted limitation.
+        return {"grounding_expected": False, "grounding_verbatim": True}
+
+    verbatim = all(grounding in presented_text for grounding in groundings)
+    digest = hashlib.sha256("\n".join(groundings).encode("utf-8")).hexdigest()
+    return {"grounding_expected": True, "grounding_hash": digest, "grounding_verbatim": verbatim}
+
+
 def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
     row = {"version": VERSION, "event": args.event, "session_id": declaration["session_id"]}
     if args.event in ("question_presented", "rule_choice_presented"):
@@ -169,6 +242,8 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.mode not in QUESTION_MODES:
             raise ReceiptError(f"question mode must be one of {QUESTION_MODES}")
         row["mode"] = args.mode
+    if args.event == "rule_choice_presented":
+        row.update(_grounding_fidelity(args.grounding_check_file))
     if args.event == "question_presented":
         has_source = bool(args.surface_source)
         has_digest = bool(args.surface_digest)
@@ -294,10 +369,40 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
                     f"row {index} answers_received contains unsupported fields: {', '.join(extra)}"
                 )
         if event == "rule_choice_presented":
-            extra = sorted(set(row) - {"version", "event", "session_id", "ts", "mode"})
+            allowed = {
+                "version", "event", "session_id", "ts", "mode",
+                "grounding_expected", "grounding_hash", "grounding_verbatim",
+            }
+            extra = sorted(set(row) - allowed)
             if extra:
                 errors.append(
                     f"row {index} rule_choice_presented contains unsupported fields: {', '.join(extra)}"
+                )
+            # #293: presenting candidate rules without proving the engine's
+            # grounding text was shown verbatim is not a passing QA run. Fail
+            # closed whether the evidence is absent (legacy/unrecorded) or
+            # present but false (paraphrased) — there is no grandfathered
+            # legacy state for this field, unlike optional `ts`.
+            expected = row.get("grounding_expected")
+            if not isinstance(expected, bool):
+                errors.append(
+                    f"row {index} rule_choice_presented is missing grounding-fidelity evidence "
+                    "(grounding_expected must be recorded as true or false)"
+                )
+            if row.get("grounding_verbatim") is not True:
+                errors.append(
+                    f"row {index} rule_choice_presented did not prove its candidates' grounding "
+                    "was presented verbatim (grounding_verbatim must be true)"
+                )
+            digest = row.get("grounding_hash")
+            if expected is True:
+                if not isinstance(digest, str) or not SURFACE_DIGEST.fullmatch(digest):
+                    errors.append(
+                        f"row {index} rule_choice_presented has an invalid or missing grounding_hash"
+                    )
+            elif expected is False and digest is not None:
+                errors.append(
+                    f"row {index} rule_choice_presented has a grounding_hash but no grounding was expected"
                 )
 
     question_modes = set(declaration.get("question_modes") or [])
@@ -428,6 +533,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(event)
     event.add_argument("--event", required=True, choices=EVENT_KINDS)
     event.add_argument("--mode")
+    event.add_argument(
+        "--grounding-check-file",
+        help="rule_choice_presented only: path to a transient JSON file pairing each "
+             "presented candidate's engine grounding with the exact presented text "
+             "(never persisted; see _grounding_fidelity)",
+    )
     event.add_argument("--surface-source", choices=SURFACE_SOURCES)
     event.add_argument("--surface-digest")
     event.add_argument("--stage", choices=STAGES)
