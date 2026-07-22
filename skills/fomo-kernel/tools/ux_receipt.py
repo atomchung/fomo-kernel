@@ -157,14 +157,21 @@ def start_receipt(args: argparse.Namespace) -> None:
     path = _receipt_path(args.session_id, args.state_root)
     if path.exists():
         raise ReceiptError(f"refusing to overwrite existing trace: {path}")
+    # plain_text and markdown_inline are universal fallbacks every text-based
+    # client can render (interaction-delivery.md: "must always be declared").
+    # Guarantee them here instead of leaving it to the caller to remember —
+    # a caller only needs to additionally declare native_options/widget when
+    # the host actually exposes them.
+    question_modes = list(dict.fromkeys([*args.question_mode, "plain_text"]))
+    card_modes = list(dict.fromkeys([*args.card_mode, "markdown_inline"]))
     row = {
         "version": VERSION,
         "event": "capabilities_declared",
         "session_id": args.session_id,
         "client": args.client,
         "route": args.route,
-        "question_modes": list(dict.fromkeys(args.question_mode)),
-        "card_modes": list(dict.fromkeys(args.card_mode)),
+        "question_modes": question_modes,
+        "card_modes": card_modes,
     }
     _append(path, row)
 
