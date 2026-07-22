@@ -106,6 +106,12 @@
             "object",
             "null"
           ]
+        },
+        "price_feed": {
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

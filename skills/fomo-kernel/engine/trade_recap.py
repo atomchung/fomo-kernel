@@ -12,6 +12,7 @@ from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 import instruments as instrument_policy
 import market_context as market_context_engine
+import price_feed
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
@@ -465,13 +466,19 @@ def currency_map(rows):
     return cur_map, sorted(set(cur_map.values())), sorted(conflicts)
 
 
-def fetch_fx(currencies):
+def fetch_fx(currencies, feed=None):
     """非 USD 幣別 → yfinance '{CUR}=X'(1 USD 兌多少 CUR)→ {cur: usd_per_unit};USD 恆 1.0。
-    離線/失敗 → 缺誰記誰,不 crash(呼叫端把缺口寫進 data_integrity,聚合以 1.0 近似並明示)。"""
+    離線/失敗 → 缺誰記誰,不 crash(呼叫端把缺口寫進 data_integrity,聚合以 1.0 近似並明示)。
+    feed(#289 agent-supplied envelope)在場 → 只讀 feed,不碰網路:餵 feed 的前提就是
+    這台機器抓不到,再試一次只是把 prepare 卡在 DNS timeout 上。"""
     fx = {"USD": 1.0}
     todo = sorted(c for c in set(currencies) if c and c != "USD")
     if not todo:
         return fx, None
+    if feed is not None:
+        fx.update({c: r for c, r in price_feed.fx_rates(feed).items() if c in todo})
+        missing = [c for c in todo if c not in fx]
+        return fx, (f"匯率無資料(供給的價格檔未含): {','.join(missing)}" if missing else None)
     try:
         import yfinance as yf
     except ImportError:
@@ -501,13 +508,16 @@ def fx_request_currencies(currencies, requested_display=None):
     return sorted(held)
 
 
-def fetch_fx_series(currencies, start):
+def fetch_fx_series(currencies, start, feed=None):
     """非 USD 幣別的每日匯率序列('{CUR}=X' → usd_per_unit DataFrame),帳戶級估值用
     (#171 拍板默認:混幣 V_t 用每日 fx、含匯率損益)。離線/缺 →(None, err),
-    呼叫端退回即期 fx 常數近似(perf.basis.fx_approx 會標記、honesty 揭露)。"""
+    呼叫端退回即期 fx 常數近似(perf.basis.fx_approx 會標記、honesty 揭露)。
+    feed 在場 → 不碰網路:envelope 只帶即期匯率,序列誠實缺席走既有近似路徑。"""
     todo = sorted({c for c in currencies if c != "USD"})
     if not todo:
         return None, None
+    if feed is not None:
+        return None, "fx 序列缺(供給的價格檔只帶即期匯率),帳戶級估值退回即期近似"
     try:
         import yfinance as yf
     except ImportError:
@@ -567,7 +577,16 @@ def pnl_by_currency(rts, held, last_px, cur_map):
 
 
 # ───────────────────── 4. yfinance 補價（賣太早）─────────────────────
-def fetch_prices(tickers, start):
+def fetch_prices(tickers, start, feed=None):
+    """價格框(index=日期, columns=ticker)。失敗一律 (None, 人話原因),絕不 crash。
+
+    feed(#289):沙箱 host 抓不到價時,agent 從公認資料源查回來的 envelope 走這條——
+    只讀 envelope、完全不碰網路,單日收盤就足以還原損益,帶日線 history 才解鎖
+    基準/β/帳戶柱。envelope 沒涵蓋的 ticker 就是缺價,誠實留白不補洞。"""
+    if feed is not None:
+        universe = sorted(set(tickers) | set(market_context_engine.SYMBOLS))
+        frame, err = price_feed.to_frame(feed, universe)
+        return frame, err
     try:
         import yfinance as yf
     except ImportError:
@@ -646,11 +665,14 @@ def market_context_from_prices(data, error, start, end):
                 prices[symbol] = series
     return market_context_engine.build_output(prices or None, error, start, end)
 
-def fetch_splits(tickers):
+def fetch_splits(tickers, feed=None):
     """抓每檔的分割事件 {ticker: [(date, ratio), ...]}。抓不到/離線 → 回 {}(不調整,降級)。
+    feed(#289)在場 → 只認 envelope 宣告的分割事件,不碰網路;沒宣告 = 不調整(降級同離線)。
     yfinance 沒有批次 splits 端點,只能逐檔;序列逐檔是 prepare 網路時間裡唯一隨持倉數
     線性增長的段(#235 實測 8 執行緒 4.2×),故執行緒並行。結果按排序後的 ticker 合併,
     與序列版逐檔輸出一致;單檔失敗仍不連累其他檔。"""
+    if feed is not None:
+        return price_feed.splits_map(feed, tickers)
     try:
         import yfinance as yf
     except ImportError:
@@ -1608,7 +1630,7 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
-                max_pos_override=None):
+                max_pos_override=None, price_provenance=None, price_request=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1719,6 +1741,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
         "price_snapshot": price_snapshot,                   # #191 PR B:review-time prices for deterministic exit/swap comparison; frozen in the session plan
+        "price_provenance": price_provenance,               # #289:價格來源與覆蓋率(engine_fetch / agent_feed / unavailable),degraded 模式必須可觀測
+        "price_request": price_request,                     # #289:還缺哪些價的機讀清單,agent 據此去公認資料源補檔再重跑 prepare
         "market_context": market_context,                   # #191 PR B:SPY/QQQ/VIX review window; renderer consumes without refetching
         "problem_events": p_events,                         # #137 問題帳:本次規約出的事件(SKILL 收尾 append 進 problems.jsonl)
         "problem_opportunities": p_opps,                    # 各 key 本期有無機會犯(規矩對位的 Opportunity Check)
@@ -1769,7 +1793,7 @@ def _merge_attribution_integrity(data_integrity, ab):
 
 
 def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None, acct_perf=None,
-                         portfolio_structure=None):
+                         portfolio_structure=None, price_provenance=None):
     """聚合「卡面必須交代的誠實點」成一張清單(#82:機械強制取代 self-check 自律)。
 
     只收『觸發的』揭露項 → 空 list = 這張卡沒有誠實缺口。判定條件對齊預設人話卡的
@@ -1810,6 +1834,22 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
     if di.get("unclassified_drivers"):
         L.append({"key": "unclassified_drivers", "status": "present",
                   "data": {"tickers": list(di["unclassified_drivers"])}})
+    # 價格來源(#289):這一項排在 unrealized_coverage 之前,因為它是「因」不是「果」。
+    # 卡面 Block-1 footnote 依 ledger 順序逐句列出誠實點(#276 §4 收斂:不再各自搶指標行的
+    # host),所以「因先於果」這個閱讀順序由這裡的 append 次序保證,而不是 renderer 端的配位。
+    #   agent_feed  = 現價由 agent 從外部資料源查回、engine 自己沒抓(provenance 必揭露)
+    #   unavailable = engine 抓價失敗又沒人補檔(資料可得性故障,不是下市判定、不是零報酬)
+    # engine 自己抓到但個別檔缺價 → 不觸發,那是 unrealized_coverage 的敘事,不疊床架屋。
+    pp = price_provenance or {}
+    if pp.get("mode") in ("agent_feed", "unavailable"):
+        cov_pp = pp.get("coverage") or {}
+        L.append({"key": "price_source", "status": pp["mode"],
+                  "data": {"source": pp.get("source"), "as_of": pp.get("as_of"),
+                           "series": pp.get("series"), "error": pp.get("error"),
+                           "splits_applied": pp.get("splits_applied"),
+                           "priced_n": cov_pp.get("priced_n"),
+                           "requested_n": cov_pp.get("requested_n"),
+                           "missing": cov_pp.get("missing")}})
     # 未實現非全覆蓋:部分持倉沒抓到現價,帳面看似完整實則漏算(#82 原症)
     cov = (overview or {}).get("unrealized_coverage") or {}
     if cov.get("unpriced"):
@@ -1871,7 +1911,7 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
 def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
                     acct_perf=None, pnl_curve_data=None, portfolio_structure=None,
-                    currency_by_ticker=None):
+                    currency_by_ticker=None, price_provenance=None, price_request=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1948,8 +1988,10 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "portfolio_structure": portfolio_structure,         # ETF P0:配置型豁免、集中 ETF 仍計風險、metadata 誠實缺口
         "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
         "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
+        "price_provenance": price_provenance,                # #289:這次的價格從哪來(engine_fetch / agent_feed / unavailable)
+        "price_request": price_request,                      # #289:還缺哪些價的機讀清單;None=無缺口
         "honesty_ledger": build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash, acct_perf,
-                                                portfolio_structure),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
+                                                portfolio_structure, price_provenance),  # #82:卡面必講的誠實點清單(空=無缺口);出卡前 gate 對照源
         "pnl_curve": pnl_curve_data or {"note": "無資料"},   # #167:累積損益曲線,卡片畫 sparkline 用(一個點→一張圖);{'note':...} = 誠實降級,不硬畫
     }
 
@@ -1977,7 +2019,23 @@ def main():
     im_result = instrument_policy.load_from_env()          # 本機 ETF/instrument 覆寫;未知標的不猜 ETF
     if im_result.get("error"):
         print(f"⚠️  instrument map 載入失敗: {im_result['error']} — 改用保守 fallback", file=sys.stderr)
-    n_adj = adjust_for_splits(rows, fetch_splits({r["ticker"] for r in rows}))  # 分割調整,對齊今日價
+    # 供給式價格檔(#289):沙箱 host 抓不到 Yahoo 時,agent 從公認資料源查回來的 envelope。
+    # 壞檔一律 fail closed:價格是錢,靜默算錯比誠實缺價更糟,agent 修好 envelope 重跑即可。
+    try:
+        feed = price_feed.load_from_env()
+    except price_feed.PriceFeedError as e:
+        print(f"❌ 供給的價格檔不合格:{e}", file=sys.stderr)
+        sys.exit(1)
+    if feed:
+        conflicts = price_feed.currency_conflicts(feed, currency_map(rows)[0])
+        if conflicts:
+            detail = "; ".join(f"{c['ticker']} 價格檔記 {c['feed']}、交易紀錄記 {c['trades']}"
+                               for c in conflicts)
+            print(f"❌ 供給的價格檔幣別與交易紀錄不符({detail})——修正 envelope 後重跑 prepare",
+                  file=sys.stderr)
+            sys.exit(1)
+    splits = fetch_splits({r["ticker"] for r in rows}, feed=feed)
+    n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
     rts, open_lots = round_trips(rows)
     _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
     held = fifo_held(open_lots)        # #162:未實現改 FIFO 剩餘,與 realized 同基礎,加總=真值
@@ -1989,7 +2047,7 @@ def main():
     t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
     bench = {p for p in (_sector_proxy(t, t_market.get(t, "US")) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
     bench |= {MARKET_BENCH.get(m, "SPY") for m in set(t_market.values())}   # 各市場主基準(TW→^TWII)一起抓
-    px, yf_err = fetch_prices(tickers | bench, start)
+    px, yf_err = fetch_prices(tickers | bench, start, feed=feed)
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
@@ -2010,7 +2068,27 @@ def main():
     # during prepare, even when that currency is not held in the portfolio.
     requested_display = str(os.environ.get("TR_DISPLAY_CURRENCY") or "").strip().upper()
     fx_currencies = fx_request_currencies(currencies, requested_display)
-    fx, fx_err = fetch_fx(fx_currencies) if mixed_ccy else ({"USD": 1.0}, None)
+    fx, fx_err = fetch_fx(fx_currencies, feed=feed) if mixed_ccy else ({"USD": 1.0}, None)
+    # 價格可得性(#289):這次的價從哪來、覆蓋到哪、還缺什麼——全部機讀化。
+    # 缺價不是「零報酬」也不是「下市」,是資料可得性故障,必須對用戶與 QA 都保持可見。
+    priced = {t for t in tickers if t in last_px}
+    # 沒有價格框 = unavailable,不管有沒有人餵過檔:餵了一份完全對不上持倉的 envelope
+    # (符號寫錯之類)不該對外宣稱「價格已由外部供給」,error 欄會說清楚是哪一種失敗。
+    price_provenance = price_feed.provenance(
+        mode=("unavailable" if px is None else ("agent_feed" if feed else "engine_fetch")),
+        feed=feed, error=yf_err, requested=tickers, priced=priced,
+        benchmarks_priced={b for b in bench if b in last_px},
+        fx_mode=("not_needed" if not mixed_ccy else
+                 ("feed" if feed else ("engine_fetch" if not fx_err else "missing"))),
+        splits_applied=bool(splits), as_of=price_as_of)
+    price_request = None
+    if price_provenance["coverage"]["missing"] or not price_provenance["benchmarks_priced"]:
+        price_request = price_feed.build_request(
+            tickers=tickers, benchmarks=[b for b in bench if b not in last_px],
+            currencies=[c for c in currencies if c not in fx],
+            window=(context_start, context_end), as_of=context_end,
+            earliest_trade=start, reason=yf_err,
+            missing=price_provenance["coverage"]["missing"])
     if mixed_ccy:
         rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
         decision_rts_u = [r for r in rts_u
@@ -2119,18 +2197,24 @@ def main():
         data_integrity["cash_residuals"] = cash_residuals
     fx_series = None
     if mixed_ccy and px is not None:
-        fx_series, _fxs_err = fetch_fx_series(currencies, start)
+        fx_series, _fxs_err = fetch_fx_series(currencies, start, feed=feed)
     acct_perf = account_perf(rows, px, cash_flows, cash_data, cur_map,
                              fx_spot=fx if mixed_ccy else None, fx_series=fx_series,
                              cash_residuals=cash_residuals)
 
     dm_skip = f"({_DM_SKIPPED} 筆格式錯跳過)" if _DM_SKIPPED else ""
     split_note = f"｜分割調整: {n_adj} 筆" if n_adj else ""
+    # 價格狀態一行(#289):兩種輸出模式都印,degraded 與供給式來源都不准靜默。
+    px_note = ({"agent_feed": f"供給價格檔 OK（{price_provenance.get('source')}"
+                              f"，{price_provenance['coverage']['priced_n']}/"
+                              f"{price_provenance['coverage']['requested_n']} 檔）",
+                "unavailable": f"價格不可得（{yf_err or '來源無回應'}）——已輸出 price_request 待補",
+                }.get(price_provenance["mode"], "OK" if not yf_err else yf_err))
     # JSON 模式(SKILL Step 3 走這條):stdout 純 JSON 給 Claude 寫敘事卡;meta 走 stderr 不污染
     if os.environ.get("TR_JSON"):
         import json
         meta = (f"# 載入 {len(rows)} 筆交易{_load_skip_note()}（{rows[0]['date']} ~ {rows[-1]['date']}），"
-                f"{len(rts)} round-trip,持倉 {len(held)}｜yfinance: {'OK' if not yf_err else yf_err}"
+                f"{len(rts)} round-trip,持倉 {len(held)}｜價格: {px_note}"
                 f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔{dm_skip}{split_note}"
                 + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(meta, file=sys.stderr)
@@ -2139,13 +2223,14 @@ def main():
                                currency_meta=currency_meta, cash=cash_data,
                                acct_perf=acct_perf, pnl_curve_data=pc,
                                portfolio_structure=portfolio_structure,
-                               currency_by_ticker=cur_map)
+                               currency_by_ticker=cur_map,
+                               price_provenance=price_provenance, price_request=price_request)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
         print(f"# 載入 {len(rows)} 筆交易{_load_skip_note()}（{rows[0]['date']} ~ {rows[-1]['date']}），"
               f"{len(rts)} 個 round-trip，當前持倉 {len(held)} 檔。", end="")
-        print(f" yfinance: {'OK' if not yf_err else yf_err}｜鏡片: {master or 'fallback'}"
+        print(f" 價格: {px_note}｜鏡片: {master or 'fallback'}"
               f"｜driver map: {n_dm} 檔{dm_skip}{split_note}" + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(f"# 出場紀律只看「決策賣出」：{len(decision_rts)}/{len(rts)} round-trip"
               f"（排除 {len(rts)-len(decision_rts)} 筆大盤/債/商品 ETF 再平衡）")
@@ -2192,7 +2277,8 @@ def main():
                             prev_end=prev_end,
                             cash=cash_data, portfolio_structure=portfolio_structure,
                             price_snapshot=price_snapshot, market_context=review_market,
-                            max_pos_override=max_pos_override)
+                            max_pos_override=max_pos_override,
+                            price_provenance=price_provenance, price_request=price_request)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

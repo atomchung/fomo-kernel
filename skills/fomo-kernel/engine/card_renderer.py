@@ -726,6 +726,19 @@ def _original_pnl_lines(card, language):
     return lines
 
 
+def unrealized_is_measured(overview):
+    """False when positions are held but not one of them has a current price.
+
+    The engine sums only priced positions, so a portfolio with no retrievable
+    prices produces a zero that means "nothing was measured", not "no gain".
+    Printing that zero would treat missing data as zero, which the card spec
+    forbids and #289 saw happen. The engine owns the condition
+    (``unrealized_coverage``); the renderer only chooses the wording.
+    """
+    coverage = (overview or {}).get("unrealized_coverage") or {}
+    return not (coverage.get("held_n") and not coverage.get("priced_n"))
+
+
 def _overview_lines(card, language):
     overview = card.get("overview") or {}
     context = _display_context(card, language)
@@ -733,6 +746,10 @@ def _overview_lines(card, language):
         total_value = _finite_number(overview.get("total_pnl"))
         realized_value = _finite_number(overview.get("realized"))
         unrealized_value = _finite_number(overview.get("unrealized"))
+        if not unrealized_is_measured(overview):
+            # Falls through to the realized-only sentence, which already says
+            # the unrealized side was not scored.
+            unrealized_value = None
         if total_value is not None and realized_value is not None and unrealized_value is not None:
             total = _display_money(total_value, context)
             realized = _display_money(realized_value, context)
@@ -956,6 +973,21 @@ def vs_market_suppressed(card):
     return isinstance(gate, dict) and gate.get("render") is False
 
 
+def price_retrieval_blocked(card):
+    """True when price availability — not the cash anchor — blocks the return.
+
+    #289: a host that cannot reach the price source is a data-availability
+    failure, and the gap note must name that blocker instead of reciting the
+    cash-flow reason. Cards without price provenance (legacy bundles) keep the
+    original wording.
+    """
+    provenance = (card or {}).get("price_provenance") or {}
+    if provenance.get("mode") == "unavailable":
+        return True
+    coverage = provenance.get("coverage") or {}
+    return bool(coverage.get("requested_n")) and not coverage.get("priced_n")
+
+
 def _honesty_lines(bundle, copy):
     """Sentence per triggered honesty key, agent-authored first (#82).
 
@@ -1098,6 +1130,10 @@ def _exit_entries(bundle, copy):
 # _performance_block and the market-grouping below, not for caveat hosting.
 # etf_metadata still rides the ETF lines in Block 2 (special-cased in
 # _card_structure) — that placement is unrelated to this Block-1 ruling.
+# #289 price_source: it needs no host entry here. The footnote lists sentences
+# in honesty_ledger order, and build_honesty_ledger() emits price_source ahead
+# of unrealized_coverage (cause before symptom), so that reading order is
+# preserved by the ledger itself, not by a host-number race.
 
 
 def _performance_items(card, language):
@@ -1131,7 +1167,8 @@ def _performance_items(card, language):
     realized = _finite_number(overview.get("realized"))
     unrealized = _finite_number(overview.get("unrealized"))
     if (display.get("currency") and total is not None and realized is not None
-            and unrealized is not None and kpi_copy.get("pnl") and kpi_copy.get("pnl_sub")):
+            and unrealized is not None and unrealized_is_measured(overview)
+            and kpi_copy.get("pnl") and kpi_copy.get("pnl_sub")):
         sub = kpi_copy["pnl_sub"].format(realized=_display_money(realized, display),
                                          unrealized=_display_money(unrealized, display))
         line("pnl", f"{kpi_copy['pnl']} {_display_money(total, display)}"
@@ -1765,7 +1802,8 @@ def _kpi_tiles(card, context, copy):
     if total is not None and total_text:
         sub = None
         realized_text = _display_money(realized, context)
-        unrealized_text = _display_money(unrealized, context)
+        unrealized_text = (_display_money(unrealized, context)
+                           if unrealized_is_measured(overview) else None)
         if realized_text and unrealized_text and kpi_copy.get("pnl_sub"):
             sub = kpi_copy["pnl_sub"].format(realized=realized_text, unrealized=unrealized_text)
         tiles.append({"id": "pnl", "label": kpi_copy.get("pnl"), "value": total_text,
@@ -1946,6 +1984,10 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
         footnote = [honesty.pop(key) for key in list(honesty)]
         return items, footnote
     missing = copy.get("block_missing") or {}
+    # #289: name the actual blocker. When the host could not retrieve prices at
+    # all, the portfolio-level return is missing for a data-availability reason,
+    # not because the cash anchor or the benchmark symbol is at fault.
+    price_blocked = price_retrieval_blocked(card)
     items = []
     period = _period_line(bundle, copy)
     if period:
@@ -1956,13 +1998,17 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     if not any(item.get("tag") in ("account_hold", "account", "account_gate") for item in perf):
         index = next((i for i, item in enumerate(perf)
                       if item.get("tag") in ("cash", "benchmark")), len(perf))
-        perf.insert(index, {"kind": "line", "tag": None, "text": missing.get("annualized", "")})
+        perf.insert(index, {"kind": "line", "tag": None,
+                            "text": (missing.get("annualized_prices") if price_blocked
+                                     else missing.get("annualized", ""))})
     if (not any(item.get("tag") == "benchmark" for item in perf)
             and not vs_market_suppressed(card)):
         # §3: a month-gated review renders no gap note — the vs-market lines
         # are simply absent. The one-line note stays for genuinely missing
         # benchmark data on a review whose monthly slot is open.
-        perf.append({"kind": "line", "tag": None, "text": missing.get("vs_market", "")})
+        perf.append({"kind": "line", "tag": None,
+                     "text": (missing.get("vs_market_prices") if price_blocked
+                              else missing.get("vs_market", ""))})
     items.extend(perf)
     for text in facts["stress"]:
         items.append({"kind": "line", "tag": "stress", "text": text})

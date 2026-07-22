@@ -45,7 +45,9 @@
   "block_missing": {
     "absolute_pnl": "Absolute P&L is not computable this period: no trades or valuation basis.",
     "annualized": "Annualized return is not computable this period: the cash-flow anchor is incomplete.",
+    "annualized_prices": "Annualized return is not computable this period: current prices could not be retrieved, so no portfolio-level valuation exists.",
     "vs_market": "Benchmark comparison is not computable this period: no resolvable benchmark series.",
+    "vs_market_prices": "Benchmark comparison is not computable this period: the benchmark prices could not be retrieved.",
     "trades": "No ranked instrument diagnosis this period.",
     "trades_traded": "No ranked instrument diagnosis this period; traded: {tickers}.",
     "risks": "No behavioral diagnosis this period: the engine scored no dimension.",
@@ -152,6 +154,7 @@
     "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",
     "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
     "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
+    "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
     "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",

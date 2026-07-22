@@ -142,6 +142,15 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
   *conditions* live in `build_honesty_ledger()` (CLAUDE.md "Honesty decisions
   belong in code"), not new SKILL.md prose — placement itself is now a
   single rule with no per-key table to maintain.
+- A Block-1 gap note names the **actual** blocker. When price retrieval
+  itself failed (#289), the annualized and vs-market notes say so instead of
+  reciting the cash-anchor or benchmark-symbol reason; the renderer selects
+  the variant from `engine_card.price_provenance`, never from prose. The
+  `price_source` sentence itself collapses into the Block-1 footnote like
+  every other honesty key — it rides no indicator line. `build_honesty_ledger()`
+  emits it ahead of `unrealized_coverage` (where the prices came from is the
+  cause, incomplete coverage is its symptom), and because the footnote lists
+  sentences in ledger order, that cause-before-symptom order is preserved.
 
 ## 5. Language and number rules
 

@@ -45,7 +45,9 @@
   "block_missing": {
     "absolute_pnl": "本期算不出帳面損益：缺交易或估值基礎。",
     "annualized": "本期算不出年化報酬：現金流錨點不完整。",
+    "annualized_prices": "本期算不出年化報酬：現價取不到，整體持倉沒有可用的估值基礎。",
     "vs_market": "本期無法比對大盤：缺可用的基準序列。",
+    "vs_market_prices": "本期無法比對大盤：基準指數的價格取不到。",
     "trades": "本期沒有可排序的標的層診斷。",
     "trades_traded": "本期沒有可排序的標的層診斷；這期交易過：{tickers}。",
     "risks": "本期沒有行為診斷：引擎沒有可評分的維度。",
@@ -152,6 +154,7 @@
     "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
     "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
     "unclassified_drivers": "部分標的尚未分類，組合集中度可能被低估。",
+    "price_source": "這期的現價不是引擎自己抓到的：不是來自明確標示的外部資料源與截止日，就是根本取不到，卡上會說明是哪一種。",
     "unrealized_coverage": "部分持倉缺現價，未實現損益不是完整帳面。",
     "orphan_sells": "有賣出缺少已知建倉，相關已實現損益未納入。",
     "currency_mix": "組合含多幣別；聚合數字使用共同幣別，部分匯率可能為近似。",
