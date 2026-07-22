@@ -1100,7 +1100,16 @@ def _reconciliation_lines(bundle, language):
 
     Prints the committed rule plus the metric's then/now values verbatim from
     engine state — the renderer never computes a delta, and the agent never
-    touches the numbers."""
+    touches the numbers.
+
+    #292: when the engine's honesty_ledger carries a `prior_commitment_breach`
+    entry (review.py's `_flag_prior_commitment_breach` matched this exact rule
+    against this period's draft problem_events), one more sentence is appended
+    stating the breach as fact. That sentence is copy-fallback only — same
+    provenance as the then/now numbers above it — and never reads
+    narrative.honesty, so it is guaranteed to reach the reader regardless of
+    how the agent's separately-required honesty sentence turns out to be
+    worded or where it lands on the card."""
     prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
     if not prior.get("rule"):
         return []
@@ -1112,11 +1121,19 @@ def _reconciliation_lines(bundle, language):
         if then_v is not None and now_v is not None:
             # A-12: never print internal metric keys on the card — values only.
             line += f" — the tracked number was {_metric_display(key, then_v)} then, {_metric_display(key, now_v)} now"
-        return [line + "."]
-    line = f"上次你承諾：「{prior['rule']}」"
-    if then_v is not None and now_v is not None:
-        line += f"——追蹤的數字當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
-    return [line + "。"]
+        line += "."
+    else:
+        line = f"上次你承諾：「{prior['rule']}」"
+        if then_v is not None and now_v is not None:
+            line += f"——追蹤的數字當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
+        line += "。"
+    breached = any(entry.get("key") == "prior_commitment_breach"
+                   for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
+    if breached:
+        fallback = (load_copy(language).get("honesty") or {}).get("prior_commitment_breach")
+        if fallback:
+            line += f" {fallback}"
+    return [line]
 
 
 def _review_opening_lines(bundle, language):

@@ -140,7 +140,8 @@
     "acct_perf_basis": "Account performance uses partial cost or FX approximations and remains uncertain.",
     "accounting_reconciliation": "The imported transactions did not reproduce the snapshot-anchored current holdings, so current sizing, diversification, and unrealized P&L were not scored.",
     "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
-    "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero."
+    "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero.",
+    "prior_commitment_breach": "This period already recorded a breach of that same rule, before this review closed the books on it."
   },
   "instrument_tags": {
     "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct} (confirm the thesis)",

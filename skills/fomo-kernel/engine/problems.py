@@ -280,17 +280,25 @@ def load_rules(path):
     return tracking, muted
 
 
-def check_rules(tracking, events, marks):
+def check_rules(tracking, events, marks, draft_events=None, draft_week=None):
     """逐期對位,verdict 依 Opportunity Check 三分:
       broke   = 該期內有綁定 key 的事件
       held    = 無事件,且該期 mark 標「有機會犯」
       skipped = 無事件,也沒機會(零事件不冒充守住)
-    回每條 {rule_id, text, problem_key, verdict(最新期), held_streak, last_breach}。
+    回每條 {rule_id, text, problem_key, verdict(最新期), held_streak, last_breach, draft_breach}。
     last_breach 保留最近一次 broke 的精確期別與最多三筆事件證據，供定性問句引用；
     不可拿四週 recent_events 冒充本次破戒證據。
     held_streak 給呈現層做注意力調度(連 2 次守住退出卡面),不是畢業判定。
     規矩只從 created 之後的期開始對位(review):初診全期補齊的歷史事件是「你過去犯過」
-    的統計事實,但規矩生效前的行為不對規矩計破——否則規矩才立(或剛匯入)就滿版 broke。"""
+    的統計事實,但規矩生效前的行為不對規矩計破——否則規矩才立(或剛匯入)就滿版 broke。
+
+    draft_events/draft_week(#292,additive,唯讀,預設 None):本期尚未 finalize 的草稿
+    problem_events(engine state 的 problem_events)+ 其 date_end。只在 draft_week 晚於
+    這條規矩對位到的最後一期(prev_week——迴圈跑完後自然停在 marks_sorted 最後一個既有
+    mark 的 week,草稿視窗下界不用重算)時才算數,已被正式 mark 涵蓋的區間不重算。命中寫
+    成獨立的 draft_breach,不寫回 last_breach/held_streak/verdict——這是附加的「本期進行
+    中」信號,不是對正式歷史的追溯改寫。不傳這兩參數(或 draft_week 未晚於 prev_week)時
+    draft_breach 恆為 None,其餘欄位與舊行為逐位元組相同。"""
     marks_sorted = sorted(marks, key=lambda m: m["week"])
 
     def _evidence_amount(event):
@@ -298,6 +306,9 @@ def check_rules(tracking, events, marks):
             return abs(float(event.get("amount") or 0))
         except (TypeError, ValueError):
             return 0.0
+
+    def _rank_key(event):
+        return (-_evidence_amount(event), str(event.get("ticker") or ""), str(event.get("note") or ""))
 
     out = []
     for r in tracking:
@@ -316,12 +327,7 @@ def check_rules(tracking, events, marks):
                          and (not created or e["week"] > created)]
             if in_period:
                 verdicts.append("broke")
-                ranked = sorted(
-                    in_period,
-                    key=lambda event: (-_evidence_amount(event),
-                                       str(event.get("ticker") or ""),
-                                       str(event.get("note") or "")),
-                )
+                ranked = sorted(in_period, key=_rank_key)
                 last_breach = {"week": w, "event_count": len(in_period),
                                "events": [dict(event) for event in ranked[:3]]}
             elif (m.get("opportunities") or {}).get(k):
@@ -336,13 +342,24 @@ def check_rules(tracking, events, marks):
             elif v == "broke":
                 break
             # skipped 不中斷也不累計(沒機會犯的週,對 streak 是透明的)
+        draft_breach = None
+        if draft_events and draft_week and draft_week > (prev_week or ""):
+            draft_in_period = [e for e in draft_events if e.get("key") == k
+                               and e.get("week") and e["week"] > (prev_week or "") and e["week"] <= draft_week
+                               and (not created or e["week"] > created)]
+            if draft_in_period:
+                ranked = sorted(draft_in_period, key=_rank_key)
+                draft_breach = {"week": draft_week, "event_count": len(draft_in_period),
+                                "events": [dict(event) for event in ranked[:3]]}
         out.append({"rule_id": r["rule_id"], "text": r.get("text"),
                     "problem_key": k, "verdict": verdicts[-1] if verdicts else None,
-                    "held_streak": streak, "last_breach": last_breach})
+                    "held_streak": streak, "last_breach": last_breach,
+                    "draft_breach": draft_breach})
     return out
 
 
-def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=False):
+def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=False,
+             draft_events=None, draft_week=None):
     """Assemble the review-ready stats payload (single source for CLI and review v2).
 
     rules_path=None keeps the CLI's opt-in semantics (rules_check/muted None);
@@ -353,7 +370,11 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
     window — falling back to the classic `compute_stats` window when fewer
     than 3 marks exist yet. Defaults to False so the standalone `problems.py
     stats` CLI keeps its documented fixed-window contract unless asked
-    otherwise; `engine/review.py`'s `_problem_snapshot` opts in by default."""
+    otherwise; `engine/review.py`'s `_problem_snapshot` opts in by default.
+
+    draft_events/draft_week(#292): forwarded verbatim to check_rules; both
+    default to None so the CLI `stats` subcommand (no flag for this) is
+    unaffected. See check_rules docstring for exact semantics."""
     events, marks, skipped = load_book(book_path)
     today = today or dt.date.today().isoformat()
     window = None
@@ -367,7 +388,8 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
     rules_check = muted = None
     if rules_path:
         tracking, muted_rules = load_rules(rules_path)
-        rules_check = check_rules(tracking, events, marks)
+        rules_check = check_rules(tracking, events, marks,
+                                  draft_events=draft_events, draft_week=draft_week)
         muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
                   "problem_key": r.get("problem_key")} for r in muted_rules]
     return {"as_of": today, "recent_weeks": recent_weeks, "window": window,

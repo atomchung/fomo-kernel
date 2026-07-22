@@ -3155,6 +3155,97 @@ def test_reconciliation_opens_the_card_with_prior_commitment():
         "first review has no prior commitment and no reconciliation line"
 
 
+def test_reconciliation_lines_appends_prior_commitment_breach_sentence():
+    """#292: a `prior_commitment_breach` honesty_ledger entry adds one more
+    sentence right after the then/now reconciliation line. This sentence is
+    copy-fallback only — it never reads narrative.honesty — so it is
+    guaranteed to reach the reader regardless of the agent's separately
+    required (and separately gated) honesty wording."""
+    import card_renderer
+    base_bundle = {"review_plan": {"state_snapshot": {"prior_commitment": {
+                       "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct", "metric_value": 0.47}}},
+                   "engine_state": {"metrics": {"max_pos_pct": 0.48}}}
+    unbreached_zh = card_renderer._reconciliation_lines(base_bundle, "zh-TW")
+    unbreached_en = card_renderer._reconciliation_lines(base_bundle, "en")
+    assert len(unbreached_zh) == 1 and len(unbreached_en) == 1
+
+    breached_bundle = {**base_bundle, "engine_card": {"honesty_ledger": [
+        {"key": "prior_commitment_breach", "status": "draft",
+         "data": {"problem_key": "oversize", "week": "2026-07-21"}}]}}
+    zh = card_renderer._reconciliation_lines(breached_bundle, "zh-TW")
+    en = card_renderer._reconciliation_lines(breached_bundle, "en")
+    assert len(zh) == 1 and len(en) == 1, \
+        "the breach sentence rides the same opening line, not a second list entry"
+    assert zh[0].startswith(unbreached_zh[0]) and zh[0] != unbreached_zh[0], \
+        "the then/now numbers must render exactly as before, with the breach sentence appended"
+    assert en[0].startswith(unbreached_en[0]) and en[0] != unbreached_en[0]
+    assert zh[0][len(unbreached_zh[0]):].strip() == \
+        card_renderer.load_copy("zh-TW")["honesty"]["prior_commitment_breach"]
+    assert en[0][len(unbreached_en[0]):].strip() == \
+        card_renderer.load_copy("en")["honesty"]["prior_commitment_breach"]
+
+    # An unrelated honesty-ledger key must not trigger the sentence.
+    unrelated_bundle = {**base_bundle, "engine_card": {"honesty_ledger": [
+        {"key": "etf_metadata", "status": "partial", "data": {}}]}}
+    assert card_renderer._reconciliation_lines(unrelated_bundle, "en") == unbreached_en
+
+    # No prior commitment at all still short-circuits before the ledger is read.
+    assert card_renderer._reconciliation_lines(
+        {"review_plan": {}, "engine_card": {"honesty_ledger": [
+            {"key": "prior_commitment_breach", "status": "draft", "data": {}}]}}, "en") == [], \
+        "first review has no prior commitment; a stray ledger entry must not fabricate one"
+
+
+def test_draft_breach_of_a_prior_commitment_forces_a_required_honesty_key():
+    """#292: rules.jsonl carries the rule the user is tracking; last_state.json's
+    commitment names that same rule (the join key session.PKEY + text); the
+    _artifacts() fixture state already carries one 2026-07-14 avgdown_breach
+    problem_event. problems.jsonl needs one real prior mark (2026-07-07, before
+    the fixture's own date_end) so the book is non-empty and prev_week resolves
+    to a date strictly before the draft window — otherwise _problem_snapshot
+    short-circuits to None before check_rules ever runs."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root_dir:
+        root = pathlib.Path(root_dir)
+        rule_text = "虧損不加碼"
+        (root / "rules.jsonl").write_text(json.dumps({
+            "rule_id": "rule-prior", "text": rule_text, "problem_key": "avgdown_breach",
+            "status": "tracking", "created": "2026-06-01",
+        }, ensure_ascii=False) + "\n", encoding="utf-8")
+        (root / "problems.jsonl").write_text(json.dumps({
+            "type": "review_mark", "week": "2026-07-07", "opportunities": {"avgdown_breach": True},
+        }) + "\n", encoding="utf-8")
+        (root / "last_state.json").write_text(json.dumps({
+            "date_end": "2026-07-07",
+            "commitment": {"rule": rule_text, "metric_key": "avgdown_count",
+                          "metric_value": 2, "goal": "down", "origin": "candidate",
+                          "source": "user_chosen"},
+        }, ensure_ascii=False), encoding="utf-8")
+
+        card, state = _artifacts(tmp)
+        run = _run("prepare", "--root", root, "--route", "weekly_review", "--language", "zh-TW",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+
+        rules_check = plan["state_snapshot"]["problem_stats"]["rules_check"]
+        assert len(rules_check) == 1
+        assert rules_check[0]["last_breach"] is None, \
+            "no finalized mark has closed over this period yet — only the draft window sees it"
+        assert rules_check[0]["draft_breach"] == {
+            "week": "2026-07-14", "event_count": 1,
+            "events": [{"key": "avgdown_breach", "kind": "event", "week": "2026-07-14",
+                       "ticker": "PLTR", "amount": 1, "note": "test"}],
+        }
+        assert rules_check[0]["verdict"] == "held" and rules_check[0]["held_streak"] == 1, \
+            "the finalized verdict/streak stay driven by real marks only, untouched by the draft window"
+
+        assert "prior_commitment_breach" in plan["card_plan"]["required_honesty_keys"]
+        ledger_entry = next(e for e in plan["engine_card"]["honesty_ledger"]
+                            if e["key"] == "prior_commitment_breach")
+        assert ledger_entry == {"key": "prior_commitment_breach", "status": "draft",
+                                "data": {"problem_key": "avgdown_breach", "week": "2026-07-14"}}
+
+
 def test_review_count_unifies_canonical_and_legacy_history():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
