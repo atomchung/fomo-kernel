@@ -85,6 +85,12 @@ python3 engine/review.py prepare <CSV...> --language en --prices /tmp/fomo-kerne
 
 The supplied envelope changes the session fingerprint, so this is a new prepare rather than a resume of the degraded run. When an envelope is supplied the engine performs no retrieval of its own, including FX and split lookups.
 
+## Plausibility cross-check
+
+Structural validation catches a malformed envelope, not a wrong one: a mistranscribed digit, a stale price from the wrong date, or the wrong ticker entirely can still be positive, finite, and currency-matched, and would otherwise be priced and disclosed as if it were genuine. The engine additionally compares every supplied close against that ticker's own last recorded trade price. A deviation beyond a wide band, in either direction, adds a `price_plausibility` honesty caveat naming the affected ticker — it never rejects the run. A genuine multi-bagger or a genuine collapse between the last trade and `as_of` is real and still prices normally; this only asks that you double-check the source when the gap is unusually large.
+
+If the card discloses this caveat, re-open the page you read the close from and confirm the ticker, the date, and the number before treating it as settled.
+
 ## What the card says
 
-An applied envelope triggers the `price_source` honesty key, and the card names the external source and its as-of date. An unrecovered failure triggers the same key with the unavailable status, and the performance block states that price retrieval — not the cash anchor — is what blocks the portfolio-level return. Neither form silently drops a number that could not be computed.
+An applied envelope triggers the `price_source` honesty key, and the card names the external source and its as-of date. An unrecovered failure triggers the same key with the unavailable status, and the performance block states that price retrieval — not the cash anchor — is what blocks the portfolio-level return. Neither form silently drops a number that could not be computed. A supplied close that fails the plausibility cross-check above additionally triggers `price_plausibility`, naming the ticker without changing the price the card actually uses.

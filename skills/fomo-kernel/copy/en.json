@@ -155,6 +155,7 @@
     "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
     "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
     "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
+    "price_plausibility": "A supplied closing price differs sharply from that ticker's own last recorded trade price; the source should be re-verified before the figure is trusted.",
     "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",

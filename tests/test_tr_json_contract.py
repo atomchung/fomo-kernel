@@ -161,7 +161,8 @@ def main():
         HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
                    "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability",
                    "acct_perf_basis", "etf_metadata", # skill v2:ETF metadata 缺值不可猜零
-                   "price_source"}                    # #289:價格來源(供給式/不可得)
+                   "price_source",                    # #289:價格來源(供給式/不可得)
+                   "price_plausibility"}               # #330:供給價與最近成交價落差過大
         ok(all(e["key"] in HL_KEYS for e in hl),
            "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
         hl_keys = {e["key"] for e in hl}
