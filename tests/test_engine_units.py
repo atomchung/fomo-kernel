@@ -653,6 +653,18 @@ def test_dim_diversify_triggered_severity_thresholds_aligned():
     assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
 
 
+def test_number_line_and_dim_strength_use_plain_driver_wording():
+    """#314: 卡面 zh 文案不夾雜未翻譯的 driver 英文字；分散維的 number_line() 與
+    dim_strength() 兩處都改講「驅動因子」。"""
+    hole = {"dim": "分散", "n": 3, "ai_pct": 1.0, "max_sector": "半導體",
+            "max_sector_pct": 1.0, "top3": 1.0}
+    line = tr.number_line(hole)
+    assert "驅動因子" in line and "driver" not in line, line
+
+    strength = tr.dim_strength({}, {}, {}, {"triggered": False, "n": 6}, {})
+    assert strength and "驅動因子" in strength and "driver" not in strength, strength
+
+
 def test_card_for_fallback_and_loaded_lens_paths():
     """鏡片未載入走固定 fallback；載入後只覆寫有明確 stance 的維度。"""
     original_lens = tr._LENS

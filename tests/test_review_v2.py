@@ -3537,6 +3537,15 @@ def test_account_performance_pillar_gate_and_full_render():
     assert any("不是對錯判定" in x for x in zh), "#179: cash drag stays neutral, never a verdict"
     assert card_renderer._performance_lines({"acct_perf": {"note": "offline"}}, "en", {}) == [], \
         "no holdings pillar computed -> no account section"
+    # #314: the internal 持倉柱 (holdings-pillar) metaphor must not leak onto the
+    # zh card; user-facing wording (僅計持倉) replaces it everywhere it appeared —
+    # the hold_twr line, the cash-drag comparison, and the gated unlock-invitation.
+    assert any("僅計持倉的時間加權報酬為 12%" in x for x in zh)
+    assert any("與僅計持倉的差距" in x for x in zh)
+    assert not any("持倉柱" in x for x in zh), \
+        "#314: internal pillar jargon must not appear on the rendered zh card"
+    gated_zh = card_renderer._performance_lines(gated, "zh-TW", {})
+    assert any("上面的僅計持倉不受影響" in x for x in gated_zh)
 
 
 def test_alpha_interval_line_uses_arabic_digits_for_the_interval_level():
@@ -3549,6 +3558,64 @@ def test_alpha_interval_line_uses_arabic_digits_for_the_interval_level():
     assert "九十五" not in line, "spelled-out zh numeral must not mix with Arabic percentages"
     en_line = card_renderer._alpha_interval_line(ab, "en")
     assert en_line and "95% interval" in en_line
+
+
+def test_alpha_interval_line_adds_plain_language_caveat_when_interval_crosses_zero():
+    """#313: "95% interval from -10% to +74%" is statistically opaque to a
+    retail reader on its own. When the lower bound is negative, the renderer
+    appends one plain-language sentence (both locales) saying the interval
+    does not yet confirm a durable edge; a comfortably positive interval gets
+    no such caveat, so the card does not print a warning nobody needs."""
+    import card_renderer
+    crossing = {"alpha_stat": {"alpha_ann": 0.32, "ci95": [-0.10, 0.74]}}
+    zh = card_renderer._alpha_interval_line(crossing, "zh-TW")
+    assert "區間包含負值" in zh and "還不能視為穩定能力" in zh, zh
+    en = card_renderer._alpha_interval_line(crossing, "en")
+    assert "includes a negative value" in en and "not yet statistically confirmed" in en, en
+
+    positive_only = {"alpha_stat": {"alpha_ann": 0.32, "ci95": [0.10, 0.74]}}
+    zh_clean = card_renderer._alpha_interval_line(positive_only, "zh-TW")
+    assert "區間包含負值" not in zh_clean, \
+        "no caveat needed when the interval excludes zero on the downside"
+    en_clean = card_renderer._alpha_interval_line(positive_only, "en")
+    assert "includes a negative value" not in en_clean
+
+
+def test_zh_copy_glossary_drops_untranslated_jargon():
+    """#314: zh-TW cards must not mix untranslated English (thesis/driver) into
+    otherwise-Chinese sentences. Covers the period line, instrument tag, rule,
+    and problem-ledger surfaces the issue named, plus the internal 驅動因子/
+    交易論述 replacement terms staying consistent everywhere they appear."""
+    import card_renderer
+    copy_zh = card_renderer.load_copy("zh-TW")
+    assert copy_zh["sections"]["motive"] == "這次加碼的交易論述"
+    assert copy_zh["period"]["spy"] == "SPY 同期 {ret}"
+    assert "thesis" not in copy_zh["rules"]["exit_discipline"]
+    assert "driver" not in copy_zh["rules"]["diversification"]
+    assert "驅動因子" in copy_zh["rules"]["diversification"]
+    assert copy_zh["problem_keys"]["concentration"] == "同一驅動因子集中"
+    assert copy_zh["problem_keys"]["horizon_break"] == "交易論述時間軸破戒"
+
+    tag = {"code": "suspected_averaging_down_losing", "params": {"n_adds": 3, "cur": -0.22}}
+    resolved = card_renderer.localized_instrument_tag(tag, "zh-TW")
+    assert "thesis" not in resolved and "交易論述" in resolved, resolved
+
+    bundle = {"engine_state": {"date_start": "2026-06-01", "date_end": "2026-07-14"},
+              "review_plan": {"state_snapshot": {"market_context": {
+                  "benchmarks": {"SPY": {"window_ret": 0.011}}}}}}
+    period_line = card_renderer._period_line(bundle, copy_zh)
+    assert "SPY 同期" in period_line and "SPY 窗口" not in period_line and "SPY 區間" not in period_line
+
+    problem_bundle = {"review_plan": {"state_snapshot": {"problem_stats": {
+        "top": ["concentration", "horizon_break"],
+        "per_key": {"concentration": {"recent_count": 3, "prev_count": 1, "trend": "worse"},
+                    "horizon_break": {"recent_count": 1, "prev_count": 2, "trend": "better"}}}}},
+        "rule_breach_decisions": []}
+    copy_with_lang = dict(copy_zh, language="zh-TW")
+    problem_lines = card_renderer._problem_lines(problem_bundle, copy_with_lang)
+    assert any("同一驅動因子集中" in x for x in problem_lines)
+    assert any("交易論述時間軸破戒" in x for x in problem_lines)
+    assert not any("driver" in x or "thesis" in x for x in problem_lines)
 
 
 def test_horizon_plan_join_ranks_full_exits_and_never_closes_a_reduction():

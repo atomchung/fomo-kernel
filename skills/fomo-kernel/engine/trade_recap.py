@@ -1221,7 +1221,7 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
         c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次,卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
                         + (f"(例:{_egt})" if _egt else "")))
     if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
-        c.append((0.6, f"{div_dim['n']} 檔分布在不同 driver,沒有全押在同一個故事上"))
+        c.append((0.6, f"{div_dim['n']} 檔分布在不同驅動因子，沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
         c.append((0.5, f"進出有一致的節奏:中位持有 {hold_dim['median_hold']:.0f} 天,不是隨機亂買亂賣"))
     if not c: return None
@@ -1464,7 +1464,7 @@ def number_line(d):
     if n == "部位 sizing":
         return f"你最大一筆 {d['max_ticker']} 佔 {d['max_pct']*100:.0f}%，其餘平均 {d['avg_pct']*100:.0f}%"
     if n == "分散":
-        return f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、top3 {d['top3']*100:.0f}%——同一個 driver"
+        return f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、top3 {d['top3']*100:.0f}%——同一個驅動因子"
     if n == "持有時間":
         if d.get("no_data"):
             return "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）"
