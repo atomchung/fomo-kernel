@@ -182,6 +182,50 @@ def test_engine_numbers_match_markdown_card():
         assert token in run["html"], f"engine value missing from HTML: {token}"
 
 
+def test_markdown_reader_path_surfaces_existing_risk_and_rule_before_performance():
+    """#325: text-only hosts expose the key decisions without adding facts."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        structure = card_renderer._card_structure(run["bundle"])
+        copy = structure["copy"]
+        body = run["markdown"].split("---", 2)[2].lstrip()
+        performance = f"## {copy['blocks']['performance']}"
+        assert body.index(f"# {structure['headline']}") < body.index(performance)
+        for label, line in card_renderer._read_first_panels(structure):
+            summary = f"> **{label}**\n>\n> {line}"
+            assert summary in body, f"{language} Markdown reader path lost {label!r}"
+            assert body.index(summary) < body.index(performance), \
+                f"{language} {label!r} must be visible before performance detail"
+            assert body.count(line) >= 2, \
+                f"{language} reader path must project, not replace, its canonical panel"
+
+
+def test_cli_private_markdown_is_the_committed_canonical_card():
+    """#325: the terminal fallback is a renderer output, never new CLI copy."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "demo-root"
+        card, state = _artifacts_with_curve(tmp)
+        prepared = v2._run("prepare", "--test-drive", "--root", root,
+                           "--card-json", card, "--state-json", state,
+                           "--language", "zh-TW")
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+        plan = json.loads(prepared.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "answers.json"
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        answers.write_text(json.dumps(v2._answers(plan, commitment="candidate_0"),
+                           ensure_ascii=False), encoding="utf-8")
+        narrative.write_text(json.dumps(v2._narrative("zh-TW"), ensure_ascii=False),
+                             encoding="utf-8")
+        finalized = v2._run("finalize", "--root", root, "--session-id", plan["session_id"],
+                            "--answers", answers, "--narrative", narrative)
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        path = pathlib.Path(json.loads(finalized.stdout)["path"])
+        rendered = v2._run("render", "--root", root, "--session-id", plan["session_id"],
+                           "--format", "private-markdown")
+        assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+        assert rendered.stdout == (path / "card-private.md").read_text(encoding="utf-8")
+
+
 def test_sparkline_renders_only_with_curve_points():
     run = _session("zh-TW")
     html = run["html"]
@@ -778,6 +822,12 @@ def test_delivery_contract_exists_and_is_routed():
     # terminal/graphical surfaces must both fall back to the canonical Markdown.
     fallback = re.search(r"fall back[^\n]*Markdown|Markdown card text verbatim", text)
     assert fallback, "delivery contract must keep the verbatim-Markdown fallback rule"
+    assert "do not put it in a code fence" in text, \
+        "the conversation fallback must leave the Markdown hierarchy renderable"
+    assert "same canonical Markdown artifact" in text, \
+        "CLI fallback must reuse the canonical card rather than fork its copy"
+    assert "--format private-markdown" in text, \
+        "delivery contract must document the direct terminal fallback command"
 
     assert "references/card-delivery.md" in (SKILL / "SKILL.md").read_text(encoding="utf-8")
     assert "references/card-delivery.md" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -988,6 +1038,8 @@ def main():
         test_exactly_one_widget_fragment_pair,
         test_localized_title_from_copy_assets,
         test_engine_numbers_match_markdown_card,
+        test_markdown_reader_path_surfaces_existing_risk_and_rule_before_performance,
+        test_cli_private_markdown_is_the_committed_canonical_card,
         test_sparkline_renders_only_with_curve_points,
         test_sparkline_caption_shows_date_range_and_peak_trough,
         test_rich_layout_renders_template_blocks_from_shared_facts,

@@ -12,7 +12,9 @@ Record the actual user-visible mode following `interaction-delivery.md`. Artifac
 ## Choose a channel per surface
 
 - Graphical surface (claude.ai, desktop app, IDE webview): render a widget from the engine HTML artifact. Use the fragment between the `<!-- WIDGET-FRAGMENT-START -->` and `<!-- WIDGET-FRAGMENT-END -->` markers — a self-contained `<style>` plus `<div class="rc">` block built for pasting into a widget host. If no widget tool exists or rendering fails, fall back to pasting the canonical Markdown card text verbatim.
-- Terminal or plain-text surface: paste the canonical Markdown card text verbatim, and mention that the `.html` artifact can be opened in a browser for the styled card.
+- Conversation-only, terminal, or plain-text surface: paste the canonical Markdown card text verbatim and **do not put it in a code fence**. Its title plus the engine-rendered `Key risk` / `Next rule` blockquote is the readable last-resort layout; the four detailed blocks remain immediately below it. The `.html` artifact is optional and may be offered as a browser view, never as a replacement for the inline text.
+
+The terminal/CLI fallback is the same canonical Markdown artifact, not a separately authored report. After finalization, `python3 engine/review.py render --root <root> --session-id <id> --format private-markdown` writes that exact private card directly to stdout. A terminal that renders Markdown preserves the full hierarchy; a raw terminal still keeps the heading, blockquote, panel marks, and fixed block order legible. Do not make a second CLI template or calculate a condensed summary outside `card_renderer.py`.
 
 ## Try the widget once per session
 

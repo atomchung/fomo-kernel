@@ -2927,6 +2927,12 @@ def cmd_render(args):
     bundle = session.load_committed(root, args.session_id)
     private_md = card_renderer.render_private(bundle)
     public_md = card_renderer.render_public(bundle)
+    if args.format == "private-markdown":
+        sys.stdout.write(private_md)
+        return
+    if args.format == "public-markdown":
+        sys.stdout.write(public_md)
+        return
     _emit({"session_id": args.session_id, "private_card": private_md, "public_card": public_md})
 
 
@@ -3011,6 +3017,8 @@ def build_parser():
     render = sub.add_parser("render")
     render.add_argument("--session-id", required=True)
     render.add_argument("--root")
+    render.add_argument("--format", choices=("json", "private-markdown", "public-markdown"),
+                        default="json", help="emit JSON (default) or one canonical Markdown card")
     render.set_defaults(func=cmd_render)
     repair = sub.add_parser("repair-projections")
     repair.add_argument("--root")
