@@ -22,7 +22,7 @@ The target reader understands a brokerage statement. Use standard account langua
 
 - Raw five-dimension severity tables.
 - Raw `thesis_questions` or unanswered questions.
-- Internal labels such as `max_pos_pct`, `metric_key`, `baseline`, or implementation notes.
+- Internal labels such as `max_pos_pct`, `metric_key`, `baseline_note`, or implementation notes.
 - Agent-computed numbers or rewritten engine facts.
 - Several recommendations or action items.
 - Buy or sell advice for a security.

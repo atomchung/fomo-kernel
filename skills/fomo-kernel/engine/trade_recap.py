@@ -1243,19 +1243,19 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
             cand = [r for r in rts if r.get("ret", 0) > 0.10 and r.get("fwd") is not None and r["fwd"] < 0.03]
             if cand:
                 b = max(cand, key=lambda r: r["ret"])
-                eg = f"（例:{b['ticker']} 你賺 {b['ret']*100:.0f}% 出場,賣完它只動 {b['fwd']*100:+.0f}%——沒賣早）"
-        c.append((0.7+(0.35-we), f"該獲利了結時你不手軟:賣掉的賺錢單只有 {we*100:.0f}% 事後繼續漲,代表你不會「抱著賺錢的捨不得賣、結果回吐」{eg}"))
+                eg = f"（例:{b['ticker']} 你賺 {b['ret']*100:.0f}% 出場，賣完它只動 {b['fwd']*100:+.0f}%——沒賣早）"
+        c.append((0.7+(0.35-we), f"該獲利了結時你不手軟：賣掉的賺錢單只有 {we*100:.0f}% 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」{eg}"))
     mp = size_dim.get("max_pct", 1)
     if mp < 0.22:
-        c.append((1-mp, f"單筆部位有控制:押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
+        c.append((1-mp, f"單筆部位有控制：押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
     if avgdown_dim.get("breach", 1) == 0 and avgdown_dim.get("count", 0) >= 2:
         _egt = (avgdown_dim.get("tickers") or [""])[0]         # 帶一個具體標的當案例;「爆倉」是黑話,改人話「越攤越重」
-        c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次,卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
+        c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
                         + (f"(例:{_egt})" if _egt else "")))
     if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
         c.append((0.6, f"{div_dim['n']} 檔分布在不同驅動因子，沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
-        c.append((0.5, f"進出有一致的節奏:中位持有 {hold_dim['median_hold']:.0f} 天,不是隨機亂買亂賣"))
+        c.append((0.5, f"進出有一致的節奏：中位持有 {hold_dim['median_hold']:.0f} 天，不是隨機亂買亂賣"))
     if not c: return None
     c.sort(reverse=True); return c[0][1]
 

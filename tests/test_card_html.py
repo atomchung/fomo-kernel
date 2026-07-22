@@ -240,8 +240,8 @@ def test_sparkline_caption_shows_date_range_and_peak_trough():
 # synthetic but shaped exactly like trade_recap output on the committed mocks.
 _RICH_CARD_FIELDS = {
     "ticker_diagnosis": [
-        {"ticker": "PLTR", "impact": 76647.0, "tags": ["⚠押太重:佔組合 49%"]},
-        {"ticker": "NVDA", "impact": 58524.0, "tags": ["✓紀律持有:賺 150%"]},
+        {"ticker": "PLTR", "impact": 76647.0, "tags": ["⚠押太重：佔組合 49%"]},
+        {"ticker": "NVDA", "impact": 58524.0, "tags": ["✓紀律持有：賺 150%"]},
         {"ticker": "AMD", "impact": -1000.0, "tags": ["— 大致中性"]},
     ],
     "what_if": {"label": "AI 概念股(跨板塊)", "mval": 170963.0, "pct": 0.983,

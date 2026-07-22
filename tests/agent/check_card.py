@@ -53,8 +53,12 @@ class Finding:
 
 
 # ── 內部 metric key 黑名單(A-12;card-spec 說話原則:工程內部名不上卡)──────────
+#    bare "baseline" 曾在此表(2026-07-21 前):它是英文單字,會誤中合法卡面散文
+#    ("...sets a baseline without forcing a commitment.")——真正的內部欄位名是
+#    底線接壤的 `baseline_note`(review.py/coach.py 內部 commitment 記帳鍵,從未
+#    上卡),改成這個 snake_case 全名才符合本表其餘項目「真的是內部識別碼」的前提。
 _INTERNAL_KEYS = re.compile(
-    r"max_pos_pct|ai_pct|avgdown_count|max_sector_pct|top3_pct|metric_key|baseline")
+    r"max_pos_pct|ai_pct|avgdown_count|max_sector_pct|top3_pct|metric_key|baseline_note")
 
 # ── 5 維 severity 小數表(A-2;card-spec 🚫「卡是故事不是 dashboard」)────────────
 _SEVERITY_TABLE = re.compile(r"0?\.\d+ *[🔴🟡]")
