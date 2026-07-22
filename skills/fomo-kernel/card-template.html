@@ -39,6 +39,14 @@
     numbers and examples; lead with a strength; prioritize money over count or
     win rate; compare alpha with SPY and use sector ETFs for attribution only;
     never add the deprecated five-dimension severity table.
+  - Removed by #301 (2026-07-22): the standalone "Improve · preserve strengths
+    and remove pure process loss" section and its `.rx` rows. Listing amplify,
+    outsource, and cut prescriptions above the committed rule made the Next-step
+    block issue several imperatives at once, some opposing each other ("don't let
+    sizing dilute your edge" beside "PLTR is too heavy at 49%"). Amplify rows now
+    sit beside the Block-3 strength, outsource under the Block-3 hole, and cut
+    rows are represented by the rule itself. Block 4 renders exactly one action.
+    Do not reintroduce a prescription list here.
   - The pnl_curve sparkline uses engine `pnl_curve.points`. Use one thin line,
     colored only by the final sign. Omit the SVG when `pnl_curve.note` is nonempty.
   - The rule section has two states: show two or three candidates before the user
@@ -136,15 +144,6 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
 .rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
-.rc .rx{display:flex;gap:11px;padding:11px 0;border-top:0.5px solid var(--border)}
-.rc .rx:first-of-type{border-top:none;padding-top:2px}
-.rc .rx .ic{width:30px;height:30px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-1);border:0.5px solid var(--border)}
-.rc .rx .ic i{font-size:17px}
-.rc .ic-amp i{color:var(--text-success)}
-.rc .ic-test i{color:var(--text-accent)}
-.rc .ic-cut i{color:var(--text-danger)}
-.rc .rx .kind{font-size:13px;font-weight:500;margin:0 0 2px}
-.rc .rx .desc{font-size:13px;color:var(--text-secondary);line-height:1.55;margin:0}
 .rc .rule{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
 .rc .rule .rt{font-size:12px;color:var(--text-accent);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
 .rc .rule .rmain{font-size:15px;color:var(--text-primary);line-height:1.65;margin:0;font-weight:500}
@@ -256,21 +255,9 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
     <p class="story" style="margin-top:14px">The conclusion changes with the comparator: selection beats neutral QQQ but trails the strongest hindsight benchmark, SOXX. The data cannot yet establish selection skill, and beta 2.05 shows that much of the gain came from concentration in the right theme.</p>
   </div>
 
-  <div class="sec">
-    <h2><i class="ti ti-route" aria-hidden="true"></i>Improve · preserve strengths and remove pure process loss</h2>
-    <div class="rx">
-      <div class="ic ic-test"><i class="ti ti-flask" aria-hidden="true"></i></div>
-      <div><p class="kind">Test a possible strength</p><p class="desc">Theme selection may explain the excess return, but one correct AI exposure can be luck. Record the next theme thesis and timestamp it; repeated correct calls are needed before treating it as an edge.</p></div>
-    </div>
-    <div class="rx">
-      <div class="ic ic-amp"><i class="ti ti-trending-up" aria-hidden="true"></i></div>
-      <div><p class="kind">Preserve a strength</p><p class="desc">The selection result beat even SOXX in this sample. Preserve the research process while preventing concentration and discipline leaks from dominating it.</p></div>
-    </div>
-    <div class="rx">
-      <div class="ic ic-cut"><i class="ti ti-scissors" aria-hidden="true"></i></div>
-      <div><p class="kind">Remove process loss</p><p class="desc">Adding to a loss without new evidence is the first behavior to remove.</p></div>
-    </div>
-  </div>
+  <!-- The "Improve" prescription list that used to sit here was removed by
+       #301; see the header note. Amplify content belongs beside the Block-3
+       strength, outsource under the Block-3 hole. -->
 
   <div class="sec">
     <div class="rule">

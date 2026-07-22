@@ -8,7 +8,7 @@ fomo-kernel · trade-recap engine v0.2
 隱私：本檔不含任何真實帳戶路徑;預設只跑 mock 資料。用戶自己的 CSV 由參數傳入,留在本機。
 """
 import csv, os, re, sys, statistics, datetime as dt
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 import instruments as instrument_policy
 import market_context as market_context_engine
@@ -28,6 +28,7 @@ SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
 RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股息零頭/1 股尾倉),不計入分散度/what-if/per-ticker 診斷/未分類計數(#172,owner 2026-07-12 拍板;相對佔比自適應帳戶規模,非絕對股數/金額)
+POSITION_CAP = 0.20        # 單一標的建議上限:通用基準(單檔歸零 = 帳戶 -20%),不依用戶歷史分佈個人化——那會把壞習慣正常化(owner 2026-07-22)。cut_oversize 規矩與卡片超標判定共用此值;三處口徑不對齊(dim_size 25% / prescribe 30% / 此處 20%)與「用戶自訂上限」在 #324 追蹤
 
 # ── ticker → (sector, thematic?)  thematic=1 代表同屬一個跨產業主題(如 AI capex)= VY B2 的「driver」──
 # 這張表只是「常見股 fallback」。主路徑:SKILL 指引 Claude 對『實際持倉』用世界知識生成 driver map
@@ -1108,8 +1109,12 @@ def dim_avgdown(avg_down, held, last_px, size_dim):
     # 純次數高（常買 dip 的 DCA）只當資訊，不入卡（owner 143 次/0 breach 被舊版誤排第三）。
     sev = min(0.5*breach + cnt/600, 0.8)
     tickers = sorted({e["ticker"] for e in avg_down})
+    # #302:per-ticker 次數讓卡片的規矩能指名「這條本期會攔下誰」,不只給總次數。
+    # 純聚合,不帶日期/價格——事件細節留在 problem_events,卡面只要可對照的標的。
+    ticker_counts = Counter(e["ticker"] for e in avg_down)
     return dict(dim="加碼攤平", tier=1, triggered=(breach >= 1),
                 severity=sev, count=cnt, breach=breach, tickers=tickers,
+                ticker_counts=dict(ticker_counts),
                 allocation_exempt_tickers=exempt)
 
 # ── 【風格】維雛形(v2a,解鎖 v2c 誠實閥)──────────────────────────────────────
@@ -1380,7 +1385,7 @@ def prescribe(ab, dims, overview):
         rx.append(dict(code="cut_oversize", kind="cut_loss", dim="部位 sizing",
                        params={"ticker": sz.get("max_ticker"), "max_pct": sz.get("max_pct", 0)},
                        verify="單筆最大佔比(降→好)",
-                       rule="單筆部位上限定死 20%,超過就減"))
+                       rule=f"單筆部位上限定死 {POSITION_CAP:.0%},超過就減"))
     return rx
 
 def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):

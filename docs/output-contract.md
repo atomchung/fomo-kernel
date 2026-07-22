@@ -28,8 +28,35 @@ Every committed review card renders, in this order:
 | 0 | **Keynote** | One sentence that states the period's most important judgment. | "On paper you're up +$138k, but almost all of it is 'held and never sold'" |
 | 1 | **Performance** | Fixed internal order: ① absolute P&L for the period (realized + unrealized) → ② the period's rate of return, annualized (engine: IRR; **presentation must never print the token "IRR"** — use the plain phrase "annualized return" in the card's locale) → ③ comparison vs market: excess in pp, β, what the benchmark did (monthly cadence — §3). Period label (date span) is one line at the top of this block — the former market-timeline section collapses into one or two indicators here and is **not** a standalone block. The concentration stress line ("drop 30% → −$X") rides the exposure indicator (final placement follows PR #265). | Total P&L line, win/loss ratio, "Beat the market +247pp · β 2.04 · 30% drawdown = −$50k", α split indent |
 | 2 | **Key trades** | Instruments ranked by \|money impact\|, each row = ticker + amount + verdict tag. Motive answers (from Step-2 questions) and exit records attach to the row of the instrument they concern; they are not standalone sections. | "PLTR +$74,058 [v] likely DCA · [!] too heavy 50%" |
-| 3 | **Risks & problems** | `[v]` what you did right (top strength) paired with `[X]` the biggest hole. Behavior patterns fold in here. | "[v] averaged down but stayed within cap / [X] position sizing — PLTR 50%" |
-| 4 | **Next step** | Exactly one rule to change next period. | "[*] hard-cap any single position at 20%" |
+| 3 | **Risks & problems** | Up to three panels in this order: `[v]` what you did right (top strength, plus at most one `amplify` prescription row — the strongest claim only), `[X]` the biggest hole (plus the `outsource` row when it fired), and `[?]` patterns the engine detected but has not judged. Behavior patterns fold in here. | "[v] averaged down but stayed within cap / [X] position sizing — PLTR 50%" |
+| 4 | **Next step** | Exactly one rule to change next period, and nothing that reads as a second instruction. | "[*] hard-cap any single position at 20%" |
+
+**Block 3's `[?]` panel** (#303) holds read-only observations — exit
+opportunity-cost being the first — that the engine surfaces without a verdict.
+Its label must state that no answer is expected, and it must name the
+instruments so the pattern is checkable. A pattern the engine *does* want
+answered belongs in the question queue, not here.
+
+**Block 4 renders, in order** (#301): the rule, then the positions or behavior
+counts it would act on (#302), then — only when the same card credits a
+strength the rule appears to contradict — one engine-owned sentence stating the
+order of operations. Nothing else. Specifically:
+
+- **No prescription list.** `amplify` rows belong to Block 3's `[v]`,
+  `outsource` to Block 3's `[X]`, and `cut_loss` rows are already represented by
+  the rule the engine derived from them. Rendering them here produced up to
+  five imperatives at once, some of them opposing ("don't let sizing dilute
+  your edge" beside "PLTR is too heavy at 49%"), and the reader was left to
+  arbitrate. That was the #301 QA finding.
+- **`narrative.rule_rationale` is not rendered.** It duplicated the trade-off
+  sentence; between an authored restatement and a derived one, the card keeps
+  the derived one.
+- **The threshold travels inside the rule text** (#317), interpolated from
+  `POSITION_CAP`, so the reader is not left recalling what "the cap" was. It is
+  a constant, not a per-period fact, so the tracked rule text stays stable
+  across weeks. Threshold alignment and user-set caps are tracked in #324; do
+  **not** add card copy explaining that the threshold is a generic baseline —
+  that is the caveat noise this contract exists to remove.
 
 Renderer sections not mapped above (standalone market timeline, standalone
 motive/exit/ETF sections, …) merge into the blocks as described or disappear;
@@ -54,7 +81,11 @@ never silent omission.
 | 2 behavior tags | engine per-ticker diagnosis present | row renders without tags |
 | 2 motive/exit attachments | Step-2 answers / exit records exist for that ticker | row renders without them |
 | 3 strengths + hole | engine diagnosis present | one-line note |
+| 3 `[v]` amplify row | an `amplify` / `amplify_hypothesis` / `selection_inconclusive` prescription exists (strongest one only, in that order) | panel renders with the strength line alone |
+| 3 `[?]` pattern panel | an unjudged pattern fired (today: `sold_winner_early` tags on ≥1 instrument) | omit the panel — an empty "no patterns" line is noise |
 | 4 next step | always — falls back to restating the standing rule when the engine proposes no change | — |
+| 4 rule targets | the commitment carries a `dim` and that dimension has per-position facts (`risk_weights` over the cap; per-ticker averaging-down counts) | fall back to the aggregate `#248` grounding sentence; never leave the rule unanchored |
+| 4 trade-off line | the rule's dimension shrinks a position (`position_sizing` / `diversification`) **and** the card carries an `amplify` row | omit the line — an unconditional one is caveat noise |
 | snapshot route | suppresses history-performance modules by design (`card_renderer.py:1411`) | Block 1 = position-structure baseline only |
 
 Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
