@@ -10,7 +10,7 @@ The agent may:
 - Interpret motive answers and evidence deltas.
 - Customize a grounded private question surface only for an engine-selected `add_thesis`, `headline_motive`, `initial_thesis`, or `exit_consistency` opportunity, then map it back to the unchanged canonical choices through `references/interaction-delivery.md`.
 - Write an inferred hypothesis for a position without a thesis.
-- Write the headline, mirror, counterfactual, and rule rationale.
+- Write the headline, mirror, counterfactual, rule rationale, and the optional closing synthesis.
 - Add observations that do not silently replace the engine's top conclusion.
 
 The agent may not:

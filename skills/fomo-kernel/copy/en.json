@@ -34,7 +34,8 @@
     "performance": "Performance",
     "trades": "Key trades · ranked by money impact",
     "risks": "Risks and problems",
-    "next": "Next step"
+    "next": "Next step",
+    "summary": "Summary"
   },
   "period": {
     "span": "Review period {start} → {end}",

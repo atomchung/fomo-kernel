@@ -171,10 +171,13 @@ _BLOCKS = _COPY["blocks"]
 _MISSING = _COPY["block_missing"]
 
 
-def _v2_card(titles=None, block1=None, block2=None, block3=None, tail=""):
-    """手工組一張最小 v2 私卡(front matter + keynote + 四 block)。"""
-    titles = titles if titles is not None else [
-        _BLOCKS[key] for key in ("performance", "trades", "risks", "next")]
+def _v2_card(titles=None, block1=None, block2=None, block3=None, summary=None, tail=""):
+    """手工組一張最小 v2 私卡(front matter + keynote + 四 block，選填第 5 個
+    summary block,#345)。``summary`` 給 body 行清單時,預設標題自動附在四大
+    block 之後(``titles`` 顯式指定時由呼叫端自己控制順序/標題,供越序測試用)。"""
+    titles = titles if titles is not None else (
+        [_BLOCKS[key] for key in ("performance", "trades", "risks", "next")]
+        + ([_BLOCKS["summary"]] if summary is not None else []))
     block1 = block1 if block1 is not None else [
         "復盤區間 2026-01-01 → 2026-07-14",
         "帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
@@ -182,6 +185,8 @@ def _v2_card(titles=None, block1=None, block2=None, block3=None, tail=""):
     block2 = block2 if block2 is not None else [_MISSING["trades"]]
     block3 = block3 if block3 is not None else ["[X] 最大的行為漏洞：INTC 虧 $1,240 仍加碼"]
     bodies = [block1, block2, block3, ["[*] 下次只改這一件：單筆上限 20%"]]
+    if summary is not None:
+        bodies.append(summary)
     lines = ["---", "session_id: probe", "privacy: private", "language: zh-TW", "---",
              "", "# 帳面賺的靠 beta，操作靠紀律", ""]
     for title, body in zip(titles, bodies):
@@ -211,6 +216,35 @@ def test_card_structure_series_alive():
     ok("S-1" in _card_fail_ids(shuffled), "S-1 抓 block 亂序")
     dropped = _v2_card(titles=[_BLOCKS["performance"], _BLOCKS["risks"], _BLOCKS["next"]])
     ok("S-1" in _card_fail_ids(dropped), "S-1 抓少一個 block")
+
+    # #345: optional 5th block(結尾 synthesis)排在下一步之後、標題正確 → 全過;
+    # 標題不對,或插在四大 block 中間而非排在最後,兩者都該讓 S-1 踩雷。
+    with_summary = _v2_card(summary=["這期的處境由集中度主導，往前看它仍是最大的擺動因子。"])
+    ok(not {f.assertion for f in check_card(with_summary, _S2_CONTEXT) if not f.passed},
+       "S 系列:第 5 個 summary block(下一步之後、標題正確)全過",
+       str({f.assertion: f.evidence for f in check_card(with_summary, _S2_CONTEXT) if not f.passed}))
+    wrong_summary_title = _v2_card(
+        titles=[_BLOCKS[key] for key in ("performance", "trades", "risks", "next")]
+        + ["不是總結的標題"],
+        summary=["這期的處境由集中度主導，往前看它仍是最大的擺動因子。"])
+    ok("S-1" in _card_fail_ids(wrong_summary_title),
+       "S-1 抓第 5 個 block 標題不是 copy.blocks.summary")
+
+    misplaced_lines = ["---", "session_id: probe", "privacy: private", "language: zh-TW", "---",
+                       "", "# 帳面賺的靠 beta，操作靠紀律", ""]
+    for title, body in (
+        (_BLOCKS["performance"], ["復盤區間 2026-01-01 → 2026-07-14",
+                                  "帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
+                                  _MISSING["annualized"], _MISSING["vs_market"]]),
+        (_BLOCKS["trades"], [_MISSING["trades"]]),
+        (_BLOCKS["summary"], ["這期的處境由集中度主導，往前看它仍是最大的擺動因子。"]),
+        (_BLOCKS["risks"], ["[X] 最大的行為漏洞：INTC 虧 $1,240 仍加碼"]),
+        (_BLOCKS["next"], ["[*] 下次只改這一件：單筆上限 20%"]),
+    ):
+        misplaced_lines.extend([f"## {title}", ""] + body + [""])
+    misplaced = "\n".join(misplaced_lines) + "\n"
+    ok("S-1" in _card_fail_ids(misplaced),
+       "S-1 抓 summary 插在四大 block 中間(risks 與 next 之間)而非排在最後")
 
     stacked = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
                                "  （caveat 甲）", "  （caveat 乙）", "  （caveat 丙）",

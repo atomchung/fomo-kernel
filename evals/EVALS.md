@@ -39,6 +39,7 @@ This is a maintainer checklist, not runtime context. Executable prompts live in 
 - Every triggered honesty-ledger key appears in plain, narrow language — except `alpha_credibility` and `sector_attribution` on a review whose vs-market segment is month-gated out (#284): the segment and its hosted keys are absent together, with no gap note.
 - Public card is independently rendered, retains only fixed behavior-pattern copy plus engine-owned beta and benchmark-excess percentage points, and contains no amounts, dates, tickers, exact weights, session IDs, evidence text, or agent-authored prose. Mixed-market public lines use market labels without benchmark symbols and never reuse the top-level compatibility row as a synthetic total.
 - Test-drive cards and conversations are visibly labeled as demo data and do not touch production state.
+- An optional closing-synthesis block (#345) may append after the next-step rule when the agent authors `narrative.synthesis`: two to three digit-free sentences giving one cross-section point of view, never a restatement of a number already on the card; it renders on neither surface when the field is absent.
 
 ## Important scenario checks
 

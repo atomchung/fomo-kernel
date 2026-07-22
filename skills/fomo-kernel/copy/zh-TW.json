@@ -34,7 +34,8 @@
     "performance": "這期的績效",
     "trades": "關鍵交易 · 按金額排序",
     "risks": "風險與問題",
-    "next": "下一步"
+    "next": "下一步",
+    "summary": "總結"
   },
   "period": {
     "span": "復盤區間 {start} → {end}",
