@@ -46,6 +46,7 @@ STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "rule", "insufficient_data", "holdings",
+    "prev_end",                                          # #270:實際採用的 prev_end,供下次 review 自我別名排除鏈用
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)

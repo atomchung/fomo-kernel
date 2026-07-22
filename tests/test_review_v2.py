@@ -4032,6 +4032,131 @@ def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
         assert problems_rows and "review_mark" in problems_rows[0]["error"]
 
 
+def _offline_engine_env(tmp):
+    """PYTHONPATH-injected yfinance ImportError stub so a REAL (non-injected)
+    engine subprocess run stays offline-deterministic -- same pattern as
+    test_prepare_completes_when_no_hole_and_no_headline_dimension."""
+    stub_dir = pathlib.Path(tmp) / "stubs"
+    stub_dir.mkdir()
+    (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n', encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+    return env
+
+
+def _run_real_review(tmp, root, csv_path, env, tag):
+    """Full prepare+finalize over a REAL CSV through the real engine
+    subprocess (no --card-json/--state-json injection, unlike _prepare_dated)
+    so TR_PREV_END/TR_PREV_PREV_END actually get exercised. Every queued
+    question is answered "skip" -- valid for every kind this minimal fixture
+    can produce (revisit / headline_motive quiet-week backfill). The narrative
+    omits "honesty" entirely rather than reusing the shared _narrative()
+    helper: this fixture has no open position and no ETF, so its
+    required_honesty_keys is empty, and the shared helper's etf_metadata entry
+    would be rejected as an unrequired key (#82 gate)."""
+    run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+               "--session-nonce", tag, env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = _pending_plan(root, run.stdout)
+    answers = {"session_id": plan["session_id"], "answers": [], "observations": [],
+               "commitment": {"choice": "skip"}, "thesis_updates": []}
+    for question in plan["question_queue"]:
+        answers["answers"].append({"question_id": question["id"], "choice": "skip"})
+    a_path = pathlib.Path(tmp) / f"answers_{tag}.json"
+    a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
+    n_path.write_text(json.dumps({"headline": "測試標題", "mirror": "測試鏡像"},
+                                 ensure_ascii=False), encoding="utf-8")
+    final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                 "--answers", a_path, "--narrative", n_path, env=env)
+    assert final.returncode == 0, final.stdout + final.stderr
+    return plan["engine_state"], json.loads(final.stdout)
+
+
+def test_same_week_rerun_keeps_opportunity_flags_stable():
+    """#270: review.py sets TR_PREV_END from last_state.json's date_end
+    *before* invoking the engine -- before this run's own date_end can be
+    known, since that requires parsing the CSV. Re-running a byte-identical
+    CSV for the identical week therefore used to make TR_PREV_END alias THIS
+    run's own date_end (a prior finalize had already advanced the anchor to
+    it), which collapsed every "new since prev_end" boundary
+    (build_problem_events) and flipped exit_anxiety/fomo_entry from True to
+    False on the second pass -- tripping the #166 fail-closed mark guard on a
+    rerun that changed nothing about the underlying trades.
+
+    Three independent sessions (distinct --session-nonce so they are not
+    deduped as the identical session) over the identical CSV/week must keep
+    producing byte-identical problem_opportunities, and none may report a
+    #166 mark conflict."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        csv_path = pathlib.Path(tmp) / "rerun.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n",
+            encoding="utf-8")
+        env = _offline_engine_env(tmp)
+
+        es1, result1 = _run_real_review(tmp, root, csv_path, env, "rerun1")
+        opps1 = es1["problem_opportunities"]
+        assert opps1["exit_anxiety"] is True and opps1["fomo_entry"] is True, \
+            f"fixture must actually exercise both opportunities on the first pass: {opps1}"
+        assert result1.get("projection_error") is None, \
+            f"first (fresh-root) finalize must not conflict: {result1.get('projection_error')}"
+
+        es2, result2 = _run_real_review(tmp, root, csv_path, env, "rerun2")
+        assert es2["problem_opportunities"] == opps1, (
+            "same CSV/week rerun flipped problem_opportunities (#270): "
+            f"{opps1} -> {es2['problem_opportunities']}")
+        assert result2.get("projection_error") is None, (
+            "same-content rerun must not trip the #166 mark-conflict guard: "
+            f"{result2.get('projection_error')}")
+
+        # The fixed point must hold indefinitely, not just survive one retry.
+        es3, result3 = _run_real_review(tmp, root, csv_path, env, "rerun3")
+        assert es3["problem_opportunities"] == opps1
+        assert result3.get("projection_error") is None
+
+
+def test_prev_end_advances_correctly_across_genuinely_different_weeks():
+    """#270 companion guard: the self-exclusion fix must not turn every review
+    into an unconditional None. A second, genuinely later CSV (a realistic
+    incremental broker export) must anchor prev_end to the first review's real
+    date_end -- neither None nor aliased to its own date_end. Nothing else in
+    this suite exercises the real engine subprocess across two real weeks
+    (every other multi-week test injects --card-json/--state-json and never
+    runs _run_engine), so this is the only coverage for the TR_PREV_END /
+    TR_PREV_PREV_END wiring in review.py on the ordinary advancing path."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        week1 = pathlib.Path(tmp) / "week1.csv"
+        week1.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n",
+            encoding="utf-8")
+        week2 = pathlib.Path(tmp) / "week2.csv"
+        week2.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n"
+            "BETA,BUY,5,80,2026-03-12,Trade,US,USD\n"
+            "BETA,SELL,5,90,2026-03-13,Trade,US,USD\n",
+            encoding="utf-8")
+        env = _offline_engine_env(tmp)
+
+        es1, result1 = _run_real_review(tmp, root, week1, env, "wk1")
+        assert es1["prev_end"] is None, "first-ever review has no prior boundary"
+        assert result1.get("projection_error") is None
+
+        es2, result2 = _run_real_review(tmp, root, week2, env, "wk2")
+        assert es2["date_end"] == "2026-03-13"
+        assert es2["prev_end"] == "2026-03-03", (
+            "a genuinely later week must anchor to the prior review's real "
+            f"date_end, not self-alias or reset to None: got {es2['prev_end']}")
+        assert result2.get("projection_error") is None
+
+
 def test_thesis_updates_reject_out_of_vocabulary_inference_values():
     """New canonical enum and horizon values fail closed without breaking legacy reads."""
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
