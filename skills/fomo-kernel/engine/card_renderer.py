@@ -1158,7 +1158,16 @@ def _snapshot_summary(card):
 
 
 def _snapshot_overview_lines(card, copy):
-    """Render only facts supported by an opening position snapshot."""
+    """Render only facts supported by an opening position snapshot.
+
+    #316: the out-of-scope disclosure (which history-only dimensions this
+    review cannot score) is not repeated here. ``snapshot_scope`` is always
+    present on a snapshot card's honesty ledger, so it already collapses into
+    the Block-1 footnote (contract §4: a caveat with no host number goes to
+    the footnote, never a second copy in the opening). Stating it again in
+    this function's prose would double the same sentence and crowd out the
+    structural facts this review actually establishes.
+    """
     summary = _snapshot_summary(card)
     en = copy.get("language") == "en"
     positions_n = _finite_number(summary.get("positions_n"))
@@ -1180,10 +1189,6 @@ def _snapshot_overview_lines(card, copy):
             valuation = "Structural weights use the supplied cost basis."
         else:
             valuation = "No reliable valuation basis was available, so weight-based structure remains unscored."
-        scope = _copy_string(
-            copy, "snapshot_scope",
-            "Transaction-history dimensions — averaging down, exit discipline, win rate, payoff, and historical motives — were not scored. Import transaction history later to unlock them.",
-        )
     else:
         subject = f"使用者提供的 {positions} 個持倉" if positions is not None else "使用者提供的持倉"
         opening = f"這是針對{subject}的開場組合檢查"
@@ -1196,10 +1201,6 @@ def _snapshot_overview_lines(card, copy):
             valuation = "結構權重採使用者提供的成本口徑。"
         else:
             valuation = "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。"
-        scope = _copy_string(
-            copy, "snapshot_scope",
-            "交易歷史維度——攤平、出場紀律、勝率、盈虧比與歷史動機——這次都不評分；之後匯入交易紀錄即可解鎖。",
-        )
 
     integrity = []
     missing_avg_cost = summary.get("missing_avg_cost") or []
@@ -1212,7 +1213,7 @@ def _snapshot_overview_lines(card, copy):
         currencies = ", ".join(str(x) for x in fx_gaps)
         integrity.append((f"Reliable FX coverage was missing for: {currencies}." if en else
                           f"以下幣別缺少可靠匯率：{currencies}。"))
-    return [opening, valuation] + integrity + [scope]
+    return [opening, valuation] + integrity
 
 
 def _snapshot_strength_line(card, language):
@@ -1232,25 +1233,45 @@ def _snapshot_strength_line(card, language):
     return "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。"
 
 
-def _snapshot_hole_line(card, language):
+def _snapshot_hole_lines(card, language):
+    """Structural risk narrative(s) for the [X] panel.
+
+    #316: a position snapshot can score exactly two structural dimensions
+    (position sizing, diversification). Both ride the panel when the engine
+    flagged both as a concern instead of one silently displacing the other —
+    structure is the whole of what a snapshot review can diagnose, so neither
+    finding should read as a dropped leftover. Returns a list of one or more
+    lines (never empty)."""
     summary = _snapshot_summary(card)
     holes = card.get("top_holes") or []
-    if summary.get("weights_available") is True and holes:
-        hole = holes[0] if isinstance(holes[0], dict) else {}
-        raw = hole.get("raw") or {}
-        dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
-        # A position snapshot can support only structural dimensions. Never let
-        # an accidentally carried history dimension become a snapshot claim.
-        if dim_id in {"position_sizing", "diversification"}:
+    if summary.get("weights_available") is True:
+        lines = []
+        for hole in holes:
+            if not isinstance(hole, dict):
+                continue
+            raw = hole.get("raw") or {}
+            dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
+            # A position snapshot can support only structural dimensions. Never let
+            # an accidentally carried history dimension become a snapshot claim.
+            if dim_id not in {"position_sizing", "diversification"}:
+                continue
             line = _hole_line(hole, language)
-            if line:
-                return line
-            label = localized_dimension(dim_id, language)
-            return ((f"The leading structural risk in the available snapshot was {label}."
-                     if language == "en" else f"現有快照的主要結構風險是「{label}」。"))
+            if not line:
+                label = localized_dimension(dim_id, language)
+                line = ((f"The leading structural risk in the available snapshot was {label}."
+                         if language == "en" else f"現有快照的主要結構風險是「{label}」。"))
+            lines.append(line)
+        if lines:
+            return lines
+        # Weights were available but neither structural dimension triggered —
+        # a clean structural read is itself the finding, not a data gap.
+        return [("This position snapshot did not flag concentration or "
+                 "diversification as a structural risk."
+                 if language == "en" else
+                 "這次持倉快照沒有觸發集中度或分散度的結構風險。")]
     if language == "en":
-        return "This opening check establishes a structural baseline without treating unavailable weights as low risk."
-    return "這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"
+        return ["This opening check establishes a structural baseline without treating unavailable weights as low risk."]
+    return ["這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"]
 
 
 def _trade_lines(card, language):
@@ -1858,7 +1879,7 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
                   if snapshot else sections_copy["hole"])
     hole_inner = []
     if snapshot:
-        hole_inner.append(("paragraph", [_snapshot_hole_line(card, language)]))
+        hole_inner.extend(("paragraph", [line]) for line in _snapshot_hole_lines(card, language))
     elif holes:
         hole_inner.append(("paragraph", [_hole_line(holes[0], language)]))
     if not snapshot and narrative.get("counterfactual"):
@@ -1924,6 +1945,17 @@ def _next_block(bundle, copy, facts, state, snapshot):
             text = missing.get("rule", "")
         if text:
             rule_inner.append(("paragraph", [text]))
+    if snapshot:
+        # #316: exactly one unlock hint, appended here regardless of which
+        # commitment sub-branch above fired (baseline-only or explicit skip) —
+        # the card's last block names the concrete payoff of importing history
+        # instead of interrupting the structure story earlier with a repeated
+        # disclosure, and it must not silently disappear behind the "skip"
+        # acknowledgment.
+        rule_inner.append(("paragraph", [
+            "匯入交易歷史 CSV 可解鎖行為診斷（勝率、盈虧比、攤平紀律等）。" if not en
+            else ("Importing your transaction-history CSV unlocks behavior diagnostics "
+                  "(win rate, payoff ratio, averaging-down discipline, and more).")]))
     if rule_inner:
         blocks.append(("panel", {"style": "rule", "mark": "*", "label": sections_copy["rule"],
                                  "blocks": rule_inner}))
