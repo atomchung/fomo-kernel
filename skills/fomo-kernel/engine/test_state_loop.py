@@ -106,10 +106,11 @@ def coach_turn(state, log_path):
     return mode, line
 
 
-def test_insufficient_span_gate():
-    """#21.4:≥3 round-trip 但全擠在 <60 交易日(≈84 日曆日)→ 仍應判 insufficient。
-    舊碼只查 len(rts)<3 會放行(把缺資料的猜測當已確認承諾);新碼加 span gate 才擋得住。
-    長跨度 case 反向守:同樣 3 round-trip、跨度 >84 日,不該被 span gate 誤殺。"""
+def test_insufficient_gate_is_round_trip_count_not_span():
+    """#306 (取代 #21.4 span gate):insufficient / commitment 閘是「完整買賣回合數」,
+    不是日曆跨度。短但密的窗(>=MIN_ROUND_TRIPS 個完整回合)不再因為窗短就判 insufficient
+    ——跨度只當 review._review_tier.durability_short 的提示。回合數 < MIN_ROUND_TRIPS 在
+    任何跨度都仍 insufficient,真的缺資料不會被當成已確認承諾。"""
     tmp = tempfile.mkdtemp(prefix="tr_span_test_")
     HEADER = "Symbol,Action,Quantity,Price,TradeDate,RecordType\n"
     def _csv(name, trades):
@@ -127,17 +128,24 @@ def test_insufficient_span_gate():
         ("AAA", "BUY", 10, 100, "2024-01-02"), ("AAA", "SELL", 10, 110, "2024-02-10"),
         ("BBB", "BUY", 10, 100, "2024-04-15"), ("BBB", "SELL", 10, 90,  "2024-06-25"),
         ("CCC", "BUY", 10, 100, "2024-08-01"), ("CCC", "SELL", 10, 120, "2024-10-08")])
+    thin = _csv("thin.csv", [                                  # 2 round-trip → 任何跨度都仍 insufficient
+        ("AAA", "BUY", 10, 100, "2024-01-02"), ("AAA", "SELL", 10, 110, "2024-03-10"),
+        ("BBB", "BUY", 10, 100, "2024-04-15"), ("BBB", "SELL", 10, 90,  "2024-06-25")])
     shim = offline_shim(tmp)
     s_short = run_engine([short], os.path.join(tmp, "st_short.json"), pythonpath=shim)
     s_long = run_engine([long_], os.path.join(tmp, "st_long.json"), pythonpath=shim)
+    s_thin = run_engine([thin], os.path.join(tmp, "st_thin.json"), pythonpath=shim)
     assert s_short["n_round_trips"] == 3, f"short 應有 3 rt,實得 {s_short['n_round_trips']}"
     assert s_long["n_round_trips"] == 3, f"long 應有 3 rt,實得 {s_long['n_round_trips']}"
-    assert s_short["insufficient_data"] is True, \
-        "≥3 rt 但跨度<84 日應判 insufficient(#21.4 span gate;舊碼 len(rts)<3 會在此漏放)"
-    assert s_long["insufficient_data"] is False, \
-        "≥3 rt 且跨度>84 日不該被 span gate 誤殺"
-    assert s_short["commitment"] is None, "insufficient → commitment 必須為 None(§4.4)"
-    print("✅ #21.4 insufficient span gate（<60 交易日擋假承諾 / 長跨度不誤殺）全過\n")
+    assert s_thin["n_round_trips"] == 2, f"thin 應有 2 rt,實得 {s_thin['n_round_trips']}"
+    # #306:跨度不再 gate —— 3 個完整回合擠在 39 天內,不該被判 insufficient。
+    assert s_short["insufficient_data"] is False, \
+        "#306:>=MIN_ROUND_TRIPS 回合不因跨度短而判 insufficient(取代 #21.4 span gate)"
+    assert s_long["insufficient_data"] is False, "長跨度、足回合同樣 sufficient"
+    # 回合數仍 gate:不足 MIN_ROUND_TRIPS 在任何跨度都 insufficient,不硬出承諾。
+    assert s_thin["insufficient_data"] is True, "回合 < MIN_ROUND_TRIPS 仍 insufficient"
+    assert s_thin["commitment"] is None, "insufficient → commitment 必須為 None(§4.4)"
+    print("✅ #306 insufficient gate = 完整回合數(span 只當 durability 提示,不誤殺高頻短窗)全過\n")
 
 
 def test_classify_adds_fixes():
@@ -183,7 +191,7 @@ def main():
     assert _c.get("Z") == {"start":"2024-02-01","seq":1}, f"缺期初: {_c}"
     print("✅ current_cycles 邊界（oversell / 清倉重建 / 缺期初）全過\n")
 
-    test_insufficient_span_gate()                              # #21.4:60 交易日 gate
+    test_insufficient_gate_is_round_trip_count_not_span()      # #306:回合數 gate(取代 #21.4 span)
     test_classify_adds_fixes()                                 # #41 G:首筆/oversell
 
     tmp = tempfile.mkdtemp(prefix="tr_state_test_")
