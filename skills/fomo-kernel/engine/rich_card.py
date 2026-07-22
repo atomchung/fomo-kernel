@@ -169,7 +169,7 @@ def print_entry_style(d_entry):
         print(f"    進場區間位置中位 {d_entry['median_pct']*100:.0f}%（{d_entry['n']} 筆 · {conf}）"
               f" lean={d_entry['lean'] or '—'}")
 
-def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, rx=None, tdiag=None, cash=None, acct=None, lens=None):
+def render(dims, strength=None, overview=None, wi=None, rx=None, tdiag=None, cash=None, acct=None, lens=None):
     """把復盤卡渲染成一張 Rich Panel（cyan 邊框，ANSI color，中英對齊）。
     架構：一張外框大 Panel，內部按段用 Rule(───) 分節；五維行為診斷用 bar chart 取代內部加權公式。"""
     if not _HAS_RICH:
@@ -241,22 +241,6 @@ def render(dims, strength=None, overview=None, best=None, worst=None, wi=None, r
                 ov.append("   帳戶年化 IRR ")
                 ov.append_text(_pct(acct["irr_annual"], bold=True))
         parts.append(Padding(ov, (0, 1)))
-
-    # 〔做得最好 / 最差的一筆〕
-    if best and worst:
-        parts.append(Rule(style="dim cyan"))
-        # 明標這是「已賣出 round-trip」報酬,跟下方標的層的「仍持有 cost→現價」cur_ret 區隔(#21.1)
-        parts.append(Padding(Text("做得最好 / 最差的一筆  ·  已賣出 round-trip(買→賣)", style="bold"), (0, 1)))
-        bw = Text()
-        bw.append("✓ 最賺  ", style="bold green")
-        bw.append(f"{best['ticker']:<5} ")
-        bw.append_text(_pct(best['ret'], bold=True))
-        bw.append(f"   {best['buy_px']:.0f} → {best['sell_px']:.0f}   抱 {best['hold']} 天")
-        bw.append("\n✗ 最虧  ", style="bold red")
-        bw.append(f"{worst['ticker']:<5} ")
-        bw.append_text(_pct(worst['ret'], bold=True))
-        bw.append(f"   {worst['buy_px']:.0f} → {worst['sell_px']:.0f}   抱 {worst['hold']} 天")
-        parts.append(Padding(bw, (0, 1)))
 
     # 〔what if〕— 動態挑「最大集中暴險」(AI thematic / 最大 sector / 最大個股 取最高)
     # 都低於 25% 門檻(真分散)→ wi 為 None,整段省略

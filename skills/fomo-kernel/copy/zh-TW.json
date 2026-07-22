@@ -16,7 +16,6 @@
     "context": "市場與時間軸鏡子",
     "numbers": "這期的帳",
     "performance": "相對績效",
-    "trades": "最賺與最虧的已實現交易",
     "instruments": "標的層影響 · 按金額排序",
     "attribution": "報酬歸因 · 賽道曝險還是選股",
     "stress": "集中度壓測 · 回檔情境",
@@ -169,13 +168,13 @@
     "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。"
   },
   "instrument_tags": {
-    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}(待你確認交易論述)",
+    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}{price_note}(待你確認交易論述)",
     "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣，不是紀律",
     "adds_pending_confirmation": "？加碼 {n_adds} 次待確認：是定投還是凹單，要你定",
     "suspected_dca": "✓疑似定投：漲跌都買/規律 {n_adds} 次，不是凹單",
-    "deep_underwater": "✗套牢:{cur_pct} 還抱著沒處理",
+    "deep_underwater": "✗套牢:{cur_pct}{price_note} 還抱著沒處理",
     "too_heavy": "⚠押太重：佔組合 {wpct_pct}",
-    "disciplined_hold": "✓紀律持有：賺 {cur_pct}",
+    "disciplined_hold": "✓紀律持有：賺 {cur_pct}{price_note}",
     "roughly_neutral": "— 大致中性"
   },
   "stress_test": {

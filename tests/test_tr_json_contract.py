@@ -32,7 +32,7 @@ import coach  # noqa: E402  # 只取常數(CYCLE_ID_RE 同步斷言),不跑 main
 # ── SKILL.md Step 1/3 消費清單:改 engine 輸出欄位 = 改這份契約,兩邊要一起動 ──
 TR_JSON_KEYS = {
     "schema_version", "philosophy", "strength", "overview",
-    "best_trade", "worst_trade", "what_if", "ticker_diagnosis",
+    "what_if", "ticker_diagnosis",
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶

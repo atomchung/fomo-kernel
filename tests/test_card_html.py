@@ -833,6 +833,47 @@ def test_coded_fields_render_localized_english_blocks():
         "en Markdown must join tags with halfwidth punctuation"
 
 
+def test_instrument_tag_price_note_stays_inline_without_growing_the_row():
+    """#347 acceptance: current price / average cost ride inside the same tag
+    string as cur_ret's percentage, on disciplined_hold / suspected_averaging
+    _down_losing / deep_underwater. Owner's binding 2026-07-22 constraint: the
+    key-trades row must not grow from one line to two, and must not gain an
+    indent level. Compare a tag carrying price data against the identical tag
+    without it: Markdown line count and HTML element counts must be
+    unchanged, and the only textual diff must be the inline parenthetical —
+    proof this is an appendage to the existing tag, not a restructuring."""
+    for language, fragment in (("zh-TW", "(現 150.20／均 68.30)"),
+                              ("en", " (now 150.20 / cost 68.30)")):
+        def bundle_with(params):
+            b = _coded_bundle(language)
+            b["engine_card"]["ticker_diagnosis"] = [
+                {"ticker": "NVDA", "impact": 58524.0,
+                 "tags": [{"code": "disciplined_hold", "params": params}]},
+                {"ticker": "PLTR", "impact": 76647.0,
+                 "tags": [{"code": "too_heavy", "params": {"wpct": 0.49}}]},
+            ]
+            return b
+
+        bare = bundle_with({"cur": 1.50})
+        priced = bundle_with({"cur": 1.50, "px": 150.20, "avg_cost": 68.30})
+        bare_md, priced_md = card_renderer.render_private(bare), card_renderer.render_private(priced)
+        bare_html, priced_html = card_renderer.render_html(bare), card_renderer.render_html(priced)
+
+        assert fragment in priced_md and fragment in priced_html, \
+            f"{language}: price/cost fragment missing from a surface"
+        assert fragment not in bare_md and fragment not in bare_html, \
+            f"{language}: fragment must not appear without px/avg_cost params"
+        assert bare_md.count("\n") == priced_md.count("\n"), \
+            f"{language}: adding price/cost changed the Markdown line count"
+        assert priced_md.replace(fragment, "") == bare_md, \
+            f"{language}: the only Markdown diff must be the inline fragment"
+        for cls in ('<div class="trow">', '<p class="rsub">', '<div class="track">'):
+            assert bare_html.count(cls) == priced_html.count(cls), \
+                f"{language}: {cls} count changed — price/cost must not add HTML structure"
+        assert priced_html.replace(fragment, "") == bare_html, \
+            f"{language}: the only HTML diff must be the inline fragment"
+
+
 def test_preview_emits_html_and_finalize_cleans_pending():
     for language in ("zh-TW", "en"):
         run = _session(language)
@@ -1276,6 +1317,7 @@ def main():
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_resolve_zh_prescriptions_from_copy,
         test_coded_fields_render_localized_english_blocks,
+        test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,

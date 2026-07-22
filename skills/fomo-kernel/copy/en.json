@@ -16,7 +16,6 @@
     "context": "Context and timeline mirrors",
     "numbers": "The account for this review",
     "performance": "Relative performance",
-    "trades": "Best and worst realized trades",
     "instruments": "Instrument impact · ranked by money",
     "attribution": "Return attribution · theme exposure or selection",
     "stress": "Concentration stress test",
@@ -169,13 +168,13 @@
     "prior_commitment_breach": "This period already recorded a breach of that same rule, before this review closed the books on it."
   },
   "instrument_tags": {
-    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct} (confirm the thesis)",
+    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct}{price_note} (confirm the thesis)",
     "suspected_averaging_down_recovered": "likely averaged a loser, now green: {n_adds} adds only while losing — the recovery looks like luck, not discipline",
     "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
     "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
-    "deep_underwater": "down {cur_abs_pct} and still held without a decision",
+    "deep_underwater": "down {cur_abs_pct}{price_note} and still held without a decision",
     "too_heavy": "too heavy: {wpct_pct} of the portfolio",
-    "disciplined_hold": "disciplined hold: {cur_signed_pct}",
+    "disciplined_hold": "disciplined hold: {cur_signed_pct}{price_note}",
     "roughly_neutral": "roughly neutral"
   },
   "stress_test": {
