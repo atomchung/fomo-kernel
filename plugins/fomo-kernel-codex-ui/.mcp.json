@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "fomo-kernel-codex-ui": {
+      "command": "node",
+      "args": ["./server.js", "--stdio"],
+      "cwd": "."
+    }
+  }
+}

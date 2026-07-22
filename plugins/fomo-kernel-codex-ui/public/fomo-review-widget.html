@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root { color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; padding: 16px; background: #f8fafc; }
+      .surface { border: 1px solid #dbe4ee; border-radius: 16px; background: #fff; padding: 18px; box-shadow: 0 8px 20px rgba(15, 23, 42, .06); }
+      .badge { display: inline-block; margin-bottom: 10px; padding: 4px 8px; border-radius: 99px; background: #e0f2fe; color: #075985; font-size: 12px; font-weight: 650; }
+      h1 { margin: 0; font-size: 20px; } p { line-height: 1.5; } .subtle { color: #64748b; }
+      .metric { margin: 14px 0; padding: 12px; border-radius: 10px; background: #f1f5f9; } .metric small { display: block; color: #64748b; } .metric strong { display: block; margin-top: 4px; }
+      .choices { display: grid; gap: 10px; margin-top: 14px; } button { border: 1px solid #93c5fd; border-radius: 10px; background: #eff6ff; color: #1e3a8a; cursor: pointer; font: inherit; padding: 12px; text-align: left; } button:hover { background: #dbeafe; } button:disabled { cursor: wait; opacity: .65; } .status { min-height: 1.5em; color: #334155; font-size: 14px; } .status[data-state="success"] { color: #166534; } .status[data-state="error"] { color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <main class="surface" aria-live="polite">
+      <div id="badge" class="badge"></div>
+      <section id="card" hidden>
+        <h1 id="card-title"></h1>
+        <p id="card-subtitle" class="subtle"></p>
+        <div class="metric"><small id="card-label"></small><strong id="card-value"></strong></div>
+      </section>
+      <section id="question" hidden>
+        <h1 id="question-title"></h1>
+        <p id="question-detail" class="subtle"></p>
+        <div id="choices" class="choices" role="radiogroup"></div>
+      </section>
+      <p id="status" class="status"></p>
+    </main>
+    <script data-fomo-app-bridge>
+      (() => {
+        let nextId = 0;
+        const pending = new Map();
+        const notificationHandlers = new Map();
+
+        function errorFrom(response) {
+          const detail = response && response.error;
+          const error = new Error(detail && detail.message ? detail.message : 'MCP Apps request failed');
+          if (detail && typeof detail.code === 'number') error.code = detail.code;
+          return error;
+        }
+
+        function request(method, params) {
+          const id = ++nextId;
+          return new Promise((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+            window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+          });
+        }
+
+        function notify(method, params) {
+          window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+        }
+
+        window.addEventListener('message', (event) => {
+          if (event.source !== window.parent || !event.data || event.data.jsonrpc !== '2.0') return;
+          const response = event.data;
+          if (Object.prototype.hasOwnProperty.call(response, 'id') && pending.has(response.id)) {
+            const requestHandlers = pending.get(response.id);
+            pending.delete(response.id);
+            if (Object.prototype.hasOwnProperty.call(response, 'result')) requestHandlers.resolve(response.result);
+            else requestHandlers.reject(errorFrom(response));
+            return;
+          }
+          const handlers = notificationHandlers.get(response.method);
+          if (handlers) handlers.forEach((handler) => handler(response.params));
+        });
+
+        window.FomoAppBridge = {
+          initialize: async () => {
+            const result = await request('ui/initialize', {
+              appInfo: { name: 'fomo-kernel-codex-ui-probe', version: '0.1.0' },
+              appCapabilities: {},
+              protocolVersion: '2026-01-26'
+            });
+            notify('ui/notifications/initialized');
+            return result;
+          },
+          requestTool: (name, arguments_) => request('tools/call', { name, arguments: arguments_ }),
+          onNotification: (method, handler) => {
+            const handlers = notificationHandlers.get(method) || [];
+            handlers.push(handler);
+            notificationHandlers.set(method, handlers);
+          }
+        };
+      })();
+    </script>
+    <script>
+      let latest = null;
+      const status = document.querySelector('#status');
+      const bridge = window.FomoAppBridge;
+
+      function setStatus(state, text) {
+        status.dataset.state = state;
+        status.textContent = text;
+      }
+
+      function render(output) {
+        if (!output || output.demo !== true) return;
+        latest = output;
+        document.documentElement.lang = output.locale || document.documentElement.lang;
+        const copy = output.copy || {};
+        document.querySelector('#badge').textContent = copy.badge || '';
+        const showCard = output.kind === 'card';
+        document.querySelector('#card').hidden = !showCard;
+        document.querySelector('#question').hidden = showCard;
+        if (showCard) {
+          for (const [id, value] of Object.entries({ 'card-title': copy.cardTitle, 'card-subtitle': copy.cardSubtitle, 'card-label': copy.cardLabel, 'card-value': copy.cardValue })) document.getElementById(id).textContent = value || '';
+          return;
+        }
+        document.querySelector('#question-title').textContent = copy.questionTitle || '';
+        document.querySelector('#question-detail').textContent = copy.questionDetail || '';
+        const choices = document.querySelector('#choices'); choices.replaceChildren();
+        for (const choice of output.choices || []) {
+          const button = document.createElement('button'); button.type = 'button'; button.role = 'radio'; button.textContent = choice.label; button.dataset.choice = choice.value;
+          button.addEventListener('click', () => submit(choice.value)); choices.appendChild(button);
+        }
+      }
+      async function submit(choice) {
+        if (!latest) return;
+        const buttons = [...document.querySelectorAll('button')]; buttons.forEach((button) => { button.disabled = true; });
+        setStatus('pending', latest.copy.submitting || 'Submitting synthetic choice…');
+        try {
+          const result = await bridge.requestTool('fomo_submit_demo_choice', { locale: latest.locale, question_id: 'codex_ui_probe_choice', choice });
+          const selected = result && result.structuredContent && result.structuredContent.choice;
+          if (!selected) throw new Error('Missing structured demo choice');
+          setStatus('success', `${latest.copy.selected || ''}${selected}`);
+        } catch (error) {
+          setStatus('error', `${latest.copy.submitError || 'Submission failed: '}${error.message || String(error)}`);
+        } finally { buttons.forEach((button) => { button.disabled = false; }); }
+      }
+      bridge.onNotification('ui/notifications/tool-result', (result) => render(result && result.structuredContent));
+      bridge.initialize().catch((error) => setStatus('error', `MCP Apps bridge error: ${error.message || String(error)}`));
+    </script>
+  </body>
+</html>

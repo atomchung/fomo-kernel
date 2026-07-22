@@ -1,0 +1,18 @@
+{
+  "name": "fomo-kernel-codex-ui",
+  "version": "0.1.0",
+  "description": "Demo-only MCP Apps UI probe for the fomo-kernel review flow.",
+  "author": {
+    "name": "Local developer"
+  },
+  "interface": {
+    "displayName": "fomo-kernel Codex UI probe",
+    "shortDescription": "Dogfood clickable controls and a visual review card in Codex.",
+    "longDescription": "A demo-only Apps SDK probe. It never reads fomo-kernel review sessions or private card artifacts.",
+    "developerName": "fomo-kernel",
+    "category": "Productivity",
+    "capabilities": ["mcp-apps", "demo-only"],
+    "defaultPrompt": "Run the fomo-kernel Codex UI probe in Traditional Chinese."
+  },
+  "mcpServers": "./.mcp.json"
+}
