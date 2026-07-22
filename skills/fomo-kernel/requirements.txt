@@ -1,0 +1,19 @@
+# Runtime dependencies for the fomo-kernel skill (the installable engine).
+#
+# After copying the skill, install these from the skill directory:
+#     pip install -r requirements.txt
+# Then verify:
+#     python3 engine/review.py doctor
+#
+# All three are optional at import time — the engine fail-soft degrades without
+# them and never crashes — but a card is only complete with them:
+#   yfinance  current prices, unrealized P&L, alpha/beta, market context, FX
+#   pandas    the P&L curve and the alpha/beta regression
+#   rich      the v1 terminal card (the v2 review card renders without it)
+#
+# Test-only tooling (anthropic, python-dotenv) is intentionally NOT here; it is
+# used only by the LLM-judge evals under tests/ and must not be imposed on
+# end users who install the skill.
+yfinance>=0.2
+pandas>=2.0
+rich>=13
