@@ -3984,6 +3984,180 @@ def test_headline_motive_event_copies_only_engine_context_and_routes_ticker_row(
         "an engine-grounded ticker motive must render once under its existing trade row"
 
 
+def _exit_diagnosis():
+    """A ticker_diagnosis carrying the aggregated early-exit pattern (#303):
+    two instruments whose winners kept rising after the sell."""
+    return [
+        {"ticker": "TSLA", "impact": 8200.0,
+         "tags": [{"code": "sold_winner_early", "params": {"win_early": 3, "win_n": 4}}]},
+        {"ticker": "AMD", "impact": -1000.0,
+         "tags": [{"code": "sold_winner_early", "params": {"win_early": 2, "win_n": 3}}]},
+    ]
+
+
+def _prepare_exit_consistency(tmp, root, tag, language="zh-TW"):
+    """Prepare a weekly review whose card carries the early-exit pattern, so the
+    one answerable exit-consistency question is the entire queue (#303).
+
+    Pinned to weekly_review for the same reason as the headline-motive fixture:
+    first_review would add #291 initial-thesis captures beside the one question
+    this fixture asserts on."""
+    card_path, state_path = _artifacts(tmp)
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card["thesis_questions"] = []
+    card["ticker_diagnosis"] = _exit_diagnosis()
+    exit_card = pathlib.Path(tmp) / f"exit_card_{tag}.json"
+    exit_card.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    run = _run("prepare", "--root", root, "--language", language,
+               "--route", "weekly_review",
+               "--card-json", exit_card, "--state-json", state_path,
+               "--session-nonce", tag)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = _pending_plan(root, run.stdout)
+    assert [row["kind"] for row in plan["question_queue"]] == ["exit_consistency"], \
+        plan["question_queue"]
+    return plan
+
+
+def _exit_consistency_answers(plan, choice):
+    return {
+        "session_id": plan["session_id"],
+        "answers": [{"question_id": "exit_consistency", "choice": choice}],
+        "thesis_updates": [_base_thesis_update()],
+        "observations": [],
+        "commitment": {"choice": "skip"},
+    }
+
+
+def test_exit_consistency_question_is_answerable_and_persists_canonically():
+    """#303: the aggregated early-exit pattern is put to the user as one grounded
+    motive question (tickers + counts in the stem); a non-skip answer becomes a
+    durable typed event in its own stream, the read-only [?] observation panel
+    yields to the question on the card, and nothing leaks to the public card."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_exit_consistency(tmp, root, "ec")
+        q = plan["question_queue"][0]
+        assert q["kind"] == "exit_consistency" and q["required"] is True
+        assert "TSLA 3/4" in q["question"] and "AMD 2/3" in q["question"], \
+            "the stem must cite the exact engine facts so the user can answer it"
+        assert [o["value"] for o in q["options"]] == [
+            "deliberate_plan", "emotional_reaction", "external_constraint", "skip"]
+        assert q["question_opportunity"]["intent"] == "classify_exit_consistency"
+
+        answers_path = pathlib.Path(tmp) / "ec_answers.json"
+        narrative_path = pathlib.Path(tmp) / "ec_narrative.json"
+        answers_path.write_text(json.dumps(_exit_consistency_answers(plan, "deliberate_plan"),
+                                           ensure_ascii=False), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers_path, "--narrative", narrative_path)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        payload = json.loads(preview.stdout)
+        assert "[?]" not in payload["private_card"] and "不用回答" not in payload["private_card"], \
+            "the observation panel must yield to the question the user just answered"
+        for secret in ("exit_consistency", "賣完還漲", "TSLA 3/4"):
+            assert secret not in payload["public_card"], "private motive facts never go public"
+
+        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", answers_path, "--narrative", narrative_path)
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        assert len(bundle["exit_consistency_events"]) == 1
+        event = bundle["exit_consistency_events"][0]
+        assert event["event"] == "exit_consistency_decision"
+        assert event["decision"] == "deliberate_plan"
+        assert event["context"]["ticker"] == "TSLA"
+        assert event["event_id"].startswith("exit-consistency-")
+
+        projection = pathlib.Path(root) / "exit_consistency.jsonl"
+        projected = [json.loads(line) for line in
+                     projection.read_text(encoding="utf-8").splitlines()]
+        assert projected == [event], "the answer projects to its own isolated audit log"
+        headline = pathlib.Path(root) / "headline_motives.jsonl"
+        assert not headline.exists() or headline.read_text(encoding="utf-8").strip() == "", \
+            "an exit-consistency answer must never enter the headline-motive stream"
+
+
+def test_exit_consistency_skip_keeps_bundle_key_absent_for_replay_compat():
+    """#303: a skip produces no event and no bundle key, the same
+    absent-when-empty contract as headline_motive_events — so the documented-safe
+    finalize retry stays a no-op instead of failing closed."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        plan = _prepare_exit_consistency(tmp, root, "ecskip")
+        answers_path = pathlib.Path(tmp) / "ecskip_answers.json"
+        narrative_path = pathlib.Path(tmp) / "ecskip_narrative.json"
+        answers_path.write_text(json.dumps(_exit_consistency_answers(plan, "skip"),
+                                           ensure_ascii=False), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                         "--answers", answers_path, "--narrative", narrative_path)
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
+        before_retry = bundle_path.read_text(encoding="utf-8")
+        assert "exit_consistency_events" not in json.loads(before_retry)
+        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers_path, "--narrative", narrative_path)
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        assert json.loads(retry.stdout)["status"] == "no-op"
+        assert bundle_path.read_text(encoding="utf-8") == before_retry
+
+
+def test_exit_consistency_event_copies_only_engine_context():
+    """#303 boundary (mirrors #299): consume existing context keys without
+    inventing them, and never emit for a skip."""
+    question = {
+        "id": "exit_consistency", "kind": "exit_consistency", "required": True,
+        "options": [{"value": value} for value in
+                    ("deliberate_plan", "emotional_reaction", "external_constraint", "skip")],
+        "question_opportunity": {"context": {
+            "ticker": "TSLA",
+            "asked_because": "5 of the 7 positions you sold kept rising, most clearly TSLA 3/4",
+        }},
+    }
+    plan = {"session_id": "2026-07-22__exit", "question_queue": [question],
+            "engine_state": {"date_end": "2026-07-22"}}
+    events = review_engine._build_exit_consistency_events(
+        plan, {"answers": [{"question_id": "exit_consistency", "choice": "emotional_reaction"}]})
+    assert len(events) == 1
+    event = events[0]
+    assert event["decision"] == "emotional_reaction"
+    assert event["context"] == question["question_opportunity"]["context"]
+    assert "note" not in event and "evidence_delta" not in event
+    assert review_engine._build_exit_consistency_events(
+        plan, {"answers": [{"question_id": "exit_consistency", "choice": "skip"}]}) == []
+
+
+def test_exit_consistency_respects_density_and_falls_back_to_observation_when_full():
+    """#303: the exit-consistency question competes for a slot up to the route
+    max but never past it. With room it is offered; when higher-signal due
+    checkpoints already fill the band it is trimmed as over_max_capacity — its
+    facts then survive as the read-only [?] observation panel, never dropped."""
+    card = {"ticker_diagnosis": _exit_diagnosis(),
+            "top_holes": [{"dim": "出場紀律", "raw": {"dim": "出場紀律"}}],
+            "thesis_questions": [], "dims_raw": [{"dim": "出場紀律"}]}
+    state = {"headline_dim": "出場紀律", "holdings": {"positions": {}}}
+    # Room in the weekly band (max 3): the question is offered.
+    queue, _ = review_engine._question_queue(card, state, {}, None, "zh-TW",
+                                             route="weekly_review")
+    assert [q["kind"] for q in queue] == ["exit_consistency"]
+    # Band full with three higher-signal due checkpoints: the question is trimmed
+    # and recorded, so the renderer falls back to the [?] observation panel.
+    due = [{"item": {"ticker": f"DUE{i}", "exit_date": "2026-06-01", "exit_price": 100,
+                     "shares_sold": 50 + i, "kind": "full", "cycle_id": f"DUE{i}#c"},
+            "revisit_id": f"r{i}", "checkpoint": 30, "due_date": "2026-07-01"}
+           for i in range(3)]
+    queue, report = review_engine._question_queue(card, state, {}, None, "zh-TW",
+                                                  due_revisits=due, route="weekly_review")
+    assert len(queue) == 3 and "exit_consistency" not in [q["kind"] for q in queue]
+    assert any(r.get("id") == "exit_consistency" and r.get("reason") == "over_max_capacity"
+               for r in report["rejected"]), "a trimmed question must be recorded, not lost"
+    # The same aggregated facts still render as the observation panel.
+    panel = card_renderer._pattern_panel(card, card_renderer.load_copy("zh-TW"), False)
+    assert panel is not None and panel[1]["mark"] == "?"
+
+
 def _finalize(tmp, root, plan, answers, tag):
     a_path = pathlib.Path(tmp) / f"answers_{tag}.json"
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")

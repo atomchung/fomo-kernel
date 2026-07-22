@@ -2046,19 +2046,17 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     return blocks
 
 
-def _pattern_panel(card, copy, snapshot):
-    """Block 3 ``[?]`` panel (#303): read-only patterns the engine detected but
-    has not judged, collected in one place.
+def exit_consistency_facts(card):
+    """Aggregate the per-instrument ``sold_winner_early`` tags into one fact set.
 
-    Exit opportunity-cost tags used to sit scattered across the instrument rows,
-    where a reader could not tell whether a reply was expected. The panel names
-    the instruments so the pattern is checkable, and its label says outright
-    that no answer is wanted. Returns ``None`` when nothing fired."""
-    if snapshot:
-        return None
-    language = copy["language"]
+    This is the single engine-derived source of truth shared by two surfaces:
+    the read-only ``[?]`` pattern panel (#303) and the answerable
+    exit-consistency question the review engine may queue for the same facts
+    (#303 interactive half). Returns ``{"early", "total", "instruments":
+    [{"ticker", "early", "total"}, …]}`` sorted most-consistent-first, or
+    ``None`` when no instrument carries the tag."""
     entries = []
-    for row in card.get("ticker_diagnosis") or []:
+    for row in (card or {}).get("ticker_diagnosis") or []:
         if not isinstance(row, dict):
             continue
         for tag in row.get("tags") or []:
@@ -2073,22 +2071,64 @@ def _pattern_panel(card, copy, snapshot):
     entries = [e for e in entries if e["ticker"] and e["total"]]
     if not entries:
         return None
-    pattern_copy = copy.get("patterns_panel") or {}
-    template = pattern_copy.get("sold_winner_early")
-    label = pattern_copy.get("label")
-    if not template or not label:
-        return None
     entries.sort(key=lambda e: (-(e["early"] / e["total"]), -e["early"], e["ticker"]))
-    joiner = ", " if copy["language"] == "en" else "、"
-    named = joiner.join(f"{e['ticker']} {e['early']}/{e['total']}" for e in entries[:3])
+    return {"early": sum(e["early"] for e in entries),
+            "total": sum(e["total"] for e in entries),
+            "instruments": entries}
+
+
+def exit_consistency_named(facts, language):
+    """The top-3 ``TICKER early/total`` list both surfaces name (#303)."""
+    joiner = ", " if str(language).lower().startswith("en") else "、"
+    return joiner.join(f"{e['ticker']} {e['early']}/{e['total']}"
+                       for e in (facts or {}).get("instruments", [])[:3])
+
+
+def exit_consistency_line(card, copy):
+    """The one fact sentence shared by the ``[?]`` panel and the question stem.
+
+    Returns ``(facts, sentence)`` so callers that also need the raw counts (the
+    question builder) do not re-aggregate. ``sentence`` is ``None`` when the
+    copy template is missing; ``facts`` is ``None`` when nothing fired."""
+    facts = exit_consistency_facts(card)
+    if not facts:
+        return None, None
+    template = (copy.get("patterns_panel") or {}).get("sold_winner_early")
+    if not template:
+        return facts, None
     try:
-        line = template.format(early=sum(e["early"] for e in entries),
-                               total=sum(e["total"] for e in entries),
-                               tickers=named)
+        return facts, template.format(early=facts["early"], total=facts["total"],
+                                      tickers=exit_consistency_named(facts, copy["language"]))
     except (KeyError, IndexError, ValueError):
+        return facts, None
+
+
+def _pattern_panel(card, copy, snapshot, suppress=False):
+    """Block 3 ``[?]`` panel (#303): read-only patterns the engine detected but
+    has not judged, collected in one place.
+
+    Exit opportunity-cost tags used to sit scattered across the instrument rows,
+    where a reader could not tell whether a reply was expected. The panel names
+    the instruments so the pattern is checkable, and its label says outright
+    that no answer is wanted. Returns ``None`` when nothing fired — or when
+    ``suppress`` is set because the review already put this exact pattern to the
+    user as an answerable question, so a "no answer needed" observation would
+    contradict the question they just saw."""
+    if snapshot or suppress:
+        return None
+    facts, line = exit_consistency_line(card, copy)
+    label = (copy.get("patterns_panel") or {}).get("label")
+    if not facts or not line or not label:
         return None
     return ("panel", {"style": "pattern", "mark": "?", "label": label,
                       "blocks": [("paragraph", [line])]})
+
+
+def _exit_consistency_asked(bundle):
+    """True when the review queued the answerable exit-consistency question, so
+    the ``[?]`` observation panel yields to it (#303)."""
+    queue = (bundle.get("review_plan") or {}).get("question_queue") or []
+    return any(isinstance(q, dict) and q.get("kind") == "exit_consistency" for q in queue)
 
 
 def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
@@ -2106,7 +2146,8 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     trade_tickers = set(trade_tickers or [])
     motive_lines = [text for ticker, text in _headline_motive_entries(bundle, copy)
                     if not ticker or str(ticker) not in trade_tickers]
-    pattern_panel = _pattern_panel(card, copy, snapshot)
+    pattern_panel = _pattern_panel(card, copy, snapshot,
+                                   suppress=_exit_consistency_asked(bundle))
     blocks = []
     if (not snapshot and not holes and not card.get("dims_raw")
             and not motive_lines and not pattern_panel):

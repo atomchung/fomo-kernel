@@ -403,6 +403,7 @@ DATA_FILES = [
     ("theses.jsonl", "jsonl", "每筆持倉的持股假設與出場敘事"),
     ("thesis_decisions.jsonl", "jsonl", "每次加碼的 thesis 決策與 evidence delta"),
     ("headline_motives.jsonl", "jsonl", "headline 行為的使用者動機分類"),
+    ("exit_consistency.jsonl", "jsonl", "賣後機會成本模式的出場動機分類(#303;純稽核紀錄,與 headline 動機分流)"),
     ("initial_theses.jsonl", "jsonl", "第一次復盤的進場動機分類(#291;純稽核紀錄,不影響 thesis 續接)"),
     ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
     ("profile.json", "json", "標準版偏好(如自訂單一部位上限 max_position_pct;review.py set-cap 寫入,#324)"),

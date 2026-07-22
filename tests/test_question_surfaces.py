@@ -128,6 +128,33 @@ def test_opportunity_is_engine_owned_and_limited_to_first_slice():
     )
 
 
+def test_exit_consistency_opportunity_is_engine_owned_and_grounded():
+    """#303: the exit-consistency question is a first-class validated surface —
+    it is in ELIGIBLE_KINDS, carries its own intent, and grounds its context in
+    the aggregated early-exit facts through the existing refs (no schema growth).
+    Its answer contract matches the shared motive axis."""
+    assert "exit_consistency" in question_surface.ELIGIBLE_KINDS
+    card = {
+        "top_holes": [{"dim": "出場紀律", "raw": {"dim": "出場紀律"}}],
+        "ticker_diagnosis": [
+            {"ticker": "TSLA", "impact": 8200.0,
+             "tags": [{"code": "sold_winner_early", "params": {"win_early": 3, "win_n": 4}}]},
+            {"ticker": "AMD", "impact": -1000.0,
+             "tags": [{"code": "sold_winner_early", "params": {"win_early": 2, "win_n": 3}}]},
+        ],
+    }
+    question = review_engine._exit_consistency_question(card, "en")
+    assert question["kind"] == "exit_consistency"
+    opportunity = question["question_opportunity"]
+    assert opportunity["intent"] == "classify_exit_consistency"
+    assert opportunity["answer_contract"]["canonical_choices"] == \
+        ["deliberate_plan", "emotional_reaction", "external_constraint", "skip"]
+    assert opportunity["context"]["ticker"] == "TSLA"
+    assert "TSLA 3/4" in opportunity["context"]["asked_because"]
+    # No pattern → no question (the gate the queue and the panel share).
+    assert review_engine._exit_consistency_question({"ticker_diagnosis": []}, "en") is None
+
+
 def _grounded_headline(ticker, pct):
     raw = {"dim": "部位 sizing", "max_ticker": ticker, "max_pct": pct,
            "risk_weights": {ticker: pct}}

@@ -17,7 +17,8 @@ import re
 
 
 SCHEMA_VERSION = 1
-ELIGIBLE_KINDS = frozenset({"add_thesis", "headline_motive", "initial_thesis"})
+ELIGIBLE_KINDS = frozenset({"add_thesis", "headline_motive", "initial_thesis",
+                            "exit_consistency"})
 MAPPING_CONFIDENCE = frozenset({"high", "medium", "low"})
 GROUNDING_REFS = frozenset({
     "context.ticker",
@@ -103,6 +104,16 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
             context["asked_because"] = question["asked_because"]
         intent = "classify_initial_thesis"
         requirements = _INITIAL_THESIS_REQUIREMENTS
+    elif kind == "exit_consistency":
+        # #303: the same motive answer contract as a headline motive, grounded
+        # in the aggregated early-exit facts through the existing ticker /
+        # asked_because refs — no schema expansion needed.
+        if question.get("ticker"):
+            context["ticker"] = question["ticker"]
+        if question.get("asked_because"):
+            context["asked_because"] = question["asked_because"]
+        intent = "classify_exit_consistency"
+        requirements = _HEADLINE_REQUIREMENTS
     else:
         # headline_motive can now expose the selected top hole's engine-owned
         # facts through existing grounding refs, without expanding the schema.

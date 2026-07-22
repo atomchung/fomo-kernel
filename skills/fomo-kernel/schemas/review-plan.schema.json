@@ -135,7 +135,8 @@
               "revisit",
               "rule_breach",
               "due_revisit",
-              "initial_thesis"
+              "initial_thesis",
+              "exit_consistency"
             ]
           },
           "ticker": {

@@ -35,7 +35,10 @@ Every committed review card renders, in this order:
 opportunity-cost being the first — that the engine surfaces without a verdict.
 Its label must state that no answer is expected, and it must name the
 instruments so the pattern is checkable. A pattern the engine *does* want
-answered belongs in the question queue, not here.
+answered belongs in the question queue, not here: when the review has room in
+its density band it queues the grounded `exit_consistency` motive question about
+the same facts, and this panel yields to it. A pattern is either answerable this
+review (the question) or a read-only observation (this panel), never both.
 
 **Block 4 renders, in order** (#301): the rule, then the positions or behavior
 counts it would act on (#302), then — only when the same card credits a
@@ -82,7 +85,7 @@ never silent omission.
 | 2 motive/exit attachments | Step-2 answers / exit records exist for that ticker | row renders without them |
 | 3 strengths + hole | engine diagnosis present | one-line note |
 | 3 `[v]` amplify row | an `amplify` / `amplify_hypothesis` / `selection_inconclusive` prescription exists (strongest one only, in that order) | panel renders with the strength line alone |
-| 3 `[?]` pattern panel | an unjudged pattern fired (today: `sold_winner_early` tags on ≥1 instrument) | omit the panel — an empty "no patterns" line is noise |
+| 3 `[?]` pattern panel | an unjudged pattern fired (today: `sold_winner_early` tags on ≥1 instrument) **and** the review did not queue the answerable `exit_consistency` question about it | omit the panel — either nothing fired, or the question already carries the facts answerably |
 | 4 next step | always — falls back to restating the standing rule when the engine proposes no change | — |
 | 4 rule targets | the commitment carries a `dim` and that dimension has per-position facts (`risk_weights` over the cap; per-ticker averaging-down counts) | fall back to the aggregate `#248` grounding sentence; never leave the rule unanchored |
 | 4 trade-off line | the rule's dimension shrinks a position (`position_sizing` / `diversification`) **and** the card carries an `amplify` row | omit the line — an unconditional one is caveat noise |
