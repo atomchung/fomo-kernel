@@ -12,10 +12,12 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 
 1. Read `skills/fomo-kernel/SKILL.md` completely.
 2. Normalize brokerage data locally. Do not require the user to reformat it. For a position table or screenshot, transcribe only the broker-declared facts into the snapshot JSON envelope documented in `references/data-contract.md`; keep this temporary JSON outside the repository (for example under `/tmp`), and do not calculate weights, P&L, cycle IDs, or classifications. Screenshot transcription stays local and does not use a cloud OCR service.
-3. Start from the single orchestration entry point. Use the trade command for transaction history or the snapshot command for declared positions:
+3. Start from the single orchestration entry point. Preflight once after install — the engine fail-soft degrades (silently dropping current prices, P&L, alpha/beta, and market context) when its optional runtime dependencies are missing. Use the trade command for transaction history or the snapshot command for declared positions:
 
    ```bash
    cd skills/fomo-kernel
+   pip install -r requirements.txt   # runtime deps: yfinance + pandas + rich
+   python3 engine/review.py doctor   # verify; lists what each unlocks, non-zero if a full-experience dep is missing
    python3 engine/review.py prepare <CSV...> --language en
    python3 engine/review.py prepare --route snapshot_review \
      --snapshot-json /tmp/fomo-kernel-positions.json --language en

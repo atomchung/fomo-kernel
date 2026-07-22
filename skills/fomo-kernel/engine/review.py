@@ -2975,6 +2975,44 @@ def cmd_set_cap(args):
     _emit({"status": "set", "root": root, "max_position_pct": cap})
 
 
+def cmd_doctor(args):
+    """Report optional runtime dependencies and what each unlocks (#322).
+
+    Read-only preflight. The engine fail-soft degrades and never crashes on a
+    missing package, so a user who skipped ``pip install`` silently loses the
+    price-dependent half of the card — disclosed only as a data-coverage gap
+    that misattributes the cause. ``doctor`` names the real cause: it lists each
+    runtime dependency, whether it imports, and the card capability it unlocks,
+    then exits non-zero when a full-experience dependency (yfinance / pandas) is
+    missing so an installer or CI can gate on it. ``rich`` is optional for the v2
+    card and never gates the exit code.
+    """
+    checks = (
+        ("yfinance", True, "current prices, unrealized P&L, alpha/beta, market context, FX"),
+        ("pandas", True, "the P&L curve and the alpha/beta regression"),
+        ("rich", False, "the v1 terminal card (the v2 review card renders without it)"),
+    )
+    lines = ["fomo-kernel runtime dependencies:"]
+    missing_full = []
+    for module, full_experience, unlocks in checks:
+        try:
+            __import__(module)
+            present = True
+        except Exception:                        # ImportError or a broken install
+            present = False
+            if full_experience:
+                missing_full.append(module)
+        lines.append(f"  [{'ok  ' if present else 'MISS'}] {module:9s} — {unlocks}")
+    if missing_full:
+        lines += ["",
+                  "Full-experience dependencies missing: " + ", ".join(missing_full) + ".",
+                  "The card silently drops price-dependent sections without them. Install with:",
+                  "  pip install -r skills/fomo-kernel/requirements.txt"]
+    print("\n".join(lines))
+    if missing_full:
+        raise SystemExit(1)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="fomo-kernel stable review orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -3032,6 +3070,9 @@ def build_parser():
     cap_group.add_argument("--clear", action="store_true",
                            help="remove the override and revert to the universal default")
     setcap.set_defaults(func=cmd_set_cap)
+    doctor = sub.add_parser(
+        "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
+    doctor.set_defaults(func=cmd_doctor)
     return parser
 
 

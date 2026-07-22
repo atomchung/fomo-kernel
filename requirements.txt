@@ -1,5 +1,11 @@
+# Full contributor set (runtime + test tooling). End users who install only the
+# skill need just the runtime deps -> see skills/fomo-kernel/requirements.txt,
+# or run `python3 engine/review.py doctor` to check.
+#
+# Runtime (the engine and the review card):
 yfinance>=0.2
 pandas>=2.0
 rich>=13
+# Test-only (LLM-judge evals under tests/agent/; NOT imported by the runtime engine):
 anthropic>=0.40
 python-dotenv>=1.0

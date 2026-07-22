@@ -28,6 +28,7 @@ SUITES = [
     ("State-loop end-to-end", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
     ("Card and state checker probes", "tests/test_checkers_offline.py"),
     ("Local data-control CLI", "tests/test_coach_data_cli.py"),
+    ("Skill dependency preflight (doctor)", "tests/test_deps_doctor.py"),
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
     ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
     ("Validated private question surfaces", "tests/test_question_surfaces.py"),
