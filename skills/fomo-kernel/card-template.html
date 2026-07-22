@@ -124,6 +124,8 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .tk{font-family:var(--font-mono);font-size:14px;font-weight:500;width:52px;flex:none}
 .rc .tamt{font-size:14px;font-weight:500;width:78px;flex:none;text-align:right}
 .rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+@media (max-width:300px){.rc .ttop{flex-wrap:wrap}}
+@media (max-width:300px){.rc .ttags .tag{font-size:11px}}
 .rc .tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:6px;white-space:nowrap;line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
 .rc .tag i{font-size:13px}
 .rc .t-warn{color:var(--text-warning);border-color:var(--border-strong)}
@@ -148,6 +150,8 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
 .rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
+@media (max-width:300px){.rc .attr-head .big{font-size:16px}}
+@media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
 .rc .rule{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
 .rc .rule .rt{font-size:12px;color:var(--text-accent);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
 .rc .rule .rmain{font-size:15px;color:var(--text-primary);line-height:1.65;margin:0;font-weight:500}
