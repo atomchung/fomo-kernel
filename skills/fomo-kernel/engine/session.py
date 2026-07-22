@@ -978,6 +978,11 @@ def _project_legacy_locked(root, bundle, private_md):
                                         list(bundle.get("thesis_decisions") or [])))
     reports.append(_append_session_rows(os.path.join(root, "headline_motives.jsonl"), session_id,
                                         list(bundle.get("headline_motive_events") or [])))
+    # #303: early-exit motive classifications are an isolated append-only audit
+    # log, kept separate from the headline-motive stream so the two motive axes
+    # never merge in durable state.
+    reports.append(_append_session_rows(os.path.join(root, "exit_consistency.jsonl"), session_id,
+                                        list(bundle.get("exit_consistency_events") or [])))
     reports.append(_append_session_rows(os.path.join(root, "revisit.jsonl"), session_id,
                                         list(bundle.get("revisit_resolutions") or [])))
     # #291: first-review entry-motive classifications are an isolated append-only

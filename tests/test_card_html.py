@@ -905,6 +905,41 @@ def test_exit_opportunity_cost_collects_into_one_read_only_panel():
             f"{language}: an unjudged pattern is not a next step"
 
 
+def test_exit_opportunity_cost_is_no_longer_scattered_across_key_trades():
+    """#303: after consolidation the ``sold_winner_early`` tag no longer renders
+    per-trade in Key trades — it lives only in the [?] panel. #326 added the
+    panel but left the per-trade tags (``instrument_tags.sold_winner_early``);
+    this completes the de-scatter, so the tag must be absent from every row."""
+    for language, scattered in (("zh-TW", "賣後機會成本"),
+                                ("en", "kept rising after the sell")):
+        markdown = card_renderer.render_private(_conflicted_bundle(language, "position_sizing"))
+        key_trades = next(block for block in re.split(r"\n## ", markdown)
+                          if block.startswith(("關鍵交易", "Key trades")))
+        assert scattered not in key_trades, \
+            f"{language}: the exit tag must not sit scattered in a Key-trades row"
+        assert "TSLA" in key_trades and "AMD" in key_trades, \
+            f"{language}: the instrument rows themselves still render"
+        # The fact survives once, consolidated, in the [?] panel.
+        assert "[?]" in markdown and "TSLA 3/4" in markdown, \
+            f"{language}: the consolidated observation must still carry the fact"
+
+
+def test_exit_consistency_panel_yields_to_the_question_when_asked():
+    """#303: when the review queues the answerable exit-consistency question, the
+    read-only [?] observation panel is suppressed — the card must not say "no
+    answer needed" about a pattern the user was just asked to explain."""
+    asked = {"question_queue": [{"id": "exit_consistency", "kind": "exit_consistency",
+                                 "required": True, "question": "q", "options": []}]}
+    for language in ("zh-TW", "en"):
+        without = _conflicted_bundle(language, "position_sizing")
+        assert "[?]" in card_renderer.render_private(without), \
+            f"{language}: the panel shows as an observation when nothing was asked"
+        with_question = _conflicted_bundle(language, "position_sizing")
+        with_question["review_plan"] = asked
+        assert "[?]" not in card_renderer.render_private(with_question), \
+            f"{language}: the observation panel must yield to the queued question"
+
+
 def test_committed_rule_carries_its_threshold():
     """#317: the sizing rule prints the cap, so the reader is not left trying to
     remember what "the cap" was. The value tracks the renderer constant."""
@@ -978,6 +1013,8 @@ def main():
         test_next_step_reconciles_a_rule_that_contradicts_a_strength,
         test_rule_names_the_positions_it_would_act_on,
         test_exit_opportunity_cost_collects_into_one_read_only_panel,
+        test_exit_opportunity_cost_is_no_longer_scattered_across_key_trades,
+        test_exit_consistency_panel_yields_to_the_question_when_asked,
         test_committed_rule_carries_its_threshold,
         test_renderer_position_cap_matches_the_engine_constant,
         test_committed_rule_carries_the_user_cap_override,

@@ -103,6 +103,9 @@
     "label": "A pattern, not yet judged (no answer needed)",
     "sold_winner_early": "{early} of the {total} positions you sold kept rising afterwards, most clearly {tickers}."
   },
+  "exit_consistency": {
+    "question": "Was that a consistent exit rule, an emotional reaction, or an external constraint?"
+  },
   "add_choices": {
     "planned_tranche": "A pre-planned tranche",
     "new_evidence": "New testable evidence",
@@ -161,7 +164,6 @@
     "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
     "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
     "deep_underwater": "down {cur_abs_pct} and still held without a decision",
-    "sold_winner_early": "kept rising after the sell: {win_early}/{win_n} exits (not a verdict; check exit-rule consistency)",
     "too_heavy": "too heavy: {wpct_pct} of the portfolio",
     "disciplined_hold": "disciplined hold: {cur_signed_pct}",
     "roughly_neutral": "roughly neutral"

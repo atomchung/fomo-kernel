@@ -8,7 +8,7 @@ The agent may:
 - Transcribe broker-declared position facts from a table or screenshot into the normalized snapshot envelope, including date and symbol-format normalization, and keep the temporary envelope outside the repository.
 - Use world knowledge to propose a driver map or instrument map. Mark uncertainty as unknown rather than pretending certainty.
 - Interpret motive answers and evidence deltas.
-- Customize a grounded private question surface only for an engine-selected `add_thesis` or `headline_motive` opportunity, then map it back to the unchanged canonical choices through `references/interaction-delivery.md`.
+- Customize a grounded private question surface only for an engine-selected `add_thesis`, `headline_motive`, `initial_thesis`, or `exit_consistency` opportunity, then map it back to the unchanged canonical choices through `references/interaction-delivery.md`.
 - Write an inferred hypothesis for a position without a thesis.
 - Write the headline, mirror, counterfactual, and rule rationale.
 - Add observations that do not silently replace the engine's top conclusion.

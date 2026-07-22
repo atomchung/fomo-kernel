@@ -22,7 +22,7 @@ Every row the tool writes is stamped with a UTC ISO-8601 `ts` (seconds, e.g. `20
 
 ## Bind a private surface or the engine fallback
 
-The Review Plan keeps display-ready `question` and `options` for every queue row. `add_thesis` and `headline_motive` may additionally carry an engine-owned `question_opportunity`; `due_revisit`, `rule_breach`, and recent-exit `revisit` remain engine-rendered.
+The Review Plan keeps display-ready `question` and `options` for every queue row. `add_thesis`, `headline_motive`, `initial_thesis`, and `exit_consistency` may additionally carry an engine-owned `question_opportunity`; `due_revisit`, `rule_breach`, and recent-exit `revisit` remain engine-rendered.
 
 For an eligible opportunity, the agent may author only the private stem, surface labels/descriptions, allowed grounding references, `none_of_above` copy, and one optional clarification in `schemas/question-surface.schema.json`. Keep that candidate outside the repository and bind it through the existing lifecycle entry point before showing it:
 

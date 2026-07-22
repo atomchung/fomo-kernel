@@ -65,6 +65,10 @@ INITIAL_THESIS_CHOICES = {"planned_entry", "momentum_follow", "external_call",
 EXIT_DECISIONS = {"price_target", "thesis_broken", "swap", "anxiety", "other", "skip"}
 RULE_BREACH_CHOICES = {"keep_tracking", "revise_rule", "exception"}
 HEADLINE_MOTIVE_CHOICES = {"deliberate_plan", "emotional_reaction", "external_constraint"}
+# #303: exit-consistency classifies the same motive axis as a headline motive
+# (deliberate / emotional / external), so it reuses the choice contract and the
+# `_generic_options` labels — only the durable event stream is kept separate.
+EXIT_CONSISTENCY_CHOICES = HEADLINE_MOTIVE_CHOICES
 
 
 class ReviewError(ValueError):
@@ -1004,6 +1008,34 @@ def _generic_options(language):
     ]
 
 
+def _exit_consistency_question(card, language):
+    """#303: one answerable motive question for the aggregated early-exit
+    pattern, or ``None`` when no instrument carried a ``sold_winner_early`` tag.
+
+    The stem is grounded in the exact engine facts the read-only ``[?]`` panel
+    would otherwise state (same counts, same named instruments), so a user can
+    reply with why those exits happened instead of reading a verdict-free
+    observation they cannot answer. The answer contract is the shared motive
+    axis; only the durable ``exit_consistency`` event stream is distinct, so
+    these classifications never pollute the headline-motive history (#296/#299).
+    """
+    copy = card_renderer.load_copy(language)
+    facts, sentence = card_renderer.exit_consistency_line(card, copy)
+    stem = (copy.get("exit_consistency") or {}).get("question")
+    if not facts or not sentence or not stem:
+        return None
+    en = str(language).lower().startswith("en")
+    question = f"{sentence} {stem}" if en else f"{sentence}{stem}"
+    row = {
+        "id": "exit_consistency", "kind": "exit_consistency", "required": True,
+        "question": question, "options": _generic_options(language),
+        "ticker": facts["instruments"][0]["ticker"], "asked_because": sentence,
+        "_importance": 0.0, "_tie": 2,
+    }
+    row["question_opportunity"] = question_surface.build_opportunity(row, language)
+    return row
+
+
 def _initial_thesis_options(language):
     """Canonical first-review entry-motive choices (#291), localized labels.
 
@@ -1559,6 +1591,18 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     for row in initial_overflow:
         rejected.append(_rejection(row.get("id"), "initial_thesis", "initial_thesis_limit",
                                    cycle_id=row.get("cycle_id")))
+    # #303: the aggregated early-exit pattern becomes one answerable motive
+    # question when it fired. It is a grounded candidate (real tickers/counts),
+    # not a min-only backfill, so it competes for a slot up to the route max —
+    # "answerable when the queue has room". It ranks at the bottom of its tier
+    # (_importance 0.0) so it never displaces a higher-signal question; when the
+    # queue is already full it is trimmed below and the read-only `[?]` panel
+    # states the same facts as an explicit observation instead. Counting it
+    # here, before the generic headline backfill, keeps a grounded question
+    # ahead of an invented one (#291).
+    exit_consistency = _exit_consistency_question(card, language)
+    if exit_consistency is not None:
+        candidates.append(exit_consistency)
     # #291: route-min-aware min-backfill (was `if not candidates:`); weekly
     # min=1 makes it exactly equivalent to the prior behavior, while
     # first-review min=3 lets the motive question backfill when 1-2 grounded
@@ -2422,6 +2466,51 @@ def _build_headline_motive_events(plan, answers, amap=None):
     return events
 
 
+def _build_exit_consistency_events(plan, answers, amap=None):
+    """Consume an exit-consistency answer into one typed canonical event (#303).
+
+    Mirrors ``_build_headline_motive_events`` (#299): a non-skip classification
+    becomes an append-only typed event carrying only the canonical choice and
+    the engine-owned question context (the named instruments / counts). A skip
+    stays explicit in ``answers`` and records nothing. The event lands in its
+    own ``exit_consistency`` stream — never the headline-motive history — so the
+    two motive axes stay separable in durable state.
+    """
+    if amap is None:
+        amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=True)
+    events = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "exit_consistency":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        if choice == "skip":
+            continue
+        offered = {option.get("value") for option in question.get("options") or []}
+        if choice not in EXIT_CONSISTENCY_CHOICES or choice not in offered:
+            raise ReviewError(f"unsupported exit consistency decision: {choice}")
+        if answer.get("evidence_delta") is not None:
+            raise ReviewError(
+                f"{question['id']}: evidence_delta is not valid for an exit consistency motive")
+        opportunity = question.get("question_opportunity") or {}
+        context = opportunity.get("context") or {}
+        event = {
+            "event": "exit_consistency_decision",
+            "schema_version": 1,
+            "session_id": plan.get("session_id"),
+            "question_id": question.get("id"),
+            "decision": choice,
+            "context": json.loads(json.dumps(context, ensure_ascii=False, sort_keys=True)),
+            "review_date": (plan.get("engine_state") or {}).get("date_end"),
+        }
+        identity = session.canonical(event)
+        event["event_id"] = (
+            "exit-consistency-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        )
+        events.append(event)
+    return events
+
+
 def _build_initial_thesis_events(plan, answers, amap=None):
     """Persist the first-review entry-motive classification as append-only events (#291).
 
@@ -2528,6 +2617,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     revisit_resolutions = _build_revisit_resolutions(plan, answers, amap)
     rule_breach_decisions = _build_rule_breach_decisions(plan, answers, amap)
     headline_motive_events = _build_headline_motive_events(plan, answers, amap)
+    exit_consistency_events = _build_exit_consistency_events(plan, answers, amap)
     initial_thesis_events = _build_initial_thesis_events(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every required honesty key must be covered by an agent-authored
@@ -2570,6 +2660,10 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
         bundle["rule_breach_decisions"] = rule_breach_decisions
     if headline_motive_events:
         bundle["headline_motive_events"] = headline_motive_events
+    # #303: absent-when-empty, same replay-compatibility contract as the keys
+    # above — only present when at least one early-exit motive was classified.
+    if exit_consistency_events:
+        bundle["exit_consistency_events"] = exit_consistency_events
     # Absent-when-empty, same replay-compatibility contract as the keys above:
     # first-review-only, and only when at least one entry motive was classified.
     if initial_thesis_events:

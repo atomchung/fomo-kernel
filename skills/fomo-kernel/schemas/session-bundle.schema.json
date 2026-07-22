@@ -240,6 +240,44 @@
         }
       }
     },
+    "exit_consistency_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event",
+          "schema_version",
+          "event_id",
+          "session_id",
+          "question_id",
+          "decision",
+          "context",
+          "review_date"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "event": {"const": "exit_consistency_decision"},
+          "schema_version": {"const": 1},
+          "event_id": {
+            "type": "string",
+            "pattern": "^exit-consistency-[a-f0-9]{16}$"
+          },
+          "session_id": {"type": "string"},
+          "question_id": {"type": "string"},
+          "decision": {
+            "enum": [
+              "deliberate_plan",
+              "emotional_reaction",
+              "external_constraint"
+            ]
+          },
+          "context": {
+            "$ref": "question-opportunity.schema.json#/properties/context"
+          },
+          "review_date": {"type": ["string", "null"]}
+        }
+      }
+    },
     "exit_narratives": {
       "type": "array",
       "items": {

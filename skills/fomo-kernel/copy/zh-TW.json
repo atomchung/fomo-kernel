@@ -103,6 +103,9 @@
     "label": "一個模式，還沒下判斷（不用回答）",
     "sold_winner_early": "這期賣掉的 {total} 筆有 {early} 筆賣完還漲，最明顯是 {tickers}。"
   },
+  "exit_consistency": {
+    "question": "這是你出場規則裡一致的做法、情緒反應，還是外部限制？"
+  },
   "add_choices": {
     "planned_tranche": "事先規劃的分批",
     "new_evidence": "有新的可驗證證據",
@@ -161,7 +164,6 @@
     "adds_pending_confirmation": "？加碼 {n_adds} 次待確認:是定投還是凹單,要你定",
     "suspected_dca": "✓疑似定投:漲跌都買/規律 {n_adds} 次,不是凹單",
     "deep_underwater": "✗套牢:{cur_pct} 還抱著沒處理",
-    "sold_winner_early": "賣後機會成本:{win_early}/{win_n} 筆賣完它還漲(非審判,看你出場規則一致嗎)",
     "too_heavy": "⚠押太重:佔組合 {wpct_pct}",
     "disciplined_hold": "✓紀律持有:賺 {cur_pct}",
     "roughly_neutral": "— 大致中性"
