@@ -289,6 +289,50 @@ def test_surface_mutations_fail_closed():
             pass
 
 
+def test_leaked_internal_enum_key_or_architecture_term_fails_the_gate():
+    """#305: a cross-client dogfood run showed a host adapter rendering an
+    option's internal enum key next to its label (e.g. "...(planned_entry)")
+    and surfacing the internal `answers.commitment` schema field as prompt
+    vocabulary ("Commitment Rule"). The engine cannot observe what a host
+    actually renders, but it can and must fail closed when an AI-authored
+    surface already carries the leak, so this failure mode does not rely on
+    the agent silently following a prose-only rule.
+
+    The leaked enum key here is read off the surface's own
+    `canonical_choices` — the live answer contract already used a few lines
+    above to validate option order — not a hardcoded copy of engine values
+    that could drift from the real schema.
+    """
+    question = _add_question()
+    plan = _plan(question)
+    good = _surface_artifact(plan, question)
+    question_surface.validate_surfaces(plan, good)  # sanity: a clean surface still passes
+
+    canonical_choices = question["question_opportunity"]["answer_contract"]["canonical_choices"]
+    leaked_key = canonical_choices[1]
+    leaked_option = copy.deepcopy(good)
+    original_label = leaked_option["surfaces"][0]["options"][1]["label"]
+    leaked_option["surfaces"][0]["options"][1]["label"] = f"{original_label} ({leaked_key})"
+    try:
+        question_surface.validate_surfaces(plan, leaked_option)
+        assert False, "a label echoing its own internal enum key must be rejected"
+    except question_surface.QuestionSurfaceError as exc:
+        assert leaked_key in str(exc)
+
+    leaked_term = copy.deepcopy(good)
+    leaked_term["surfaces"][0]["stem"] += " (Commitment Rule)"
+    try:
+        question_surface.validate_surfaces(plan, leaked_term)
+        assert False, "architecture vocabulary like 'Commitment Rule' must be rejected"
+    except question_surface.QuestionSurfaceError as exc:
+        assert "Commitment Rule" in str(exc)
+
+    # The clean artifact built above is untouched by either mutation (both
+    # mutate deep copies) and still passes, proving the gate is precise
+    # rather than incidentally broken by the new check.
+    question_surface.validate_surfaces(plan, good)
+
+
 def test_surface_list_order_cannot_change_engine_queue_order():
     add = _add_question()
     headline_queue, _headline_report = review_engine._question_queue(

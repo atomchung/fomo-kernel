@@ -26,6 +26,11 @@ GROUNDING_REFS = frozenset({
     "context.asked_because",
     "context.headline_dimension.label",
 })
+# #305: architecture vocabulary observed leaking into a rendered prompt. This
+# is deliberately a short, exact-phrase list (not the bare word "commitment",
+# which is legitimate domain English already shipped in copy/en.json) so the
+# gate below cannot false-positive on ordinary prose.
+LEAKED_ARCHITECTURE_TERMS = ("Commitment Rule",)
 
 _ADD_REQUIREMENTS = {
     "new_evidence": ["evidence_delta.claim", "evidence_delta.source"],
@@ -195,6 +200,32 @@ def _validate_grounded_text(text, refs, context, label, *, extra_refs=None):
         raise QuestionSurfaceError(f"{label} contains an ungrounded numeric fact: {invented[0]}")
 
 
+def _assert_no_internal_leak(text, label, canonical_choices):
+    """#305: reject authored copy that echoes an internal enum key or known
+    architecture vocabulary onto a user-facing surface (observed live as
+    "<label> (planned_entry)" and "...承諾規矩（Commitment Rule）"). The
+    leak-check universe is `canonical_choices` — the same authoritative,
+    already-validated answer-contract list this function's caller uses to
+    check option order — not a separate hardcoded copy that could drift.
+
+    Only a snake_case value (containing "_") is checked verbatim: that shape
+    is what makes a value unmistakably an internal identifier rather than
+    ordinary language, in either English or Chinese copy — no natural label
+    is ever written with an underscore standing in for a space. A one-word
+    value such as "skip" is excluded because it can legitimately be the
+    domain label itself (the correct label for that choice already is
+    "Skip"/"先跳過"); flagging it would reject correct copy, not a leak.
+    """
+    folded = text.casefold()
+    for value in canonical_choices:
+        value = str(value)
+        if "_" in value and value.casefold() in folded:
+            raise QuestionSurfaceError(f"{label} leaks an internal enum key: {value}")
+    for term in LEAKED_ARCHITECTURE_TERMS:
+        if term.casefold() in folded:
+            raise QuestionSurfaceError(f"{label} leaks internal architecture vocabulary: {term}")
+
+
 def _question_map(plan):
     return {row.get("id"): row for row in plan.get("question_queue") or [] if row.get("id")}
 
@@ -228,15 +259,16 @@ def validate_surfaces(plan, artifact):
             raise QuestionSurfaceError(f"question kind remains engine-rendered: {question_id}")
         opportunity = question["question_opportunity"]
         context = opportunity.get("context") or {}
+        canonical_choices = (opportunity.get("answer_contract") or {}).get("canonical_choices") or []
         stem = _text(surface.get("stem"), f"{label}.stem", 1000)
         stem_refs = surface.get("stem_grounding_refs")
         if not stem_refs:
             raise QuestionSurfaceError(f"{label}.stem must cite at least one opportunity fact")
         _validate_grounded_text(stem, stem_refs, context, f"{label}.stem")
+        _assert_no_internal_leak(stem, f"{label}.stem", canonical_choices)
         options = surface.get("options")
         if not isinstance(options, list):
             raise QuestionSurfaceError(f"{label}.options must be an array")
-        canonical_choices = (opportunity.get("answer_contract") or {}).get("canonical_choices") or []
         mapped = [row.get("maps_to") if isinstance(row, dict) else None for row in options]
         if mapped != canonical_choices:
             raise QuestionSurfaceError(
@@ -252,11 +284,13 @@ def validate_surfaces(plan, artifact):
             _validate_grounded_text(
                 display_label + " " + description, refs, context, option_label
             )
+            _assert_no_internal_leak(display_label + " " + description, option_label, canonical_choices)
         none = surface.get("none_of_above")
         _strict_keys(none, {"label", "description"}, set(), f"{label}.none_of_above")
         none_text = (_text(none.get("label"), f"{label}.none_of_above.label", 160) + " " +
                      _text(none.get("description"), f"{label}.none_of_above.description", 500))
         _validate_grounded_text(none_text, [], context, f"{label}.none_of_above")
+        _assert_no_internal_leak(none_text, f"{label}.none_of_above", canonical_choices)
         clarification = surface.get("clarification")
         if clarification is not None:
             _strict_keys(clarification, {"stem", "grounding_refs"}, set(),
@@ -271,6 +305,9 @@ def validate_surfaces(plan, artifact):
                 )
             _validate_grounded_text(
                 clarification_stem, clarification_refs, context, f"{label}.clarification"
+            )
+            _assert_no_internal_leak(
+                clarification_stem, f"{label}.clarification", canonical_choices
             )
     return copy.deepcopy(artifact)
 
