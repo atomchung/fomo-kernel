@@ -17,6 +17,7 @@ DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades
 
 N_FWD = 30          # 賣出後 N 交易日看續漲（tunable）
 MIN_SPAN_DAYS = 84  # 樣本不足 gate:60 交易日 ≈ 84 日曆日(×7/5);交易跨度短於此 → insufficient(§4.4, #21.4)
+MIN_ROUND_TRIPS = 3  # 完整買賣回合 < 此 → 已實現行為太薄;review._review_tier 的 behavioral 門檻同源(#306)
 CURVE_MAX_POINTS = 52  # pnl_curve 逐日序列長於此 → 降成週頻(W-FRI),卡片 sparkline 不需要逐日精度
 
 # cycle_id 契約(單一事實源,#61):SKILL 對帳、theses.jsonl 綁定、測試斷言都以這兩條為準。
@@ -1644,13 +1645,13 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 因 prescribe 攤平處方排在 sizing 前、且 sizing 規矩被 not any(砍損耗) 擋掉)。
     actionable = [r for r in (rx or []) if r.get("rule")]
     rule = actionable[0]["rule"] if actionable else None
-    # 樣本不足(§4.4):round-trip < 3,或交易跨度 < 60 交易日 → 行為訊號太薄,不硬出 commitment。
-    # 跨度 gate 堵「≥3 round-trip 但全擠在一兩週」的假承諾(SKILL.md:80,316;#21.4);
-    # 60 交易日 ≈ 84 日曆日(×7/5),用日曆跨度當 proxy,免維護市場行事曆。
+    # 樣本不足(§4.4, #306):完整買賣回合 < MIN_ROUND_TRIPS → 已實現行為太薄,不硬出 commitment。
+    # #306 起「交易跨度」不再進這條硬閘(取代 #21.4 的 span gate):判準是「回合夠不夠完整」,
+    # 不是日曆窗長短——免得把高頻短窗檔(回合多但跨度短)誤殺。跨度只當 review._review_tier
+    # 的 durability_short 提示;承諾本就可 skip,窗短提示即可,不用 span 硬壓掉整條承諾。
     # 不綁 α 樣本(ab.n):離線/無價格時 ab.n=0,但行為維(sizing/攤平/分散)仍可承諾;
     # α 是否可信另由 alpha_credible 表示,別讓「沒價格」誤殺行為層的 commitment(codex review)。
-    span_days = (rows[-1]["date"] - rows[0]["date"]).days if rows else 0
-    insufficient = len(rts) < 3 or span_days < MIN_SPAN_DAYS
+    insufficient = len(rts) < MIN_ROUND_TRIPS
     # commitment = 下次要對帳的「規矩 + 它對應的可追蹤 metric」。對帳必須查這一維(用戶真承諾的),
     # 不是查 headline(否則第二張卡拿 sizing 比、用戶卻承諾攤平 = 對錯帳)。rule 關鍵字 → metric。
     commitment = None

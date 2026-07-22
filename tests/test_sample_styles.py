@@ -216,18 +216,17 @@ def test_pyramid_top_hole_is_sizing_not_avgdown():
 
 
 def test_insufficient_sample_blocks_commitment():
-    """樣本不足者(2 個 round-trip、跨度 <84 天)→ engine 不得硬出 commitment(A-10)。
+    """樣本不足者(2 個完整 round-trip)→ engine 不得硬出 commitment。
 
-    對應 eval-design.md A-10:round-trip < 3 或交易跨度 < MIN_SPAN_DAYS → insufficient_data=True、
-    commitment 必為 None(除非用戶親選,那是 SKILL 層 Step 3.5 的例外,engine 本身不做這件事)。
+    #306(取代 #21.4 span gate):閘是「完整買賣回合數 < MIN_ROUND_TRIPS」;交易跨度不再是
+    條件(改當 review._review_tier.durability_short 提示)。commitment 必為 None(除非用戶親選,
+    那是 SKILL 層 Step 3.5 的例外,engine 本身不做這件事)。
     """
     tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
     tr.load_driver_map(os.path.join(MOCK, "sample_insufficient.driver_map.json"))
     rows = tr.load([os.path.join(MOCK, "sample_insufficient.csv")])
     rts, _ = tr.round_trips(rows)
-    span_days = (rows[-1]["date"] - rows[0]["date"]).days
-    assert len(rts) < 3
-    assert span_days < tr.MIN_SPAN_DAYS
+    assert len(rts) < tr.MIN_ROUND_TRIPS
     # 直接跑 build_state 驗證 engine 真的擋下 commitment(不只是靠 gate 條件成立就假設)
     held, avg_down = tr.positions(rows)
     d_size = tr.dim_size(rows, held, None)

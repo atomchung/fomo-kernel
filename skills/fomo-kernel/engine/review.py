@@ -34,6 +34,7 @@ import revisit
 import session
 import snapshot_adapter
 import thesis
+import trade_recap
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -466,6 +467,68 @@ def _cadence(route, date_end, previous):
     tier = "light" if span <= threshold else "full"
     return {"tier": tier, "span_days": span, "threshold_days": threshold,
             "basis": "span", "override": None}
+
+
+def _trade_span_days(date_start, date_end):
+    """Calendar-day span of the trade file itself (first row to last).
+
+    Mirrors ``trade_recap.build_state``'s own span basis; used only for the
+    advisory ``durability_short`` flag in :func:`_review_tier`. Returns None when
+    either boundary is missing or unparseable. Distinct from
+    ``_review_span_days``, which measures the gap *between* reviews.
+    """
+    if not date_start or not date_end:
+        return None
+    try:
+        start = dt.date.fromisoformat(str(date_start))
+        end = dt.date.fromisoformat(str(date_end))
+    except (TypeError, ValueError):
+        return None
+    return max(0, (end - start).days)
+
+
+def _review_tier(state):
+    """Engine-owned classification of how much a file can support (#306).
+
+    Additive Review Plan metadata (frozen into ``state_snapshot``), deterministic
+    and fail-closed. It records the entry decision in one place so later
+    consumers — routing, question density, card framing — read a single
+    engine-owned source instead of re-deriving thresholds in agent prose:
+
+    - ``empty``:       no current holdings and no closed round trips — nothing to
+                       diagnose; the flow must tell the user exactly what to add.
+    - ``behavioral``:  at least ``MIN_ROUND_TRIPS`` closed round trips — enough
+                       realized history for a full behavioral review.
+    - ``structural``:  holdings exist but fewer round trips — an opening
+                       structural check.
+
+    Per #306 the calendar span is advisory only: ``durability_short`` flags a
+    short trade window for a later note, but round-trip *count* — never span —
+    decides ``behavioral``, so a high-frequency short-window file is not demoted
+    the way the ``rts<3 or span<MIN_SPAN_DAYS`` commitment gate would demote it.
+    Nothing consumes this field yet; emitting it first keeps the tier a single
+    source of truth for the follow-up routing/rendering changes.
+    """
+    n_rt = state.get("n_round_trips") or 0
+    n_held = state.get("n_held")
+    if n_held is None:
+        n_held = len(((state.get("holdings") or {}).get("positions")) or {})
+    span_days = _trade_span_days(state.get("date_start"), state.get("date_end"))
+    if n_held == 0 and n_rt == 0:
+        tier = "empty"
+    elif n_rt >= trade_recap.MIN_ROUND_TRIPS:
+        tier = "behavioral"
+    else:
+        tier = "structural"
+    return {
+        "tier": tier,
+        "n_round_trips": n_rt,
+        "n_held": n_held,
+        "span_days": span_days,
+        "min_round_trips": trade_recap.MIN_ROUND_TRIPS,
+        "min_span_days": trade_recap.MIN_SPAN_DAYS,
+        "durability_short": span_days is not None and span_days < trade_recap.MIN_SPAN_DAYS,
+    }
 
 
 # Monthly vs-market cadence (#284, output contract §3): the vs-market
@@ -1439,12 +1502,20 @@ def _rejection(id_, kind, reason, cycle_id=None):
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
-                    route=None, missing_thesis_positions=None):
+                    route=None, missing_thesis_positions=None, tier=None):
     """Return (queue, selection_report). The report states, plan-internally, how
     the route's density band was filled: the eligible/selected counts, why the
     queue fell short of the route minimum, and every candidate rejected with its
     reason (#291). It is QA/agent-facing and never rendered on the card."""
     policy = QUESTION_POLICY.get(route) or QUESTION_POLICY["weekly_review"]
+    # #306: a structural/empty first review is an opening structural check, not a
+    # behavioral interrogation — suppress the question band entirely (0 required
+    # questions) so a thin first file never triggers the 3–5 question string.
+    # Scoped to first_review by design: a returning weekly review keeps its
+    # perishable revisit / exit / due-checkpoint questions no matter how thin the
+    # new activity is (there the tier is advisory, never a suppressor).
+    if route == "first_review" and tier in ("structural", "empty"):
+        policy = {"min": 0, "max": 0}
     report = {"route": route, "min": policy["min"], "max": policy["max"],
               "eligible": 0, "selected": 0, "shortfall_reason": None, "rejected": []}
     rejected = report["rejected"]
@@ -1551,7 +1622,7 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     # rejected yet: a below-min queue prefers these grounded rows over the
     # generic motive backfill (refill loop below).
     initial_overflow = []
-    if route == "first_review":
+    if route == "first_review" and policy["max"]:
         add_covered = {row.get("cycle_id") for row in candidates
                        if row.get("kind") == "add_thesis"}
         missing_cycles = {entry.get("cycle_id") for entry in (missing_thesis_positions or [])
@@ -1952,17 +2023,27 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # only asked to author sentences whose host lines render this month.
         required_honesty_keys = [key for key in required_honesty_keys
                                  if key not in card_renderer.VS_MARKET_HONESTY_KEYS]
+    review_tier = _review_tier(state)
+    # Carry the engine decision inside engine_state too, so the deterministic
+    # renderer can frame a thin first file as an opening structural check without
+    # re-deriving thresholds (#306). state_snapshot keeps the agent-facing copy.
+    state["review_tier"] = review_tier
+    flow_path = f"flows/{route.replace('_', '-')}.md"
+    if route == "first_review" and review_tier["tier"] in ("structural", "empty"):
+        # #306: a thin first file is an opening structural check, not a full
+        # behavioral review — send the agent to the structural flow.
+        flow_path = "flows/first-review-structural.md"
     question_queue, question_selection = _question_queue(
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
-        missing_thesis_positions=missing)
+        missing_thesis_positions=missing, tier=review_tier["tier"])
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
         "session_id": session_id,
         "status": "awaiting_answers",
         "route": route,
-        "flow_path": f"flows/{route.replace('_', '-')}.md",
+        "flow_path": flow_path,
         "language": "en" if str(language).lower().startswith("en") else "zh-TW",
         "persist": bool(persist),
         "state_root": root,
@@ -1976,6 +2057,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                                "returning": completed_reviews > 0,
                            },
                            "cadence": cadence,
+                           "review_tier": review_tier,
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single

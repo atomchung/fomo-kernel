@@ -2250,6 +2250,16 @@ def _next_block(bundle, copy, facts, state, snapshot):
         rule_inner.append(("paragraph", [
             "這次開場檢查先保留結構基線，不強迫設定承諾。" if not en
             else "This opening check keeps the structural baseline without forcing a commitment."]))
+    elif (state.get("review_tier") or {}).get("tier") == "structural":
+        # #306: a thin first file is an opening structural check, not a full
+        # behavioral review. Keep the structural baseline (no forced commitment)
+        # and name the one thing that unlocks the behavioral review, so the card
+        # reads as a coherent opening step rather than a review apologizing for
+        # what it lacks. Framed off the tier, not insufficient_data, so a
+        # high-frequency short-window file (behavioral, span-short) is not caught.
+        rule_inner.append(("paragraph", [
+            "這次是開場結構檢查：先立基線、不硬塞承諾。之後補上含買賣的完整交易紀錄，就能解鎖出場紀律、持有時間與勝負的完整行為復盤。" if not en
+            else "This is an opening structural check: it sets a baseline without forcing a commitment. A later file with complete buy-and-sell history unlocks the full behavioral review — exit discipline, holding period, and win/loss."]))
     elif state.get("insufficient_data"):
         rule_inner.append(("paragraph", [
             "樣本仍短，這次不硬塞承諾；先把它當基線。" if not en

@@ -43,6 +43,7 @@ For a position table or screenshot, transcribe the displayed facts locally into 
 `prepare` creates a Review Plan; it does not create a conclusion card. Read only the flow selected by `review_plan.flow_path`:
 
 - `flows/first-review.md`
+- `flows/first-review-structural.md` (a first review the engine tiered `structural`/`empty`: an opening structural check, no question string, no forced commitment)
 - `flows/weekly-review.md`
 - `flows/snapshot-review.md`
 - `flows/test-drive.md`

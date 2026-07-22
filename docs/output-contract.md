@@ -101,6 +101,7 @@ never silent omission.
 | 4 rule targets | the commitment carries a `dim` and that dimension has per-position facts (`risk_weights` over the cap; per-ticker averaging-down counts) | fall back to the aggregate `#248` grounding sentence; never leave the rule unanchored |
 | 4 trade-off line | the rule's dimension shrinks a position (`position_sizing` / `diversification`) **and** the card carries an `amplify` row | omit the line — an unconditional one is caveat noise |
 | snapshot route | suppresses history-performance modules by design (`card_renderer.py:1411`) | Block 1 = position-structure baseline only |
+| structural / empty tier (thin first file) | engine tiers a first review with fewer than `MIN_ROUND_TRIPS` closed round trips (`review._review_tier`, #306); round-trip count decides, span is advisory only | Block 4 = opening-check baseline that names what unlocks the behavioral review (exit, holding, win/loss) — no forced commitment, no question string; other blocks still render whatever the thin file supports |
 
 Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 
