@@ -1647,6 +1647,47 @@ def test_review_tier_frozen_into_plan_and_span_is_soft():
         assert tier["min_round_trips"] == 3 and tier["min_span_days"] == 84, tier
 
 
+def test_structural_first_review_suppresses_questions_and_routes_to_structural_flow():
+    """#306: a thin first file (structural tier) must not trigger the 3-5
+    question first-review interrogation. The engine forces the question band to
+    zero and routes the agent to the structural flow; a behavioral first file is
+    untouched. A real first review is used (not --test-drive, which forces the
+    test_drive route)."""
+    mock = ROOT / "skills" / "fomo-kernel" / "mock"
+    with tempfile.TemporaryDirectory() as tmp:
+        stub_dir = pathlib.Path(tmp) / "stubs"
+        stub_dir.mkdir()
+        (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n',
+                                              encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+
+        # Structural: sample_value has 5 holdings but only 2 closed round trips.
+        # Under the old first-review band those holdings would have produced a
+        # string of initial-thesis questions; the tier gate now yields zero.
+        run = _run("prepare", mock / "sample_value.csv",
+                   "--root", pathlib.Path(tmp) / "structural", "--language", "en", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["route"] == "first_review"
+        assert plan["state_snapshot"]["review_tier"]["tier"] == "structural"
+        assert plan["question_queue"] == [], "a structural first file must ask no questions"
+        assert plan["card_plan"]["question_policy"] == {
+            "route": "first_review", "min": 0, "max": 0}
+        assert plan["flow_path"] == "flows/first-review-structural.md"
+
+        # Behavioral: mock_trades has 8 round trips -> the full first review is
+        # untouched (density band and flow path unchanged).
+        run2 = _run("prepare", mock / "mock_trades.csv",
+                    "--root", pathlib.Path(tmp) / "behavioral", "--language", "en", env=env)
+        assert run2.returncode == 0, run2.stdout + run2.stderr
+        plan2 = json.loads(run2.stdout)["review_plan"]
+        assert plan2["state_snapshot"]["review_tier"]["tier"] == "behavioral"
+        assert plan2["flow_path"] == "flows/first-review.md"
+        assert plan2["card_plan"]["question_policy"]["max"] == 5
+
+
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
     """#194A: files and staging dir land before rename; parent dir lands after."""
     with tempfile.TemporaryDirectory() as root:

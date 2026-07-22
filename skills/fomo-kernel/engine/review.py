@@ -1502,12 +1502,20 @@ def _rejection(id_, kind, reason, cycle_id=None):
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
-                    route=None, missing_thesis_positions=None):
+                    route=None, missing_thesis_positions=None, tier=None):
     """Return (queue, selection_report). The report states, plan-internally, how
     the route's density band was filled: the eligible/selected counts, why the
     queue fell short of the route minimum, and every candidate rejected with its
     reason (#291). It is QA/agent-facing and never rendered on the card."""
     policy = QUESTION_POLICY.get(route) or QUESTION_POLICY["weekly_review"]
+    # #306: a structural/empty first review is an opening structural check, not a
+    # behavioral interrogation — suppress the question band entirely (0 required
+    # questions) so a thin first file never triggers the 3–5 question string.
+    # Scoped to first_review by design: a returning weekly review keeps its
+    # perishable revisit / exit / due-checkpoint questions no matter how thin the
+    # new activity is (there the tier is advisory, never a suppressor).
+    if route == "first_review" and tier in ("structural", "empty"):
+        policy = {"min": 0, "max": 0}
     report = {"route": route, "min": policy["min"], "max": policy["max"],
               "eligible": 0, "selected": 0, "shortfall_reason": None, "rejected": []}
     rejected = report["rejected"]
@@ -1614,7 +1622,7 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     # rejected yet: a below-min queue prefers these grounded rows over the
     # generic motive backfill (refill loop below).
     initial_overflow = []
-    if route == "first_review":
+    if route == "first_review" and policy["max"]:
         add_covered = {row.get("cycle_id") for row in candidates
                        if row.get("kind") == "add_thesis"}
         missing_cycles = {entry.get("cycle_id") for entry in (missing_thesis_positions or [])
@@ -2015,17 +2023,23 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # only asked to author sentences whose host lines render this month.
         required_honesty_keys = [key for key in required_honesty_keys
                                  if key not in card_renderer.VS_MARKET_HONESTY_KEYS]
+    review_tier = _review_tier(state)
+    flow_path = f"flows/{route.replace('_', '-')}.md"
+    if route == "first_review" and review_tier["tier"] in ("structural", "empty"):
+        # #306: a thin first file is an opening structural check, not a full
+        # behavioral review — send the agent to the structural flow.
+        flow_path = "flows/first-review-structural.md"
     question_queue, question_selection = _question_queue(
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
-        missing_thesis_positions=missing)
+        missing_thesis_positions=missing, tier=review_tier["tier"])
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
         "session_id": session_id,
         "status": "awaiting_answers",
         "route": route,
-        "flow_path": f"flows/{route.replace('_', '-')}.md",
+        "flow_path": flow_path,
         "language": "en" if str(language).lower().startswith("en") else "zh-TW",
         "persist": bool(persist),
         "state_root": root,
@@ -2039,7 +2053,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                                "returning": completed_reviews > 0,
                            },
                            "cadence": cadence,
-                           "review_tier": _review_tier(state),
+                           "review_tier": review_tier,
                            "active_theses": active_rows, "closed_theses": closed_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single
