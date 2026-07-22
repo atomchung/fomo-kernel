@@ -2896,13 +2896,18 @@ def render_public(bundle):
     severity = (None if snapshot and severity_value is None
                 else _public_band(hole.get("severity"), copy["language"]))
     commitment = bundle.get("commitment") or {}
+    # #324: the public card re-derives the canonical rule text (never the
+    # user-authored commitment["rule"], which may carry tickers/amounts/dates),
+    # so it must thread the standing single-position cap override itself — the
+    # same value review.py bakes into the private card's committed rule.
+    cap_override = (bundle.get("engine_state") or {}).get("max_position_pct")
     # Candidate rules resolve to fixed copy strings; custom rules (and anything of
     # unknown origin) render as a generic localized line so user-authored text —
     # which may carry tickers, amounts, or dates — never reaches the public card.
     rule = None
     if commitment:
         if commitment.get("origin") == "candidate":
-            rule = localized_rule(commitment.get("dim"), language)
+            rule = localized_rule(commitment.get("dim"), language, cap=cap_override)
         if not rule:
             rule = copy.get("public_custom_rule")
     structural_hole = (snapshot and snapshot_summary.get("weights_available") is True
