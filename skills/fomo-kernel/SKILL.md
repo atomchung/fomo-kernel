@@ -62,7 +62,7 @@ Then read the shared rules:
 ## Fixed lifecycle
 
 1. `prepare`: run the engine, reconstruct active theses, deduplicate questions, and return a Review Plan.
-2. Agent work: declare the host capabilities for the local presentation trace, make only permitted qualitative judgments, ask every required question once using the native control or fixed fallback in `references/interaction-delivery.md`, create inferred theses for uncovered positions, and write a narrative with no digits.
+2. Agent work: resolve the one host adapter in the local presentation trace. Unknown or unproven hosts use the first-class `plain_text` fallback; declare optional native controls or a rich widget only after the current host proves them. Then make only permitted qualitative judgments, ask every required question once using the selected adapter or fixed fallback in `references/interaction-delivery.md`, create inferred theses for uncovered positions, and write a narrative with no digits.
 3. `preview`: validate answers, evidence, theses, and narrative; then render private and public previews.
 4. Show the complete review-card preview inline, record the actual delivery mode, then ask the user to choose a candidate rule, provide a custom rule, or skip. Artifact generation alone is not card delivery.
 5. `finalize`: validate the final commitment, atomically commit the canonical session bundle, then rebuild compatibility projections.

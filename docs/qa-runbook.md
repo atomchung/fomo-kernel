@@ -28,8 +28,8 @@ issues it produces must say so.
    lifecycle tools honor `TRADE_COACH_HOME` (`review.py`, `coach.py`,
    `tools/ux_receipt.py` — the last one since #269).
 3. **Presentation receipt** — every user-visible step was recorded through
-   `tools/ux_receipt.py` (`start` with an honest `--client` and capability
-   declaration, then events after each user-visible action). A run without a
+   `tools/ux_receipt.py` (`start` with an honest `--client`, resolved adapter,
+   and capability declaration, then events after each user-visible action). A run without a
    receipt is structurally unattributable — exactly the untracked-run gap
    described in #273. This applies to `--test-drive` runs too. When a rule
    choice is presented, the receipt also proves each candidate's engine
@@ -127,7 +127,7 @@ step (exact arguments: `tools/ux_receipt.py --help`):
 
 ```bash
 python3 tools/ux_receipt.py start --session-id <ID> --client <your-client> --route <route> \
-  --question-mode ... --card-mode ...
+  --adapter plain_text
 python3 tools/ux_receipt.py event --event question_presented ...   # after each question is shown
 python3 tools/ux_receipt.py event --event answers_received          # right after the final required answer
 python3 tools/ux_receipt.py event --event card_presented ...        # after the user actually sees a card
@@ -136,9 +136,12 @@ python3 tools/ux_receipt.py event --event rule_choice_presented ... # when the r
 
 Non-negotiables while walking (each has burned a real QA run before):
 
-- Declare capabilities honestly; if the client can render rich cards, attempt
-  the rich path once before degrading and record `widget_attempt_failed` if it
-  fails. A generated artifact is not a presented card (#230).
+- Resolve the adapter honestly. An unknown client, missing plugin, or unproven
+  bridge starts as `--adapter plain_text`; it is a supported, first-class QA
+  route. Declare `validated_widget` only after a real-host probe has shown
+  direct structured choice submission and rich-card rendering. If that widget
+  then fails in-session, record `widget_attempt_failed` before falling back.
+  A generated artifact is not a presented card (#230).
 - Append each event when the action happens. Never replace a partial receipt or
   backfill the walk at archive time; after an interruption, append to the same
   trace. A reconstructed receipt is not execution-layer evidence.
@@ -206,9 +209,9 @@ verbatim.
   skill is the convenience wrapper; *this runbook is the contract it wraps.*
 - **Codex, Antigravity, Cursor, others** — no wrapper exists: follow the flow
   above manually. Set `--client` truthfully in the receipt so cross-client
-  runs stay attributable (#273). If the client cannot render rich cards or
-  native option controls, that is a finding to record (with an honest
-  capability declaration and verdict), not a reason to skip the receipt.
+  runs stay attributable (#273). Begin unknown hosts in the complete text
+  route; absence of rich cards or native options is not a reason to skip the
+  receipt. Promote an adapter only after a separate real-host dogfood pass.
 - **Any client**: if you realize mid-run that a gate was violated (wrong root,
   stale checkout, missing receipt), stop, note it, and restart the run — do
   not retrofit compliance onto a drifted session.

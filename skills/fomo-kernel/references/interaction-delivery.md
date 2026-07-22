@@ -6,15 +6,50 @@ The engine already fail-closes on review content: `preview`/`finalize` reject a 
 
 **Scope: full-tier reviews only.** A light-tier capture (`state_snapshot.cadence.tier == "light"`, `flows/light-capture.md`) never renders a card and never asks more than one plain-text question, so there is nothing for this contract to verify. Do not call `ux_receipt.py start`/`event`/`verify` for a light-tier session — its `ROUTES` and `verify_rows` checks are defined for `first_review`/`weekly_review`/`snapshot_review`/`test_drive` presenting at least one card, which a capture-only action by design never does.
 
-## Declare capabilities once
+## Capability resolution
 
-Immediately after `prepare`, declare what the current host can do. `start` always adds `plain_text` and `markdown_inline` to the declaration itself — they are universal fallbacks every text-based client can render, so the caller does not need to pass them. Pass `--question-mode native_options` and/or `--card-mode widget` only when the current surface actually exposes that richer capability.
+Immediately after `prepare`, resolve exactly one adapter from what the current
+host can prove *in this task*. A Skill may name these profiles, but it must not
+infer one from the coding-agent name, a plugin manifest, or a previous task.
+For example, a host named Codex does not prove that an AppBridge plugin is
+installed, loaded, permitted, or able to submit a choice directly.
+
+| Resolved adapter | Use only when | Required delivery |
+|---|---|---|
+| `plain_text` | Default for Unknown hosts, missing plugins, and unproven capabilities. | Complete lettered questions and inline canonical Markdown card. |
+| `native_options` | The host can show one real single-choice control and return its canonical value. | Native question/rule controls and inline canonical Markdown card. |
+| `validated_widget` | A host-specific adapter has passed real-host dogfood for direct structured choice submission and rich-card rendering. AppBridge may qualify only after that gate. | Native controls plus widget card, with the same universal fallbacks declared. |
+
+The engine owns the Review Plan, resolved presentation, answer schema,
+lifecycle, and card artifacts. An adapter only renders those canonical payloads
+and submits their canonical values. It must not invent, paraphrase, reorder,
+or omit an option; it must not receive private session/card data merely to
+perform this capability probe.
+
+`plain_text` and `markdown_inline` are universal fallbacks. The receipt CLI
+defaults to `plain_text`, so an unknown host needs no optional capability flag:
 
 ```bash
 python3 tools/ux_receipt.py start \
   --session-id <session_id> --client <client> --route <route> \
-  --question-mode plain_text --card-mode markdown_inline
+  --adapter plain_text
 ```
+
+When a known adapter is actually available, declare its profile and the extra
+capabilities it proves:
+
+```bash
+python3 tools/ux_receipt.py start \
+  --session-id <session_id> --client <client> --route <route> \
+  --adapter validated_widget \
+  --question-mode native_options --card-mode widget
+```
+
+The CLI writes the universal fallbacks into both declarations. It rejects a
+`plain_text` adapter that claims optional controls, or a `validated_widget`
+adapter missing either native controls or a widget. Old traces without an
+adapter remain verifiable for historical evidence, but every new CLI trace
+records the resolved route.
 
 The tool writes the trace inside the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`) — the same trust boundary as the canonical ledger. It is never committed and never published. Question events are also mechanically restricted to mode, surface source, and an opaque digest; they cannot carry the stem, options, ticker, thesis, user statement, or interpretation. After an interruption, append to the existing trace with the same `--session-id`; do not start a new one. (Tests and inspection pass `--state-root` to redirect it.)
 
@@ -50,6 +85,13 @@ Reply with one option label: A, B, ...
 ```
 
 Letters are a presentation mapping only; write the mapped engine `value` to `answers.json`. `semantic_anchor`, `payload_requirements`, and `requirement_text` are engine-owned and cannot be replaced by custom wording. An invalid or ambiguous reply is not an answer. If the resolved presentation includes a clarification, the agent may use that exact frozen wording once inside the same `question_id`, without displaying a second option set; it may not improvise another follow-up.
+
+The text route is a first-class experience: show the full question and one
+complete option set; accept a bounded letter reply; confirm the mapped choice
+briefly; then show the next complete question. Never hide a required question
+in a prior message, replace it with a bare “reply now” prompt, duplicate its
+options, or add a host-specific greeting/preamble. An interruption resumes the
+same unresolved `question_id` with its complete canonical fallback.
 
 `none_of_above` is not a new canonical choice. Preserve the user's exact words in `response_provenance.user_statement`. A mapped interpretation requires `summary_author=ai_interpretation`, mapping confidence, and explicit user confirmation. If the mapping remains ambiguous, write `choice=skip`, preserve the exact statement in `note`, and mark the private provenance low-confidence and unresolved. Existing gates still apply: `new_evidence` requires claim and source, while planned-tranche and valuation-change answers require their short note.
 
