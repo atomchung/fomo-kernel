@@ -80,15 +80,23 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 
 ## 4. Honesty / caveat placement
 
-- Every honesty-ledger sentence **rides the number it qualifies**: one line,
-  indented, immediately under that indicator (demo-card anchor: the α-caveat
-  line under the attribution split).
-- A caveat that has no host number goes to a footnote line at the end of
-  Block 1 — collapsed/`<details>` on HTML, single trailing line on text.
+> **2026-07-22 ruling reverses this section's 2026-07-21 original**
+> (per-number placement, "rides the number it qualifies"). See §9 for the
+> reasoning; the rule below is current.
+
+- Every honesty-ledger sentence **collapses into one footnote at the end of
+  Block 1** — collapsed/`<details>` on HTML (one bulleted `<li>` per
+  sentence, sharing the section's existing `<ul>` bullet styling), one
+  bulleted line per sentence on text (demo-card anchor: the "Data notes"
+  footnote after the vs-market indicators; 2026-07-22 owner bullet-pass
+  ruling, §9). None of them ride an individual indicator line anymore.
 - Hard rule: no caveat prose block in the opening; the 12-key ledger never
-  again renders as consecutive paragraphs (root cause B in #276). Per-key
-  host-number mapping is an implementation table to be added next to
-  `build_honesty_ledger()`, not new SKILL.md prose.
+  renders as consecutive paragraphs mid-block (root cause B in #276) or as a
+  wall of per-number interruptions (2026-07-22 reversal, same root cause,
+  reached from real high-density data instead). Per-key disclosure
+  *conditions* live in `build_honesty_ledger()` (CLAUDE.md "Honesty decisions
+  belong in code"), not new SKILL.md prose — placement itself is now a
+  single rule with no per-key table to maintain.
 
 ## 5. Language and number rules
 
@@ -129,8 +137,8 @@ This contract adds an **S-series** to `check_card.py`:
 
 - S-1 block presence and order (keynote + four blocks).
 - S-2 module lighting matches the §3 prerequisite table given the state file.
-- S-3 caveat placement (no consecutive caveat paragraphs; none before
-  Block 1's indicators).
+- S-3 caveat placement (no consecutive caveat paragraphs; none before Block 1;
+  and — since the 2026-07-22 footnote ruling — none inside Block 1 at all).
 - S-4 language rules §5.3/§5.4 (jargon tokens, mixed digit styles).
 
 Markdown and HTML cards share one facts assembly (`_card_facts`, #247), so
@@ -156,3 +164,6 @@ LLM judge and dogfood verdicts: structure is mechanical, prose is judged.
 | 2026-07-21 | language | Dev-phase: persisted zh literals get no compatibility mapping; clean up on demand. |
 | 2026-07-21 | axis 3 | Cadence tiers finalized: light (≤5 trading days) = capture-only with no card; full = the four-block card. Vs-market segment renders monthly (first full review each calendar month) — closes #237 item 3; implementation #284. |
 | 2026-07-21 | axis 3 | Month-gate implementation landed (#284): the decision is frozen at prepare into `engine_card.vs_market_gate` (fail-closed toward showing on unreadable history); gated reviews render no gap note; `alpha_credibility`/`sector_attribution` are required honesty keys only when the segment renders; S-2 accepts the gate signal and stays strict in both directions. |
+| 2026-07-22 | axis 1/root cause B | **Reverses** the 2026-07-21 ruling above: caveats no longer ride individual numbers (§4). Every triggered honesty sentence now collapses into the Block-1 footnote instead. Reason: real high-density accounts (5+ triggered keys) fragmented the indicator list into a wall of one-caveat-per-number interruptions — the same "consecutive paragraph wall" root cause B was meant to prevent, just relocated from the opening into the indicator list. Source: owner_live dogfood on real data, [#276](https://github.com/atomchung/fomo-kernel/issues/276) 2026-07-22 comment (owner: every number was followed by a caveat sentence, interrupting the narrative and hurting readability — this kind of explanatory caveat should move to the top or a collapsed area instead of being interspersed line by line). `_HONESTY_HOSTS`/`_place_caveats` (the per-key → indicator-tag host table) are removed from `card_renderer.py`; the footnote text itself also moved from one joined paragraph to one sentence per line, so collapsing the wall does not just re-form it at the bottom. |
+| 2026-07-22 | axis 2 | Mixed-market vs-market rows group visually by market (a `[TW]`/`[US]` label precedes each market's cluster) on both surfaces, but only when 2+ markets actually render — a single-market card (the common case) is unaffected, since there is nothing to disambiguate. Source: same 2026-07-22 #276 comment (owner: the performance section's layout was messy, and the TW and US portions in particular should be split into separate modules rather than interleaved). Pure layout: `alpha_beta_breakdown.by_market` already computes TW and US separately; no engine change. |
+| 2026-07-22 | axis 1/§4 follow-up | Owner review of the rendered footnote asked for a further bullet pass: the Block-1 footnote's disclosures and the TW/US-grouped vs-market lines (both, §4/axis 2 above) each render as one bulleted line — reusing the existing `<ul>`/`<li>` markup and its CSS, not a new bullet system. The main Block-1 number lines (absolute P&L, payoff, annualized/account, cash, the stress line) are explicitly unaffected — bullets apply only inside the footnote and inside a rendered TW/US module. A hypothetical future multi-sentence honesty entry (none exist today — every `narrative.honesty` value is one digit-free sentence by contract) would fall back to a plain paragraph instead of one bullet; the always-single-sentence, engine-templated vs-market lines bullet unconditionally, since a decimal-counting exception check would misread their own numbers (e.g. "β 1.10") as a second sentence. |

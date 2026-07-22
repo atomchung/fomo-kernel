@@ -42,7 +42,9 @@ your active trades are what need discipline, not luck.
   Active win/loss ratio  2.9         (avg win $2,851 vs avg loss $1,000)
   Beat the market +247pp · β 2.04 · AI exposure 98% (30% drawdown = −$50k)
       └ splitting "beat the market" into luck vs skill: right sector +67pp + picking within the sector +181pp
-        (the α interval is still wide — can't yet tell skill from luck; don't take the demo literally)
+
+  Data notes:
+  - the α interval is still wide — can't yet tell skill from luck; don't take the demo literally.
 
 Per-position diagnosis (sorted by size; small lots not nitpicked):
   PLTR  +$74,058   [v] likely DCA (buys up and down, not averaging a loser) · [!] too heavy 50%

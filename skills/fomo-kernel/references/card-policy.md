@@ -7,7 +7,7 @@
 
 A card is a story, not a dashboard.
 
-The private card follows this order when data exists: mirror, frozen market/timeline context, primary account numbers, one strength, largest leak, qualitative motive or thesis, exit follow-up and recurring problem memory, ETF structure, and one rule. Honesty sentences are not a section: each triggered ledger key renders inside the section it qualifies, using the agent-authored wording from `narrative.honesty`. Omit unavailable sections instead of filling them with generic prose.
+The private card follows this order when data exists: mirror, frozen market/timeline context, primary account numbers, one strength, largest leak, qualitative motive or thesis, exit follow-up and recurring problem memory, ETF structure, and one rule. Honesty sentences are not a section: per [output-contract.md §4](../../../docs/output-contract.md) (2026-07-22 ruling), every triggered ledger key collapses into the Block-1 footnote — using the agent-authored wording from `narrative.honesty` — rather than riding the number it qualifies; ETF metadata gaps are the one exception, staying beside the ETF facts in Block 2. Omit unavailable sections instead of filling them with generic prose.
 
 Agent narrative may not contain digits. The renderer obtains every amount, percentage, date, ticker, and metric from engine card and state artifacts. This deliberately strict boundary prevents the engine and prose from becoming competing numeric truth sources.
 

@@ -87,7 +87,7 @@ python3 engine/review.py repair-projections
 - Preserve the resolved option order and show its engine-owned semantic anchor and payload requirement copy. Native and text clients write the same canonical value and a content-free interaction receipt. A `none_of_above` response gets at most one clarification; unresolved wording becomes `skip` plus exact private provenance, never a forced classification.
 - Validate `answers.json` against `schemas/answers.schema.json`.
 - Validate `narrative.json` against `schemas/narrative.schema.json`; it may contain qualitative prose only and no digits.
-- Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer weaves each sentence into the section it qualifies.
+- Write one sentence in `narrative.honesty` for every key in `card_plan.required_honesty_keys`, following the wording guidance in `card-spec.md`. Preview fails on a missing or untriggered key; the renderer collapses every sentence into the Block-1 footnote (output-contract.md §4).
 - Add one `thesis_updates` entry for every missing-thesis `cycle_id`, following the field vocabulary in `review_plan.authoring_contract`: submit the unchanged `cycle_id` plus the qualitative fields, and the engine prefills the mechanical fields it owns. State the inference source; never present an inferred thesis as user-confirmed.
 - Do not invent `thesis_id`, `event_id`, `revises`, or `decision_cursor`. The engine assigns stable identity and links each accepted event to the prior event for that cycle.
 - A `new_evidence` decision requires `evidence_delta.claim` and `evidence_delta.source` or preview must fail.

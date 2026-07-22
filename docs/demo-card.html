@@ -26,7 +26,11 @@
   .attr-bar .track { background:#1a2233; color:#8b949e; border:1px solid #24314a; }
   .attr-bar .pick { background:#11271a; color:#7ee787; border:1px solid #1f5c33; }
   .attr-bar b { display:block; font-size:15.5px; margin-top:3px; color:#e6edf3; }
-  .attr-note { font-size:11.5px; color:#6e7681; margin-top:9px; font-style:italic; }
+  .fnote { padding:13px 24px 15px; border-top:1px solid #21262d; }
+  .fnote summary { font-size:11px; letter-spacing:.04em; color:#6e7681; cursor:pointer; }
+  .fnote p { font-size:11.5px; color:#6e7681; margin-top:8px; line-height:1.5; font-style:italic; }
+  .fnote ul { padding-left:16px; margin-top:8px; }
+  .fnote li { font-size:11.5px; color:#6e7681; line-height:1.5; font-style:italic; }
   .sec { padding:16px 24px; border-top:1px solid #21262d; }
   .sec-t { font-size:11px; letter-spacing:.06em; color:#6e7681; margin-bottom:12px; }
   .row { display:flex; align-items:baseline; gap:10px; padding:6px 0; font-size:13.5px; }
@@ -64,8 +68,12 @@
       <span class="track">押對賽道 · 方向/運氣<b>+67pp</b></span>
       <span class="pick">板塊內選股 · 技巧<b>+181pp</b></span>
     </div>
-    <div class="attr-note">α 區間仍寬,統計上還分不出選股是本事還是運氣 —— demo 別當真,真實多元持倉才看得準。</div>
   </div>
+
+  <details class="fnote">
+    <summary>資料備註</summary>
+    <ul><li>α 區間仍寬,統計上還分不出選股是本事還是運氣 —— demo 別當真,真實多元持倉才看得準。</li></ul>
+  </details>
 
   <div class="sec">
     <div class="sec-t">標的層診斷 · 按金額排序,小倉不糾結</div>

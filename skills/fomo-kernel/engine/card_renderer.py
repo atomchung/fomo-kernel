@@ -670,7 +670,8 @@ def _private_split_lines(market, row, language):
                 f"市場／賽道配置 {_benchmark_pp(allocation)} 個百分點、"
                 f"標的選擇 {_benchmark_pp(selection)} 個百分點。")
     # Coverage limitations belong to the engine-triggered sector_attribution
-    # honesty entry, which _performance_lines places once after this split.
+    # honesty entry, which collapses into the Block-1 footnote rather than
+    # appearing next to this split (2026-07-22 ruling, §4).
     return [line]
 
 
@@ -886,50 +887,17 @@ def _exit_entries(bundle, copy):
 
 
 # ── Block 1 caveat placement (output contract §4) ────────────────────────────
-# Every honesty sentence rides the number it qualifies: one indented line
-# directly under that indicator. The key → host mapping is renderer-side
-# (consumer) knowledge next to _honesty_lines; review.py stays untouched.
-# Hosts are indicator tags emitted by _performance_items; a key tries its
-# chain in order and an occupied host line never takes a second caveat, so
-# the ledger can never re-form the consecutive-paragraph wall (#276 root
-# cause B). Keys with no reachable host collapse into the Block-1 footnote.
-_HONESTY_HOSTS = {
-    "unrealized_coverage": ("pnl",),
-    "orphan_sells": ("payoff", "pnl"),
-    "currency_mix": ("currency_note", "pnl"),
-    "cash_reliability": ("cash", "account"),
-    "acct_perf_basis": ("account", "cash"),
-    "alpha_credibility": ("alpha", "benchmark"),
-    "sector_attribution": ("split", "benchmark"),
-    "unclassified_drivers": ("stress", "benchmark"),
-}
-# etf_metadata rides the ETF lines in Block 2 (special-cased in _card_structure);
-# every other key (snapshot/accounting reconciliation, future keys) is footnote-only.
-
-
-def _place_caveats(items, honesty):
-    """Insert hosted honesty sentences as caveat items under their indicators.
-
-    ``items`` are Block-1 indicator dicts ({"kind", "tag", "text"}); ``honesty``
-    is consumed for every placed key and keeps the leftovers for the footnote.
-    Placement is deterministic: ledger order for keys, first free host wins,
-    at most one caveat per indicator line."""
-    placements = {}
-    for key in [k for k in list(honesty) if k in _HONESTY_HOSTS]:
-        for tag in _HONESTY_HOSTS[key]:
-            index = next((i for i, item in enumerate(items)
-                          if item["kind"] == "line" and item.get("tag") == tag
-                          and i not in placements), None)
-            if index is not None:
-                placements[index] = key
-                break
-    out = []
-    for index, item in enumerate(items):
-        out.append(item)
-        key = placements.get(index)
-        if key is not None:
-            out.append({"kind": "caveat", "tag": None, "text": honesty.pop(key)})
-    return out
+# 2026-07-22 ruling (output-contract.md §4/§9, issue #276 owner_live dogfood,
+# 2026-07-22 comment): reverses the 2026-07-21 per-number placement. Real
+# high-density accounts (5+ triggered honesty keys) fragmented the indicator
+# list into a wall of one-caveat-per-number interruptions — every triggered
+# sentence now collapses into the single Block-1 footnote instead (below,
+# where ``honesty`` is popped wholesale). ``_HONESTY_HOSTS``/``_place_caveats``
+# (the old per-key → indicator-tag host mapping) are gone; tags on the items
+# below now exist only for the "insert a missing-module note" logic in
+# _performance_block and the market-grouping below, not for caveat hosting.
+# etf_metadata still rides the ETF lines in Block 2 (special-cased in
+# _card_structure) — that placement is unrelated to this Block-1 ruling.
 
 
 def _performance_items(card, language):
@@ -937,8 +905,12 @@ def _performance_items(card, language):
     ① absolute P&L (KPI-mirror line) → payoff/drag → ② annualized/account →
     cash → ③ vs market (benchmark/split/alpha) → alternative comparators.
 
-    Tags are the caveat hosts (_HONESTY_HOSTS); text wording reuses the same
-    sentences the card always printed so no engine number changes shape."""
+    Tags feed the missing-module fallback logic in _performance_block; text
+    wording reuses the same sentences the card always printed so no engine
+    number changes shape. Per-market vs-market lines also carry a ``market``
+    key ("TW"/"US") so the renderers can visually group a mixed-market card's
+    rows by market (#276 2026-07-22 dogfood note) — absent for single-market
+    cards, where grouping has nothing to disambiguate."""
     copy = load_copy(language)
     overview = card.get("overview") or {}
     display = _display_context(card, language)
@@ -946,8 +918,11 @@ def _performance_items(card, language):
     kpi_copy = copy.get("kpi") or {}
     items = []
 
-    def line(tag, text):
-        items.append({"kind": "line", "tag": tag, "text": text})
+    def line(tag, text, market=None):
+        item = {"kind": "line", "tag": tag, "text": text}
+        if market:
+            item["market"] = market
+        items.append(item)
 
     # ① absolute P&L: one numbers-summary line mirroring the HTML KPI tile
     # (README anchor "Total P&L +$138,058 (realized $19k + unrealized $119k)");
@@ -1056,9 +1031,9 @@ def _performance_items(card, language):
         ab = card.get("alpha_beta_breakdown") or {}
         benchmark_rows = _benchmark_rows(card)
         for market, bench, row in benchmark_rows:
-            line("benchmark", _private_benchmark_line(market, bench, row, language))
+            line("benchmark", _private_benchmark_line(market, bench, row, language), market=market)
             for text in _private_split_lines(market, row, language):
-                line("split", text)
+                line("split", text, market=market)
         if benchmark_rows:
             alpha_line = _alpha_interval_line(ab, language)
             if alpha_line:
@@ -1074,13 +1049,14 @@ def _performance_items(card, language):
 def _performance_lines(card, language, honesty=None):
     """Legacy flat projection of the Block-1 performance cluster.
 
-    Unit-test compatibility shim over ``_performance_items`` +
-    ``_place_caveats``; the card structure consumes the structured items
-    directly. Leftover honesty (minus the Block-2-hosted etf_metadata) is
-    appended so a triggered disclosure can never be dropped."""
+    Unit-test compatibility shim over ``_performance_items``; the card
+    structure consumes the structured items directly. All honesty (minus the
+    Block-2-hosted etf_metadata) is appended as footnote text so a triggered
+    disclosure can never be dropped — every key lands here now, since caveats
+    no longer ride individual indicator lines (2026-07-22 ruling, §4)."""
     honesty = dict(honesty) if honesty is not None else {}
-    items = _place_caveats(_performance_items(card, language), honesty)
-    lines = [item["text"] for item in items if item["kind"] in ("line", "caveat")]
+    items = _performance_items(card, language)
+    lines = [item["text"] for item in items if item["kind"] == "line"]
     lines.extend(honesty[key] for key in honesty if key != "etf_metadata")
     return lines
 
@@ -1740,9 +1716,10 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     ③ vs market; a module whose prerequisite is missing renders one localized
     neutral line, never silent omission. The stress line rides the exposure
     indicator area unconditionally when its data exists (#265 intent: no
-    unrelated hole ever absorbs it — final placement is Block 1). Hosted
-    honesty sentences ride their numbers (§4); the leftovers become the
-    footnote. Returns ``(items, footnote_texts)``."""
+    unrelated hole ever absorbs it — final placement is Block 1). Every
+    triggered honesty sentence collapses into the Block-1 footnote (§4,
+    2026-07-22 ruling — no more per-number caveat placement). Returns
+    ``(items, footnote_texts)``."""
     language = copy["language"]
     if snapshot:
         # Snapshot route: position-structure baseline only (§3 last row); the
@@ -1773,7 +1750,9 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     items.extend(perf)
     for text in facts["stress"]:
         items.append({"kind": "line", "tag": "stress", "text": text})
-    items = _place_caveats(items, honesty)
+    # 2026-07-22 ruling (§4/§9, #276): every triggered honesty sentence goes
+    # to the footnote — real high-density accounts (5+ keys) fragmented the
+    # indicator list when each one rode its own number instead.
     footnote = [honesty.pop(key) for key in list(honesty)]
     items = [item for item in items if item.get("text")]
     return items, footnote
@@ -1957,10 +1936,11 @@ def _card_structure(bundle):
     preamble plus exactly four blocks — Performance, Key trades, Risks and
     problems, Next step — with block titles from ``copy.blocks``. Block
     content is ``(kind, payload)`` tuples: ``paragraph`` / ``bullets`` /
-    ``grounding`` line lists, ``indicators`` (Block-1 items with caveat and
-    attr-row kinds), ``footnote`` (collapsed leftovers), ``rows`` (instrument
-    spine with attached sub-lines), ``panel`` (strength/hole/rule), and
-    ``improve`` (prescription rows)."""
+    ``grounding`` line lists, ``indicators`` (Block-1 line and attr-row
+    items — a mixed-market item may carry a ``market`` grouping key, §2/§9),
+    ``footnote`` (every triggered honesty sentence, 2026-07-22 ruling §4),
+    ``rows`` (instrument spine with attached sub-lines), ``panel``
+    (strength/hole/rule), and ``improve`` (prescription rows)."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
@@ -2021,8 +2001,66 @@ def _card_structure(bundle):
 
 
 def _caveat_md(text, en):
-    """One indented full-line parenthetical: the caveat shape S-3 recognizes."""
+    """One indented full-line parenthetical: the caveat shape S-3 recognizes.
+
+    Since the 2026-07-22 footnote ruling (§4), the only remaining caller is
+    the Block-2 ETF metadata caveat — Block-1 honesty no longer uses this
+    shape at all (it collapses into the plain-line footnote instead)."""
     return f"  ({text})" if en else f"  （{text}）"
+
+
+_SENTENCE_END = "。.!?！？"
+
+
+def _is_bulletable(text):
+    """True for a short, single-sentence honesty footnote line — the shape
+    a bullet suits.
+
+    2026-07-22 owner ruling (bullet pass on the footnote): bullet every
+    disclosure *except* a complete multi-sentence narrative paragraph,
+    which should stay a plain paragraph instead of being crammed into one
+    bullet. In practice every `narrative.honesty` value is already a single
+    sentence — it is contractually one qualitative, digit-free sentence per
+    key (card-spec.md), enforced by ``validate_narrative`` raising on any
+    digit — so this only guards a hypothetical future multi-sentence entry;
+    it does not change today's output. Counting sentence-terminal
+    punctuation is a safe proxy *only* for this digit-free text.
+
+    Deliberately NOT used for the TW/US grouped vs-market lines: those are
+    engine-templated (``_private_benchmark_line``/``_private_split_lines``)
+    and always exactly one sentence by construction, but they are full of
+    decimal numbers (e.g. "β 1.10") whose "." would be misread as a second
+    sentence boundary by this same counting proxy — counting would be
+    actively wrong there, not just unnecessary. Those lines bullet
+    unconditionally instead (see the market-gated call sites)."""
+    body = text.rstrip()
+    if body and body[-1] in _SENTENCE_END:
+        body = body[:-1]
+    return not any(ch in _SENTENCE_END for ch in body)
+
+
+def _bulleted_html(texts):
+    """Render each bulletable text as one <li> inside a <ul>; a non-bulletable
+    (multi-sentence) text renders as its own <p> instead. Consecutive
+    bulletable texts share one <ul> so the list never fragments into one
+    <ul> per item. Reuses the existing .rc ul/li styling (_HTML_WIDGET_CSS)
+    — no new CSS for this ruling."""
+    parts = []
+    pending = []
+
+    def flush():
+        if pending:
+            parts.append("<ul>" + "".join(f"<li>{html.escape(x)}</li>" for x in pending) + "</ul>")
+            pending.clear()
+
+    for text in texts:
+        if _is_bulletable(text):
+            pending.append(text)
+        else:
+            flush()
+            parts.append(f"<p>{html.escape(text)}</p>")
+    flush()
+    return "".join(parts)
 
 
 def _panel_md(panel, en):
@@ -2077,16 +2115,42 @@ def render_private(bundle):
                     lines.extend(f"  - {sub}" for sub in row.get("subs") or [])
                 lines.append("")
             elif kind == "indicators":
+                # Mixed-market grouping (#276 2026-07-22 dogfood note): only
+                # label when 2+ markets actually appear in this block — a
+                # single-market card has nothing to disambiguate, so it stays
+                # exactly as before. No caveat items reach this loop anymore
+                # (§4 2026-07-22 ruling): every honesty sentence is footnoted.
+                # 2026-07-22 owner bullet pass: only the grouped vs-market
+                # lines (those carrying a market key) get a "- " bullet; the
+                # main Block-1 number lines (pnl/payoff/account/cash/stress/
+                # ...) are left exactly as before — owner asked for bullets
+                # only in the footnote and inside the TW/US modules. Bullet
+                # unconditionally here (no _is_bulletable check): these lines
+                # are engine-templated and always exactly one sentence by
+                # construction, but they are full of decimal numbers (e.g.
+                # "β 1.10") that _is_bulletable's sentence-counting would
+                # misread as a second sentence — that check is for honesty
+                # text specifically (digit-free by contract), not this.
+                markets = {item.get("market") for item in block if item.get("market")}
+                current_market = None
                 for item in block:
-                    if item["kind"] == "caveat":
-                        lines.append(_caveat_md(item["text"], en))
-                    else:
-                        lines.append(item["text"])
+                    market = item.get("market") if len(markets) > 1 else None
+                    if market and market != current_market:
+                        lines.append(f"[{market}]")
+                    current_market = market
+                    lines.append(f"- {item['text']}" if market else item["text"])
                 lines.append("")
             elif kind == "footnote":
+                # One sentence per line (not one joined paragraph): the same
+                # fix this ruling makes to Block 1 — a wall of honesty
+                # sentences run together is still a wall, just moved.
+                # 2026-07-22 owner bullet pass: each disclosure gets a "- "
+                # bullet; a non-bulletable multi-sentence entry (none exist
+                # today — see _is_bulletable) would stay a plain line.
                 label = copy.get("footnote_label", "")
-                joined = (" " if en else "").join(block)
-                lines.extend([f"{label}{': ' if en else '：'}{joined}", ""])
+                lines.append(f"{label}{':' if en else '：'}")
+                lines.extend(f"- {text}" if _is_bulletable(text) else text for text in block)
+                lines.append("")
             elif kind == "caveat":
                 # Rides the block right above it (e.g. the ETF facts): no
                 # blank line in between, so the sentence stays attached.
@@ -2302,6 +2366,7 @@ border-radius:var(--rc-radius);padding:16px 18px}
 .rc .fnote{margin:12px 0 0}
 .rc .fnote summary{font-size:12px;color:var(--rc-text-muted);cursor:pointer}
 .rc .fnote p{font-size:12px;color:var(--rc-text-muted);margin:6px 0 0}
+.rc .fnote li{font-size:12px;color:var(--rc-text-muted);margin:6px 0 0}
 .rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
 
 
@@ -2437,15 +2502,50 @@ def render_html(bundle):
                 for row in rows]
 
     def indicator_items(items):
+        # Mixed-market grouping (#276 2026-07-22 dogfood note): only label
+        # when 2+ markets actually appear — a single-market card has nothing
+        # to disambiguate, so it stays exactly as before. No item here is
+        # ever kind "caveat" anymore (§4 2026-07-22 ruling): every honesty
+        # sentence is footnoted instead, via the .fnote <details> below.
+        # 2026-07-22 owner bullet pass: grouped vs-market lines (market key
+        # set) share one <ul>/<li> list per market cluster, reusing the
+        # existing .rc ul/li styling — no new CSS. Main Block-1 number lines
+        # (no market key) stay plain <p>, exactly as before. Bullet these
+        # market-tagged lines unconditionally (no _is_bulletable check):
+        # they are engine-templated and always exactly one sentence by
+        # construction, but full of decimal numbers (e.g. "β 1.10") that
+        # _is_bulletable's sentence-counting would misread as a second
+        # sentence — that check is for honesty text specifically
+        # (digit-free by contract), not this.
         parts = []
+        markets = {item.get("market") for item in items if item.get("market")}
+        current_market = None
+        pending = []
+
+        def flush():
+            if pending:
+                parts.append("<ul>" + "".join(f"<li>{e(x)}</li>" for x in pending) + "</ul>")
+                pending.clear()
+
         for item in items:
-            if item["kind"] == "caveat":
-                parts.append(f'<p class="cavt">{e(item["text"])}</p>')
-            elif item["kind"] == "attr_rows":
+            if item["kind"] == "attr_rows":
                 # The attribution bars carry these comparator rows on HTML.
                 continue
-            elif item.get("text"):
-                parts.append(f"<p>{e(item['text'])}</p>")
+            market = item.get("market") if len(markets) > 1 else None
+            if market != current_market:
+                flush()
+                if market:
+                    parts.append(f'<p class="panel-label">[{e(market)}]</p>')
+            current_market = market
+            text = item.get("text")
+            if not text:
+                continue
+            if market:
+                pending.append(text)
+            else:
+                flush()
+                parts.append(f"<p>{e(text)}</p>")
+        flush()
         return parts
 
     def panel_html(panel):
@@ -2471,8 +2571,13 @@ def render_html(bundle):
             if kind == "indicators":
                 rendered.extend(indicator_items(block))
             elif kind == "footnote":
+                # 2026-07-22 owner bullet pass: each disclosure renders as a
+                # <li> (reusing the existing .rc ul/li styling — no new CSS);
+                # _bulleted_html falls back to <p> for the hypothetical
+                # non-bulletable (multi-sentence) entry, none of which exist
+                # today (see _is_bulletable).
                 label = copy.get("footnote_label", "")
-                inner = "".join(f"<p>{e(text)}</p>" for text in block)
+                inner = _bulleted_html(block)
                 rendered.append(f'<details class="fnote"><summary>{e(label)}</summary>'
                                 f"{inner}</details>")
             elif kind == "rows":

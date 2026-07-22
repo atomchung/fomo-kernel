@@ -16,7 +16,8 @@ v1 人話卡 / 任意文字不出 S findings,舊 eval case 行為零變:
   S-2  模組點亮與 §3 資料前提表一致(需 --context 給 card/state JSON;沒給則降級跳過)。
        vs_market 認月度 gate 訊號(engine_card.vs_market_gate,#284):gated 卡
        整段不出且無 gap note 才過;未 gated 而前提在,段落必須真的上卡
-  S-3  caveat 佈局:不得連續 caveat 段、Block 1 首指標前不得先出 caveat
+  S-3  caveat 佈局:不得連續 caveat 段、不得先於 Block 1、Block 1 內不得殘留任何
+       inline caveat(2026-07-22 起全數收進 footnote,#276)
   S-4  語言規則(output-language.md §5):禁 IRR token、單句內禁混用數字風格
 
 每條 check 回一個 Finding(assertion 編號 / passed / 證據原句)。任一 FAIL → CLI exit 1。
@@ -265,12 +266,19 @@ def _s3_caveat_placement(body: str) -> "Finding":
         before = next((lines[i] for i in caveat_indices if i < block1), None)
         if before is not None:
             problems.append(f"Block 1 前(keynote 區)出現 caveat:{before.strip()}")
-        first_content = next((i for i in range(block1 + 1, len(lines)) if lines[i].strip()),
-                             None)
-        if first_content is not None and first_content in caveat_indices:
-            problems.append(f"Block 1 首行是 caveat,先於任何指標:{lines[first_content].strip()}")
+        # 2026-07-22 ruling (output-contract.md §4/§9, #276): caveats no
+        # longer ride Block-1 indicators at all — every triggered honesty
+        # sentence collapses into the footnote instead. Any caveat-shaped
+        # line inside Block 1 (first line or not, stacked or not) is now a
+        # structural violation on its own, superseding the narrower
+        # first-line-only check this replaced.
+        block1_end = header_indices[1] if len(header_indices) > 1 else len(lines)
+        inline = next((lines[i] for i in caveat_indices if block1 < i < block1_end), None)
+        if inline is not None:
+            problems.append(f"Block 1 內出現 inline caveat(應集中 footnote):{inline.strip()}")
     return Finding("S-3", not problems,
-                   "caveat 佈局:不連續、不先於 Block 1 指標", "; ".join(problems))
+                   "caveat 佈局:不連續、不先於 Block 1 指標、Block 1 內不得有 inline caveat",
+                   "; ".join(problems))
 
 
 def _s4_language_rules(body: str, language) -> "Finding":

@@ -4962,7 +4962,8 @@ def test_vs_market_month_gate_first_second_and_next_month():
         assert "風險調整後 alpha" in card1
         for sentence in (_VS_HONESTY_SENTENCES["alpha_credibility"],
                          _VS_HONESTY_SENTENCES["sector_attribution"]):
-            assert sentence in card1, "hosted honesty sentences ride the rendered segment"
+            assert sentence in card1, \
+                "honesty sentences required by the rendered segment must appear (now in the Block-1 footnote)"
         assert _VS_NOTE_ZH not in card1, "segment present -> no missing-data note"
         finding1 = _s2_finding(card1, plan1["engine_card"])
         assert finding1.passed, finding1.evidence
@@ -4975,8 +4976,10 @@ def test_vs_market_month_gate_first_second_and_next_month():
                          "month": "2026-07"}
         assert plan2["card_plan"]["required_honesty_keys"] == ["etf_metadata"], \
             "segment-hosted honesty keys must not be required on a gated review"
-        # The exact-cover gate rejects a sentence for a month-gated key: its
-        # host lines do not exist, so it could only land in the footnote.
+        # The exact-cover gate rejects a sentence for a month-gated key:
+        # required_honesty_keys excludes it this review (the segment that
+        # would require it did not render), independent of where any
+        # rendered honesty text ends up (2026-07-22: always the footnote).
         bad, _a, _n = _vs_preview(tmp, root, plan2, "w2bad",
                                   extra_honesty={"alpha_credibility": "多寫的一句。"})
         assert bad.returncode == 2

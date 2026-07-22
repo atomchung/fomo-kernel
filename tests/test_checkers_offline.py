@@ -198,6 +198,7 @@ _S2_CONTEXT = {  # overview 亮、其餘模組全暗、診斷有 → 對應 _v2_
 
 def test_card_structure_series_alive():
     """S-1..S-4 逐條:乾淨 v2 卡全過;亂序 / 刪 block / 疊 caveat / 越序 caveat /
+    Block 1 內殘留單條 inline caveat(2026-07-22 起應全數收進 footnote,#276)/
     IRR token / 混數字風格 / S-2 兩向(靜默省略、多印缺料 note)各自踩紅;
     非 v2 文字完全不出 S findings(v1 eval case 零影響)。"""
     clean = _v2_card()
@@ -219,6 +220,14 @@ def test_card_structure_series_alive():
                              "帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
                              _MISSING["annualized"], _MISSING["vs_market"]])
     ok("S-3" in _card_fail_ids(early), "S-3 抓 Block 1 首行 caveat")
+    # 2026-07-22 ruling (#276): caveats no longer ride Block-1 indicators at
+    # all, so a single, non-stacked, non-first-line caveat inside Block 1 is
+    # now itself a violation — the old two checks above would both miss it.
+    mid_caveat = _v2_card(block1=["帳面總損益 $-300（已實現 $+200 · 未實現 $-500）",
+                                  "  （caveat 在中間）",
+                                  _MISSING["annualized"], _MISSING["vs_market"]])
+    ok("S-3" in _card_fail_ids(mid_caveat),
+       "S-3 抓 Block 1 內任何 inline caveat(非首行、未疊也算違規)")
 
     irr = _v2_card(tail="\n年化 IRR 15% 不該這樣寫。")
     ok("S-4" in _card_fail_ids(irr), "S-4 抓 IRR token")
