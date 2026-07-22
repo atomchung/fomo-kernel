@@ -544,6 +544,104 @@ def test_snapshot_currency_gates_weights_but_preserves_etf_structure():
         assert card2["portfolio_structure"]["concentrated_etfs"][0]["ticker"] == "QQQ"
 
 
+def _snapshot_render_bundle(plan, language, session_id="test"):
+    card, state = plan["engine_card"], plan["engine_state"]
+    en = language == "en"
+    return {
+        "schema_version": 2, "session_id": session_id, "route": "snapshot_review",
+        "language": language, "review_plan": {}, "engine_state": state, "engine_card": card,
+        "answers": {},
+        "narrative": {
+            "headline": "Opening structure check" if en else "開場結構檢查",
+            "mirror": ("This review looks at how the portfolio is put together."
+                       if en else "這次檢視聚焦組合怎麼組成。"),
+        },
+        "thesis_updates": [], "thesis_decisions": [], "exit_narratives": [],
+        "commitment": None, "observations": [],
+    }
+
+
+def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
+    """#316: the history-dimension disclosure must not repeat (once, in the
+    Block-1 footnote), the card's last block must name the unlock payoff
+    exactly once, and both structural findings a snapshot can diagnose —
+    single-position concentration and driver/sector concentration — must
+    render as real content instead of the less severe one silently dropping
+    out behind the other."""
+    payload = {
+        "as_of": "2026-07-20",
+        "positions": [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 152.3, "market": "US",
+             "currency": "USD", "market_value": 6800},
+            {"ticker": "PLTR", "shares": 200, "avg_cost": 18.5, "market": "US",
+             "currency": "USD", "market_value": 4200},
+            {"ticker": "SPY", "shares": 10, "avg_cost": 500, "market": "US",
+             "currency": "USD", "market_value": 5300},
+            {"ticker": "2330.TW", "shares": 1000, "avg_cost": 900, "market": "TW",
+             "currency": "TWD", "market_value": 985000},
+        ],
+        "fx": {"USD": 1, "TWD": 0.0307},
+    }
+    markers = {
+        "en": ("are out of scope for this position-snapshot review",
+               "unlocks behavior diagnostics",
+               "Import transaction history later"),
+        "zh-TW": ("不在這次持倉快照的評分範圍內",
+                  "匯入交易歷史 CSV 可解鎖行為診斷",
+                  "之後匯入交易紀錄即可解鎖"),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        card = plan["engine_card"]
+        dim_ids = {card_renderer.dimension_id(h["dim"]) for h in card["top_holes"]}
+        assert dim_ids == {"position_sizing", "diversification"}, \
+            "fixture must trigger both structural dimensions to exercise the fix"
+
+        for language in ("en", "zh-TW"):
+            bundle = _snapshot_render_bundle(plan, language)
+            scope_marker, unlock_marker, old_marker = markers[language]
+            for surface in (card_renderer.render_private(bundle), card_renderer.render_html(bundle)):
+                assert surface.count(scope_marker) == 1, \
+                    f"[{language}] consolidated scope sentence must appear exactly once"
+                assert surface.count(unlock_marker) == 1, \
+                    f"[{language}] unlock hint must appear exactly once"
+                assert old_marker not in surface, \
+                    f"[{language}] the old duplicated wording must not resurface"
+            # Structure-health content leads as real content: both structural
+            # findings render with engine numbers, neither is a dropped leftover.
+            # (Markers deliberately avoid the "driver"/thesis glossary text that
+            # #313/#314/#272 own — this test asserts presence, not wording.)
+            md = card_renderer.render_private(bundle)
+            assert "2330.TW" in md and "65" in md, \
+                f"[{language}] single-position concentration must render as main content"
+            sector_marker = "top three non-allocation risks" if language == "en" else "top3"
+            assert sector_marker in md, \
+                f"[{language}] driver/sector concentration must also render, not be dropped"
+
+        # A well-diversified snapshot (weights available, nothing triggered) must
+        # report a clean structural read, never misreport unscored weights as
+        # the reason nothing was flagged.
+        clean_payload = {
+            "as_of": "2026-07-20",
+            "positions": [
+                {"ticker": t, "shares": 10, "avg_cost": 100, "market": "US",
+                 "currency": "USD", "market_value": 2000}
+                for t in ("MSTR", "HOOD", "CAVA", "MP", "ONDS", "NOK")
+            ],
+        }
+        clean_plan, _ = _snapshot_prepare(tmp, pathlib.Path(tmp) / "coach-clean",
+                                          payload=clean_payload, name="clean.json")
+        assert clean_plan["engine_card"]["top_holes"] == [], \
+            "fixture must be clean (no structural dimension triggered)"
+        assert clean_plan["engine_card"]["snapshot_summary"]["weights_available"] is True
+        clean_md = card_renderer.render_private(_snapshot_render_bundle(clean_plan, "en", "test-clean"))
+        assert "did not flag concentration or diversification" in clean_md
+        assert "unavailable weights as low risk" not in clean_md, \
+            "weights ARE available here; the no-data fallback must not misreport them as unavailable"
+        assert clean_md.count(markers["en"][1]) == 1, "unlock hint still renders exactly once"
+
+
 def test_incomplete_snapshot_commits_review_without_accounting_anchor():
     payload = {
         "as_of": "2026-07-16",
@@ -770,7 +868,12 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         preview_payload = json.loads(preview.stdout)
         private, public = preview_payload["private_card"], preview_payload["public_card"]
         assert "opening portfolio check" in private.lower()
-        assert "Import transaction history later" in private
+        # #316: the out-of-scope disclosure collapses into the Block-1 footnote
+        # exactly once (agent-authored honesty text here), and the card's last
+        # block names the concrete unlock payoff exactly once — regardless of
+        # the "skip commitment" answer this scenario exercises.
+        assert private.count("cannot score transaction history yet") == 1
+        assert private.count("unlocks behavior diagnostics") == 1
         assert "Total P&L" not in private and "Best:" not in private and "Worst:" not in private
         assert "opening portfolio check" in public.lower()
         assert "behavioral pressure" not in public and "highlighted behavior" not in public

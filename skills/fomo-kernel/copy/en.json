@@ -5,7 +5,6 @@
   "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
   "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
   "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
-  "snapshot_scope": "Transaction-history dimensions — averaging down, exit discipline, holding behavior, win rate, payoff, alpha, and historical motives — were not scored. Import transaction history later to unlock them.",
   "snapshot_numbers": "Opening portfolio structure",
   "snapshot_strength": "What this snapshot establishes",
   "snapshot_hole": "The leading structural risk",
@@ -141,7 +140,7 @@
     }
   },
   "honesty": {
-    "snapshot_scope": "This is an opening portfolio check; transaction-history behavior remains unscored until transactions are imported.",
+    "snapshot_scope": "Transaction-history dimensions — averaging down, exit discipline, holding behavior, win rate, payoff, alpha, and historical motives — are out of scope for this position-snapshot review.",
     "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",
     "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
     "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
