@@ -1282,12 +1282,6 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
     if not c: return None
     c.sort(reverse=True); return c[0][1]
 
-def best_worst(rts):
-    """結果最好 / 最差的具體 round-trip,給卡片當案例(點:列出做得最好跟最不好的決策)。"""
-    closed = [r for r in rts if r.get("ret") is not None]
-    if not closed: return None, None
-    return max(closed, key=lambda r: r["ret"]), min(closed, key=lambda r: r["ret"])
-
 def overview_stats(rts, ab, held=None, last_px=None):
     """金額導向總覽:已實現(賣掉落袋)+ 未實現(還抱著)都要算,只報一個會失真。"""
     pnls = [r["qty"] * (r["sell_px"] - r["buy_px"]) for r in rts
@@ -1451,7 +1445,7 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
     出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。"""
     last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
-                                   cur_ret=None, mval=0.0))
+                                   cur_ret=None, mval=0.0, px=None, avg_cost=None))
     for r in rts:
         a = agg[r["ticker"]]
         a["realized"] += r["qty"] * (r["sell_px"] - r["buy_px"])
@@ -1466,6 +1460,8 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
             a["unreal"] = sh * px - cost
             a["cur_ret"] = (px - cost / sh) / (cost / sh) if sh else 0
             a["mval"] = sh * px
+            a["px"] = px                                    # #347:現價,供 cur_ret 旁的原始數字揭露
+            a["avg_cost"] = cost / sh if sh else None        # #347:均成本(每股),同上
     out = []
     for t, a in agg.items():
         impact = a["realized"] + a["unreal"]
@@ -1475,10 +1471,15 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
         cls, n_adds = ac.get("cls"), ac.get("n_adds", 0)
         # #279 i18n phase 1: tags are stable codes + raw params; localized
         # wording lives in copy/<locale>.json and is resolved by the renderers.
+        # #347: current price + average cost per share travel alongside cur_ret
+        # wherever the percentage itself is shown, so the reader can see the
+        # figure is this position's own current-vs-cost ratio rather than a
+        # trade amount. Only tags whose copy actually surfaces cur_ret need it.
+        px_cost = {"px": a["px"], "avg_cost": a["avg_cost"]}
         if cls == "疑似凹單":                         # 主從分類:只在虧損買 + 金額加速
             if cur is not None and cur < -0.10:
                 tags.append({"code": "suspected_averaging_down_losing",
-                             "params": {"n_adds": n_adds, "cur": cur}})
+                             "params": {"n_adds": n_adds, "cur": cur, **px_cost}})
             else:
                 tags.append({"code": "suspected_averaging_down_recovered",
                              "params": {"n_adds": n_adds}})
@@ -1487,14 +1488,14 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
         elif cls == "疑似定投":
             tags.append({"code": "suspected_dca", "params": {"n_adds": n_adds}})
         if cls != "疑似凹單" and cur is not None and cur < -0.40:
-            tags.append({"code": "deep_underwater", "params": {"cur": cur}})
+            tags.append({"code": "deep_underwater", "params": {"cur": cur, **px_cost}})
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
             tags.append({"code": "sold_winner_early",
                          "params": {"win_early": a["win_early"], "win_n": a["win_n"]}})
         if wpct > 0.25 and not instrument_policy.is_diversified_allocation(t):
             tags.append({"code": "too_heavy", "params": {"wpct": wpct}})
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
-            tags.append({"code": "disciplined_hold", "params": {"cur": cur}})
+            tags.append({"code": "disciplined_hold", "params": {"cur": cur, **px_cost}})
         if not tags:
             tags.append({"code": "roughly_neutral", "params": {}})
         thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問;配置型 ETF 定投也不問)
@@ -1530,7 +1531,10 @@ def number_line(d):
             return base + f"；其中 {d['n_incon']}/{d['n_multi']} 檔同一檔又當沖又長抱（{', '.join(d['incon_tickers'][:5])}）——同檔沒有一致框架"
         return base + f"（中位 {d['median_hold']:.0f} 天 = 你的主框架；同檔框架大致一致）"
     if n == "加碼攤平":
-        return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
+        # #348:「加到 >25%」讀起來像現在的市值佔比,跟 dim_size 的「目前佔 X%」撞語意。
+        # 兩個錨點都要在句子裡:「當下」(加碼那一刻,不是現在)+「成本」(佔成本基礎,不是市值)。
+        return (f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），"
+                f"其中 {d['breach']} 次加碼當下佔成本 >25%")
     return ""
 
 # ── headline 選卡的唯一事實源(#63)──────────────────────────────────────────
@@ -1851,6 +1855,15 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                            "priced_n": cov_pp.get("priced_n"),
                            "requested_n": cov_pp.get("requested_n"),
                            "missing": cov_pp.get("missing")}})
+    # 供給價合理性複核(#330):排在 price_source 之後——這是「這批供給價裡有一筆可疑」
+    # 的細節,附屬於「這批價是供給的」那個因,不是獨立新因,也不該疊在它之前搶讀序。
+    # 結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住「看起來合理但其實錯」的假數字;
+    # 這裡只加揭露、絕不擋跑——真的十倍腰斬或十倍飆漲都存在,不能因為「看起來誇張」
+    # 就讓復盤跑不完(band 選擇見 price_feed.PLAUSIBILITY_BAND)。
+    if di.get("price_plausibility"):
+        L.append({"key": "price_plausibility", "status": "suspect",
+                  "data": {"tickers": [row["ticker"] for row in di["price_plausibility"]],
+                           "details": di["price_plausibility"]}})
     # 未實現非全覆蓋:部分持倉沒抓到現價,帳面看似完整實則漏算(#82 原症)
     cov = (overview or {}).get("unrealized_coverage") or {}
     if cov.get("unpriced"):
@@ -1909,10 +1922,10 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
     return L
 
 
-def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
+def build_card_data(dims, strength, overview, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
                     acct_perf=None, pnl_curve_data=None, portfolio_structure=None,
-                    currency_by_ticker=None, price_provenance=None, price_request=None):
+                    price_provenance=None, price_request=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -1961,20 +1974,6 @@ def build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
         "philosophy": master,
         "strength": strength,
         "overview": overview,
-        # Per-trade amounts stay in brokerage/original currency.  The v2 renderer
-        # must never apply the aggregate portfolio label to these raw values.
-        "best_trade": ({**best,
-                         "pnl": best["qty"] * (best["sell_px"] - best["buy_px"]),
-                         "currency": (currency_by_ticker or {}).get(best["ticker"]) or
-                                     (None if (currency_meta or {}).get("mixed") else
-                                      (currency_meta or {}).get("aggregate_currency") or "USD")}
-                       if best else None),
-        "worst_trade": ({**worst,
-                          "pnl": worst["qty"] * (worst["sell_px"] - worst["buy_px"]),
-                          "currency": (currency_by_ticker or {}).get(worst["ticker"]) or
-                                      (None if (currency_meta or {}).get("mixed") else
-                                       (currency_meta or {}).get("aggregate_currency") or "USD")}
-                        if worst else None),
         "what_if": wi,
         "ticker_diagnosis": tdiag,                          # tags = stable codes + params (#279); renderers resolve via copy
         "thesis_questions": thesis_questions,               # ⚠️ Step 2 對話用,不准印卡上
@@ -2037,6 +2036,14 @@ def main():
             sys.exit(1)
     splits = fetch_splits({r["ticker"] for r in rows}, feed=feed)
     n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
+    # #330:供給價的軟性合理性複核——結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住
+    # 「看起來合理但其實錯」的假數字。用這檔自己「最近一次真實成交價」(分割調整後,
+    # 與供給收盤價同一基準)當唯一不必連網的錨點;rows 已按日期排序,同檔後面的列
+    # 覆蓋前面的 → 留下的就是最近一筆。只加揭露、不擋跑(band 選擇見 price_feed.py)。
+    last_trade_price = {}
+    for r in rows:
+        last_trade_price[r["ticker"]] = (r["price"], r["date"])
+    price_plausibility = price_feed.plausibility_flags(feed, last_trade_price)
     rts, open_lots = round_trips(rows)
     _, avg_down = positions(rows)      # avgdown 偵測留 avg cost(行為語意:買價 vs 平均持倉成本)
     held = fifo_held(open_lots)        # #162:未實現改 FIFO 剩餘,與 realized 同基礎,加總=真值
@@ -2122,7 +2129,6 @@ def main():
     pc = pnl_curve(rows, px, market=curve_market) if curve_market else {"note": "混市場尚未支援"}
     overview = overview_stats(decision_rts_u, ab, held_u, lastpx_u)   # 已實現 + 未實現都報(聚合幣別上)
     pa = payoff_attribution(decision_rts_u)                # 盈虧比拆解:重點交易的貢獻度(聚合幣別上)
-    best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆(ret%,無因次 → 原幣)
     wi = what_if(held_dx, lastpx_u)                        # 可量化的 what-if(聚合幣別上,#172 殘倉不計)
     rx = prescribe(ab, dims, overview, max_pos_override)   # 處方層:揚長/外包/砍損耗(sizing 觸發線 + 規矩上限吃自訂覆寫)
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
@@ -2143,6 +2149,8 @@ def main():
         data_integrity["fx_gaps"] = fx_gaps                # 混幣但缺匯率:聚合按原幣近似(因子=1),卡面必須明示
     if cur_conflicts:
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
+    if price_plausibility:
+        data_integrity["price_plausibility"] = price_plausibility   # #330:供給價與最近成交價落差過大,只揭露不擋跑
     # #92:有 driver 標籤但 SECTOR_BENCH 查無板塊 ETF 對照 → 該檔超額被全歸「選股」、賽道效應漏記。
     # 原本只在 α 面板(需 SPY + ≥60 交易日對齊 + coverage<0.995 那行 if)才揭露 → 併入永遠顯示的
     # data_integrity,與「未分類 driver」同語意(板塊歸因不可靠)的第二個揭露缺口,不再只靠自律。
@@ -2219,12 +2227,11 @@ def main():
                 f"｜鏡片: {master or 'fallback'}｜driver map: {n_dm} 檔{dm_skip}{split_note}"
                 + (" (純 fallback,冷門股可能失準)" if not n_dm else ""))
         print(meta, file=sys.stderr)
-        card = build_card_data(dims, strength, overview, best, worst, wi, rx, tdiag,
+        card = build_card_data(dims, strength, overview, wi, rx, tdiag,
                                ab, pa, master, data_integrity=data_integrity,
                                currency_meta=currency_meta, cash=cash_data,
                                acct_perf=acct_perf, pnl_curve_data=pc,
                                portfolio_structure=portfolio_structure,
-                               currency_by_ticker=cur_map,
                                price_provenance=price_provenance, price_request=price_request)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
@@ -2239,7 +2246,7 @@ def main():
         # lens 必須由 main 傳:直跑 `python3 trade_recap.py` 時本模組是 __main__,rich_card 內
         # `import trade_recap` 會載入「另一個」trade_recap 副本(其模組級 _LENS 恆為 None)——
         # 只有 main 這裡的 bare _LENS 才是 load_lens() 已填好的值。
-        rich_card.render(dims, strength, overview, best, worst, wi, rx, tdiag, cash=cash_data,
+        rich_card.render(dims, strength, overview, wi, rx, tdiag, cash=cash_data,
                          acct=acct_perf, lens=_LENS)
         rich_card.print_alpha_beta(ab)
         rich_card.print_payoff_attr(pa)                   # 盈虧比拆解(誰在撐/拖,反事實)

@@ -36,7 +36,7 @@
         "The Review Plan, questions, selected rule, and private card are in English.",
         "English mode uses the same engine card/state schemas and analysis policy as zh-TW.",
         "The public card contains no amounts, dates, tickers, exact weights, session id, or agent free text.",
-        "The private card preserves engine-derived P&L, payoff, best/worst trades, top hole, honesty disclosures, and one rule.",
+        "The private card preserves engine-derived P&L, payoff, top hole, honesty disclosures, and one rule.",
         "Only the public card is offered for posting; the private artifact remains local."
       ]
     },

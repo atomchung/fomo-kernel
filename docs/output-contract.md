@@ -60,10 +60,53 @@ order of operations. Nothing else. Specifically:
   across weeks. Threshold alignment and user-set caps are tracked in #324; do
   **not** add card copy explaining that the threshold is a generic baseline —
   that is the caveat noise this contract exists to remove.
+- **The positions named under the rule are the ones the engine actually
+  flagged** (#328): the sizing dimension filters on `OVERSIZE_TRIGGER` (the
+  diagnostic line that opens the `cut_oversize` prescription), not on
+  `POSITION_CAP` above — a holding between the two was never judged a problem
+  by any engine path, so listing it there would make the card stricter than
+  the engine's own judgment. Named entries are capped at
+  `RULE_TARGETS_DISPLAY_LIMIT` (#349); any remainder collapses into one
+  localized "+N more" tail instead of an enumerated dump.
 
 Renderer sections not mapped above (standalone market timeline, standalone
 motive/exit/ETF sections, …) merge into the blocks as described or disappear;
 they are the accumulation the owner flagged as "each iteration got worse".
+
+### Closing synthesis (optional 5th block)
+
+Owner ruling 2026-07-22
+([#345](https://github.com/atomchung/fomo-kernel/issues/345)): the four
+blocks above are a diagnosis-then-prescription arc — Performance, Key
+trades, and Risks & problems build the picture, and Next step commits one
+action. Nothing in that arc synthesizes *across* sections: concentration
+level, dollar exposure, and a drawdown scenario each land as separate
+sentences, and the reader has to assemble the judgment alone (#345's
+trigger finding).
+
+A 5th block, carried by `narrative.synthesis`, may append **after** Next
+step — never between existing blocks, and it never reorders or rewords
+them. It is a closing reflection, explicitly not an opening hook: the
+keynote (Block 0) already carries the period's headline judgment; this
+block closes the story after the reader has seen the diagnosis and the one
+committed action. It condenses the period's single most important
+cross-section judgment into two to three sentences with a point of view —
+a synthesis, not a second fact list (that restatement disease is what
+[#344](https://github.com/atomchung/fomo-kernel/issues/344) is filed
+against). Same authoring contract as every other narrative field:
+qualitative only, digit-ban enforced by `card_renderer.validate_narrative`
+(§8).
+
+This is not a Note: a Note explains an existing card element (an honesty
+caveat, a metadata gap); the closing synthesis says something the rest of
+the card does not — the distinction the owner drew when separately
+declining to grow the card with explanatory Notes.
+
+Optional and fail-closed: when `narrative.synthesis` is absent or empty,
+the block does not exist — no header, no placeholder line — unlike the
+four mandatory blocks, which always render at least a neutral one-line
+note. An agent is never required to write it; a period with nothing that
+rises to a synthesis should simply omit it.
 
 ### Markdown reader path
 
@@ -102,6 +145,7 @@ never silent omission.
 | 4 trade-off line | the rule's dimension shrinks a position (`position_sizing` / `diversification`) **and** the card carries an `amplify` row | omit the line — an unconditional one is caveat noise |
 | snapshot route | suppresses history-performance modules by design (`card_renderer.py:1411`) | Block 1 = position-structure baseline only |
 | structural / empty tier (thin first file) | engine tiers a first review with fewer than `MIN_ROUND_TRIPS` closed round trips (`review._review_tier`, #306); round-trip count decides, span is advisory only | Block 4 = opening-check baseline that names what unlocks the behavioral review (exit, holding, win/loss) — no forced commitment, no question string; other blocks still render whatever the thin file supports |
+| 5 closing synthesis | `narrative.synthesis` authored by the agent (#345) — the one module lit by agent judgment rather than an engine data prerequisite | omit the block entirely — no gap note, no header (§2) |
 
 Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 
@@ -136,10 +180,11 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
   bulleted line per sentence on text (demo-card anchor: the "Data notes"
   footnote after the vs-market indicators; 2026-07-22 owner bullet-pass
   ruling, §9). None of them ride an individual indicator line anymore.
-- Hard rule: no caveat prose block in the opening; the 12-key ledger never
-  renders as consecutive paragraphs mid-block (root cause B in #276) or as a
-  wall of per-number interruptions (2026-07-22 reversal, same root cause,
-  reached from real high-density data instead). Per-key disclosure
+- Hard rule: no caveat prose block in the opening; the full honesty ledger
+  (the key count grows over time; see `build_honesty_ledger()` for the
+  current set) never renders as consecutive paragraphs mid-block (root
+  cause B in #276) or as a wall of per-number interruptions (2026-07-22
+  reversal, same root cause, reached from real high-density data instead). Per-key disclosure
   *conditions* live in `build_honesty_ledger()` (CLAUDE.md "Honesty decisions
   belong in code"), not new SKILL.md prose — placement itself is now a
   single rule with no per-key table to maintain.
@@ -190,7 +235,9 @@ None of them asserts structure — which is why every drift shipped green.
 
 This contract adds an **S-series** to `check_card.py`:
 
-- S-1 block presence and order (keynote + four blocks).
+- S-1 block presence and order (keynote + four mandatory blocks, plus the
+  optional 5th closing-synthesis block when `narrative.synthesis` is
+  authored — #345).
 - S-2 module lighting matches the §3 prerequisite table given the state file.
 - S-3 caveat placement (no consecutive caveat paragraphs; none before Block 1;
   and — since the 2026-07-22 footnote ruling — none inside Block 1 at all).
@@ -222,3 +269,4 @@ LLM judge and dogfood verdicts: structure is mechanical, prose is judged.
 | 2026-07-22 | axis 1/root cause B | **Reverses** the 2026-07-21 ruling above: caveats no longer ride individual numbers (§4). Every triggered honesty sentence now collapses into the Block-1 footnote instead. Reason: real high-density accounts (5+ triggered keys) fragmented the indicator list into a wall of one-caveat-per-number interruptions — the same "consecutive paragraph wall" root cause B was meant to prevent, just relocated from the opening into the indicator list. Source: owner_live dogfood on real data, [#276](https://github.com/atomchung/fomo-kernel/issues/276) 2026-07-22 comment (owner: every number was followed by a caveat sentence, interrupting the narrative and hurting readability — this kind of explanatory caveat should move to the top or a collapsed area instead of being interspersed line by line). `_HONESTY_HOSTS`/`_place_caveats` (the per-key → indicator-tag host table) are removed from `card_renderer.py`; the footnote text itself also moved from one joined paragraph to one sentence per line, so collapsing the wall does not just re-form it at the bottom. |
 | 2026-07-22 | axis 2 | Mixed-market vs-market rows group visually by market (a `[TW]`/`[US]` label precedes each market's cluster) on both surfaces, but only when 2+ markets actually render — a single-market card (the common case) is unaffected, since there is nothing to disambiguate. Source: same 2026-07-22 #276 comment (owner: the performance section's layout was messy, and the TW and US portions in particular should be split into separate modules rather than interleaved). Pure layout: `alpha_beta_breakdown.by_market` already computes TW and US separately; no engine change. |
 | 2026-07-22 | axis 1/§4 follow-up | Owner review of the rendered footnote asked for a further bullet pass: the Block-1 footnote's disclosures and the TW/US-grouped vs-market lines (both, §4/axis 2 above) each render as one bulleted line — reusing the existing `<ul>`/`<li>` markup and its CSS, not a new bullet system. The main Block-1 number lines (absolute P&L, payoff, annualized/account, cash, the stress line) are explicitly unaffected — bullets apply only inside the footnote and inside a rendered TW/US module. A hypothetical future multi-sentence honesty entry (none exist today — every `narrative.honesty` value is one digit-free sentence by contract) would fall back to a plain paragraph instead of one bullet; the always-single-sentence, engine-templated vs-market lines bullet unconditionally, since a decimal-counting exception check would misread their own numbers (e.g. "β 1.10") as a second sentence. |
+| 2026-07-22 | new (#345) | Owner ruling: build a closing synthesis this round. `narrative.synthesis` may append as an optional 5th block strictly after Next step — never inserted between, and never reordering or rewording, the four mandatory blocks ruled 2026-07-21. It condenses the period's most important cross-section judgment into two to three sentences with a point of view; it is not a second fact list ([#344](https://github.com/atomchung/fomo-kernel/issues/344)) and not a Note (a Note explains an existing element; this says something new). Absent or empty: the block does not render at all — no header, no placeholder — the same clean-degradation shape as any other optional narrative field. A new schema field (not an extension of `mirror` or `strength`, both of which are already committed to a different, specific placement — `mirror` opens the card, `strength` lives in Block 3's `[v]` panel) keeps each field's job singular; `ALLOWED_NARRATIVE` is still the one source of truth other surfaces (schema, authoring_contract, S-1) derive from or must stay synchronized with. |

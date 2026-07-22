@@ -40,7 +40,7 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 2. Do not provide buy or sell recommendations. Review behavior, motives, thesis evolution, and the next process rule.
 3. Required motive questions cannot be skipped. A `new_evidence` decision requires both a claim and a source.
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
-5. Keep trade data local and out of cloud memory. Never mix private-card content into a public card.
+5. Keep trade data and engine state local and out of cloud memory. The review card itself is private to the user, not public: local files, terminal output, and private-by-default in-client rendering (for example, a claude.ai Artifact) are permitted, but never publish, post, or send it to a third party. Never mix private-card content into a public card.
 6. An incomplete snapshot may produce a bounded review, but it is not an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and claims about an unreconciled current broker view must fail closed.
 7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, `render`, `repair-projections`, `set-cap`, or `doctor`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 

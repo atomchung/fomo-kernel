@@ -645,7 +645,7 @@ def test_build_state_echoes_position_cap_override():
 
 def _card_from(dims, rx):
     """組出 build_card_data 需要的最小參數(其餘用不到的欄位餵 None/{})。"""
-    return tr.build_card_data(dims, None, {}, None, None, None, rx, [], None, None, None)
+    return tr.build_card_data(dims, None, {}, None, rx, [], None, None, None)
 
 
 def test_candidate_rules_backfilled_from_top_holes_when_prescribe_empty():

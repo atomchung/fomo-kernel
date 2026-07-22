@@ -32,7 +32,7 @@ import coach  # noqa: E402  # 只取常數(CYCLE_ID_RE 同步斷言),不跑 main
 # ── SKILL.md Step 1/3 消費清單:改 engine 輸出欄位 = 改這份契約,兩邊要一起動 ──
 TR_JSON_KEYS = {
     "schema_version", "philosophy", "strength", "overview",
-    "best_trade", "worst_trade", "what_if", "ticker_diagnosis",
+    "what_if", "ticker_diagnosis",
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
     "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
@@ -161,7 +161,8 @@ def main():
         HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
                    "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability",
                    "acct_perf_basis", "etf_metadata", # skill v2:ETF metadata 缺值不可猜零
-                   "price_source"}                    # #289:價格來源(供給式/不可得)
+                   "price_source",                    # #289:價格來源(供給式/不可得)
+                   "price_plausibility"}               # #330:供給價與最近成交價落差過大
         ok(all(e["key"] in HL_KEYS for e in hl),
            "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
         hl_keys = {e["key"] for e in hl}

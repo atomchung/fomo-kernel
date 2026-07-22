@@ -225,6 +225,60 @@ def test_adapters():
        "幣別一致 → 無衝突;交易紀錄沒有的標的(基準)不比對")
 
 
+def test_plausibility_flags():
+    """#330:純函式層——supplied close vs 最近一次真實成交價的軟性合理性複核。
+    band=20x(pf.PLAUSIBILITY_BAND),嚴格大於才觸發;方向雙向(暴漲/暴跌都算);
+    沒有交易錨點(基準,不在持倉裡)一律跳過,不因缺資料誤判。"""
+    feed = pf.parse(envelope())   # AMD close=60.0(AMD_CLOSE),NVDA close=130.0
+    ok(pf.PLAUSIBILITY_BAND == 20.0, "預設 band = 20x(#330 選定值)", pf.PLAUSIBILITY_BAND)
+
+    normal = pf.plausibility_flags(feed, {"AMD": (50.0, dt.date(2024, 2, 1)),
+                                          "NVDA": (120.0, dt.date(2024, 3, 10))})
+    ok(normal == [], "落差在 band 內(含真實漲跌)→ 不揭露", repr(normal))
+
+    feed3 = pf.parse(envelope(prices=[
+        {"ticker": "AMD", "close": AMD_CLOSE, "date": AS_OF, "currency": "USD"},
+        {"ticker": "NVDA", "close": 130.0, "date": AS_OF, "currency": "USD"},
+        {"ticker": "SPY", "close": 4000.0, "date": AS_OF, "currency": "USD"}]))
+    skipped = pf.plausibility_flags(feed3, {"AMD": (50.0, dt.date(2024, 2, 1)),
+                                            "NVDA": (120.0, dt.date(2024, 3, 10))})
+    ok(skipped == [], "SPY 在餵入的價格檔裡但不在交易紀錄裡(基準)→ 沒錨點可比,略過不誤判",
+       repr(skipped))
+
+    at_band = pf.plausibility_flags(feed, {"AMD": (3.0, dt.date(2023, 1, 5)),
+                                           "NVDA": (120.0, dt.date(2024, 3, 10))})
+    ok(60.0 / 3.0 == 20.0 and at_band == [],
+       "恰好等於 band(60/3=20.0)不觸發——嚴格大於才算", repr(at_band))
+
+    just_over = pf.plausibility_flags(feed, {"AMD": (2.99, dt.date(2023, 1, 5)),
+                                             "NVDA": (120.0, dt.date(2024, 3, 10))})
+    ok([row["ticker"] for row in just_over] == ["AMD"],
+       "剛超過 band(60/2.99≈20.07)→ 揭露", repr(just_over))
+    ok(just_over and just_over[0]["last_trade_price"] == 2.99
+       and just_over[0]["feed_close"] == AMD_CLOSE
+       and just_over[0]["ratio"] == round(AMD_CLOSE / 2.99, 2),
+       "回傳落差比與錨點原值,供 agent 寫話用", repr(just_over))
+
+    crash = pf.plausibility_flags(feed, {"AMD": (50.0, dt.date(2024, 2, 1)),
+                                         "NVDA": (3000.0, dt.date(2024, 3, 10))})
+    ok([row["ticker"] for row in crash] == ["NVDA"],
+       "反向(供給價遠低於最近成交價)一樣揭露,不是只抓暴漲", repr(crash))
+    ok(crash and crash[0]["ratio"] == round(3000.0 / 130.0, 2),
+       "跌方向 ratio 用倒數,恆 >1", repr(crash))
+
+    both = pf.plausibility_flags(feed, {"AMD": (2.0, dt.date(2023, 1, 5)),
+                                        "NVDA": (3000.0, dt.date(2024, 3, 10))})
+    ok([row["ticker"] for row in both] == ["AMD", "NVDA"],
+       "兩檔同時觸發 → 依 ticker 排序,非插入序", repr(both))
+
+    widened = pf.plausibility_flags(feed, {"AMD": (2.0, dt.date(2023, 1, 5))}, band=100.0)
+    ok(widened == [], "band 可由呼叫端調寬,同一落差不再觸發", repr(widened))
+
+    ok(pf.plausibility_flags(feed, {}) == [], "沒有任何錨點 → 全部略過,不拋例外")
+    ok(pf.plausibility_flags(None, {"AMD": (50.0, dt.date(2024, 2, 1))}) == [],
+       "feed 為 None(未供給價格)→ 空清單,永不拋例外")
+
+
 # ─────────────────── 2. 引擎:無價格 → degraded 可觀測 ───────────────────
 
 def test_engine_without_prices_stays_observable():
@@ -277,6 +331,49 @@ def test_engine_with_supplied_close_restores_pnl():
         ok("unrealized_coverage" not in [row["key"] for row in card["honesty_ledger"]],
            "全覆蓋 → 不再宣告未實現有洞")
         ok("供給價格檔" in meta, "meta 一行說得出價格來自供給檔", meta[:160])
+
+
+def test_engine_flags_implausible_supplied_close():
+    """#330:supplied close 遠超 band(這裡用 AMD 最近一次真實成交價的 25 倍)→ 加揭露,
+    但仍照樣定價,不是第二個 fail-closed 關卡——跟 currency_conflicts(#289 既有的硬擋)
+    刻意不同待遇:軟性複核只加話術,不擋復盤跑完。"""
+    with tempfile.TemporaryDirectory(prefix="fomo-pf-") as tmp:
+        implausible_close = 50.0 * 25   # AMD 最近一次真實成交價 50.0 → 25x,band(20x)之外
+        path = write(tmp, "prices.json", envelope(prices=[
+            {"ticker": "AMD", "close": implausible_close, "date": AS_OF, "currency": "USD"},
+            {"ticker": "NVDA", "close": 130.0, "date": AS_OF, "currency": "USD"}]))
+        rc, card, stderr = run_engine(tmp, trades_csv(tmp), prices=path)
+        ok(rc == 0, "遠超 band 的供給價不擋跑——軟性揭露,非第二道 fail-closed", stderr[-200:])
+        prov = card["price_provenance"]
+        ok(prov["mode"] == "agent_feed", "價格仍照常視為供給成功", repr(prov)[:160])
+        entry = [row for row in card["honesty_ledger"] if row["key"] == "price_plausibility"]
+        ok(entry and entry[0]["status"] == "suspect" and entry[0]["data"]["tickers"] == ["AMD"],
+           "觸發 price_plausibility,指名 AMD", repr(entry))
+        detail = (entry[0]["data"]["details"][0] if entry and entry[0]["data"]["details"] else {})
+        ok(detail.get("ticker") == "AMD" and detail.get("feed_close") == implausible_close
+           and detail.get("last_trade_price") == 50.0,
+           "細節帶供給收盤價與最近成交價原值,供 agent 寫話用", repr(detail))
+        ok(card["overview"]["unrealized"] == 20 * implausible_close - 1000.0,
+           "揭露之外,這個價照樣被拿去算未實現損益——fail-open,不是第二個 reject",
+           repr(card["overview"]["unrealized"]))
+
+
+def test_engine_does_not_flag_a_plausible_multibagger():
+    """#330:band 選 20x 就是為了讓這種真實大漲(15x)照樣通過,不誤判成假資料——
+    這正是 issue 點名『不能因為挑到合理的大漲就 false-positive』的案例。"""
+    with tempfile.TemporaryDirectory(prefix="fomo-pf-") as tmp:
+        multibagger_close = 50.0 * 15   # 15x,band(20x)之內——真實的大漲一樣要能定價
+        path = write(tmp, "prices.json", envelope(prices=[
+            {"ticker": "AMD", "close": multibagger_close, "date": AS_OF, "currency": "USD"},
+            {"ticker": "NVDA", "close": 130.0, "date": AS_OF, "currency": "USD"}]))
+        rc, card, stderr = run_engine(tmp, trades_csv(tmp), prices=path)
+        ok(rc == 0, "正常供給價 exit 0", stderr[-200:])
+        keys = [row["key"] for row in card["honesty_ledger"]]
+        ok("price_plausibility" not in keys,
+           "15x 在 band 內 → 不觸發,不能讓真實的大漲被當成可疑資料", repr(keys))
+        ok(card["overview"]["unrealized"] == 20 * multibagger_close - 1000.0,
+           "大漲照樣正確定價,不因『看起來誇張』被打折或攔下",
+           repr(card["overview"]["unrealized"]))
 
 
 def test_engine_with_series_unlocks_benchmarks():
@@ -400,6 +497,8 @@ def test_card_names_price_availability_as_the_blocker():
         ok(missing["vs_market_prices"] != missing["vs_market"],
            f"{language}: 缺價與缺基準序列是兩句不同的話")
         ok(copy["honesty"].get("price_source"), f"{language}: price_source 有 fallback 文案")
+        ok(copy["honesty"].get("price_plausibility"),
+           f"{language}: price_plausibility 有 fallback 文案(#330)")
 
 
 # ─────────── 6. degraded session_id 決定性:error 存穩定代碼、不存原文 ───────────
@@ -452,8 +551,11 @@ def test_degraded_error_normalizes_so_session_id_stays_deterministic():
 
 def main():
     for fn in (test_parse_contract, test_parse_fails_closed, test_adapters,
+               test_plausibility_flags,
                test_engine_without_prices_stays_observable,
                test_engine_with_supplied_close_restores_pnl,
+               test_engine_flags_implausible_supplied_close,
+               test_engine_does_not_flag_a_plausible_multibagger,
                test_engine_with_series_unlocks_benchmarks,
                test_engine_does_not_claim_supply_that_covered_nothing,
                test_engine_fails_closed_on_bad_feed,

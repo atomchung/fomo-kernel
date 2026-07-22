@@ -1,0 +1,8 @@
+{
+  "name": "fomo-kernel",
+  "description": "Review a user's trade CSV or position snapshot into one local review card and an append-only investment-thesis record, with at most one user-chosen next-time rule. Transaction history supports behavioral diagnosis; a position snapshot supports an opening structural check. Use for trade reviews, transaction postmortems, brokerage-statement reviews, position reviews, and equivalent requests in any supported language. Do not use for stock picks, market forecasts, or security research.",
+  "version": "0.1.0",
+  "author": {
+    "name": "atomchung"
+  }
+}

@@ -130,6 +130,7 @@ The complete deterministic suite runs through `python3 tests/run_all.py`. Headle
 - Contains no raw question queue, internal field names, or five-dimension dashboard.
 - Gives no security recommendation.
 - Renders both a canonical Markdown artifact and a self-contained HTML artifact from one structured assembly, carrying identical engine numbers; the HTML makes no external request, exposes exactly one `WIDGET-FRAGMENT` block, and draws a P&L sparkline only when the curve has at least two finite points (missing or note-form curves omit it without a new caveat).
+- Renders an optional closing-synthesis 5th block (`narrative.synthesis`, output contract section 2, #345) only when the agent authors it, as one digit-free paragraph after Next step, adding a cross-section point of view rather than restating a number already on the card; it is silently omitted, with no header, when the field is absent.
 - Is delivered, never re-summarized in chat, per `references/card-delivery.md`: graphical surfaces render the widget fragment and fall back to verbatim Markdown; a snapshot route carries no performance section or sparkline.
 
 ### Public card

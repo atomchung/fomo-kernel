@@ -488,6 +488,81 @@ def test_keynote_and_four_blocks_in_order_on_both_surfaces():
         assert run["markdown"].count("# ") >= 1, "keynote headline missing"
 
 
+def _html_section_chunk(html_text, title):
+    """The full inner HTML for one ``<div class="sec"><h2>title</h2>...</div>``
+    section, keyed by its heading text (mirrors ``_hole_panel_chunk`` above)."""
+    marker = f"<h2>{html.escape(title)}</h2>"
+    return html_text.split(marker, 1)[1].split("</div>", 1)[0]
+
+
+def test_closing_synthesis_renders_as_fifth_block_after_next_step():
+    """#345: narrative.synthesis, when authored, appends as a 5th block after
+    Next step on both surfaces — a plain paragraph (no [mark] bracket, no KPI
+    tile, no new CSS class), never inserted between or reordering the four
+    mandatory blocks the 2026-07-21 ruling fixed."""
+    synthesis_text = ("Concentration is what defined this period, and it is "
+                      "still the single biggest swing factor going forward.")
+    for language in ("zh-TW", "en"):
+        bundle = copy.deepcopy(_session(language)["bundle"])
+        bundle["narrative"]["synthesis"] = synthesis_text
+        markdown = card_renderer.render_private(bundle)
+        html_out = card_renderer.render_html(bundle)
+
+        blocks = card_renderer.load_copy(language)["blocks"]
+        expected = [blocks[key] for key in ("performance", "trades", "risks", "next")] \
+            + [blocks["summary"]]
+        md_titles = [line[3:].strip() for line in markdown.splitlines()
+                     if line.startswith("## ")]
+        assert md_titles == expected, f"{language} md blocks with synthesis: {md_titles}"
+        html_titles = re.findall(r"<h2>(.*?)</h2>", html_out)
+        assert html_titles == expected, f"{language} html blocks with synthesis: {html_titles}"
+
+        summary_md = _markdown_section(markdown, blocks["summary"])
+        assert synthesis_text in summary_md
+        assert not summary_md.strip().startswith("["), \
+            "closing synthesis must render as plain prose, not a [mark]-style panel"
+
+        summary_html = _html_section_chunk(html_out, blocks["summary"])
+        assert f"<p>{html.escape(synthesis_text)}</p>" in summary_html, \
+            "closing synthesis must render as an unadorned <p>, reusing existing markup"
+        assert 'class="panel' not in summary_html, \
+            "closing synthesis is prose, not a strength/hole/rule panel"
+        assert 'class="grid4"' not in summary_html and 'class="trow"' not in summary_html, \
+            "closing synthesis must not invent a new KPI-tile or instrument-bar shape"
+
+
+def test_closing_synthesis_absent_renders_no_fifth_block():
+    """#345 fail-closed: without narrative.synthesis (the default v2 fixture,
+    and any older committed session), the card renders exactly the four
+    mandatory blocks on both surfaces — no Summary/總結 header and no empty
+    placeholder — checked both at the rendered-surface level and directly on
+    the _card_structure assembly both surfaces share."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        blocks = card_renderer.load_copy(language)["blocks"]
+        assert blocks["summary"] not in run["markdown"]
+        assert blocks["summary"] not in run["html"]
+        structure = card_renderer._card_structure(run["bundle"])
+        assert [section["id"] for section in structure["sections"]] == \
+            ["performance", "trades", "risks", "next"], \
+            "narrative.synthesis absent must not add a 'summary' section"
+
+
+def test_closing_synthesis_empty_string_is_rejected_not_silently_dropped():
+    """An explicit empty-string synthesis is invalid input under the same rule
+    every other optional narrative field already follows (validate_narrative
+    rejects any blank value) — it fails validation loudly rather than being
+    treated as a silent, well-formed 'omit this field'."""
+    bundle = copy.deepcopy(_session("zh-TW")["bundle"])
+    bundle["narrative"]["synthesis"] = ""
+    try:
+        card_renderer._card_structure(bundle)
+    except card_renderer.RenderError as exc:
+        assert "synthesis" in str(exc)
+    else:
+        raise AssertionError("an empty-string synthesis must fail validation, not render silently")
+
+
 def test_zh_and_en_cards_light_the_same_blocks_from_the_same_state():
     """output-language.md §6 structure-equivalence: same state, both locales
     light the same blocks and block kinds — a locale gap is a defect."""
@@ -758,6 +833,47 @@ def test_coded_fields_render_localized_english_blocks():
         "en Markdown must join tags with halfwidth punctuation"
 
 
+def test_instrument_tag_price_note_stays_inline_without_growing_the_row():
+    """#347 acceptance: current price / average cost ride inside the same tag
+    string as cur_ret's percentage, on disciplined_hold / suspected_averaging
+    _down_losing / deep_underwater. Owner's binding 2026-07-22 constraint: the
+    key-trades row must not grow from one line to two, and must not gain an
+    indent level. Compare a tag carrying price data against the identical tag
+    without it: Markdown line count and HTML element counts must be
+    unchanged, and the only textual diff must be the inline parenthetical —
+    proof this is an appendage to the existing tag, not a restructuring."""
+    for language, fragment in (("zh-TW", "(現 150.20／均 68.30)"),
+                              ("en", " (now 150.20 / cost 68.30)")):
+        def bundle_with(params):
+            b = _coded_bundle(language)
+            b["engine_card"]["ticker_diagnosis"] = [
+                {"ticker": "NVDA", "impact": 58524.0,
+                 "tags": [{"code": "disciplined_hold", "params": params}]},
+                {"ticker": "PLTR", "impact": 76647.0,
+                 "tags": [{"code": "too_heavy", "params": {"wpct": 0.49}}]},
+            ]
+            return b
+
+        bare = bundle_with({"cur": 1.50})
+        priced = bundle_with({"cur": 1.50, "px": 150.20, "avg_cost": 68.30})
+        bare_md, priced_md = card_renderer.render_private(bare), card_renderer.render_private(priced)
+        bare_html, priced_html = card_renderer.render_html(bare), card_renderer.render_html(priced)
+
+        assert fragment in priced_md and fragment in priced_html, \
+            f"{language}: price/cost fragment missing from a surface"
+        assert fragment not in bare_md and fragment not in bare_html, \
+            f"{language}: fragment must not appear without px/avg_cost params"
+        assert bare_md.count("\n") == priced_md.count("\n"), \
+            f"{language}: adding price/cost changed the Markdown line count"
+        assert priced_md.replace(fragment, "") == bare_md, \
+            f"{language}: the only Markdown diff must be the inline fragment"
+        for cls in ('<div class="trow">', '<p class="rsub">', '<div class="track">'):
+            assert bare_html.count(cls) == priced_html.count(cls), \
+                f"{language}: {cls} count changed — price/cost must not add HTML structure"
+        assert priced_html.replace(fragment, "") == bare_html, \
+            f"{language}: the only HTML diff must be the inline fragment"
+
+
 def test_preview_emits_html_and_finalize_cleans_pending():
     for language in ("zh-TW", "en"):
         run = _session(language)
@@ -981,13 +1097,17 @@ def test_next_step_reconciles_a_rule_that_contradicts_a_strength():
 
 def test_rule_names_the_positions_it_would_act_on():
     """#302: the rule cites this period's actual positions or behavior counts,
-    at sub-line level under the rule rather than as a detached footnote."""
+    at sub-line level under the rule rather than as a detached footnote.
+    PLTR/NVDA (49%/46%) sit above both POSITION_CAP and OVERSIZE_TRIGGER, and
+    ORCL/AMD (12%/3%) sit below both, so this fixture does not itself pin
+    which of the two thresholds gates the list — see
+    test_rule_targets_filter_on_the_trigger_not_the_coach_cap for that."""
     sizing = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("zh-TW", "position_sizing")))
     assert "PLTR 49%" in sizing and "NVDA 46%" in sizing, \
-        "the sizing rule must name every position over the cap"
+        "the sizing rule must name every position over the trigger"
     assert "ORCL" not in sizing and "AMD" not in sizing, \
-        "positions inside the cap are not what the rule would catch"
+        "positions under the trigger are not what the rule would catch"
     avgdown = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("zh-TW", "averaging_down")))
     assert "PLTR 7 次" in avgdown and "NVDA 5 次" in avgdown, \
@@ -995,6 +1115,88 @@ def test_rule_names_the_positions_it_would_act_on():
     en = _next_step_text(card_renderer.render_private(
         _conflicted_bundle("en", "position_sizing")))
     assert "PLTR 49%, NVDA 46%" in en, "en must join targets with halfwidth punctuation"
+
+
+def test_rule_targets_filter_on_the_trigger_not_the_coach_cap():
+    """#328: a holding between POSITION_CAP (20%, the coach's suggested target)
+    and OVERSIZE_TRIGGER (25%, the diagnostic line that actually opens the
+    cut_oversize prescription) was never judged a problem by any engine path.
+    Listing it under "what this rule would catch" made the card stricter than
+    the engine's own judgment (the literal owner-verified repro: 27/22/21)."""
+    for language, over, between in (("zh-TW", "AAA 27%", ("BBB 22%", "CCC 21%")),
+                                     ("en", "AAA 27%", ("BBB 22%", "CCC 21%"))):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+            "AAA": 0.27, "BBB": 0.22, "CCC": 0.21, "DDD": 0.03}
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        assert over in block4, \
+            f"{language}: a holding above the trigger must still be named"
+        for name in between:
+            assert name not in block4, \
+                f"{language}: {name} sits between the cap and the trigger and " \
+                "must not appear — the engine never flagged it as a hole"
+        assert "DDD" not in block4, f"{language}: a holding under both lines stays absent"
+
+    # A custom single-position cap override (#324) moves the trigger and the
+    # cap to the same user-set value, per effective_oversize_trigger/
+    # effective_position_cap: a holding that clears the override must show,
+    # one that does not must be absent, matching the standing contract that
+    # an override collapses the two thresholds into one.
+    bundle = _conflicted_bundle("en", "position_sizing")
+    bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+        "AAA": 0.35, "BBB": 0.28, "CCC": 0.22}
+    bundle["engine_state"]["max_position_pct"] = 0.30
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    assert "AAA 35%" in block4, "a holding above the 30% override must show"
+    assert "BBB" not in block4 and "CCC" not in block4, \
+        "holdings below a 30% override must not show, even though both clear the universal 25% default"
+
+
+def test_rule_targets_truncate_past_the_display_limit():
+    """#349: past RULE_TARGETS_DISPLAY_LIMIT (4) named entries, the targets
+    line reads as a raw data dump rather than a point of view (owner dogfood
+    finding). The remainder collapses into one localized "+N more" tail, and
+    the items shown are still the top-impact ones (already ranked upstream)."""
+    weights = {"AAA": 0.40, "BBB": 0.35, "CCC": 0.30, "DDD": 0.29,
+               "EEE": 0.28, "FFF": 0.26}
+    for language, tail in (("zh-TW", "、及其他 2 檔"), ("en", ", and 2 more")):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        bundle["engine_card"]["dims_raw"][0]["risk_weights"] = weights
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        for shown in ("AAA 40%", "BBB 35%", "CCC 30%", "DDD 29%"):
+            assert shown in block4, f"{language}: top-impact entry {shown} must still be named"
+        for hidden in ("EEE 28%", "FFF 26%"):
+            assert hidden not in block4, \
+                f"{language}: {hidden} is past the display limit and must fold into the tail"
+        assert tail in block4, f"{language}: overflow must render as the localized '+N more' tail"
+
+    # Exactly at the limit: no overflow, no tail, every entry named.
+    bundle = _conflicted_bundle("en", "position_sizing")
+    bundle["engine_card"]["dims_raw"][0]["risk_weights"] = {
+        "AAA": 0.40, "BBB": 0.35, "CCC": 0.30, "DDD": 0.26}
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    assert all(t in block4 for t in ("AAA 40%", "BBB 35%", "CCC 30%", "DDD 26%")), \
+        "exactly four entries must all be named"
+    assert "more" not in block4, "four entries (the limit) must not trigger the overflow tail"
+
+    # The truncation is generic across dims/kinds, not special-cased to pct:
+    # averaging_down's "count" items must also fold past the limit.
+    bundle = _conflicted_bundle("zh-TW", "averaging_down")
+    bundle["engine_card"]["dims_raw"][1]["ticker_counts"] = {
+        "AAA": 9, "BBB": 8, "CCC": 7, "DDD": 6, "EEE": 5}
+    block4 = _next_step_text(card_renderer.render_private(bundle))
+    for shown in ("AAA 9 次", "BBB 8 次", "CCC 7 次", "DDD 6 次"):
+        assert shown in block4, f"averaging_down: {shown} must still be named"
+    assert "EEE" not in block4, "averaging_down: the fifth ticker must fold into the tail"
+    assert "、及其他 1 檔" in block4, "averaging_down: overflow tail must use the same copy contract"
+
+
+def test_renderer_oversize_trigger_matches_the_engine_constant():
+    """#328: the renderer keeps its own stdlib copy of the trigger, same
+    reason and same boundary as POSITION_CAP. Pin them together."""
+    import trade_recap  # engine path already on sys.path via test_review_v2
+    assert card_renderer.OVERSIZE_TRIGGER == trade_recap.OVERSIZE_TRIGGER, \
+        "card_renderer.OVERSIZE_TRIGGER and trade_recap.OVERSIZE_TRIGGER must stay in sync"
 
 
 def test_exit_opportunity_cost_collects_into_one_read_only_panel():
@@ -1105,6 +1307,9 @@ def main():
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,
         test_keynote_and_four_blocks_in_order_on_both_surfaces,
+        test_closing_synthesis_renders_as_fifth_block_after_next_step,
+        test_closing_synthesis_absent_renders_no_fifth_block,
+        test_closing_synthesis_empty_string_is_rejected_not_silently_dropped,
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
         test_all_honesty_collapses_into_block1_footnote_one_per_line,
         test_price_source_rides_the_footnote_ahead_of_unrealized_coverage,
@@ -1112,6 +1317,7 @@ def main():
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_resolve_zh_prescriptions_from_copy,
         test_coded_fields_render_localized_english_blocks,
+        test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
@@ -1121,6 +1327,9 @@ def main():
         test_next_step_renders_exactly_one_action,
         test_next_step_reconciles_a_rule_that_contradicts_a_strength,
         test_rule_names_the_positions_it_would_act_on,
+        test_rule_targets_filter_on_the_trigger_not_the_coach_cap,
+        test_rule_targets_truncate_past_the_display_limit,
+        test_renderer_oversize_trigger_matches_the_engine_constant,
         test_exit_opportunity_cost_collects_into_one_read_only_panel,
         test_exit_opportunity_cost_is_no_longer_scattered_across_key_trades,
         test_exit_consistency_panel_yields_to_the_question_when_asked,

@@ -21,7 +21,8 @@ class RenderError(ValueError):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COPY_DIR = os.path.join(os.path.dirname(HERE), "copy")
-ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty"}
+ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty",
+                     "synthesis"}
 DIMENSION_ID_BY_LEGACY_LABEL = {
     "出場紀律": "exit_discipline",
     "部位 sizing": "position_sizing",
@@ -220,10 +221,27 @@ def localized_rule(dim, language, cap=None):
 # computation, and a dimension without citable facts omits the sentence
 # rather than printing an empty shell.
 RULE_GROUNDING_TICKER_LIMIT = 2
+# #349: past this many named entries the Block-4 targets line reads as a raw
+# data dump rather than a point of view (owner dogfood finding), so the
+# remainder collapses into one localized "+N more" tail instead. Distinct
+# from RULE_GROUNDING_TICKER_LIMIT above (a different, shorter sentence in
+# the question layer) and from the diversification/holding_period "top 3
+# cluster" slices in rule_grounding_items below, which already name at most
+# 3 positions by definition and so never hit this limit.
+RULE_TARGETS_DISPLAY_LIMIT = 4
 # 與 trade_recap.POSITION_CAP 同一條契約:card_renderer 刻意不 import trade_recap
 # (與 coach/horizon 前例同語意 — 保持純標準庫、免 pandas),兩處常數由
 # test_card_html 斷言同步。改一處必改另一處。
 POSITION_CAP = 0.20
+# #328: mirrors trade_recap.OVERSIZE_TRIGGER under the same stdlib-only,
+# no-import-trade_recap boundary as POSITION_CAP above. This is the
+# diagnostic trigger the engine actually flags a position_sizing hole
+# against; POSITION_CAP is only the coach's suggested target once the rule
+# is committed. The two are deliberately different since #334: a holding
+# between them was never judged a problem by any engine path, so any
+# user-visible list of "positions this rule would act on" must filter on
+# this constant, not on POSITION_CAP.
+OVERSIZE_TRIGGER = 0.25
 
 
 def valid_position_cap(value):
@@ -239,6 +257,15 @@ def valid_position_cap(value):
 def effective_position_cap(override=None):
     """規矩文案帶的「建議上限」:用戶自訂(合法時)否則通用預設 POSITION_CAP。"""
     return valid_position_cap(override) or POSITION_CAP
+
+
+def effective_oversize_trigger(override=None):
+    """The diagnostic trigger: the user's standing single-position override
+    when valid, otherwise the universal OVERSIZE_TRIGGER. Stdlib mirror of
+    trade_recap.effective_oversize_trigger (#328) — this decides which
+    positions a targets list names, not what the rule text recommends
+    compressing down to (that stays effective_position_cap)."""
+    return valid_position_cap(override) or OVERSIZE_TRIGGER
 
 
 def _grounding_dims(card):
@@ -306,7 +333,7 @@ def rule_grounding_facts(card, dim_id):
     return None
 
 
-def rule_grounding_items(card, dim_id):
+def rule_grounding_items(card, dim_id, cap_override=None):
     """The positions or behavior counts the committed rule would act on this
     period (#302), ranked, or ``[]`` when nothing is citable.
 
@@ -316,20 +343,31 @@ def rule_grounding_items(card, dim_id):
     come from the same engine card — no new computation, no event detail (dates
     and prices stay in ``problem_events``); the card needs names the reader can
     match against their own positions, not a transaction log.
+
+    ``cap_override`` is the user's standing single-position override
+    (``state.max_position_pct``, #324): threaded into ``effective_oversize_
+    trigger`` so a custom cap moves the position_sizing filter the same way
+    it already moves the committed rule text and the engine's own severity.
     """
     dims = _grounding_dims(card)
     dim = dims.get(dim_id)
     if not isinstance(dim, dict):
         return []
     if dim_id == "position_sizing":
-        # Only the positions actually over the cap: a rule that lists compliant
-        # holdings reads as noise, which is the Block-4 bloat #301 is undoing.
+        # #328: filter on the diagnostic *trigger*, not the stricter coach
+        # target (POSITION_CAP). Only crossing the trigger makes the engine
+        # flag sizing as a hole and open the cut_oversize prescription in the
+        # first place — a holding between the two was never judged a problem
+        # by any engine path, so naming it here made the card stricter than
+        # the engine's own judgment. A rule that lists compliant holdings
+        # also reads as noise, which is the Block-4 bloat #301 is undoing.
         weights = dim.get("risk_weights")
         if not isinstance(weights, dict):
             return []
+        trigger = effective_oversize_trigger(cap_override)
         over = [(t, _positive_rate(w)) for t, w in weights.items()
                 if isinstance(t, str) and t and _positive_rate(w) is not None
-                and float(w) > POSITION_CAP]
+                and float(w) > trigger]
         return [{"ticker": t, "kind": "pct", "value": v}
                 for t, v in sorted(over, key=lambda item: (-item[1], item[0]))]
     if dim_id == "averaging_down":
@@ -356,28 +394,49 @@ def rule_grounding_items(card, dim_id):
     return []
 
 
-def localized_rule_targets(dim, language, card):
+def localized_rule_targets(dim, language, card, cap_override=None):
     """The one-line "what this rule would catch this period" list (#302), or
-    ``None`` when the dimension has nothing citable."""
-    items = rule_grounding_items(card, dimension_id(dim))
+    ``None`` when the dimension has nothing citable.
+
+    #349: named entries are capped at ``RULE_TARGETS_DISPLAY_LIMIT`` (items
+    are already ranked by impact in ``rule_grounding_items``) so the line
+    stays a short, scannable point of view rather than an enumerated dump;
+    any remainder collapses into one localized "+N more" tail. If the copy
+    contract has no ``more_suffix`` for the active locale, fall back to
+    showing every entry instead of silently dropping the overflow — an
+    over-long line is preferable to one that hides facts without saying so.
+    """
+    items = rule_grounding_items(card, dimension_id(dim), cap_override)
     if not items:
         return None
     copy = load_copy(language)
-    template = (copy.get("rule_targets") or {}).get("line")
+    rule_targets_copy = copy.get("rule_targets") or {}
+    template = rule_targets_copy.get("line")
     if not template:
         return None
+    shown = items[:RULE_TARGETS_DISPLAY_LIMIT]
+    overflow = len(items) - len(shown)
+    more_suffix = rule_targets_copy.get("more_suffix") if overflow > 0 else None
+    if overflow > 0 and not more_suffix:
+        shown, overflow = items, 0
     joiner = ", " if copy["language"] == "en" else "、"
     parts = []
-    for item in items:
+    for item in shown:
         if item["kind"] == "pct":
             parts.append(f"{item['ticker']} {item['value'] * 100:.0f}%")
         elif item["kind"] == "count":
-            unit = (copy.get("rule_targets") or {}).get("count_unit", "")
+            unit = rule_targets_copy.get("count_unit", "")
             parts.append(f"{item['ticker']} {item['value']}{unit}")
         else:
             parts.append(item["ticker"])
+    joined = joiner.join(parts)
+    if overflow > 0:
+        try:
+            joined += more_suffix.format(n=overflow)
+        except (KeyError, IndexError, ValueError):
+            pass
     try:
-        return template.format(items=joiner.join(parts))
+        return template.format(items=joined)
     except (KeyError, IndexError, ValueError):
         return None
 
@@ -486,8 +545,16 @@ def localized_rule_grounding(dim, language, card):
 # with no migration layer (owner ruling on #279: dev-phase, no compat mapping).
 
 
-def _tag_format_values(params):
-    """Presentation formatting for raw tag params, shared by every locale."""
+def _tag_format_values(params, language):
+    """Presentation formatting for raw tag params, one locale at a time.
+
+    #347: current price and average cost per share travel beside ``cur_ret``
+    so a reader cannot mistake the position's current-vs-cost percentage for a
+    trade amount. ``price_note`` is one self-contained fragment (not two bare
+    placeholders) so a template can reference it unconditionally: it renders
+    as an empty string whenever either raw number is missing (older bundles,
+    a tag that never carried price data), keeping this byte-identical to the
+    pre-#347 text in that case."""
     values = {}
     for key in ("n_adds", "win_early", "win_n"):
         number = _finite_number((params or {}).get(key))
@@ -501,6 +568,13 @@ def _tag_format_values(params):
     wpct = _finite_number((params or {}).get("wpct"))
     if wpct is not None:
         values["wpct_pct"] = f"{wpct * 100:.0f}%"
+    px = _finite_number((params or {}).get("px"))
+    avg_cost = _finite_number((params or {}).get("avg_cost"))
+    if px is not None and avg_cost is not None:
+        values["price_note"] = (f" (now {px:,.2f} / cost {avg_cost:,.2f})" if language == "en"
+                                else f"(現 {px:,.2f}／均 {avg_cost:,.2f})")
+    else:
+        values["price_note"] = ""
     return values
 
 
@@ -517,7 +591,7 @@ def localized_instrument_tag(tag, language):
     if not template:
         return None
     try:
-        return template.format(**_tag_format_values(tag.get("params")))
+        return template.format(**_tag_format_values(tag.get("params"), language))
     except (KeyError, IndexError, ValueError):
         return None
 
@@ -936,8 +1010,13 @@ def _hole_line(hole, language):
         return (f"Holding periods ranged from {d.get('min', 0)} to {d.get('max', 0)} days, "
                 f"with a median of {d.get('median_hold', 0):.0f} days.")
     if dim == "averaging_down":
+        # #348: "crossed the position-size boundary" read like today's market-value
+        # concentration and collided with the sizing dimension's wording. Both anchors
+        # must be in the sentence: "at the moment of that add" (not now) and "cost
+        # basis" (not market value).
         return (f"There were {d.get('count', 0)} adds to losing positions; "
-                f"{d.get('breach', 0)} crossed the position-size boundary at the time of the add.")
+                f"{d.get('breach', 0)} pushed the position's share of cost basis over "
+                f"25% at the moment of that add.")
     return ""
 
 
@@ -1504,34 +1583,6 @@ def _snapshot_hole_lines(card, language):
     return ["這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"]
 
 
-def _trade_lines(card, language):
-    best, worst = card.get("best_trade"), card.get("worst_trade")
-    if not best or not worst:
-        return []
-    mixed = bool((card.get("currency_meta") or {}).get("mixed"))
-
-    def amount(trade):
-        currency = trade.get("currency")
-        if not currency and not mixed:
-            currency = _currency(card)
-        return _money(trade.get("pnl"), str(currency).upper()) if currency else None
-
-    best_amount, worst_amount = amount(best), amount(worst)
-    if language == "en":
-        return [
-            (f"Best: {best['ticker']} {_pct(best.get('ret'))}, {best_amount} realized."
-             if best_amount else f"Best: {best['ticker']} {_pct(best.get('ret'))}."),
-            (f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}, {worst_amount} realized."
-             if worst_amount else f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}."),
-        ]
-    return [
-        (f"最賺：{best['ticker']} {_pct(best.get('ret'))}，已實現 {best_amount}。"
-         if best_amount else f"最賺：{best['ticker']} {_pct(best.get('ret'))}。"),
-        (f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}，已實現 {worst_amount}。"
-         if worst_amount else f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}。"),
-    ]
-
-
 def _signed_pct(value, digits=1):
     return "—" if value is None else f"{float(value) * 100:+.{digits}f}%"
 
@@ -2022,10 +2073,10 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
 
 def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     """Block 2 (Key trades): ranked instrument rows are the spine; motive
-    answers, exit records, follow-ups, horizon mirrors, and best/worst
-    realized trades attach as sub-lines under the row of the instrument they
-    concern. Facts no row can host stay as block-level lines, so nothing is
-    lost when the spine cannot render (§3: one neutral line instead)."""
+    answers, exit records, follow-ups, and horizon mirrors attach as sub-lines
+    under the row of the instrument they concern. Facts no row can host stay
+    as block-level lines, so nothing is lost when the spine cannot render
+    (§3: one neutral line instead)."""
     language = copy["language"]
     en = language == "en"
     missing = copy.get("block_missing") or {}
@@ -2056,9 +2107,6 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
         loose.extend(followup_loose)
         for ticker, text in _horizon_entries(bundle, copy):
             push(ticker, text)
-        trade_lines = _trade_lines(card, language)
-        for trade, text in zip((card.get("best_trade"), card.get("worst_trade")), trade_lines):
-            push((trade or {}).get("ticker"), text)
 
     blocks = []
     if facts["instruments"]:
@@ -2067,9 +2115,6 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     else:
         traded = [str(row.get("ticker")) for row in card.get("ticker_diagnosis") or []
                   if isinstance(row, dict) and row.get("ticker")]
-        if not traded:
-            traded = [trade.get("ticker") for trade in (card.get("best_trade"), card.get("worst_trade"))
-                      if isinstance(trade, dict) and trade.get("ticker")]
         traded = list(dict.fromkeys(traded))
         note = None
         if traded and missing.get("trades_traded"):
@@ -2277,7 +2322,11 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # wrong positions under the rule. A custom rule without a dimension
         # keeps the aggregate grounding sentence instead.
         dim = commitment.get("dim")
-        targets = localized_rule_targets(dim, language, card) if dim else None
+        # #328: the same standing cap override that shaped the rule text and
+        # the engine's own severity (state.max_position_pct, #324) must also
+        # govern which positions this line names.
+        targets = (localized_rule_targets(dim, language, card, state.get("max_position_pct"))
+                   if dim else None)
         grounding = commitment.get("grounding")
         if targets:
             rule_inner.append(("grounding", [targets]))
@@ -2346,14 +2395,19 @@ def _card_structure(bundle):
     HTML artifact) consume this single assembly, so the two surfaces cannot
     drift into different content-policy decisions. The section skeleton is the
     output contract's canonical shape (docs/output-contract.md §2): keynote
-    preamble plus exactly four blocks — Performance, Key trades, Risks and
-    problems, Next step — with block titles from ``copy.blocks``. Block
-    content is ``(kind, payload)`` tuples: ``paragraph`` / ``bullets`` /
-    ``grounding`` line lists, ``indicators`` (Block-1 line and attr-row
-    items — a mixed-market item may carry a ``market`` grouping key, §2/§9),
-    ``footnote`` (every triggered honesty sentence, 2026-07-22 ruling §4),
-    ``rows`` (instrument spine with attached sub-lines), ``panel``
-    (strength/hole/rule), and ``improve`` (prescription rows)."""
+    preamble plus four mandatory blocks — Performance, Key trades, Risks and
+    problems, Next step — with block titles from ``copy.blocks``. An optional
+    5th block, the closing synthesis (#345, ``narrative.synthesis``), appends
+    after Next step only when the agent authors it; when absent it is not in
+    ``sections`` at all — no header, no placeholder, unlike the four mandatory
+    blocks above, which always render something (falling back to a neutral
+    one-line note rather than disappearing). Block content is ``(kind,
+    payload)`` tuples: ``paragraph`` / ``bullets`` / ``grounding`` line lists,
+    ``indicators`` (Block-1 line and attr-row items — a mixed-market item may
+    carry a ``market`` grouping key, §2/§9), ``footnote`` (every triggered
+    honesty sentence, 2026-07-22 ruling §4), ``rows`` (instrument spine with
+    attached sub-lines), ``panel`` (strength/hole/rule), and ``improve``
+    (prescription rows)."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
@@ -2399,6 +2453,19 @@ def _card_structure(bundle):
         {"id": "next", "title": blocks_copy.get("next", ""),
          "blocks": _next_block(bundle, copy, facts, state, snapshot)},
     ]
+    # #345: optional 5th block — a closing synthesis appended after Next step,
+    # present only when the agent authors narrative.synthesis. Unlike the four
+    # mandatory blocks above (which always render, falling back to a neutral
+    # one-line note when data is missing), this section has no fallback text:
+    # an absent or empty field means the section does not exist at all — no
+    # header, no placeholder — the same clean-degradation shape as any other
+    # unauthored optional narrative field. validate_narrative already
+    # guarantees a present value is a non-empty, digit-free string, so a plain
+    # truthiness check is sufficient here.
+    synthesis = narrative.get("synthesis")
+    if synthesis:
+        sections.append({"id": "summary", "title": blocks_copy.get("summary", ""),
+                         "blocks": [("paragraph", [synthesis])]})
 
     return {
         "session_id": bundle.get("session_id"),
@@ -2774,6 +2841,8 @@ stroke-linejoin:round;opacity:.85}
 .rc .tk{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px;font-weight:500;min-width:52px}
 .rc .tamt{font-size:14px;font-weight:500;min-width:78px;text-align:right}
 .rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+@media (max-width:300px){.rc .ttop{flex-wrap:wrap}}
+@media (max-width:300px){.rc .ttags .tag{font-size:11px}}
 .rc .track{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:6px 0 0;overflow:hidden}
 .rc .fill{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
 .rc .fill.neg{background:var(--rc-text-danger);opacity:.85}
@@ -2785,6 +2854,8 @@ stroke-linejoin:round;opacity:.85}
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace}
 .rc .abar{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
+@media (max-width:300px){.rc .attr-head .big{font-size:16px}}
+@media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
 .rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-radius);padding:16px 18px}
 .rc .panel+.panel{margin-top:10px}

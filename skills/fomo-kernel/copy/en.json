@@ -16,7 +16,6 @@
     "context": "Context and timeline mirrors",
     "numbers": "The account for this review",
     "performance": "Relative performance",
-    "trades": "Best and worst realized trades",
     "instruments": "Instrument impact · ranked by money",
     "attribution": "Return attribution · theme exposure or selection",
     "stress": "Concentration stress test",
@@ -34,7 +33,8 @@
     "performance": "Performance",
     "trades": "Key trades · ranked by money impact",
     "risks": "Risks and problems",
-    "next": "Next step"
+    "next": "Next step",
+    "summary": "Summary"
   },
   "period": {
     "span": "Review period {start} → {end}",
@@ -99,7 +99,8 @@
   },
   "rule_targets": {
     "line": "What this rule would catch this period: {items}",
-    "count_unit": "x"
+    "count_unit": "x",
+    "more_suffix": ", and {n} more"
   },
   "rule_tradeoff": {
     "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge.",
@@ -155,6 +156,7 @@
     "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
     "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
     "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
+    "price_plausibility": "A supplied closing price differs sharply from that ticker's own last recorded trade price; the source should be re-verified before the figure is trusted.",
     "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
@@ -166,13 +168,13 @@
     "prior_commitment_breach": "This period already recorded a breach of that same rule, before this review closed the books on it."
   },
   "instrument_tags": {
-    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct} (confirm the thesis)",
+    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct}{price_note} (confirm the thesis)",
     "suspected_averaging_down_recovered": "likely averaged a loser, now green: {n_adds} adds only while losing — the recovery looks like luck, not discipline",
     "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
     "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
-    "deep_underwater": "down {cur_abs_pct} and still held without a decision",
+    "deep_underwater": "down {cur_abs_pct}{price_note} and still held without a decision",
     "too_heavy": "too heavy: {wpct_pct} of the portfolio",
-    "disciplined_hold": "disciplined hold: {cur_signed_pct}",
+    "disciplined_hold": "disciplined hold: {cur_signed_pct}{price_note}",
     "roughly_neutral": "roughly neutral"
   },
   "stress_test": {
