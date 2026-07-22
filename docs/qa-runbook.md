@@ -31,7 +31,12 @@ issues it produces must say so.
    `tools/ux_receipt.py` (`start` with an honest `--client` and capability
    declaration, then events after each user-visible action). A run without a
    receipt is structurally unattributable — exactly the untracked-run gap
-   described in #273. This applies to `--test-drive` runs too.
+   described in #273. This applies to `--test-drive` runs too. When a rule
+   choice is presented, the receipt also proves each candidate's engine
+   `grounding` was shown verbatim (or that none was expected) — see
+   `rule_choice_presented` in
+   [interaction-delivery.md](../skills/fomo-kernel/references/interaction-delivery.md)
+   (#293).
 4. **Verdict and verification** — the session ended with an `owner_verdict`
    event and `tools/ux_receipt.py verify` passing (use
    `--require-owner-verdict` for human-graded runs).
@@ -55,6 +60,7 @@ machine-enforced versus procedural:
 | 4. Verdict | `verify --require-owner-verdict` fails without a passing verdict | running verify with that flag on human-graded runs |
 | 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
+| 3b. Grounding fidelity | `verify` fails when a `rule_choice_presented` event is missing its grounding-fidelity evidence, or reports a non-verbatim match, with no legacy exemption (#293) | authoring `--grounding-check-file` honestly (candidates + exact presented text) before recording the event |
 
 A drifted run therefore surfaces *before* its results are trusted or posted,
 not in a post-hoc audit — but only the checks in the middle column are

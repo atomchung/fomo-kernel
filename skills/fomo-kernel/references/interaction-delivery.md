@@ -82,11 +82,19 @@ This content-free marker makes the "answered → card" machine wait (#236) measu
 
 After a successful `preview`, record `artifact_generated`, then present the complete card inline following `card-delivery.md`, and only then record `card_presented`. A file path or attachment without inline card content is not presentation. Ask for the one commitment only after the preview card is visible. Apply the same generated-versus-presented distinction to the final card.
 
-When the rule choice — the candidate rules, a custom rule, or skip — is shown to the user after the preview card, record `rule_choice_presented` with the presentation mode used (it must be a declared question mode):
+When the rule choice — the candidate rules, a custom rule, or skip — is shown to the user after the preview card, record `rule_choice_presented` with the presentation mode used (it must be a declared question mode). This event also machine-checks grounding fidelity (#293): whether each candidate's engine-authored `card_plan.candidate_rules[].grounding`, when present, was shown to the user verbatim, so "present each candidate's grounding verbatim... never invent a grounding for a candidate that has none" (the flow instruction above) is no longer enforced by self-discipline alone. Write a transient `--grounding-check-file` (never committed, never persisted, deleted like any other scratch file once the event is recorded) pairing each presented candidate's `id` and engine `grounding` (omitted when the candidate has none) with the exact `presented_text` shown to the user:
 
 ```bash
-python3 tools/ux_receipt.py event --session-id <id> --event rule_choice_presented --mode native_options
+cat > /tmp/fomo-kernel-rule-choice-grounding.json <<'JSON'
+{"candidates": [{"id": "candidate_0", "grounding": "<engine grounding text, verbatim from card_plan>"},
+                {"id": "candidate_1"}],
+ "presented_text": "<the exact text shown to the user for this rule choice>"}
+JSON
+python3 tools/ux_receipt.py event --session-id <id> --event rule_choice_presented --mode native_options \
+  --grounding-check-file /tmp/fomo-kernel-rule-choice-grounding.json
 ```
+
+The tool performs the verbatim-containment comparison itself and persists only `grounding_expected` (bool), `grounding_verbatim` (bool), and `grounding_hash` (sha256 of the grounding text, only when one was expected) — never the raw grounding or presented text. `verify` fails closed when this evidence is absent or `grounding_verbatim` is not `true`; there is no legacy exemption for this field. This cannot detect a candidate that had no grounding but was presented with a fabricated one — the check only proves fidelity where the engine gave something to be faithful to.
 
 If `widget` was declared, attempt it. When an attempt fails, record `widget_attempt_failed` and paste the canonical Markdown verbatim inline; do not stop at a file link and do not paraphrase the card. A recorded failure authorizes the Markdown fallback for the rest of the session (widget capability is fixed per host, so one failure need not be repeated per stage); presenting Markdown under a declared widget capability with no recorded failure fails verification.
 

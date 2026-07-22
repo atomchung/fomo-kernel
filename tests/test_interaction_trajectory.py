@@ -7,6 +7,7 @@ commitment completeness are the engine's job (test_review_v2 / thesis) and are
 deliberately not re-tested here.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -175,7 +176,8 @@ def test_undeclared_question_mode_fails():
 def test_latency_marker_events_pass_without_ordering_rules():
     rows = good_markdown_rows()
     rows.insert(1, row("answers_received"))  # before the preview artifact
-    rows.insert(4, row("rule_choice_presented", mode="plain_text"))  # after the preview card
+    rows.insert(4, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=False, grounding_verbatim=True))  # after the preview card
     assert ux_receipt.verify_rows(rows) == []
     # Deliberately no ordering rules for the markers: they verify wherever they
     # appear, including before the weekly opener.
@@ -203,6 +205,219 @@ def test_rule_choice_undeclared_mode_fails():
     missing = good_markdown_rows()
     missing.insert(3, row("rule_choice_presented"))  # no mode at all fails closed
     assert_has(ux_receipt.verify_rows(missing), "rule choice used undeclared mode")
+
+
+# --- Rule-choice grounding fidelity is machine-checked, not self-attested (#293) --
+
+def test_rule_choice_faithful_grounding_passes():
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=True, grounding_hash=SURFACE_DIGEST,
+                       grounding_verbatim=True))
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_rule_choice_no_grounding_expected_passes():
+    # A candidate list where no candidate carried an engine grounding: nothing
+    # to be verbatim about, so the trivial state must still pass.
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=False, grounding_verbatim=True))
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_rule_choice_missing_grounding_evidence_fails_closed():
+    # This is the #293 bug itself: an agent that records rule_choice_presented
+    # without ever running the fidelity check. Unlike optional `ts`, there is
+    # no legacy grandfather here — absence must fail exactly like a false
+    # result, or an agent could silently keep doing what caused the issue.
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text"))
+    errors = ux_receipt.verify_rows(rows)
+    assert_has(errors, "missing grounding-fidelity evidence")
+    assert_has(errors, "did not prove its candidates' grounding was presented verbatim")
+
+
+def test_rule_choice_paraphrased_grounding_fails():
+    # Reproduces the reported failure mode: engine grounding existed but the
+    # presented text did not contain it verbatim (paraphrased/rewritten).
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=True, grounding_hash=SURFACE_DIGEST,
+                       grounding_verbatim=False))
+    assert_has(
+        ux_receipt.verify_rows(rows),
+        "did not prove its candidates' grounding was presented verbatim",
+    )
+
+
+def test_rule_choice_expected_without_hash_fails():
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=True, grounding_verbatim=True))
+    assert_has(ux_receipt.verify_rows(rows), "invalid or missing grounding_hash")
+
+
+def test_rule_choice_hash_without_expectation_fails():
+    # Defensive/consistency check: a hash with no expected grounding is a
+    # contradictory row (hand-edited or corrupted), not a legitimate state.
+    rows = good_markdown_rows()
+    rows.insert(3, row("rule_choice_presented", mode="plain_text",
+                       grounding_expected=False, grounding_hash=SURFACE_DIGEST,
+                       grounding_verbatim=True))
+    assert_has(ux_receipt.verify_rows(rows), "grounding_hash but no grounding was expected")
+
+
+def test_grounding_fidelity_helper_matches_verbatim_containment():
+    with tempfile.TemporaryDirectory() as tmp:
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text(json.dumps({
+            "candidates": [
+                {"id": "candidate_0", "grounding": "This period's actual position: largest single holding ZZZZ at 48%."},
+                {"id": "candidate_1"},
+            ],
+            "presented_text": (
+                "A. Cap position size before adding — "
+                "This period's actual position: largest single holding ZZZZ at 48%.\n"
+                "B. Sell when the thesis is confirmed false or complete."
+            ),
+        }), encoding="utf-8")
+        result = ux_receipt._grounding_fidelity(str(check_path))
+        assert result["grounding_expected"] is True
+        assert result["grounding_verbatim"] is True
+        assert ux_receipt.SURFACE_DIGEST.fullmatch(result["grounding_hash"])
+        # Deterministic: the hash is over the grounding text only, matching
+        # the algorithm documented in _grounding_fidelity.
+        expected_hash = hashlib.sha256(
+            "This period's actual position: largest single holding ZZZZ at 48%.".encode("utf-8")
+        ).hexdigest()
+        assert result["grounding_hash"] == expected_hash
+        # Never persist the raw strings themselves.
+        assert set(result) == {"grounding_expected", "grounding_hash", "grounding_verbatim"}
+
+
+def test_grounding_fidelity_helper_detects_paraphrase():
+    with tempfile.TemporaryDirectory() as tmp:
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text(json.dumps({
+            "candidates": [
+                {"id": "candidate_0", "grounding": "This period's actual position: largest single holding ZZZZ at 48%."},
+            ],
+            "presented_text": "A. Cap position size before adding — you're overweight ZZZZ right now.",
+        }), encoding="utf-8")
+        result = ux_receipt._grounding_fidelity(str(check_path))
+        assert result == {
+            "grounding_expected": True,
+            "grounding_hash": hashlib.sha256(
+                "This period's actual position: largest single holding ZZZZ at 48%.".encode("utf-8")
+            ).hexdigest(),
+            "grounding_verbatim": False,
+        }
+
+
+def test_grounding_fidelity_helper_no_candidates_trivially_passes():
+    with tempfile.TemporaryDirectory() as tmp:
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text(json.dumps({
+            "candidates": [{"id": "candidate_0"}, {"id": "candidate_1"}],
+            "presented_text": "A. Type your own rule.\nB. Skip for now.",
+        }), encoding="utf-8")
+        assert ux_receipt._grounding_fidelity(str(check_path)) == {
+            "grounding_expected": False,
+            "grounding_verbatim": True,
+        }
+
+
+def test_grounding_fidelity_helper_requires_file():
+    try:
+        ux_receipt._grounding_fidelity(None)
+    except ux_receipt.ReceiptError as exc:
+        assert "requires --grounding-check-file" in str(exc)
+    else:
+        raise AssertionError("expected a ReceiptError")
+
+
+def test_grounding_fidelity_helper_rejects_malformed_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text("not json", encoding="utf-8")
+        try:
+            ux_receipt._grounding_fidelity(str(check_path))
+        except ux_receipt.ReceiptError as exc:
+            assert "not valid JSON" in str(exc)
+        else:
+            raise AssertionError("expected a ReceiptError")
+
+
+def test_grounding_fidelity_helper_requires_presented_text():
+    with tempfile.TemporaryDirectory() as tmp:
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text(json.dumps({"candidates": []}), encoding="utf-8")
+        try:
+            ux_receipt._grounding_fidelity(str(check_path))
+        except ux_receipt.ReceiptError as exc:
+            assert "presented_text must be a non-empty string" in str(exc)
+        else:
+            raise AssertionError("expected a ReceiptError")
+
+
+def test_cli_rule_choice_presented_requires_grounding_check_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "session-293", "--state-root", tmp]
+        subprocess.run(
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "codex-desktop", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, check=True,
+        )
+        missing = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common,
+             "--event", "rule_choice_presented", "--mode", "plain_text"],
+            capture_output=True, text=True,
+        )
+        assert missing.returncode == 2
+        assert "requires --grounding-check-file" in missing.stderr
+
+
+def test_cli_rule_choice_presented_persists_only_hash_never_raw_grounding():
+    fake_grounding = "This period's actual position: largest single holding ZZZZ at 61%."
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "session-293b", "--state-root", tmp]
+        subprocess.run(
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "codex-desktop", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, check=True,
+        )
+        check_path = pathlib.Path(tmp) / "grounding-check.json"
+        check_path.write_text(json.dumps({
+            "candidates": [{"id": "candidate_0", "grounding": fake_grounding}],
+            "presented_text": f"A. Cap position size before adding — {fake_grounding}",
+        }), encoding="utf-8")
+
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common,
+             "--event", "rule_choice_presented", "--mode", "plain_text",
+             "--grounding-check-file", str(check_path)],
+            capture_output=True, text=True,
+        )
+        assert done.returncode == 0, done.stderr
+
+        receipt = pathlib.Path(tmp) / "ux" / "session-293b.jsonl"
+        raw_bytes = receipt.read_bytes()
+        assert b"ZZZZ" not in raw_bytes
+        assert b"largest single holding" not in raw_bytes
+        assert fake_grounding.encode("utf-8") not in raw_bytes
+
+        rows = [json.loads(line) for line in raw_bytes.decode("utf-8").splitlines()]
+        presented = [r for r in rows if r["event"] == "rule_choice_presented"][0]
+        assert presented["grounding_expected"] is True
+        assert presented["grounding_verbatim"] is True
+        assert ux_receipt.SURFACE_DIGEST.fullmatch(presented["grounding_hash"])
+        assert set(presented) == {
+            "version", "event", "session_id", "ts", "mode",
+            "grounding_expected", "grounding_hash", "grounding_verbatim",
+        }
 
 
 # --- Timestamps are optional metadata, validated when present (#236) ----------
@@ -356,13 +571,20 @@ def test_cli_writes_trace_into_protected_state_root():
         )
         assert again.returncode == 2 and "refusing to overwrite" in again.stderr
 
+        no_grounding_check = pathlib.Path(tmp) / "grounding-check.json"
+        no_grounding_check.write_text(json.dumps({
+            "candidates": [{"id": "candidate_0"}],
+            "presented_text": "A. Type your own rule.\nB. Skip for now.",
+        }), encoding="utf-8")
+
         for args in (
             ["--event", "question_presented", "--mode", "plain_text",
              "--surface-source", "validated_dynamic", "--surface-digest", SURFACE_DIGEST],
             ["--event", "answers_received"],
             ["--event", "artifact_generated", "--stage", "preview", "--artifact-path", "/tmp/p.md"],
             ["--event", "card_presented", "--stage", "preview", "--mode", "markdown_inline"],
-            ["--event", "rule_choice_presented", "--mode", "plain_text"],
+            ["--event", "rule_choice_presented", "--mode", "plain_text",
+             "--grounding-check-file", str(no_grounding_check)],
             ["--event", "artifact_generated", "--stage", "final", "--artifact-path", "/tmp/f.md"],
             ["--event", "card_presented", "--stage", "final", "--mode", "markdown_inline"],
         ):
@@ -425,6 +647,7 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         "answers_received",
         "rule_choice_presented",
         "stamped with a UTC ISO-8601 `ts`",
+        "--grounding-check-file",
     ):
         assert fragment in text, fragment
 
