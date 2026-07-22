@@ -60,6 +60,14 @@ order of operations. Nothing else. Specifically:
   across weeks. Threshold alignment and user-set caps are tracked in #324; do
   **not** add card copy explaining that the threshold is a generic baseline —
   that is the caveat noise this contract exists to remove.
+- **The positions named under the rule are the ones the engine actually
+  flagged** (#328): the sizing dimension filters on `OVERSIZE_TRIGGER` (the
+  diagnostic line that opens the `cut_oversize` prescription), not on
+  `POSITION_CAP` above — a holding between the two was never judged a problem
+  by any engine path, so listing it there would make the card stricter than
+  the engine's own judgment. Named entries are capped at
+  `RULE_TARGETS_DISPLAY_LIMIT` (#349); any remainder collapses into one
+  localized "+N more" tail instead of an enumerated dump.
 
 Renderer sections not mapped above (standalone market timeline, standalone
 motive/exit/ETF sections, …) merge into the blocks as described or disappear;

@@ -99,7 +99,8 @@
   },
   "rule_targets": {
     "line": "本期會被它攔下的：{items}",
-    "count_unit": " 次"
+    "count_unit": " 次",
+    "more_suffix": "、及其他 {n} 檔"
   },
   "rule_tradeoff": {
     "sizing_vs_proven_edge": "上限管的是單筆爆掉，不跟「選股是真 edge」衝突。",

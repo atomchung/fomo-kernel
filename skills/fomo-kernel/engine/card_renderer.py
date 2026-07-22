@@ -220,10 +220,27 @@ def localized_rule(dim, language, cap=None):
 # computation, and a dimension without citable facts omits the sentence
 # rather than printing an empty shell.
 RULE_GROUNDING_TICKER_LIMIT = 2
+# #349: past this many named entries the Block-4 targets line reads as a raw
+# data dump rather than a point of view (owner dogfood finding), so the
+# remainder collapses into one localized "+N more" tail instead. Distinct
+# from RULE_GROUNDING_TICKER_LIMIT above (a different, shorter sentence in
+# the question layer) and from the diversification/holding_period "top 3
+# cluster" slices in rule_grounding_items below, which already name at most
+# 3 positions by definition and so never hit this limit.
+RULE_TARGETS_DISPLAY_LIMIT = 4
 # 與 trade_recap.POSITION_CAP 同一條契約:card_renderer 刻意不 import trade_recap
 # (與 coach/horizon 前例同語意 — 保持純標準庫、免 pandas),兩處常數由
 # test_card_html 斷言同步。改一處必改另一處。
 POSITION_CAP = 0.20
+# #328: mirrors trade_recap.OVERSIZE_TRIGGER under the same stdlib-only,
+# no-import-trade_recap boundary as POSITION_CAP above. This is the
+# diagnostic trigger the engine actually flags a position_sizing hole
+# against; POSITION_CAP is only the coach's suggested target once the rule
+# is committed. The two are deliberately different since #334: a holding
+# between them was never judged a problem by any engine path, so any
+# user-visible list of "positions this rule would act on" must filter on
+# this constant, not on POSITION_CAP.
+OVERSIZE_TRIGGER = 0.25
 
 
 def valid_position_cap(value):
@@ -239,6 +256,15 @@ def valid_position_cap(value):
 def effective_position_cap(override=None):
     """規矩文案帶的「建議上限」:用戶自訂(合法時)否則通用預設 POSITION_CAP。"""
     return valid_position_cap(override) or POSITION_CAP
+
+
+def effective_oversize_trigger(override=None):
+    """The diagnostic trigger: the user's standing single-position override
+    when valid, otherwise the universal OVERSIZE_TRIGGER. Stdlib mirror of
+    trade_recap.effective_oversize_trigger (#328) — this decides which
+    positions a targets list names, not what the rule text recommends
+    compressing down to (that stays effective_position_cap)."""
+    return valid_position_cap(override) or OVERSIZE_TRIGGER
 
 
 def _grounding_dims(card):
@@ -306,7 +332,7 @@ def rule_grounding_facts(card, dim_id):
     return None
 
 
-def rule_grounding_items(card, dim_id):
+def rule_grounding_items(card, dim_id, cap_override=None):
     """The positions or behavior counts the committed rule would act on this
     period (#302), ranked, or ``[]`` when nothing is citable.
 
@@ -316,20 +342,31 @@ def rule_grounding_items(card, dim_id):
     come from the same engine card — no new computation, no event detail (dates
     and prices stay in ``problem_events``); the card needs names the reader can
     match against their own positions, not a transaction log.
+
+    ``cap_override`` is the user's standing single-position override
+    (``state.max_position_pct``, #324): threaded into ``effective_oversize_
+    trigger`` so a custom cap moves the position_sizing filter the same way
+    it already moves the committed rule text and the engine's own severity.
     """
     dims = _grounding_dims(card)
     dim = dims.get(dim_id)
     if not isinstance(dim, dict):
         return []
     if dim_id == "position_sizing":
-        # Only the positions actually over the cap: a rule that lists compliant
-        # holdings reads as noise, which is the Block-4 bloat #301 is undoing.
+        # #328: filter on the diagnostic *trigger*, not the stricter coach
+        # target (POSITION_CAP). Only crossing the trigger makes the engine
+        # flag sizing as a hole and open the cut_oversize prescription in the
+        # first place — a holding between the two was never judged a problem
+        # by any engine path, so naming it here made the card stricter than
+        # the engine's own judgment. A rule that lists compliant holdings
+        # also reads as noise, which is the Block-4 bloat #301 is undoing.
         weights = dim.get("risk_weights")
         if not isinstance(weights, dict):
             return []
+        trigger = effective_oversize_trigger(cap_override)
         over = [(t, _positive_rate(w)) for t, w in weights.items()
                 if isinstance(t, str) and t and _positive_rate(w) is not None
-                and float(w) > POSITION_CAP]
+                and float(w) > trigger]
         return [{"ticker": t, "kind": "pct", "value": v}
                 for t, v in sorted(over, key=lambda item: (-item[1], item[0]))]
     if dim_id == "averaging_down":
@@ -356,28 +393,49 @@ def rule_grounding_items(card, dim_id):
     return []
 
 
-def localized_rule_targets(dim, language, card):
+def localized_rule_targets(dim, language, card, cap_override=None):
     """The one-line "what this rule would catch this period" list (#302), or
-    ``None`` when the dimension has nothing citable."""
-    items = rule_grounding_items(card, dimension_id(dim))
+    ``None`` when the dimension has nothing citable.
+
+    #349: named entries are capped at ``RULE_TARGETS_DISPLAY_LIMIT`` (items
+    are already ranked by impact in ``rule_grounding_items``) so the line
+    stays a short, scannable point of view rather than an enumerated dump;
+    any remainder collapses into one localized "+N more" tail. If the copy
+    contract has no ``more_suffix`` for the active locale, fall back to
+    showing every entry instead of silently dropping the overflow — an
+    over-long line is preferable to one that hides facts without saying so.
+    """
+    items = rule_grounding_items(card, dimension_id(dim), cap_override)
     if not items:
         return None
     copy = load_copy(language)
-    template = (copy.get("rule_targets") or {}).get("line")
+    rule_targets_copy = copy.get("rule_targets") or {}
+    template = rule_targets_copy.get("line")
     if not template:
         return None
+    shown = items[:RULE_TARGETS_DISPLAY_LIMIT]
+    overflow = len(items) - len(shown)
+    more_suffix = rule_targets_copy.get("more_suffix") if overflow > 0 else None
+    if overflow > 0 and not more_suffix:
+        shown, overflow = items, 0
     joiner = ", " if copy["language"] == "en" else "、"
     parts = []
-    for item in items:
+    for item in shown:
         if item["kind"] == "pct":
             parts.append(f"{item['ticker']} {item['value'] * 100:.0f}%")
         elif item["kind"] == "count":
-            unit = (copy.get("rule_targets") or {}).get("count_unit", "")
+            unit = rule_targets_copy.get("count_unit", "")
             parts.append(f"{item['ticker']} {item['value']}{unit}")
         else:
             parts.append(item["ticker"])
+    joined = joiner.join(parts)
+    if overflow > 0:
+        try:
+            joined += more_suffix.format(n=overflow)
+        except (KeyError, IndexError, ValueError):
+            pass
     try:
-        return template.format(items=joiner.join(parts))
+        return template.format(items=joined)
     except (KeyError, IndexError, ValueError):
         return None
 
@@ -2277,7 +2335,11 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # wrong positions under the rule. A custom rule without a dimension
         # keeps the aggregate grounding sentence instead.
         dim = commitment.get("dim")
-        targets = localized_rule_targets(dim, language, card) if dim else None
+        # #328: the same standing cap override that shaped the rule text and
+        # the engine's own severity (state.max_position_pct, #324) must also
+        # govern which positions this line names.
+        targets = (localized_rule_targets(dim, language, card, state.get("max_position_pct"))
+                   if dim else None)
         grounding = commitment.get("grounding")
         if targets:
             rule_inner.append(("grounding", [targets]))

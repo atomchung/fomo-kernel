@@ -99,7 +99,8 @@
   },
   "rule_targets": {
     "line": "What this rule would catch this period: {items}",
-    "count_unit": "x"
+    "count_unit": "x",
+    "more_suffix": ", and {n} more"
   },
   "rule_tradeoff": {
     "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge.",
