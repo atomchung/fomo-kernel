@@ -42,7 +42,7 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
 5. Keep trade data local and out of cloud memory. Never mix private-card content into a public card.
 6. An incomplete snapshot may produce a bounded review, but it is not an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and claims about an unreconciled current broker view must fail closed.
-7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, or `repair-projections`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
+7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, `render`, `repair-projections`, `set-cap`, or `doctor`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 
 ## Why this bridge stays thin
 
