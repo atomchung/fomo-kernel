@@ -2024,6 +2024,10 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         required_honesty_keys = [key for key in required_honesty_keys
                                  if key not in card_renderer.VS_MARKET_HONESTY_KEYS]
     review_tier = _review_tier(state)
+    # Carry the engine decision inside engine_state too, so the deterministic
+    # renderer can frame a thin first file as an opening structural check without
+    # re-deriving thresholds (#306). state_snapshot keeps the agent-facing copy.
+    state["review_tier"] = review_tier
     flow_path = f"flows/{route.replace('_', '-')}.md"
     if route == "first_review" and review_tier["tier"] in ("structural", "empty"):
         # #306: a thin first file is an opening structural check, not a full

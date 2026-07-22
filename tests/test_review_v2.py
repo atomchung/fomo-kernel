@@ -1688,6 +1688,29 @@ def test_structural_first_review_suppresses_questions_and_routes_to_structural_f
         assert plan2["card_plan"]["question_policy"]["max"] == 5
 
 
+def test_structural_card_next_step_names_the_unlock_path():
+    """#306: a structural first-file card frames itself as an opening check and
+    names what unlocks the full behavioral review. A behavioral tier must NOT get
+    that line even when a short span sets insufficient_data, so a high-frequency
+    short-window file is not mis-framed (span is soft at the render layer too)."""
+    def _bundle(tier, n_round_trips):
+        return {
+            "schema_version": 2, "language": "en", "route": "first_review",
+            "engine_card": {}, "commitment": None, "answers": {}, "thesis_updates": [],
+            "narrative": {"headline": "h", "mirror": "m", "honesty": {}},
+            "engine_state": {"date_start": "2026-01-01", "date_end": "2026-02-01",
+                             "n_round_trips": n_round_trips, "n_held": 5,
+                             "insufficient_data": True,  # short span in both cases
+                             "review_tier": {"tier": tier}, "metrics": {},
+                             "holdings": {"positions": {}}},
+        }
+    unlock = "unlocks the full behavioral review"
+    assert unlock in card_renderer.render_private(_bundle("structural", 2))
+    # behavioral (14 round trips) with a short-span insufficient flag must not be
+    # framed as an opening structural check.
+    assert unlock not in card_renderer.render_private(_bundle("behavioral", 14))
+
+
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
     """#194A: files and staging dir land before rename; parent dir lands after."""
     with tempfile.TemporaryDirectory() as root:
