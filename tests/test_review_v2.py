@@ -64,7 +64,7 @@ def _artifacts(tmp):
         "problem_opportunities": {"avgdown_breach": True},
     }
     hole = {"dim": "加碼攤平", "severity": 0.8, "tier_weight": 1.0,
-            "number_line": "你有 3 次在虧損倉往下加碼，其中 1 次加到 >25%",
+            "number_line": "你有 3 次在虧損倉往下加碼，其中 1 次加碼當下佔成本 >25%",
             "lens_rule": "往下加碼前先寫新證據。", "lens_quote": "先驗證再加碼。",
             "raw": {"dim": "加碼攤平", "tier": 1, "triggered": True, "severity": 0.8,
                     "count": 3, "breach": 1, "tickers": ["PLTR"]}}

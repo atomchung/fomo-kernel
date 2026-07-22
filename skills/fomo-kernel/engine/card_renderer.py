@@ -936,8 +936,13 @@ def _hole_line(hole, language):
         return (f"Holding periods ranged from {d.get('min', 0)} to {d.get('max', 0)} days, "
                 f"with a median of {d.get('median_hold', 0):.0f} days.")
     if dim == "averaging_down":
+        # #348: "crossed the position-size boundary" read like today's market-value
+        # concentration and collided with the sizing dimension's wording. Both anchors
+        # must be in the sentence: "at the moment of that add" (not now) and "cost
+        # basis" (not market value).
         return (f"There were {d.get('count', 0)} adds to losing positions; "
-                f"{d.get('breach', 0)} crossed the position-size boundary at the time of the add.")
+                f"{d.get('breach', 0)} pushed the position's share of cost basis over "
+                f"25% at the moment of that add.")
     return ""
 
 
