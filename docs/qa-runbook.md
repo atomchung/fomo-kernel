@@ -38,8 +38,10 @@ issues it produces must say so.
    [interaction-delivery.md](../skills/fomo-kernel/references/interaction-delivery.md)
    (#293).
 4. **Verdict and verification** — the session ended with an `owner_verdict`
-   event and `tools/ux_receipt.py verify` passing (use
-   `--require-owner-verdict` for human-graded runs).
+   event and `tools/ux_receipt.py verify` passing. Human-graded runs use both
+   `--require-owner-verdict` and `--require-timing-integrity`; only
+   `timing_integrity.status=credible` is eligible for fresh `owner_live` UX
+   ground truth.
 5. **Archived manifest** — the receipt was archived together with a manifest
    recording `engine_version` (the tested `main@<sha>`), `client`,
    `data_source`, and `human_involvement`. Honest default for human
@@ -56,8 +58,8 @@ machine-enforced versus procedural:
 |---|---|---|
 | 1. Version | — | record the sha yourself before starting (the owner's `/fomo-qa` skill automates this) |
 | 2. Isolation | engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | exporting it, and not overriding it per-command |
-| 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, or a missing weekly opener | recording every event honestly, right after the user sees it |
-| 4. Verdict | `verify --require-owner-verdict` fails without a passing verdict | running verify with that flag on human-graded runs |
+| 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, or a missing weekly opener; it machine-reports timing plausibility separately | recording every event honestly, right after the user sees it |
+| 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence | running both flags on human-graded runs; auditing or re-running suspect timing |
 | 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
 | 3b. Grounding fidelity | `verify` fails when a `rule_choice_presented` event is missing its grounding-fidelity evidence, or reports a non-verbatim match, with no legacy exemption (#293) | authoring `--grounding-check-file` honestly (candidates + exact presented text) before recording the event |
@@ -137,6 +139,9 @@ Non-negotiables while walking (each has burned a real QA run before):
 - Declare capabilities honestly; if the client can render rich cards, attempt
   the rich path once before degrading and record `widget_attempt_failed` if it
   fails. A generated artifact is not a presented card (#230).
+- Append each event when the action happens. Never replace a partial receipt or
+  backfill the walk at archive time; after an interruption, append to the same
+  trace. A reconstructed receipt is not execution-layer evidence.
 - `--language` follows the conversation language.
 - The `answers_received → card_presented(preview)` timestamp gap is the
   user-visible machine wait — report it in the wrap-up (#236).
@@ -146,8 +151,21 @@ Non-negotiables while walking (each has burned a real QA run before):
 ```bash
 python3 tools/ux_receipt.py event --event owner_verdict --controls ... --card ... --memory ... \
   [--question-specificity ... --answer-fit ...]
-python3 tools/ux_receipt.py verify --session-id <ID> [--require-owner-verdict]
+python3 tools/ux_receipt.py verify --session-id <ID> \
+  --require-owner-verdict --require-timing-integrity
 ```
+
+The JSON result includes `timing_integrity`. Timestamp reversal or a complete
+owner-verdict trace spanning less than three seconds is `suspect`; ordinary
+verification warns so legacy consumers remain compatible, while the strict QA
+command above exits non-zero. A suspect receipt cannot be archived or cited as
+`owner_live` ground truth without an audit using contemporaneous evidence or a
+fresh walkthrough. If retaining the run for non-UX diagnostics, label its
+`human_involvement` as `agent_simulated`. The recorded owner verdict itself may
+still be reported as the owner's judgment; timing integrity limits the trace's
+evidentiary use, not that judgment. Legacy receipts without `ts` remain valid
+under ordinary verification and report `not_assessed`; they are not evidence
+for a new `owner_live` claim.
 
 Archive the receipt with its manifest (tested sha, client, data source, human
 involvement). Claude Code sessions on the owner's machine use the local
