@@ -609,8 +609,6 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
         "philosophy": philosophy,
         "strength": None,
         "overview": {},
-        "best_trade": None,
-        "worst_trade": None,
         "what_if": None,
         "ticker_diagnosis": [],
         "thesis_questions": [],

@@ -73,8 +73,7 @@ def _artifacts(tmp):
         "strength": "你守住了其他部位的上限。",
         "overview": {"total_pnl": -300, "realized": 200, "unrealized": -500,
                      "payoff": 1.4, "avg_win": 140, "avg_loss": -100},
-        "best_trade": {"ticker": "NVDA", "ret": 0.2, "pnl": 200},
-        "worst_trade": {"ticker": "AMD", "ret": -0.1, "pnl": -100}, "what_if": None,
+        "what_if": None,
         "ticker_diagnosis": [],
         "thesis_questions": [{"ticker": "PLTR", "question": "PLTR 加碼時有新證據，還是只想攤低成本？"}],
         "top_holes": [hole],
@@ -425,8 +424,7 @@ def test_snapshot_prepare_builds_narrow_plan_without_writing_ledger():
         for key in ("avgdown_count", "avgdown_breach", "payoff", "exit_severity",
                     "hold_severity", "beta", "alpha_ann", "alpha_t", "alpha_credible"):
             assert state["metrics"][key] is None, key
-        assert card["overview"] == {} and card["best_trade"] is None
-        assert card["worst_trade"] is None and card["ticker_diagnosis"] == []
+        assert card["overview"] == {} and card["ticker_diagnosis"] == []
         assert card["thesis_questions"] == [] and card["alpha_beta_breakdown"] == {}
         assert {row["dim"] for row in card["dims_raw"]} <= {"部位 sizing", "分散"}
         assert not (root / "ledger.jsonl").exists(), "prepare cannot leave an orphan anchor"
@@ -2568,7 +2566,9 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         private = (session_dir / "card-private.md").read_text(encoding="utf-8")
         public = (session_dir / "card-public.md").read_text(encoding="utf-8")
         assert "PLTR" in private and "-$300" in private and "session_id" in private
-        assert "已實現盈虧比 1.4" in private and "NVDA 20%" in private and "AMD -10%" in private
+        assert "已實現盈虧比 1.4" in private
+        assert "最賺" not in private and "最虧" not in private, \
+            "closes #346: best/worst single-trade extremes must never print"
         assert "缺費用率資料" in private, "agent-authored honesty sentence must reach the card"
         assert "資料邊界" not in private and "Evidence boundaries" not in private, \
             "#82: honesty is woven into sections, never a standalone checklist section"
@@ -2701,13 +2701,11 @@ def test_mixed_market_private_card_renders_each_market_and_winning_split():
         "mixed cards must never render the top-level scope row as a combined third result"
 
 
-def test_display_currency_converts_aggregate_and_keeps_trade_original_currency():
+def test_display_currency_converts_aggregate_amounts():
     import card_renderer
     base = {
         "overview": {"total_pnl": -300, "realized": 200, "unrealized": -500,
                      "payoff": 1.5, "avg_win": 100, "avg_loss": -50},
-        "best_trade": {"ticker": "2330.TW", "ret": 0.2, "pnl": 1200, "currency": "TWD"},
-        "worst_trade": {"ticker": "AAPL", "ret": -0.1, "pnl": -40, "currency": "USD"},
         "currency_meta": {"mixed": True, "aggregate_currency": "USD",
                           "currencies": ["TWD", "USD"], "fx": {"TWD": 1 / 32},
                           "pnl_by_currency": {
@@ -2720,10 +2718,6 @@ def test_display_currency_converts_aggregate_and_keeps_trade_original_currency()
     assert zh_card["currency_meta"]["display_currency"] == "TWD"
     overview = "\n".join(card_renderer._overview_lines(zh_card, "zh-TW"))
     assert "-TWD 9,600" in overview and "+TWD 6,400" in overview and "-TWD 16,000" in overview
-    trades = "\n".join(card_renderer._trade_lines(zh_card, "zh-TW"))
-    assert "2330.TW" in trades and "+TWD 1,200" in trades
-    assert "AAPL" in trades and "-$40" in trades, \
-        "per-trade P&L must retain brokerage currency instead of the aggregate/display label"
 
     en_card, _ = review_engine._apply_display_currency(base, state, None, "en")
     assert en_card["currency_meta"]["display_currency"] == "USD"
@@ -2809,20 +2803,6 @@ def test_display_currency_rejects_approximate_aggregate_and_single_currency_iden
         offline_mixed, {"currency_meta": dict(offline_mixed["currency_meta"])}, pure_state, "zh-TW")
     assert resolved["currency_meta"]["display_fx_source"] == "unavailable", \
         "single-currency identity factor is not a USD-per-unit FX cache"
-
-
-def test_engine_card_carries_original_currency_on_best_and_worst_trades():
-    best = {"ticker": "2330.TW", "qty": 2, "buy_px": 100, "sell_px": 120, "ret": 0.2}
-    worst = {"ticker": "AAPL", "qty": 1, "buy_px": 100, "sell_px": 90, "ret": -0.1}
-    card = tr.build_card_data([], None, {}, best, worst, None, [], [], {}, {}, None,
-                              currency_meta={"aggregate_currency": "USD", "mixed": True},
-                              currency_by_ticker={"2330.TW": "TWD", "AAPL": "USD"})
-    assert card["best_trade"]["currency"] == "TWD" and card["best_trade"]["pnl"] == 40
-    assert card["worst_trade"]["currency"] == "USD" and card["worst_trade"]["pnl"] == -10
-    unknown = tr.build_card_data([], None, {}, best, worst, None, [], [], {}, {}, None,
-                                 currency_meta={"aggregate_currency": "USD", "mixed": True})
-    assert unknown["best_trade"]["currency"] is None and unknown["worst_trade"]["currency"] is None, \
-        "unknown per-trade currency must omit the amount instead of borrowing the aggregate label"
 
 
 def test_public_card_keeps_behavior_and_relative_performance_without_identifiers():

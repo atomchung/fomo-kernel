@@ -486,8 +486,16 @@ def localized_rule_grounding(dim, language, card):
 # with no migration layer (owner ruling on #279: dev-phase, no compat mapping).
 
 
-def _tag_format_values(params):
-    """Presentation formatting for raw tag params, shared by every locale."""
+def _tag_format_values(params, language):
+    """Presentation formatting for raw tag params, one locale at a time.
+
+    #347: current price and average cost per share travel beside ``cur_ret``
+    so a reader cannot mistake the position's current-vs-cost percentage for a
+    trade amount. ``price_note`` is one self-contained fragment (not two bare
+    placeholders) so a template can reference it unconditionally: it renders
+    as an empty string whenever either raw number is missing (older bundles,
+    a tag that never carried price data), keeping this byte-identical to the
+    pre-#347 text in that case."""
     values = {}
     for key in ("n_adds", "win_early", "win_n"):
         number = _finite_number((params or {}).get(key))
@@ -501,6 +509,13 @@ def _tag_format_values(params):
     wpct = _finite_number((params or {}).get("wpct"))
     if wpct is not None:
         values["wpct_pct"] = f"{wpct * 100:.0f}%"
+    px = _finite_number((params or {}).get("px"))
+    avg_cost = _finite_number((params or {}).get("avg_cost"))
+    if px is not None and avg_cost is not None:
+        values["price_note"] = (f" (now {px:,.2f} / cost {avg_cost:,.2f})" if language == "en"
+                                else f"(現 {px:,.2f}／均 {avg_cost:,.2f})")
+    else:
+        values["price_note"] = ""
     return values
 
 
@@ -517,7 +532,7 @@ def localized_instrument_tag(tag, language):
     if not template:
         return None
     try:
-        return template.format(**_tag_format_values(tag.get("params")))
+        return template.format(**_tag_format_values(tag.get("params"), language))
     except (KeyError, IndexError, ValueError):
         return None
 
@@ -1504,34 +1519,6 @@ def _snapshot_hole_lines(card, language):
     return ["這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"]
 
 
-def _trade_lines(card, language):
-    best, worst = card.get("best_trade"), card.get("worst_trade")
-    if not best or not worst:
-        return []
-    mixed = bool((card.get("currency_meta") or {}).get("mixed"))
-
-    def amount(trade):
-        currency = trade.get("currency")
-        if not currency and not mixed:
-            currency = _currency(card)
-        return _money(trade.get("pnl"), str(currency).upper()) if currency else None
-
-    best_amount, worst_amount = amount(best), amount(worst)
-    if language == "en":
-        return [
-            (f"Best: {best['ticker']} {_pct(best.get('ret'))}, {best_amount} realized."
-             if best_amount else f"Best: {best['ticker']} {_pct(best.get('ret'))}."),
-            (f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}, {worst_amount} realized."
-             if worst_amount else f"Worst: {worst['ticker']} {_pct(worst.get('ret'))}."),
-        ]
-    return [
-        (f"最賺：{best['ticker']} {_pct(best.get('ret'))}，已實現 {best_amount}。"
-         if best_amount else f"最賺：{best['ticker']} {_pct(best.get('ret'))}。"),
-        (f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}，已實現 {worst_amount}。"
-         if worst_amount else f"最虧：{worst['ticker']} {_pct(worst.get('ret'))}。"),
-    ]
-
-
 def _signed_pct(value, digits=1):
     return "—" if value is None else f"{float(value) * 100:+.{digits}f}%"
 
@@ -2022,10 +2009,10 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
 
 def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     """Block 2 (Key trades): ranked instrument rows are the spine; motive
-    answers, exit records, follow-ups, horizon mirrors, and best/worst
-    realized trades attach as sub-lines under the row of the instrument they
-    concern. Facts no row can host stay as block-level lines, so nothing is
-    lost when the spine cannot render (§3: one neutral line instead)."""
+    answers, exit records, follow-ups, and horizon mirrors attach as sub-lines
+    under the row of the instrument they concern. Facts no row can host stay
+    as block-level lines, so nothing is lost when the spine cannot render
+    (§3: one neutral line instead)."""
     language = copy["language"]
     en = language == "en"
     missing = copy.get("block_missing") or {}
@@ -2056,9 +2043,6 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
         loose.extend(followup_loose)
         for ticker, text in _horizon_entries(bundle, copy):
             push(ticker, text)
-        trade_lines = _trade_lines(card, language)
-        for trade, text in zip((card.get("best_trade"), card.get("worst_trade")), trade_lines):
-            push((trade or {}).get("ticker"), text)
 
     blocks = []
     if facts["instruments"]:
@@ -2067,9 +2051,6 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
     else:
         traded = [str(row.get("ticker")) for row in card.get("ticker_diagnosis") or []
                   if isinstance(row, dict) and row.get("ticker")]
-        if not traded:
-            traded = [trade.get("ticker") for trade in (card.get("best_trade"), card.get("worst_trade"))
-                      if isinstance(trade, dict) and trade.get("ticker")]
         traded = list(dict.fromkeys(traded))
         note = None
         if traded and missing.get("trades_traded"):
