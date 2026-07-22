@@ -30,7 +30,8 @@ Codex plugin host can launch the same server over stdio.
 2. Invoke `fomo_show_demo_card` with `locale: "zh-TW"`; verify the styled card
    is visible rather than a file link or a Markdown paraphrase.
 3. Invoke `fomo_show_demo_question` with `locale: "zh-TW"`; click either
-   option and verify the tool result contains `rule_a` or `rule_b`.
+   option and verify its MCP Apps JSON-RPC `tools/call` result contains
+   `rule_a` or `rule_b`.
 4. Record the actual mode and the owner's controls/card verdict with
    `skills/fomo-kernel/tools/ux_receipt.py`; only then decide whether a private
    artifact handoff is safe to design.
@@ -40,5 +41,6 @@ Codex plugin host can launch the same server over stdio.
 This probe does not replace `engine/review.py`, record an answer, render an
 engine private card, or bypass `interaction-delivery.md`. Adding a path-based
 handoff for engine HTML is intentionally deferred: it must first prove that the
-Codex host's data boundary, local-path containment, locale propagation, widget
-failure fallback, and owner verdict are acceptable for private review data.
+Codex host's data boundary, local-path containment, locale propagation, and
+owner verdict are acceptable for private review data. It makes no production
+interaction-support claim.

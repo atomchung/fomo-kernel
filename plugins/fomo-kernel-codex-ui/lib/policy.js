@@ -50,8 +50,8 @@ export function localizedCopy(locale) {
     questionDetail: zh
       ? "點選任一選項，widget 應回傳固定的 canonical value。"
       : "Select either option; the widget should return a fixed canonical value.",
+    submitting: zh ? "正在送出合成測試選擇…" : "Submitting synthetic test choice…",
     selected: zh ? "已送出測試選擇：" : "Test selection submitted: ",
-    unavailable: zh ? "此 host 沒有可用的 Apps bridge。" : "This host has no available Apps bridge.",
-    submitError: zh ? "送出失敗，請改用文字 fallback。" : "Submission failed; use the text fallback."
+    submitError: zh ? "送出失敗：" : "Submission failed: "
   };
 }

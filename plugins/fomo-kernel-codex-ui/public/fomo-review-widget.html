@@ -10,7 +10,7 @@
       .badge { display: inline-block; margin-bottom: 10px; padding: 4px 8px; border-radius: 99px; background: #e0f2fe; color: #075985; font-size: 12px; font-weight: 650; }
       h1 { margin: 0; font-size: 20px; } p { line-height: 1.5; } .subtle { color: #64748b; }
       .metric { margin: 14px 0; padding: 12px; border-radius: 10px; background: #f1f5f9; } .metric small { display: block; color: #64748b; } .metric strong { display: block; margin-top: 4px; }
-      .choices { display: grid; gap: 10px; margin-top: 14px; } button { border: 1px solid #93c5fd; border-radius: 10px; background: #eff6ff; color: #1e3a8a; cursor: pointer; font: inherit; padding: 12px; text-align: left; } button:hover { background: #dbeafe; } button:disabled { cursor: wait; opacity: .65; } .status { min-height: 1.5em; color: #334155; font-size: 14px; }
+      .choices { display: grid; gap: 10px; margin-top: 14px; } button { border: 1px solid #93c5fd; border-radius: 10px; background: #eff6ff; color: #1e3a8a; cursor: pointer; font: inherit; padding: 12px; text-align: left; } button:hover { background: #dbeafe; } button:disabled { cursor: wait; opacity: .65; } .status { min-height: 1.5em; color: #334155; font-size: 14px; } .status[data-state="success"] { color: #166534; } .status[data-state="error"] { color: #b91c1c; }
     </style>
   </head>
   <body>
@@ -28,8 +28,74 @@
       </section>
       <p id="status" class="status"></p>
     </main>
+    <script data-fomo-app-bridge>
+      (() => {
+        let nextId = 0;
+        const pending = new Map();
+        const notificationHandlers = new Map();
+
+        function errorFrom(response) {
+          const detail = response && response.error;
+          const error = new Error(detail && detail.message ? detail.message : 'MCP Apps request failed');
+          if (detail && typeof detail.code === 'number') error.code = detail.code;
+          return error;
+        }
+
+        function request(method, params) {
+          const id = ++nextId;
+          return new Promise((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+            window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+          });
+        }
+
+        function notify(method, params) {
+          window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+        }
+
+        window.addEventListener('message', (event) => {
+          if (event.source !== window.parent || !event.data || event.data.jsonrpc !== '2.0') return;
+          const response = event.data;
+          if (Object.prototype.hasOwnProperty.call(response, 'id') && pending.has(response.id)) {
+            const requestHandlers = pending.get(response.id);
+            pending.delete(response.id);
+            if (Object.prototype.hasOwnProperty.call(response, 'result')) requestHandlers.resolve(response.result);
+            else requestHandlers.reject(errorFrom(response));
+            return;
+          }
+          const handlers = notificationHandlers.get(response.method);
+          if (handlers) handlers.forEach((handler) => handler(response.params));
+        });
+
+        window.FomoAppBridge = {
+          initialize: async () => {
+            const result = await request('ui/initialize', {
+              appInfo: { name: 'fomo-kernel-codex-ui-probe', version: '0.1.0' },
+              appCapabilities: {},
+              protocolVersion: '2026-01-26'
+            });
+            notify('ui/notifications/initialized');
+            return result;
+          },
+          requestTool: (name, arguments_) => request('tools/call', { name, arguments: arguments_ }),
+          onNotification: (method, handler) => {
+            const handlers = notificationHandlers.get(method) || [];
+            handlers.push(handler);
+            notificationHandlers.set(method, handlers);
+          }
+        };
+      })();
+    </script>
     <script>
       let latest = null;
+      const status = document.querySelector('#status');
+      const bridge = window.FomoAppBridge;
+
+      function setStatus(state, text) {
+        status.dataset.state = state;
+        status.textContent = text;
+      }
+
       function render(output) {
         if (!output || output.demo !== true) return;
         latest = output;
@@ -51,24 +117,21 @@
           button.addEventListener('click', () => submit(choice.value)); choices.appendChild(button);
         }
       }
-      async function callTool(name, args) {
-        if (window.openai && typeof window.openai.callTool === 'function') return window.openai.callTool(name, args);
-        throw new Error('Apps bridge unavailable');
-      }
       async function submit(choice) {
         if (!latest) return;
         const buttons = [...document.querySelectorAll('button')]; buttons.forEach((button) => { button.disabled = true; });
-        const status = document.querySelector('#status');
+        setStatus('pending', latest.copy.submitting || 'Submitting synthetic choice…');
         try {
-          const result = await callTool('fomo_submit_demo_choice', { locale: latest.locale, question_id: 'codex_ui_probe_choice', choice });
-          const selected = result && result.structuredContent ? result.structuredContent.choice : choice;
-          status.textContent = `${latest.copy.selected || ''}${selected}`;
+          const result = await bridge.requestTool('fomo_submit_demo_choice', { locale: latest.locale, question_id: 'codex_ui_probe_choice', choice });
+          const selected = result && result.structuredContent && result.structuredContent.choice;
+          if (!selected) throw new Error('Missing structured demo choice');
+          setStatus('success', `${latest.copy.selected || ''}${selected}`);
         } catch (error) {
-          status.textContent = latest.copy.unavailable || latest.copy.submitError || String(error);
+          setStatus('error', `${latest.copy.submitError || 'Submission failed: '}${error.message || String(error)}`);
         } finally { buttons.forEach((button) => { button.disabled = false; }); }
       }
-      render(window.openai && window.openai.toolOutput);
-      window.addEventListener('openai:set_globals', (event) => render(event.detail && event.detail.globals && event.detail.globals.toolOutput), { passive: true });
+      bridge.onNotification('ui/notifications/tool-result', (result) => render(result && result.structuredContent));
+      bridge.initialize().catch((error) => setStatus('error', `MCP Apps bridge error: ${error.message || String(error)}`));
     </script>
   </body>
 </html>
