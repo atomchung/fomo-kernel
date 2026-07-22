@@ -1923,6 +1923,13 @@ def _authoring_contract(route):
                                 "neutral coverage facts; do not frame them as the "
                                 "user's negligence, and do not make them the central "
                                 "judgment of the headline or mirror"),
+            "synthesis": ("optional (#345); two to three sentences giving the period's "
+                          "single most important cross-section judgment as the card's "
+                          "closing block, after the next-step rule; it must connect facts "
+                          "that otherwise sit in separate sections into one point of view "
+                          "and must never restate a number, tile, or sentence already on "
+                          "the card; omit it entirely, rather than a placeholder, when "
+                          "nothing rises to that synthesis"),
         },
     }
     if route == "snapshot_review":

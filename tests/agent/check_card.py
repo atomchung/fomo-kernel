@@ -12,7 +12,10 @@ card-spec.md);S 系列(結構檢)= docs/output-contract.md §8。改那些文件
 
 S 系列只對 v2 renderer 私卡生效(front matter 含 privacy: private + language);
 v1 人話卡 / 任意文字不出 S findings,舊 eval case 行為零變:
-  S-1  keynote + 四大 block 標題齊且序正(標題取自 copy/<locale>.json blocks)
+  S-1  keynote + 四大 block 標題齊且序正(標題取自 copy/<locale>.json blocks);
+       第 5 個選填 block(結尾 synthesis,narrative.synthesis,#345)沒寫就不該
+       出現——出現時標題必須恰為 copy.blocks.summary 且排在四大 block 之後,
+       絕不能插在中間或取代任一個既有 block
   S-2  模組點亮與 §3 資料前提表一致(需 --context 給 card/state JSON;沒給則降級跳過)。
        vs_market 認月度 gate 訊號(engine_card.vs_market_gate,#284):gated 卡
        整段不出且無 gap note 才過;未 gated 而前提在,段落必須真的上卡
@@ -164,7 +167,16 @@ def _s1_block_titles(body: str, copy: dict) -> "Finding":
     # snapshot 路線的 Block 1 標題採 snapshot_numbers 覆寫(§3 snapshot row)。
     snapshot_first = copy.get("snapshot_numbers")
     ok_first = titles[:1] and titles[0] in {expected[0], snapshot_first}
-    ok = bool(ok_first) and titles[1:] == expected[1:] and len(titles) == 4
+    core_ok = bool(ok_first) and titles[1:4] == expected[1:]
+    # #345: an optional 5th block (closing synthesis) may follow Next step
+    # when narrative.synthesis is authored — output-contract.md §2. It never
+    # replaces or reorders the four mandatory blocks above, so the only two
+    # legal title-list lengths are 4 (absent) or 5 (present, and its title
+    # must be exactly copy.blocks.summary — never any other trailing title).
+    summary_title = blocks.get("summary")
+    tail_ok = len(titles) == 4 or (len(titles) == 5 and bool(summary_title)
+                                    and titles[4] == summary_title)
+    ok = core_ok and tail_ok
     headline = any(line.startswith("# ") for line in body.splitlines())
     evidence = "" if (ok and headline) else f"標題序:{titles!r}" + ("" if headline else ";缺 keynote(# 行)")
     return Finding("S-1", ok and headline, "keynote + 四大 block 齊且序正", evidence)

@@ -21,7 +21,8 @@ class RenderError(ValueError):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COPY_DIR = os.path.join(os.path.dirname(HERE), "copy")
-ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty"}
+ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty",
+                     "synthesis"}
 DIMENSION_ID_BY_LEGACY_LABEL = {
     "出場紀律": "exit_discipline",
     "部位 sizing": "position_sizing",
@@ -2346,14 +2347,19 @@ def _card_structure(bundle):
     HTML artifact) consume this single assembly, so the two surfaces cannot
     drift into different content-policy decisions. The section skeleton is the
     output contract's canonical shape (docs/output-contract.md §2): keynote
-    preamble plus exactly four blocks — Performance, Key trades, Risks and
-    problems, Next step — with block titles from ``copy.blocks``. Block
-    content is ``(kind, payload)`` tuples: ``paragraph`` / ``bullets`` /
-    ``grounding`` line lists, ``indicators`` (Block-1 line and attr-row
-    items — a mixed-market item may carry a ``market`` grouping key, §2/§9),
-    ``footnote`` (every triggered honesty sentence, 2026-07-22 ruling §4),
-    ``rows`` (instrument spine with attached sub-lines), ``panel``
-    (strength/hole/rule), and ``improve`` (prescription rows)."""
+    preamble plus four mandatory blocks — Performance, Key trades, Risks and
+    problems, Next step — with block titles from ``copy.blocks``. An optional
+    5th block, the closing synthesis (#345, ``narrative.synthesis``), appends
+    after Next step only when the agent authors it; when absent it is not in
+    ``sections`` at all — no header, no placeholder, unlike the four mandatory
+    blocks above, which always render something (falling back to a neutral
+    one-line note rather than disappearing). Block content is ``(kind,
+    payload)`` tuples: ``paragraph`` / ``bullets`` / ``grounding`` line lists,
+    ``indicators`` (Block-1 line and attr-row items — a mixed-market item may
+    carry a ``market`` grouping key, §2/§9), ``footnote`` (every triggered
+    honesty sentence, 2026-07-22 ruling §4), ``rows`` (instrument spine with
+    attached sub-lines), ``panel`` (strength/hole/rule), and ``improve``
+    (prescription rows)."""
     language = bundle.get("language") or "zh-TW"
     copy = load_copy(language)
     narrative = validate_narrative(bundle.get("narrative") or {})
@@ -2399,6 +2405,19 @@ def _card_structure(bundle):
         {"id": "next", "title": blocks_copy.get("next", ""),
          "blocks": _next_block(bundle, copy, facts, state, snapshot)},
     ]
+    # #345: optional 5th block — a closing synthesis appended after Next step,
+    # present only when the agent authors narrative.synthesis. Unlike the four
+    # mandatory blocks above (which always render, falling back to a neutral
+    # one-line note when data is missing), this section has no fallback text:
+    # an absent or empty field means the section does not exist at all — no
+    # header, no placeholder — the same clean-degradation shape as any other
+    # unauthored optional narrative field. validate_narrative already
+    # guarantees a present value is a non-empty, digit-free string, so a plain
+    # truthiness check is sufficient here.
+    synthesis = narrative.get("synthesis")
+    if synthesis:
+        sections.append({"id": "summary", "title": blocks_copy.get("summary", ""),
+                         "blocks": [("paragraph", [synthesis])]})
 
     return {
         "session_id": bundle.get("session_id"),

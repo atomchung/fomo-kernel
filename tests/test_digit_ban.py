@@ -194,7 +194,7 @@ def test_schema_dropped_divergent_pattern_and_points_at_code():
     # $comment may still discuss patterns, so match the quoted JSON key.)
     assert '"pattern"' not in raw, "narrative schema still declares a regex pattern (divergence source)"
     schema = json.loads(raw)
-    for name in ("headline", "mirror", "counterfactual", "rule_rationale", "strength"):
+    for name in ("headline", "mirror", "counterfactual", "rule_rationale", "strength", "synthesis"):
         assert "pattern" not in schema["properties"][name], f"{name} still carries a digit pattern"
     assert "pattern" not in schema["properties"]["honesty"]["additionalProperties"]
     # The schema now names the authoritative gate.
@@ -203,6 +203,57 @@ def test_schema_dropped_divergent_pattern_and_points_at_code():
     assert schema["$schema"].endswith("2020-12/schema")
     assert schema["required"] == ["headline", "mirror"]
     assert schema["additionalProperties"] is False
+
+
+# ─────────────── G. #345 closing synthesis: same gate, still optional ──────────
+
+def test_synthesis_is_declared_optional_in_schema_and_code():
+    """#345: narrative.synthesis is a new field (not an extension of mirror or
+    strength), but it must not become a second required field — the closing
+    block is optional and degrades cleanly when absent."""
+    assert "synthesis" in cr.ALLOWED_NARRATIVE
+    schema = json.loads(open(SCHEMA, encoding="utf-8").read())
+    assert "synthesis" in schema["properties"]
+    assert schema["properties"]["synthesis"]["type"] == "string"
+    assert schema["properties"]["synthesis"]["minLength"] == 1
+    assert "synthesis" not in schema["required"], \
+        "the closing synthesis must stay optional, unlike headline/mirror"
+    # A legal minimal narrative (no synthesis at all) must still validate.
+    cr.validate_narrative(_narr())
+
+
+def test_synthesis_field_rejects_cjk_and_english_quantity_claims():
+    """The digit-ban gate is generic over every narrative key (validate_narrative
+    loops all of ``narrative`` except ``honesty``), so a brand-new field gets
+    the same enforcement automatically — pin that explicitly for #345 rather
+    than relying only on coverage of the older fields."""
+    for text in CJK_CLAIMS[:6] + EN_CLAIMS[:6]:
+        try:
+            cr.validate_narrative(_narr(synthesis=text))
+        except cr.RenderError as exc:
+            assert "numeric claim" in str(exc), f"unexpected message for {text!r}: {exc}"
+        else:
+            raise AssertionError(f"validate_narrative accepted a quantity claim in synthesis: {text!r}")
+
+
+def test_synthesis_field_rejects_ascii_and_fullwidth_digits():
+    for text in ["30%", "concentration at 30%", "報酬 ３０"]:
+        try:
+            cr.validate_narrative(_narr(synthesis=text))
+        except cr.RenderError as exc:
+            assert "contains digits" in str(exc), f"unexpected message for {text!r}: {exc}"
+        else:
+            raise AssertionError(f"validate_narrative accepted digits in synthesis: {text!r}")
+
+
+def test_synthesis_field_accepts_clean_qualitative_prose():
+    """A legitimate closing synthesis — qualitative, digit-free, no spelled-out
+    quantity — must validate without raising."""
+    clean = ("Concentration is what defined this period, and it is still the "
+             "single biggest swing factor going forward, not a footnote to it.")
+    cr.validate_narrative(_narr(synthesis=clean))
+    clean_zh = "這期的處境由集中度主導，往前看它仍是最大的擺動因子，不是附註。"
+    cr.validate_narrative(_narr(synthesis=clean_zh))
 
 
 def test_code_gate_catches_what_the_old_ascii_pattern_missed():

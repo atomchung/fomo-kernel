@@ -12,6 +12,11 @@
     "counterfactual": {"type": "string", "minLength": 1},
     "rule_rationale": {"type": "string", "minLength": 1},
     "strength": {"type": "string", "minLength": 1},
+    "synthesis": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional closing synthesis (#345): two to three sentences that condense the period's single most important cross-section judgment into one point of view, rendered as the card's final section, after Block 4 (Next step). It must connect facts that otherwise sit in separate sections (for example: concentration level + dollar exposure + what a drawdown would mean) into one conclusion — it must never restate a number, tile, or sentence that already appears elsewhere on the card. Omit the field entirely, rather than writing a placeholder, when nothing rises to that synthesis; the renderer drops the section with no header when the field is absent."
+    },
     "honesty": {
       "type": "object",
       "description": "One qualitative sentence per triggered honesty-ledger key; preview fails unless every required_honesty_keys entry is covered (#82: conditions live in the engine, wording stays with the agent). Digit-ban is enforced by card_renderer.validate_narrative, not by a schema pattern (see top-level $comment).",

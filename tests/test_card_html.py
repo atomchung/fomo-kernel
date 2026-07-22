@@ -488,6 +488,81 @@ def test_keynote_and_four_blocks_in_order_on_both_surfaces():
         assert run["markdown"].count("# ") >= 1, "keynote headline missing"
 
 
+def _html_section_chunk(html_text, title):
+    """The full inner HTML for one ``<div class="sec"><h2>title</h2>...</div>``
+    section, keyed by its heading text (mirrors ``_hole_panel_chunk`` above)."""
+    marker = f"<h2>{html.escape(title)}</h2>"
+    return html_text.split(marker, 1)[1].split("</div>", 1)[0]
+
+
+def test_closing_synthesis_renders_as_fifth_block_after_next_step():
+    """#345: narrative.synthesis, when authored, appends as a 5th block after
+    Next step on both surfaces — a plain paragraph (no [mark] bracket, no KPI
+    tile, no new CSS class), never inserted between or reordering the four
+    mandatory blocks the 2026-07-21 ruling fixed."""
+    synthesis_text = ("Concentration is what defined this period, and it is "
+                      "still the single biggest swing factor going forward.")
+    for language in ("zh-TW", "en"):
+        bundle = copy.deepcopy(_session(language)["bundle"])
+        bundle["narrative"]["synthesis"] = synthesis_text
+        markdown = card_renderer.render_private(bundle)
+        html_out = card_renderer.render_html(bundle)
+
+        blocks = card_renderer.load_copy(language)["blocks"]
+        expected = [blocks[key] for key in ("performance", "trades", "risks", "next")] \
+            + [blocks["summary"]]
+        md_titles = [line[3:].strip() for line in markdown.splitlines()
+                     if line.startswith("## ")]
+        assert md_titles == expected, f"{language} md blocks with synthesis: {md_titles}"
+        html_titles = re.findall(r"<h2>(.*?)</h2>", html_out)
+        assert html_titles == expected, f"{language} html blocks with synthesis: {html_titles}"
+
+        summary_md = _markdown_section(markdown, blocks["summary"])
+        assert synthesis_text in summary_md
+        assert not summary_md.strip().startswith("["), \
+            "closing synthesis must render as plain prose, not a [mark]-style panel"
+
+        summary_html = _html_section_chunk(html_out, blocks["summary"])
+        assert f"<p>{html.escape(synthesis_text)}</p>" in summary_html, \
+            "closing synthesis must render as an unadorned <p>, reusing existing markup"
+        assert 'class="panel' not in summary_html, \
+            "closing synthesis is prose, not a strength/hole/rule panel"
+        assert 'class="grid4"' not in summary_html and 'class="trow"' not in summary_html, \
+            "closing synthesis must not invent a new KPI-tile or instrument-bar shape"
+
+
+def test_closing_synthesis_absent_renders_no_fifth_block():
+    """#345 fail-closed: without narrative.synthesis (the default v2 fixture,
+    and any older committed session), the card renders exactly the four
+    mandatory blocks on both surfaces — no Summary/總結 header and no empty
+    placeholder — checked both at the rendered-surface level and directly on
+    the _card_structure assembly both surfaces share."""
+    for language in ("zh-TW", "en"):
+        run = _session(language)
+        blocks = card_renderer.load_copy(language)["blocks"]
+        assert blocks["summary"] not in run["markdown"]
+        assert blocks["summary"] not in run["html"]
+        structure = card_renderer._card_structure(run["bundle"])
+        assert [section["id"] for section in structure["sections"]] == \
+            ["performance", "trades", "risks", "next"], \
+            "narrative.synthesis absent must not add a 'summary' section"
+
+
+def test_closing_synthesis_empty_string_is_rejected_not_silently_dropped():
+    """An explicit empty-string synthesis is invalid input under the same rule
+    every other optional narrative field already follows (validate_narrative
+    rejects any blank value) — it fails validation loudly rather than being
+    treated as a silent, well-formed 'omit this field'."""
+    bundle = copy.deepcopy(_session("zh-TW")["bundle"])
+    bundle["narrative"]["synthesis"] = ""
+    try:
+        card_renderer._card_structure(bundle)
+    except card_renderer.RenderError as exc:
+        assert "synthesis" in str(exc)
+    else:
+        raise AssertionError("an empty-string synthesis must fail validation, not render silently")
+
+
 def test_zh_and_en_cards_light_the_same_blocks_from_the_same_state():
     """output-language.md §6 structure-equivalence: same state, both locales
     light the same blocks and block kinds — a locale gap is a defect."""
@@ -1105,6 +1180,9 @@ def main():
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,
         test_keynote_and_four_blocks_in_order_on_both_surfaces,
+        test_closing_synthesis_renders_as_fifth_block_after_next_step,
+        test_closing_synthesis_absent_renders_no_fifth_block,
+        test_closing_synthesis_empty_string_is_rejected_not_silently_dropped,
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
         test_all_honesty_collapses_into_block1_footnote_one_per_line,
         test_price_source_rides_the_footnote_ahead_of_unrealized_coverage,
