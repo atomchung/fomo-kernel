@@ -140,7 +140,8 @@
     "acct_perf_basis": "帳戶績效有部分成本或匯率近似，需保留不確定性。",
     "accounting_reconciliation": "匯入交易未能重現快照錨定的目前持倉，因此這次不評分部位大小、分散與未實現損益。",
     "snapshot_reconciliation": "這份持倉宣告已與帳本推導持倉對帳；一致即標記為已對帳，若有差異則以明確的調整事件保留紀錄，並改以較新宣告為記帳錨點，不猜測差異原因。",
-    "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。"
+    "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。",
+    "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。"
   },
   "instrument_tags": {
     "suspected_averaging_down_losing": "✗疑似凹單:只在虧損加碼 {n_adds} 次、現虧 {cur_pct}(待你確認 thesis)",

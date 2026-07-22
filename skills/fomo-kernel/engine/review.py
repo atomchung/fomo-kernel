@@ -1645,10 +1645,17 @@ def _problem_snapshot(root, state):
     Offline and read-only: prepare must be able to show trends and rule verdicts
     without mutating the book (appending happens at finalize via projections).
     Assembly lives in problems.snapshot so the CLI and this path cannot drift.
+
+    #292: also feeds this period's not-yet-appended draft problem_events (plus
+    its date_end) so `rules_check[*].draft_breach` can flag an in-progress
+    breach of a just-committed rule — still read-only, since draft_events are
+    only compared, never written to problems.jsonl here.
     """
     payload = problems.snapshot(os.path.join(root, "problems.jsonl"),
                                 os.path.join(root, "rules.jsonl"),
-                                today=_review_date(state).isoformat(), span_aware=True)
+                                today=_review_date(state).isoformat(), span_aware=True,
+                                draft_events=state.get("problem_events"),
+                                draft_week=state.get("date_end"))
     if not payload["events_n"] and not payload["marks_n"]:
         return None
     return payload
@@ -1772,6 +1779,58 @@ def _authoring_contract(route):
     return contract
 
 
+def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
+    """#292: surface an in-period breach of the rule the user committed to last time.
+
+    `problems.check_rules` only writes `last_breach` once a *finalized* review
+    boundary (a committed mark) closes over the breaching event; a breach that
+    happens inside the still-open current period never crosses that boundary
+    until the *next* review commits its own mark. `_rule_breach_questions`
+    reads only `last_breach`, so it silently skips a same-period violation of
+    a rule the user just promised to keep — the card ships with zero
+    acknowledgment (#292). This reads the already-computed, read-only
+    `draft_breach` (problems.py's additive draft-window judgment, keyed off
+    this period's not-yet-appended problem_events) and, on a match against the
+    rule `prior_commitment` names, appends one honesty_ledger entry. That entry
+    flows into `required_honesty_keys` unchanged, so the existing
+    narrative.honesty gate in `_draft_bundle` forces the agent to author one
+    sentence about it — no new checker, and `last_breach`/`held_streak`/
+    `verdict` are never touched.
+
+    problem_key + text is a two-part match because one problem_key can carry
+    more than one historical rule line (revisions); `session.PKEY` maps the
+    commitment's metric_key the same way `session.py`'s finalize path derives
+    a rules.jsonl row's problem_key from that same commitment, so the join is
+    exact for the immediately-following review regardless of revision history.
+
+    Returns `card` unchanged when nothing matches. On a match, returns a *new*
+    dict with a freshly built honesty_ledger list — mirrors `_gate_current_view`
+    (review.py) building a new list and reassigning rather than appending to
+    the existing list object in place, so no caller-held reference is mutated.
+    """
+    if not prior_commitment or not problem_stats:
+        return card
+    problem_key = session.PKEY.get(prior_commitment.get("metric_key"))
+    if not problem_key:
+        return card
+    rule_text = prior_commitment.get("rule")
+    if not rule_text:
+        return card
+    for rule in problem_stats.get("rules_check") or []:
+        if (rule.get("problem_key") != problem_key
+                or rule.get("text") != rule_text
+                or not rule.get("draft_breach")):
+            continue
+        ledger = list(card.get("honesty_ledger") or [])
+        ledger.append({
+            "key": "prior_commitment_breach",
+            "status": "draft",
+            "data": {"problem_key": problem_key, "week": rule["draft_breach"].get("week")},
+        })
+        return {**card, "honesty_ledger": ledger}
+    return card
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None, revisit_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None):
@@ -1810,6 +1869,11 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # existing route-level suppression — no second gate layered on top.
         card = {**card, "vs_market_gate": _vs_market_gate(
             root, state.get("date_end"), exclude_session_id=session_id)}
+    # #292: read-only, additive check against this period's draft problem_events —
+    # must run after problem_stats/previous are both available and before the
+    # honesty_ledger is read into required_honesty_keys below, so a match cannot
+    # be silently dropped from the agent's authoring gate.
+    card = _flag_prior_commitment_breach(card, problem_stats, (previous or {}).get("commitment"))
     required_honesty_keys = [x.get("key") for x in card.get("honesty_ledger") or []]
     if card_renderer.vs_market_suppressed(card):
         # The ledger keeps recording what the engine triggered; the agent is

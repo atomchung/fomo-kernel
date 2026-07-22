@@ -245,6 +245,60 @@ def test_check_rules_three_way_and_streak():
     assert out2[0]["last_breach"]["week"] == "2026-07-11"
 
 
+def test_check_rules_draft_breach_is_additive_and_read_only():
+    """#292: draft_events/draft_week must only ever add a `draft_breach` entry
+    — never touch verdict/held_streak/last_breach — and must not fire once the
+    window it would cover is already absorbed by a real, finalized mark."""
+    events = [{"type": "event", "key": "avgdown_breach", "week": "2026-06-10", "ticker": "PLTR"}]
+    marks = [{"week": "2026-06-13", "opportunities": {"avgdown_breach": True}},
+             {"week": "2026-06-20", "opportunities": {"avgdown_breach": True}},
+             {"week": "2026-06-27", "opportunities": {"avgdown_breach": False}},
+             {"week": "2026-07-04", "opportunities": {"avgdown_breach": True}}]
+    tracking = [{"rule_id": "r1", "text": "虧損不加碼", "problem_key": "avgdown_breach"}]
+
+    baseline = pb.check_rules(tracking, events, marks)
+    assert baseline[0]["draft_breach"] is None, \
+        "not passing draft_events/draft_week must leave draft_breach at its default None " \
+        "(byte-identical to the pre-#292 3-arg call)"
+    assert (baseline[0]["verdict"], baseline[0]["held_streak"], baseline[0]["last_breach"]) == \
+        ("held", 2, {"week": "2026-06-13", "event_count": 1,
+                     "events": [{"type": "event", "key": "avgdown_breach",
+                                "week": "2026-06-10", "ticker": "PLTR"}]})
+
+    draft_events = [{"key": "avgdown_breach", "week": "2026-07-08", "ticker": "MU", "amount": -500}]
+    with_draft = pb.check_rules(tracking, events, marks,
+                                draft_events=draft_events, draft_week="2026-07-11")
+    assert with_draft[0]["verdict"] == baseline[0]["verdict"]
+    assert with_draft[0]["held_streak"] == baseline[0]["held_streak"]
+    assert with_draft[0]["last_breach"] == baseline[0]["last_breach"], \
+        "a draft-window event must never rewrite the finalized last_breach"
+    assert with_draft[0]["draft_breach"] == {
+        "week": "2026-07-11", "event_count": 1,
+        "events": [{"key": "avgdown_breach", "week": "2026-07-08", "ticker": "MU", "amount": -500}],
+    }
+
+    # draft_week <= the last mark this rule has already been scored through
+    # (prev_week, here "2026-07-04") must not produce a draft_breach, even
+    # with a draft event that would otherwise match by key and date.
+    not_after = pb.check_rules(tracking, events, marks,
+                               draft_events=draft_events, draft_week="2026-07-04")
+    assert not_after[0]["draft_breach"] is None, \
+        "draft_week == prev_week (already covered by a real mark) must not fire"
+    earlier = pb.check_rules(tracking, events, marks,
+                             draft_events=draft_events, draft_week="2026-06-20")
+    assert earlier[0]["draft_breach"] is None, "draft_week before prev_week must not fire"
+
+    # draft_week alone cannot fabricate a breach without a matching draft event.
+    empty_window = pb.check_rules(tracking, events, marks,
+                                  draft_events=[], draft_week="2026-07-11")
+    assert empty_window[0]["draft_breach"] is None
+    wrong_key = pb.check_rules(
+        tracking, events, marks,
+        draft_events=[{"key": "oversize", "week": "2026-07-08", "ticker": "MU"}],
+        draft_week="2026-07-11")
+    assert wrong_key[0]["draft_breach"] is None, "a draft event under a different key must not match"
+
+
 def test_rule_created_lower_bound():
     """建立當期是 baseline；舊事件與促成規矩的同日事件都不算規矩生效後破戒。"""
     events = [
