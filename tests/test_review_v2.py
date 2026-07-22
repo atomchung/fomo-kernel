@@ -2460,7 +2460,7 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
             assert hashlib.sha256((session_dir / name).read_bytes()).hexdigest() == digest
         private = (session_dir / "card-private.md").read_text(encoding="utf-8")
         public = (session_dir / "card-public.md").read_text(encoding="utf-8")
-        assert "PLTR" in private and "$-300" in private and "session_id" in private
+        assert "PLTR" in private and "-$300" in private and "session_id" in private
         assert "已實現盈虧比 1.4" in private and "NVDA 20%" in private and "AMD -10%" in private
         assert "缺費用率資料" in private, "agent-authored honesty sentence must reach the card"
         assert "資料邊界" not in private and "Evidence boundaries" not in private, \
@@ -2612,21 +2612,21 @@ def test_display_currency_converts_aggregate_and_keeps_trade_original_currency()
     zh_card, _ = review_engine._apply_display_currency(base, state, None, "zh-TW")
     assert zh_card["currency_meta"]["display_currency"] == "TWD"
     overview = "\n".join(card_renderer._overview_lines(zh_card, "zh-TW"))
-    assert "TWD -9,600" in overview and "TWD +6,400" in overview and "TWD -16,000" in overview
+    assert "-TWD 9,600" in overview and "+TWD 6,400" in overview and "-TWD 16,000" in overview
     trades = "\n".join(card_renderer._trade_lines(zh_card, "zh-TW"))
-    assert "2330.TW" in trades and "TWD +1,200" in trades
-    assert "AAPL" in trades and "$-40" in trades, \
+    assert "2330.TW" in trades and "+TWD 1,200" in trades
+    assert "AAPL" in trades and "-$40" in trades, \
         "per-trade P&L must retain brokerage currency instead of the aggregate/display label"
 
     en_card, _ = review_engine._apply_display_currency(base, state, None, "en")
     assert en_card["currency_meta"]["display_currency"] == "USD"
-    assert "$-300" in "\n".join(card_renderer._overview_lines(en_card, "en"))
+    assert "-$300" in "\n".join(card_renderer._overview_lines(en_card, "en"))
 
     single = {"overview": base["overview"],
               "currency_meta": {"mixed": False, "aggregate_currency": "USD"}}
     single_zh, _ = review_engine._apply_display_currency(single, {}, None, "zh-TW")
     assert single_zh["currency_meta"]["display_currency"] == "USD"
-    assert "$-300" in "\n".join(card_renderer._overview_lines(single_zh, "zh-TW")), \
+    assert "-$300" in "\n".join(card_renderer._overview_lines(single_zh, "zh-TW")), \
         "single-market cards stay in their own currency regardless of locale"
 
 
@@ -2645,7 +2645,7 @@ def test_display_currency_uses_dated_cache_then_falls_back_to_original_buckets()
     previous = {"date_end": "2026-07-10", "currency_meta": {"fx": {"TWD": 1 / 31}}}
     cached, cached_state = review_engine._apply_display_currency(card, state, previous, "zh-TW")
     assert cached["currency_meta"]["display_fx_source"] == "cached"
-    assert "TWD +310" in "\n".join(card_renderer._overview_lines(cached, "zh-TW"))
+    assert "+TWD 310" in "\n".join(card_renderer._overview_lines(cached, "zh-TW"))
     note = card_renderer._currency_note(cached, "zh-TW")
     assert "2026-07-10" in note and "上次對帳匯率" in note
 
@@ -2676,15 +2676,15 @@ def test_display_currency_rejects_approximate_aggregate_and_single_currency_iden
     }
     state = {"currency_meta": dict(incomplete["currency_meta"])}
     legacy_text = "\n".join(card_renderer._overview_lines(incomplete, "en"))
-    assert "EUR" in legacy_text and "$+1,100" not in legacy_text, \
+    assert "EUR" in legacy_text and "+$1,100" not in legacy_text, \
         "re-rendering a pre-display-currency bundle must also fail closed on held FX gaps"
     for language in ("en", "zh-TW"):
         resolved, _ = review_engine._apply_display_currency(incomplete, state, None, language)
         assert resolved["currency_meta"]["display_fx_source"] == "unavailable"
         assert resolved["currency_meta"]["display_fx_reason"] == "portfolio_fx_gap"
         text = "\n".join(card_renderer._overview_lines(resolved, language))
-        assert "EUR" in text and ("$+100" in text or "USD" in text)
-        assert "TWD +35,200" not in text and "$+1,100" not in text, \
+        assert "EUR" in text and ("+$100" in text or "USD" in text)
+        assert "+TWD 35,200" not in text and "+$1,100" not in text, \
             "a 1:1 approximate engine aggregate must never be relabeled or converted"
         assert "held-currency" in card_renderer._currency_note(resolved, "en")
 
@@ -5162,7 +5162,7 @@ def test_vs_market_month_gate_first_second_and_next_month():
                 and "風險調整後 alpha" not in card2 and "同期 SPY" not in card2), \
             "gated review renders no vs-market line"
         assert _VS_NOTE_ZH not in card2, "§3: month-gated -> simply absent, no gap note"
-        assert "帳面總損益 $-300" in card2 and "本期算不出年化報酬" in card2, \
+        assert "帳面總損益 -$300" in card2 and "本期算不出年化報酬" in card2, \
             "absolute P&L and the annualized module keep their own behavior"
         for sentence in list(_VS_ZH_COPY_HONESTY.values()) + [
                 _VS_HONESTY_SENTENCES["alpha_credibility"],

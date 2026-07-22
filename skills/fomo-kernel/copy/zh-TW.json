@@ -57,7 +57,8 @@
     "excess": "相對大盤",
     "excess_sub": "β {beta}",
     "alpha": "年化 α",
-    "alpha_unreliable": "統計上還不可信"
+    "alpha_unreliable": "統計上還不可信",
+    "spark_caption": "{start} ~ {end} · 高點 {peak} · 低點 {trough}"
   },
   "dimensions": {
     "exit_discipline": "出場紀律",

@@ -49,6 +49,10 @@
     Do not reintroduce a prescription list here.
   - The pnl_curve sparkline uses engine `pnl_curve.points`. Use one thin line,
     colored only by the final sign. Omit the SVG when `pnl_curve.note` is nonempty.
+    A `.cap` line rides under it with the start~end date range plus the
+    peak/trough of the same points (#312) — no axis, just enough context that
+    the line is interpretable; a missing/malformed point date drops only the
+    caption, never the line.
   - The rule section has two states: show two or three candidates before the user
     chooses; after selection, show `.picked` plus one short `.alt` note.
 
@@ -178,6 +182,7 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
         <svg class="spark pos" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0,25 L12,23 L24,24 L36,17 L48,19 L60,11 L72,13 L84,7 L96,9 L108,4 L120,2"/>
         </svg>
+        <p class="cap">2024-01-12 ~ 2024-12-03 · peak +321% · trough +0%</p>
       </div>
       <div class="m"><p class="lbl">Active payoff ratio</p><p class="val">2.9</p><p class="sub">Average win $2,851 vs loss $1,000</p></div>
       <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market movement</p></div>

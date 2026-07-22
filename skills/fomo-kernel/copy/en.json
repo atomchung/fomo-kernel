@@ -57,7 +57,8 @@
     "excess": "Benchmark excess",
     "excess_sub": "β {beta}",
     "alpha": "Annualized alpha",
-    "alpha_unreliable": "not yet statistically credible"
+    "alpha_unreliable": "not yet statistically credible",
+    "spark_caption": "{start} ~ {end} · peak {peak} · trough {trough}"
   },
   "dimensions": {
     "exit_discipline": "exit discipline",

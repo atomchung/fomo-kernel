@@ -7,11 +7,13 @@ asserts the preview/finalize HTML artifacts satisfy the renderer contract in
 card-spec.md "Rendering": structured markup rather than a whole-document
 ``<pre>`` dump, self-contained (zero external requests), light/dark aware,
 exactly one widget-fragment pair, localized from copy assets, numerically
-consistent with the canonical Markdown card, and sparkline-conditional.
+consistent with the canonical Markdown card, and sparkline-conditional (#312:
+including its date-range / peak-trough caption).
 Doc-consistency assertions bind SKILL.md and the flows to
 references/card-delivery.md and keep card-template.html de-orphaned.
 """
 import copy
+import html
 import json
 import pathlib
 import re
@@ -24,7 +26,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import test_review_v2 as v2  # noqa: E402  (shared CLI fixtures and helpers)
 import card_renderer  # noqa: E402  (engine path added by test_review_v2)
 
-SVG_RE = re.compile(r"<svg.*?</svg>", re.S)
+SVG_RE = re.compile(r"<svg.*?</svg>(?:<p class=\"cap\">.*?</p>)?", re.S)
 CURVE_POINTS = [
     {"date": "2026-06-30", "cum_ret": 0.0},
     {"date": "2026-07-04", "cum_ret": -0.012},
@@ -175,7 +177,7 @@ def test_localized_title_from_copy_assets():
 
 def test_engine_numbers_match_markdown_card():
     run = _session("zh-TW")
-    for token in ("$-300", "$+200", "已實現盈虧比 1.4"):
+    for token in ("-$300", "+$200", "已實現盈虧比 1.4"):
         assert token in run["markdown"], f"engine value missing from Markdown: {token}"
         assert token in run["html"], f"engine value missing from HTML: {token}"
 
@@ -201,6 +203,37 @@ def test_sparkline_renders_only_with_curve_points():
     assert "<svg" not in html_note and "無資料" not in html_note, \
         "note-form curve must be omitted silently, not printed"
     assert SVG_RE.sub("", html) == html_note
+
+
+def test_sparkline_caption_shows_date_range_and_peak_trough():
+    """#312: the sparkline is not an unlabeled decoration — a caption under the
+    line gives the start~end date range plus the peak/trough of the very same
+    ``pnl_curve.points`` the path already traces (no invented number, no full
+    axis system)."""
+    for language, joiner in (("zh-TW", "高點"), ("en", "peak")):
+        html = _session(language)["html"]
+        trough_word = "低點" if language == "zh-TW" else "trough"
+        caption = (f'<p class="cap">2026-06-30 ~ 2026-07-14 · '
+                   f'{joiner} +3% · {trough_word} -1%</p>')
+        assert caption in html, f"{language} sparkline caption missing or wrong: {caption!r}"
+        # The caption must ride directly under the sparkline it describes, not
+        # float free somewhere else in the section.
+        assert re.search(r'<svg class="spark[^"]*".*?</svg>' + re.escape(caption), html, re.S), \
+            f"{language} caption must sit immediately after its own <svg>"
+
+    # A point missing only its date must drop the caption without touching the
+    # line itself — the fail-soft contract is per-field, not all-or-nothing.
+    run = _session("zh-TW")
+    bundle = copy.deepcopy(run["bundle"])
+    points = [dict(p) for p in bundle["engine_card"]["pnl_curve"]["points"]]
+    points[0].pop("date", None)
+    points[-1].pop("date", None)
+    bundle["engine_card"]["pnl_curve"] = {"points": points}
+    html_no_dates = card_renderer.render_html(bundle)
+    assert "<svg" in html_no_dates and 'class="cap"' not in html_no_dates, \
+        "points missing dates must drop only the caption, never the sparkline line"
+    assert SVG_RE.sub("", run["html"]) == SVG_RE.sub("", html_no_dates), \
+        "dropping the caption alone must not change any other text on the card"
 
 
 # #247: engine fields that light up the card-template rich layout. Values are
@@ -254,7 +287,7 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     # The headline already carries the primary-benchmark excess; comparator
     # rows are the alternatives only.
     assert "vs SPY" not in html and "vs QQQ" in html and "vs SOXX" in html
-    for token in ("$+76,647", "$-1,000", "+243pp", "+96pp", "撐得住嗎"):
+    for token in ("+$76,647", "-$1,000", "+243pp", "+96pp", "撐得住嗎"):
         assert token in html, f"missing from HTML: {token}"
         assert token in markdown, f"missing from Markdown: {token}"
     # Alpha below the credibility gate stays starred with its caveat.
@@ -268,6 +301,76 @@ def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
     assert 'class="grid4"' in html
     for marker in ('class="trow"', 'class="attr-head"', 'class="rx"'):
         assert marker not in html, f"unexpected rich block on plain fixture: {marker}"
+
+
+def test_kpi_dashboard_uses_grid4_metric_boxes_not_flat_paragraphs():
+    """#310: Total P&L, (realized) payoff ratio, benchmark excess, and
+    annualized alpha — the four metrics #310 named — must render as
+    card-template.html's `.grid4` row of labeled `.m` metric boxes, never
+    degrade to bare `<p>` paragraphs with no dashboard structure around them.
+
+    `<p class="lbl">` is emitted from exactly one place in the renderer (the
+    grid-tile builder in ``render_html``'s ``kpi_grid()``), so pinning the
+    literal ``<div class="m"><p class="lbl">...</p>`` shape for each named
+    metric locks the nesting, not just the numbers — a regression that kept
+    the numbers but dropped the surrounding grid/tile markup would still be
+    caught here, which is exactly the failure #310 reported."""
+    for language in ("zh-TW", "en"):
+        kpi_copy = card_renderer.load_copy(language)["kpi"]
+
+        # The plain/default fixture only lights pnl + payoff (no
+        # alpha_beta_breakdown data), but those two must still be tiles.
+        plain_html = _session(language)["html"]
+        assert plain_html.count('<div class="grid4">') == 1, \
+            f"{language} plain card must carry exactly one KPI dashboard row"
+        for key in ("pnl", "payoff"):
+            tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
+            assert tile_open in plain_html, \
+                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .grid4 .m box"
+
+        # The rich fixture also lights benchmark excess + annualized alpha —
+        # all four of #310's named metrics, all four as metric boxes.
+        rich_html = card_renderer.render_html(_rich_bundle(language))
+        assert rich_html.count('<div class="grid4">') == 1
+        assert rich_html.count('<div class="m">') == 4
+        for key in ("pnl", "payoff", "excess", "alpha"):
+            tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
+            assert tile_open in rich_html, \
+                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .grid4 .m box"
+
+
+def test_grid4_metric_box_css_stays_mirrored_with_card_template():
+    """CLAUDE.md "Mirrored surfaces": card-template.html's `.grid4`/`.m` rules
+    are the documented design intent for the KPI dashboard (#310); the runtime
+    `_HTML_WIDGET_CSS` must keep matching layout constraints for the classes
+    that give the dashboard its shape. This does not require byte-identical
+    CSS — the runtime legitimately renames every themed variable from the
+    template's `--foo` to a locally-aliased `--rc-foo` (defined once at the
+    top of `_HTML_WIDGET_CSS` as `var(--foo, <fallback>)`, per its own
+    docstring) and adds host-theming fallbacks and a standalone `.spark` rule
+    the static template never needed — only that every declaration the
+    template makes for these selectors still holds at runtime, so the two
+    cannot silently drift apart again."""
+    template = (SKILL / "card-template.html").read_text(encoding="utf-8")
+
+    def _rule(css_text, selector):
+        match = re.search(re.escape(selector) + r"\{([^}]*)\}", css_text)
+        assert match, f"selector {selector!r} not found"
+        return {prop.strip() for prop in match.group(1).split(";") if prop.strip()}
+
+    def _normalize(props):
+        # Undo the runtime's "--foo" -> "--rc-foo" theming alias so a rule
+        # copied verbatim from the template compares equal to its runtime form.
+        return {prop.replace("--rc-", "--") for prop in props}
+
+    # Selectors as written differ only in the `.rc ` ancestor prefix the
+    # runtime widget fragment always renders under; compare their bodies.
+    for selector in (".grid4", ".m", ".m .lbl", ".m .val", ".m .sub"):
+        template_props = _normalize(_rule(template, ".rc " + selector))
+        runtime_props = _normalize(_rule(card_renderer._HTML_WIDGET_CSS, ".rc " + selector))
+        missing = template_props - runtime_props
+        assert not missing, \
+            f"{selector} lost {missing!r} vs card-template.html (runtime has {runtime_props!r})"
 
 
 def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
@@ -829,8 +932,11 @@ def main():
         test_localized_title_from_copy_assets,
         test_engine_numbers_match_markdown_card,
         test_sparkline_renders_only_with_curve_points,
+        test_sparkline_caption_shows_date_range_and_peak_trough,
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
+        test_kpi_dashboard_uses_grid4_metric_boxes_not_flat_paragraphs,
+        test_grid4_metric_box_css_stays_mirrored_with_card_template,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,
         test_keynote_and_four_blocks_in_order_on_both_surfaces,
