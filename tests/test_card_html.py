@@ -350,10 +350,13 @@ def test_zh_and_en_cards_light_the_same_blocks_from_the_same_state():
     assert shapes["zh-TW"] == shapes["en"], shapes
 
 
-def test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote():
-    """Output contract §4: a hosted honesty sentence renders as one caveat
-    line under its indicator; unhosted sentences collapse into the Block-1
-    footnote; caveat lines never stack."""
+def test_all_honesty_collapses_into_block1_footnote_one_per_line():
+    """Output contract §4 (2026-07-22 ruling, reversing the 2026-07-21
+    per-number placement — real high-density accounts fragmented the
+    indicator list): every triggered honesty sentence collapses into the
+    Block-1 footnote, none of them ride an indicator line anymore, and the
+    footnote itself prints one bulleted sentence per line instead of
+    joining them into a run-on paragraph (2026-07-22 owner bullet pass)."""
     bundle = _rich_bundle("zh-TW")
     card = bundle["engine_card"]
     card["alpha_beta_breakdown"]["alpha_stat"] = {"alpha_ann": 0.33, "ci95": [0.10, 0.56]}
@@ -370,20 +373,89 @@ def test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote():
 
     block1 = _markdown_block(markdown, "zh-TW", "performance")
     lines = block1.splitlines()
-    caveat_rows = [index for index, line in enumerate(lines)
-                   if re.match(r"^[ \t]+[（(].*[)）][ \t]*$", line)]
-    assert caveat_rows, "hosted caveat line missing from Block 1"
-    assert all(b - a > 1 for a, b in zip(caveat_rows, caveat_rows[1:])), \
-        "caveat lines must never stack into a wall"
-    hosted = next(index for index in caveat_rows if "先當觀察" in lines[index])
-    assert "alpha" in lines[hosted - 1] or "α" in lines[hosted - 1], \
-        "the alpha caveat must sit directly under the alpha indicator line"
-    assert "資料備註：" in block1 and "對不攏" in block1, \
-        "unhosted honesty must collapse into the Block-1 footnote line"
-    assert '<p class="cavt">' in html and '<details class="fnote">' in html, \
-        "HTML must render the caveat line and the collapsed footnote"
-    assert "<details" in html.split("<h2>", 2)[1], \
-        "the footnote details element must live inside Block 1"
+    caveat_shaped = [line for line in lines if re.match(r"^[ \t]+[（(].*[)）][ \t]*$", line)]
+    assert not caveat_shaped, \
+        f"Block 1 must render zero inline caveat lines now, found: {caveat_shaped}"
+
+    label_line = "資料備註："
+    assert label_line in lines, "the footnote label must still live inside Block 1"
+    footnote_lines = [x for x in lines[lines.index(label_line) + 1:] if x.strip()]
+    assert footnote_lines[0].startswith("- ") and "先當觀察" in footnote_lines[0], \
+        "alpha_credibility must land in the footnote, bulleted, in ledger order"
+    assert footnote_lines[1].startswith("- ") and "對不攏" in footnote_lines[1], \
+        "accounting_reconciliation must land in the footnote too, bulleted, on its own line"
+    assert not any("先當觀察" in x and "對不攏" in x for x in lines), \
+        "footnote sentences must never be joined onto a single line"
+
+    block1_html = html.split("<h2>", 2)[1]
+    assert 'class="cavt"' not in block1_html, \
+        "Block 1 must not render any per-number caveat paragraph anymore"
+    assert '<details class="fnote">' in block1_html, \
+        "the collapsed footnote must still live inside Block 1"
+    fnote_html = block1_html.split('<details class="fnote">', 1)[1]
+    assert fnote_html.count("<ul>") == 1 and fnote_html.count("<li>") == 2, \
+        f"the HTML footnote must render one shared <ul> with one <li> per honesty sentence, got: {fnote_html}"
+    assert "先當觀察" in fnote_html and "匯入紀錄" in fnote_html, \
+        "both honesty sentences must appear in the HTML footnote"
+
+
+def test_vs_market_groups_by_market_label_only_when_mixed():
+    """Adjustment 2A (#276 2026-07-22 dogfood note: "台股和美股部分也比較混
+    亂，最好分模塊"): a mixed-market card labels each market's vs-market
+    cluster ([TW]/[US]) on both surfaces so the two markets read as separate
+    modules instead of interleaved prose, and bullets each market's lines
+    (2026-07-22 owner bullet pass) — reusing the existing <ul>/<li> markup,
+    grouped per market so the list never fragments into one <ul> per line.
+    A single-market card — the common case, and what every other test in
+    this file renders — has nothing to disambiguate and must show no such
+    label or bullet (regression guard for the 2+-market gate)."""
+    bundle = _rich_bundle("zh-TW")
+    bundle["engine_card"]["alpha_beta_breakdown"] = {
+        "by_market": {
+            "TW": {"bench": "^TWII", "port_tot": 0.20, "spy_tot": 0.10,
+                   "excess_vs_spy": 0.10, "beta": 1.10},
+            "US": {"bench": "SPY", "port_tot": 0.05, "spy_tot": 0.08,
+                   "excess_vs_spy": -0.03, "beta": 0.80},
+        },
+    }
+    markdown = card_renderer.render_private(bundle)
+    html = card_renderer.render_html(bundle)
+
+    block1 = _markdown_block(markdown, "zh-TW", "performance")
+    lines = block1.splitlines()
+    tw_at = next(i for i, x in enumerate(lines) if x == "[TW]")
+    us_at = next(i for i, x in enumerate(lines) if x == "[US]")
+    assert tw_at < us_at, "TW's cluster must precede US's (MARKET_BENCHMARKS order)"
+    assert lines[tw_at + 1].startswith("- ") and "TW 部位報酬" in lines[tw_at + 1], \
+        "the TW benchmark line must follow its [TW] label, bulleted"
+    assert lines[us_at + 1].startswith("- ") and "US 部位報酬" in lines[us_at + 1], \
+        "the US benchmark line must follow its [US] label, bulleted"
+
+    block1_html = html.split("<h2>", 2)[1]
+    assert block1_html.count('<p class="panel-label">[TW]</p>') == 1
+    assert block1_html.count('<p class="panel-label">[US]</p>') == 1
+    tw_label_at = block1_html.index('<p class="panel-label">[TW]</p>')
+    us_label_at = block1_html.index('<p class="panel-label">[US]</p>')
+    assert block1_html[tw_label_at:us_label_at].count("<ul>") == 1, \
+        "TW's benchmark line must render inside one shared <ul>, right after its [TW] label"
+    assert block1_html[us_label_at:].split("<p>", 1)[0].count("<ul>") == 1, \
+        "US's benchmark line must render inside its own <ul>, right after its [US] label"
+
+    # Single-market cards (every other test's fixture, and the common case)
+    # render no grouping label or bullet at all — there is only one market
+    # to show.
+    single_market = _rich_bundle("zh-TW")  # alpha_beta_breakdown.bench == "SPY", no by_market
+    single_md = card_renderer.render_private(single_market)
+    single_html = card_renderer.render_html(single_market)
+    assert "[TW]" not in single_md and "[US]" not in single_md, \
+        "a single-market card has nothing to disambiguate; no label should appear"
+    assert "panel-label\">[TW]" not in single_html and "panel-label\">[US]" not in single_html
+    # Scoped to Block 1: Block 2's ETF facts legitimately render their own
+    # unrelated <ul> (existing "bullets" kind, untouched by this change) —
+    # this assertion is about the vs-market line specifically, not the card.
+    single_block1_html = single_html.split("<h2>", 2)[1]
+    assert "<ul>" not in single_block1_html, \
+        "a single-market card must not bullet its (ungrouped) vs-market line either"
 
 
 # #279 i18n phase 1: the engine now emits stable codes + raw params for tags,
@@ -613,7 +685,8 @@ def main():
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,
         test_keynote_and_four_blocks_in_order_on_both_surfaces,
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
-        test_caveats_ride_their_numbers_and_leftovers_collapse_to_footnote,
+        test_all_honesty_collapses_into_block1_footnote_one_per_line,
+        test_vs_market_groups_by_market_label_only_when_mixed,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_render_zh_prescriptions_from_copy,
         test_coded_fields_render_localized_english_blocks,
