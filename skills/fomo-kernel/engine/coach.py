@@ -405,6 +405,7 @@ DATA_FILES = [
     ("headline_motives.jsonl", "jsonl", "headline 行為的使用者動機分類"),
     ("initial_theses.jsonl", "jsonl", "第一次復盤的進場動機分類(#291;純稽核紀錄,不影響 thesis 續接)"),
     ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
+    ("profile.json", "json", "標準版偏好(如自訂單一部位上限 max_position_pct;review.py set-cap 寫入,#324)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),

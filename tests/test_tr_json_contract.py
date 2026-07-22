@@ -45,6 +45,7 @@ TR_JSON_KEYS = {
 STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
+    "max_position_pct",                                 # #324:本次診斷/規矩採用的用戶自訂單一部位上限(None=通用預設)
     "rule", "insufficient_data", "holdings",
     "prev_end",                                          # #270:實際採用的 prev_end,供下次 review 自我別名排除鏈用
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)

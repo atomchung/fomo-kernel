@@ -28,7 +28,36 @@ SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
 RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股息零頭/1 股尾倉),不計入分散度/what-if/per-ticker 診斷/未分類計數(#172,owner 2026-07-12 拍板;相對佔比自適應帳戶規模,非絕對股數/金額)
-POSITION_CAP = 0.20        # 單一標的建議上限:通用基準(單檔歸零 = 帳戶 -20%),不依用戶歷史分佈個人化——那會把壞習慣正常化(owner 2026-07-22)。cut_oversize 規矩與卡片超標判定共用此值;三處口徑不對齊(dim_size 25% / prescribe 30% / 此處 20%)與「用戶自訂上限」在 #324 追蹤
+# ── 單一部位 sizing 閾值(#324:四處硬編對齊成單一事實源)────────────────────────
+# 對齊前三處口徑各吹各的號:診斷 25% / 處方 30% / severity 起算 20% → 25–30% 的倉被標成
+# 洞卻拿不到規矩(診斷與處方脫節)。對齊後:診斷=處方=同一條觸發線 OVERSIZE_TRIGGER,severity
+# 亦從該線起算;規矩「建議壓到」的目標 POSITION_CAP 可比觸發線更嚴(那是教練建議,不是觸發門檻)。
+# 通用基準,不依用戶歷史分佈個人化——那會把壞習慣正常化(owner 2026-07-22);個人化只來自用戶
+# 明確覆寫(profile.json → state.max_position_pct),覆寫時觸發線與規矩目標一起改用其值。
+OVERSIZE_TRIGGER = 0.25    # 超過即把 sizing 標成洞 + 開 cut_oversize 處方(診斷=處方同一條線)
+OVERSIZE_SEV_SPAN = 0.25   # severity 從觸發線線性升到 1.0 的跨度(觸發線 + span = 滿格;預設 25%→50%)
+POSITION_CAP = 0.20        # cut_oversize 規矩建議壓到的上限(教練目標);renderer 端有 stdlib 副本,test_card_html 鎖同步
+
+
+def valid_position_cap(value):
+    """用戶自訂單一部位上限 → (0,1) 的 float,否則 None(fail-closed)。
+    拒收 <=0、>=1、NaN、inf、非數字:壞覆寫值靜默退回通用預設,不讓它污染診斷/處方/規矩。
+    連鎖比較天然擋 NaN/inf(0 < nan 為 False),不必額外引入 math。"""
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return None
+    return pct if 0 < pct < 1 else None
+
+
+def effective_oversize_trigger(override=None):
+    """診斷/處方的觸發線:用戶自訂上限(合法時)否則通用預設 OVERSIZE_TRIGGER。"""
+    return valid_position_cap(override) or OVERSIZE_TRIGGER
+
+
+def effective_position_cap(override=None):
+    """規矩文案「建議上限」帶的數字:用戶自訂上限(合法時)否則通用預設 POSITION_CAP。"""
+    return valid_position_cap(override) or POSITION_CAP
 
 # ── ticker → (sector, thematic?)  thematic=1 代表同屬一個跨產業主題(如 AI capex)= VY B2 的「driver」──
 # 這張表只是「常見股 fallback」。主路徑:SKILL 指引 Claude 對『實際持倉』用世界知識生成 driver map
@@ -1001,7 +1030,7 @@ def dim_exit(rts, fwds, n_fwd=N_FWD):
                 n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc, n_fwd=n_fwd,
                 n_winners=n_winners, low_conf=low_conf)
 
-def dim_size(rows, held, last_px):
+def dim_size(rows, held, last_px, max_pos_override=None):
     # 用市值（有 yf）或成本算當前權重（rows 參數保留簽名相容;entry-size 序列已移除:
     # 從未進輸出,且混幣下 cum 會跨幣別亂加 —— 兩輪 review 均判 dead code,2026-07-06 刪）
     vals = {}
@@ -1016,9 +1045,12 @@ def dim_size(rows, held, last_px):
                     if not instrument_policy.is_diversified_allocation(t)}
     max_t = max(risk_weights, key=risk_weights.get) if risk_weights else None
     max_pct = risk_weights.get(max_t, 0)
-    sev = min(max((max_pct - 0.20) / 0.30, 0), 1)
+    # #324:診斷觸發線與 severity 起算點對齊到同一條線(可被用戶自訂覆寫);severity 從觸發線
+    # 而非舊的 0.20 起算,「被標成洞」與「severity>0」不再各自為政。
+    trigger = effective_oversize_trigger(max_pos_override)
+    sev = min(max((max_pct - trigger) / OVERSIZE_SEV_SPAN, 0), 1)
     others = [w for t, w in risk_weights.items() if t != max_t]  # 「其餘平均」排除最大風險部位;配置型 ETF 不混入單一標的基準
-    return dict(dim="部位 sizing", tier=1, triggered=max_pct > 0.25,
+    return dict(dim="部位 sizing", tier=1, triggered=max_pct > trigger,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
                 avg_pct=statistics.mean(others) if others else 0.0, weights=weights,
                 risk_weights=risk_weights,
@@ -1344,7 +1376,7 @@ def what_if(held, last_px, threshold=0.25):
     return dict(scenario=scenario, mval=mval, pct=pct,
                 drop30=mval * 0.30, drop50=mval * 0.50)
 
-def prescribe(ab, dims, overview):
+def prescribe(ab, dims, overview, max_pos_override=None):
     """處方層:從歸因 + 診斷生成優化路徑——揚長 edge / 外包短板 / 砍損耗。每條盡量附可驗 metric。
     關鍵:處方是『放大你強的 + 外包你弱的』,不是通用避短。力量來自歸因精確(ChatGPT 沒你的數字不敢這樣說)。"""
     # #279 i18n phase 1: prescription rows carry stable codes plus raw params.
@@ -1381,11 +1413,13 @@ def prescribe(ab, dims, overview):
                        verify="虧損加碼次數(降→好)",
                        rule="虧損部位一律不加碼;真想加,先整筆賣掉隔天重買(逼你重新面對『現在還會買它嗎』)"))
     sz = dd.get("部位 sizing", {})
-    if sz.get("max_pct", 0) > 0.30:                          # #29:解開互斥 gate,攤平與 sizing 可同時成候選(讓 candidate_rules 能 2-3 條)
+    # #324:處方觸發線對齊到診斷同一條線(原 0.30 → OVERSIZE_TRIGGER，25–30% 不再被標成洞卻拿不到規矩);
+    # 觸發線與規矩文案的上限都吃用戶自訂覆寫。#29:解開互斥 gate,攤平與 sizing 可同時成候選。
+    if sz.get("max_pct", 0) > effective_oversize_trigger(max_pos_override):
         rx.append(dict(code="cut_oversize", kind="cut_loss", dim="部位 sizing",
                        params={"ticker": sz.get("max_ticker"), "max_pct": sz.get("max_pct", 0)},
                        verify="單筆最大佔比(降→好)",
-                       rule=f"單筆部位上限定死 {POSITION_CAP:.0%},超過就減"))
+                       rule=f"單筆部位上限定死 {effective_position_cap(max_pos_override):.0%},超過就減"))
     return rx
 
 def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
@@ -1573,7 +1607,8 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
 
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
-                portfolio_structure=None, price_snapshot=None, market_context=None):
+                portfolio_structure=None, price_snapshot=None, market_context=None,
+                max_pos_override=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1656,6 +1691,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         "headline_dim": headline_dim,                      # 這次最大的洞(給「新增診斷」用)
         "headline_metric": {"key": hk, "value": hv},
         "commitment": commitment,                          # 下次對帳的錨點(規矩 + 追蹤 metric)
+        "max_position_pct": valid_position_cap(max_pos_override),  # #324:本次診斷/規矩文案採用的用戶自訂上限(None=通用預設);renderer 與下次對帳讀它
         "metrics": {
             "max_pos_pct": d_size.get("max_pct"),
             "max_pos_ticker": d_size.get("max_ticker"),
@@ -1935,6 +1971,7 @@ def main():
     prev_end = _resolve_prev_end(date_end, os.environ.get("TR_PREV_END") or None,
                                  os.environ.get("TR_PREV_PREV_END") or None)
     master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
+    max_pos_override = valid_position_cap(os.environ.get("TR_MAX_POSITION_PCT"))  # #324:用戶自訂單一部位上限(review.py 從 profile.json 帶入);壞值 fail-closed 退回通用預設
     dm = os.environ.get("TR_DRIVER_MAP")                  # Claude 生成的 driver map(冷門股分類)
     n_dm = load_driver_map(dm) if dm else 0
     im_result = instrument_policy.load_from_env()          # 本機 ETF/instrument 覆寫;未知標的不猜 ETF
@@ -1985,7 +2022,7 @@ def main():
     # overview(P&L)/dim_size(單筆過重本就只看大倉)/n_held(對帳全量)不動 → 不藏虧損、對帳一致。
     keep_dx = meaningful_tickers(held_u, lastpx_u)
     held_dx = {t: v for t, v in held_u.items() if t in keep_dx}
-    d_size = dim_size(rows, held_u, lastpx_u)
+    d_size = dim_size(rows, held_u, lastpx_u, max_pos_override)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held_dx, lastpx_u)
     portfolio_structure = instrument_policy.portfolio_analysis(d_size.get("weights"))
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held_u, lastpx_u, d_size)
@@ -2008,7 +2045,7 @@ def main():
     pa = payoff_attribution(decision_rts_u)                # 盈虧比拆解:重點交易的貢獻度(聚合幣別上)
     best, worst = best_worst(decision_rts)                 # 做得最好/最差的一筆(ret%,無因次 → 原幣)
     wi = what_if(held_dx, lastpx_u)                        # 可量化的 what-if(聚合幣別上,#172 殘倉不計)
-    rx = prescribe(ab, dims, overview)                     # 處方層:揚長/外包/砍損耗
+    rx = prescribe(ab, dims, overview, max_pos_override)   # 處方層:揚長/外包/砍損耗(sizing 觸發線 + 規矩上限吃自訂覆寫)
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
     # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
     # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
@@ -2154,7 +2191,8 @@ def main():
                             avg_down=avg_down, last_px=last_px,
                             prev_end=prev_end,
                             cash=cash_data, portfolio_structure=portfolio_structure,
-                            price_snapshot=price_snapshot, market_context=review_market)
+                            price_snapshot=price_snapshot, market_context=review_market,
+                            max_pos_override=max_pos_override)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

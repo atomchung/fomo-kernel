@@ -190,18 +190,23 @@ def localized_dimension(dim, language):
     return (copy.get("dimensions") or {}).get(dim_id, dim_id.replace("_", " "))
 
 
-def localized_rule(dim, language):
+def localized_rule(dim, language, cap=None):
     """The canonical rule text for a dimension.
 
-    #317: templates may carry ``{cap}`` so the user reads the threshold in the
-    rule itself instead of having to remember it. The cap is a constant, not a
-    per-period fact, so the text stays stable across weeks and rules.jsonl
-    tracking (which keys on rule_id) is unaffected."""
+    #317 (from #326): templates may carry ``{cap}`` so the user reads the
+    threshold in the rule itself instead of having to remember it. The cap is a
+    standing value, not a per-period fact, so the text stays stable across weeks
+    and rules.jsonl tracking (which keys on rule_id) is unaffected.
+
+    #324: ``cap`` is the user's standing single-position override when set;
+    otherwise the interpolation falls back to the universal ``POSITION_CAP``.
+    Callers pass the raw ``state.max_position_pct`` (or ``None``) and this
+    resolves the effective cap fail-closed."""
     template = (load_copy(language).get("rules") or {}).get(dimension_id(dim))
     if not isinstance(template, str):
         return template
     try:
-        return template.format(cap=f"{POSITION_CAP:.0%}")
+        return template.format(cap=f"{effective_position_cap(cap):.0%}")
     except (KeyError, IndexError, ValueError):
         return template
 
@@ -217,8 +222,23 @@ def localized_rule(dim, language):
 RULE_GROUNDING_TICKER_LIMIT = 2
 # 與 trade_recap.POSITION_CAP 同一條契約:card_renderer 刻意不 import trade_recap
 # (與 coach/horizon 前例同語意 — 保持純標準庫、免 pandas),兩處常數由
-# test_tr_json_contract 斷言同步。改一處必改另一處。#324 追蹤口徑對齊與用戶自訂。
+# test_card_html 斷言同步。改一處必改另一處。
 POSITION_CAP = 0.20
+
+
+def valid_position_cap(value):
+    """(0,1) 的 float,否則 None(fail-closed)。trade_recap.valid_position_cap 的 stdlib 鏡像,
+    與 POSITION_CAP 同一條「不 import trade_recap」的邊界(#324)。"""
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return None
+    return pct if 0 < pct < 1 else None
+
+
+def effective_position_cap(override=None):
+    """規矩文案帶的「建議上限」:用戶自訂(合法時)否則通用預設 POSITION_CAP。"""
+    return valid_position_cap(override) or POSITION_CAP
 
 
 def _grounding_dims(card):

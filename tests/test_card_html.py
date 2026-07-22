@@ -923,6 +923,28 @@ def test_renderer_position_cap_matches_the_engine_constant():
         "card_renderer.POSITION_CAP and trade_recap.POSITION_CAP must stay in sync"
 
 
+def test_committed_rule_carries_the_user_cap_override():
+    """#324: the committed sizing rule prints the user's standing cap override in
+    both locales, replacing #326's universal default. The default path and any
+    invalid (fail-closed) override still show the universal POSITION_CAP."""
+    universal = f"{card_renderer.POSITION_CAP:.0%}"
+    for language in ("zh-TW", "en"):
+        # Interpolation resolves the effective cap.
+        assert universal in card_renderer.localized_rule("position_sizing", language), \
+            f"{language}: no override keeps the universal cap"
+        assert universal in card_renderer.localized_rule("position_sizing", language, cap=1.5), \
+            f"{language}: an out-of-range override is fail-closed to the universal cap"
+        overridden = card_renderer.localized_rule("position_sizing", language, cap=0.30)
+        assert "30%" in overridden and universal not in overridden, \
+            f"{language}: a valid override replaces the default in the rule text"
+        # End-to-end: the committed rule the private card prints carries it.
+        bundle = _conflicted_bundle(language, "position_sizing")
+        bundle["commitment"]["rule"] = card_renderer.localized_rule(
+            "position_sizing", language, cap=0.30)
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        assert "30%" in block4, f"{language}: committed rule must show the user's cap"
+
+
 def main():
     tests = [
         test_finalize_html_is_structured_not_a_pre_dump,
@@ -958,6 +980,7 @@ def main():
         test_exit_opportunity_cost_collects_into_one_read_only_panel,
         test_committed_rule_carries_its_threshold,
         test_renderer_position_cap_matches_the_engine_constant,
+        test_committed_rule_carries_the_user_cap_override,
     ]
     for test in tests:
         test()
