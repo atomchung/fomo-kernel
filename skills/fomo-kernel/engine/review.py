@@ -911,6 +911,15 @@ def _run_engine(paths, root, args):
         previous = _previous_state(root)
         if previous and previous.get("date_end"):
             env["TR_PREV_END"] = str(previous["date_end"])
+            # #270: last_state.date_end is THIS run's own date_end when the
+            # identical week is reviewed again (a prior finalize already
+            # advanced the anchor to it) — this is decided before the engine
+            # has parsed the CSV, so it cannot be detected here. Also pass the
+            # prev_end that state itself was built from, so the engine can
+            # fall back to the closest genuinely-earlier review boundary
+            # instead of aliasing prev_end to its own date_end (#166).
+            if previous.get("prev_end"):
+                env["TR_PREV_PREV_END"] = str(previous["prev_end"])
         for arg_name, env_name in (("driver_map", "TR_DRIVER_MAP"),
                                    ("instrument_map", "TR_INSTRUMENT_MAP"),
                                    ("cash", "TR_CASH")):

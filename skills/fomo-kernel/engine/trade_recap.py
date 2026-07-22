@@ -567,6 +567,30 @@ def review_window(date_end, previous_end=None):
     return (end - dt.timedelta(days=7)).isoformat(), end.isoformat()
 
 
+def _resolve_prev_end(date_end, prev_end, prev_prev_end):
+    """Self-exclusion for a same-week rerun (#270).
+
+    review.py sets TR_PREV_END from last_state.json's date_end *before*
+    invoking this engine — before this run's own date_end is knowable, since
+    that requires parsing the CSV. Re-running the identical CSV for the same
+    week therefore makes TR_PREV_END alias THIS run's own date_end (the prior
+    finalize already advanced the anchor to it). Feeding that back in collapses
+    every "_new(d)" boundary (build_problem_events) to nothing, which flips
+    opportunity flags such as exit_anxiety/fomo_entry between runs of the same
+    week and trips the #166 fail-closed mark guard.
+
+    When the candidate would alias this run's own date_end, fall back one rung
+    to prev_prev_end — the prev_end that last_state itself was built from,
+    i.e. the closest genuinely-earlier review boundary — instead of silently
+    treating every trade in the week as "new". Once a review commits with the
+    correct prev_end, this stays a stable fixed point: last_state.prev_end
+    keeps resolving to the same genuinely-earlier boundary no matter how many
+    times the same week is reviewed again."""
+    if prev_end and prev_end == date_end:
+        return prev_prev_end or None
+    return prev_end or None
+
+
 def shared_price_start(trade_start, context_start, context_end):
     """Widen the shared fetch enough for both trade analytics and context anchors."""
     trade_anchor = dt.date.fromisoformat(str(trade_start))
@@ -1618,6 +1642,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         "portfolio_structure": portfolio_structure,        # v2 orchestration P0:ETF 配置/集中語意 + metadata 缺口
         "date_start": rows[0]["date"].isoformat() if rows else None,
         "date_end": rows[-1]["date"].isoformat() if rows else None,
+        # #270:這次實際採用的 prev_end(已解過同週重跑自我別名),持久化供下次 review 當
+        # TR_PREV_PREV_END 的來源——同一週被重跑任意次都能穩定解回同一個「真正更早」的邊界。
+        "prev_end": prev_end,
         "n_trades": len(rows),
         "n_round_trips": len(rts),
         "n_held": len(held),
@@ -1896,6 +1923,12 @@ def main():
         print(f"沒有可解析的交易{note}:CSV 為空,或沒有任何 BUY/SELL 的 Trade 列{hint}。"
               "請確認欄位 Symbol / Action / Quantity / Price / TradeDate 都在。", file=sys.stderr)
         sys.exit(1)
+    # #270:date_end 一旦可知(rows 已排序、非空)就立刻凍結 prev_end,下面所有消費點
+    # (review_window / cash_position / build_state)共用同一個解過的值,不再各自現讀
+    # os.environ——避免同週重跑時只解出「別名成自己」的 TR_PREV_END。
+    date_end = rows[-1]["date"].isoformat()
+    prev_end = _resolve_prev_end(date_end, os.environ.get("TR_PREV_END") or None,
+                                 os.environ.get("TR_PREV_PREV_END") or None)
     master = load_lens()                                  # 顯示用哲學名(去名,可換大師/哲學檔)
     dm = os.environ.get("TR_DRIVER_MAP")                  # Claude 生成的 driver map(冷門股分類)
     n_dm = load_driver_map(dm) if dm else 0
@@ -1909,8 +1942,7 @@ def main():
     tickers = {r["ticker"] for r in rts} | set(held.keys())
     trade_price_start = (min((r["entry"] for r in rts), default=rows[0]["date"])
                          - dt.timedelta(days=10)).isoformat()
-    context_start, context_end = review_window(rows[-1]["date"].isoformat(),
-                                                os.environ.get("TR_PREV_END"))
+    context_start, context_end = review_window(date_end, prev_end)
     start = shared_price_start(trade_price_start, context_start, context_end)
     t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
     bench = {p for p in (_sector_proxy(t, t_market.get(t, "US")) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
@@ -2024,7 +2056,7 @@ def main():
         cash_anchor = None
     # 多幣別：cash_position 內部 per-currency 各算餘額再用 fx 聚合（台美各帳戶各自錨點）；單幣 fx=None → 因子 1.0。
     cash_data = cash_position(cash_flows, held_mv, anchor=cash_anchor,
-                              prev_end=os.environ.get("TR_PREV_END") or None,
+                              prev_end=prev_end,
                               fx=fx if mixed_ccy else None)
 
     # 帳戶級績效(#171 B 路線,拍板 2026-07-12 見該 issue comment):daily 鏈式 TWR + cash drag +
@@ -2115,11 +2147,11 @@ def main():
         state = build_state(rows, rts, held, dims, overview, ab, rx,
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
-                            prev_end=os.environ.get("TR_PREV_END") or None,
+                            prev_end=prev_end,
                             cash=cash_data, portfolio_structure=portfolio_structure,
                             price_snapshot=price_snapshot, market_context=review_market)
-        # TR_PREV_END=上次 review 的 date_end(SKILL 對帳模式傳入)→ behavior 型問題事件
-        # 只取其後的新交易(weekly 增量);不設 = 初診全期補齊,問題帳統計冷啟動。
+        # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
+        # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."
         fd, tmp = tempfile.mkstemp(dir=outdir, suffix=".tmp")  # 原子寫:tmp→replace,不留半寫髒狀態(§4.6)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
