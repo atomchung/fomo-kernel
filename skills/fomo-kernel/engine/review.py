@@ -28,6 +28,7 @@ import tempfile
 import card_renderer
 import horizon
 import ledger
+import price_feed
 import problems
 import question_surface
 import revisit
@@ -145,13 +146,19 @@ def _jsonl(path):
     return thesis.read_jsonl(path)
 
 
-def _fingerprint(paths, language, route, prepared=None, nonce=""):
+def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
     h.update(f"{language}\0{route}\0{nonce}\0".encode())
     if prepared:
         h.update(session.canonical(prepared).encode())
+    if prices:
+        # A supplied price envelope changes every valuation number, so it has to
+        # change the fingerprint too. Without this, rerunning prepare after a
+        # degraded run would resume the priceless pending session and silently
+        # discard the prices the agent just retrieved (#289).
+        h.update(b"prices\0" + session.canonical(prices).encode())
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -999,6 +1006,9 @@ def _run_engine(paths, root, args):
         env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
                    TR_LEDGER=os.path.join(root, "ledger.jsonl"),
                    TR_DISPLAY_CURRENCY=card_renderer.default_display_currency(args.language))
+        env.pop("TR_PRICES", None)      # only an explicit --prices may inject a price envelope
+        if getattr(args, "prices", None):
+            env["TR_PRICES"] = os.path.abspath(os.path.expanduser(args.prices))
         previous = _previous_state(root)
         if previous and previous.get("date_end"):
             env["TR_PREV_END"] = str(previous["date_end"])
@@ -1974,6 +1984,38 @@ def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
     return card
 
 
+def _price_feed_status(card):
+    """Agent-visible price availability for this run (#289).
+
+    ``provenance`` records where the prices came from; ``request`` is the
+    machine-readable manifest of what is still unpriced, present only when
+    coverage is incomplete. A degraded run stays visible instead of quietly
+    dropping the portfolio-level return.
+    """
+    provenance = (card or {}).get("price_provenance")
+    request = (card or {}).get("price_request")
+    if not provenance and not request:
+        return None
+    status = {"provenance": provenance}
+    if request:
+        status["request"] = request
+        # Held instruments and benchmarks fail differently: unpriced holdings
+        # remove P&L itself, unpriced benchmarks only remove the vs-market
+        # segment. Saying which one is missing keeps the agent from treating an
+        # optional enrichment as a blocker, or the reverse.
+        blocking = bool(request.get("tickers"))
+        scope = ("the instruments in input.price_feed.request.tickers — without them there is no "
+                 "unrealized P&L or portfolio-level return" if blocking else
+                 "the benchmark symbols in input.price_feed.request.benchmarks — holdings are "
+                 "priced, but the benchmark comparison stays unavailable without them")
+        status["next_action"] = (
+            f"price coverage is incomplete for {scope}. Look those closes up in a recognized "
+            "market-data source, transcribe them into the envelope documented in "
+            "references/price-feed.md, and rerun prepare with --prices <path>. Never invent a "
+            "price, and never read a missing price as a delisting or as a zero return")
+    return status
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None, revisit_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None):
@@ -2050,7 +2092,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "input": {"paths": [os.path.abspath(p) for p in paths],
                   "kind": "positions_snapshot" if route == "snapshot_review" else "trades_csv",
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
-                  "ledger_ingest": ledger_ingest},
+                  "ledger_ingest": ledger_ingest,
+                  "price_feed": _price_feed_status(card)},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
                            "review_progress": {
                                "completed_reviews_before_start": completed_reviews,
@@ -2153,6 +2196,18 @@ def cmd_prepare(args):
         raise ReviewError("--snapshot-json cannot be combined with --cash; include cash in the snapshot envelope")
     if args.snapshot_json and args.paths:
         raise ReviewError("pass the normalized snapshot only through --snapshot-json")
+    # #289: validate the supplied price envelope here, before any engine work.
+    # A malformed envelope is an input error the agent can fix and retry; it
+    # must never reach the engine as half-usable prices.
+    supplied_prices = None
+    if getattr(args, "prices", None):
+        if args.snapshot_json or args.card_json or args.state_json:
+            raise ReviewError("--prices applies to transaction-history reviews; a snapshot or "
+                              "precomputed artifacts already carry their own valuation basis")
+        try:
+            supplied_prices = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
+        except price_feed.PriceFeedError as exc:
+            raise ReviewError(f"price feed rejected: {exc}") from exc
     if route == "snapshot_review" and not args.snapshot_json and not (args.card_json and args.state_json):
         raise ReviewError("snapshot_review requires --snapshot-json")
     paths = ([args.snapshot_json] if args.snapshot_json else
@@ -2194,7 +2249,8 @@ def cmd_prepare(args):
         state = _load_json(args.state_json, "engine state")
         prepared = {"card": card, "state": state}
         engine_meta = "prepared artifacts"
-    fingerprint = _fingerprint(paths, language, route, prepared=prepared, nonce=args.session_nonce or "")
+    fingerprint = _fingerprint(paths, language, route, prepared=prepared,
+                               nonce=args.session_nonce or "", prices=supplied_prices)
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
@@ -2242,6 +2298,11 @@ def cmd_prepare(args):
         # discover on their own; without this handoff they report "pending session
         # not found" against the default root.
         next_action += f"; test drive is isolated — pass --root {root} to every later command"
+    price_status = ((plan.get("input") or {}).get("price_feed") or {})
+    if price_status.get("request"):
+        # #289: a host that cannot retrieve prices is a recoverable input gap,
+        # not a dead end. Say so at the point the agent decides what to do next.
+        next_action = (price_status["next_action"] + "; otherwise continue: " + next_action)
     _emit({"status": "prepared", "session_id": plan["session_id"],
            "review_plan": _plan_for_agent(plan),
            "next_action": next_action})
@@ -3109,6 +3170,9 @@ def build_parser():
     prepare.add_argument("--driver-map")
     prepare.add_argument("--instrument-map")
     prepare.add_argument("--cash", help="TR_CASH JSON string")
+    prepare.add_argument("--prices",
+                         help="agent-supplied price envelope (references/price-feed.md); "
+                              "use when the host cannot retrieve prices itself")
     prepare.add_argument("--snapshot-json",
                          help="normalized position-snapshot facts; valid only for snapshot_review")
     prepare.add_argument("--card-json", help="precomputed engine card (adapter/testing)")

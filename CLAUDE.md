@@ -75,6 +75,7 @@ When multiple sessions are active:
 | Demo card values | English README ↔ English demo HTML/image; Traditional Chinese README ↔ Traditional Chinese demo HTML/image. Values must match; only wording differs. |
 | GTM documentation | `README.md` is the English default; `README.zh-TW.md` is the complete Traditional Chinese counterpart. Keep language links and substantive product claims synchronized. |
 | Hole number-line copy | `trade_recap.number_line()` (v1 human-card zh narration) ↔ `card_renderer._hole_line()` (v2 card; independent en implementation). The two per-dimension number narrations must stay semantically in sync. |
+| Agent-supplied price envelope | `price_feed.py` (parser and adapters) ↔ `schemas/price-feed.schema.json` ↔ `references/price-feed.md` ↔ `review.py prepare --prices` ↔ `tests/test_price_feed.py`. The envelope's field rules are stated once in the schema; the reference explains when and how the agent may fill it. |
 | HTML card design system | `card-template.html` (design-provenance reference) ↔ the `_HTML_SHIM_CSS` / `_HTML_WIDGET_CSS` literals in `card_renderer.render_html()`. Palette, dark-mode rules, and layout constraints must match; `tests/test_card_html.py` gates the renderer output while `card-template.html` documents the intent. |
 
 Date product assumptions when using them for prioritization. Reconfirm assumptions that are several weeks old or contradicted by new evidence.

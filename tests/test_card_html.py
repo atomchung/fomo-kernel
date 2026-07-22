@@ -553,6 +553,62 @@ def test_all_honesty_collapses_into_block1_footnote_one_per_line():
         "both honesty sentences must appear in the HTML footnote"
 
 
+def test_price_source_rides_the_footnote_ahead_of_unrealized_coverage():
+    """#289 under the 2026-07-22 footnote model (§4): the `price_source`
+    disclosure carries no host number — like every honesty key it collapses
+    into the Block-1 footnote. The one placement guarantee that survives is
+    order: `build_honesty_ledger()` emits `price_source` before
+    `unrealized_coverage` (cause before symptom), and because the footnote
+    lists sentences in ledger order, that reading order must hold on the card.
+    Both locales, since a locale gap here is a disclosure defect."""
+    sentences = {
+        "en": {"price_source": "The current prices did not come from the engine's own retrieval.",
+               "unrealized_coverage": "Some positions lack a current price, so unrealized gain is incomplete."},
+        "zh-TW": {"price_source": "這期的現價不是引擎自己抓到的，卡上據此說明來源。",
+                  "unrealized_coverage": "部分持倉缺現價，未實現損益不是完整帳面。"},
+    }
+    for language in ("en", "zh-TW"):
+        bundle = _rich_bundle(language)
+        card = bundle["engine_card"]
+        card["price_provenance"] = {"mode": "unavailable",
+                                    "coverage": {"requested_n": 2, "priced_n": 0}}
+        # Ledger order is the contract: cause (price_source) before symptom
+        # (unrealized_coverage). The footnote must not reorder them.
+        card["honesty_ledger"] = [
+            {"key": "price_source", "status": "unavailable", "data": {}},
+            {"key": "unrealized_coverage", "status": "present", "data": {}},
+        ]
+        bundle["narrative"]["honesty"] = dict(sentences[language])
+        ps, uc = sentences[language]["price_source"], sentences[language]["unrealized_coverage"]
+
+        markdown = card_renderer.render_private(bundle)
+        block1 = _markdown_block(markdown, language, "performance")
+        lines = block1.splitlines()
+
+        # Footnote model: no inline per-number caveat line survives in Block 1.
+        caveat_shaped = [line for line in lines if re.match(r"^[ \t]+[（(].*[)）][ \t]*$", line)]
+        assert not caveat_shaped, f"{language}: price_source must not ride an inline caveat: {caveat_shaped}"
+
+        label_line = card_renderer.load_copy(language)["footnote_label"] + (":" if language == "en" else "：")
+        assert label_line in lines, f"{language}: the footnote label must live inside Block 1"
+        footnote = [x for x in lines[lines.index(label_line) + 1:] if x.strip()]
+        assert any(ps in x for x in footnote), f"{language}: price_source sentence must land in the footnote: {footnote}"
+        assert any(uc in x for x in footnote), f"{language}: unrealized_coverage sentence must land in the footnote: {footnote}"
+        ps_at = next(i for i, x in enumerate(footnote) if ps in x)
+        uc_at = next(i for i, x in enumerate(footnote) if uc in x)
+        assert ps_at < uc_at, \
+            f"{language}: price_source (cause) must precede unrealized_coverage (symptom) in the footnote: {footnote}"
+
+        # HTML surface: both land in the collapsed footnote, price_source first.
+        html_card = card_renderer.render_html(bundle)
+        block1_html = html_card.split("<h2>", 2)[1]
+        fnote_html = block1_html.split('<details class="fnote">', 1)[1]
+        assert ps in html.unescape(fnote_html) and uc in html.unescape(fnote_html), \
+            f"{language}: both sentences must appear in the HTML footnote"
+        assert html.unescape(fnote_html).index(ps) < html.unescape(fnote_html).index(uc), \
+            f"{language}: HTML footnote must keep price_source ahead of unrealized_coverage"
+
+
 def test_vs_market_groups_by_market_label_only_when_mixed():
     """Adjustment 2A (#276 2026-07-22 dogfood note: "台股和美股部分也比較混
     亂，最好分模塊"): a mixed-market card labels each market's vs-market
@@ -1051,6 +1107,7 @@ def main():
         test_keynote_and_four_blocks_in_order_on_both_surfaces,
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
         test_all_honesty_collapses_into_block1_footnote_one_per_line,
+        test_price_source_rides_the_footnote_ahead_of_unrealized_coverage,
         test_vs_market_groups_by_market_label_only_when_mixed,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_resolve_zh_prescriptions_from_copy,

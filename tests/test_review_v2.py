@@ -4592,11 +4592,11 @@ def _run_real_review(tmp, root, csv_path, env, tag):
     subprocess (no --card-json/--state-json injection, unlike _prepare_dated)
     so TR_PREV_END/TR_PREV_PREV_END actually get exercised. Every queued
     question is answered "skip" -- valid for every kind this minimal fixture
-    can produce (revisit / headline_motive quiet-week backfill). The narrative
-    omits "honesty" entirely rather than reusing the shared _narrative()
-    helper: this fixture has no open position and no ETF, so its
-    required_honesty_keys is empty, and the shared helper's etf_metadata entry
-    would be rejected as an unrequired key (#82 gate)."""
+    can produce (revisit / headline_motive quiet-week backfill). This fixture
+    has no open position and no ETF, but it runs the engine offline (the
+    _offline_engine_env stub blocks yfinance), so #289 makes `price_source`
+    (unavailable) a required honesty key: author one digit-free sentence per
+    key the plan actually requires, exactly as a real degraded review must."""
     run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
                "--session-nonce", tag, env=env)
     assert run.returncode == 0, run.stdout + run.stderr
@@ -4607,9 +4607,17 @@ def _run_real_review(tmp, root, csv_path, env, tag):
         answers["answers"].append({"question_id": question["id"], "choice": "skip"})
     a_path = pathlib.Path(tmp) / f"answers_{tag}.json"
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    honesty = {
+        key: {
+            "price_source": "這期的現價引擎抓不到，卡上據此說明是價格缺了，不當成下市或零報酬。",
+        }.get(key, "這項限制在卡上保持明示，而不是把缺口當成零。")
+        for key in plan["card_plan"]["required_honesty_keys"]
+    }
+    narrative = {"headline": "測試標題", "mirror": "測試鏡像"}
+    if honesty:
+        narrative["honesty"] = honesty
     n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
-    n_path.write_text(json.dumps({"headline": "測試標題", "mirror": "測試鏡像"},
-                                 ensure_ascii=False), encoding="utf-8")
+    n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
     final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
                  "--answers", a_path, "--narrative", n_path, env=env)
     assert final.returncode == 0, final.stdout + final.stderr
@@ -4958,7 +4966,8 @@ def test_repair_projections_never_regresses_a_newer_last_state():
 def test_all_json_schemas_parse():
     names = {"review-plan.schema.json", "answers.schema.json", "narrative.schema.json",
              "session-bundle.schema.json", "question-opportunity.schema.json",
-             "question-surface.schema.json", "capture.schema.json"}
+             "question-surface.schema.json", "capture.schema.json",
+             "price-feed.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")

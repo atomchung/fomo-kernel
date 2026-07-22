@@ -19,6 +19,7 @@ SUITES = [
     ("Engine unit tests", "tests/test_engine_units.py"),
     ("TR_JSON and state contract", "tests/test_tr_json_contract.py"),
     ("Synthetic price paths", "tests/test_price_paths.py"),
+    ("Agent-supplied price fallback", "tests/test_price_feed.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),
     ("Market context", "tests/test_market_context.py"),

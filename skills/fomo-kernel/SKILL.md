@@ -19,6 +19,7 @@ Turn transaction history into one focused behavior-review card, or a position sn
 8. For a position table or screenshot, transcribe only the broker-declared facts into the normalized snapshot JSON envelope and keep that temporary file outside the repository, such as under `/tmp`. Do not calculate weights, P&L, cycle IDs, metrics, or ETF classifications, and do not use a cloud OCR service.
 9. An incomplete snapshot may produce a bounded review, but it must not become an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and any claim about an unreconciled current broker view must fail closed.
 10. When `review_plan.state_snapshot.cadence.tier == "light"`, the review is a capture-only action, not a full review: follow `flows/light-capture.md` instead of the route's normal flow. No card, no commitment, no `preview`/`finalize` — see the fixed lifecycle's light-tier note below.
+11. Never invent, interpolate, or recall a market price. When a host blocks the engine's own price retrieval, `review_plan.input.price_feed.request` states what is unpriced; you may transcribe those closes from a recognized market-data source into the envelope in `references/price-feed.md` and rerun `prepare --prices`. A price you cannot find stays missing, and a missing price is never a delisting verdict or a zero return.
 
 ## Canonical entry point
 
@@ -39,6 +40,8 @@ For transaction history, the agent must understand and normalize broker data loc
 Add `Market / Currency` for non-US instruments when available. Do not ask the user to normalize the file. Symbol and cash-anchor rules (Taiwan `.TW`/`.TWO` suffixes, ROC dates, `--cash`) live in `references/data-contract.md`.
 
 For a position table or screenshot, transcribe the displayed facts locally into the JSON envelope in `references/data-contract.md`, save that temporary file outside the repository, then pass it through `--snapshot-json`. The agent may map broker labels, normalize dates, and add the complete provider ticker suffix; it may not derive weights, returns, cycle IDs, or card/state artifacts. There is no engine OCR or cloud-upload path.
+
+The engine prices the portfolio itself, so a normal review passes no prices. If the host blocks that retrieval, `prepare` still completes in a degraded mode and reports the gap in `review_plan.input.price_feed`; recovering it through `--prices` follows `references/price-feed.md`.
 
 `prepare` creates a Review Plan; it does not create a conclusion card. Read only the flow selected by `review_plan.flow_path`:
 

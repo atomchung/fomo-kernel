@@ -30,6 +30,8 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 
 After an interruption, use `review.py resume`; do not refetch live prices. If a projection fails, use `review.py repair-projections`. An existing canonical session is not data loss.
 
+If the host blocks the engine's own price retrieval, `prepare` still completes and reports the gap in `review_plan.input.price_feed`, including a manifest of what is unpriced. You may transcribe those closes from a recognized market-data source into the envelope in `references/price-feed.md` and rerun `prepare --prices <path>`. Never invent, interpolate, or recall a price, and never read a missing price as a delisting or a zero return.
+
 Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <review_plan.state_root>` to every later command of that session.
 
 ## Non-negotiable boundaries

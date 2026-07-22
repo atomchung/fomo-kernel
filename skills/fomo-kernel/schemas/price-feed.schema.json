@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/price-feed.schema.json",
+  "title": "Fomo Kernel Agent-Supplied Price Feed",
+  "description": "Closing prices transcribed from a recognized market-data source when the host cannot retrieve prices itself. Declared facts only: the agent never computes a return, a weight, or a P&L number.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["as_of", "source", "prices"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "as_of": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Non-future end-of-day date this feed represents; no row may be dated after it."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Feed-level provenance, named on the card. Use the market-data source, not a search engine."
+    },
+    "prices": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ticker", "close", "date", "currency"],
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9^][A-Za-z0-9.\\-^=]{0,19}$",
+            "description": "The complete engine symbol, matching the trade rows (for example NVDA, 2330.TW, ^TWII)."
+          },
+          "close": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Closing price in the instrument's own trading currency."
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Session date of this close."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "Trading currency of the close. A currency contradicting the trade rows fails the run closed."
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Per-instrument source when it differs from the feed-level source."
+          },
+          "history": {
+            "type": "array",
+            "maxItems": 2000,
+            "description": "Optional daily close series. Unlocks benchmark comparison, beta and alpha, the P&L curve, and account-level time-weighted return.",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "prefixItems": [
+                    {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                    {"type": "number", "exclusiveMinimum": 0}
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["date", "close"],
+                  "properties": {
+                    "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                    "close": {"type": "number", "exclusiveMinimum": 0}
+                  }
+                }
+              ]
+            }
+          },
+          "splits": {
+            "type": "array",
+            "maxItems": 2000,
+            "description": "Optional split events the source shows, as [date, ratio] (a 10-for-1 split is 10). Omitted means no adjustment is applied.",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "prefixItems": [
+                    {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                    {"type": "number", "exclusiveMinimum": 0}
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["date", "ratio"],
+                  "properties": {
+                    "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                    "ratio": {"type": "number", "exclusiveMinimum": 0}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "fx": {
+      "type": "array",
+      "description": "Spot rates for a mixed-currency portfolio. Omit an unavailable rate instead of guessing it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency", "usd_per_unit", "date"],
+        "properties": {
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "Non-USD currency code; USD is fixed at 1.0 and must not be supplied."
+          },
+          "usd_per_unit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "USD per one unit of this currency."
+          },
+          "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

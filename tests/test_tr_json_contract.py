@@ -41,6 +41,7 @@ TR_JSON_KEYS = {
     "acct_perf",                                        # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note}=沒算)
     "honesty_ledger",                                   # #82:卡面必講的誠實點清單(觸發項聚合;空=無缺口)
     "pnl_curve",                                        # #167:累積損益曲線(卡片 sparkline 用);{'note':...}=誠實降級
+    "price_provenance", "price_request",                # #289:價格從哪來 + 還缺哪些價的機讀清單(None=無缺口)
 }
 STATE_KEYS = {
     "schema_version", "date_start", "date_end", "n_trades", "n_round_trips",
@@ -52,6 +53,7 @@ STATE_KEYS = {
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
     "price_snapshot", "market_context",                # #191 PR B:frozen prices + SPY/QQQ/VIX window for private-card reconciliation
+    "price_provenance", "price_request",                # #289:價格來源/覆蓋率 + 待補清單,degraded 模式必須可觀測
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
 # SKILL Step 1「metrics:全 metric 快照」+ 對帳反查用鍵;收尾 CLI 另存 metrics_snapshot 全量快照
@@ -158,7 +160,8 @@ def main():
            "honesty_ledger 每項 = {key,status,data}", repr(hl)[:150])
         HL_KEYS = {"alpha_credibility", "sector_attribution", "unclassified_drivers",
                    "unrealized_coverage", "orphan_sells", "currency_mix", "cash_reliability",
-                   "acct_perf_basis", "etf_metadata"} # skill v2:ETF metadata 缺值不可猜零
+                   "acct_perf_basis", "etf_metadata", # skill v2:ETF metadata 缺值不可猜零
+                   "price_source"}                    # #289:價格來源(供給式/不可得)
         ok(all(e["key"] in HL_KEYS for e in hl),
            "honesty_ledger key 都在允許集合", repr([e["key"] for e in hl]))
         hl_keys = {e["key"] for e in hl}
