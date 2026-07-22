@@ -610,11 +610,13 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
                     f"[{language}] the old duplicated wording must not resurface"
             # Structure-health content leads as real content: both structural
             # findings render with engine numbers, neither is a dropped leftover.
+            # (Markers deliberately avoid the "driver"/thesis glossary text that
+            # #313/#314/#272 own — this test asserts presence, not wording.)
             md = card_renderer.render_private(bundle)
             assert "2330.TW" in md and "65" in md, \
                 f"[{language}] single-position concentration must render as main content"
-            driver_marker = "largest classified driver" if language == "en" else "同一個 driver"
-            assert driver_marker in md, \
+            sector_marker = "top three non-allocation risks" if language == "en" else "top3"
+            assert sector_marker in md, \
                 f"[{language}] driver/sector concentration must also render, not be dropped"
 
         # A well-diversified snapshot (weights available, nothing triggered) must
