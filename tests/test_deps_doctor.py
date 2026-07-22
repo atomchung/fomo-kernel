@@ -17,6 +17,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "fomo-kernel")
 REVIEW = os.path.join(SKILL, "engine", "review.py")
 MANIFEST = os.path.join(SKILL, "requirements.txt")
+ROOT_MANIFEST = os.path.join(ROOT, "requirements.txt")
+
+
+def _manifest_specs(path):
+    """{lowercased dep name: exact specifier line} for real dependency lines
+    (comments stripped, blanks skipped) — shared by the drift check below."""
+    lines = [ln.split("#", 1)[0].strip()
+             for ln in open(path, encoding="utf-8").read().splitlines()]
+    specs = {}
+    for ln in lines:
+        if not ln:
+            continue
+        name = ln.split(">=")[0].split("==")[0].split("[")[0].strip().lower()
+        specs[name] = ln
+    return specs
 
 
 def _stub_dir(tmp, name, modules):
@@ -49,6 +64,30 @@ def test_skill_dir_ships_runtime_only_manifest():
     for dev_only in ("anthropic", "python-dotenv"):
         assert dev_only not in names, \
             f"{dev_only} is test-only and must not be imposed on skill installs"
+
+
+def test_root_and_skill_manifests_cannot_drift():
+    """The runtime pins are intentionally duplicated across two files — the
+    root `requirements.txt` documents the full contributor set (runtime +
+    test-only), and `skills/fomo-kernel/requirements.txt` is the copy that
+    actually travels with an installed skill (README's `cp -r
+    skills/fomo-kernel ...` path never sees the root file). Nothing about
+    argparse or Python's import machinery would notice the two falling out of
+    sync — e.g. a version bump landing in one file but not the other — so this
+    pins them together: every dependency the skill manifest ships must carry
+    the byte-identical specifier line in the root manifest.
+    """
+    root_specs = _manifest_specs(ROOT_MANIFEST)
+    skill_specs = _manifest_specs(MANIFEST)
+    assert skill_specs, "skill manifest must not be empty"
+    for name, spec in skill_specs.items():
+        assert name in root_specs, (
+            f"{name} is pinned in skills/fomo-kernel/requirements.txt but is "
+            "missing from the root requirements.txt")
+        assert root_specs[name] == spec, (
+            f"{name} has drifted between the two manifests: "
+            f"root requirements.txt has {root_specs[name]!r}, "
+            f"skills/fomo-kernel/requirements.txt has {spec!r}")
 
 
 def test_doctor_passes_when_all_present():
