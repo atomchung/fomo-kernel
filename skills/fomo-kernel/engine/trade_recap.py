@@ -1530,7 +1530,10 @@ def number_line(d):
             return base + f"；其中 {d['n_incon']}/{d['n_multi']} 檔同一檔又當沖又長抱（{', '.join(d['incon_tickers'][:5])}）——同檔沒有一致框架"
         return base + f"（中位 {d['median_hold']:.0f} 天 = 你的主框架；同檔框架大致一致）"
     if n == "加碼攤平":
-        return f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），其中 {d['breach']} 次加到 >25%"
+        # #348:「加到 >25%」讀起來像現在的市值佔比,跟 dim_size 的「目前佔 X%」撞語意。
+        # 兩個錨點都要在句子裡:「當下」(加碼那一刻,不是現在)+「成本」(佔成本基礎,不是市值)。
+        return (f"你有 {d['count']} 次在虧損倉往下加碼（{', '.join(d['tickers'][:6])}），"
+                f"其中 {d['breach']} 次加碼當下佔成本 >25%")
     return ""
 
 # ── headline 選卡的唯一事實源(#63)──────────────────────────────────────────
