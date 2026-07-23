@@ -304,6 +304,58 @@ def test_backlog_excludes_resolved_and_ranks_by_amount():
     assert [b["ticker"] for b in backlog1] == ["AAA"], "複核過的 BBB 退出 backlog"
 
 
+def _mk_hist_revisit(revisit_id, ticker, exit_date, exit_price, shares_sold, enqueued_at):
+    """直接組一筆『完全歷史存量』revisit 佇列項(繞過 enqueue,拿到插入序的完全控制權)。
+    due 用 rv.CHECKPOINTS 現算,跟引擎自己排的公式同一份,不手key日期、不會抄錯。"""
+    d0 = dt.date.fromisoformat(exit_date)
+    return {"type": "revisit", "revisit_id": revisit_id, "ticker": ticker,
+            "cycle_id": f"{ticker}#{exit_date}#1", "exit_date": exit_date,
+            "exit_price": exit_price, "shares_sold": shares_sold, "shares_before": shares_sold,
+            "kind": "full", "market": "US", "currency": "USD",
+            "due": {cp: (d0 + dt.timedelta(days=int(cp))).isoformat() for cp in rv.CHECKPOINTS},
+            "enqueued_at": enqueued_at, "swaps": [], "idle_cash": True}
+
+
+def test_backlog_ranks_by_dollar_impact_over_notional():
+    """#343:金額影響(|impact|)壓過純出場金額(notional)——不能再退化成「插入序」或
+    「單純出場金額大者先」。BIGCO notional 是 SMALLCO 的 20 倍,但出場後幾乎沒動(現價只
+    漂移 +1%);SMALLCO notional 雖小,出場後暴漲 5 倍,閒置現金的機會成本金額反而更大。
+    寫入順序刻意讓 notional 較大的 BIGCO 先進 revisits dict,證明排序贏的不是插入序、
+    也不是 notional,而是決策的金額影響。"""
+    _, q = _mk_paths()
+    enq = "2026-07-14"
+    big = _mk_hist_revisit("BIGCO-RID", "BIGCO", "2024-02-10", 1000.0, 10.0, enq)   # notional 10000
+    small = _mk_hist_revisit("SMALLCO-RID", "SMALLCO", "2024-04-10", 100.0, 5.0, enq)  # notional 500
+    lg.append_events(q, [big, small])          # 大 notional 先寫入 → 先進 dict(插入序陷阱)
+    revisits, resolutions, _ = rv.load_queue(q)
+    assert list(revisits.keys())[0] == "BIGCO-RID", "前置條件:BIGCO 確實先進 dict"
+    prices = {"BIGCO": 1010.0, "SMALLCO": 500.0}   # BIGCO 幾乎沒動(+1%);SMALLCO 暴漲 5 倍(+400%)
+    backlog, _, total = rv.scan_backlog(revisits, resolutions, prices=prices)
+    assert total == 2
+    assert [b["ticker"] for b in backlog] == ["SMALLCO", "BIGCO"], (
+        "SMALLCO notional 只有 BIGCO 的 1/20,但機會成本金額($2,000)遠大於 BIGCO($100),應排第一")
+    assert backlog[0]["notional"] < backlog[1]["notional"], "確認贏的不是靠 notional 大,而是靠 impact 大"
+    assert abs(backlog[0]["impact"]) > abs(backlog[1]["impact"])
+    assert _approx(backlog[0]["impact"], -2000.0, 1e-6), "SMALLCO:notional 500 × (0 - 4.0) = -2000"
+    assert _approx(backlog[1]["impact"], -100.0, 1e-6), "BIGCO:notional 10000 × (0 - 0.01) = -100"
+
+
+def test_backlog_impact_unknown_falls_back_to_notional():
+    """任一端缺現價 → impact 誠實回 None(不猜),排序退回舊行為(notional 大者先),
+    確保沒有價格來源時仍是決定性排序而非任意序。"""
+    led, q = _mk_paths()
+    lg.append_events(led, [_tr("2024-01-01", "AAA", "buy", 10, 100.0),
+                           _tr("2024-02-10", "AAA", "sell", 10, 110.0),    # notional 1100
+                           _tr("2024-03-01", "BBB", "buy", 5, 200.0),
+                           _tr("2024-04-10", "BBB", "sell", 5, 300.0)])    # notional 1500 > AAA
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 14))
+    revisits, resolutions, _ = rv.load_queue(q)
+    backlog, _, total = rv.scan_backlog(revisits, resolutions, prices={})
+    assert total == 2
+    assert [b["impact"] for b in backlog] == [None, None], "全缺價 → impact 誠實回 None,不猜"
+    assert [b["ticker"] for b in backlog] == ["BBB", "AAA"], "impact 未知 → 退回 notional 大者先(舊行為不變)"
+
+
 # ─────────────── D. swap framing 對比數學(#33 核心)───────────────
 
 def test_compare_swap_framing_math():

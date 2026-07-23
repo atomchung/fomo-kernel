@@ -18,6 +18,7 @@ The agent may not:
 - Calculate or alter numbers, rankings, weights, P&L, cycle IDs, metrics, driver concentration, or ETF allocation exemptions. Transcription is allowed; derived analysis is not.
 - Skip required questions, answer for the user, or represent an inference as confirmed.
 - Change a question's route, kind, trigger, priority, required status, queue position, canonical choices, payload requirements, numeric facts, identity, or validation; add a surface to an engine-rendered question kind; or ask more than one clarification.
+- Show, echo, or append an internal engine value or schema/field name in a question, option, or rule-choice prompt — for example a canonical choice key (`planned_entry`, `anxiety`) beside its label, or the `commitment` field name surfaced as "Commitment Rule". User-facing surfaces use domain language only; see `references/interaction-delivery.md`.
 - use polished prose to bypass a missing claim or source for `new_evidence`.
 - Assemble engine card/state artifacts by hand, append several JSONL files directly, and claim an atomic completion.
 - Upload a statement or screenshot for OCR. Snapshot transcription stays local; the engine accepts only the normalized JSON envelope through `review.py`.

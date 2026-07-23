@@ -2497,6 +2497,86 @@ def test_rule_grounding_facts_and_localization():
     assert grounded and "INTC, PYPL" in grounded[0]["grounding"], grounded
 
 
+def test_candidate_comparison_reflects_severity_not_list_order_and_degrades_cleanly():
+    """#302(c): the interaction-layer "why the other candidates ranked lower"
+    sentence must follow the same severity x tier-weight key `_rank_holes`
+    uses (`trade_recap.HEADLINE_TIER_W`), not the candidate list's own
+    insertion/display order, and must degrade to None -- never an empty or
+    dangling string -- whenever an honest ranking claim cannot be made.
+
+    Insertion order below deliberately puts the LOWER-severity dimension
+    first: `trade_recap.prescribe()` always emits averaging_down's rule
+    before position_sizing's, regardless of which is more severe this
+    period (see review.py:_candidate_rules' `source` construction). A test
+    that only used a persona where severity happens to agree with insertion
+    order (as every current mock persona does) would not catch a regression
+    that silently swapped in list position instead of severity.
+    """
+    card = {
+        "candidate_rules": [{"dim": "加碼攤平", "rule": "r1"}, {"dim": "部位 sizing", "rule": "r2"}],
+        "top_holes": [],
+        "dims_raw": [
+            {"dim": "加碼攤平", "tier": 1, "severity": 0.3},   # lower severity, listed first
+            {"dim": "部位 sizing", "tier": 1, "severity": 0.9},  # higher severity, listed second
+        ],
+    }
+    state = {"metrics": {"avgdown_count": 5, "max_pos_pct": 0.9}}
+    candidates = review_engine._candidate_rules(card, state, "en")
+    assert [c["dim"] for c in candidates] == ["averaging_down", "position_sizing"], candidates
+
+    en = review_engine._candidate_comparison(candidates, card, "en")
+    assert en == ("position sizing scored higher than averaging-down discipline on this "
+                  "period's severity ranking -- that reflects which pattern showed up more "
+                  "strongly this period, not which rule is the right fit for you."), en
+    zh = review_engine._candidate_comparison(candidates, card, "zh-TW")
+    assert zh == ("本期「部位 sizing」的訊號比「加碼攤平」更強——"
+                  "這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。"), zh
+
+    # Single candidate: clean degrade to None, not an empty or dangling sentence.
+    one = review_engine._candidate_rules(
+        {"candidate_rules": [{"dim": "加碼攤平", "rule": "r1"}], "top_holes": [],
+         "dims_raw": [{"dim": "加碼攤平", "tier": 1, "severity": 0.3}]},
+        {"metrics": {"avgdown_count": 5}}, "en")
+    assert len(one) == 1
+    assert review_engine._candidate_comparison(one, card, "en") is None
+
+    # Zero candidates: same clean degrade.
+    assert review_engine._candidate_comparison([], card, "en") is None
+
+    # A tie at the top is not an honest "ranked lower" claim -> None rather
+    # than an arbitrary pick between equals.
+    tie_card = {
+        "candidate_rules": [{"dim": "加碼攤平", "rule": "r1"}, {"dim": "部位 sizing", "rule": "r2"}],
+        "top_holes": [],
+        "dims_raw": [
+            {"dim": "加碼攤平", "tier": 1, "severity": 0.5},
+            {"dim": "部位 sizing", "tier": 1, "severity": 0.5},
+        ],
+    }
+    tie_state = {"metrics": {"avgdown_count": 5, "max_pos_pct": 0.9}}
+    tie_candidates = review_engine._candidate_rules(tie_card, tie_state, "en")
+    assert len(tie_candidates) == 2
+    assert review_engine._candidate_comparison(tie_candidates, tie_card, "en") is None
+
+    # A candidate whose severity cannot be located in dims_raw (e.g. an
+    # adapter-built card with a partial fact source): fail closed instead of
+    # silently comparing only the candidates it can see.
+    incomplete_card = {
+        "candidate_rules": [{"dim": "加碼攤平", "rule": "r1"}, {"dim": "部位 sizing", "rule": "r2"}],
+        "top_holes": [],
+        "dims_raw": [{"dim": "加碼攤平", "tier": 1, "severity": 0.3}],  # position_sizing missing
+    }
+    incomplete_candidates = review_engine._candidate_rules(incomplete_card, tie_state, "en")
+    assert len(incomplete_candidates) == 2
+    assert review_engine._candidate_comparison(incomplete_candidates, incomplete_card, "en") is None
+
+    # Structural guarantee that this sentence cannot reach the rendered card:
+    # card_renderer has no code path that reads this field at all.
+    import inspect
+    assert "candidate_comparison" not in inspect.getsource(card_renderer), \
+        "card_renderer must never read the interaction-layer comparison sentence"
+
+
 def test_preview_rejects_new_evidence_without_delta_and_narrative_numbers():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"

@@ -1792,6 +1792,70 @@ def _candidate_rules(card, state, language):
     return candidates
 
 
+def _severity_rank_key(card, dim_id):
+    """The same severity x tier-weight key `trade_recap._rank_holes` uses to
+    order the card's headline dimensions (#63 single fact source), looked up
+    by canonical `dim_id`.
+
+    Not a new score: `HEADLINE_TIER_W` and each dimension's `severity`/`tier`
+    already live on `card['dims_raw']`. Returns None when the dimension has
+    no raw entry or no numeric severity -- `_candidate_comparison` must never
+    guess a rank for data it cannot see.
+    """
+    for row in card.get("dims_raw") or []:
+        if not isinstance(row, dict) or card_renderer.dimension_id(row.get("dim")) != dim_id:
+            continue
+        severity = row.get("severity")
+        if not isinstance(severity, (int, float)):
+            return None
+        weight = trade_recap.HEADLINE_TIER_W.get(row.get("tier", 2), 0.7)
+        return float(severity) * weight
+    return None
+
+
+def _candidate_comparison(candidates, card, language):
+    """#302(c): one engine-generated sentence explaining why the candidates
+    other than the top-ranked one rank lower this period.
+
+    Derived strictly from the existing severity x tier-weight ranking (the
+    same key `_rank_holes` uses to pick `top_holes`) -- no new score is
+    invented here. Consumed only by `card_plan.candidate_comparison` /
+    `cmd_preview`'s echo of it, i.e. the interaction layer where the agent
+    presents the candidate-rule choice (`references/interaction-delivery.md`);
+    `card_renderer` never reads this field, so it cannot reach the rendered
+    card.
+
+    Degrades to None (no sentence -- never an empty or dangling one) whenever
+    an honest ranking claim cannot be made: fewer than two candidates, a
+    candidate whose severity cannot be located in `dims_raw`, or a tie at the
+    top. The sentence explains *ranking* only; it never claims the top
+    candidate is the objectively right rule for the user.
+    """
+    if len(candidates) < 2:
+        return None
+    ranked = []
+    for candidate in candidates:
+        key = _severity_rank_key(card, candidate.get("dim"))
+        if key is None:
+            return None  # can't compare fairly when any candidate's rank is unknown
+        ranked.append((key, candidate))
+    ranked.sort(key=lambda pair: -pair[0])
+    top_key, top = ranked[0]
+    others = ranked[1:]
+    if top_key <= others[0][0]:
+        return None  # tie at the top: no honest "ranked lower" claim to make
+    top_label = card_renderer.localized_dimension(top.get("dim"), language)
+    other_labels = [card_renderer.localized_dimension(c.get("dim"), language) for _, c in others]
+    if str(language).lower().startswith("en"):
+        others_text = " and ".join(other_labels)
+        return (f"{top_label} scored higher than {others_text} on this period's severity "
+                f"ranking -- that reflects which pattern showed up more strongly this period, "
+                f"not which rule is the right fit for you.")
+    others_text = "、".join(other_labels)
+    return (f"本期「{top_label}」的訊號比「{others_text}」更強——"
+            f"這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。")
+
+
 def _problem_snapshot(root, state):
     """Fold the problem book and rules into review-ready stats.
 
@@ -2086,6 +2150,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
         missing_thesis_positions=missing, tier=review_tier["tier"])
+    candidate_rules = _candidate_rules(card, state, language)
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -2127,7 +2192,12 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "question_queue": question_queue,
         "missing_thesis_positions": missing,
         "authoring_contract": _authoring_contract(route),
-        "card_plan": {"candidate_rules": _candidate_rules(card, state, language),
+        "card_plan": {"candidate_rules": candidate_rules,
+                      # #302(c): engine-authored, interaction-layer-only sentence
+                      # explaining why the other candidates rank lower; None when
+                      # fewer than two candidates or the ranking can't honestly
+                      # compare them (see _candidate_comparison).
+                      "candidate_comparison": _candidate_comparison(candidate_rules, card, language),
                       "question_limit": question_selection["max"],
                       "question_policy": {"route": question_selection["route"],
                                           "min": question_selection["min"],
@@ -2976,6 +3046,8 @@ def cmd_preview(args):
            "private_card": private_md, "public_card": public_md,
            "private_card_html_path": paths.get("card-private-preview.html"),
            "candidate_rules": (plan.get("card_plan") or {}).get("candidate_rules") or [],
+           # #302(c): interaction-layer-only; None when there is nothing honest to compare.
+           "candidate_comparison": (plan.get("card_plan") or {}).get("candidate_comparison"),
            "paths": paths, "next_action": "show the review-card preview (delivery contract: references/card-delivery.md); ask the user to choose one rule or skip; then finalize"})
 
 

@@ -248,11 +248,29 @@ def scan_due(revisits, resolutions, today):
 
 
 def _notional(item):
-    """出場金額(排序用):出場價 × 賣出股數。缺欄防禦回 0。"""
+    """出場金額(排序備援用):出場價 × 賣出股數。缺欄防禦回 0。"""
     try:
         return float(item.get("exit_price") or 0) * float(item.get("shares_sold") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _impact_dollars(item, cmp):
+    """#343:這筆出場決策對總報酬的金額影響——notional × 決策淨差,不是淨差的報酬率本身。
+    有 swap:淨差 = swap_net_pp(換入 vs 原標的續抱,已含正負號,>0 = 換對了)。
+    純閒置現金(無 swap):以「現金 ≈ 0 報酬」當基準,淨差 = -orig_ret——原標的續抱後續漲,
+    閒置就是機會成本(負);原標的續抱後續跌,閒置反而是對的(正)。號的方向跟 swap_net_pp
+    一致,兩種情況可直接比大小。任一端缺現價(needs_prices 非空)→ None,誠實不猜,
+    由呼叫端退回 notional 排序。
+    口徑刻意跟 trade_recap.ticker_diagnosis() 的 |impact| 排序一致(金額而非報酬率)——
+    #346 已裁決「按報酬率排序」與卡片其餘所有排序邏輯(帳面損益、關鍵交易、加碼次數)
+    不一致,不可在這裡重蹈。"""
+    net_pp = cmp.get("swap_net_pp")
+    if net_pp is None and cmp.get("idle_cash") and cmp.get("orig_ret") is not None:
+        net_pp = -cmp["orig_ret"]
+    if net_pp is None:
+        return None
+    return _notional(item) * net_pp
 
 
 def scan_recent_exits(revisits, today, window_days=RECENT_WINDOW_DAYS):
@@ -281,13 +299,25 @@ def _resolved_any(rid, resolutions):
 def scan_backlog(revisits, resolutions, prices=None, limit=5):
     """#170 冷啟動兩層的下半:啟用前的歷史出場不灌 due,改成 on-demand backlog。
     回 (backlog_topN, summary, total)。
-      backlog_topN —— 金額大者先(抓大放小),已複核過(有任一 resolution)的排除;engine 先收斂到 limit 筆。
+      backlog_topN —— #343 排序鍵:每筆先算 compare()(需要價才有 swap_net_pp/閒置機會成本),
+        有現價可判斷決策淨差的,按金額影響 |impact_dollars| 大者先(口徑同 trade_recap 的
+        |impact| 排序,金額而非報酬率——#346 已裁決報酬率排序與卡片其餘邏輯不一致);
+        沒現價、判斷不了決策淨差的,退回 notional(出場金額)排序,墊在有 impact 的後面
+        (未知不能假裝比已知的更值得看)。已複核過(有任一 resolution)的排除;
+        engine 先收斂到 limit 筆。
       summary —— 對「全部歷史未複核出場」的彙總洞察(選項 4):count/full/reduce/top_tickers/span 免現價必得;
         賣飛傾向(sold_before_rise/avg_hindsight_pp)只對 prices 有的算、覆蓋率(priced)誠實列,缺價不猜。
       total —— 歷史未複核出場總數(backlog 收斂前的真數,SKILL 講「還有 N 筆」用)。"""
     hist = [it for it in revisits.values()
             if _is_historical(it) and not _resolved_any(it.get("revisit_id"), resolutions)]
-    hist.sort(key=lambda it: (-_notional(it), str(it.get("revisit_id"))))
+    # compare() 要對每一筆算(不能只對「notional 前 limit 名」算)否則排在 notional 第 6+ 名、
+    # 但 swap 翻轉幅度最大的那筆永遠沒機會被看見——這正是舊版排序看起來「隨便挑幾筆」的病灶。
+    scored = [(it, compare(it, prices)) for it in hist]
+    scored = [(it, cmp, _impact_dollars(it, cmp)) for it, cmp in scored]
+    scored.sort(key=lambda row: (row[2] is None,
+                                  -abs(row[2]) if row[2] is not None else 0.0,
+                                  -_notional(row[0]), str(row[0].get("revisit_id"))))
+    hist = [row[0] for row in scored]
     full = sum(1 for it in hist if it.get("kind") == "full")
     freq = {}
     for it in hist:
@@ -311,8 +341,10 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5):
                "avg_hindsight_pp": round(ret_sum / priced, 6) if priced else None}
     topn = [{"revisit_id": it["revisit_id"], "ticker": it["ticker"], "exit_date": it["exit_date"],
              "exit_price": it["exit_price"], "shares_sold": it["shares_sold"], "kind": it.get("kind"),
-             "notional": round(_notional(it), 2), "compare": compare(it, prices)}
-            for it in hist[:limit]]
+             "notional": round(_notional(it), 2),
+             "impact": round(impact, 2) if impact is not None else None,
+             "compare": cmp}
+            for it, cmp, impact in scored[:limit]]
     return topn, summary, len(hist)
 
 
