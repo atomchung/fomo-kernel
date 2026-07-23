@@ -21,3 +21,6 @@ ledger.jsonl
 # second net alongside the doc instruction to keep it outside the repository.
 # No leading slash: matches at any path depth.
 fomo-kernel-positions.json
+
+# Generated Claude Design bundle (rebuild with tools/design_bundle.py)
+skills/fomo-kernel/tools/ds-bundle/
