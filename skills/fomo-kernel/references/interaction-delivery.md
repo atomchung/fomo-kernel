@@ -116,6 +116,15 @@ python3 tools/ux_receipt.py event --session-id <session_id> \
   --event memory_presented --memory-kind prior_commitment
 ```
 
+On `first_review` and `weekly_review`, record `cash_anchor_checked` before the first question or card (#357). The cash anchor (`references/data-contract.md`) is resolved before `prepare` even runs — read from the source, asked as one short question, or explicitly skipped — so this event is retrospective evidence that the check happened at all rather than a self-reported claim made after the fact; recording it late fails the same way a backfilled weekly opener would. `--cash-outcome` names which of the three happened:
+
+```bash
+python3 tools/ux_receipt.py event --session-id <session_id> \
+  --event cash_anchor_checked --cash-outcome found_in_source
+```
+
+`found_in_source` (the trade statement carried a cash balance row, used directly), `asked_user` (none appeared anywhere, so the user was asked once and answered or declined), or `skipped` (the user explicitly declined to provide one) are the only valid values; the card degrades to the holdings-only pillar exactly as before when no anchor was ultimately supplied. `snapshot_review` (its own envelope states `cash` inline, or omits it) and `test_drive` (never persists an accounting anchor) do not carry this requirement.
+
 When the user's final required answer has arrived in the conversation, record `answers_received` immediately, before calling `preview`:
 
 ```bash

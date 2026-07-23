@@ -50,6 +50,7 @@ def row(event, **values):
 def good_markdown_rows():
     return [
         declaration(),
+        row("cash_anchor_checked", cash_outcome="found_in_source"),
         row("artifact_generated", stage="preview", artifact_path="/tmp/card-private-preview.md"),
         row("card_presented", stage="preview", mode="markdown_inline"),
         row("artifact_generated", stage="final", artifact_path="/tmp/card-private.md"),
@@ -66,13 +67,13 @@ def weekly_rows():
 
 def owner_rows():
     rows = good_markdown_rows()
-    rows.insert(1, row("question_presented", mode="plain_text"))
-    rows.insert(2, row("answers_received"))
+    rows.insert(2, row("question_presented", mode="plain_text"))
+    rows.insert(3, row("answers_received"))
     # #293 (merged after this fixture was authored): rule_choice_presented now
     # requires machine-checked grounding-fidelity evidence. No candidate in
     # this synthetic fixture carries an engine grounding, so the trivially
     # satisfied state applies (mirrors _grounding_fidelity's no-candidates path).
-    rows.insert(5, row("rule_choice_presented", mode="plain_text",
+    rows.insert(6, row("rule_choice_presented", mode="plain_text",
                        grounding_expected=False, grounding_verbatim=True))
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     return rows
@@ -105,29 +106,29 @@ def test_native_controls_and_widget_pass():
         question_modes=["plain_text", "native_options"],
         card_modes=["markdown_inline", "widget"],
     )
-    rows.insert(1, row("question_presented", mode="native_options",
+    rows.insert(2, row("question_presented", mode="native_options",
                        surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
-    rows[3]["mode"] = "widget"   # preview card
-    rows[5]["mode"] = "widget"   # final card
+    rows[4]["mode"] = "widget"   # preview card
+    rows[6]["mode"] = "widget"   # final card
     assert ux_receipt.verify_rows(rows) == []
 
 
 def test_question_surface_trace_is_content_free():
     rows = good_markdown_rows()
-    rows.insert(1, row("question_presented", mode="plain_text",
+    rows.insert(2, row("question_presented", mode="plain_text",
                        surface_source="engine_fallback", surface_digest=SURFACE_DIGEST))
     assert ux_receipt.verify_rows(rows) == []
 
     leaked = [dict(value) for value in rows]
-    leaked[1]["stem"] = "private trade wording"
+    leaked[2]["stem"] = "private trade wording"
     assert_has(ux_receipt.verify_rows(leaked), "question trace contains content fields")
 
     missing = [dict(value) for value in rows]
-    missing[1].pop("surface_digest")
+    missing[2].pop("surface_digest")
     assert_has(ux_receipt.verify_rows(missing), "source and digest must appear together")
 
     invalid = [dict(value) for value in rows]
-    invalid[1]["surface_digest"] = "not-a-digest"
+    invalid[2]["surface_digest"] = "not-a-digest"
     assert_has(ux_receipt.verify_rows(invalid), "invalid surface digest")
 
 
@@ -139,18 +140,18 @@ def test_weekly_opening_memory_passes():
 
 def test_generated_without_presented_fails():
     rows = good_markdown_rows()
-    del rows[2]  # drop the preview card_presented, keep its artifact
+    del rows[3]  # drop the preview card_presented, keep its artifact
     assert_has(ux_receipt.verify_rows(rows), "preview card_presented must appear exactly once")
 
 
 def test_card_marked_presented_before_artifact_fails():
     rows = good_markdown_rows()
-    rows[1], rows[2] = rows[2], rows[1]  # card before its artifact
+    rows[2], rows[3] = rows[3], rows[2]  # card before its artifact
     assert_has(ux_receipt.verify_rows(rows), "before its artifact existed")
 
 
 def test_final_card_before_preview_card_fails():
-    rows = [good_markdown_rows()[0]] + good_markdown_rows()[3:5] + good_markdown_rows()[1:3]
+    rows = [good_markdown_rows()[0]] + good_markdown_rows()[4:6] + good_markdown_rows()[2:4]
     assert_has(ux_receipt.verify_rows(rows), "final card presentation must follow the preview card")
 
 
@@ -197,7 +198,7 @@ def test_missing_universal_fallbacks_fail():
 
 def test_undeclared_card_mode_fails():
     rows = good_markdown_rows()
-    rows[2]["mode"] = "widget"  # not declared
+    rows[3]["mode"] = "widget"  # not declared
     assert_has(ux_receipt.verify_rows(rows), "undeclared mode")
 
 
@@ -507,6 +508,7 @@ def test_malformed_ts_fails():
 def test_normal_owner_trace_has_credible_timing_integrity():
     rows = stamp(owner_rows(), [
         "2026-07-20T13:46:00Z",
+        "2026-07-20T13:46:02Z",  # cash_anchor_checked
         "2026-07-20T13:46:05Z",
         "2026-07-20T13:46:12Z",
         "2026-07-20T13:46:15Z",
@@ -524,7 +526,7 @@ def test_normal_owner_trace_has_credible_timing_integrity():
 
 
 def test_same_second_owner_trace_is_suspect_one_burst_backfill():
-    rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 9)
+    rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 10)
     integrity = ux_receipt.timing_integrity(rows)
     assert integrity["status"] == "suspect"
     assert integrity["owner_live_eligible"] is False
@@ -537,6 +539,7 @@ def test_same_second_owner_trace_is_suspect_one_burst_backfill():
 def test_reversed_owner_trace_timestamp_is_suspect():
     rows = stamp(owner_rows(), [
         "2026-07-20T13:46:00Z",
+        "2026-07-20T13:46:02Z",  # cash_anchor_checked
         "2026-07-20T13:46:05Z",
         "2026-07-20T13:46:12Z",
         "2026-07-20T13:46:11Z",  # preview artifact timestamp reverses
@@ -554,8 +557,8 @@ def test_reversed_owner_trace_timestamp_is_suspect():
     ]
     assert integrity["findings"][0] == {
         "code": "timestamp_reversal",
-        "row": 4,
-        "previous_row": 3,
+        "row": 5,
+        "previous_row": 4,
     }
 
 
@@ -588,7 +591,7 @@ def test_cli_warns_by_default_and_strict_timing_gate_fails_suspect_trace():
     with tempfile.TemporaryDirectory() as tmp:
         receipt = pathlib.Path(tmp) / "ux" / "burst.jsonl"
         receipt.parent.mkdir(parents=True)
-        rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 9)
+        rows = stamp(owner_rows(), ["2026-07-20T13:46:02Z"] * 10)
         for value in rows:
             value["session_id"] = "burst"
         receipt.write_text("".join(json.dumps(value) + "\n" for value in rows), encoding="utf-8")
@@ -625,6 +628,87 @@ def test_weekly_opener_after_first_card_fails():
     rows[0] = declaration(route="weekly_review")
     rows.append(row("memory_presented", memory_kind="prior_skip"))  # after both cards
     assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
+
+
+# --- Cash anchor pre-flight (#357) --------------------------------------------
+# The cash anchor is resolved before `prepare` even runs (agent reads the
+# source, or asks the user one short question, or the user skips), so this
+# event is retrospective evidence the check happened at all -- an agent that
+# forgot to check (the failure mode #357 was filed for) cannot fabricate it
+# after the fact without also getting the ordering wrong.
+
+def test_cash_anchor_checked_missing_fails_for_first_review():
+    rows = good_markdown_rows()
+    del rows[1]  # drop the cash_anchor_checked row good_markdown_rows() adds
+    assert_has(ux_receipt.verify_rows(rows), "first_review must record exactly one cash_anchor_checked event")
+
+
+def test_cash_anchor_checked_missing_fails_for_weekly_review():
+    rows = weekly_rows()
+    del rows[2]  # weekly_rows() inserts memory_presented at 1, pushing cash to 2
+    assert_has(ux_receipt.verify_rows(rows), "weekly_review must record exactly one cash_anchor_checked event")
+
+
+def test_cash_anchor_checked_duplicate_fails():
+    rows = good_markdown_rows()
+    rows.insert(2, row("cash_anchor_checked", cash_outcome="asked_user"))
+    assert_has(ux_receipt.verify_rows(rows), "must record exactly one cash_anchor_checked event")
+
+
+def test_cash_anchor_checked_after_first_question_fails():
+    rows = good_markdown_rows()
+    del rows[1]  # remove the pre-flight cash check...
+    rows.insert(1, row("question_presented", mode="plain_text"))
+    rows.insert(2, row("cash_anchor_checked", cash_outcome="found_in_source"))  # ...and backfill it late
+    assert_has(ux_receipt.verify_rows(rows), "cash_anchor_checked was recorded after the first question or card")
+
+
+def test_cash_anchor_checked_invalid_outcome_fails():
+    rows = good_markdown_rows()
+    rows[1]["cash_outcome"] = "assumed_zero"
+    assert_has(ux_receipt.verify_rows(rows), "unsupported cash outcome")
+
+
+def test_cash_anchor_checked_valid_outcomes_pass():
+    for outcome in ux_receipt.CASH_OUTCOMES:
+        rows = good_markdown_rows()
+        rows[1]["cash_outcome"] = outcome
+        assert ux_receipt.verify_rows(rows) == []
+
+
+def test_cash_anchor_checked_not_required_outside_trade_history_routes():
+    # snapshot_review's own envelope states `cash` inline (or omits it) and
+    # test_drive never persists an accounting anchor at all (references/
+    # data-contract.md) -- neither route carries this requirement.
+    for route in ("snapshot_review", "test_drive"):
+        rows = good_markdown_rows()
+        del rows[1]  # no cash_anchor_checked at all
+        rows[0] = declaration(route=route)
+        assert ux_receipt.verify_rows(rows) == []
+
+
+def test_cli_cash_anchor_checked_requires_outcome():
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "session-357", "--state-root", tmp]
+        subprocess.run(
+            [sys.executable, str(TOOL), "start", *common,
+             "--client", "codex-desktop", "--route", "first_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True, check=True,
+        )
+        missing = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "cash_anchor_checked"],
+            capture_output=True, text=True,
+        )
+        assert missing.returncode == 2
+        assert "requires --cash-outcome" in missing.stderr
+
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common,
+             "--event", "cash_anchor_checked", "--cash-outcome", "skipped"],
+            capture_output=True, text=True,
+        )
+        assert done.returncode == 0, done.stderr
 
 
 # --- Declaration integrity ---------------------------------------------------
@@ -672,7 +756,7 @@ def test_manual_verification_requires_owner_verdict():
 
 def test_dynamic_surface_manual_verdict_requires_specificity_and_answer_fit():
     rows = good_markdown_rows()
-    rows.insert(1, row("question_presented", mode="plain_text",
+    rows.insert(2, row("question_presented", mode="plain_text",
                        surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     assert_has(
@@ -730,6 +814,7 @@ def test_cli_writes_trace_into_protected_state_root():
         }), encoding="utf-8")
 
         for args in (
+            ["--event", "cash_anchor_checked", "--cash-outcome", "found_in_source"],
             ["--event", "question_presented", "--mode", "plain_text",
              "--surface-source", "validated_dynamic", "--surface-digest", SURFACE_DIGEST],
             ["--event", "answers_received"],

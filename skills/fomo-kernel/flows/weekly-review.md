@@ -2,6 +2,8 @@
 
 Use when the Review Plan has `route=weekly_review`.
 
+Before calling `prepare` at all, resolve the cash anchor per `references/data-contract.md`: read it from the source, ask the user one short question when none appears anywhere, or accept an explicit skip. Once `prepare` returns a session_id, record `cash_anchor_checked` before the first question or card (`references/interaction-delivery.md`, #357) — this is retrospective evidence the check happened, not a new question added to the queue.
+
 0. Recover prices before anything else if `review_plan.input.price_feed.request` is present (the host could not retrieve prices; `provenance.mode == "unavailable"` in the sandbox case): you MUST first look the requested closes up yourself from a recognized market-data source with your own retrieval or search tooling, transcribe them into the envelope, and rerun `prepare --prices <path>` — before you surface the gap to the user or deliver a degraded card. Deliver the degraded card only if that recovery genuinely fails, and never stall the review. See `references/price-feed.md`.
 1. Read `state_snapshot` from the Review Plan. Do not scan the entire `~/.trade-coach` directory. If `state_snapshot.cadence.tier == "light"`, stop here and follow `flows/light-capture.md` instead of the remaining steps in this flow.
 2. Begin the interpretation by reconciling against `prior_commitment`; when it is null, state that the previous review ended with no committed rule. Record that `prior_commitment` or `prior_skip` was actually presented following `references/interaction-delivery.md`. The renderer opens the card with the committed rule and that metric's then/now values verbatim; interpret the movement in the mirror, and do not compute a delta yourself.

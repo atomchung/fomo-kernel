@@ -437,6 +437,7 @@ def test_cross_client_receipts_share_digest_without_private_copy():
             {**base, "event": "capabilities_declared", "client": "test-client",
              "route": "first_review", "question_modes": ["plain_text", mode],
              "card_modes": ["markdown_inline"]},
+            {**base, "event": "cash_anchor_checked", "cash_outcome": "found_in_source"},
             {**base, "event": "question_presented", "mode": mode,
              "surface_source": presentation["source"],
              "surface_digest": presentation["surface_digest"]},
@@ -448,7 +449,7 @@ def test_cross_client_receipts_share_digest_without_private_copy():
             {**base, "event": "card_presented", "stage": "final", "mode": "markdown_inline"},
         ]
         assert ux_receipt.verify_rows(rows) == []
-        receipt_text = json.dumps(rows[1], ensure_ascii=False)
+        receipt_text = json.dumps(rows[2], ensure_ascii=False)
         assert "NVDA" not in receipt_text
         assert "Enterprise demand" not in receipt_text
         assert presentation["surface_digest"] in receipt_text
