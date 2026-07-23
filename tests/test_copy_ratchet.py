@@ -38,6 +38,7 @@ trying to stop.
 recursive key set (#279). That test already exists and runs in the "Card
 HTML and delivery contract" suite, so it is not duplicated here.
 """
+import json
 import pathlib
 import re
 
@@ -122,6 +123,55 @@ def test_language_branch_count_only_ratchets_down():
         "lower BASELINE in this file to the newly measured count in the "
         "same PR — see the module docstring."
     )
+
+
+# Every way ``card_renderer.py`` subscripts the ``sections`` group with a
+# literal key. The group has exactly one dynamic reader — ``_copy_string``'s
+# ``(copy.get("sections") or {}).get(key)`` fallback — and all three of its call
+# sites pass ``snapshot_strength`` / ``snapshot_hole`` / ``snapshot_numbers``,
+# which are top-level copy keys, not section keys. So the literal subscripts
+# below are the complete reader set, and a section key absent from them is
+# genuinely unrendered.
+SECTION_READ_PATTERNS = (
+    re.compile(r'sections_copy\[["\'](\w+)["\']\]'),
+    re.compile(r'\[["\']sections["\']\]\[["\'](\w+)["\']\]'),
+)
+COPY_DIR = ROOT / "skills" / "fomo-kernel" / "copy"
+
+
+def test_every_section_heading_has_a_renderer_that_reads_it():
+    """A copy key nothing renders is not neutral — it is a migration decoy.
+
+    #368's whole method is to move hardcoded prose into ``copy/*.json`` and
+    watch the ratchet fall. A heading with no reader accepts that prose and
+    reports the same progress while rendering nothing, so the ratchet drops
+    without the card changing. Ten of the fifteen ``sections`` keys were in
+    exactly that state when this test was written (leftovers from the
+    pre-#286 standalone-section card, which four blocks replaced); they were
+    deleted rather than kept as landing sites.
+
+    Two of the five survivors — ``performance`` and ``etf`` — are read only by
+    ``render_public``. They are covered by
+    ``test_review_v2.test_public_card_renders_the_two_section_headings_only_it_owns``,
+    since the persona sweep cannot light them (it runs offline, and no mock
+    persona holds an ETF)."""
+    source = CARD_RENDERER.read_text(encoding="utf-8")
+    read = {key for pattern in SECTION_READ_PATTERNS for key in pattern.findall(source)}
+    for locale in ("en", "zh-TW"):
+        defined = set(json.loads(
+            (COPY_DIR / f"{locale}.json").read_text(encoding="utf-8"))["sections"])
+        unread = sorted(defined - read)
+        assert not unread, (
+            f"copy/{locale}.json defines sections {unread} that card_renderer.py "
+            "never subscripts. Delete them, or render them — do not leave them "
+            "as somewhere for a #368 Phase 2 batch to move sentences into, "
+            "because the ratchet would fall while the card stayed the same. "
+            "(If you added a genuinely dynamic reader for the group, extend "
+            "SECTION_READ_PATTERNS and say why in the comment above it.)")
+        missing = sorted(read - defined)
+        assert not missing, (
+            f"card_renderer.py reads sections {missing}, which copy/{locale}.json "
+            "does not define — that is a KeyError on the rendering path.")
 
 
 def main():

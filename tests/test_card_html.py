@@ -744,7 +744,11 @@ def test_stress_line_rides_block1_exposure_for_any_hole_dimension():
     its data exists. #265's intent survives — an unrelated hole never absorbs
     the stress fact — and the concentration-family holes no longer host it
     either; there is no standalone stress section on either surface."""
-    sections = card_renderer.load_copy("zh-TW")["sections"]
+    # The literal, not copy["sections"]["stress"]: that key was pruned (#368,
+    # 2026-07-23) precisely because nothing renders it, and reading a deleted
+    # key to prove it never appears would be circular. Pinning the heading text
+    # keeps this assertion falsifiable if the standalone section ever returns.
+    stress_heading = "集中度壓測 · 回檔情境"
     cases = (
         ("加碼攤平", None),  # the rich fixture's own non-concentration hole
         ("分散", "前三大風險部位佔 83%，最大 driver 佔 98%。"),
@@ -761,8 +765,8 @@ def test_stress_line_rides_block1_exposure_for_any_hole_dimension():
 
         assert "撐得住嗎" not in _hole_panel_chunk(html), \
             f"the {dim} hole panel must not absorb the stress line"
-        assert "撐得住嗎" in html and f"## {sections['stress']}" not in markdown \
-            and sections["stress"] not in html, \
+        assert "撐得住嗎" in html and f"## {stress_heading}" not in markdown \
+            and stress_heading not in html, \
             "the stress line must render without a standalone stress section"
         assert "撐得住嗎" in _markdown_block(markdown, "zh-TW", "performance"), \
             f"stress line must ride Block 1 when the top hole is {dim}"

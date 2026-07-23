@@ -2981,6 +2981,40 @@ def test_public_relative_performance_omits_bad_rows_and_preserves_zero():
         "rounded zero is a valid engine result and must never expose a negative sign"
 
 
+def test_public_card_renders_the_two_section_headings_only_it_owns():
+    """``sections.performance`` and ``sections.etf`` are read by nothing but
+    ``render_public``, and no test covered either heading before #368.
+
+    That combination is how a live key comes to look dead: the persona sweep
+    renders public cards, but it runs offline (so ``_public_performance_lines``
+    never gets the ``excess_vs_spy`` + ``beta`` pair it needs) against personas
+    that hold no ETFs — both headings are dark to it for reasons that have
+    nothing to do with whether the product renders them. The #368 audit
+    initially counted both as unread; this test is the standing evidence that
+    they are not."""
+    import card_renderer
+    card = _mixed_market_card_for_rendering()
+    card["portfolio_structure"] = {
+        "allocation_etfs": [{"ticker": "SPY", "weight": 0.30}],
+        "concentrated_etfs": [],
+    }
+    expected = {
+        "en": ("## Relative performance", "## ETF and portfolio structure"),
+        "zh-TW": ("## 相對績效", "## ETF 與組合結構"),
+    }
+    for language, (performance, etf) in expected.items():
+        public = card_renderer.render_public({"language": language, "engine_card": card})
+        assert performance in public, f"{language}: public card dropped the performance heading"
+        assert etf in public, f"{language}: public card dropped the ETF heading"
+        # Both are data-gated, and the gates are independent: drop the ETF
+        # structure and only that heading goes, which is what makes the two
+        # headings separate keys rather than one.
+        without_etf = card_renderer.render_public(
+            {"language": language, "engine_card": {**card, "portfolio_structure": {}}})
+        assert performance in without_etf and etf not in without_etf, \
+            f"{language}: the two headings must gate independently"
+
+
 def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
@@ -3433,8 +3467,13 @@ def test_english_is_same_contract_with_localized_questions_and_card():
         result = json.loads(final.stdout)
         assert final.returncode == 0
         text = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
-        assert "Trade Review" not in text or "The account for this review" in text
-        assert "Before averaging down" in text and "這期的帳" not in text
+        # Was: `"Trade Review" not in text or "The account for this review" in
+        # text` — vacuous since the en title became "Review Card", and its
+        # right-hand side named `sections.numbers`, pruned in #368. The English
+        # card's no-CJK property it gestured at is now gated far harder, on
+        # every en persona and all three surfaces, by persona_sweep's
+        # locale_purity (#356).
+        assert "Before averaging down" in text
 
 
 def test_reconciliation_opens_the_card_with_prior_commitment():
@@ -3783,7 +3822,10 @@ def test_zh_copy_glossary_drops_untranslated_jargon():
     交易論述 replacement terms staying consistent everywhere they appear."""
     import card_renderer
     copy_zh = card_renderer.load_copy("zh-TW")
-    assert copy_zh["sections"]["motive"] == "這次加碼的交易論述"
+    # `sections.motive` used to carry the 交易論述 term here; it was pruned
+    # (#368, 2026-07-23) as one of ten section headings no renderer reads. The
+    # glossary rule it stood for is asserted below on surfaces that do render:
+    # problem_keys.horizon_break and localized_instrument_tag.
     # The period line's SPY half was cut (#366, owner ruling 2026-07-23), so
     # the glossary has no `period.spy` key left to check — the surviving VIX
     # half is asserted against the renderer below.
