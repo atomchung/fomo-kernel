@@ -18,6 +18,10 @@
 - `card-template.html` stays as HTML design provenance (palette, dark mode),
   synchronized with `card_renderer.render_html()` per CLAUDE.md; it no longer
   defines section order.
+- [layout-constraints.md](layout-constraints.md) restates this contract for a
+  designer with no repository context: what is load-bearing, what the visual
+  system currently is, and which questions are open. It is written to be handed
+  to an outside design review; it never overrides this file.
 
 ## 2. Canonical structure: keynote + four blocks
 
