@@ -294,5 +294,36 @@
       "clean_structure": "This position snapshot did not flag concentration or diversification as a structural risk.",
       "no_weights": "This opening check establishes a structural baseline without treating unavailable weights as low risk."
     }
+  },
+  "problems": {
+    "trend_line": "{name}: {recent} events in the recent window versus {prev} before ({trend}).",
+    "breach_decision": "Rule \"{rule}\": {label}.",
+    "breach_note": " Note: \"{note}\".",
+    "rule_held": "Rule \"{rule}\" was kept in the latest observable period."
+  },
+  "exit_followup": {
+    "position_fallback": "position",
+    "check": "{ticker}, {checkpoint}-day check: {label}.",
+    "note": " Note: \"{note}\".",
+    "as_of": " as of {as_of}",
+    "needs_prices": " Current prices are missing for {missing}{when}, so no outcome comparison was made.",
+    "replacement_fallback": "the replacement",
+    "frozen_lead": " Using prices frozen on {as_of},",
+    "frozen_lead_absent": "",
+    "swap": "{lead} the original moved {orig}; {swaps} moved {swap}; swap net {net}.",
+    "frozen_note": " using prices frozen on {as_of}",
+    "idle": " Proceeds stayed idle while the original moved {orig}{when}.",
+    "backlog": "Historical exit backlog: {count} unresolved exits ({full} full, {reduce} reductions)",
+    "backlog_span": " from {first} to {last}",
+    "backlog_top": "; most frequent: {top}",
+    "sentence_end": ".",
+    "backlog_priced": " Across {priced} price-covered exits, the average post-exit move was {avg}; {rose} later rose.",
+    "action_full": "full exit",
+    "action_reduce": "reduction",
+    "focus": "Backlog focus: {ticker}, {action} on {exit_date}.",
+    "focus_needs_prices": " No frozen-price comparison for {missing}{when}.",
+    "focus_swap": " The original moved {orig}{when}; the replacement moved {swap}; swap net {net}.",
+    "focus_idle": " Proceeds stayed idle while the original moved {orig}{when}.",
+    "focus_orig": " The original moved {orig}{when}."
   }
 }
