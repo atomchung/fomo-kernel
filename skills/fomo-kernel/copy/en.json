@@ -39,7 +39,6 @@
   "period": {
     "span": "Review period {start} → {end}",
     "as_of": "As of {end}",
-    "spy": "SPY window {ret}",
     "vix": "VIX {value}"
   },
   "block_missing": {

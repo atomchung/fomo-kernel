@@ -1697,24 +1697,29 @@ def _period_span(bundle, copy):
 
 
 def _market_backdrop(bundle, copy):
-    """The two demoted market indicators — primary benchmark window return and
-    VIX — that qualify the excess-versus-market reading.
+    """The demoted market indicator — VIX — that qualifies the
+    excess-versus-market reading.
 
-    Unlike the review span these ARE properties of the benchmark comparison,
-    so they stay with the excess KPI tile on HTML (and hold Block 1's line on
-    Markdown, which has no tile grid). Returns None when neither indicator is
-    available."""
+    Unlike the review span this IS a property of the benchmark comparison, so
+    it stays with the excess KPI tile on HTML (and holds Block 1's line on
+    Markdown, which has no tile grid). Returns None when it is unavailable.
+
+    The primary benchmark's window return used to lead this line. Owner ruling
+    2026-07-23 removed it (#366): it was the only period-scoped figure on a
+    card whose personal numbers are all cumulative since inception
+    (``overview_stats`` sums every round trip ever plus every current
+    holding), so the reader had nothing to compare it against — and after #344
+    put it in the excess tile's sub, a window-scoped return sat directly under
+    a whole-history excess value, with both labelled "same period". Its stated
+    second job, qualifying motive reads, was never wired either: nothing in
+    question generation consumes ``market_context``. #366 records the one
+    condition that earns it back — a period-local section for it to sit
+    beside. A volatility *level* carries neither defect, so VIX stays."""
     context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("market_context") or {})
     period_copy = copy.get("period") or {}
     pieces = []
     benchmarks = context.get("benchmarks") or {}
-    spy = benchmarks.get("SPY") or {}
-    if spy.get("window_ret") is not None and period_copy.get("spy"):
-        try:
-            pieces.append(period_copy["spy"].format(ret=_signed_pct(spy["window_ret"])))
-        except (KeyError, IndexError, ValueError):
-            pass
     vix = benchmarks.get("VIX") or {}
     if vix.get("last") is not None and period_copy.get("vix"):
         value = f"{float(vix['last']):.1f}"
@@ -1940,9 +1945,12 @@ def _problem_lines(bundle, copy):
 def _kpi_tiles(card, context, copy, backdrop=None):
     """Up to four headline tiles: P&L, payoff, benchmark excess, alpha.
 
-    ``backdrop`` (#344) is the benchmark window return and VIX that qualify
-    the excess reading; when the excess tile renders they fold into its sub
-    instead of standing as their own sentence beneath the grid. The review
+    ``backdrop`` (#344) is the VIX level that qualifies the excess reading;
+    when the excess tile renders it folds into its sub instead of standing as
+    its own sentence beneath the grid. The primary benchmark's window return
+    rode here too until owner ruling 2026-07-23 cut it (#366 — a window-scoped
+    return under a whole-history excess, with nothing period-local on the card
+    to compare it against). The review
     span deliberately does NOT ride along — owner ruling 2026-07-22 put it at
     the top of the card (see ``_period_span``), because carrying both made
     this one cell roughly three times the text of its neighbours and the

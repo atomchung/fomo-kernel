@@ -3756,7 +3756,10 @@ def test_zh_copy_glossary_drops_untranslated_jargon():
     import card_renderer
     copy_zh = card_renderer.load_copy("zh-TW")
     assert copy_zh["sections"]["motive"] == "這次加碼的交易論述"
-    assert copy_zh["period"]["spy"] == "SPY 同期 {ret}"
+    # The period line's SPY half was cut (#366, owner ruling 2026-07-23), so
+    # the glossary has no `period.spy` key left to check — the surviving VIX
+    # half is asserted against the renderer below.
+    assert "spy" not in copy_zh["period"], copy_zh["period"]
     assert "thesis" not in copy_zh["rules"]["exit_discipline"]
     assert "driver" not in copy_zh["rules"]["diversification"]
     assert "驅動因子" in copy_zh["rules"]["diversification"]
@@ -3769,9 +3772,14 @@ def test_zh_copy_glossary_drops_untranslated_jargon():
 
     bundle = {"engine_state": {"date_start": "2026-06-01", "date_end": "2026-07-14"},
               "review_plan": {"state_snapshot": {"market_context": {
-                  "benchmarks": {"SPY": {"window_ret": 0.011}}}}}}
+                  "benchmarks": {"SPY": {"window_ret": 0.011},
+                                 "VIX": {"last": 17.2, "delta": -1.8}}}}}}
     backdrop = card_renderer._market_backdrop(bundle, copy_zh)
-    assert "SPY 同期" in backdrop and "SPY 窗口" not in backdrop and "SPY 區間" not in backdrop
+    assert backdrop == "VIX 17.2 (-1.8)", backdrop
+    # #366: the benchmark's window return is gone from this line entirely — it
+    # was the card's only period-scoped figure, with nothing period-local to
+    # compare it against, and "同期" ended up naming two different windows.
+    assert "SPY" not in backdrop and "+1.1%" not in backdrop, backdrop
     # The review span is card-level metadata and leads the keynote preamble
     # (owner ruling 2026-07-22); it must not ride the market backdrop that
     # qualifies the excess tile.
@@ -3862,7 +3870,7 @@ def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
                                         "note": "SECRET lesson"}]}
     private = card_renderer.render_private(bundle)
     public = card_renderer.render_public(bundle)
-    for fragment in ("SPY window +3.0%", "inferred thesis horizon was weeks",
+    for fragment in ("VIX 17.2 (-1.8)", "inferred thesis horizon was weeks",
                      "prices frozen on 2026-07-15", "swap net -15.0 pp",
                      "Historical exit backlog: 4",
                      "Across 3 price-covered exits, the average post-exit move was -3.0 pp; 1 later rose",
@@ -3870,6 +3878,9 @@ def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
                      "Proceeds stayed idle while the original moved +25.0% using prices frozen on 2026-07-15",
                      "Averaging-down boundary", "SECRET lesson"):
         assert fragment in private, fragment
+    # #366: the benchmark's window return no longer renders on either surface.
+    assert "SPY window" not in private and "+3.0%" not in private, \
+        "#366: the period-scoped benchmark return must be gone from the card"
     for fragment in ("SECRET", "SWAPSECRET", "OLDSECRET", "FOCUSSECRET", "2026-07-01", "+3.0%", "194"):
         assert fragment not in public, f"private weekly-memory fact leaked: {fragment}"
 
