@@ -85,6 +85,14 @@ ROUTES = ("first_review", "weekly_review", "snapshot_review", "test_drive")
 STAGES = ("preview", "final")
 MEMORY_KINDS = ("prior_commitment", "prior_skip", "exit_reason", "due_revisit")
 WEEKLY_OPENERS = ("prior_commitment", "prior_skip")
+CASH_OUTCOMES = ("found_in_source", "asked_user", "skipped")
+# The cash anchor is a `prepare`-time input (references/data-contract.md), so
+# the check it documents already happened by the time a session_id exists to
+# receipt it against. Routes that read a trade/transaction history can carry
+# a cash anchor; a declared positions snapshot already states `cash` inline
+# (or omits it) in its own envelope, and test_drive never persists an
+# accounting anchor at all — both stay out of this requirement (#357).
+CASH_ANCHOR_ROUTES = ("first_review", "weekly_review")
 EVENT_KINDS = (
     "question_presented",
     "answers_received",
@@ -93,6 +101,7 @@ EVENT_KINDS = (
     "rule_choice_presented",
     "memory_presented",
     "widget_attempt_failed",
+    "cash_anchor_checked",
     "owner_verdict",
 )
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
@@ -307,6 +316,10 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if not args.memory_kind:
             raise ReceiptError("memory_presented requires --memory-kind")
         row["memory_kind"] = args.memory_kind
+    if args.event == "cash_anchor_checked":
+        if args.cash_outcome not in CASH_OUTCOMES:
+            raise ReceiptError(f"cash_anchor_checked requires --cash-outcome in {CASH_OUTCOMES}")
+        row["cash_outcome"] = args.cash_outcome
     if args.event == "owner_verdict":
         verdicts = {"controls": args.controls, "card": args.card, "memory": args.memory}
         if any(value is None for value in verdicts.values()):
@@ -463,6 +476,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
             errors.append(f"row {index} has unsupported stage {row.get('stage')!r}")
         if event == "memory_presented" and row.get("memory_kind") not in MEMORY_KINDS:
             errors.append(f"row {index} has unsupported memory kind {row.get('memory_kind')!r}")
+        if event == "cash_anchor_checked" and row.get("cash_outcome") not in CASH_OUTCOMES:
+            errors.append(f"row {index} has unsupported cash outcome {row.get('cash_outcome')!r}")
         if event == "question_presented":
             allowed = {"version", "event", "session_id", "ts", "mode", "surface_source", "surface_digest"}
             extra = sorted(set(row) - allowed)
@@ -569,6 +584,20 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
         errors.append("final card presentation must follow the preview card")
     if preview_card and final_artifact and final_artifact[0] <= preview_card[0]:
         errors.append("final artifact was generated before the preview card was presented")
+
+    # #357: the cash anchor is resolved before `prepare` runs (agent reads the
+    # source, or asks the user one short question, or the user skips), so this
+    # event is retrospective evidence the check happened at all — it cannot be
+    # skipped by forgetting, the way plain data-contract.md prose could.
+    if route in CASH_ANCHOR_ROUTES:
+        checks = _positions(rows, "cash_anchor_checked")
+        first_surface = min(
+            _positions(rows, "question_presented") + preview_card + final_card or [len(rows)]
+        )
+        if len(checks) != 1:
+            errors.append(f"{route} must record exactly one cash_anchor_checked event")
+        elif checks[0] >= first_surface:
+            errors.append("cash_anchor_checked was recorded after the first question or card")
 
     if Counter(row.get("event") for row in rows)["widget_attempt_failed"] and "widget" not in card_modes:
         errors.append("widget failure was recorded without declared widget capability")
@@ -688,6 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--stage", choices=STAGES)
     event.add_argument("--artifact-path")
     event.add_argument("--memory-kind", choices=MEMORY_KINDS)
+    event.add_argument("--cash-outcome", choices=CASH_OUTCOMES)
     event.add_argument("--controls", choices=("pass", "fail"))
     event.add_argument("--card", choices=("pass", "fail"))
     event.add_argument("--memory", choices=("pass", "fail", "not_applicable"))
