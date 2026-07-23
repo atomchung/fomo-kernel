@@ -58,7 +58,7 @@ machine-enforced versus procedural:
 |---|---|---|
 | 1. Version | — | record the sha yourself before starting (the owner's `/fomo-qa` skill automates this) |
 | 2. Isolation | engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | exporting it, and not overriding it per-command |
-| 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, or a missing weekly opener; it machine-reports timing plausibility separately | recording every event honestly, right after the user sees it |
+| 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, a missing weekly opener, or a missing/duplicated/misordered `cash_anchor_checked` on a first review or full-tier weekly review (#357); it machine-reports timing plausibility separately | recording every event honestly, right after the user sees it |
 | 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence | running both flags on human-graded runs; auditing or re-running suspect timing |
 | 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |

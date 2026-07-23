@@ -631,11 +631,12 @@ def test_weekly_opener_after_first_card_fails():
 
 
 # --- Cash anchor pre-flight (#357) --------------------------------------------
-# The cash anchor is resolved before `prepare` even runs (agent reads the
-# source, or asks the user one short question, or the user skips), so this
-# event is retrospective evidence the check happened at all -- an agent that
-# forgot to check (the failure mode #357 was filed for) cannot fabricate it
-# after the fact without also getting the ordering wrong.
+# The cash anchor is resolved before the first surface (on first_review before
+# `prepare` even runs; on weekly_review after the cadence-tier gate, since a
+# light week is never asked and writes no receipt at all -- #357 owner ruling
+# 2026-07-23), so this event is retrospective evidence the check happened at
+# all -- an agent that forgot to check (the failure mode #357 was filed for)
+# cannot fabricate it after the fact without also getting the ordering wrong.
 
 def test_cash_anchor_checked_missing_fails_for_first_review():
     rows = good_markdown_rows()

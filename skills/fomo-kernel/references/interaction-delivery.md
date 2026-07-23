@@ -116,7 +116,7 @@ python3 tools/ux_receipt.py event --session-id <session_id> \
   --event memory_presented --memory-kind prior_commitment
 ```
 
-On `first_review` and `weekly_review`, record `cash_anchor_checked` before the first question or card (#357). The cash anchor (`references/data-contract.md`) is resolved before `prepare` even runs — read from the source, asked as one short question, or explicitly skipped — so this event is retrospective evidence that the check happened at all rather than a self-reported claim made after the fact; recording it late fails the same way a backfilled weekly opener would. `--cash-outcome` names which of the three happened:
+On `first_review` and full-tier `weekly_review`, record `cash_anchor_checked` before the first question or card (#357); a light-tier week follows `flows/light-capture.md`, is never asked, and writes no receipt at all. The cash anchor (`references/data-contract.md`) is resolved before the first surface — on `first_review` before `prepare` even runs, on `weekly_review` after the cadence-tier check (#357 owner ruling 2026-07-23) — read from the source, asked as one short question, or explicitly skipped — so this event is retrospective evidence that the check happened at all rather than a self-reported claim made after the fact; recording it late fails the same way a backfilled weekly opener would. `--cash-outcome` names which of the three happened:
 
 ```bash
 python3 tools/ux_receipt.py event --session-id <session_id> \
