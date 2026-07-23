@@ -246,5 +246,53 @@
     "worse": "惡化",
     "flat": "持平",
     "better": "改善"
+  },
+  "pnl_lines": {
+    "display": {
+      "total": "帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
+      "realized_only": "已實現損益 {realized}；目前未實現損益未評分。",
+      "unrealized_only": "未實現損益 {unrealized}；已實現損益無法取得。"
+    },
+    "original": {
+      "both": "{currency} 帳面損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
+      "realized_only": "{currency} 已實現損益 {realized}。",
+      "unrealized_only": "{currency} 未實現損益 {unrealized}。"
+    }
+  },
+  "alpha_interval": {
+    "scope_suffix": "（{market} 部位）",
+    "negative_caveat": "（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）",
+    "lead": "風險調整後 alpha{scope}年化 {alpha}%，95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。",
+    "compact": "95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。"
+  },
+  "best_strength": {
+    "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。"
+  },
+  "reconciliation": {
+    "statement": "上次你承諾：「{rule}」。",
+    "statement_with_metric": "上次你承諾：「{rule}」——追蹤的數字當時 {then}，這次 {now}。"
+  },
+  "snapshot": {
+    "overview": {
+      "subject_with_count": "使用者提供的 {positions} 個持倉",
+      "subject_generic": "使用者提供的持倉",
+      "opening": "這是針對{subject}的開場組合檢查。",
+      "opening_as_of": "這是針對{subject}的開場組合檢查，快照截至 {as_of}。",
+      "valuation_market_value": "結構權重採使用者提供的市值口徑。",
+      "valuation_cost": "結構權重採使用者提供的成本口徑。",
+      "valuation_unavailable": "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。",
+      "missing_avg_cost": "以下持倉缺少平均成本：{tickers}。",
+      "missing_fx": "以下幣別缺少可靠匯率：{currencies}。"
+    },
+    "strength": {
+      "complete": "這份持倉快照已建立完整的開場組合結構基線。",
+      "partial": "現有欄位已建立組合結構基線；缺少的輸入維持明示，不用推測補齊。",
+      "baseline": "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。"
+    },
+    "holes": {
+      "leading_risk": "現有快照的主要結構風險是「{label}」。",
+      "clean_structure": "這次持倉快照沒有觸發集中度或分散度的結構風險。",
+      "no_weights": "這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"
+    }
   }
 }

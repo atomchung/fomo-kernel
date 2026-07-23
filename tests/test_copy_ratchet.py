@@ -89,7 +89,19 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # rule_insufficient_data / snapshot_unlock), and dropped the now-dead
 # `en = language == "en"` local it left behind. 97 -> 91 (-6: 5 ternaries +
 # 1 now-unused language-comparison assignment).
-BASELINE = 91
+#
+# #368 Phase 2 batch 2 (2026-07-23): migrated the Performance/Block-1 helper
+# cluster's hardcoded bilingual sentences into copy/en.json + copy/zh-TW.json
+# under 5 new top-level groups -- pnl_lines.{display,original}.*
+# (_original_pnl_lines / _overview_lines), alpha_interval.*
+# (_alpha_interval_line), best_strength.no_signal (_best_strength),
+# reconciliation.* (_reconciliation_lines), and snapshot.{overview,strength,
+# holes}.* (the snapshot trio: _snapshot_overview_lines /
+# _snapshot_strength_line / _snapshot_hole_lines). Dropped the now-dead
+# `en = copy.get("language") == "en"` local in _snapshot_overview_lines.
+# 91 -> 74 (-17: 3 + 3 + 1 + 1 + 1 + 4 + 1 + 3 branch points across the 8
+# functions, matching LANGUAGE_BRANCH_PATTERN.findall() run before/after).
+BASELINE = 74
 
 
 def test_language_branch_count_only_ratchets_down():

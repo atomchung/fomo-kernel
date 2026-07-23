@@ -1422,6 +1422,164 @@ def test_locale_copy_files_keep_key_parity():
         f"missing in en: {sorted(missing_in_en)}"
 
 
+def test_reconciliation_statement_copy_is_pinned_in_rendered_output():
+    """#368 Phase 2 batch 2 mutation-probe finding: corrupting
+    reconciliation.statement_with_metric survives both tests/run_all.py
+    (test_review_v2.py's reconciliation tests assert only a short prefix
+    substring -- "上次你承諾" / "Last time you committed" -- which a
+    corruption placed later in the sentence does not break) and
+    tests/persona_sweep.py --baseline (a prior commitment implies a
+    returning review; the sweep renders first-review cards only, where
+    _reconciliation_lines short-circuits to []). Pins the full, exact,
+    copy-resolved sentence on both rendered surfaces so a corruption
+    anywhere in it is caught here."""
+    rules = {
+        "zh-TW": "單筆部位上限定死 30%；超過就減，不新增。",
+        "en": "Cap any single position at 30%; trim if it goes over, and do not add.",
+    }
+    for language in ("zh-TW", "en"):
+        bundle = copy.deepcopy(_session(language)["bundle"])
+        bundle["review_plan"]["state_snapshot"]["prior_commitment"] = {
+            "rule": rules[language], "metric_key": "max_pos_pct", "metric_value": 0.51,
+        }
+        # This fixture's engine_state.metrics.max_pos_pct is already 0.42.
+        # The template is hardcoded here, not read from copy/*.json: the
+        # whole point of this pin is to catch a corruption of that file, so
+        # the expectation must not share a source with the value under test
+        # (see the module docstring note on this pattern, #368 batch 2).
+        statement_with_metric_template = {
+            "zh-TW": '上次你承諾：「{rule}」——追蹤的數字當時 {then}，這次 {now}。',
+            "en": 'Last time you committed: "{rule}" — the tracked number was {then} then, {now} now.',
+        }[language]
+        expected = statement_with_metric_template.format(
+            rule=rules[language], then="51%", now="42%")
+        markdown = card_renderer.render_private(bundle)
+        html_card = html.unescape(card_renderer.render_html(bundle))
+        assert expected in markdown, \
+            f"{language}: reconciliation sentence missing/altered on Markdown"
+        assert expected in html_card, \
+            f"{language}: reconciliation sentence missing/altered on HTML"
+
+
+def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
+    """#368 Phase 2 batch 2 mutation-probe finding: corrupting
+    snapshot.overview.* or snapshot.strength.* survives both
+    tests/persona_sweep.py --baseline (every mock persona is a
+    transaction-history CSV; none takes the snapshot_review route the sweep
+    would need to reach these functions) and tests/run_all.py
+    (test_review_v2.test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes
+    asserts other markers on this same fixture shape -- the honesty scope
+    sentence, the unlock hint, hole ticker/pct figures -- and never the
+    opening/valuation/strength sentences themselves). Reuses that test's
+    concentrated-snapshot payload and pins the exact, copy-resolved
+    sentences it renders but does not check."""
+    payload = {
+        "as_of": "2026-07-20",
+        "positions": [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 152.3, "market": "US",
+             "currency": "USD", "market_value": 6800},
+            {"ticker": "PLTR", "shares": 200, "avg_cost": 18.5, "market": "US",
+             "currency": "USD", "market_value": 4200},
+            {"ticker": "SPY", "shares": 10, "avg_cost": 500, "market": "US",
+             "currency": "USD", "market_value": 5300},
+            {"ticker": "2330.TW", "shares": 1000, "avg_cost": 900, "market": "TW",
+             "currency": "TWD", "market_value": 985000},
+        ],
+        "fx": {"USD": 1, "TWD": 0.0307},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        for language in ("zh-TW", "en"):
+            root = pathlib.Path(tmp) / f"coach-{language}"
+            plan, _path = v2._snapshot_prepare(
+                tmp, root, payload=payload, language=language,
+                name=f"positions-{language}.json")
+            assert plan["engine_card"]["snapshot_summary"]["weights_available"] is True, \
+                "fixture must keep weights available to exercise the market-value sentence"
+            bundle = v2._snapshot_render_bundle(plan, language)
+            # Hardcoded, not read from copy/*.json -- see the
+            # reconciliation pin test above for why.
+            snap_templates = {
+                "zh-TW": {"subject_with_count": '使用者提供的 {positions} 個持倉',
+                          "opening_as_of": '這是針對{subject}的開場組合檢查，快照截至 {as_of}。',
+                          "valuation_market_value": '結構權重採使用者提供的市值口徑。',
+                          "strength_complete": '這份持倉快照已建立完整的開場組合結構基線。'},
+                "en": {"subject_with_count": '{positions} supplied positions',
+                       "opening_as_of": 'This is an opening portfolio check of {subject} as of {as_of}.',
+                       "valuation_market_value": 'Structural weights use the supplied market-value basis.',
+                       "strength_complete": 'The supplied snapshot establishes a complete structural baseline for the opening portfolio check.'},
+            }[language]
+            subject = snap_templates["subject_with_count"].format(positions="4")
+            expected_opening = snap_templates["opening_as_of"].format(
+                subject=subject, as_of="2026-07-20")
+            expected_valuation = snap_templates["valuation_market_value"]
+            expected_strength = snap_templates["strength_complete"]
+            markdown = card_renderer.render_private(bundle)
+            html_card = html.unescape(card_renderer.render_html(bundle))
+            for expected, label in ((expected_opening, "opening"),
+                                    (expected_valuation, "valuation"),
+                                    (expected_strength, "strength")):
+                assert expected in markdown, \
+                    f"{language}: snapshot {label} sentence missing/altered on Markdown"
+                assert expected in html_card, \
+                    f"{language}: snapshot {label} sentence missing/altered on HTML"
+
+        # A well-diversified snapshot (weights available, nothing triggered)
+        # takes the sibling branch of _snapshot_hole_lines -- pin that too.
+        clean_payload = {
+            "as_of": "2026-07-20",
+            "positions": [
+                {"ticker": t, "shares": 10, "avg_cost": 100, "market": "US",
+                 "currency": "USD", "market_value": 2000}
+                for t in ("MSTR", "HOOD", "CAVA", "MP", "ONDS", "NOK")
+            ],
+        }
+        clean_root = pathlib.Path(tmp) / "coach-clean"
+        clean_plan, _path = v2._snapshot_prepare(
+            tmp, clean_root, payload=clean_payload, language="en", name="clean.json")
+        assert clean_plan["engine_card"]["top_holes"] == [], \
+            "fixture must be clean (no structural dimension triggered)"
+        clean_bundle = v2._snapshot_render_bundle(clean_plan, "en", session_id="clean")
+        clean_markdown = card_renderer.render_private(clean_bundle)
+        # Hardcoded, not read from copy/en.json -- see above.
+        expected_clean_structure = 'This position snapshot did not flag concentration or diversification as a structural risk.'
+        assert expected_clean_structure in clean_markdown, \
+            "clean-structure snapshot sentence missing/altered on Markdown"
+
+
+def test_best_strength_no_signal_copy_is_pinned_in_rendered_output():
+    """#368 Phase 2 batch 2 mutation-probe finding: corrupting
+    best_strength.no_signal survives both tests/run_all.py and
+    tests/persona_sweep.py --baseline -- no mock persona has every scored
+    dimension triggered (the condition this fallback needs), and no
+    fixture test asserts its wording. _best_strength reaches this fallback
+    in English on the base fixture as-is (its one dims_raw entry is already
+    triggered=True); the zh-TW branch additionally needs engine_card.
+    strength cleared, since _best_strength prefers that engine-authored
+    string over the fallback whenever the card supplies one -- but only
+    when language != "en" (the function's own pre-existing asymmetric
+    guard, preserved as-is by this migration, not something this test
+    should paper over)."""
+    for language in ("zh-TW", "en"):
+        bundle = copy.deepcopy(_session(language)["bundle"])
+        bundle["engine_card"]["strength"] = None
+        assert bundle["narrative"].get("strength") is None, \
+            "fixture must not carry a narrative-authored strength override"
+        assert all(d.get("triggered") for d in bundle["engine_card"]["dims_raw"]), \
+            "fixture must have no safe (untriggered) dimension to exercise the fallback"
+        # Hardcoded, not read from copy/*.json -- see the reconciliation
+        # pin test above for why.
+        expected = {
+            "zh-TW": '這期沒有足夠強的正向訊號；先把注意力留給最大的洞。',
+            "en": 'No positive behavior was strong enough to claim; keep attention on the largest leak.',
+        }[language]
+        markdown = card_renderer.render_private(bundle)
+        html_card = html.unescape(card_renderer.render_html(bundle))
+        assert expected in markdown, \
+            f"{language}: best_strength fallback sentence missing/altered on Markdown"
+        assert expected in html_card, \
+            f"{language}: best_strength fallback sentence missing/altered on HTML"
+
+
 def test_delivery_contract_exists_and_is_routed():
     contract = SKILL / "references" / "card-delivery.md"
     assert contract.is_file(), "references/card-delivery.md must exist"
@@ -1797,6 +1955,9 @@ def main():
         test_coded_fields_render_localized_english_blocks,
         test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
+        test_reconciliation_statement_copy_is_pinned_in_rendered_output,
+        test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output,
+        test_best_strength_no_signal_copy_is_pinned_in_rendered_output,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
