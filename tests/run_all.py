@@ -46,7 +46,7 @@ SUITES = [
     # (--baseline) stays a manual tool by design: it needs a second engine
     # checkout, and requiring byte-identity on a PR would fail every
     # legitimate copy change.
-    ("Persona sweep (all personas x locales x variants)", "tests/persona_sweep.py"),
+    ("Persona sweep (personas x locales x reviews x variants)", "tests/persona_sweep.py"),
 ]
 
 
