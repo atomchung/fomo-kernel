@@ -44,6 +44,7 @@ Live market-dependent values may drift because online runs fetch historical and 
 | `sample_rotator.csv` | Full-position rotation through unrelated hot themes | sequence exposes theme churn even when current snapshot is simply concentrated |
 | `sample_panic_seller.csv` | Several long-held losing positions exited in one stress window, followed by a higher re-entry | extreme exit-discipline branch |
 | `sample_tw_mixed.csv` | Taiwan and US instruments with multiple currencies | per-market benchmark and aggregate-currency contracts |
+| `sample_bare_export.csv` | The normalized six-column schema and nothing else — no broker `Amount`, commission, or settlement columns | trades load and the card renders in full; each trade's cash footprint is estimated from quantity times price and disclosed (#375) |
 
 ## Fixture design rules
 

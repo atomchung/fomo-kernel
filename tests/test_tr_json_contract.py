@@ -185,10 +185,13 @@ def main():
         ok(ccash["weight"] is None and "cash_reliability" not in hl_keys,
            "無錨點且淨買入 → weight=None,cash_reliability 不進 ledger(不冒充也不空吠)", repr(sorted(hl_keys)))
 
-        # ── 1b. #171 B 路線:acct_perf 離線 fail-closed({note} 單鍵),honesty 不觸發 ──
+        # ── 1b. #171 B 路線:acct_perf 離線 fail-closed({gate} 單鍵),honesty 不觸發。
+        #        #375:擋卡原因是機器可讀的 {status, data},不是寫死的繁中句子——渲染層
+        #        靠 status 選對應語言的句子,才講得出「真正擋住的是什麼」。──
         ap = card["acct_perf"]
-        ok(isinstance(ap, dict) and set(ap.keys()) == {"note"} and ap["note"],
-           "離線 → acct_perf = {note}(fail-closed,不硬湊帳戶級數字)", repr(ap)[:120])
+        ok(isinstance(ap, dict) and set(ap.keys()) == {"gate"}
+           and ap["gate"]["status"] == "no_prices" and isinstance(ap["gate"]["data"], dict),
+           "離線 → acct_perf = {gate:{status,data}}(fail-closed,不硬湊帳戶級數字)", repr(ap)[:120])
         ok("acct_perf_basis" not in hl_keys,
            "帳戶級沒出數 → acct_perf_basis 不進 ledger(觸發式)", repr(sorted(hl_keys)))
 

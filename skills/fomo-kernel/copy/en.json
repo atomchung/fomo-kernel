@@ -56,7 +56,17 @@
     "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
     "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. A later file with complete buy-and-sell history unlocks the full behavioral review — exit discipline, holding period, and win/loss.",
     "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
-    "snapshot_unlock": "Importing your transaction-history CSV unlocks behavior diagnostics (win rate, payoff ratio, averaging-down discipline, and more)."
+    "snapshot_unlock": "Importing your transaction-history CSV unlocks behavior diagnostics (win rate, payoff ratio, averaging-down discipline, and more).",
+    "annualized_short_series": "Annualized return is not computable this period: the price series covers fewer than two days, so there is no change to measure.",
+    "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists."
+  },
+  "account_gate": {
+    "default": "Account-level return stays locked until cash has a complete anchor; the holdings pillar above is unaffected.",
+    "no_cash_anchor": "Account-level return stays locked because cash has no anchor yet; one current cash balance unlocks it, and the holdings pillar above is unaffected.",
+    "mixed_trade_footprint": "Account-level return stays locked because only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history; the holdings pillar above is unaffected.",
+    "negative_cash_rollback": "Account-level return stays locked because reconstructing cash for a currency with no anchor runs it negative, so the reconstruction is known to be wrong; anchoring that currency unlocks it, and the holdings pillar above is unaffected.",
+    "cash_residual": "Account-level return stays locked because one stretch of cash history does not reconcile against the anchors around it; updating the cash position for that stretch unlocks it, and the holdings pillar above is unaffected.",
+    "chain_unavailable": "Account-level return stays locked because no day in this window produced a usable account value to chain; the holdings pillar above is unaffected."
   },
   "footnote_label": "Data notes",
   "kpi": {
@@ -170,7 +180,7 @@
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
     "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
-    "acct_perf_basis": "Account performance uses partial cost or FX approximations and remains uncertain.",
+    "acct_perf_basis": "Account performance rests on an approximate basis — partial anchors, cost-line pricing, FX approximation, trade cash amounts estimated from quantity times price, or a period with no deposit or withdrawal on record — and remains uncertain.",
     "accounting_reconciliation": "The imported transactions did not reproduce the snapshot-anchored current holdings, so current sizing, diversification, and unrealized P&L were not scored.",
     "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
     "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero.",

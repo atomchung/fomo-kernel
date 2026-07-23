@@ -37,7 +37,7 @@ python3 engine/review.py prepare --route snapshot_review \
 
 For transaction history, the agent must understand and normalize broker data locally into:
 `Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate / RecordType(Trade)`.
-Add `Market / Currency` for non-US instruments when available. Do not ask the user to normalize the file. Symbol and cash-anchor rules (Taiwan `.TW`/`.TWO` suffixes, ROC dates, `--cash`) live in `references/data-contract.md`.
+Add `Market / Currency` for non-US instruments when available. Carry `Amount` through whenever the source has it: it is the broker's own cash-account change for that row, already net of commissions and fees, and it makes account-level return exact instead of estimated. Do not ask the user to normalize the file. Symbol and cash-anchor rules (Taiwan `.TW`/`.TWO` suffixes, ROC dates, `--cash`) live in `references/data-contract.md`.
 
 For a position table or screenshot, transcribe the displayed facts locally into the JSON envelope in `references/data-contract.md`, save that temporary file outside the repository, then pass it through `--snapshot-json`. The agent may map broker labels, normalize dates, and add the complete provider ticker suffix; it may not derive weights, returns, cycle IDs, or card/state artifacts. There is no engine OCR or cloud-upload path.
 

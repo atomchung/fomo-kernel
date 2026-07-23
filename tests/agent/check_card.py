@@ -232,8 +232,14 @@ def _s2_module_lighting(body: str, copy: dict, context, language) -> "Finding":
     # #289/#321: when price retrieval was blocked, the renderer swaps in the
     # *_prices variant of the same missing-data note — either variant counts
     # as "the note was shown" (both directions of the check).
+    # #375: the annualized gap note now has one variant per structured engine
+    # gate status (card_renderer.ANNUALIZED_GAP_NOTE_BY_GATE). Any of them
+    # counts as "the note was shown" — a variant missing from this tuple would
+    # make the checker report a silent omission that did not happen.
     for key, lit, note_keys in (("absolute_pnl", has_abs, ("absolute_pnl",)),
-                                ("annualized", has_ann, ("annualized", "annualized_prices")),
+                                ("annualized", has_ann,
+                                 ("annualized", "annualized_prices",
+                                  "annualized_short_series", "annualized_reconciliation")),
                                 ("risks", has_diag, ("risks",))):
         notes = [missing_copy.get(note_key) or "" for note_key in note_keys]
         shown = any(note and note in body for note in notes)

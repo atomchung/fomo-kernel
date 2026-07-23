@@ -965,6 +965,61 @@ def test_cash_flows_reads_all_amount_rows_with_kind():
     assert _approx(sum(f["amount"] for f in flows), 2612.50), sum(f["amount"] for f in flows)
 
 
+# #375:來源沒有 Amount 欄(多數陽春券商匯出格式,連 SKILL.md 要求的正規化 schema 都沒有
+# 這一欄)時,交易的現金足跡改用 qty×price 估算——否則帳戶級 TWR/IRR 100% 不出數。
+_NO_AMOUNT_CSV = (
+    "Symbol,Quantity,Price,Action,TradeDate,RecordType\n"
+    "NVDA,10,100.00,BUY,2024-01-10,Trade\n"
+    "NVDA,5,120.00,SELL,2024-02-10,Trade\n"
+)
+
+
+def test_cash_flows_estimated_when_source_has_no_amount():
+    """來源一筆 Amount 都沒有 → 每筆交易用 qty×price 估出現金足跡,並標記 estimated。
+
+    符號要跟真 Amount 同向(買=負、賣=正),否則現金史整個翻號。"""
+    p = _write_csv(_NO_AMOUNT_CSV)
+    rows = tr.load([p])
+    flows = tr.load_cash_flows([p], trade_rows=rows)
+    os.unlink(p)
+    assert len(flows) == 2, f"兩筆交易各估一筆現金足跡,實得 {len(flows)}"
+    assert all(f["kind"] == "trade" and f["estimated"] is True for f in flows), flows
+    assert _approx(flows[0]["amount"], -1000.0), flows[0]      # 買 10×100 → 現金減
+    assert _approx(flows[1]["amount"], 600.0), flows[1]        # 賣 5×120 → 現金增
+
+
+def test_cash_flows_no_estimate_without_trade_rows():
+    """不帶 trade_rows(舊呼叫端/單測)→ 不憑空生現金流,維持原行為。"""
+    p = _write_csv(_NO_AMOUNT_CSV)
+    flows = tr.load_cash_flows([p])
+    os.unlink(p)
+    assert flows == [], flows
+
+
+def test_cash_flows_real_amount_beats_estimate():
+    """來源有 Amount → 一律用真值(已含手續費淨額),不因為帶了 trade_rows 就改用估算。"""
+    p = _write_csv(_CASH_CSV)
+    rows = tr.load([p])
+    flows = tr.load_cash_flows([p], trade_rows=rows)
+    os.unlink(p)
+    assert len(flows) == 7, f"仍是 CSV 原本的 7 筆,沒被估算列灌水,實得 {len(flows)}"
+    assert not any(f.get("estimated") for f in flows), flows
+
+
+def test_cash_flows_partial_amount_not_estimated():
+    """部分交易有 Amount、部分沒有 = 混合口徑:不估算(併不成同一條現金史),
+    留給 perf 的 mixed_trade_footprint gate 擋——寧可不出數,也不混兩種口徑。"""
+    p = _write_csv(
+        "Symbol,Quantity,Price,Action,TradeDate,Amount,RecordType\n"
+        "NVDA,10,100.00,BUY,2024-01-10,-1000.00,Trade\n"
+        "AMD,20,50.00,BUY,2024-01-11,,Trade\n")
+    rows = tr.load([p])
+    flows = tr.load_cash_flows([p], trade_rows=rows)
+    os.unlink(p)
+    assert len(flows) == 1 and not flows[0].get("estimated"), flows
+    assert len(rows) == 2, rows
+
+
 def test_cash_flows_dedup_cross_file_overlap():
     """跨檔重疊期的同一筆現金流只算一次(去重骨架同 load());同檔同鍵多筆各自保留。"""
     p1 = _write_csv(_CASH_CSV)

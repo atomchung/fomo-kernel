@@ -29,10 +29,17 @@ qty×price 生成(價格口徑)**,不依賴 CSV Amount 欄——手續費(trade 
 平線 = 買入日 H 增量恰等於 F_H 流入,對 r 恆等中性。判定是整檔的(px 全缺、或首個有效價
 晚於該檔首筆交易),不做期中切換——切換日的市價/成本跳點沒有金流對應,會污染 r。
 
-**帳戶柱多一道資料完整性 gate**:現金史回滾需要「每筆交易都有 Amount 現金足跡」——
-CSV 沒有 Amount 欄時,買賣不動現金桶,加倉日會被鏈式誤算成暴漲(V 跳而 F=0)。故
-kind=trade 的金流筆數 < rows 交易筆數 → 帳戶級 TWR/IRR 誠實不出(hold 柱不受影響,
-它只吃 rows + 價格)。
+**帳戶柱多一道資料完整性 gate**:現金史回滾需要「每筆交易都有現金足跡」——買賣不動
+現金桶時,加倉日會被鏈式誤算成暴漲(V 跳而 F=0)。來源完全沒有 Amount 欄時,
+load_cash_flows 用 qty×price 估滿足跡(#375;與 F_H 同一個價格口徑,差別只在手續費/稅
+沒被扣掉,basis.estimated_footprint 揭露),所以這道 gate 剩下的職責是擋「部分有、部分
+沒有」的混合來源:kind=trade 的金流筆數 < rows 交易筆數 → 帳戶級 TWR/IRR 誠實不出
+(hold 柱不受影響,它只吃 rows + 價格)。
+
+**擋卡原因是結構化的**(#375):算不出時 `out["gate"] = {"status", "data"}`、算得出但有
+限制時 `out["notes"] = [{"status", "data"}, ...]`,兩者分家。perf.py 不寫使用者看得到的
+句子——語言由 copy catalog 決定,新增一種原因不必回頭補文案(舊版寫死繁中句子,渲染層
+分不出原因,不管實際是什麼都印「等現金錨點補齊」)。
 
 持倉柱只在有持倉的日子上鏈(同一混合慣例,分母 = H_{t-1} + 當日買入);帳戶柱全窗上鏈——
 空倉期 = 100% 現金照走,踏空/躲跌自動涵蓋(#164 縫 A 在帳戶級閉合)。
@@ -47,6 +54,21 @@ EPS = 1e-6
 MIN_IRR_DAYS = 90          # 同 #164:年化窗 <90 天標「太短,年化無意義」不出數
 _EXT_KINDS = ("deposit", "withdrawal", "other")   # 對帳口徑的外部金流(拍板四)
 RESIDUAL_TAINT_TH = 0.10   # #180:殘差(換 USD)佔帳戶規模超此比例 → 大缺口,帳戶柱算不出、出解鎖邀請
+# #375:回滾隱含的「期初閒置現金」佔期初帳戶值超此比例 → 「存提款不可見」的前提才值得揭露。
+# 這個比例就是失真的代理量:沒有存提款紀錄時,後來才存進來的錢會被回滾成期初就躺在帳上的
+# 現金,帳戶 TWR 被系統性低估(合成案例:share 0.5 → 差 33pp)。share≈0 = 回滾其實是對的
+# (錢在期初就全部投進去了),此時揭露只是空吠,不觸發。
+IMPLIED_START_CASH_TH = 0.05
+
+
+def _reason(status, **data):
+    """一條「機器可讀的原因」= {status, data},對齊 honesty ledger 的 {key, status, data}。
+
+    #375:這裡**永遠不寫使用者看得到的句子**。舊版把繁中句子寫死在 perf.py,渲染層只能
+    靠 truthiness 判斷「有沒有被擋」,於是不管真正原因是什麼都印同一句「等現金錨點補齊」——
+    使用者已經補了錨點、真正原因是缺 Amount 欄時,卡片給的下一步是錯的。原因由引擎算、
+    語言由 copy catalog 決定,新增一種原因不必回頭補句子(也順帶讓這些原因有了英文版)。"""
+    return {"status": status, "data": data}
 
 
 # ───────────────────────── XIRR solver(#164 / #171 共用) ─────────────────────────
@@ -195,9 +217,9 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
     rows/cash_flows/cash_data/cur_map = 引擎 load / load_cash_flows / cash_position /
     currency_map 的原樣輸出;px / fx_series = fetch_prices / fetch_fx_series 的 DataFrame。"""
     if px is None or getattr(px, "empty", True) or not rows:
-        return {"note": "無價格資料,帳戶級績效不算(離線或全缺價)"}
+        return {"gate": _reason("no_prices")}
     if len(px.index) < 2:
-        return {"note": "價格序列不足兩天,帳戶級績效不算"}
+        return {"gate": _reason("short_price_series", days=len(px.index))}
 
     days = list(px.index)
     day_dates = [d.date() for d in days]
@@ -333,30 +355,53 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
 
     window = {"start": day_dates[0].isoformat(), "end": day_dates[-1].isoformat(),
               "days": (day_dates[-1] - day_dates[0]).days, "traded_days": n}
+    # #375 L3:估算足跡與「存提款不可見」的量化揭露來源。條件算在引擎(CLAUDE.md
+    # 「Honesty decisions belong in code」),文案在 renderer/copy。
+    #   estimated_footprint:trade 現金足跡是 qty×price 估的(來源沒有 Amount 欄),
+    #     手續費/稅/匯損被排除在現金桶外 → 誤差隨週轉率放大(美股零佣金低週轉是雜訊,
+    #     台股賣出證交稅 0.3% + 高週轉則不是)。
+    #   external_flows_absent:整份流水沒有任何存/提款列、窗夠長,且回滾隱含的期初閒置
+    #     現金佔比夠大 → 回滾隱含「這段期間現金變化 100% 只來自交易」。實測:真的存過錢
+    #     時,回滾會把後來才存進來的錢當成期初就有的現金,帳戶 TWR 被系統性低估(合成案例
+    #     差 33pp),而舊版對此完全零揭露。implied_start_cash_share 給出這個前提有多重
+    #     ——它同時是觸發條件與失真代理量,所以不對「錢在期初就全投進去」的帳戶空吠。
+    # 口徑用 _EXT_KINDS(對帳口徑,含 other=ACH/Transfer)而不是 deposit/withdrawal:
+    # 這裡問的是「外部金錢進出看不看得見」,而鏈式 TWR 本來就把 other 當真外部流處理
+    # (見檔頭拍板四)。用窄口徑會對「其實有一筆 ACH 轉帳在檔裡」的來源誤判成不可見。
+    external_flow_rows = sum(1 for cf in cash_flows if cf["kind"] in _EXT_KINDS)
+    start_share = (C[0] / V[0]) if V[0] > EPS else None
     basis = {"cash_source": (cash_data or {}).get("source"),
              "unanchored": sorted(c for c, v in by_ccy.items() if not v.get("reliable")),
              "at_cost_tickers": sorted(at_cost),
-             "fx_approx": fx_approx, "skipped_days": skipped}
+             "fx_approx": fx_approx, "skipped_days": skipped,
+             "estimated_footprint": any(cf.get("estimated") for cf in cash_flows
+                                        if cf["kind"] == "trade"),
+             "external_flow_rows": external_flow_rows,
+             "external_flows_absent": (external_flow_rows == 0
+                                       and window["days"] >= MIN_IRR_DAYS
+                                       and (start_share or 0.0) > IMPLIED_START_CASH_TH),
+             "implied_start_cash_share": (round(start_share, 4)
+                                          if start_share is not None else None)}
     out = {"acct_twr": None, "hold_twr": hold_twr, "cash_drag": None,
            "drag_dollar_approx": None, "avg_cash_weight": None, "irr_annual": None,
-           "window": window, "basis": basis, "note": None}
+           "window": window, "basis": basis, "gate": None, "notes": []}
 
     # gate:可用性繼承 cash reliable 三態(拍板;anchored / partial 才出帳戶柱)
     notes = []
     src = (cash_data or {}).get("source")
     if src not in ("anchored", "partial"):
-        out["note"] = "現金無錨點(csv_sum),帳戶級 TWR/IRR 不出——只出持倉柱;補 TR_CASH 錨點即解鎖"
+        out["gate"] = _reason("no_cash_anchor", source=src)
         return out
     n_trade_flows = sum(1 for cf in cash_flows if cf["kind"] == "trade")
     if n_trade_flows < len(rows):
-        # CSV 缺 Amount 欄(或部分交易無現金足跡)→ 買賣不動現金桶,現金史回滾必錯
-        # (加倉日 V 跳而 F=0 → 被鏈式誤算成暴漲)。錨點在也救不了,誠實不出。
-        out["note"] = (f"流水裡只有 {n_trade_flows}/{len(rows)} 筆交易有 Amount 現金足跡,"
-                       f"現金史重建不出來——帳戶級 TWR/IRR 不出;匯出含 Amount 欄的流水即解鎖")
+        # 部分交易有現金足跡、部分沒有 → 兩種口徑混在同一條現金史裡對不起來,誠實不出。
+        # (完全沒有 Amount 欄的來源不會走到這裡:load_cash_flows 已用 qty×price 估滿,
+        #  #375;這條剩下的職責是擋「混合來源」。)
+        out["gate"] = _reason("mixed_trade_footprint",
+                              with_footprint=n_trade_flows, trades=len(rows))
         return out
     if broken_ccys:
-        out["note"] = (f"無錨點幣別 {'/'.join(broken_ccys)} 的現金回滾出現負值(入金沒記全,"
-                       f"假設破裂)——帳戶級 TWR/IRR 不出;補該幣別錨點即解鎖")
+        out["gate"] = _reason("negative_cash_rollback", currencies=list(broken_ccys))
         return out
     # #180 大缺口 gate:殘差大到會實質污染每天淨值(相對帳戶規模)→ 帳戶柱算不出、出「解鎖邀請」,
     # 持倉柱 hold_twr 已在 out 照給。判定用相對量綱(殘差換 USD / 帳戶總值峰值),對齊 #172 相對哲學。
@@ -367,13 +412,18 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
                     if abs(r["residual"]) * fx_at(r["currency"], n - 1) / acct_scale > RESIDUAL_TAINT_TH]
         if blocking:
             seg = max(blocking, key=lambda r: abs(r["residual"]))
-            out["note"] = (f"現金史 {seg['start']}~{seg['end']} 有 {abs(seg['residual']):.0f} "
-                           f"{seg['currency']} 對不上(可能漏記入金/提款/股息)——帳戶級報酬需補齊該段"
-                           f"才算得準,先看持倉柱;更新現金部位(補該筆金流日期)即解鎖")
+            out["gate"] = _reason("cash_residual", currency=seg["currency"],
+                                  start=seg["start"], end=seg["end"],
+                                  residual=round(abs(seg["residual"]), 2))
             return out
 
     acct_twr = acct_f - 1.0 if n_acct else None
     out["acct_twr"] = acct_twr
+    if acct_twr is None:
+        # 每道 gate 都過了,但沒有任何一天算得出可用的鏈式因子(深 margin / 每一步都有
+        # 資料洞)。舊版這裡靜靜落地成 acct_twr=None + 一句諮詢 note,渲染層看到 note
+        # 非空就印「等現金錨點補齊」——把「鏈算不出來」講成「錨點沒補」(#375)。
+        out["gate"] = _reason("chain_unavailable", skipped_days=skipped)
     out["avg_cash_weight"] = round(avg_cash_w, 4) if avg_cash_w is not None else None
     if acct_twr is not None and hold_twr is not None:
         out["cash_drag"] = acct_twr - hold_twr
@@ -382,7 +432,7 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
 
     # 帳戶 IRR:CF_0 = −V_0(窗前結餘視同期初虛擬投入)+ 窗內存提流 + 期末 V_T
     if window["days"] < MIN_IRR_DAYS:
-        notes.append(f"窗 {window['days']} 天 <{MIN_IRR_DAYS},年化 IRR 無意義不出數")
+        notes.append(_reason("irr_window_short", days=window["days"], min_days=MIN_IRR_DAYS))
     elif V[-1] > EPS:
         cfs = []
         if V[0] > EPS:
@@ -394,8 +444,10 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
         cfs.append((day_dates[-1], V[-1]))
         out["irr_annual"] = xirr(cfs)
         if out["irr_annual"] is None:
-            notes.append("IRR 掃不到唯一根(非常規金流),誠實跳過")
+            notes.append(_reason("irr_no_unique_root"))
     if skipped:
-        notes.append(f"{skipped} 個交易日淨值非正或估不出(深 margin/資料洞),未入鏈")
-    out["note"] = ";".join(notes) or None
+        notes.append(_reason("chain_days_skipped", skipped=skipped))
+    # 諮詢註記(算得出、但有限制)與 gate(擋卡原因)分家:舊版兩者共用同一個 note 欄,
+    # 渲染層只能靠 truthiness 判斷,分不出「被擋」和「算出來了但要交代」(#375)。
+    out["notes"] = notes
     return out

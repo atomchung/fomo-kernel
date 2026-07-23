@@ -101,7 +101,12 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # `en = copy.get("language") == "en"` local in _snapshot_overview_lines.
 # 91 -> 74 (-17: 3 + 3 + 1 + 1 + 1 + 4 + 1 + 3 branch points across the 8
 # functions, matching LANGUAGE_BRANCH_PATTERN.findall() run before/after).
-BASELINE = 74
+#
+# #375 (2026-07-23): the account-level gate sentence moved out of its inline
+# ternary into the new copy/*.json `account_gate` group, because the engine now
+# hands the renderer a structured {status, data} blocker instead of a hardcoded
+# zh sentence — the gate's six reasons are copy keys, not branches. 74 -> 73.
+BASELINE = 73
 
 
 def test_language_branch_count_only_ratchets_down():

@@ -173,12 +173,23 @@ def load(paths):
     return rows
 
 
-def load_cash_flows(paths):
+def load_cash_flows(paths, trade_rows=None):
     """讀出所有影響現金餘額的 row（含買賣 + deposit/withdrawal/dividend/interest/fee）。
     load() 只留 BUY/SELL 給行為分析；現金餘額要的是**每一筆現金增減**，靠 Amount 欄
     （券商流水裡 Amount = 現金帳戶實際變動：買=負、賣/存/息=正、費=負，已含手續費淨額）。
     #171 PR-1（B 路線帳戶級現金地基）。去重骨架同 load()（跨檔重疊期同一筆只算一次）。
-    回傳 [{date, amount, kind, currency}]，依日期排序。"""
+    回傳 [{date, amount, kind, currency}]，依日期排序（估算列另帶 estimated=True）。
+
+    `trade_rows` = load() 的輸出。**沒有任何一筆交易帶得出 Amount 現金足跡時**，用
+    qty×price 估滿（#375）。這不是新的近似口徑：持倉柱的 F_H 一直就是這個價格口徑
+    （見 perf.py 檔頭），舊版只是不肯把同一個數字借給現金桶，於是「來源沒有 Amount 欄」
+    直接等於帳戶級 TWR/IRR 100% 不出數——而多數陽春券商匯出格式根本沒有這一欄，連
+    SKILL.md 要求 agent 產出的正規化 schema 都沒有它。估算值排除手續費/稅/匯損，
+    誤差隨週轉率放大，由 acct_perf.basis.estimated_footprint 揭露。
+
+    刻意從 `trade_rows` 生成而不是重新解析 CSV：load() 的過濾（RecordType/BUY|SELL/
+    price>0 濾 split/跨檔去重）是一整套規則，複製第二份必然漂移。
+    只在「一筆都沒有」時估算；部分有部分沒有 = 混合口徑，維持不估、由 perf 的 gate 擋。"""
     KIND = {"BUY": "trade", "SELL": "trade", "REINVEST": "trade",
             "DEPOSIT": "deposit", "WITHDRAWAL": "withdrawal",
             "DIVIDEND": "dividend", "INTEREST": "interest", "FEE": "fee"}
@@ -211,6 +222,13 @@ def load_cash_flows(paths):
                     continue
                 seen.add(rec)
                 flows.append(dict(date=d, amount=amt, kind=kind, currency=cur))
+    if trade_rows and not any(f["kind"] == "trade" for f in flows):
+        for r in trade_rows:
+            gross = r["qty"] * r["price"]
+            flows.append(dict(date=r["date"],
+                              amount=-gross if r["side"] == "buy" else gross,
+                              kind="trade", currency=r.get("currency", "USD"),
+                              estimated=True))
     flows.sort(key=lambda x: x["date"])
     return flows
 
@@ -1906,17 +1924,28 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
         L.append({"key": "cash_reliability", "status": status, "data": data})
     # 帳戶級績效地基有洞(#171):帳戶 TWR 有出數、但算在部分錨點 / 缺價檔成本平線 / fx 即期
     # 近似之上 → 數字可用但地基要交代(哪個幣別盲算、哪些檔平線零報酬、匯損益是近似)。
-    # 沒出數(gate 掉)不觸發——cash_reliability / note 已各自說明,不疊床架屋。
+    # 沒出數(gate 掉)不觸發——cash_reliability 與 acct_perf.gate 已各自說明,不疊床架屋。
+    # #375 擴傘(不新增 key,同 cash_reliability 收殘差的作法):現金足跡是估算的、以及
+    # 「這段期間沒有任何存/提款紀錄」這個從沒被揭露過的前提,都屬於「帳戶績效的地基」
+    # 這同一段話。status 依「錯得可能多大」排序 —— external_flows_absent 排最前:
+    # 存提款不可見會讓回滾把後來才存進來的錢當成期初現金,帳戶報酬系統性低估(量級遠大於
+    # 估算足跡漏掉的手續費),data.implied_start_cash_share 讓 Claude 講得出有多重。
     if isinstance(acct_perf, dict) and acct_perf.get("acct_twr") is not None:
         b = acct_perf.get("basis") or {}
-        if b.get("unanchored") or b.get("at_cost_tickers") or b.get("fx_approx"):
-            status = ("partial_anchor" if b.get("unanchored") else
+        if (b.get("unanchored") or b.get("at_cost_tickers") or b.get("fx_approx")
+                or b.get("estimated_footprint") or b.get("external_flows_absent")):
+            status = ("external_flows_absent" if b.get("external_flows_absent") else
+                      "estimated_footprint" if b.get("estimated_footprint") else
+                      "partial_anchor" if b.get("unanchored") else
                       "partial_coverage" if b.get("at_cost_tickers") else "fx_approx")
             L.append({"key": "acct_perf_basis", "status": status,
                       "data": {"unanchored": b.get("unanchored"),
                                "at_cost_tickers": b.get("at_cost_tickers"),
                                "fx_approx": b.get("fx_approx"),
-                               "cash_source": b.get("cash_source")}})
+                               "cash_source": b.get("cash_source"),
+                               "estimated_footprint": b.get("estimated_footprint"),
+                               "external_flow_rows": b.get("external_flow_rows"),
+                               "implied_start_cash_share": b.get("implied_start_cash_share")}})
     # ETF 費用率 / tracking error 沒資料時不猜數字。只要這次有 ETF 且 metadata 不全,
     # renderer 必須明說「尚未納入」；這是 P0 的誠實邊界,不是要把缺值補成 0。
     ps = portfolio_structure or {}
@@ -2180,7 +2209,9 @@ def main():
     # 帳戶現金地基（#171）：現金流 + 現金餘額錨點 → cash_position（多幣別 per-currency 各算再 fx 聚合）。
     # held_mv = 持倉市值（聚合幣別 USD，無現價用成本近似，同 dim_diversify）= cash_weight 分母。
     import json
-    cash_flows = load_cash_flows(paths)                 # per-currency（每筆帶 currency）；聚合由 cash_position 內部做
+    # per-currency（每筆帶 currency）；聚合由 cash_position 內部做。帶 rows 進去讓「來源
+    # 沒有 Amount 欄」時能用 qty×price 估出交易的現金足跡（#375），而不是整條路打死。
+    cash_flows = load_cash_flows(paths, trade_rows=rows)
     held_mv = sum((sh * lastpx_u[t]) if lastpx_u.get(t) else c for t, (sh, c) in held_u.items())
     _ca = os.environ.get("TR_CASH")                     # SKILL Step 0 抓對帳單現金餘額 → 單 {as_of,amount,currency} 或多帳戶 list
     try:
