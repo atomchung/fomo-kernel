@@ -692,6 +692,54 @@ def test_price_source_rides_the_footnote_ahead_of_unrealized_coverage():
             f"{language}: HTML footnote must keep price_source ahead of unrealized_coverage"
 
 
+def test_review_span_runs_to_the_price_date_the_card_is_valued_at():
+    """#363 (owner ruling 2026-07-23): the card states one window, and it ends
+    where the card's numbers end. `engine_state.date_end` is the last *trade*
+    date, but every unrealized figure — market value, exposure, the drawdown
+    scenario, the holdings-only return — is priced at `price_snapshot.as_of`.
+    A long-term holder who last traded months ago would otherwise read a span
+    that stopped well before the prices the whole card is built on.
+
+    Fail-closed in both directions: an as-of date that is earlier, absent, or
+    malformed leaves the span exactly as it renders today, so a bad value can
+    never push the window past the engine's own dates."""
+    for language in ("zh-TW", "en"):
+        copy = card_renderer.load_copy(language)
+        state = {"date_start": "2022-01-05", "date_end": "2025-11-03"}
+
+        def span(as_of):
+            engine_state = dict(state)
+            if as_of is not None:
+                engine_state["price_snapshot"] = {"as_of": as_of}
+            return card_renderer._period_span({"engine_state": engine_state}, copy)
+
+        assert "2026-07-23" in span("2026-07-23") and "2025-11-03" not in span("2026-07-23"), \
+            f"{language}: the span must run to the price date the card is valued at"
+        assert "2022-01-05" in span("2026-07-23"), \
+            f"{language}: the first trade must still open the span"
+        for degraded in (None, "2025-10-01", "not-a-date", ""):
+            assert span(degraded) == span(None), \
+                f"{language}: a missing/earlier/malformed as-of must not move the span ({degraded!r})"
+
+
+def test_holdings_return_states_no_second_window_of_its_own():
+    """#363: with the span above ending on the same price date this return is
+    measured to (both are `px.index[-1]`), the sentence's own "over the N-day
+    window" tail was a duration the reader had to convert back into a period
+    the card had already given them in dates. It states the return alone now —
+    and still renders when the engine reports no window at all."""
+    for language in ("zh-TW", "en"):
+        for window in ({"days": 1296}, {}, None):
+            card = {"acct_perf": {"hold_twr": 7.03, "window": window}}
+            texts = [item["text"] for item in card_renderer._performance_items(card, language)
+                     if item.get("tag") == "account_hold"]
+            assert len(texts) == 1, f"{language}: expected one holdings-return line, got {texts}"
+            assert "703%" in texts[0], f"{language}: the engine number must survive: {texts[0]}"
+            for banned in ("1296", "天窗口", "-day window"):
+                assert banned not in texts[0], \
+                    f"{language}: the sentence must state no window of its own: {texts[0]}"
+
+
 def test_vs_market_groups_by_market_label_only_when_mixed():
     """Adjustment 2A (#276 2026-07-22 dogfood note: "台股和美股部分也比較混
     亂，最好分模塊"): a mixed-market card labels each market's vs-market
@@ -1321,6 +1369,8 @@ def main():
         test_zh_and_en_cards_light_the_same_blocks_from_the_same_state,
         test_all_honesty_collapses_into_block1_footnote_one_per_line,
         test_price_source_rides_the_footnote_ahead_of_unrealized_coverage,
+        test_review_span_runs_to_the_price_date_the_card_is_valued_at,
+        test_holdings_return_states_no_second_window_of_its_own,
         test_vs_market_groups_by_market_label_only_when_mixed,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_resolve_zh_prescriptions_from_copy,
