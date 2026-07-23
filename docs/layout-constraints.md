@@ -7,6 +7,8 @@
 > For the authoritative section order see [output-contract.md](output-contract.md);
 > this file exists to make that contract legible to a designer and to say
 > *why* each rule is there. Where the two disagree, output-contract.md wins.
+> For how to add or change one element without re-tuning its neighbours, see
+> [design-guidelines.md](design-guidelines.md).
 
 ## 1. What this card is
 

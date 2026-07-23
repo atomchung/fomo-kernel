@@ -22,6 +22,10 @@
   designer with no repository context: what is load-bearing, what the visual
   system currently is, and which questions are open. It is written to be handed
   to an outside design review; it never overrides this file.
+- [design-guidelines.md](design-guidelines.md) owns module contracts and the
+  procedure for adding a visual element without re-tuning its neighbours. It
+  describes *how to change* the card, never what the card renders; it never
+  overrides this file.
 
 ## 2. Canonical structure: keynote + four blocks
 
