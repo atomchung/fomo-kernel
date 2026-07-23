@@ -3021,6 +3021,24 @@ stroke-linejoin:round;opacity:.85}
 border-radius:var(--rc-r-md);padding:var(--rc-sp-2) var(--rc-sp-3);margin:var(--rc-sp-2) 0 0}
 .rc .trend .spark{flex:1;height:26px}
 .rc .trend .cap{margin:0;white-space:nowrap;font-size:var(--rc-tx-micro)}
+.rc .kpirow{display:grid;grid-template-columns:2fr 1fr;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
+.rc .kpirow .hero{margin:0}
+@media (max-width:520px){.rc .kpirow{grid-template-columns:minmax(0,1fr)}}
+.rc .hero{background:var(--rc-surface-1);border-radius:var(--rc-r-md);
+padding:var(--rc-sp-3) var(--rc-sp-4);margin:0 0 var(--rc-sp-2)}
+.rc .heromain{display:flex;align-items:center;gap:var(--rc-sp-4)}
+.rc .herofig{flex:0 0 auto;min-width:0}
+.rc .herofig .lbl{font-size:var(--rc-tx-small);color:var(--rc-text-secondary);margin:0}
+.rc .herofig .val{font-size:var(--rc-tx-figure);font-weight:500;line-height:1.25;
+margin:var(--rc-sp-1) 0 0;color:var(--rc-text-primary)}
+.rc .herofig .val.pos{color:var(--rc-text-success)}
+.rc .herofig .val.neg{color:var(--rc-text-danger)}
+.rc .herocurve{flex:1 1 90px;min-width:0}
+.rc .herocurve .spark{height:32px}
+.rc .herofoot{display:flex;flex-wrap:wrap;justify-content:space-between;
+gap:0 var(--rc-sp-3);margin:var(--rc-sp-1) 0 0}
+.rc .herofoot .sub,.rc .herofoot .cap{margin:0;font-size:var(--rc-tx-micro);
+color:var(--rc-text-muted);line-height:1.45}
 .rc .kpi{display:grid;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
 .rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
 .rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -3093,7 +3111,7 @@ background:var(--rc-surface-1);padding:var(--rc-sp-3) var(--rc-sp-6)}"""
 
 def _sparkline_svg(card, copy=None):
     """Inline-SVG cumulative P&L sparkline from engine ``pnl_curve.points``,
-    with a minimal date-range / peak-trough caption riding under it (#312).
+    with a minimal peak/trough caption riding under it (#312).
 
     Renders only when at least two finite points exist.  Note-form or missing
     curve data omits the sparkline silently: card-spec forbids inventing a new
@@ -3101,11 +3119,12 @@ def _sparkline_svg(card, copy=None):
     per the card-template design reference.  No external references, so the
     artifact stays request-free.
 
-    The caption is a second, independent fail-soft layer on top of that: a
-    missing/malformed ``date`` on the points never blocks the line itself, it
-    only drops the caption (no full axis, just enough context — the start and
-    end dates plus the peak/trough the line already traces — for the shape to
-    be interpretable without inventing a number the engine did not supply)."""
+    The caption carried the curve's start and end dates until 2026-07-23.
+    ``pnl_curve`` anchors its first point to the start of the review period
+    (``trade_recap.pnl_curve``), so those dates restated the review window the
+    keynote already leads with — the one-value-once rule.  It now names only
+    the peak and trough, which no other element on the card carries, and no
+    longer depends on the points having usable dates."""
     # Decorative field, fail-soft contract: any wrong-typed curve (adapter or
     # --card-json input) must omit the sparkline, never abort the render.
     curve = (card or {}).get("pnl_curve")
@@ -3140,14 +3159,15 @@ def _sparkline_svg(card, copy=None):
     path = "M" + " L".join(coords)
     svg = (f'<svg class="spark {tone}" viewBox="0 0 {width:.0f} {height:.0f}" '
            f'preserveAspectRatio="none" aria-hidden="true"><path d="{path}"/></svg>')
-    start_date, end_date = dates[0], dates[-1]
     template = ((copy or {}).get("kpi") or {}).get("spark_caption")
-    if not (start_date and end_date and template):
+    if not template:
         return svg
     try:
-        caption = template.format(start=start_date, end=end_date,
-                                   peak=_signed_pct(high, digits=0),
-                                   trough=_signed_pct(low, digits=0))
+        # start/end stay available to any locale that still interpolates them,
+        # but the shipped copy no longer does — see the docstring.
+        caption = template.format(start=dates[0] or "", end=dates[-1] or "",
+                                  peak=_signed_pct(high, digits=0),
+                                  trough=_signed_pct(low, digits=0))
     except (KeyError, IndexError, ValueError):
         return svg
     return svg + f'<p class="cap">{html.escape(caption)}</p>'
@@ -3197,47 +3217,90 @@ def render_html(bundle):
              else _sparkline_svg(bundle.get("engine_card") or {}, copy))
     facts = structure["facts"]
 
-    def kpi_grid():
-        """The KPI tile row.
+    def _tile_html(tile):
+        """One secondary metric box: label, value, and a sub capped at two lines.
 
-        Two layout rules are load-bearing here (docs/layout-constraints.md §5):
+        Grid rows stretch to their tallest cell, so a tile allowed to grow
+        without bound pads every neighbour -- that is how a sparkline plus its
+        caption once forced a whole row to 209px.  The two-line cap bounds the
+        tallest cell instead of forbidding one particular field, which is what
+        the narrower "the review window may not sit in a tile" ruling did;
+        that one only blocked a single source of the same defect.  The sub
+        wraps rather than truncating: dropping half of "realized X ·
+        unrealized Y" loses a figure the reader needs."""
+        tone = f' {tile["tone"]}' if tile.get("tone") else ""
+        parts = []
+        if tile.get("label"):
+            parts.append(f'<p class="lbl">{e(tile["label"])}</p>')
+        parts.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
+        if tile.get("sub"):
+            parts.append(f'<p class="sub">{e(tile["sub"])}</p>')
+        return '<div class="m">' + "".join(parts) + "</div>"
 
-        * The column count is the number of tiles that actually lit up, not a
-          fixed four.  A month-gated review renders two tiles, and a hardcoded
-          ``repeat(4,1fr)`` left more than half the row empty.
-        * A tile is label + value + a sub capped at two lines, and never hosts
-          the sparkline.  Grid rows stretch to their tallest cell, so a tile
-          allowed to grow without bound pads every neighbour -- that is how a
-          sparkline plus its caption once forced a whole row to 209px.  The
-          two-line cap bounds the tallest cell instead of forbidding one
-          particular field, which is what the narrower "the review window may
-          not sit in a tile" ruling did; that one only blocked a single source
-          of the same defect.  The sub wraps rather than truncating: dropping
-          half of "realized X · unrealized Y" loses a figure the reader
-          needs.
-        """
-        tiles = []
-        for tile in facts["kpi"]:
-            tone = f' {tile["tone"]}' if tile.get("tone") else ""
-            parts = []
-            if tile.get("label"):
-                parts.append(f'<p class="lbl">{e(tile["label"])}</p>')
-            parts.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
-            if tile.get("sub"):
-                parts.append(f'<p class="sub">{e(tile["sub"])}</p>')
-            tiles.append('<div class="m">' + "".join(parts) + "</div>")
+    def _hero_html(tile, curve_svg, curve_caption):
+        """The lead metric, with the curve that traces it alongside.
+
+        The curve plots cumulative P&L, so it belongs beside the P&L figure
+        rather than adrift in its own strip below the grid: a reader should
+        not have to infer which number the line describes.  Putting it
+        *inside* a grid cell is what padded the whole tile row, so the hero
+        sits outside the grid and spans the block.
+
+        Three rows, which is what a plain tile also costs, so a hero beside a
+        tile does not stretch it: label + value with the line to their right,
+        then one footer row carrying the metric's own sub on the left and the
+        curve's caption on the right.  The caption sits there rather than
+        under the line because the hero can be as narrow as a two-column
+        share, where it would otherwise wrap and add a fourth row."""
+        tone = f' {tile["tone"]}' if tile.get("tone") else ""
+        figure = []
+        if tile.get("label"):
+            figure.append(f'<p class="lbl">{e(tile["label"])}</p>')
+        figure.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
+        main = '<div class="herofig">' + "".join(figure) + "</div>"
+        if curve_svg:
+            main += f'<div class="herocurve">{curve_svg}</div>'
+        foot = ""
+        if tile.get("sub") or curve_caption:
+            foot = ('<div class="herofoot">'
+                    + (f'<p class="sub">{e(tile["sub"])}</p>' if tile.get("sub") else "")
+                    + curve_caption + "</div>")
+        return f'<div class="hero"><div class="heromain">{main}</div>{foot}</div>'
+
+    def kpi_block():
+        """Lead metric + the secondary grid, in that order.
+
+        The column count is the number of secondary tiles that actually lit
+        up, never a fixed four: a month-gated review renders two metrics, and
+        a hardcoded ``repeat(4,1fr)`` left more than half the row empty."""
+        tiles = list(facts["kpi"])
         if not tiles:
-            return ""
-        return f'<div class="kpi" data-n="{len(tiles)}">' + "".join(tiles) + "</div>"
-
-    def trend_strip():
-        """The cumulative-P&L curve as a block-scoped strip.
-
-        The curve describes the whole period, not the single metric whose tile
-        used to host it, so it sits under the grid at full width instead of
-        inside one cell.  ``_sparkline_svg`` may append its own caption
-        paragraph; both go in the strip."""
-        return f'<div class="trend">{spark}</div>' if spark else ""
+            # No metric lit up at all; the curve, if any, still has a home.
+            return f'<div class="trend">{spark}</div>' if spark else ""
+        hero, rest = tiles[0], tiles[1:]
+        # Only the P&L figure is the one this curve traces. When some other
+        # metric leads (no total P&L this period), the curve keeps its own
+        # strip rather than implying it describes that metric.
+        hero_curve = spark if (spark and hero.get("id") == "pnl") else None
+        # ``_sparkline_svg`` returns the line optionally followed by its own
+        # caption paragraph; the hero puts the two on different rows.
+        curve_svg, _, caption_tail = (hero_curve or "").partition('<p class="cap">')
+        hero_html = _hero_html(hero, curve_svg,
+                               f'<p class="cap">{caption_tail}' if caption_tail else "")
+        if len(rest) == 1:
+            # A lone secondary metric stretched across its own full-width row
+            # leaves most of that row empty, so it shares the hero's row
+            # instead. This is the common case: a month-gated review lights
+            # exactly two metrics.
+            out = [f'<div class="kpirow">{hero_html}{_tile_html(rest[0])}</div>']
+        else:
+            out = [hero_html]
+            if rest:
+                out.append(f'<div class="kpi" data-n="{len(rest)}">'
+                           + "".join(_tile_html(tile) for tile in rest) + "</div>")
+        if spark and not hero_curve:
+            out.append(f'<div class="trend">{spark}</div>')
+        return "".join(out)
 
     def instrument_bars(rows):
         parts = []
@@ -3382,16 +3445,11 @@ def render_html(bundle):
                                   if chunk.startswith('<details class="fnote"')),
                                  len(rendered))
                 rendered[insert_at:insert_at] = attribution_bars()
-            grid = kpi_grid()
-            strip = trend_strip()
-            if grid:
-                # Tiles first, then the period curve, then the story block:
-                # the prose keeps only what a tile cannot hold (#344).
-                rendered.insert(0, grid)
-                if strip:
-                    rendered.insert(1, strip)
-            elif strip:
-                rendered.insert(0, strip)
+            # Metrics first, then the story block: the prose keeps only what
+            # a tile cannot hold (#344).
+            metrics = kpi_block()
+            if metrics:
+                rendered.insert(0, metrics)
         # Block 4 is the card's single visual centre of gravity: the product
         # promises exactly one thing to change, so the section carrying it gets
         # its own ground while every other section shares the card surface.

@@ -27,10 +27,13 @@ import test_review_v2 as v2  # noqa: E402  (shared CLI fixtures and helpers)
 import card_renderer  # noqa: E402  (engine path added by test_review_v2)
 
 SVG_RE = re.compile(r"<svg.*?</svg>(?:<p class=\"cap\">.*?</p>)?", re.S)
-# The curve is block-scoped, not tile-scoped: it renders as
-# <div class="trend"> svg + optional caption </div> under the KPI grid, so a
-# card without curve data drops the whole strip rather than an inline <svg>.
-TREND_RE = re.compile(r'<div class="trend">.*?</div>', re.S)
+# The curve is not tile-scoped. It normally sits beside the lead metric
+# (<div class="herocurve">) with its caption on the hero's footer row, and
+# falls back to its own <div class="trend"> strip when some other metric leads.
+# A card without curve data drops all of that, not just an inline <svg>.
+TREND_RE = re.compile(r'<div class="herocurve">.*?</div>'
+                      r'|<div class="trend">.*?</div>'
+                      r'|<p class="cap">.*?</p>', re.S)
 CURVE_POINTS = [
     {"date": "2026-06-30", "cum_ret": 0.0},
     {"date": "2026-07-04", "cum_ret": -0.012},
@@ -261,35 +264,37 @@ def test_sparkline_renders_only_with_curve_points():
     assert TREND_RE.sub("", html) == html_note
 
 
-def test_sparkline_caption_shows_date_range_and_peak_trough():
-    """#312: the sparkline is not an unlabeled decoration — a caption under the
-    line gives the start~end date range plus the peak/trough of the very same
-    ``pnl_curve.points`` the path already traces (no invented number, no full
-    axis system)."""
-    for language, joiner in (("zh-TW", "高點"), ("en", "peak")):
-        html = _session(language)["html"]
-        trough_word = "低點" if language == "zh-TW" else "trough"
-        caption = (f'<p class="cap">2026-06-30 ~ 2026-07-14 · '
-                   f'{joiner} +3% · {trough_word} -1%</p>')
-        assert caption in html, f"{language} sparkline caption missing or wrong: {caption!r}"
-        # The caption must ride directly under the sparkline it describes, not
-        # float free somewhere else in the section.
-        assert re.search(r'<svg class="spark[^"]*".*?</svg>' + re.escape(caption), html, re.S), \
-            f"{language} caption must sit immediately after its own <svg>"
+def test_sparkline_caption_names_peak_and_trough_without_the_window():
+    """#312 gave the curve a caption so it is not an unlabeled decoration; the
+    2026-07-23 layout pass narrowed what that caption may say.
 
-    # A point missing only its date must drop the caption without touching the
-    # line itself — the fail-soft contract is per-field, not all-or-nothing.
+    ``trade_recap.pnl_curve`` anchors its first point to the start of the
+    review period, so the caption's old start~end range restated the window
+    the keynote already leads with -- one value, stated twice. It now names
+    only the peak and trough, which no other element on the card carries, and
+    no longer depends on the points carrying usable dates at all."""
+    for language, peak_word, trough_word in (("zh-TW", "高點", "低點"),
+                                             ("en", "peak", "trough")):
+        card = _session(language)["html"]
+        caption = f'<p class="cap">{peak_word} +3% · {trough_word} -1%</p>'
+        assert caption in card, f"{language} caption missing or wrong: {caption!r}"
+        assert not re.search(r'<p class="cap">[^<]*\d{4}-\d{2}-\d{2}', card), \
+            f"{language} caption must not restate a date range (the keynote carries the window)"
+        # It rides the hero's footer row, beside the lead metric's own sub, so
+        # the reader sees which figure the line traces.
+        assert re.search(r'<div class="herofoot">.*?' + re.escape(caption), card, re.S), \
+            f"{language} caption must sit on the hero footer row"
+
+    # Dates are no longer a prerequisite for the caption, so stripping every
+    # one of them must leave the card byte-identical.
     run = _session("zh-TW")
     bundle = copy.deepcopy(run["bundle"])
-    points = [dict(p) for p in bundle["engine_card"]["pnl_curve"]["points"]]
-    points[0].pop("date", None)
-    points[-1].pop("date", None)
+    points = [dict(point) for point in bundle["engine_card"]["pnl_curve"]["points"]]
+    for point in points:
+        point.pop("date", None)
     bundle["engine_card"]["pnl_curve"] = {"points": points}
-    html_no_dates = card_renderer.render_html(bundle)
-    assert "<svg" in html_no_dates and 'class="cap"' not in html_no_dates, \
-        "points missing dates must drop only the caption, never the sparkline line"
-    assert TREND_RE.sub("", run["html"]) == TREND_RE.sub("", html_no_dates), \
-        "dropping the caption alone must not change any other text on the card"
+    assert card_renderer.render_html(bundle) == run["html"], \
+        "the caption no longer reads dates, so removing them must change nothing"
 
 
 # #247: engine fields that light up the card-template rich layout. Values are
@@ -332,7 +337,10 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     bundle = _rich_bundle("zh-TW")
     html = card_renderer.render_html(bundle)
     markdown = card_renderer.render_private(bundle)
-    assert 'class="kpi" data-n="4"' in html and html.count('<div class="m">') == 4
+    # Four metrics: the lead one heads the block in the hero (with the curve
+    # it traces), the other three fill the secondary grid.
+    assert '<div class="hero">' in html and 'class="kpi" data-n="3"' in html
+    assert html.count('<div class="m">') == 3
     assert html.count('<div class="trow">') == 3
     assert html.count('class="track"') == 3
     # The comparator rows stay; their headline figure does not. It is the same
@@ -372,7 +380,8 @@ def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
     """The stock fixture lacks the rich fields: KPI tiles still come from the
     overview, and every other rich block stays absent instead of inventing."""
     html = _session("zh-TW")["html"]
-    assert 'class="kpi"' in html
+    assert '<div class="hero">' in html and '<div class="kpirow">' in html, \
+        "two lit metrics must share the hero's row, not stretch across two rows"
     for marker in ('class="trow"', 'class="attr-head"', 'class="rx"'):
         assert marker not in html, f"unexpected rich block on plain fixture: {marker}"
 
@@ -394,26 +403,32 @@ def test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs():
 
         # The plain/default fixture only lights pnl + payoff (no
         # alpha_beta_breakdown data), but those two must still be tiles.
+        # The plain fixture lights two metrics: P&L leads in the hero, payoff
+        # is the lone secondary, so the two share one row.
         plain_html = _session(language)["html"]
-        assert plain_html.count('<div class="kpi" data-n="') == 1, \
-            f"{language} plain card must carry exactly one KPI dashboard row"
-        # The column count is the tile count: this fixture lights two, so a
-        # hardcoded four-column grid would leave half the row empty.
-        assert '<div class="kpi" data-n="2">' in plain_html, \
-            f"{language} plain card lights 2 tiles, so the grid must declare 2 columns"
-        for key in ("pnl", "payoff"):
-            tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
-            assert tile_open in plain_html, \
-                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
+        assert plain_html.count('<div class="kpirow">') == 1, \
+            f"{language} plain card must pair the hero with its single secondary metric"
+        hero_open = f'<div class="herofig"><p class="lbl">{html.escape(kpi_copy["pnl"])}</p>'
+        assert hero_open in plain_html, \
+            f"{language} 'pnl' ({kpi_copy['pnl']!r}) must lead the block as the hero metric"
+        tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy["payoff"])}</p>'
+        assert tile_open in plain_html, \
+            f"{language} 'payoff' ({kpi_copy['payoff']!r}) is not inside a .m box"
 
         # The rich fixture also lights benchmark excess + annualized alpha —
         # all four of #310's named metrics, all four as metric boxes.
+        # The rich fixture lights all four of #310's named metrics: P&L leads,
+        # the other three become a three-column grid -- the column count is the
+        # number of secondary metrics, never a hardcoded four.
         rich_html = card_renderer.render_html(_rich_bundle(language))
         assert rich_html.count('<div class="kpi" data-n="') == 1
-        assert rich_html.count('<div class="m">') == 4
-        assert '<div class="kpi" data-n="4">' in rich_html, \
-            f"{language} rich card lights 4 tiles, so the grid must declare 4 columns"
-        for key in ("pnl", "payoff", "excess", "alpha"):
+        assert rich_html.count('<div class="m">') == 3
+        assert '<div class="kpi" data-n="3">' in rich_html, \
+            f"{language} rich card has 3 secondary metrics, so the grid declares 3 columns"
+        hero_open = f'<div class="herofig"><p class="lbl">{html.escape(kpi_copy["pnl"])}</p>'
+        assert hero_open in rich_html, \
+            f"{language} 'pnl' ({kpi_copy['pnl']!r}) must lead the block as the hero metric"
+        for key in ("payoff", "excess", "alpha"):
             tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
             assert tile_open in rich_html, \
                 f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
@@ -446,7 +461,8 @@ def test_kpi_metric_box_css_stays_mirrored_with_card_template():
     # Selectors as written differ only in the `.rc ` ancestor prefix the
     # runtime widget fragment always renders under; compare their bodies.
     for selector in (".kpi", ".m", ".m .lbl", ".m .val", ".m .sub",
-                     ".trend", ".rule"):
+                     ".trend", ".rule", ".hero", ".heromain", ".herofig",
+                     ".herocurve", ".herofoot", ".kpirow"):
         template_props = _normalize(_rule(template, ".rc " + selector))
         runtime_props = _normalize(_rule(card_renderer._HTML_WIDGET_CSS, ".rc " + selector))
         missing = template_props - runtime_props
@@ -501,11 +517,11 @@ def test_kpi_tile_never_hosts_the_sparkline():
         assert tiles, "the rich fixture must render KPI tiles"
         for tile in tiles:
             assert "<svg" not in tile, f"a KPI tile must not host the sparkline: {tile[:80]!r}"
-        # ...and the curve still renders, as a block-scoped strip below the grid.
-        assert '<div class="trend">' in card and "<svg" in card, \
-            "the curve must still render as a block-scoped trend strip"
-        assert re.search(r'</div><div class="trend">', card), \
-            "the trend strip must follow the KPI grid, not float elsewhere"
+        # ...and the curve still renders, beside the metric it traces.
+        assert '<div class="herocurve">' in card and "<svg" in card, \
+            "the curve must render beside the lead metric"
+        assert re.search(r'<div class="herofig">.*?<div class="herocurve">', card, re.S), \
+            "the curve must sit next to the lead figure, not float elsewhere"
 
 
 def test_next_step_is_the_cards_only_emphasis_ground():
@@ -1549,7 +1565,7 @@ def main():
         test_markdown_reader_path_surfaces_existing_risk_and_rule_before_performance,
         test_cli_private_markdown_is_the_committed_canonical_card,
         test_sparkline_renders_only_with_curve_points,
-        test_sparkline_caption_shows_date_range_and_peak_trough,
+        test_sparkline_caption_names_peak_and_trough_without_the_window,
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
         test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
