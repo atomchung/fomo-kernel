@@ -53,8 +53,11 @@ support. Present a coherent opening check and one clear next step.
    and record the actual presentation following `references/interaction-delivery.md`.
    A commitment is **not** forced on this tier: offer a candidate rule only if
    the engine surfaced one, and make clear the user may skip it and simply keep
-   this structural check as the baseline. Write the choice (or `skip`) to
-   `answers.commitment`, then finalize.
+   this structural check as the baseline. When more than one candidate is
+   offered and `card_plan.candidate_comparison` is present, present that one
+   sentence too — it explains why the others ranked lower on this period's
+   severity ranking, not which rule is objectively right for the user. Write
+   the choice (or `skip`) to `answers.commitment`, then finalize.
 
 **Empty edge (`review_tier.tier == "empty"`):** the file carried no current
 holdings and no closed round trips. Do not manufacture a card. Tell the user
