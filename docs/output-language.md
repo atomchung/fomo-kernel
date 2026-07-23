@@ -71,7 +71,10 @@ cards printed Chinese rather than losing content. The engine now also emits
 `rules`. Note the failure shape: every violation above drops content on the
 en card, which reads as a thin card; this one *added* the wrong language, and
 no per-sentence test saw it. `tests/persona_sweep.py` therefore gates the
-whole rendered card — an English card carries no CJK on either surface.
+whole rendered card — an English card carries no CJK on any of the three
+surfaces, on a first *or* a second review (the reconciliation opener and the
+revisit checkpoints exist only on the latter, and interpolate stored text from
+the prior review, which is where a zh literal has the most room to hide).
 
 ## 4. Out of scope for this contract
 
