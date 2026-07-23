@@ -270,8 +270,7 @@ def build_fixtures(out):
                     continue
                 (bundles / f"{name}.bundle.json").write_text(
                     json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
-    gaps, coverage_notes = coverage_report(bundles)
-    return bundles, failures + gaps, notes + coverage_notes
+    return bundles, failures, notes
 
 
 def coverage_report(bundles_dir):
@@ -401,6 +400,12 @@ def main():
         return 1 if failures else 0
 
     failures += render_all(args.engine, bundles, out / "render", gate=True)
+    # Runs wherever the gates run, including a --bundles rerun: coverage is a
+    # gate on the sweep itself, so it must not be tied to having just built the
+    # fixtures.
+    gaps, coverage_notes = coverage_report(bundles)
+    failures += gaps
+    notes += coverage_notes
 
     if args.baseline:
         proc = subprocess.run(
