@@ -1917,6 +1917,82 @@ def test_public_committed_rule_carries_the_user_cap_override():
             f"{language}: an invalid override is fail-closed on the public card"
 
 
+def _pre_commitment_bundle(language, rule_dim="部位 sizing"):
+    """A pre-commitment preview bundle: the engine prescribed a rule but the
+    user has not chosen one yet, so Block 4 falls to the standing-rule
+    placeholder. ``engine_state.rule`` carries the v1-only zh literal exactly
+    as ``trade_recap.prescribe`` writes it, and ``rule_dim`` its legacy label."""
+    bundle = copy.deepcopy(_session(language)["bundle"])
+    bundle["commitment"] = None
+    answers = dict(bundle.get("answers") or {})
+    answers.pop("commitment", None)
+    bundle["answers"] = answers
+    state = bundle["engine_state"] = dict(bundle.get("engine_state") or {})
+    state["rule"] = "單筆部位上限定死 20%,超過就減"
+    state["rule_dim"] = rule_dim
+    state.pop("max_position_pct", None)
+    return bundle
+
+
+def test_standing_rule_placeholder_resolves_copy_not_the_v1_literal():
+    """#356: before the user picks a rule, Block 4 restates the standing rule.
+    It used to interpolate ``engine_state.rule`` verbatim — a zh literal
+    ``trade_recap.prescribe`` hardcodes — so English cards printed a Chinese
+    sentence inside an English wrapper (found in /fomo-qa dogfood, five of the
+    thirteen mock personas). The placeholder now resolves the canonical text
+    from ``copy/<locale>.json`` "rules" through ``engine_state.rule_dim``, the
+    same resolution the committed and public rule paths already use.
+
+    Expectations are the literal catalog sentences, not ``load_copy`` lookups:
+    reading the expected value from the same source the renderer reads makes
+    the assertion a tautology that passes however the wiring breaks."""
+    expected = {
+        "zh-TW": "單筆部位上限定死 20%；超過就減，不新增。",
+        "en": "Cap any single position at 20%. Trim if it goes over, and do not add.",
+    }
+    for language, sentence in expected.items():
+        block4 = _next_step_text(card_renderer.render_private(
+            _pre_commitment_bundle(language)))
+        assert sentence in block4, \
+            f"{language}: the standing-rule placeholder must print the catalog rule"
+        assert "單筆部位上限定死 20%,超過就減" not in block4, \
+            f"{language}: the v1 engine literal must never reach a v2 card"
+    # The English card carries no CJK at all — the wrapper being translated is
+    # not enough when the value interpolated into it is not.
+    cjk = re.compile("[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff"
+                     "\uf900-\ufaff\uff00-\uffef]")
+    english = card_renderer.render_private(_pre_commitment_bundle("en"))
+    leaked = [line for line in english.splitlines() if cjk.search(line)]
+    assert not leaked, f"CJK leaked onto the English card: {leaked}"
+    # A prescription whose dimension does not resolve falls back to the generic
+    # localized line rather than the untranslated literal (fail-closed).
+    for language, generic in (("zh-TW", "這次沒有新的規矩承諾"),
+                              ("en", "No new rule commitment this time")):
+        block4 = _next_step_text(card_renderer.render_private(
+            _pre_commitment_bundle(language, rule_dim=None)))
+        assert generic in block4, \
+            f"{language}: an unresolvable dimension falls back to the generic line"
+        assert "單筆部位上限定死" not in block4, \
+            f"{language}: the fallback must not print the v1 literal either"
+
+
+def test_standing_rule_placeholder_carries_the_user_cap_override():
+    """#324 applies to the placeholder too: the standing rule the card restates
+    is the same canonical text a candidate would offer, so a valid standing
+    override moves its threshold and an out-of-range one is fail-closed."""
+    universal = f"{card_renderer.POSITION_CAP:.0%}"
+    for language in ("zh-TW", "en"):
+        bundle = _pre_commitment_bundle(language)
+        bundle["engine_state"]["max_position_pct"] = 0.30
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        assert "30%" in block4 and universal not in block4, \
+            f"{language}: the user's cap must reach the standing-rule placeholder"
+        bundle["engine_state"]["max_position_pct"] = 1.5
+        block4 = _next_step_text(card_renderer.render_private(bundle))
+        assert universal in block4, \
+            f"{language}: an invalid override is fail-closed to the universal cap"
+
+
 def main():
     tests = [
         test_finalize_html_is_structured_not_a_pre_dump,
@@ -1976,6 +2052,8 @@ def main():
         test_renderer_position_cap_matches_the_engine_constant,
         test_committed_rule_carries_the_user_cap_override,
         test_public_committed_rule_carries_the_user_cap_override,
+        test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
+        test_standing_rule_placeholder_carries_the_user_cap_override,
     ]
     for test in tests:
         test()

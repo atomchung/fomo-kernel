@@ -63,6 +63,16 @@ renderer resolves codes → copy. Persisted artifacts that already store zh
 literals need no compatibility mapping — dev-phase ruling (owner
 2026-07-21): stale data is cleaned up on demand, not migrated.
 
+Repaired, kept here as the worked example (#356): Block 4's standing-rule
+placeholder interpolated `engine_state.rule` — a v1-only zh sentence
+`trade_recap.prescribe` hardcodes — into the localized wrapper, so English
+cards printed Chinese rather than losing content. The engine now also emits
+`engine_state.rule_dim` and the renderer resolves the rule text from copy
+`rules`. Note the failure shape: every violation above drops content on the
+en card, which reads as a thin card; this one *added* the wrong language, and
+no per-sentence test saw it. `tests/persona_sweep.py` therefore gates the
+whole rendered card — an English card carries no CJK on either surface.
+
 ## 4. Out of scope for this contract
 
 - **v1 zh human card** (`trade_recap.py`) is zh-only legacy; the CLAUDE.md

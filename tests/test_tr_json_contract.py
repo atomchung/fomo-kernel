@@ -48,6 +48,7 @@ STATE_KEYS = {
     "n_held", "headline_dim", "headline_metric", "commitment", "metrics",
     "max_position_pct",                                 # #324:本次診斷/規矩採用的用戶自訂單一部位上限(None=通用預設)
     "rule", "insufficient_data", "holdings",
+    "rule_dim",                                          # #356:rule 的維度;v2 卡片用它從 copy "rules" 取當地語系文案(rule 本身是 v1 zh 字面值)
     "prev_end",                                          # #270:實際採用的 prev_end,供下次 review 自我別名排除鏈用
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀

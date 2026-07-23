@@ -2475,7 +2475,16 @@ def _next_block(bundle, copy, facts, state, snapshot):
     elif state.get("insufficient_data"):
         rule_inner.append(("paragraph", [missing.get("rule_insufficient_data", "")]))
     else:
-        standing = state.get("rule")
+        # #356: ``state["rule"]`` is a v1-only zh literal — trade_recap.prescribe
+        # writes the sentence in Traditional Chinese — so interpolating it here
+        # leaked Chinese into English cards. Resolve the canonical rule text from
+        # copy "rules" through the prescription's dimension instead, the same
+        # resolution the committed private card and the public card already use.
+        # A prescription without a resolvable dimension falls through to the
+        # generic localized line rather than the untranslated literal.
+        standing = (localized_rule(state.get("rule_dim"), language,
+                                   cap=state.get("max_position_pct"))
+                    if state.get("rule_dim") else None)
         text = None
         if standing and missing.get("rule_standing"):
             try:
