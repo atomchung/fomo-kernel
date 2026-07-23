@@ -585,10 +585,11 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
     if preview_card and final_artifact and final_artifact[0] <= preview_card[0]:
         errors.append("final artifact was generated before the preview card was presented")
 
-    # #357: the cash anchor is resolved before `prepare` runs (agent reads the
-    # source, or asks the user one short question, or the user skips), so this
-    # event is retrospective evidence the check happened at all — it cannot be
-    # skipped by forgetting, the way plain data-contract.md prose could.
+    # #357: the cash anchor is resolved before the first surface (first_review:
+    # before `prepare` runs; weekly_review: after the cadence-tier gate, and a
+    # light-tier session never calls this tool at all), so this event is
+    # retrospective evidence the check happened — it cannot be skipped by
+    # forgetting, the way plain data-contract.md prose could.
     if route in CASH_ANCHOR_ROUTES:
         checks = _positions(rows, "cash_anchor_checked")
         first_surface = min(
