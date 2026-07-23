@@ -74,13 +74,21 @@
   --text-primary:#1a1915;--text-secondary:#5f5e5a;--text-muted:#8a8980;
   --text-success:#3b6d11;--text-danger:#a32d2d;--text-warning:#854f0b;--text-accent:#185fa5;
   --border:rgba(0,0,0,0.10);--border-strong:rgba(0,0,0,0.18);
+  --surface-key:#f0eee6;--border-key:rgba(24,95,165,0.35);
   --radius:8px;
+  /* Layout scales. Colour was the only tokenized axis before 2026-07-23:
+     spacing used 16 ad-hoc values and type used 7 steps, so every layout
+     ruling had to name a pixel instead of a scale. */
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;
+  --tx-micro:11px;--tx-small:12px;--tx-body:14px;--tx-lead:15px;--tx-rule:17px;--tx-figure:20px;
+  --r-sm:6px;--r-md:var(--radius);--r-lg:12px;
 }
 @media (prefers-color-scheme:dark){:root{
   --surface-2:#2b2a27;--surface-1:#232220;--surface-0:#1a1917;
   --text-primary:#f5f4ef;--text-secondary:#b4b2a9;--text-muted:#8a8980;
   --text-success:#a7be83;--text-danger:#df8b84;--text-warning:#c9aa68;--text-accent:#a9b5c2;
   --border:rgba(255,250,240,0.10);--border-strong:rgba(255,250,240,0.16);
+  --surface-key:#26282b;--border-key:rgba(169,181,194,0.42);
 }}
 body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify-content:center}
 .page{width:680px;max-width:100%}
@@ -100,17 +108,25 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
 .rc .lens{font-size:13px;color:var(--text-secondary);margin:8px 0 0;line-height:1.6}
 .rc .meta{font-size:12px;color:var(--text-muted);margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px}
-.rc .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-@media (max-width:520px){.rc .grid4{grid-template-columns:repeat(2,1fr)}}
-@media (max-width:380px){.rc .grid4{grid-template-columns:1fr}}
-.rc .m{background:var(--surface-1);border-radius:var(--radius);padding:13px 15px}
-.rc .m .lbl{font-size:12px;color:var(--text-secondary);margin:0}
-.rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25}
-.rc .m .sub{font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4}
-.rc .m .spark{display:block;width:100%;height:22px;margin:8px 0 0}
-.rc .m .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
-.rc .m .spark.pos path{stroke:var(--text-success)}
-.rc .m .spark.neg path{stroke:var(--text-danger)}
+.rc .kpi{display:grid;gap:var(--sp-2);margin:0 0 var(--sp-1)}
+.rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
+.rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rc .kpi[data-n="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rc .kpi[data-n="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rc .m{background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4)}
+.rc .m .lbl{font-size:var(--tx-small);color:var(--text-secondary);margin:0}
+.rc .m .val{font-size:var(--tx-figure);font-weight:500;margin:var(--sp-1) 0 0;line-height:1.25}
+.rc .m .sub{font-size:var(--tx-micro);color:var(--text-muted);margin:var(--sp-1) 0 0;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* Five cells is four metrics plus the curve: two rows of three with the
+   curve spanning two fills both rows exactly. */
+.rc .kpi[data-n="5"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rc .kpi[data-n="5"] .curve{grid-column:span 2}
+.rc .m.curve .cval{margin:var(--sp-1) 0 0;height:25px}
+.rc .m.curve .spark{display:block;width:100%;height:25px;margin:0}
+.rc .m.curve .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.rc .m.curve .spark.pos path{stroke:var(--text-success)}
+.rc .m.curve .spark.neg path{stroke:var(--text-danger)}
 .rc .pos{color:var(--text-success)}.rc .neg{color:var(--text-danger)}
 .rc .story{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0}
 .rc h2{font-size:15px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
@@ -126,7 +142,7 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
 @media (max-width:300px){.rc .ttop{flex-wrap:wrap}}
 @media (max-width:300px){.rc .ttags .tag{font-size:11px}}
-.rc .tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:6px;white-space:nowrap;line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
+.rc .tag{display:inline-flex;align-items:center;gap:var(--sp-1);font-size:var(--tx-small);padding:1px var(--sp-2);border-radius:6px;white-space:nowrap;line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
 .rc .tag i{font-size:13px}
 .rc .t-warn{color:var(--text-warning);border-color:var(--border-strong)}
 .rc .t-bad{color:var(--text-danger);border-color:var(--border-strong)}
@@ -143,18 +159,16 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .hrow .k{font-size:12px;color:var(--text-muted);font-weight:500;padding-top:1px}
 .rc .hrow .v{font-size:13px;color:var(--text-primary);line-height:1.65}
 .rc .mono{font-family:var(--font-mono)}
-.rc .attr-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;font-size:14px;margin:0 0 14px}
-.rc .attr-head .big{font-size:19px;font-weight:500}
 .rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
 .rc .arow .al{font-size:13px;color:var(--text-secondary)}
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
 .rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
-@media (max-width:300px){.rc .attr-head .big{font-size:16px}}
 @media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
-.rc .rule{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
+.rc .sec.keystep{background:var(--surface-key);border-top:0.5px solid var(--border-key)}
+.rc .rule{background:transparent;border:0;border-left:3px solid var(--text-accent);border-radius:0;padding:0 0 0 var(--sp-4)}
 .rc .rule .rt{font-size:12px;color:var(--text-accent);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
-.rc .rule .rmain{font-size:15px;color:var(--text-primary);line-height:1.65;margin:0;font-weight:500}
+.rc .rule .rmain{font-size:var(--tx-rule);color:var(--text-primary);line-height:1.5;margin:0;font-weight:600;letter-spacing:-.01em}
 .rc .rule .rmain b{color:var(--text-primary);font-weight:500}
 .rc .rule ol{margin:0;padding-left:20px}
 .rc .rule li{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:0 0 10px}
@@ -181,16 +195,18 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
   </div>
 
   <div class="sec">
-    <div class="grid4">
-      <div class="m"><p class="lbl">Total P&amp;L</p><p class="val pos">+$143,197</p><p class="sub">Realized +$18,960 · unrealized +$124,237</p>
-        <svg class="spark pos" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
-          <path d="M0,25 L12,23 L24,24 L36,17 L48,19 L60,11 L72,13 L84,7 L96,9 L108,4 L120,2"/>
-        </svg>
-        <p class="cap">2024-01-12 ~ 2024-12-03 · peak +321% · trough +0%</p>
-      </div>
+    <div class="kpi" data-n="5">
+      <div class="m"><p class="lbl">Total P&amp;L</p><p class="val pos">+$143,197</p><p class="sub">Realized +$18,960 · unrealized +$124,237</p></div>
+      <div class="m curve"><p class="lbl">Path this period</p>
+        <div class="cval">
+          <svg class="spark pos" viewBox="0 0 300 25" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0,22 L30,20 L60,21 L90,14 L120,16 L150,9 L180,10 L210,5 L240,6 L270,3 L300,2"/>
+          </svg>
+        </div>
+        <p class="sub">peak +321% · trough +0%</p></div>
       <div class="m"><p class="lbl">Active payoff ratio</p><p class="val">2.9</p><p class="sub">Average win $2,851 vs loss $1,000</p></div>
-      <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market movement</p></div>
-      <div class="m"><p class="lbl">Annualized alpha</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo only; alpha is unreliable</p></div>
+      <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market</p></div>
+      <div class="m"><p class="lbl">Annualized alpha</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo only; unreliable</p></div>
     </div>
     <p class="story">The $143k total looks strong, but 87% is unrealized and only $19k has been realized. A 2.9 payoff ratio shows large wins and smaller losses, while beta of 2.05 explains much of the 261pp excess as risk exposure rather than pure selection skill.</p>
   </div>
@@ -256,7 +272,6 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 
   <div class="sec">
     <h2><i class="ti ti-arrows-split-2" aria-hidden="true"></i>Return attribution · theme exposure or selection skill?</h2>
-    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--text-secondary)">above market (+321% vs SPY +60%)</span></p>
     <div class="arow"><span class="al">Selection vs QQQ <span style="color:var(--text-muted)">(neutral comparison)</span></span><span class="av pos">+243pp</span></div>
     <div class="abar"><div style="width:100%"></div></div>
     <div class="arow" style="margin-top:12px"><span class="al">Selection vs SOXX <span style="color:var(--text-muted)">(strongest hindsight comparison)</span></span><span class="av pos">+96pp</span></div>

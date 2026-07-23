@@ -63,7 +63,8 @@
     "excess_sub": "β {beta}",
     "alpha": "年化 α",
     "alpha_unreliable": "統計上還不可信",
-    "spark_caption": "{start} ~ {end} · 高點 {peak} · 低點 {trough}"
+    "curve": "這期走勢",
+    "spark_caption": "高點 {peak} · 低點 {trough}"
   },
   "etf_classification": {
     "allocation": "配置型 ETF 已從單一股票集中度排除：{list}。",
