@@ -1637,26 +1637,46 @@ def _signed_pp(value, digits=1):
     return "—" if value is None else f"{float(value) * 100:+.{digits}f} pp"
 
 
-def _period_line(bundle, copy):
-    """Block 1's one-line period label (contract §2): the review span from
-    engine state, plus at most two demoted market indicators (primary
-    benchmark window return and VIX) — the former standalone market-timeline
-    section collapses into this line and nothing else."""
+def _period_span(bundle, copy):
+    """The review window on its own (contract §2): which stretch of the user's
+    history this card covers.
+
+    Owner ruling 2026-07-22: this belongs at the very top of the card, in the
+    keynote preamble. It scopes the entire card — every number below is "over
+    this window" — so it is card-level metadata, not a property of any one
+    indicator. It previously rode the excess KPI tile's sub line together with
+    the market backdrop (#344), which pushed that one cell to roughly three
+    times the text of its neighbours and, under the grid's default row
+    stretch, padded the whole tile row. Split from ``_market_backdrop`` so
+    each lands where it belongs."""
     state = bundle.get("engine_state") or {}
     context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("market_context") or {})
     period_copy = copy.get("period") or {}
     start = state.get("date_start") or context.get("start")
     end = state.get("date_end") or context.get("end")
-    label = None
     try:
         if start and end and period_copy.get("span"):
-            label = period_copy["span"].format(start=start, end=end)
-        elif end and period_copy.get("as_of"):
-            label = period_copy["as_of"].format(end=end)
+            return period_copy["span"].format(start=start, end=end)
+        if end and period_copy.get("as_of"):
+            return period_copy["as_of"].format(end=end)
     except (KeyError, IndexError, ValueError):
-        label = None
-    pieces = [] if label is None else [label]
+        return None
+    return None
+
+
+def _market_backdrop(bundle, copy):
+    """The two demoted market indicators — primary benchmark window return and
+    VIX — that qualify the excess-versus-market reading.
+
+    Unlike the review span these ARE properties of the benchmark comparison,
+    so they stay with the excess KPI tile on HTML (and hold Block 1's line on
+    Markdown, which has no tile grid). Returns None when neither indicator is
+    available."""
+    context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+               .get("market_context") or {})
+    period_copy = copy.get("period") or {}
+    pieces = []
     benchmarks = context.get("benchmarks") or {}
     spy = benchmarks.get("SPY") or {}
     if spy.get("window_ret") is not None and period_copy.get("spy"):
@@ -1886,14 +1906,17 @@ def _problem_lines(bundle, copy):
 # (snapshot, insufficient, fx gaps) keep today's plainer shape.
 
 
-def _kpi_tiles(card, context, copy, period_line=None):
+def _kpi_tiles(card, context, copy, backdrop=None):
     """Up to four headline tiles: P&L, payoff, benchmark excess, alpha.
 
-    ``period_line`` (#344) is the same combined review-window/SPY/VIX string
-    ``_period_line`` builds for Block 1's top line; when the excess tile
-    renders, it folds in here (the tile's sub) instead of standing as its own
-    sentence beneath the grid. ``None``/absent leaves the excess tile exactly
-    as before (e.g. direct callers that only need beta)."""
+    ``backdrop`` (#344) is the benchmark window return and VIX that qualify
+    the excess reading; when the excess tile renders they fold into its sub
+    instead of standing as their own sentence beneath the grid. The review
+    span deliberately does NOT ride along — owner ruling 2026-07-22 put it at
+    the top of the card (see ``_period_span``), because carrying both made
+    this one cell roughly three times the text of its neighbours and the
+    grid's row stretch padded the entire row. ``None``/absent leaves the
+    excess tile exactly as before (e.g. direct callers that only need beta)."""
     overview = card.get("overview") or {}
     kpi_copy = copy.get("kpi") or {}
     tiles = []
@@ -1934,8 +1957,8 @@ def _kpi_tiles(card, context, copy, period_line=None):
         sub_parts = []
         if beta_text and kpi_copy.get("excess_sub"):
             sub_parts.append(kpi_copy["excess_sub"].format(beta=beta_text))
-        if period_line:
-            sub_parts.append(period_line)
+        if backdrop:
+            sub_parts.append(backdrop)
         sub = " · ".join(sub_parts) if sub_parts else None
         tiles.append({"id": "excess", "label": kpi_copy["excess"],
                       "value": f"{_benchmark_pp(excess)}pp",
@@ -2063,12 +2086,13 @@ def _card_facts(bundle, copy):
         # Snapshot cards intentionally suppress history-performance panels; the
         # rich layout has nothing honest to add there yet.
         return {"kpi": [], "instruments": [], "stress": [], "attribution": None}
-    # #344: the same combined period/SPY/VIX string _performance_block prints
-    # as Block 1's top line folds into the excess tile's sub here too — both
-    # call sites read the one _period_line so the two never drift apart.
-    period_line = _period_line(bundle, copy)
+    # #344: the market backdrop _performance_block prints as Block 1's line
+    # folds into the excess tile's sub here too — both call sites read the one
+    # _market_backdrop so the two never drift apart. The review span is not
+    # part of it; it renders once in the keynote preamble (_period_span).
+    backdrop = _market_backdrop(bundle, copy)
     return {
-        "kpi": _kpi_tiles(card, context, copy, period_line=period_line),
+        "kpi": _kpi_tiles(card, context, copy, backdrop=backdrop),
         "instruments": _instrument_rows(card, context, language),
         "stress": _stress_lines(card, context, language),
         "attribution": _attribution_facts(card),
@@ -2101,15 +2125,16 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     # not because the cash anchor or the benchmark symbol is at fault.
     price_blocked = price_retrieval_blocked(card)
     items = []
-    period = _period_line(bundle, copy)
+    period = _market_backdrop(bundle, copy)
     if period:
-        # #344: the review-window span and the SPY/VIX backdrop it carries
-        # fold into the "相對大盤" (excess) KPI tile's sub line when that tile
-        # renders on this card (built in _kpi_tiles from this same
-        # _period_line call) — HTML omits the standalone line then. A card
-        # with no excess tile this period (month-gated, mixed-market, or
-        # missing benchmark data) has nowhere else for this line to live, so
-        # HTML keeps it exactly as before; Markdown always keeps it.
+        # #344: the SPY/VIX backdrop folds into the "相對大盤" (excess) KPI
+        # tile's sub line when that tile renders on this card (built in
+        # _kpi_tiles from this same _market_backdrop call) — HTML omits the
+        # standalone line then. A card with no excess tile this period
+        # (month-gated, mixed-market, or missing benchmark data) has nowhere
+        # else for it to live, so HTML keeps the line; Markdown, which has no
+        # tile grid at all, always keeps it. The review span is not here — it
+        # renders once at the top of the card (_period_span).
         items.append({"kind": "line", "tag": "period", "text": period,
                       "kpi_id": "excess", "html_text": ""})
     perf = _performance_items(card, language)
@@ -2501,6 +2526,13 @@ def _card_structure(bundle):
         badges.append(copy["demo_badge"])
 
     preamble = []
+    # Owner ruling 2026-07-22: the review window leads the card. It scopes
+    # every number below it, so the reader needs it before anything else --
+    # and it is card-level metadata rather than a property of any single
+    # indicator, which is why it no longer rides the excess tile's sub line.
+    period_span = _period_span(bundle, copy)
+    if period_span:
+        preamble.append(("paragraph", [period_span]))
     opening = [] if snapshot else _review_opening_lines(bundle, copy["language"])
     if opening:
         preamble.append(("paragraph", opening))
