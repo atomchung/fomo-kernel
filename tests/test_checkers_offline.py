@@ -276,6 +276,12 @@ def test_card_structure_series_alive():
                             _MISSING["annualized"], _MISSING["vs_market"]])
     ok("S-2" in {f.assertion for f in check_card(over, _S2_CONTEXT) if not f.passed},
        "S-2 抓多印缺料 note(前提在卻說算不出)")
+    priced_out = _v2_card(block1=["帳面總損益 -$300（已實現 +$200 · 未實現 -$500）",
+                                  _MISSING["annualized_prices"],
+                                  _MISSING["vs_market_prices"]])
+    ok(not any(f.assertion == "S-2" and not f.passed
+               for f in check_card(priced_out, _S2_CONTEXT)),
+       "S-2 認得 *_prices 缺料變體(#289/#321:價格檢索被擋時 renderer 換用的同義 note)")
     ok(not any(f.assertion == "S-2" and not f.passed for f in check_card(clean)),
        "S-2 沒給 context 時降級跳過,不誤殺")
 

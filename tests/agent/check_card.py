@@ -229,11 +229,14 @@ def _s2_module_lighting(body: str, copy: dict, context, language) -> "Finding":
     has_diag = bool(card.get("top_holes") or card.get("dims_raw"))
 
     problems = []
-    for key, lit, note_key in (("absolute_pnl", has_abs, "absolute_pnl"),
-                               ("annualized", has_ann, "annualized"),
-                               ("risks", has_diag, "risks")):
-        note = missing_copy.get(note_key) or ""
-        shown = bool(note) and note in body
+    # #289/#321: when price retrieval was blocked, the renderer swaps in the
+    # *_prices variant of the same missing-data note — either variant counts
+    # as "the note was shown" (both directions of the check).
+    for key, lit, note_keys in (("absolute_pnl", has_abs, ("absolute_pnl",)),
+                                ("annualized", has_ann, ("annualized", "annualized_prices")),
+                                ("risks", has_diag, ("risks",))):
+        notes = [missing_copy.get(note_key) or "" for note_key in note_keys]
+        shown = any(note and note in body for note in notes)
         if not lit and not shown:
             problems.append(f"{key}: 前提缺但缺料 note 沒出(靜默省略)")
         if lit and shown:
@@ -243,8 +246,9 @@ def _s2_module_lighting(body: str, copy: dict, context, language) -> "Finding":
     # 未 gated → 缺料 note 兩向照舊,且前提在時段落必須真的上卡(嚴防靜默漏段)。
     gate = card.get("vs_market_gate")
     vs_gated = isinstance(gate, dict) and gate.get("render") is False
-    vs_note = missing_copy.get("vs_market") or ""
-    vs_note_shown = bool(vs_note) and vs_note in body
+    vs_notes = [missing_copy.get(note_key) or ""
+                for note_key in ("vs_market", "vs_market_prices")]
+    vs_note_shown = any(note and note in body for note in vs_notes)
     segment_re = (_VS_SEGMENT_EN_RE if str(language).lower().startswith("en")
                   else _VS_SEGMENT_ZH_RE)
     vs_segment_shown = bool(segment_re.search(body))

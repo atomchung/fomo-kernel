@@ -10,8 +10,10 @@ re-invented ad hoc (#368 records the round that standardized it).
 
 For every ``mock/sample_*.csv`` persona x locale (zh-TW, en):
 
-1. ``review.py prepare`` into an isolated throwaway ``TRADE_COACH_HOME`` —
-   offline and deterministic for mock fixtures.
+1. ``review.py prepare`` into an isolated throwaway ``TRADE_COACH_HOME``,
+   with a PYTHONPATH-injected yfinance ImportError stub (the repo's
+   ``_offline_engine_env`` pattern) so open-position personas degrade
+   deterministically instead of fetching live prices.
 2. Render the pre-commitment card (``render_private`` + ``render_html``) from
    the frozen plan, with a fixed digit-free synthetic narrative: headline,
    mirror, and exactly the plan's ``required_honesty_keys``.
@@ -26,6 +28,13 @@ For every ``mock/sample_*.csv`` persona x locale (zh-TW, en):
    carrier of every figure on clients without widget rendering.
 
 Exit code 0 only when every persona passes every gate.
+
+Scope: every card here is the pre-commitment **first-review** render — each
+persona prepares into a fresh empty root, so ``route=auto`` resolves to
+``first_review``. Weekly-only surfaces (the prior-commitment mirror,
+due-revisit swap panels, rule-breach blocks) are exercised by the fixture
+suites (``tests/test_card_html.py``, ``tests/test_review_v2.py``), not by
+this sweep.
 """
 import argparse
 import importlib.util
@@ -68,6 +77,15 @@ def prepare_plans(out):
     """Run review.py prepare for every persona x locale; return the plans dir."""
     plans = out / "plans"
     plans.mkdir(parents=True, exist_ok=True)
+    stub_dir = out / "stubs"
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    # The repo's _offline_engine_env pattern (tests/test_review_v2.py): the
+    # real engine subprocess imports this stub instead of yfinance, so the
+    # sweep stays offline and open-position personas degrade deterministically.
+    (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n', encoding="utf-8")
+    base_env = dict(os.environ)
+    base_env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(stub_dir), base_env.get("PYTHONPATH")) if part)
     failures = []
     for csv in sorted(SKILL_DIR.glob("mock/sample_*.csv")):
         persona = csv.stem.replace("sample_", "")
@@ -77,7 +95,7 @@ def prepare_plans(out):
                 [sys.executable, "engine/review.py", "prepare",
                  str(csv.relative_to(SKILL_DIR)), "--language", locale],
                 cwd=SKILL_DIR, capture_output=True, text=True,
-                env={**os.environ, "TRADE_COACH_HOME": str(root)},
+                env={**base_env, "TRADE_COACH_HOME": str(root)},
             )
             plan_files = list(root.glob(".pending/*/plan.json"))
             if proc.returncode != 0 or not plan_files:
@@ -119,7 +137,7 @@ def html_invariants(html_card):
     """Layout invariants from docs/design-guidelines.md that only hold against
     real engine output: R3 (data-n equals lit cells) and R4 (one keystep)."""
     problems = []
-    kpi = re.search(r'class="kpi" data-n="(\d)"', html_card)
+    kpi = re.search(r'class="kpi" data-n="(\d+)"', html_card)
     if kpi:
         cells = html_card.count('<div class="m">') + html_card.count('<div class="m curve">')
         if int(kpi.group(1)) != cells:
@@ -137,7 +155,8 @@ def render_all(engine_dir, plans_dir, render_dir, gate):
     failures = []
     for plan_file in sorted(pathlib.Path(plans_dir).glob("*.plan.json")):
         name = plan_file.name.replace(".plan.json", "")
-        bundle = build_bundle(json.loads(plan_file.read_text()))
+        plan = json.loads(plan_file.read_text())
+        bundle = build_bundle(plan)
         try:
             markdown = card_renderer.render_private(bundle)
             html_card = card_renderer.render_html(bundle)
@@ -148,7 +167,10 @@ def render_all(engine_dir, plans_dir, render_dir, gate):
         (render_dir / f"{name}.html").write_text(html_card)
         if not gate:
             continue
-        broken = [f.assertion for f in check_card.check_card(markdown, None) if not f.passed]
+        # The plan itself is a valid S-2 context: check_card's _context_card
+        # reads its engine_card key, so module lighting is actually checked
+        # rather than degraded to a skip.
+        broken = [f.assertion for f in check_card.check_card(markdown, plan) if not f.passed]
         if broken:
             failures.append(f"check_card {name}: {', '.join(broken)}")
         failures.extend(f"html {name}: {p}" for p in html_invariants(html_card))
@@ -201,7 +223,7 @@ def main():
     plan_count = len(list(plans.glob("*.plan.json")))
     for line in failures:
         print(f"FAIL  {line}")
-    verdict = f"❌ {len(failures)} failure(s)" if failures else "✅ all gates pass"
+    verdict = f"FAIL: {len(failures)} failure(s)" if failures else "PASS: all gates pass"
     print(f"\npersona sweep: {plan_count} cards rendered to {out} — {verdict}")
     return 1 if failures else 0
 
