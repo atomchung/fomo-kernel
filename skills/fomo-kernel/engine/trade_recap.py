@@ -1671,6 +1671,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 因 prescribe 攤平處方排在 sizing 前、且 sizing 規矩被 not any(砍損耗) 擋掉)。
     actionable = [r for r in (rx or []) if r.get("rule")]
     rule = actionable[0]["rule"] if actionable else None
+    # #356:``rule`` 是 v1-only 的 zh 字面值(prescribe 直接寫死中文),v2 卡片不可直接印。
+    # 帶出它的維度,讓 renderer 用 copy "rules" 解析當地語系的正式規矩文案。
+    rule_dim = actionable[0].get("dim") if actionable else None
     # 樣本不足(§4.4, #306):完整買賣回合 < MIN_ROUND_TRIPS → 已實現行為太薄,不硬出 commitment。
     # #306 起「交易跨度」不再進這條硬閘(取代 #21.4 的 span gate):判準是「回合夠不夠完整」,
     # 不是日曆窗長短——免得把高頻短窗檔(回合多但跨度短)誤殺。跨度只當 review._review_tier
@@ -1737,6 +1740,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "alpha_credible": credible if has_ab else None,
         },
         "rule": rule,
+        "rule_dim": rule_dim,                              # #356:rule 的維度;v2 renderer 據此從 copy "rules" 取當地語系文案(rule 本身是 v1 zh 字面值,不可上卡)
         "insufficient_data": insufficient,
         "holdings": {                                       # 目標3：持倉 snapshot（絕對值，跨期 diff 用）
             "as_of": rows[-1]["date"].isoformat() if rows else None,

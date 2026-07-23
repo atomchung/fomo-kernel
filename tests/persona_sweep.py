@@ -18,10 +18,11 @@ For every ``mock/sample_*.csv`` persona x locale (zh-TW, en):
    the frozen plan, with a fixed digit-free synthetic narrative: headline,
    mirror, and exactly the plan's ``required_honesty_keys``.
 3. Gate the output: ``tests/agent/check_card.py`` (S-1..S-4) must pass on the
-   Markdown card, and the HTML card must hold the layout invariants that no
+   Markdown card, the HTML card must hold the layout invariants that no
    fixture-based test can cover across real engine output — the KPI grid's
    ``data-n`` equals the number of cells that actually lit, and exactly one
-   ``.sec.keystep`` emphasis ground exists (R3/R4, docs/design-guidelines.md).
+   ``.sec.keystep`` emphasis ground exists (R3/R4, docs/design-guidelines.md)
+   — and an English card must carry no CJK on either surface (#356).
 4. With ``--baseline``: the Markdown card must be byte-identical to the
    baseline engine's render of the same plan. HTML may differ by design;
    silent Markdown drift is the red flag, because that surface is the only
@@ -147,6 +148,29 @@ def html_invariants(html_card):
     return problems
 
 
+# CJK punctuation, ext A, the main ideograph block, compatibility
+# ideographs, and fullwidth forms. Escapes, not literals: a leak can be a
+# lone corner bracket or fullwidth semicolon from a zh sentence template as
+# easily as a whole clause, and the range bounds must stay readable.
+CJK = re.compile("[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+
+
+def locale_purity(card, locale):
+    """#356: an English card carries no CJK, anywhere.
+
+    Locale bugs in this engine are interpolation bugs, not translation bugs —
+    the wrapper sentence comes from ``copy/en.json`` and reads as English while
+    the value dropped into it is a zh literal the engine hardcoded. A
+    per-sentence assertion cannot see that class; scanning the whole rendered
+    card can, and it holds for every persona and every block at once. The zh
+    direction has no counterpart: a zh card legitimately carries English
+    tickers, currency codes, and benchmark names."""
+    if locale != "en":
+        return []
+    return [f"CJK on the English card: {line.strip()}"
+            for line in card.splitlines() if CJK.search(line)]
+
+
 def render_all(engine_dir, plans_dir, render_dir, gate):
     """Render every plan with one engine version; optionally run the gates."""
     card_renderer = _load_module("sweep_card_renderer", pathlib.Path(engine_dir) / "card_renderer.py")
@@ -174,6 +198,9 @@ def render_all(engine_dir, plans_dir, render_dir, gate):
         if broken:
             failures.append(f"check_card {name}: {', '.join(broken)}")
         failures.extend(f"html {name}: {p}" for p in html_invariants(html_card))
+        locale = "en" if str(plan.get("language", "")).lower() == "en" else "zh-TW"
+        failures.extend(f"markdown {name}: {p}" for p in locale_purity(markdown, locale))
+        failures.extend(f"html {name}: {p}" for p in locale_purity(html_card, locale))
     return failures
 
 
