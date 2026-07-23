@@ -21,14 +21,32 @@
   reference and card_renderer.render_html(). tests/test_card_html.py enforces
   the key invariants on renderer output (self-contained, light/dark support,
   one widget-fragment pair, sparkline conditionality, rich-block presence and
-  degradation).
-
+  degradation) and, since #368 Phase 1,
+  test_widget_fragment_css_stays_mirrored_with_card_template asserts every
+  `.rc`-prefixed rule in this file's WIDGET FRAGMENT `<style>` block equals
+  (declaration-for-declaration, both directions) the corresponding rule in
+  `card_renderer._HTML_WIDGET_CSS` — runtime is the authority there; this file
+  is documentation and carries zero user-visible weight, so it is the one that
+  moves when the two disagree. Three documented, permanent exceptions that
+  test excludes rather than reconciles (all load-bearing for this file's own
+  demo rendering, none of them things the runtime is expected to grow):
+    - `.rc .eyebrow`/`.rc h2` carry `display:flex；align-items:center；gap`
+      here only because this reference still illustrates a few Tabler icons
+      next to those headings; the runtime ships icon-free (see below), so it
+      never needs the flex layout that positions an icon beside text.
+    - `.rc h2 i` sizes those same illustrative icon glyphs; no runtime
+      counterpart exists because the runtime renders zero `<i>` elements.
+    - `.rc .sr-only` is a screen-reader-only heading this reference models
+      (`<h2 class="sr-only">` below) that the runtime does not yet emit — a
+      real product gap, not stale content, tracked as an open question rather
+      than deleted.
   - Data source: actual output from engine/trade_recap.py on mock/mock_trades.csv.
   - Mock values and narrative below are illustrative layout content only.
   - Design rules finalized after the 2026-07-04 UI review:
     - flat, light/dark compatible, no emoji, weights 400/500; this reference
-      uses Tabler outline icons, while the runtime renderer ships icon-free
-      because the artifact must make zero external requests;
+      uses Tabler outline icons on a few headings only, while the runtime
+      renderer ships icon-free everywhere because the artifact must make zero
+      external requests;
     - neutral section surfaces only; semantic colors belong only on icons,
       section labels, keywords, and P&L values;
     - outlined tags, a single 20px maximum heading, and neutral progress bars;
@@ -49,12 +67,23 @@
     Do not reintroduce a prescription list here.
   - The pnl_curve sparkline uses engine `pnl_curve.points`. Use one thin line,
     colored only by the final sign. Omit the SVG when `pnl_curve.note` is nonempty.
-    A `.cap` line rides under it with the start~end date range plus the
-    peak/trough of the same points (#312) — no axis, just enough context that
-    the line is interpretable; a missing/malformed point date drops only the
-    caption, never the line.
-  - The rule section has two states: show two or three candidates before the user
-    chooses; after selection, show `.picked` plus one short `.alt` note.
+    A `.cap`-style sub line rides under it with the peak/trough of the same
+    points (#312) — no axis, just enough context that the line is
+    interpretable; a missing/malformed point date drops only the caption,
+    never the line.
+  - The rule section renders exactly one action (#301): a label
+    (`.panel-label`), the committed rule itself (`.rmain`), and one short
+    grounding fact tying it to what actually happened this period
+    (`.rground`). It no longer has a "candidates before the user chooses,
+    `.picked` plus `.alt` after" state — that predated #301 and is gone from
+    the runtime; do not reintroduce a candidate list here.
+  - `.strength`/`.hole`/`.pattern` are color-variant modifiers on the shared
+    `.panel` component (multi-class, e.g. `class="panel hole"`), not
+    standalone rich cards — a leak or a strength gets a `.panel-label` plus
+    plain paragraphs, the same shape any other panel gets. An older revision
+    of this file modeled the leak panel as its own component (`.hole` as a
+    bordered card with `.htag`/`.hrow` key-value rows); that predated the
+    panel system and is gone from the runtime — do not reintroduce it here.
 
   PREVIEW SHIM exists only so this file opens directly in a browser. Exclude it
   from the widget fragment. Its dark values follow surface-0 (page) through
@@ -67,13 +96,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.34.1/dist/tabler-icons.min.css">
 <style>
 :root{
-  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;
-  --font-voice:Georgia,"Songti TC",serif;
-  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
   --surface-2:#ffffff;--surface-1:#f5f4ef;--surface-0:#eceae1;
   --text-primary:#1a1915;--text-secondary:#5f5e5a;--text-muted:#8a8980;
-  --text-success:#3b6d11;--text-danger:#a32d2d;--text-warning:#854f0b;--text-accent:#185fa5;
-  --border:rgba(0,0,0,0.10);--border-strong:rgba(0,0,0,0.18);
+  --text-success:#3b6d11;--text-danger:#a32d2d;--text-accent:#185fa5;
+  --border:rgba(0,0,0,0.10);
   --surface-key:#f0eee6;--border-key:rgba(24,95,165,0.35);
   --radius:8px;
   /* Layout scales. Colour was the only tokenized axis before 2026-07-23:
@@ -86,8 +112,8 @@
 @media (prefers-color-scheme:dark){:root{
   --surface-2:#2b2a27;--surface-1:#232220;--surface-0:#1a1917;
   --text-primary:#f5f4ef;--text-secondary:#b4b2a9;--text-muted:#8a8980;
-  --text-success:#a7be83;--text-danger:#df8b84;--text-warning:#c9aa68;--text-accent:#a9b5c2;
-  --border:rgba(255,250,240,0.10);--border-strong:rgba(255,250,240,0.16);
+  --text-success:#a7be83;--text-danger:#df8b84;--text-accent:#a9b5c2;
+  --border:rgba(255,250,240,0.10);
   --surface-key:#26282b;--border-key:rgba(169,181,194,0.42);
 }}
 body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify-content:center}
@@ -100,86 +126,87 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 
 <!-- vvvvv WIDGET FRAGMENT — send this section, including <style>, to the renderer vvvvv -->
 <style>
-.rc{font-family:var(--font-sans);color:var(--text-primary);background:var(--surface-2);border:0.5px solid var(--border);border-radius:12px;overflow:hidden;line-height:1.6}
+.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;font-weight:400;color:var(--text-primary);background:var(--surface-2);border:0.5px solid var(--border);border-radius:var(--r-lg);overflow:hidden;line-height:1.6;font-variant-numeric:tabular-nums}
 .rc .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.rc .sec{padding:20px 22px}
+.rc .sec{padding:var(--sp-5) var(--sp-6)}
 .rc .sec+.sec{border-top:0.5px solid var(--border)}
-.rc .eyebrow{font-size:12px;color:var(--text-muted);margin:0 0 6px;display:flex;align-items:center;gap:6px}
-.rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
-.rc .lens{font-size:13px;color:var(--text-secondary);margin:8px 0 0;line-height:1.6}
-.rc .meta{font-size:12px;color:var(--text-muted);margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px}
+.rc .eyebrow{font-size:var(--tx-small);color:var(--text-muted);margin:0 0 var(--sp-1);display:flex;align-items:center;gap:6px}
+.rc h1{font-size:var(--tx-figure);font-weight:500;margin:0;line-height:1.35}
+.rc .tags{display:flex;flex-wrap:wrap;gap:var(--sp-1);margin:var(--sp-2) 0 0}
+.rc .tag{display:inline-flex;align-items:center;font-size:var(--tx-small);padding:1px var(--sp-2);border-radius:var(--r-sm);line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
+.rc .lead{font-size:var(--tx-body);color:var(--text-secondary);line-height:1.7;margin:var(--sp-3) 0 0}
+.rc h2{font-size:var(--tx-lead);font-weight:500;margin:0 0 var(--sp-2);color:var(--text-primary);display:flex;align-items:center;gap:8px}
+.rc h2 i{font-size:17px}
+.rc p{font-size:var(--tx-body);color:var(--text-secondary);line-height:1.7;margin:0}
+.rc p+p,.rc ul+p,.rc p+ul{margin-top:var(--sp-2)}
+.rc ul{margin:0;padding-left:var(--sp-5)}
+.rc li{font-size:var(--tx-body);color:var(--text-secondary);line-height:1.7;margin:0 0 var(--sp-2)}
+.rc li:last-child{margin-bottom:0}
+.rc .spark{display:block;width:100%;height:34px;margin:0}
+.rc .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.rc .spark.pos path{stroke:var(--text-success)}
+.rc .spark.neg path{stroke:var(--text-danger)}
+.rc .pos{color:var(--text-success)}
+.rc .neg{color:var(--text-danger)}
 .rc .kpi{display:grid;gap:var(--sp-2);margin:0 0 var(--sp-1)}
 .rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
 .rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
 .rc .kpi[data-n="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 .rc .kpi[data-n="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.rc .m{background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4)}
-.rc .m .lbl{font-size:var(--tx-small);color:var(--text-secondary);margin:0}
-.rc .m .val{font-size:var(--tx-figure);font-weight:500;margin:var(--sp-1) 0 0;line-height:1.25}
-.rc .m .sub{font-size:var(--tx-micro);color:var(--text-muted);margin:var(--sp-1) 0 0;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 /* Five cells is four metrics plus the curve: two rows of three with the
    curve spanning two fills both rows exactly. */
 .rc .kpi[data-n="5"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 .rc .kpi[data-n="5"] .curve{grid-column:span 2}
+@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"],
+.rc .kpi[data-n="5"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.rc .kpi[data-n="5"] .curve{grid-column:auto}}
 .rc .m.curve .cval{margin:var(--sp-1) 0 0;height:25px}
-.rc .m.curve .spark{display:block;width:100%;height:25px;margin:0}
-.rc .m.curve .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
-.rc .m.curve .spark.pos path{stroke:var(--text-success)}
-.rc .m.curve .spark.neg path{stroke:var(--text-danger)}
-.rc .pos{color:var(--text-success)}.rc .neg{color:var(--text-danger)}
-.rc .story{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0}
-.rc h2{font-size:15px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
-.rc h2 i{font-size:17px}
-.rc .good-bar{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px 15px;display:flex;gap:10px;align-items:flex-start}
-.rc .good-bar i{font-size:18px;color:var(--text-success);margin-top:1px}
-.rc .good-bar p{margin:0;font-size:14px;color:var(--text-secondary);line-height:1.6}
-.rc .good-bar b{font-weight:500;color:var(--text-primary)}
-.rc .trow{margin:0 0 11px}
-.rc .ttop{display:flex;align-items:baseline;gap:10px}
-.rc .tk{font-family:var(--font-mono);font-size:14px;font-weight:500;width:52px;flex:none}
-.rc .tamt{font-size:14px;font-weight:500;width:78px;flex:none;text-align:right}
-.rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+.rc .m.curve .spark{height:25px;margin:0}
+.rc .m{background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4)}
+.rc .m .lbl{font-size:var(--tx-small);color:var(--text-secondary);margin:0}
+.rc .m .val{font-size:var(--tx-figure);font-weight:500;margin:var(--sp-1) 0 0;line-height:1.25;color:var(--text-primary)}
+.rc .m .val.pos{color:var(--text-success)}
+.rc .m .val.neg{color:var(--text-danger)}
+.rc .m .sub{font-size:var(--tx-micro);color:var(--text-muted);margin:var(--sp-1) 0 0;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rc .trow{margin:0 0 var(--sp-3)}
+.rc .trow:last-of-type{margin-bottom:0}
+.rc .ttop{display:flex;align-items:baseline;gap:var(--sp-3)}
+.rc .tk{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:var(--tx-body);font-weight:500;min-width:52px}
+.rc .tamt{font-size:var(--tx-body);font-weight:500;min-width:78px;text-align:right}
+.rc .ttags{display:flex;flex-wrap:wrap;gap:var(--sp-1);flex:1}
 @media (max-width:300px){.rc .ttop{flex-wrap:wrap}}
-@media (max-width:300px){.rc .ttags .tag{font-size:11px}}
-.rc .tag{display:inline-flex;align-items:center;gap:var(--sp-1);font-size:var(--tx-small);padding:1px var(--sp-2);border-radius:6px;white-space:nowrap;line-height:1.5;background:transparent;border:0.5px solid var(--border);color:var(--text-secondary)}
-.rc .tag i{font-size:13px}
-.rc .t-warn{color:var(--text-warning);border-color:var(--border-strong)}
-.rc .t-bad{color:var(--text-danger);border-color:var(--border-strong)}
-.rc .t-good{color:var(--text-success)}
-.rc .track{height:4px;border-radius:99px;background:var(--surface-1);margin:6px 0 0;overflow:hidden}
+@media (max-width:300px){.rc .ttags .tag{font-size:var(--tx-micro)}}
+.rc .track{height:4px;border-radius:99px;background:var(--surface-1);margin:var(--sp-1) 0 0;overflow:hidden}
 .rc .fill{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
-.rc .fill-hot{background:var(--text-warning);opacity:.85}
-.rc .cap{font-size:12px;color:var(--text-muted);margin:12px 0 0;line-height:1.6}
-.rc .hole{background:var(--surface-1);border:0.5px solid var(--border);border-radius:var(--radius);padding:18px 20px}
-.rc .hole .htag{font-size:12px;color:var(--text-danger);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
-.rc .hole h2{color:var(--text-primary);font-size:16px;margin:0 0 10px}
-.rc .hole .lead{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:0 0 14px}
-.rc .hrow{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:8px 0;border-top:0.5px solid var(--border)}
-.rc .hrow .k{font-size:12px;color:var(--text-muted);font-weight:500;padding-top:1px}
-.rc .hrow .v{font-size:13px;color:var(--text-primary);line-height:1.65}
-.rc .mono{font-family:var(--font-mono)}
-.rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
-.rc .arow .al{font-size:13px;color:var(--text-secondary)}
-.rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
-.rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
+.rc .fill.neg{background:var(--text-danger);opacity:.85}
+.rc .cap{font-size:var(--tx-small);color:var(--text-muted);margin:var(--sp-3) 0 0;line-height:1.6}
+.rc .arow{display:grid;grid-template-columns:1fr 70px;gap:var(--sp-3);align-items:center;margin:var(--sp-2) 0}
+.rc .arow .al{font-size:var(--tx-body);color:var(--text-secondary)}
+.rc .arow .av{font-size:var(--tx-body);font-weight:500;text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace}
+.rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:var(--sp-1) 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
 @media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
+.rc .panel{background:var(--surface-1);border:0.5px solid var(--border);border-left:3px solid var(--text-muted);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4)}
+.rc .panel+.panel{margin-top:var(--sp-2)}
+.rc .panel-label{font-size:var(--tx-small);font-weight:500;margin:0 0 var(--sp-1)}
+.rc .strength{border-left-color:var(--text-success)}
+.rc .strength .panel-label{color:var(--text-success)}
+.rc .hole{border-left-color:var(--text-danger)}
+.rc .hole .panel-label{color:var(--text-danger)}
+.rc .pattern .panel-label{color:var(--text-muted)}
 .rc .sec.keystep{background:var(--surface-key);border-top:0.5px solid var(--border-key)}
 .rc .rule{background:transparent;border:0;border-left:3px solid var(--text-accent);border-radius:0;padding:0 0 0 var(--sp-4)}
-.rc .rule .rt{font-size:12px;color:var(--text-accent);margin:0 0 8px;display:flex;align-items:center;gap:6px;font-weight:500}
-.rc .rule .rmain{font-size:var(--tx-rule);color:var(--text-primary);line-height:1.5;margin:0;font-weight:600;letter-spacing:-.01em}
-.rc .rule .rmain b{color:var(--text-primary);font-weight:500}
-.rc .rule ol{margin:0;padding-left:20px}
-.rc .rule li{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:0 0 10px}
-.rc .rule li:last-child{margin-bottom:0}
-.rc .rule li b{color:var(--text-primary);font-weight:500}
-.rc .rule .picked{font-size:14px;color:var(--text-primary);line-height:1.7;margin:0}
-.rc .rule .picked b{font-weight:500}
-.rc .rule .alt{font-size:12px;color:var(--text-muted);line-height:1.6;margin:10px 0 0}
-.rc .quote{font-family:var(--font-voice);font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0;padding-top:13px;border-top:0.5px solid var(--border)}
-.rc .quote .who{font-size:12px;color:var(--text-muted);display:block;margin-top:6px;font-family:var(--font-sans)}
-.rc .foot{font-size:11px;color:var(--text-muted);line-height:1.6;background:var(--surface-1)}
+.rc .rule .panel-label{color:var(--text-accent);font-size:var(--tx-micro);letter-spacing:.1em;margin:0 0 var(--sp-2)}
+.rc .rule .rmain{font-size:var(--tx-rule);color:var(--text-primary);line-height:1.5;font-weight:600;letter-spacing:-.01em}
+.rc .rule .rground{font-size:var(--tx-small);color:var(--text-muted);line-height:1.6;margin-top:var(--sp-2)}
+.rc .cavt{font-size:var(--tx-small);color:var(--text-muted);line-height:1.6;border-top:0.5px solid var(--border);padding-top:var(--sp-2);margin-top:var(--sp-3)}
+.rc p+.cavt{margin-top:var(--sp-3)}
+.rc .rsub{font-size:var(--tx-small);color:var(--text-muted);line-height:1.55;margin:var(--sp-1) 0 var(--sp-2);padding-left:var(--sp-2)}
+.rc .fnote{margin:var(--sp-3) 0 0;border-top:0.5px solid var(--border);padding-top:var(--sp-2)}
+.rc .fnote summary{font-size:var(--tx-small);color:var(--text-muted);cursor:pointer}
+.rc .fnote p{font-size:var(--tx-small);color:var(--text-muted);margin:var(--sp-1) 0 0}
+.rc .fnote li{font-size:var(--tx-small);color:var(--text-muted);margin:var(--sp-1) 0 0}
+.rc .foot{font-size:var(--tx-micro);color:var(--text-muted);line-height:1.6;background:var(--surface-1);padding:var(--sp-3) var(--sp-6)}
 </style>
 <div class="rc">
   <h2 class="sr-only">Trade review card: total P&amp;L +143,197. Strength: consistent exit rhythm. Largest leak: PLTR 49% and NVDA 48%, with 100% exposure to one AI driver. Next rule: never add to a losing position.</h2>
@@ -187,11 +214,13 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
   <div class="sec">
     <p class="eyebrow"><i class="ti ti-aperture" aria-hidden="true"></i>Review card · behavior mirror</p>
     <h1>You let winners run and cut losses, but the portfolio is one concentrated bet</h1>
-    <p class="lens">This review separates mechanical risk facts from your stated motive. It asks whether one loss can remove your ability to continue.</p>
-    <div class="meta">
-      <span><i class="ti ti-calendar" style="font-size:13px;vertical-align:-2px" aria-hidden="true"></i> 2024-01-12 ~ 12-03</span>
-      <span>19 trades</span><span>8 round trips</span><span>4 open positions</span>
+    <div class="tags">
+      <span class="tag">2024-01-12 ~ 12-03</span>
+      <span class="tag">19 trades</span>
+      <span class="tag">8 round trips</span>
+      <span class="tag">4 open positions</span>
     </div>
+    <p class="lead">This review separates mechanical risk facts from your stated motive. It asks whether one loss can remove your ability to continue.</p>
   </div>
 
   <div class="sec">
@@ -208,13 +237,23 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
       <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market</p></div>
       <div class="m"><p class="lbl">Annualized alpha</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo only; unreliable</p></div>
     </div>
-    <p class="story">The $143k total looks strong, but 87% is unrealized and only $19k has been realized. A 2.9 payoff ratio shows large wins and smaller losses, while beta of 2.05 explains much of the 261pp excess as risk exposure rather than pure selection skill.</p>
+    <p>The $143k total looks strong, but 87% is unrealized and only $19k has been realized. A 2.9 payoff ratio shows large wins and smaller losses, while beta of 2.05 explains much of the 261pp excess as risk exposure rather than pure selection skill.</p>
   </div>
 
   <div class="sec">
-    <div class="good-bar">
-      <i class="ti ti-circle-check" aria-hidden="true"></i>
-      <p><b>What you did well:</b>the entry and exit rhythm is consistent. Median holding time is 162 days, and you held NVDA to +162% and ORCL to +60% without adding impulsively.</p>
+    <h2>Risks and problems</h2>
+    <div class="panel strength">
+      <p class="panel-label">What you did well</p>
+      <p>The entry and exit rhythm is consistent. Median holding time is 162 days, and you held NVDA to +162% and ORCL to +60% without adding impulsively.</p>
+    </div>
+    <div class="panel hole">
+      <p class="panel-label">Largest leak</p>
+      <p>Oversized, with 100% exposed to one underlying bet.</p>
+      <p>PLTR 49% plus NVDA 48% is 97% of the portfolio, and all four holdings share an AI driver. This is one bet expressed four times, not four independent bets.</p>
+      <p>Numbers: PLTR 49% · NVDA 48% · top 3 98% · AI exposure 100%.</p>
+      <p>Example: PLTR was added from $24 down to $15; both losing adds pushed the position above 25%.</p>
+      <p>Motive: you confirmed before rendering: &ldquo;I did not calculate survivable downside; I kept adding because the thesis looked right and I did not want to reduce.&rdquo;</p>
+      <p>Stress: AI exposure is $170,793. A 30% correction implies &minus;$51,238; a 50% bear market implies &minus;$85,397. Can the process survive it?</p>
     </div>
   </div>
 
@@ -222,12 +261,12 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
     <h2><i class="ti ti-coins" aria-hidden="true"></i>Instrument impact · ranked by money</h2>
     <div class="trow">
       <div class="ttop"><span class="tk">PLTR</span><span class="tamt pos">+$73,207</span>
-        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>oversized 49%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>+606% with two controlled adds</span></div></div>
-      <div class="track"><div class="fill fill-hot" style="width:100%"></div></div>
+        <div class="ttags"><span class="tag">oversized 49%</span><span class="tag">+606% with two controlled adds</span></div></div>
+      <div class="track"><div class="fill" style="width:100%"></div></div>
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">NVDA</span><span class="tamt pos">+$60,556</span>
-        <div class="ttags"><span class="tag t-warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i>oversized 48%</span><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>held +162% without impulsive adds</span></div></div>
+        <div class="ttags"><span class="tag">oversized 48%</span><span class="tag">held +162% without impulsive adds</span></div></div>
       <div class="track"><div class="fill" style="width:83%"></div></div>
     </div>
     <div class="trow">
@@ -237,7 +276,7 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
     </div>
     <div class="trow">
       <div class="ttop"><span class="tk">ORCL</span><span class="tamt pos">+$2,974</span>
-        <div class="ttags"><span class="tag t-good"><i class="ti ti-check" aria-hidden="true"></i>held +60% without impulsive adds</span></div></div>
+        <div class="ttags"><span class="tag">held +60% without impulsive adds</span></div></div>
       <div class="track"><div class="fill" style="width:4%"></div></div>
     </div>
     <div class="trow">
@@ -253,21 +292,9 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
     <div class="trow">
       <div class="ttop"><span class="tk">AMD</span><span class="tamt neg">−$1,000</span>
         <div class="ttags"><span class="tag">roughly neutral</span></div></div>
-      <div class="track"><div class="fill" style="width:2%"></div></div>
+      <div class="track"><div class="fill neg" style="width:2%"></div></div>
     </div>
     <p class="cap">Best round trip: NVDA +104% ($50→$102, 207 days) · worst: AMD −12% ($160→$140, 175 days)</p>
-  </div>
-
-  <div class="sec">
-    <div class="hole">
-      <p class="htag"><i class="ti ti-alert-hexagon" aria-hidden="true"></i>Largest leak</p>
-      <h2>Oversized, with 100% exposed to one underlying bet</h2>
-      <p class="lead">PLTR 49% plus NVDA 48% is 97% of the portfolio, and all four holdings share an AI driver. This is one bet expressed four times, not four independent bets.</p>
-      <div class="hrow"><span class="k">Numbers</span><span class="v"><span class="mono">PLTR 49% · NVDA 48% · top 3 98% · AI exposure 100%</span></span></div>
-      <div class="hrow"><span class="k">Example</span><span class="v">PLTR was added from <span class="mono">$24</span> down to <span class="mono">$15</span>; both losing adds pushed the position above 25%.</span></div>
-      <div class="hrow"><span class="k">Motive</span><span class="v">You confirmed before rendering: “I did not calculate survivable downside; I kept adding because the thesis looked right and I did not want to reduce.”</span></div>
-      <div class="hrow"><span class="k">Stress</span><span class="v">AI exposure is <span class="mono">$170,793</span>. A 30% correction implies <span class="mono">−$51,238</span>; a 50% bear market implies <span class="mono">−$85,397</span>. Can the process survive it?</span></div>
-    </div>
   </div>
 
   <div class="sec">
@@ -276,7 +303,7 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
     <div class="abar"><div style="width:100%"></div></div>
     <div class="arow" style="margin-top:12px"><span class="al">Selection vs SOXX <span style="color:var(--text-muted)">(strongest hindsight comparison)</span></span><span class="av pos">+96pp</span></div>
     <div class="abar"><div style="width:40%"></div></div>
-    <p class="story" style="margin-top:14px">The conclusion changes with the comparator: selection beats neutral QQQ but trails the strongest hindsight benchmark, SOXX. The data cannot yet establish selection skill, and beta 2.05 shows that much of the gain came from concentration in the right theme.</p>
+    <p style="margin-top:14px">The conclusion changes with the comparator: selection beats neutral QQQ but trails the strongest hindsight benchmark, SOXX. The data cannot yet establish selection skill, and beta 2.05 shows that much of the gain came from concentration in the right theme.</p>
   </div>
 
   <!-- The "Improve" prescription list that used to sit here was removed by
@@ -285,9 +312,9 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 
   <div class="sec">
     <div class="rule">
-      <p class="rt"><i class="ti ti-target" aria-hidden="true"></i>Change only this next time · immediately actionable and engine-verifiable</p>
+      <p class="panel-label">Change only this next time · immediately actionable and engine-verifiable</p>
       <p class="rmain">Never add to a losing position without new evidence. <b>If you still want more, write the new evidence first</b> and ask whether you would initiate the full position today.</p>
-      <p class="quote">A low-cost probe does not establish long-term trust; a small success should not automatically become a large position.</p>
+      <p class="rground">A low-cost probe does not establish long-term trust; a small success should not automatically become a large position.</p>
     </div>
   </div>
 

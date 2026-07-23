@@ -449,39 +449,185 @@ def test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs():
                 f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
 
 
-def test_kpi_metric_box_css_stays_mirrored_with_card_template():
-    """CLAUDE.md "Mirrored surfaces": card-template.html's `.kpi`/`.m` rules
-    are the documented design intent for the KPI dashboard (#310); the runtime
-    `_HTML_WIDGET_CSS` must keep matching layout constraints for the classes
-    that give the dashboard its shape. This does not require byte-identical
-    CSS — the runtime legitimately renames every themed variable from the
-    template's `--foo` to a locally-aliased `--rc-foo` (defined once at the
-    top of `_HTML_WIDGET_CSS` as `var(--foo, <fallback>)`, per its own
-    docstring) and adds host-theming fallbacks and a standalone `.spark` rule
-    the static template never needed — only that every declaration the
-    template makes for these selectors still holds at runtime, so the two
-    cannot silently drift apart again."""
+# --------------------------------------------------------------------------
+# Helpers for test_widget_fragment_css_stays_mirrored_with_card_template.
+#
+# A minimal, stdlib-only CSS rule scanner: splits a stylesheet into
+# (selector, declarations, media-condition) triples, with one level of
+# @media nesting resolved (the only depth either stylesheet uses). Comments
+# are stripped first -- naive brace-counting otherwise misparses whatever
+# follows a comment that precedes an @media block (found the hard way while
+# building this: a comment right before `@media (max-width:560px)` in
+# _HTML_WIDGET_CSS silently ate two rules).
+_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _split_css_rules(css_text):
+    css_text = _CSS_COMMENT_RE.sub("", css_text)
+
+    def rules_in(text, media):
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch.isspace():
+                i += 1
+                continue
+            if ch == "@":
+                open_brace = text.index("{", i)
+                condition = text[i:open_brace].strip()
+                depth = 1
+                j = open_brace + 1
+                while depth:
+                    if text[j] == "{":
+                        depth += 1
+                    elif text[j] == "}":
+                        depth -= 1
+                    j += 1
+                inner = text[open_brace + 1:j - 1]
+                yield from rules_in(inner, condition)
+                i = j
+                continue
+            open_brace = text.index("{", i)
+            selector = text[i:open_brace].strip()
+            close_brace = text.index("}", open_brace)
+            body = text[open_brace + 1:close_brace]
+            yield selector, body, media
+            i = close_brace + 1
+    yield from rules_in(css_text, None)
+
+
+def _css_declarations(body):
+    out = []
+    for chunk in body.split(";"):
+        chunk = chunk.strip()
+        if not chunk or ":" not in chunk:
+            continue
+        name, _, value = chunk.partition(":")
+        out.append((name.strip(), value.strip()))
+    return out
+
+
+def _is_rc_alias_rule(selector, decls):
+    """The two `.rc{--rc-*: ...}` blocks (light + the dark @media companion)
+    that alias a host theme variable, or its fallback, into a local
+    `--rc-*` name -- identified by shape (every declaration is a `--rc-*`
+    custom property), not position. These carry no visual information by
+    themselves (they only wire a name to a value); card-template.html's `.rc`
+    consumes the *bare* names directly from its own `:root`, with no local
+    aliasing layer, so it has no textual counterpart to compare against, and
+    treating that absence as a divergence would be comparing plumbing, not
+    appearance. `skills/fomo-kernel/tools/design_bundle.py` excludes the same
+    two rules for the same reason -- see its module docstring for the fuller
+    argument (including why naively keeping them would create a self-
+    referencing custom property)."""
+    return selector == ".rc" and bool(decls) and all(n.startswith("--rc-") for n, _ in decls)
+
+
+def _normalize_rc_rules(css_text):
+    """{(selector, media): frozenset("name:value", ...)} for every
+    `.rc`-prefixed rule, normalized so a textual copy compares equal to its
+    source: whitespace collapsed, `--rc-` mapped to `--` (undoes the
+    runtime's local host-theme-alias renaming; card-template.html always used
+    the bare names), and multi-selector lists (`.rc .a,.rc .b`) sorted so
+    line-wrapping or reordering is not a divergence. Declarations from
+    multiple rules sharing the same (selector, media) accumulate, mirroring
+    the CSS cascade. The alias rules (see _is_rc_alias_rule) are dropped."""
+    def norm_ws(text):
+        return re.sub(r"\s+", " ", text.strip())
+
+    rules = {}
+    for selector, body, media in _split_css_rules(css_text):
+        if not re.match(r"\.rc\b", selector):
+            continue
+        decls = _css_declarations(body)
+        if _is_rc_alias_rule(selector, decls):
+            continue
+        key = (",".join(sorted(norm_ws(part) for part in selector.split(","))),
+               norm_ws(media) if media else None)
+        norm_decls = {f"{norm_ws(n).replace('--rc-', '--')}:{norm_ws(v).replace('--rc-', '--')}"
+                      for n, v in decls}
+        rules.setdefault(key, set()).update(norm_decls)
+    return {key: frozenset(decls) for key, decls in rules.items()}
+
+
+# Permanent, documented exceptions -- see card-template.html's own header
+# comment for the full rationale. All three exist because this reference
+# still illustrates a few Tabler icons the icon-free runtime never renders
+# (zero-external-request constraint) or a screen-reader heading the runtime
+# does not yet emit; none of them are drift this test exists to catch.
+_TEMPLATE_ONLY_RC_RULES = {(".rc .sr-only", None), (".rc h2 i", None)}
+_ICON_FLEX_PROPS = {"display", "align-items", "gap"}
+_ICON_FLEX_RC_RULES = {(".rc .eyebrow", None), (".rc h2", None)}
+
+
+def test_widget_fragment_css_stays_mirrored_with_card_template():
+    """#368 Phase 1: full-scope, bidirectional mirror. Every `.rc`-prefixed
+    rule in card-template.html's WIDGET FRAGMENT stylesheet must equal,
+    declaration for declaration, the corresponding rule in the runtime
+    `card_renderer._HTML_WIDGET_CSS` -- and vice versa. This supersedes the
+    previous 5-selector subset check (`.kpi`, `.m`, `.rule`, ...), which only
+    verified the template's declarations were a *subset* of the runtime's for
+    a hand-picked list; it could not have caught the runtime declaring
+    something the template never mentions, and it silently ignored every
+    other selector.
+
+    Non-`.rc` template rules (`body`, `.spec`-style page scaffold, the
+    PREVIEW SHIM `:root`) are out of scope: the runtime widget fragment has
+    no page chrome of its own to compare them against.
+
+    The runtime is the authority; card-template.html is documentation with
+    zero user-visible weight (it is never loaded or executed), so it is the
+    file that moves when the two disagree. A short, permanently-documented
+    exception list (`_TEMPLATE_ONLY_RC_RULES`, `_ICON_FLEX_RC_RULES`) covers
+    the handful of declarations that exist only because this reference still
+    illustrates a few Tabler icons and one accessibility idea the runtime
+    does not implement -- see the exceptions' own comments and
+    card-template.html's header for the full rationale."""
     template = (SKILL / "card-template.html").read_text(encoding="utf-8")
+    template = re.sub(r"<!--.*?-->", "", template, flags=re.S)  # strip HTML
+    # comments first: the header comment's own prose mentions literal
+    # "<style>" / "<div class=\"rc\">" text, which would otherwise be
+    # mistaken for real markup by a naive <style> tag search.
+    template_css = "\n".join(match.group(1) for match in
+                              re.finditer(r"<style>(.*?)</style>", template, re.S))
 
-    def _rule(css_text, selector):
-        match = re.search(re.escape(selector) + r"\{([^}]*)\}", css_text)
-        assert match, f"selector {selector!r} not found"
-        return {prop.strip() for prop in match.group(1).split(";") if prop.strip()}
+    template_rules = _normalize_rc_rules(template_css)
+    runtime_rules = _normalize_rc_rules(card_renderer._HTML_WIDGET_CSS)
 
-    def _normalize(props):
-        # Undo the runtime's "--foo" -> "--rc-foo" theming alias so a rule
-        # copied verbatim from the template compares equal to its runtime form.
-        return {prop.replace("--rc-", "--") for prop in props}
+    for key in _TEMPLATE_ONLY_RC_RULES:
+        template_rules.pop(key, None)
+    for key in _ICON_FLEX_RC_RULES:
+        if key in template_rules:
+            template_rules[key] = frozenset(
+                decl for decl in template_rules[key]
+                if decl.split(":", 1)[0] not in _ICON_FLEX_PROPS)
 
-    # Selectors as written differ only in the `.rc ` ancestor prefix the
-    # runtime widget fragment always renders under; compare their bodies.
-    for selector in (".kpi", ".m", ".m .lbl", ".m .val", ".m .sub",
-                     ".rule", ".m.curve .cval"):
-        template_props = _normalize(_rule(template, ".rc " + selector))
-        runtime_props = _normalize(_rule(card_renderer._HTML_WIDGET_CSS, ".rc " + selector))
-        missing = template_props - runtime_props
-        assert not missing, \
-            f"{selector} lost {missing!r} vs card-template.html (runtime has {runtime_props!r})"
+    def _fmt(key, decls):
+        selector, media = key
+        scope = f"{media} {{ {selector} }}" if media else selector
+        return f"  {scope}\n    " + "\n    ".join(sorted(decls))
+
+    missing_in_template = set(runtime_rules) - set(template_rules)
+    missing_in_runtime = set(template_rules) - set(runtime_rules)
+    changed = {key for key in (set(template_rules) & set(runtime_rules))
+               if template_rules[key] != runtime_rules[key]}
+
+    lines = []
+    if missing_in_template:
+        lines.append("in runtime but not in card-template.html (add to the template):")
+        lines += [_fmt(key, runtime_rules[key]) for key in sorted(missing_in_template, key=str)]
+    if missing_in_runtime:
+        lines.append("in card-template.html but not in runtime "
+                      "(remove from the template, or add to an exception list above):")
+        lines += [_fmt(key, template_rules[key]) for key in sorted(missing_in_runtime, key=str)]
+    if changed:
+        lines.append("present on both sides but with different declarations:")
+        for key in sorted(changed, key=str):
+            lines.append(f"  {key[1] + ' { ' + key[0] + ' }' if key[1] else key[0]}")
+            lines.append(f"    template: {sorted(template_rules[key])}")
+            lines.append(f"    runtime : {sorted(runtime_rules[key])}")
+
+    assert not lines, "card-template.html and _HTML_WIDGET_CSS diverged:\n" + "\n".join(lines)
 
 
 def test_layout_uses_the_token_scales_not_ad_hoc_pixels():
@@ -500,10 +646,11 @@ def test_layout_uses_the_token_scales_not_ad_hoc_pixels():
     1px optical adjustments are allowed.
 
     Scope is the runtime stylesheet, which is what actually renders. The
-    static card-template.html also documents demo-only elements the runtime
-    has no counterpart for (`.lens`, `.meta`, `.good-bar`, `.hrow`, `.quote`);
-    its agreement with the runtime is enforced per-selector by
-    ``test_kpi_metric_box_css_stays_mirrored_with_card_template`` instead."""
+    static card-template.html tracks it declaration-for-declaration except a
+    short, documented exception list (a screen-reader heading and a few
+    illustrative icons the icon-free runtime does not implement); its
+    agreement with the runtime is enforced in full by
+    ``test_widget_fragment_css_stays_mirrored_with_card_template`` instead."""
     scale_props = ("font-size", "padding", "margin", "gap",
                    "padding-left", "padding-top", "margin-top")
     pattern = re.compile(r"(?<![-a-z])(" + "|".join(scale_props) + r")\s*:\s*([^;}]+)")
@@ -1627,7 +1774,7 @@ def main():
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
         test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
-        test_kpi_metric_box_css_stays_mirrored_with_card_template,
+        test_widget_fragment_css_stays_mirrored_with_card_template,
         test_layout_uses_the_token_scales_not_ad_hoc_pixels,
         test_every_kpi_cell_has_the_same_three_part_shape,
         test_next_step_is_the_cards_only_emphasis_ground,

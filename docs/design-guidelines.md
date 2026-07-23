@@ -118,9 +118,14 @@ parameter over a table of per-scenario cases.
 - **Do not state one value twice.** A figure has exactly one home per card;
   the other places describe what that home cannot hold.
 - **Do not let a hand-written parallel stylesheet become a second source of
-  truth.** Design-review artifacts and the Claude Design bundle mirror the
-  runtime; they drift silently, so re-verify them against the runtime whenever
-  the runtime changes.
+  truth.** The Claude Design bundle (`tools/design_bundle.py`) derives its CSS
+  from `_HTML_WIDGET_CSS` at build time (#368 Phase 1) instead of hand-copying
+  it — rerun the tool after a runtime CSS change to refresh `ds-bundle/`.
+  `card-template.html`'s `.rc`-scoped rules are held equal to the runtime's,
+  declaration for declaration, by
+  `test_widget_fragment_css_stays_mirrored_with_card_template`, so a change to
+  one that is not mirrored in the other fails the suite instead of drifting
+  silently.
 
 ## 6. Module inventory
 
@@ -149,7 +154,7 @@ A module contract that is not checked will drift. Current coverage:
 | Column count equals cell count | `test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs` |
 | Spacing and type come from the scales | `test_layout_uses_the_token_scales_not_ad_hoc_pixels` |
 | Exactly one L1, and nothing after it | `test_next_step_is_the_cards_only_emphasis_ground` |
-| Runtime and template agree per selector | `test_kpi_metric_box_css_stays_mirrored_with_card_template` |
+| Runtime and template's `.rc`-scope agree, declaration for declaration, both directions | `test_widget_fragment_css_stays_mirrored_with_card_template` |
 | One value, one home | attribution headline assertion in `test_rich_layout_renders_template_blocks_from_shared_facts` |
 
 Not yet mechanical, and therefore still able to drift: note scoping (§6's
