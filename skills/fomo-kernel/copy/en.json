@@ -63,6 +63,7 @@
     "excess_sub": "β {beta}",
     "alpha": "Annualized alpha",
     "alpha_unreliable": "not yet statistically credible",
+    "curve": "Path this period",
     "spark_caption": "peak {peak} · trough {trough}"
   },
   "etf_classification": {

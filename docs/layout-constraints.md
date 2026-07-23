@@ -132,10 +132,13 @@ on a rhythm scale.
 
 **Layout primitives**
 
-- KPI tile grid: columns follow the tile count via `data-n` (1–4), 8px gap.
-  A tile is label + value + sub, the sub capped at two lines; tiles never
-  host a chart.
-- Trend strip: the period curve at full block width, caption inline right.
+- Metric grid: columns follow the cell count via `data-n` (1–5), 8px gap.
+  Every cell is the same three parts — label, one body slot, one sub line
+  (capped at two lines). The body slot holds a number, or a line.
+- The period curve is one of those cells, placed directly after the P&L
+  metric it plots: its line occupies the body slot at the value's height,
+  its peak/trough caption occupies the sub. At five cells the row wraps to
+  two rows of three and the curve spans two, filling both rows exactly.
 - Attribution rows: `1fr 70px`
 - Trade rows: flex, with fixed-width ticker (52px) and amount (78px) columns
 
@@ -143,7 +146,7 @@ on a rhythm scale.
 
 | Breakpoint | What changes |
 |---|---|
-| 560px | KPI grid drops to two columns (from three or four) |
+| 560px | Metric grid drops to two columns; the curve stops spanning |
 | 300px | Trade rows wrap, tags shrink to 11px, attribution rows collapse to one column |
 
 The old 380px "drop to one column" tier was removed: a single-column KPI area
@@ -177,10 +180,17 @@ These are not preferences. Each was a bug report from dogfooding.
    review window was briefly folded into a KPI tile's sub-line; that made one
    cell roughly three times the text of its neighbours, and grid row-stretch
    padded the whole row. It now leads the card. **Superseded 2026-07-23 by
-   the tile contract in §5** — this ruling named one field, so the same defect
-   came back through another: the sparkline plus its caption held one tile at
+   the cell contract in §5** — this ruling named one field, so the same defect
+   came back through another: the sparkline plus its caption held one cell at
    209px and stretched all four to match. The rule is now about what bounds a
-   tile's height, not about which field is banned from it.
+   cell's height, not about which field is banned from it.
+
+   A first attempt at that fix banned charts from cells outright and moved the
+   curve to a strip of its own. That was the same mistake one level up: it
+   named the *chart* instead of the *shape*. The curve then sat nowhere near
+   the number it plots. What actually bounds the height is every cell having
+   the same three parts, so a chart is welcome in a cell as long as its line
+   takes the value's slot and its caption takes the sub's.
 6. **A section with nothing to say does not render.** No empty headers, no
    placeholder text, no "N/A".
 7. **One value is expressed once per card.** The excess figure used to appear

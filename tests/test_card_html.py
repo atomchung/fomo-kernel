@@ -27,13 +27,33 @@ import test_review_v2 as v2  # noqa: E402  (shared CLI fixtures and helpers)
 import card_renderer  # noqa: E402  (engine path added by test_review_v2)
 
 SVG_RE = re.compile(r"<svg.*?</svg>(?:<p class=\"cap\">.*?</p>)?", re.S)
-# The curve is not tile-scoped. It normally sits beside the lead metric
-# (<div class="herocurve">) with its caption on the hero's footer row, and
-# falls back to its own <div class="trend"> strip when some other metric leads.
-# A card without curve data drops all of that, not just an inline <svg>.
-TREND_RE = re.compile(r'<div class="herocurve">.*?</div>'
-                      r'|<div class="trend">.*?</div>'
-                      r'|<p class="cap">.*?</p>', re.S)
+def _strip_curve_cell(card):
+    """Drop the whole ``<div class="m curve">`` cell, nested markup included.
+
+    The curve is one cell in the metric grid, and that cell nests a ``.cval``
+    wrapper, so a non-greedy regex would stop at the first ``</div>``. Removing
+    it also drops the grid's cell count by one, which ``data-n`` reflects."""
+    open_tag = '<div class="m curve">'
+    start = card.find(open_tag)
+    if start == -1:
+        return card
+    depth, index = 0, start
+    while index < len(card):
+        if card.startswith("<div", index):
+            depth += 1
+            index = card.index(">", index) + 1
+        elif card.startswith("</div>", index):
+            depth -= 1
+            index += len("</div>")
+            if depth == 0:
+                stripped = card[:start] + card[index:]
+                # one fewer cell in the row
+                return re.sub(r'(<div class="kpi" data-n=")(\d+)(">)',
+                              lambda m: m.group(1) + str(int(m.group(2)) - 1) + m.group(3),
+                              stripped, count=1)
+        else:
+            index += 1
+    return card
 CURVE_POINTS = [
     {"date": "2026-06-30", "cum_ret": 0.0},
     {"date": "2026-07-04", "cum_ret": -0.012},
@@ -253,15 +273,15 @@ def test_sparkline_renders_only_with_curve_points():
     without["engine_card"].pop("pnl_curve", None)
     html_without = card_renderer.render_html(without)
     assert "<svg" not in html_without
-    assert TREND_RE.sub("", html) == html_without, \
-        "removing curve data may only remove the trend strip, nothing else"
+    assert _strip_curve_cell(html) == html_without, \
+        "removing curve data may only remove its cell, nothing else"
 
     note_form = copy.deepcopy(run["bundle"])
     note_form["engine_card"]["pnl_curve"] = {"note": "無資料"}
     html_note = card_renderer.render_html(note_form)
     assert "<svg" not in html_note and "無資料" not in html_note, \
         "note-form curve must be omitted silently, not printed"
-    assert TREND_RE.sub("", html) == html_note
+    assert _strip_curve_cell(html) == html_note
 
 
 def test_sparkline_caption_names_peak_and_trough_without_the_window():
@@ -276,14 +296,14 @@ def test_sparkline_caption_names_peak_and_trough_without_the_window():
     for language, peak_word, trough_word in (("zh-TW", "高點", "低點"),
                                              ("en", "peak", "trough")):
         card = _session(language)["html"]
-        caption = f'<p class="cap">{peak_word} +3% · {trough_word} -1%</p>'
+        caption = f'<p class="sub">{peak_word} +3% · {trough_word} -1%</p>'
         assert caption in card, f"{language} caption missing or wrong: {caption!r}"
-        assert not re.search(r'<p class="cap">[^<]*\d{4}-\d{2}-\d{2}', card), \
+        assert not re.search(r'<p class="sub">[^<]*\d{4}-\d{2}-\d{2}', card), \
             f"{language} caption must not restate a date range (the keynote carries the window)"
-        # It rides the hero's footer row, beside the lead metric's own sub, so
-        # the reader sees which figure the line traces.
-        assert re.search(r'<div class="herofoot">.*?' + re.escape(caption), card, re.S), \
-            f"{language} caption must sit on the hero footer row"
+        # It occupies the curve cell's sub slot, which is what keeps that cell
+        # the same height as every other cell in the row.
+        assert re.search(r'<div class="m curve">.*?' + re.escape(caption), card, re.S), \
+            f"{language} caption must be the curve cell's sub line"
 
     # Dates are no longer a prerequisite for the caption, so stripping every
     # one of them must leave the card byte-identical.
@@ -337,10 +357,10 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     bundle = _rich_bundle("zh-TW")
     html = card_renderer.render_html(bundle)
     markdown = card_renderer.render_private(bundle)
-    # Four metrics: the lead one heads the block in the hero (with the curve
-    # it traces), the other three fill the secondary grid.
-    assert '<div class="hero">' in html and 'class="kpi" data-n="3"' in html
-    assert html.count('<div class="m">') == 3
+    # Four metrics plus the curve, all in one grid: the curve is worth about
+    # a metric, so it gets a metric's cell rather than a band of its own.
+    assert 'class="kpi" data-n="5"' in html
+    assert html.count('<div class="m">') == 4 and html.count('<div class="m curve">') == 1
     assert html.count('<div class="trow">') == 3
     assert html.count('class="track"') == 3
     # The comparator rows stay; their headline figure does not. It is the same
@@ -380,8 +400,8 @@ def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
     """The stock fixture lacks the rich fields: KPI tiles still come from the
     overview, and every other rich block stays absent instead of inventing."""
     html = _session("zh-TW")["html"]
-    assert '<div class="hero">' in html and '<div class="kpirow">' in html, \
-        "two lit metrics must share the hero's row, not stretch across two rows"
+    assert 'class="kpi" data-n="3"' in html, \
+        "two lit metrics plus the curve make three cells in one row"
     for marker in ('class="trow"', 'class="attr-head"', 'class="rx"'):
         assert marker not in html, f"unexpected rich block on plain fixture: {marker}"
 
@@ -403,32 +423,27 @@ def test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs():
 
         # The plain/default fixture only lights pnl + payoff (no
         # alpha_beta_breakdown data), but those two must still be tiles.
-        # The plain fixture lights two metrics: P&L leads in the hero, payoff
-        # is the lone secondary, so the two share one row.
+        # The plain fixture lights two metrics; with the curve cell that is
+        # three, so the column count is three -- not a hardcoded four that
+        # would leave a quarter of the row empty.
         plain_html = _session(language)["html"]
-        assert plain_html.count('<div class="kpirow">') == 1, \
-            f"{language} plain card must pair the hero with its single secondary metric"
-        hero_open = f'<div class="herofig"><p class="lbl">{html.escape(kpi_copy["pnl"])}</p>'
-        assert hero_open in plain_html, \
-            f"{language} 'pnl' ({kpi_copy['pnl']!r}) must lead the block as the hero metric"
-        tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy["payoff"])}</p>'
-        assert tile_open in plain_html, \
-            f"{language} 'payoff' ({kpi_copy['payoff']!r}) is not inside a .m box"
+        assert plain_html.count('<div class="kpi" data-n="3">') == 1, \
+            f"{language} plain card must declare three columns for its three cells"
+        for key in ("pnl", "payoff"):
+            tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
+            assert tile_open in plain_html, \
+                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
 
         # The rich fixture also lights benchmark excess + annualized alpha —
         # all four of #310's named metrics, all four as metric boxes.
-        # The rich fixture lights all four of #310's named metrics: P&L leads,
-        # the other three become a three-column grid -- the column count is the
-        # number of secondary metrics, never a hardcoded four.
+        # The rich fixture lights all four of #310's named metrics; with the
+        # curve cell that is five, which wraps to two rows of three.
         rich_html = card_renderer.render_html(_rich_bundle(language))
         assert rich_html.count('<div class="kpi" data-n="') == 1
-        assert rich_html.count('<div class="m">') == 3
-        assert '<div class="kpi" data-n="3">' in rich_html, \
-            f"{language} rich card has 3 secondary metrics, so the grid declares 3 columns"
-        hero_open = f'<div class="herofig"><p class="lbl">{html.escape(kpi_copy["pnl"])}</p>'
-        assert hero_open in rich_html, \
-            f"{language} 'pnl' ({kpi_copy['pnl']!r}) must lead the block as the hero metric"
-        for key in ("payoff", "excess", "alpha"):
+        assert rich_html.count('<div class="m">') == 4
+        assert '<div class="kpi" data-n="5">' in rich_html, \
+            f"{language} rich card has 4 metrics + the curve, so the grid declares 5 cells"
+        for key in ("pnl", "payoff", "excess", "alpha"):
             tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
             assert tile_open in rich_html, \
                 f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
@@ -461,8 +476,7 @@ def test_kpi_metric_box_css_stays_mirrored_with_card_template():
     # Selectors as written differ only in the `.rc ` ancestor prefix the
     # runtime widget fragment always renders under; compare their bodies.
     for selector in (".kpi", ".m", ".m .lbl", ".m .val", ".m .sub",
-                     ".trend", ".rule", ".hero", ".heromain", ".herofig",
-                     ".herocurve", ".herofoot", ".kpirow"):
+                     ".rule", ".m.curve .cval"):
         template_props = _normalize(_rule(template, ".rc " + selector))
         runtime_props = _normalize(_rule(card_renderer._HTML_WIDGET_CSS, ".rc " + selector))
         missing = template_props - runtime_props
@@ -504,24 +518,35 @@ def test_layout_uses_the_token_scales_not_ad_hoc_pixels():
         f"found hardcoded pixels: {offenders!r}")
 
 
-def test_kpi_tile_never_hosts_the_sparkline():
-    """The curve describes the whole period, so it belongs to the block.
+def test_every_kpi_cell_has_the_same_three_part_shape():
+    """Cells are uniform: label, one body slot, one sub. The curve included.
 
-    Hosting it inside one tile is what padded a whole KPI row to 209px: grid
-    rows stretch to their tallest cell, so the one tile carrying a chart plus
-    its caption set the height for every neighbour, leaving the others with
-    roughly 110px of dead space each."""
+    The 209px row was never caused by "a chart sits in a cell" -- it was
+    caused by one cell carrying five parts (label, value, sub, chart, caption)
+    where its neighbours carried three. Grid rows stretch to their tallest
+    cell, so that one cell set the height for the whole row and left the
+    others with roughly 110px of dead space each. The curve may therefore live
+    in a cell, as long as the line occupies the value's slot and the caption
+    occupies the sub's."""
     for bundle in (_rich_bundle("zh-TW"), _rich_bundle("en")):
         card = card_renderer.render_html(bundle)
-        tiles = re.findall(r'<div class="m">.*?</div>', card, re.S)
-        assert tiles, "the rich fixture must render KPI tiles"
-        for tile in tiles:
-            assert "<svg" not in tile, f"a KPI tile must not host the sparkline: {tile[:80]!r}"
-        # ...and the curve still renders, beside the metric it traces.
-        assert '<div class="herocurve">' in card and "<svg" in card, \
-            "the curve must render beside the lead metric"
-        assert re.search(r'<div class="herofig">.*?<div class="herocurve">', card, re.S), \
-            "the curve must sit next to the lead figure, not float elsewhere"
+        metric_cells = re.findall(r'<div class="m">.*?</div>', card, re.S)
+        assert metric_cells, "the rich fixture must render metric cells"
+        for cell in metric_cells:
+            assert "<svg" not in cell, \
+                f"a metric cell must not carry a chart on top of its value: {cell[:80]!r}"
+        curve_cell = re.search(r'<div class="m curve">(.*?)</div>\s*<div class="m">',
+                               card, re.S)
+        assert curve_cell, "the curve must render as its own cell inside the grid"
+        body = curve_cell.group(1)
+        assert '<div class="cval">' in body and "<svg" in body, \
+            "the curve's line must occupy the value slot"
+        assert '<p class="val' not in body, \
+            "the curve cell replaces the value, it does not add to it"
+        # It stands next to the figure it traces.
+        assert re.search(r'<p class="val[^"]*">[^<]*</p><p class="sub">[^<]*</p></div>'
+                         r'<div class="m curve">', card), \
+            "the curve cell must follow the P&L metric it plots"
 
 
 def test_next_step_is_the_cards_only_emphasis_ground():
@@ -1571,7 +1596,7 @@ def main():
         test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
         test_kpi_metric_box_css_stays_mirrored_with_card_template,
         test_layout_uses_the_token_scales_not_ad_hoc_pixels,
-        test_kpi_tile_never_hosts_the_sparkline,
+        test_every_kpi_cell_has_the_same_three_part_shape,
         test_next_step_is_the_cards_only_emphasis_ground,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,

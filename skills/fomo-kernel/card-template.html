@@ -120,21 +120,15 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .m .sub{font-size:var(--tx-micro);color:var(--text-muted);margin:var(--sp-1) 0 0;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rc .trend{display:flex;align-items:center;gap:var(--sp-3);background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-2) var(--sp-3);margin:var(--sp-2) 0 0}
 .rc .trend .spark{display:block;flex:1;height:26px}
-.rc .kpirow{display:grid;grid-template-columns:2fr 1fr;gap:var(--sp-2);margin:0 0 var(--sp-1)}
-.rc .kpirow .hero{margin:0}
-@media (max-width:520px){.rc .kpirow{grid-template-columns:minmax(0,1fr)}}
-.rc .hero{background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);margin:0 0 var(--sp-2)}
-.rc .heromain{display:flex;align-items:center;gap:var(--sp-4)}
-.rc .herofig{flex:0 0 auto;min-width:0}
-.rc .herofig .lbl{font-size:var(--tx-small);color:var(--text-secondary);margin:0}
-.rc .herofig .val{font-size:var(--tx-figure);font-weight:500;line-height:1.25;margin:var(--sp-1) 0 0}
-.rc .herocurve{flex:1 1 90px;min-width:0}
-.rc .herocurve .spark{display:block;width:100%;height:32px}
-.rc .herocurve .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
-.rc .herocurve .spark.pos path{stroke:var(--text-success)}
-.rc .herocurve .spark.neg path{stroke:var(--text-danger)}
-.rc .herofoot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 var(--sp-3);margin:var(--sp-1) 0 0}
-.rc .herofoot .sub,.rc .herofoot .cap{margin:0;font-size:var(--tx-micro);color:var(--text-muted);line-height:1.45}
+/* Five cells is four metrics plus the curve: two rows of three with the
+   curve spanning two fills both rows exactly. */
+.rc .kpi[data-n="5"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rc .kpi[data-n="5"] .curve{grid-column:span 2}
+.rc .m.curve .cval{margin:var(--sp-1) 0 0;height:25px}
+.rc .m.curve .spark{display:block;width:100%;height:25px;margin:0}
+.rc .m.curve .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.rc .m.curve .spark.pos path{stroke:var(--text-success)}
+.rc .m.curve .spark.neg path{stroke:var(--text-danger)}
 .rc .trend .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
 .rc .trend .spark.pos path{stroke:var(--text-success)}
 .rc .trend .spark.neg path{stroke:var(--text-danger)}
@@ -210,21 +204,15 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
   </div>
 
   <div class="sec">
-    <div class="hero">
-      <div class="heromain">
-        <div class="herofig"><p class="lbl">Total P&amp;L</p><p class="val pos">+$143,197</p></div>
-        <div class="herocurve">
-          <svg class="spark pos" viewBox="0 0 300 32" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M0,29 L30,26 L60,27 L90,18 L120,21 L150,11 L180,13 L210,6 L240,8 L270,4 L300,2"/>
+    <div class="kpi" data-n="5">
+      <div class="m"><p class="lbl">Total P&amp;L</p><p class="val pos">+$143,197</p><p class="sub">Realized +$18,960 · unrealized +$124,237</p></div>
+      <div class="m curve"><p class="lbl">Path this period</p>
+        <div class="cval">
+          <svg class="spark pos" viewBox="0 0 300 25" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0,22 L30,20 L60,21 L90,14 L120,16 L150,9 L180,10 L210,5 L240,6 L270,3 L300,2"/>
           </svg>
         </div>
-      </div>
-      <div class="herofoot">
-        <p class="sub">Realized +$18,960 · unrealized +$124,237</p>
-        <p class="cap">peak +321% · trough +0%</p>
-      </div>
-    </div>
-    <div class="kpi" data-n="3">
+        <p class="sub">peak +321% · trough +0%</p></div>
       <div class="m"><p class="lbl">Active payoff ratio</p><p class="val">2.9</p><p class="sub">Average win $2,851 vs loss $1,000</p></div>
       <div class="m"><p class="lbl">Benchmark excess</p><p class="val pos">+261pp</p><p class="sub">β 2.05 · twice the market</p></div>
       <div class="m"><p class="lbl">Annualized alpha</p><p class="val">+33%<span style="font-size:12px;color:var(--text-muted);font-weight:400"> *</span></p><p class="sub">* demo only; unreliable</p></div>

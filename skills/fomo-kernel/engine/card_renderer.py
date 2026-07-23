@@ -3021,30 +3021,26 @@ stroke-linejoin:round;opacity:.85}
 border-radius:var(--rc-r-md);padding:var(--rc-sp-2) var(--rc-sp-3);margin:var(--rc-sp-2) 0 0}
 .rc .trend .spark{flex:1;height:26px}
 .rc .trend .cap{margin:0;white-space:nowrap;font-size:var(--rc-tx-micro)}
-.rc .kpirow{display:grid;grid-template-columns:2fr 1fr;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
-.rc .kpirow .hero{margin:0}
-@media (max-width:520px){.rc .kpirow{grid-template-columns:minmax(0,1fr)}}
-.rc .hero{background:var(--rc-surface-1);border-radius:var(--rc-r-md);
-padding:var(--rc-sp-3) var(--rc-sp-4);margin:0 0 var(--rc-sp-2)}
-.rc .heromain{display:flex;align-items:center;gap:var(--rc-sp-4)}
-.rc .herofig{flex:0 0 auto;min-width:0}
-.rc .herofig .lbl{font-size:var(--rc-tx-small);color:var(--rc-text-secondary);margin:0}
-.rc .herofig .val{font-size:var(--rc-tx-figure);font-weight:500;line-height:1.25;
-margin:var(--rc-sp-1) 0 0;color:var(--rc-text-primary)}
-.rc .herofig .val.pos{color:var(--rc-text-success)}
-.rc .herofig .val.neg{color:var(--rc-text-danger)}
-.rc .herocurve{flex:1 1 90px;min-width:0}
-.rc .herocurve .spark{height:32px}
-.rc .herofoot{display:flex;flex-wrap:wrap;justify-content:space-between;
-gap:0 var(--rc-sp-3);margin:var(--rc-sp-1) 0 0}
-.rc .herofoot .sub,.rc .herofoot .cap{margin:0;font-size:var(--rc-tx-micro);
-color:var(--rc-text-muted);line-height:1.45}
 .rc .kpi{display:grid;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
 .rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
 .rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
 .rc .kpi[data-n="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 .rc .kpi[data-n="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Five cells is four metrics plus the curve. Five equal columns would leave
+   each one too narrow for its sub line, so they wrap to two rows of three
+   with the curve spanning two: 1 + 2 + 3 fills both rows exactly, and the
+   curve gets the width it needs to read as a shape. */
+.rc .kpi[data-n="5"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rc .kpi[data-n="5"] .curve{grid-column:span 2}
+/* Two columns cannot host a two-column span without stranding the cell
+   beside it on a row of its own, so the curve drops back to one cell here. */
+@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"],
+.rc .kpi[data-n="5"]{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rc .kpi[data-n="5"] .curve{grid-column:auto}}
+/* The line occupies the value's slot, at the value's height, so this cell is
+   the same three-part shape as every other tile and cannot stretch the row. */
+.rc .m.curve .cval{margin:var(--rc-sp-1) 0 0;height:25px}
+.rc .m.curve .spark{height:25px;margin:0}
 .rc .m{background:var(--rc-surface-1);border-radius:var(--rc-r-md);
 padding:var(--rc-sp-3) var(--rc-sp-4)}
 .rc .m .lbl{font-size:var(--rc-tx-small);color:var(--rc-text-secondary);margin:0}
@@ -3237,70 +3233,60 @@ def render_html(bundle):
             parts.append(f'<p class="sub">{e(tile["sub"])}</p>')
         return '<div class="m">' + "".join(parts) + "</div>"
 
-    def _hero_html(tile, curve_svg, curve_caption):
-        """The lead metric, with the curve that traces it alongside.
+    def _curve_tile_html():
+        """The period path as one more cell in the metric row.
 
-        The curve plots cumulative P&L, so it belongs beside the P&L figure
-        rather than adrift in its own strip below the grid: a reader should
-        not have to infer which number the line describes.  Putting it
-        *inside* a grid cell is what padded the whole tile row, so the hero
-        sits outside the grid and spans the block.
+        The curve is worth about as much as a single metric, so it gets a
+        single metric's space -- not a hero band, and not a full-width strip.
+        Standing beside the P&L figure it qualifies, it reads as the process
+        behind that number rather than a decoration: the tiles state where the
+        period ended, this cell states how it got there.
 
-        Three rows, which is what a plain tile also costs, so a hero beside a
-        tile does not stretch it: label + value with the line to their right,
-        then one footer row carrying the metric's own sub on the left and the
-        curve's caption on the right.  The caption sits there rather than
-        under the line because the hero can be as narrow as a two-column
-        share, where it would otherwise wrap and add a fourth row."""
-        tone = f' {tile["tone"]}' if tile.get("tone") else ""
-        figure = []
-        if tile.get("label"):
-            figure.append(f'<p class="lbl">{e(tile["label"])}</p>')
-        figure.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
-        main = '<div class="herofig">' + "".join(figure) + "</div>"
-        if curve_svg:
-            main += f'<div class="herocurve">{curve_svg}</div>'
-        foot = ""
-        if tile.get("sub") or curve_caption:
-            foot = ('<div class="herofoot">'
-                    + (f'<p class="sub">{e(tile["sub"])}</p>' if tile.get("sub") else "")
-                    + curve_caption + "</div>")
-        return f'<div class="hero"><div class="heromain">{main}</div>{foot}</div>'
+        It is deliberately the same three-part shape as every other tile
+        (label, body, one-line sub) with the line occupying the value's slot
+        at the value's height. The original defect was never "a chart sits in
+        a tile" -- it was that this tile carried five parts where its
+        neighbours carried three, and grid rows stretch to their tallest
+        cell."""
+        if not spark:
+            return ""
+        # ``_sparkline_svg`` returns the line optionally followed by its own
+        # caption paragraph; the caption becomes this tile's sub line.
+        line, _, caption_tail = spark.partition('<p class="cap">')
+        label = ((copy.get("kpi") or {}).get("curve") or "").strip()
+        parts = []
+        if label:
+            parts.append(f'<p class="lbl">{e(label)}</p>')
+        parts.append(f'<div class="cval">{line}</div>')
+        if caption_tail:
+            # Re-tag it as a sub so it sits exactly where every other tile's
+            # sub sits, keeping all cells the same height.
+            parts.append('<p class="sub">' + caption_tail.replace("</p>", "</p>", 1))
+        return '<div class="m curve">' + "".join(parts) + "</div>"
 
     def kpi_block():
-        """Lead metric + the secondary grid, in that order.
+        """The metric row: the lit metrics plus the period curve as one cell.
 
-        The column count is the number of secondary tiles that actually lit
-        up, never a fixed four: a month-gated review renders two metrics, and
-        a hardcoded ``repeat(4,1fr)`` left more than half the row empty."""
-        tiles = list(facts["kpi"])
-        if not tiles:
-            # No metric lit up at all; the curve, if any, still has a home.
-            return f'<div class="trend">{spark}</div>' if spark else ""
-        hero, rest = tiles[0], tiles[1:]
-        # Only the P&L figure is the one this curve traces. When some other
-        # metric leads (no total P&L this period), the curve keeps its own
-        # strip rather than implying it describes that metric.
-        hero_curve = spark if (spark and hero.get("id") == "pnl") else None
-        # ``_sparkline_svg`` returns the line optionally followed by its own
-        # caption paragraph; the hero puts the two on different rows.
-        curve_svg, _, caption_tail = (hero_curve or "").partition('<p class="cap">')
-        hero_html = _hero_html(hero, curve_svg,
-                               f'<p class="cap">{caption_tail}' if caption_tail else "")
-        if len(rest) == 1:
-            # A lone secondary metric stretched across its own full-width row
-            # leaves most of that row empty, so it shares the hero's row
-            # instead. This is the common case: a month-gated review lights
-            # exactly two metrics.
-            out = [f'<div class="kpirow">{hero_html}{_tile_html(rest[0])}</div>']
-        else:
-            out = [hero_html]
-            if rest:
-                out.append(f'<div class="kpi" data-n="{len(rest)}">'
-                           + "".join(_tile_html(tile) for tile in rest) + "</div>")
-        if spark and not hero_curve:
-            out.append(f'<div class="trend">{spark}</div>')
-        return "".join(out)
+        The column count is the number of cells that actually lit up, never a
+        fixed four -- a month-gated review lights two metrics, and a hardcoded
+        ``repeat(4,1fr)`` left more than half the row empty."""
+        cells = []
+        for tile in facts["kpi"]:
+            cells.append(_tile_html(tile))
+            # The curve traces cumulative P&L, so it follows that figure
+            # directly. If no P&L metric lit this period it goes last, where
+            # it still reads as the period's path but claims no neighbour.
+            if tile.get("id") == "pnl":
+                curve = _curve_tile_html()
+                if curve:
+                    cells.append(curve)
+        if not any('class="m curve"' in cell for cell in cells):
+            curve = _curve_tile_html()
+            if curve:
+                cells.append(curve)
+        if not cells:
+            return ""
+        return f'<div class="kpi" data-n="{len(cells)}">' + "".join(cells) + "</div>"
 
     def instrument_bars(rows):
         parts = []

@@ -63,6 +63,7 @@
     "excess_sub": "β {beta}",
     "alpha": "年化 α",
     "alpha_unreliable": "統計上還不可信",
+    "curve": "這期走勢",
     "spark_caption": "高點 {peak} · 低點 {trough}"
   },
   "etf_classification": {
