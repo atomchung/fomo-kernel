@@ -1579,6 +1579,39 @@ def test_committed_rule_carries_the_user_cap_override():
         assert "30%" in block4, f"{language}: committed rule must show the user's cap"
 
 
+def test_public_committed_rule_carries_the_user_cap_override():
+    """#324: the share-safe public card re-derives the canonical rule text (it
+    must never echo the user-authored commitment rule), so — like the private
+    card — it has to thread the standing single-position cap override itself. The
+    override rides ``engine_state.max_position_pct`` (render_public receives only
+    the bundle, not state); an unset or fail-closed cap still shows the universal
+    POSITION_CAP. The public rule is the last ``##`` section, so
+    ``_next_step_text`` scopes the assertion to it."""
+    universal = f"{card_renderer.POSITION_CAP:.0%}"
+    for language in ("zh-TW", "en"):
+        bundle = _conflicted_bundle(language, "position_sizing")
+        # A candidate-origin commitment is the only path that re-derives the rule;
+        # a custom rule is replaced wholesale and never carries a cap.
+        bundle["commitment"]["origin"] = "candidate"
+        state = bundle["engine_state"] = dict(bundle.get("engine_state") or {})
+        # No override on the state → the universal cap, same as the private card.
+        state.pop("max_position_pct", None)
+        default_rule = _next_step_text(card_renderer.render_public(bundle))
+        assert universal in default_rule, \
+            f"{language}: no override keeps the universal cap on the public card"
+        # A valid standing override replaces the universal default in the public
+        # rule text, matching the private card's committed rule.
+        state["max_position_pct"] = 0.30
+        overridden = _next_step_text(card_renderer.render_public(bundle))
+        assert "30%" in overridden and universal not in overridden, \
+            f"{language}: the user's cap must reach the public card's rule"
+        # An out-of-range override is fail-closed back to the universal cap.
+        state["max_position_pct"] = 1.5
+        fail_closed = _next_step_text(card_renderer.render_public(bundle))
+        assert universal in fail_closed, \
+            f"{language}: an invalid override is fail-closed on the public card"
+
+
 def main():
     tests = [
         test_finalize_html_is_structured_not_a_pre_dump,
@@ -1634,6 +1667,7 @@ def main():
         test_committed_rule_carries_its_threshold,
         test_renderer_position_cap_matches_the_engine_constant,
         test_committed_rule_carries_the_user_cap_override,
+        test_public_committed_rule_carries_the_user_cap_override,
     ]
     for test in tests:
         test()
