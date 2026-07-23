@@ -82,7 +82,14 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # skills/fomo-kernel/engine/card_renderer.py on main @ 29a328d (2026-07-23,
 # the commit this ratchet was introduced against). See the module docstring
 # for what happens to this number as #368 Phase 2 proceeds.
-BASELINE = 97
+#
+# #368 Phase 2 batch 1 (2026-07-23): migrated _next_block's 5 bilingual
+# inline-ternary sentence pairs into copy/en.json + copy/zh-TW.json
+# (block_missing.rule_skip / rule_snapshot / rule_structural /
+# rule_insufficient_data / snapshot_unlock), and dropped the now-dead
+# `en = language == "en"` local it left behind. 97 -> 91 (-6: 5 ternaries +
+# 1 now-unused language-comparison assignment).
+BASELINE = 91
 
 
 def test_language_branch_count_only_ratchets_down():

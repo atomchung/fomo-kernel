@@ -51,7 +51,12 @@
     "trades_traded": "No ranked instrument diagnosis this period; traded: {tickers}.",
     "risks": "No behavioral diagnosis this period: the engine scored no dimension.",
     "rule": "No new rule commitment this time; you can pick one at the next review.",
-    "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\""
+    "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\"",
+    "rule_skip": "You chose not to set a new commitment; the same baseline remains available next time.",
+    "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
+    "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. A later file with complete buy-and-sell history unlocks the full behavioral review — exit discipline, holding period, and win/loss.",
+    "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
+    "snapshot_unlock": "Importing your transaction-history CSV unlocks behavior diagnostics (win rate, payoff ratio, averaging-down discipline, and more)."
   },
   "footnote_label": "Data notes",
   "kpi": {

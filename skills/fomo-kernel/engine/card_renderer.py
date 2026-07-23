@@ -2474,7 +2474,6 @@ def _next_block(bundle, copy, facts, state, snapshot):
     restates the standing rule, and a truly empty review says so in one
     neutral localized line instead of disappearing."""
     language = copy["language"]
-    en = language == "en"
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
     commitment = bundle.get("commitment") or {}
@@ -2509,13 +2508,9 @@ def _next_block(bundle, copy, facts, state, snapshot):
             # them rather than introducing anything new.
             rule_inner.append(("grounding", [tradeoff]))
     elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
-        rule_inner.append(("paragraph", [
-            "你這次選擇不設新承諾；下次仍可用同一份基線對帳。" if not en
-            else "You chose not to set a new commitment; the same baseline remains available next time."]))
+        rule_inner.append(("paragraph", [missing.get("rule_skip", "")]))
     elif snapshot:
-        rule_inner.append(("paragraph", [
-            "這次開場檢查先保留結構基線，不強迫設定承諾。" if not en
-            else "This opening check keeps the structural baseline without forcing a commitment."]))
+        rule_inner.append(("paragraph", [missing.get("rule_snapshot", "")]))
     elif (state.get("review_tier") or {}).get("tier") == "structural":
         # #306: a thin first file is an opening structural check, not a full
         # behavioral review. Keep the structural baseline (no forced commitment)
@@ -2523,13 +2518,9 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # reads as a coherent opening step rather than a review apologizing for
         # what it lacks. Framed off the tier, not insufficient_data, so a
         # high-frequency short-window file (behavioral, span-short) is not caught.
-        rule_inner.append(("paragraph", [
-            "這次是開場結構檢查：先立基線、不硬塞承諾。之後補上含買賣的完整交易紀錄，就能解鎖出場紀律、持有時間與勝負的完整行為復盤。" if not en
-            else "This is an opening structural check: it sets a baseline without forcing a commitment. A later file with complete buy-and-sell history unlocks the full behavioral review — exit discipline, holding period, and win/loss."]))
+        rule_inner.append(("paragraph", [missing.get("rule_structural", "")]))
     elif state.get("insufficient_data"):
-        rule_inner.append(("paragraph", [
-            "樣本仍短，這次不硬塞承諾；先把它當基線。" if not en
-            else "The sample is still short, so this review sets a baseline without forcing a commitment."]))
+        rule_inner.append(("paragraph", [missing.get("rule_insufficient_data", "")]))
     else:
         standing = state.get("rule")
         text = None
@@ -2549,10 +2540,7 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # instead of interrupting the structure story earlier with a repeated
         # disclosure, and it must not silently disappear behind the "skip"
         # acknowledgment.
-        rule_inner.append(("paragraph", [
-            "匯入交易歷史 CSV 可解鎖行為診斷（勝率、盈虧比、攤平紀律等）。" if not en
-            else ("Importing your transaction-history CSV unlocks behavior diagnostics "
-                  "(win rate, payoff ratio, averaging-down discipline, and more).")]))
+        rule_inner.append(("paragraph", [missing.get("snapshot_unlock", "")]))
     if rule_inner:
         blocks.append(("panel", {"style": "rule", "mark": "*", "label": sections_copy["rule"],
                                  "blocks": rule_inner}))
