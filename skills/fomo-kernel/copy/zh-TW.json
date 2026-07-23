@@ -39,7 +39,6 @@
   "period": {
     "span": "復盤區間 {start} → {end}",
     "as_of": "截至 {end}",
-    "spy": "SPY 同期 {ret}",
     "vix": "VIX {value}"
   },
   "block_missing": {
