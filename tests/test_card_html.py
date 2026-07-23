@@ -738,6 +738,100 @@ def test_holdings_return_states_no_second_window_of_its_own():
             for banned in ("1296", "天窗口", "-day window"):
                 assert banned not in texts[0], \
                     f"{language}: the sentence must state no window of its own: {texts[0]}"
+_BENCHMARK_SENTENCES = {
+    "zh-TW": "持倉對 SPY 的超額報酬 +261 個百分點；β 2.05。",
+    "en": "The holdings beat SPY by +261 pp; β 2.05.",
+}
+# port_tot / spy_tot as the card used to print them (321% / 60%). #363 sent the
+# pair back to being internal; these must appear on no surface.
+_RETIRED_ABSOLUTES = ("321%", "60%")
+_SPLIT_SENTENCES = {
+    "zh-TW": "贏大盤的 +261 個百分點拆為：市場／賽道配置 +80 個百分點、標的選擇 +181 個百分點。",
+    "en": ("The portfolio's +261 pp excess split into +80 pp from market/sector allocation "
+           "and +181 pp from security selection."),
+}
+
+
+def test_benchmark_sentence_states_the_excess_and_nothing_the_tile_repeats():
+    """#363, "one concept, one indicator" (owner ruling 2026-07-23). The
+    vs-market sentence used to open with two absolute total returns — the
+    portfolio's `port_tot` and the benchmark's `spy_tot`. `port_tot` is the
+    *same concept* as the card's cumulative return, computed on the
+    regression's aligned day set, so the card answered "what did you make?"
+    twice with two different numbers. The pair is internal again; the sentence
+    states the excess it feeds, which is a genuinely different concept.
+
+    What remains is exactly the excess tile's own value and sub, so HTML drops
+    the sentence whole (the pnl/payoff treatment) rather than trimming it.
+    Markdown, with no tile grid, keeps it as its only carrier — the shape
+    `check_card.py`'s S-2 needles as proof the vs-market module rendered.
+
+    The allocation/selection split right below carries no kpi_id and must
+    survive — asserted, not assumed, since it quotes the same +261 pp figure
+    and a too-broad dedup would take it too."""
+    for language in ("zh-TW", "en"):
+        sentence = _BENCHMARK_SENTENCES[language]
+        split = _SPLIT_SENTENCES[language]
+        bundle = _rich_bundle(language)
+        bundle["engine_card"]["alpha_beta_breakdown"]["excess_split"] = {
+            "allocation": 0.80, "selection": 1.81}
+        markdown = card_renderer.render_private(bundle)
+        html_card = card_renderer.render_html(bundle)
+        block1_md = _markdown_block(markdown, language, "performance")
+        block1_html = html.unescape(html_card.split("<h2>", 2)[1])
+
+        assert sentence in block1_md, \
+            f"{language}: Markdown must carry the excess sentence — nothing else there does"
+        assert sentence not in block1_html, \
+            f"{language}: the excess tile already states this; HTML must not repeat it as prose"
+        # Gone from both surfaces: the regression intermediate that read as a
+        # second, competing cumulative return.
+        for retired in _RETIRED_ABSOLUTES:
+            assert retired not in block1_md, \
+                f"{language}: {retired} (port_tot/spy_tot) must not render on Markdown"
+            assert retired not in block1_html, \
+                f"{language}: {retired} (port_tot/spy_tot) must not render on HTML"
+        # The figures the prose gave up are still on the card — in the tile.
+        kpi_copy = card_renderer.load_copy(language)["kpi"]
+        tile_head = block1_html.split(
+            f'<p class="lbl">{kpi_copy["excess"]}</p>', 1)[1].split("</div>", 1)[0]
+        assert "+261pp" in tile_head and "β 2.05" in tile_head, \
+            f"{language}: the excess tile must carry the excess and β"
+        # The split explains where the excess came from; no tile holds it.
+        assert split in block1_md, f"{language}: Markdown lost the allocation/selection split"
+        assert split in block1_html, \
+            f"{language}: the allocation/selection split must survive HTML dedup"
+
+
+def test_benchmark_sentence_stays_whole_where_no_excess_tile_exists():
+    """#362/#363's other half: the drop is conditional on the tile actually
+    being there. A mixed-market card renders per-market vs-market rows and no
+    excess tile at all (a synthetic top-level figure is the one thing the
+    engine refuses), so nothing carries the pp/β figures but the sentence
+    itself — it must render on HTML, exactly as on Markdown."""
+    for language in ("zh-TW", "en"):
+        bundle = _rich_bundle(language)
+        bundle["engine_card"]["alpha_beta_breakdown"] = {
+            "by_market": {
+                "TW": {"bench": "^TWII", "port_tot": 0.20, "spy_tot": 0.10,
+                       "excess_vs_spy": 0.10, "beta": 1.10},
+                "US": {"bench": "SPY", "port_tot": 0.05, "spy_tot": 0.08,
+                       "excess_vs_spy": -0.03, "beta": 0.80},
+            },
+        }
+        html_card = html.unescape(card_renderer.render_html(bundle))
+        kpi_copy = card_renderer.load_copy(language)["kpi"]
+        assert f'<p class="lbl">{kpi_copy["excess"]}</p>' not in html_card, \
+            f"{language}: a mixed-market card must not grow an excess tile"
+        expected = ("TW 部位對 ^TWII 的超額報酬 +10 個百分點；β 1.10。"
+                    if language == "zh-TW" else
+                    "TW holdings beat ^TWII by +10 pp; β 1.10.")
+        assert expected in html_card, \
+            f"{language}: with no tile to carry them, the pp/β figures must stay in the prose"
+        # The per-market absolute returns are internal now too (#363).
+        for retired in ("20%", "10%", "5%", "8%"):
+            assert f"報酬 {retired}" not in html_card and f"returned {retired}" not in html_card, \
+                f"{language}: per-market port_tot/spy_tot must not render either ({retired})"
 
 
 def test_vs_market_groups_by_market_label_only_when_mixed():
@@ -767,9 +861,9 @@ def test_vs_market_groups_by_market_label_only_when_mixed():
     tw_at = next(i for i, x in enumerate(lines) if x == "[TW]")
     us_at = next(i for i, x in enumerate(lines) if x == "[US]")
     assert tw_at < us_at, "TW's cluster must precede US's (MARKET_BENCHMARKS order)"
-    assert lines[tw_at + 1].startswith("- ") and "TW 部位報酬" in lines[tw_at + 1], \
+    assert lines[tw_at + 1].startswith("- ") and "TW 部位對 ^TWII" in lines[tw_at + 1], \
         "the TW benchmark line must follow its [TW] label, bulleted"
-    assert lines[us_at + 1].startswith("- ") and "US 部位報酬" in lines[us_at + 1], \
+    assert lines[us_at + 1].startswith("- ") and "US 部位對 SPY" in lines[us_at + 1], \
         "the US benchmark line must follow its [US] label, bulleted"
 
     block1_html = html.split("<h2>", 2)[1]
@@ -1371,6 +1465,8 @@ def main():
         test_price_source_rides_the_footnote_ahead_of_unrealized_coverage,
         test_review_span_runs_to_the_price_date_the_card_is_valued_at,
         test_holdings_return_states_no_second_window_of_its_own,
+        test_benchmark_sentence_states_the_excess_and_nothing_the_tile_repeats,
+        test_benchmark_sentence_stays_whole_where_no_excess_tile_exists,
         test_vs_market_groups_by_market_label_only_when_mixed,
         test_coded_fields_resolve_zh_byte_identical_to_legacy_literals,
         test_coded_fields_resolve_zh_prescriptions_from_copy,

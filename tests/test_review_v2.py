@@ -2770,8 +2770,11 @@ def test_mixed_market_private_card_renders_each_market_and_winning_split():
     card = _mixed_market_card_for_rendering()
     honesty = {"sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。"}
     text = "\n".join(card_renderer._performance_lines(card, "zh-TW", honesty))
-    assert "TW 部位報酬 20%" in text and "同期 ^TWII 10%" in text and "β 1.10" in text
-    assert "US 部位報酬 5%" in text and "同期 SPY 8%" in text and "β 0.80" in text
+    # #363: the absolute per-market returns are internal again; the sentence
+    # states the excess it feeds, which no other line on the card carries.
+    assert "TW 部位對 ^TWII 的超額報酬 +10 個百分點" in text and "β 1.10" in text
+    assert "US 部位對 SPY 的超額報酬 -3 個百分點" in text and "β 0.80" in text
+    assert "部位報酬 20%" not in text and "同期 ^TWII 10%" not in text
     assert "TW 贏大盤的 +10 個百分點" in text
     assert "市場／賽道配置 +4 個百分點" in text and "標的選擇 +6 個百分點" in text
     assert text.count("賽道與選股拆帳不完整") == 1, \
@@ -5495,7 +5498,7 @@ def test_vs_market_month_gate_first_second_and_next_month():
         preview1, a1, n1 = _vs_preview(tmp, root, plan1, "w1")
         assert preview1.returncode == 0, preview1.stdout + preview1.stderr
         card1 = json.loads(preview1.stdout)["private_card"]
-        assert "相差 +13 個百分點" in card1 and "β 1.31" in card1
+        assert "超額報酬 +13 個百分點" in card1 and "β 1.31" in card1
         assert "贏大盤的 +13 個百分點拆為" in card1 and "vs QQQ +4pp" in card1
         assert "風險調整後 alpha" in card1
         for sentence in (_VS_HONESTY_SENTENCES["alpha_credibility"],
@@ -5557,7 +5560,7 @@ def test_vs_market_month_gate_first_second_and_next_month():
         preview3, _a3, _n3 = _vs_preview(tmp, root, plan3, "w3")
         assert preview3.returncode == 0, preview3.stdout + preview3.stderr
         card3 = json.loads(preview3.stdout)["private_card"]
-        assert "相差 +13 個百分點" in card3, "next calendar month re-renders the segment"
+        assert "超額報酬 +13 個百分點" in card3, "next calendar month re-renders the segment"
 
 
 def test_vs_market_gate_light_capture_does_not_consume_slot():
