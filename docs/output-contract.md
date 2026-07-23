@@ -113,6 +113,11 @@ order of operations. Nothing else. Specifically:
 Renderer sections not mapped above (standalone market timeline, standalone
 motive/exit/ETF sections, …) merge into the blocks as described or disappear;
 they are the accumulation the owner flagged as "each iteration got worse".
+Their headings are gone from `copy/*.json` too (#368, 2026-07-23): ten of the
+fifteen `sections` keys had outlived every reader, and `tests/test_copy_ratchet.py`
+now fails on any `sections` key `card_renderer.py` does not subscript. The five
+survivors are `strength`, `hole` and `rule` (private card and HTML) plus
+`performance` and `etf`, which only `render_public` renders.
 
 ### Closing synthesis (optional 5th block)
 
