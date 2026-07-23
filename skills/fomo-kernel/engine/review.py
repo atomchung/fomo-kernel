@@ -664,7 +664,7 @@ def _gate_current_view(card, state, detail):
     overview["total_pnl"] = None
     overview["unrealized"] = None
     card["overview"] = overview
-    card["acct_perf"] = {"note": "accounting_reconciliation"}
+    card["acct_perf"] = {"gate": {"status": "accounting_reconciliation", "data": {}}}
 
     for artifact in (card, state):
         meta = dict(artifact.get("currency_meta") or {})

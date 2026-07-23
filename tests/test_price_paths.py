@@ -669,7 +669,8 @@ def test_acct_csv_sum_gated_hold_only():
                         _cashd("csv_sum", {"USD": _anch(-1000, reliable=False)}), {"X": "USD"})
     assert a["acct_twr"] is None and a["irr_annual"] is None and a["cash_drag"] is None, a
     assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
-    assert a["note"] and "csv_sum" in a["note"], a["note"]
+    assert a["gate"]["status"] == "no_cash_anchor", a["gate"]
+    assert a["gate"]["data"]["source"] == "csv_sum", a["gate"]
 
 
 def test_acct_partial_broken_rollback_gated():
@@ -679,7 +680,8 @@ def test_acct_partial_broken_rollback_gated():
     cd = {"source": "partial", "reliable": False,
           "by_currency": {"USD": _anch(0), "TWD": _anch(-10000, reliable=False)}}
     a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
-    assert a["acct_twr"] is None and "破裂" in (a["note"] or ""), a
+    assert a["acct_twr"] is None and a["gate"]["status"] == "negative_cash_rollback", a
+    assert a["gate"]["data"]["currencies"] == ["TWD"], a["gate"]
     assert a["hold_twr"] is not None, a["hold_twr"]
 
 
@@ -721,7 +723,8 @@ def test_acct_irr_short_window_gated():
     sub = pd.DataFrame({"X": [100.0 + i for i in range(40)]}, index=IDX[:40])
     a = pf.account_perf([_row(0)], sub, [_cf(0, -1000, "trade")],
                         _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
-    assert a["irr_annual"] is None and "年化" in (a["note"] or ""), a
+    assert a["irr_annual"] is None, a
+    assert [n["status"] for n in a["notes"]] == ["irr_window_short"], a["notes"]
     assert a["acct_twr"] is not None, a
 
 
@@ -732,14 +735,15 @@ def test_acct_negative_equity_days_skipped_not_chained():
     a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
                         _cashd("anchored", {"USD": _anch(-950)}), {"X": "USD"})  # 真融資 margin
     assert a["basis"]["skipped_days"] > 0, a["basis"]
-    assert a["note"] and "未入鏈" in a["note"], a["note"]
+    assert any(n["status"] == "chain_days_skipped" and n["data"]["skipped"]
+               for n in a["notes"]), a["notes"]
     assert a["acct_twr"] is not None and abs(a["acct_twr"]) < 0.01, a["acct_twr"]  # 崩前平盤段,不被負因子翻爆
 
 
 def test_acct_offline_fail_closed():
     """px=None(離線)→ {note} 單鍵 fail-closed,不硬湊(同 pnl_curve 慣例)。"""
     a = pf.account_perf([_row(0)], None, [], _cashd("anchored", {"USD": _anch(0)}), {})
-    assert set(a.keys()) == {"note"} and a["note"], a
+    assert set(a.keys()) == {"gate"} and a["gate"]["status"] == "no_prices", a
 
 
 def test_acct_unpriced_ticker_carried_at_cost():
@@ -770,14 +774,77 @@ def test_acct_unpriced_ticker_carried_at_cost():
 
 
 def test_acct_no_trade_footprint_gated():
-    """CSV 缺 Amount(交易無現金足跡)→ 現金史回滾必錯,帳戶柱誠實不出;hold 柱照出
-    (它只吃 rows + 價格)。錨點在也救不了——這正是 ai_holder sweep 抓到的 8663% 假暴漲根因。"""
+    """交上來的現金流裡有交易沒有現金足跡 → 現金史回滾必錯,帳戶柱誠實不出;hold 柱照出
+    (它只吃 rows + 價格)。錨點在也救不了——這正是 ai_holder sweep 抓到的 8663% 假暴漲根因。
+
+    #375 後這條剩下的職責是擋「混合口徑」:完全沒有 Amount 的來源在更上游就被
+    load_cash_flows 用 qty×price 估滿了(見 test_cash_flows_estimated_*),不會走到這裡;
+    account_perf 收到什麼就信什麼,自己不會去猜呼叫端有沒有估過。"""
     px = _px_frame({"X": _lin(100, 150)})
     a = pf.account_perf([_row(0)], px, [_cf(100, 5000, "deposit")],
                         _cashd("anchored", {"USD": _anch(4000)}), {"X": "USD"})
     assert a["acct_twr"] is None and a["irr_annual"] is None, a
-    assert "Amount" in (a["note"] or ""), a["note"]
+    assert a["gate"]["status"] == "mixed_trade_footprint", a["gate"]
+    assert a["gate"]["data"] == {"with_footprint": 0, "trades": 1}, a["gate"]
     assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+
+
+def test_acct_estimated_footprint_unlocks_and_discloses():
+    """#375:估算出來的交易現金足跡照樣解鎖帳戶柱,但 basis 必須標記 estimated_footprint
+    —— 手續費/稅沒被扣掉,數字可用但地基要交代。解鎖而不揭露,才是這條路真正的危險。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    est = dict(_cf(0, -1000, "trade"), estimated=True)
+    a = pf.account_perf([_row(0)], px, [est],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["gate"] is None and a["acct_twr"] is not None, a
+    assert a["basis"]["estimated_footprint"] is True, a["basis"]
+
+
+def test_acct_real_footprint_not_marked_estimated():
+    """真 Amount 足跡 → estimated_footprint=False,不空吠(揭露是觸發式的)。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["basis"]["estimated_footprint"] is False, a["basis"]
+
+
+def test_acct_external_flows_absent_disclosed_with_implied_start_cash():
+    """#375:整份流水沒有任何存/提款列 + 窗夠長 + 回滾生出一坨期初閒置現金 → 揭露
+    「這段期間現金變化 100% 只來自交易」這個前提,並給出它有多重。
+
+    這是估算路徑真正的風險來源:使用者真的存過錢時,回滾會把後來才存進來的錢當成期初
+    就持有的閒置現金,帳戶 TWR 被系統性低估(合成案例 share 0.5 → 差 33pp)。舊版零揭露。
+    情境:期末現金 0、兩筆各 1000 的買入(一筆在期初、一筆在中段)→ 回滾把第二筆的錢
+    放回期初,期初帳上憑空多出 1000 閒置現金,佔期初帳戶值一半。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0), _row(100)], px,
+                        [_cf(0, -1000, "trade"), _cf(100, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["basis"]["external_flow_rows"] == 0, a["basis"]
+    assert a["basis"]["implied_start_cash_share"] == 0.5, a["basis"]
+    assert a["basis"]["external_flows_absent"] is True, a["basis"]
+
+
+def test_acct_external_flows_absent_but_no_idle_cash_not_disclosed():
+    """沒有存提款列、但回滾隱含的期初閒置現金 ≈ 0 → 回滾其實是對的(錢期初就全投進去了),
+    不揭露。觸發式揭露的反面證據:別對「假設剛好成立」的帳戶吠一句沒用的 caveat。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["basis"]["external_flow_rows"] == 0, a["basis"]
+    assert a["basis"]["implied_start_cash_share"] == 0.0, a["basis"]
+    assert a["basis"]["external_flows_absent"] is False, a["basis"]
+
+
+def test_acct_external_flows_present_not_disclosed():
+    """有存/提款列 → 前提不成立,不揭露(觸發式,不對每張卡都吠一句)。"""
+    px = _px_frame({"X": _lin(100, 150)})
+    a = pf.account_perf([_row(0), _row(100)], px,
+                        [_cf(0, 1000, "deposit"), _cf(0, -1000, "trade"),
+                         _cf(100, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"})
+    assert a["basis"]["external_flow_rows"] == 1, a["basis"]
+    assert a["basis"]["external_flows_absent"] is False, a["basis"]
 
 
 def test_acct_big_residual_gated_unlock_invite():
@@ -792,7 +859,8 @@ def test_acct_big_residual_gated_unlock_invite():
                         cash_residuals=resid)
     assert a["acct_twr"] is None and a["irr_annual"] is None, a
     assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
-    assert a["note"] and "解鎖" in a["note"], a["note"]
+    assert a["gate"]["status"] == "cash_residual", a["gate"]
+    assert a["gate"]["data"]["currency"] == "USD", a["gate"]
 
 
 def test_acct_small_residual_not_gated():

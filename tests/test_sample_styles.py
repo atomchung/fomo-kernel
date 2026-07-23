@@ -258,6 +258,31 @@ def test_noisy_broker_csv_matches_clean_baseline():
         assert abs(cd["severity"] - nd["severity"]) < 1e-9
 
 
+def test_bare_export_matches_clean_baseline_and_estimates_its_cash_footprint():
+    """#375:只有 SKILL.md 正規化 schema 六欄、沒有券商 Amount 欄的匯出檔。
+
+    這隻 fixture 補的是整組 mock 的結構性盲點:在它之前,13 隻 persona 全是同一種
+    帶 Amount/Commission/Fee 的 Schwab 格式,所以 persona sweep 結構上不可能看見
+    「來源沒有 Amount」這條路——而那正是 SKILL.md 叫 agent 產出的 schema。
+    交易內容與 value 完全相同,差別只有 schema:
+      ① 行為診斷五維必須逐維相同(schema 不該影響行為判讀);
+      ② 每筆交易的現金足跡改用 qty×price 估出來,並標記 estimated。
+    """
+    clean, bare = _dims("value"), _dims("bare_export")
+    assert len(clean["rows"]) == len(bare["rows"])
+    for cd, bd in zip(clean["dims"], bare["dims"]):
+        assert cd["dim"] == bd["dim"]
+        assert cd["triggered"] == bd["triggered"]
+        assert abs(cd["severity"] - bd["severity"]) < 1e-9
+    path = os.path.join(MOCK, "sample_bare_export.csv")
+    flows = tr.load_cash_flows([path], trade_rows=bare["rows"])
+    assert len(flows) == len(bare["rows"]), (len(flows), len(bare["rows"]))
+    assert all(f["kind"] == "trade" and f["estimated"] is True for f in flows), flows[:2]
+    # 估算值必須等於同一筆交易在 value 版裡的真 Amount(該 fixture 手續費為 0)。
+    real = tr.load_cash_flows([os.path.join(MOCK, "sample_value.csv")])
+    assert [round(f["amount"], 2) for f in flows] == [round(f["amount"], 2) for f in real]
+
+
 def test_rotator_top_hole_is_sizing_via_theme_churn():
     """輪動追熱點者(依序全倉重壓不同賽道,每次都清倉才換下一個)→ 頭號洞 = 部位 sizing。
 

@@ -1076,6 +1076,33 @@ def price_retrieval_blocked(card):
     return bool(coverage.get("requested_n")) and not coverage.get("priced_n")
 
 
+# #375: gate status -> the block_missing key whose sentence names that blocker.
+# Only the statuses that come back as a bare `acct_perf` (no hold_twr, so the
+# account line never renders and the gap note speaks instead) need an entry; a
+# status missing from this map degrades to the generic `annualized` sentence,
+# so a future engine gate never renders blank. The account-level counterpart —
+# a blocker that still leaves the holdings pillar standing — is the
+# `account_gate` copy group, selected in _performance_items.
+ANNUALIZED_GAP_NOTE_BY_GATE = {
+    "no_prices": "annualized_prices",
+    "short_price_series": "annualized_short_series",
+    "accounting_reconciliation": "annualized_reconciliation",
+}
+
+
+def _annualized_gap_note(card, missing):
+    """The Block-1 gap note for a missing annualized/account module (§4).
+
+    Price retrieval failure keeps its own #289 variant and wins, because
+    `price_provenance` is the authority on that specific blocker.
+    """
+    if price_retrieval_blocked(card):
+        return missing.get("annualized_prices", "")
+    status = ((card.get("acct_perf") or {}).get("gate") or {}).get("status")
+    key = ANNUALIZED_GAP_NOTE_BY_GATE.get(status)
+    return (missing.get(key) if key else None) or missing.get("annualized", "")
+
+
 def _honesty_lines(bundle, copy):
     """Sentence per triggered honesty key, agent-authored first (#82).
 
@@ -1357,11 +1384,21 @@ def _performance_items(card, language):
                 if ap.get("cash_drag") is not None:
                     text += f"；與僅計持倉的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
                 line("account", text + "。")
-        elif ap.get("note"):
-            line("account_gate",
-                 "Account-level return stays locked until cash has a complete anchor; "
-                 "the holdings pillar above is unaffected." if en else
-                 "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的僅計持倉不受影響。")
+        elif ap.get("gate") or ap.get("note"):
+            # #375 (contract §4: a gap note names the *actual* blocker): the
+            # engine hands over a structured {status, data} reason and the
+            # sentence comes from copy, so a locked account level says what is
+            # actually blocking it. It used to print one hardcoded sentence
+            # ("locked until cash has a complete anchor") for every blocker,
+            # which told a user who had already supplied the anchor to go do
+            # the thing they had just done. A bundle from before this contract
+            # carries the old free-text `note` and no status, and falls back to
+            # that same generic sentence rather than rendering nothing.
+            gate_copy = copy.get("account_gate") or {}
+            status = (ap.get("gate") or {}).get("status")
+            text = gate_copy.get(status) or gate_copy.get("default") or ""
+            if text:
+                line("account_gate", text)
     cash = card.get("cash") or {}
     if cash.get("reliable") and cash.get("balance") is not None:
         display_cash = _display_money(cash.get("balance"), display)
@@ -2142,8 +2179,10 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
         return items, footnote
     missing = copy.get("block_missing") or {}
     # #289: name the actual blocker. When the host could not retrieve prices at
-    # all, the portfolio-level return is missing for a data-availability reason,
-    # not because the cash anchor or the benchmark symbol is at fault.
+    # all, the benchmark comparison is missing for a data-availability reason,
+    # not because the benchmark symbol is at fault. The annualized module's own
+    # variant selection moved into _annualized_gap_note (#375), which reads the
+    # engine's structured gate as well as this flag.
     price_blocked = price_retrieval_blocked(card)
     items = []
     period = _market_backdrop(bundle, copy)
@@ -2165,8 +2204,7 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
         index = next((i for i, item in enumerate(perf)
                       if item.get("tag") in ("cash", "benchmark")), len(perf))
         perf.insert(index, {"kind": "line", "tag": None,
-                            "text": (missing.get("annualized_prices") if price_blocked
-                                     else missing.get("annualized", ""))})
+                            "text": _annualized_gap_note(card, missing)})
     if (not any(item.get("tag") == "benchmark" for item in perf)
             and not vs_market_suppressed(card)):
         # §3: a month-gated review renders no gap note — the vs-market lines

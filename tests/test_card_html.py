@@ -1026,6 +1026,72 @@ def test_holdings_return_states_no_second_window_of_its_own():
             for banned in ("1296", "天窗口", "-day window"):
                 assert banned not in texts[0], \
                     f"{language}: the sentence must state no window of its own: {texts[0]}"
+_GATE_STATUSES = ("no_cash_anchor", "mixed_trade_footprint", "negative_cash_rollback",
+                  "cash_residual", "chain_unavailable")
+
+
+def test_account_gate_sentence_names_the_actual_blocker():
+    """#375 (output-contract §4: a gap note names the *actual* blocker).
+
+    The card used to print one hardcoded sentence — "locked until cash has a
+    complete anchor" — for every reason the account pillar was gated. A real
+    review that had already supplied the anchor, and was actually blocked by a
+    missing cash footprint, was told to go do the thing it had just done. The
+    engine now hands over {status, data} and each status gets its own sentence
+    in both locales, so no two blockers can read alike.
+    """
+    seen = {"zh-TW": set(), "en": set()}
+    for status in _GATE_STATUSES:
+        for language in ("zh-TW", "en"):
+            card = {"acct_perf": {"hold_twr": 0.5, "acct_twr": None,
+                                  "gate": {"status": status, "data": {}}}}
+            texts = [item["text"] for item in card_renderer._performance_items(card, language)
+                     if item.get("tag") == "account_gate"]
+            assert len(texts) == 1, f"{language}/{status}: expected one gate line, got {texts}"
+            seen[language].add(texts[0])
+    for language, sentences in seen.items():
+        assert len(sentences) == len(_GATE_STATUSES), \
+            f"{language}: every blocker needs its own wording, got {sorted(sentences)}"
+
+
+def test_account_gate_degrades_instead_of_rendering_blank():
+    """A legacy bundle (free-text `note`, no status) and a status this renderer
+    has never heard of both fall back to the generic sentence. Silence would be
+    worse than a generic sentence: the reader would see the holdings pillar and
+    no reason at all for the missing account line."""
+    for acct in ({"hold_twr": 0.5, "acct_twr": None, "note": "legacy free text"},
+                 {"hold_twr": 0.5, "acct_twr": None,
+                  "gate": {"status": "a_status_added_later", "data": {}}}):
+        for language in ("zh-TW", "en"):
+            default = card_renderer.load_copy(language)["account_gate"]["default"]
+            texts = [item["text"] for item
+                     in card_renderer._performance_items({"acct_perf": acct}, language)
+                     if item.get("tag") == "account_gate"]
+            assert texts == [default], f"{language}/{acct}: expected the default, got {texts}"
+
+
+def test_annualized_gap_note_names_the_actual_blocker():
+    """The other hardcoded reason (#375): when the engine returns a bare gate
+    and no holdings pillar, no account line renders at all and the Block-1 gap
+    note speaks instead. It recited the cash-anchor reason for every one of
+    those blockers too, including a snapshot that failed to reconcile."""
+    for language in ("zh-TW", "en"):
+        missing = card_renderer.load_copy(language)["block_missing"]
+        for status, key in card_renderer.ANNUALIZED_GAP_NOTE_BY_GATE.items():
+            if status == "no_prices":
+                continue        # #289 owns this one via price_provenance, below
+            card = {"acct_perf": {"gate": {"status": status, "data": {}}}}
+            assert card_renderer._annualized_gap_note(card, missing) == missing[key], \
+                f"{language}/{status}: gap note must name its own blocker"
+        # #289 keeps precedence: price provenance is the authority on that blocker.
+        blocked = {"acct_perf": {"gate": {"status": "short_price_series", "data": {}}},
+                   "price_provenance": {"mode": "unavailable"}}
+        assert card_renderer._annualized_gap_note(blocked, missing) == missing["annualized_prices"]
+        # An unmapped status keeps today's generic wording rather than blanking.
+        unknown = {"acct_perf": {"gate": {"status": "a_status_added_later", "data": {}}}}
+        assert card_renderer._annualized_gap_note(unknown, missing) == missing["annualized"]
+
+
 _BENCHMARK_SENTENCES = {
     "zh-TW": "持倉對 SPY 的超額報酬 +261 個百分點；β 2.05。",
     "en": "The holdings beat SPY by +261 pp; β 2.05.",
@@ -2054,6 +2120,9 @@ def main():
         test_public_committed_rule_carries_the_user_cap_override,
         test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
         test_standing_rule_placeholder_carries_the_user_cap_override,
+        test_account_gate_sentence_names_the_actual_blocker,
+        test_account_gate_degrades_instead_of_rendering_blank,
+        test_annualized_gap_note_names_the_actual_blocker,
     ]
     for test in tests:
         test()
