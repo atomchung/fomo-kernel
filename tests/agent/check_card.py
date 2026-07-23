@@ -186,8 +186,11 @@ def _s1_block_titles(body: str, copy: dict) -> "Finding":
 # vs-market 段落上卡的機檢 needle(S-2 用):鏡照 card_renderer._private_benchmark_line
 # 的 headline 句形——段落一出必有這行(單一與逐市場皆同款式)。與 _CAVEAT_LINE_RE
 # 同類的 renderer 契約形狀;改 renderer 句形要同步這裡。
-_VS_SEGMENT_ZH_RE = re.compile(r"相差 [+-]\d+ 個百分點")
-_VS_SEGMENT_EN_RE = re.compile(r"[+-]\d+ pp difference")
+# 2026-07-23(#363「一個概念一個指標」):句形從「…相差 +N 個百分點」改為
+# 「…的超額報酬 +N 個百分點」——兩個絕對報酬(port_tot/spy_tot)已退回內部,
+# 不再上卡,needle 跟著改抓超額本身。
+_VS_SEGMENT_ZH_RE = re.compile(r"超額報酬 [+-]\d+ 個百分點")
+_VS_SEGMENT_EN_RE = re.compile(r"beat .+ by [+-]\d+ pp")
 
 
 def _s2_module_lighting(body: str, copy: dict, context, language) -> "Finding":

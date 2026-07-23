@@ -283,7 +283,7 @@ def test_card_structure_series_alive():
        "非 v2 文字不出 S findings(v1 eval case 零影響)")
 
     # #284 月度 vs-market gate:S-2 認 engine_card.vs_market_gate 訊號,雙向嚴格。
-    _vs_line = "可比較的持倉報酬 24%，同期 SPY 11%，相差 +13 個百分點；β 1.31。"
+    _vs_line = "持倉對 SPY 的超額報酬 +13 個百分點；β 1.31。"
     _ab_lit = {"port_tot": 0.24, "spy_tot": 0.11, "excess_vs_spy": 0.13, "bench": "SPY"}
     ungated_ctx = {"engine_card": dict(_S2_CONTEXT["engine_card"],
                                        alpha_beta_breakdown=_ab_lit)}

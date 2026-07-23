@@ -916,21 +916,36 @@ def _benchmark_rows(card):
 
 
 def _private_benchmark_line(market, bench, row, language):
-    port = _finite_number(row.get("port_tot"))
-    benchmark = _finite_number(row.get("spy_tot"))
+    """The benchmark-excess sentence: how far the holdings ran ahead of their
+    market, and at what beta.
+
+    Owner ruling 2026-07-23 (#363, "one concept, one indicator"): the two
+    absolute total returns this sentence used to open with — ``port_tot`` and
+    ``spy_tot`` — no longer render. ``port_tot`` is *the same concept* as the
+    card's cumulative return (`acct_perf.hold_twr`), computed by a different
+    pipeline: the regression's aligned day set drops days either side is
+    missing and days the portfolio moved more than ±50%, so it answered "what
+    did you make?" with a second, smaller number and no way for the reader to
+    tell why. It is a regression intermediate that leaked onto the card. The
+    excess it feeds is a genuinely different concept and stays; the raw pair
+    goes back to being internal.
+
+    What remains is exactly what the excess KPI tile carries (value + β sub),
+    so the sentence takes the pnl/payoff treatment: ``kpi_id="excess"`` with an
+    empty ``html_text``, i.e. HTML drops it whenever that tile rendered, and it
+    stands alone on Markdown and on any card with no such tile."""
     excess = _finite_number(row.get("excess_vs_spy"))
     beta = _beta_text(row.get("beta"))
     beta_suffix = ((f"; β {beta}" if language == "en" else f"；β {beta}")
                    if beta is not None else "")
     if language == "en":
-        subject = f"{market} holdings" if market else "The measured portfolio"
-        comparator = bench or "its market benchmark"
-        return (f"{subject} returned {_pct(port)} versus {_pct(benchmark)} for {comparator}, "
-                f"a {_benchmark_pp(excess)} pp difference{beta_suffix}.")
-    subject = f"{market} 部位" if market else "可比較的持倉"
+        subject = f"{market} holdings" if market else "The holdings"
+        comparator = bench or "their market benchmark"
+        return (f"{subject} beat {comparator} by "
+                f"{_benchmark_pp(excess)} pp{beta_suffix}.")
+    subject = f"{market} 部位" if market else "持倉"
     comparator = bench or "市場大盤"
-    return (f"{subject}報酬 {_pct(port)}，同期 {comparator} {_pct(benchmark)}，"
-            f"相差 {_benchmark_pp(excess)} 個百分點{beta_suffix}。")
+    return f"{subject}對 {comparator} 的超額報酬 {_benchmark_pp(excess)} 個百分點{beta_suffix}。"
 
 
 def _private_split_lines(market, row, language):
@@ -1391,8 +1406,17 @@ def _performance_items(card, language):
         ab = card.get("alpha_beta_breakdown") or {}
         benchmark_rows = _benchmark_rows(card)
         for market, bench, row in benchmark_rows:
-            line("benchmark", _private_benchmark_line(market, bench, row, language), market=market)
+            # #362/#363: everything this sentence still states — the excess and
+            # β — is exactly what the excess tile carries, so HTML drops it
+            # whole whenever that tile rendered. A mixed-market or month-gated
+            # card has no excess tile, so it stands there, as it does on
+            # Markdown.
+            line("benchmark", _private_benchmark_line(market, bench, row, language),
+                 market=market, kpi_id="excess", html_text="")
             for text in _private_split_lines(market, row, language):
+                # No kpi_id: the allocation/selection split is the card's only
+                # explanation of where the excess came from — nothing on the
+                # tile grid carries it, so it survives dedup on every surface.
                 line("split", text, market=market)
         if benchmark_rows:
             alpha_line = _alpha_interval_line(ab, language)
