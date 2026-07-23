@@ -177,9 +177,17 @@ def test_localized_title_from_copy_assets():
 
 def test_engine_numbers_match_markdown_card():
     run = _session("zh-TW")
-    for token in ("-$300", "+$200", "已實現盈虧比 1.4"):
+    for token in ("-$300", "+$200"):
         assert token in run["markdown"], f"engine value missing from Markdown: {token}"
         assert token in run["html"], f"engine value missing from HTML: {token}"
+    # #344: "已實現盈虧比 1.4" duplicated the payoff KPI tile one-for-one, so
+    # HTML drops the sentence (the tile alone carries it there) while
+    # Markdown — which has no tile grid — keeps the full sentence. The value
+    # itself must still reach HTML, inside the tile.
+    assert "已實現盈虧比 1.4" in run["markdown"]
+    assert "已實現盈虧比 1.4" not in run["html"], \
+        "#344: the payoff line must not also stand as prose once its tile renders"
+    assert '<div class="m"><p class="lbl">已實現盈虧比</p><p class="val">1.4</p>' in run["html"]
 
 
 def test_markdown_reader_path_surfaces_existing_risk_and_rule_before_performance():
