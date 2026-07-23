@@ -1469,6 +1469,31 @@ def test_prepare_is_resumable_without_rerunning_artifacts():
         assert json.loads(again.stdout)["status"] == "resumed"
 
 
+def test_prepare_with_cash_anchor_opens_a_new_session_not_a_silent_resume():
+    """#369, the #289 class for cash: the weekly flow resolves the cash anchor
+    after the tier gate, so the legitimate call order is a cash-less prepare
+    (which is what produces the tier) followed by `prepare --cash` once the
+    user confirms the balance. Cash therefore participates in the session
+    fingerprint; without it the second call would resume the cash-less pending
+    session and silently discard the anchor -- exactly what #289 fixed for the
+    price envelope."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        first = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        assert first.returncode == 0, first.stdout + first.stderr
+        anchor = '{"currency":"USD","amount":8200,"as_of":"2024-10-08"}'
+        with_cash = _run("prepare", "--root", root, "--card-json", card,
+                         "--state-json", state, "--cash", anchor)
+        assert with_cash.returncode == 0, with_cash.stdout + with_cash.stderr
+        assert json.loads(with_cash.stdout)["status"] != "resumed", \
+            "prepare --cash must not silently resume the cash-less session"
+        again = _run("prepare", "--root", root, "--card-json", card,
+                     "--state-json", state, "--cash", anchor)
+        assert json.loads(again.stdout)["status"] == "resumed", \
+            "the same cash anchor rerun stays idempotent at its own fingerprint"
+
+
 def test_stdout_plan_is_projected_for_the_agent_but_full_on_disk():
     """#234: the agent re-sends the emitted plan as context on every later turn,
     so prepare/resume stdout must carry only the fields the flow contract reads.

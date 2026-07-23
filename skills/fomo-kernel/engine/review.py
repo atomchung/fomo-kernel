@@ -146,7 +146,7 @@ def _jsonl(path):
     return thesis.read_jsonl(path)
 
 
-def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None):
+def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -159,6 +159,17 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None):
         # degraded run would resume the priceless pending session and silently
         # discard the prices the agent just retrieved (#289).
         h.update(b"prices\0" + session.canonical(prices).encode())
+    if cash:
+        # Same #289 class, for the cash anchor (#357/#369): the weekly flow may
+        # legitimately learn the anchor only after a cash-less prepare resolved
+        # the cadence tier, so `prepare --cash` must open a fresh session
+        # instead of resuming the cash-less pending one and silently discarding
+        # the balance the user just confirmed.
+        try:
+            canonical_cash = session.canonical(json.loads(cash))
+        except (TypeError, ValueError):
+            canonical_cash = str(cash)
+        h.update(b"cash\0" + canonical_cash.encode())
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -2327,7 +2338,8 @@ def cmd_prepare(args):
         prepared = {"card": card, "state": state}
         engine_meta = "prepared artifacts"
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
-                               nonce=args.session_nonce or "", prices=supplied_prices)
+                               nonce=args.session_nonce or "", prices=supplied_prices,
+                               cash=getattr(args, "cash", None))
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
