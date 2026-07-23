@@ -3770,8 +3770,15 @@ def test_zh_copy_glossary_drops_untranslated_jargon():
     bundle = {"engine_state": {"date_start": "2026-06-01", "date_end": "2026-07-14"},
               "review_plan": {"state_snapshot": {"market_context": {
                   "benchmarks": {"SPY": {"window_ret": 0.011}}}}}}
-    period_line = card_renderer._period_line(bundle, copy_zh)
-    assert "SPY 同期" in period_line and "SPY 窗口" not in period_line and "SPY 區間" not in period_line
+    backdrop = card_renderer._market_backdrop(bundle, copy_zh)
+    assert "SPY 同期" in backdrop and "SPY 窗口" not in backdrop and "SPY 區間" not in backdrop
+    # The review span is card-level metadata and leads the keynote preamble
+    # (owner ruling 2026-07-22); it must not ride the market backdrop that
+    # qualifies the excess tile.
+    assert "2026-06-01" not in backdrop and "2026-07-14" not in backdrop, backdrop
+    span = card_renderer._period_span(bundle, copy_zh)
+    assert "2026-06-01" in span and "2026-07-14" in span, span
+    assert "SPY" not in span, span
 
     problem_bundle = {"review_plan": {"state_snapshot": {"problem_stats": {
         "top": ["concentration", "horizon_break"],
