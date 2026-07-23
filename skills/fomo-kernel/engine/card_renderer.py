@@ -775,6 +775,7 @@ def _currency_note(card, language):
 
 def _original_pnl_lines(card, language):
     rows = ((card.get("currency_meta") or {}).get("pnl_by_currency") or {})
+    pnl_copy = (load_copy(language).get("pnl_lines") or {}).get("original") or {}
     lines = []
     for currency, row in sorted(rows.items()):
         realized = _finite_number((row or {}).get("realized"))
@@ -783,21 +784,15 @@ def _original_pnl_lines(card, language):
             continue
         if realized is not None and unrealized is not None:
             total = realized + unrealized
-            if language == "en":
-                lines.append(f"{currency} P&L was {_money(total, currency)}: "
-                             f"{_money(realized, currency)} realized and "
-                             f"{_money(unrealized, currency)} unrealized.")
-            else:
-                lines.append(f"{currency} 帳面損益 {_money(total, currency)}，其中已實現 "
-                             f"{_money(realized, currency)}、未實現 {_money(unrealized, currency)}。")
+            lines.append(pnl_copy["both"].format(
+                currency=currency, total=_money(total, currency),
+                realized=_money(realized, currency), unrealized=_money(unrealized, currency)))
         elif realized is not None:
-            lines.append((f"{currency} realized P&L was {_money(realized, currency)}."
-                          if language == "en" else
-                          f"{currency} 已實現損益 {_money(realized, currency)}。"))
+            lines.append(pnl_copy["realized_only"].format(
+                currency=currency, realized=_money(realized, currency)))
         else:
-            lines.append((f"{currency} unrealized P&L was {_money(unrealized, currency)}."
-                          if language == "en" else
-                          f"{currency} 未實現損益 {_money(unrealized, currency)}。"))
+            lines.append(pnl_copy["unrealized_only"].format(
+                currency=currency, unrealized=_money(unrealized, currency)))
     return lines
 
 
@@ -825,23 +820,18 @@ def _overview_lines(card, language):
             # Falls through to the realized-only sentence, which already says
             # the unrealized side was not scored.
             unrealized_value = None
+        pnl_copy = (load_copy(language).get("pnl_lines") or {}).get("display") or {}
         if total_value is not None and realized_value is not None and unrealized_value is not None:
             total = _display_money(total_value, context)
             realized = _display_money(realized_value, context)
             unrealized = _display_money(unrealized_value, context)
-            if language == "en":
-                return [f"Total P&L was {total}: {realized} realized and {unrealized} unrealized."]
-            return [f"帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。"]
+            return [pnl_copy["total"].format(total=total, realized=realized, unrealized=unrealized)]
         if realized_value is not None:
             realized = _display_money(realized_value, context)
-            return ([f"Realized P&L was {realized}; current unrealized P&L was not scored."]
-                    if language == "en" else
-                    [f"已實現損益 {realized}；目前未實現損益未評分。"])
+            return [pnl_copy["realized_only"].format(realized=realized)]
         if unrealized_value is not None:
             unrealized = _display_money(unrealized_value, context)
-            return ([f"Unrealized P&L was {unrealized}; realized P&L was unavailable."]
-                    if language == "en" else
-                    [f"未實現損益 {unrealized}；已實現損益無法取得。"])
+            return [pnl_copy["unrealized_only"].format(unrealized=unrealized)]
         return []
     return _original_pnl_lines(card, language)
 
@@ -988,31 +978,24 @@ def _alpha_interval_line(ab, language, lead=True):
     low, high = (_finite_number(ci[0]), _finite_number(ci[1]))
     if low is None or high is None:
         return None
+    alpha_copy = load_copy(language).get("alpha_interval") or {}
     market = ab.get("scope") if isinstance(ab.get("by_market"), dict) else None
-    scope_en = f" for {market} holdings" if market in MARKET_BENCHMARKS else ""
-    scope_zh = f"（{market} 部位）" if market in MARKET_BENCHMARKS else ""
+    scope = (alpha_copy.get("scope_suffix", "").format(market=market)
+             if market in MARKET_BENCHMARKS else "")
     # #313: a lower bound below zero is statistically opaque to a retail reader
     # ("95% interval from -10% to +74%" does not by itself say whether that is
     # good or bad news). Append one plain-language sentence, both locales, only
     # when the condition holds -- the card stays a coherent story rather than
     # printing a caveat nobody needs when the interval is comfortably positive.
-    if language == "en":
-        plain = (" (The interval includes a negative value, meaning this period's "
-                  "stock-picking edge is not yet statistically confirmed as a "
-                  "durable skill.)" if low < 0 else "")
-        if lead:
-            return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
-                    f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
-                    "the interval controls how strong the conclusion may be." + plain)
-        return (f"A 95% interval ran from {low * 100:+.0f}% to {high * 100:+.0f}%; "
-                "the interval controls how strong the conclusion may be." + plain)
-    plain_zh = ("（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）"
-                if low < 0 else "")
+    plain = alpha_copy.get("negative_caveat", "") if low < 0 else ""
     # #272: Arabic digits for the interval level — one digit style per sentence.
-    head_zh = f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，" if lead else ""
-    return (head_zh +
-            f"95% 區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
-            "定論強度以這個區間為準。" + plain_zh)
+    alpha_text = f"{alpha * 100:+.0f}"
+    low_text = f"{low * 100:+.0f}"
+    high_text = f"{high * 100:+.0f}"
+    if lead:
+        return alpha_copy["lead"].format(scope=scope, alpha=alpha_text,
+                                          low=low_text, high=high_text) + plain
+    return alpha_copy["compact"].format(low=low_text, high=high_text) + plain
 
 
 def _hole_line(hole, language):
@@ -1053,8 +1036,7 @@ def _best_strength(card, language):
     dims = card.get("dims_raw") or []
     safe = [d for d in dims if not d.get("triggered")]
     if not safe:
-        return ("這期沒有足夠強的正向訊號；先把注意力留給最大的洞。" if language != "en"
-                else "No positive behavior was strong enough to claim; keep attention on the largest leak.")
+        return (load_copy(language).get("best_strength") or {}).get("no_signal", "")
     dim = min(safe, key=lambda d: float(d.get("severity") or 0)).get("dim")
     return f"The cleanest part of this review was {localized_dimension(dim, language)}."
 
@@ -1482,21 +1464,18 @@ def _reconciliation_lines(bundle, language):
     key = prior.get("metric_key")
     then_v = prior.get("metric_value")
     now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
-    if language == "en":
-        line = f"Last time you committed: \"{prior['rule']}\""
-        if then_v is not None and now_v is not None:
-            # A-12: never print internal metric keys on the card — values only.
-            line += f" — the tracked number was {_metric_display(key, then_v)} then, {_metric_display(key, now_v)} now"
-        line += "."
+    copy = load_copy(language)
+    recon_copy = copy.get("reconciliation") or {}
+    if then_v is not None and now_v is not None:
+        # A-12: never print internal metric keys on the card — values only.
+        line = recon_copy["statement_with_metric"].format(
+            rule=prior["rule"], then=_metric_display(key, then_v), now=_metric_display(key, now_v))
     else:
-        line = f"上次你承諾：「{prior['rule']}」"
-        if then_v is not None and now_v is not None:
-            line += f"——追蹤的數字當時 {_metric_display(key, then_v)}，這次 {_metric_display(key, now_v)}"
-        line += "。"
+        line = recon_copy["statement"].format(rule=prior["rule"])
     breached = any(entry.get("key") == "prior_commitment_breach"
                    for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
     if breached:
-        fallback = (load_copy(language).get("honesty") or {}).get("prior_commitment_breach")
+        fallback = (copy.get("honesty") or {}).get("prior_commitment_breach")
         if fallback:
             line += f" {fallback}"
     return [line]
@@ -1552,7 +1531,7 @@ def _snapshot_overview_lines(card, copy):
     structural facts this review actually establishes.
     """
     summary = _snapshot_summary(card)
-    en = copy.get("language") == "en"
+    overview_copy = (copy.get("snapshot") or {}).get("overview") or {}
     positions_n = _finite_number(summary.get("positions_n"))
     positions = (str(int(positions_n)) if positions_n is not None
                  and positions_n.is_integer() else None)
@@ -1560,42 +1539,26 @@ def _snapshot_overview_lines(card, copy):
     basis = summary.get("valuation_basis")
     weights_available = summary.get("weights_available") is True
 
-    if en:
-        subject = f"{positions} supplied positions" if positions is not None else "the supplied positions"
-        opening = f"This is an opening portfolio check of {subject}"
-        if as_of:
-            opening += f" as of {as_of}"
-        opening += "."
-        if weights_available and basis == "market_value":
-            valuation = "Structural weights use the supplied market-value basis."
-        elif weights_available and basis == "cost":
-            valuation = "Structural weights use the supplied cost basis."
-        else:
-            valuation = "No reliable valuation basis was available, so weight-based structure remains unscored."
+    subject = (overview_copy["subject_with_count"].format(positions=positions)
+               if positions is not None else overview_copy["subject_generic"])
+    opening = (overview_copy["opening_as_of"].format(subject=subject, as_of=as_of) if as_of
+               else overview_copy["opening"].format(subject=subject))
+    if weights_available and basis == "market_value":
+        valuation = overview_copy["valuation_market_value"]
+    elif weights_available and basis == "cost":
+        valuation = overview_copy["valuation_cost"]
     else:
-        subject = f"使用者提供的 {positions} 個持倉" if positions is not None else "使用者提供的持倉"
-        opening = f"這是針對{subject}的開場組合檢查"
-        if as_of:
-            opening += f"，快照截至 {as_of}"
-        opening += "。"
-        if weights_available and basis == "market_value":
-            valuation = "結構權重採使用者提供的市值口徑。"
-        elif weights_available and basis == "cost":
-            valuation = "結構權重採使用者提供的成本口徑。"
-        else:
-            valuation = "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。"
+        valuation = overview_copy["valuation_unavailable"]
 
     integrity = []
     missing_avg_cost = summary.get("missing_avg_cost") or []
     fx_gaps = summary.get("fx_gaps") or []
     if isinstance(missing_avg_cost, list) and missing_avg_cost:
         tickers = ", ".join(str(x) for x in missing_avg_cost)
-        integrity.append((f"Average cost was missing for: {tickers}." if en else
-                          f"以下持倉缺少平均成本：{tickers}。"))
+        integrity.append(overview_copy["missing_avg_cost"].format(tickers=tickers))
     if isinstance(fx_gaps, list) and fx_gaps:
         currencies = ", ".join(str(x) for x in fx_gaps)
-        integrity.append((f"Reliable FX coverage was missing for: {currencies}." if en else
-                          f"以下幣別缺少可靠匯率：{currencies}。"))
+        integrity.append(overview_copy["missing_fx"].format(currencies=currencies))
     return [opening, valuation] + integrity
 
 
@@ -1603,17 +1566,12 @@ def _snapshot_strength_line(card, language):
     summary = _snapshot_summary(card)
     complete = summary.get("is_complete") is True
     weighted = summary.get("weights_available") is True
-    if language == "en":
-        if complete and weighted:
-            return "The supplied snapshot establishes a complete structural baseline for the opening portfolio check."
-        if weighted:
-            return "The available fields establish a structural baseline; missing inputs remain explicit rather than inferred."
-        return "The supplied positions establish a structural baseline; weight-based strengths remain unscored."
+    strength_copy = (load_copy(language).get("snapshot") or {}).get("strength") or {}
     if complete and weighted:
-        return "這份持倉快照已建立完整的開場組合結構基線。"
+        return strength_copy.get("complete", "")
     if weighted:
-        return "現有欄位已建立組合結構基線；缺少的輸入維持明示，不用推測補齊。"
-    return "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。"
+        return strength_copy.get("partial", "")
+    return strength_copy.get("baseline", "")
 
 
 def _snapshot_hole_lines(card, language):
@@ -1627,6 +1585,7 @@ def _snapshot_hole_lines(card, language):
     lines (never empty)."""
     summary = _snapshot_summary(card)
     holes = card.get("top_holes") or []
+    hole_copy = (load_copy(language).get("snapshot") or {}).get("holes") or {}
     if summary.get("weights_available") is True:
         lines = []
         for hole in holes:
@@ -1641,20 +1600,14 @@ def _snapshot_hole_lines(card, language):
             line = _hole_line(hole, language)
             if not line:
                 label = localized_dimension(dim_id, language)
-                line = ((f"The leading structural risk in the available snapshot was {label}."
-                         if language == "en" else f"現有快照的主要結構風險是「{label}」。"))
+                line = hole_copy.get("leading_risk", "").format(label=label)
             lines.append(line)
         if lines:
             return lines
         # Weights were available but neither structural dimension triggered —
         # a clean structural read is itself the finding, not a data gap.
-        return [("This position snapshot did not flag concentration or "
-                 "diversification as a structural risk."
-                 if language == "en" else
-                 "這次持倉快照沒有觸發集中度或分散度的結構風險。")]
-    if language == "en":
-        return ["This opening check establishes a structural baseline without treating unavailable weights as low risk."]
-    return ["這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"]
+        return [hole_copy.get("clean_structure", "")]
+    return [hole_copy.get("no_weights", "")]
 
 
 def _signed_pct(value, digits=1):

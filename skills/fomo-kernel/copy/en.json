@@ -246,5 +246,53 @@
     "worse": "worsening",
     "flat": "flat",
     "better": "improving"
+  },
+  "pnl_lines": {
+    "display": {
+      "total": "Total P&L was {total}: {realized} realized and {unrealized} unrealized.",
+      "realized_only": "Realized P&L was {realized}; current unrealized P&L was not scored.",
+      "unrealized_only": "Unrealized P&L was {unrealized}; realized P&L was unavailable."
+    },
+    "original": {
+      "both": "{currency} P&L was {total}: {realized} realized and {unrealized} unrealized.",
+      "realized_only": "{currency} realized P&L was {realized}.",
+      "unrealized_only": "{currency} unrealized P&L was {unrealized}."
+    }
+  },
+  "alpha_interval": {
+    "scope_suffix": " for {market} holdings",
+    "negative_caveat": " (The interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill.)",
+    "lead": "Risk-adjusted alpha{scope} was {alpha}% annualized, with a 95% interval from {low}% to {high}%; the interval controls how strong the conclusion may be.",
+    "compact": "A 95% interval ran from {low}% to {high}%; the interval controls how strong the conclusion may be."
+  },
+  "best_strength": {
+    "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak."
+  },
+  "reconciliation": {
+    "statement": "Last time you committed: \"{rule}\".",
+    "statement_with_metric": "Last time you committed: \"{rule}\" — the tracked number was {then} then, {now} now."
+  },
+  "snapshot": {
+    "overview": {
+      "subject_with_count": "{positions} supplied positions",
+      "subject_generic": "the supplied positions",
+      "opening": "This is an opening portfolio check of {subject}.",
+      "opening_as_of": "This is an opening portfolio check of {subject} as of {as_of}.",
+      "valuation_market_value": "Structural weights use the supplied market-value basis.",
+      "valuation_cost": "Structural weights use the supplied cost basis.",
+      "valuation_unavailable": "No reliable valuation basis was available, so weight-based structure remains unscored.",
+      "missing_avg_cost": "Average cost was missing for: {tickers}.",
+      "missing_fx": "Reliable FX coverage was missing for: {currencies}."
+    },
+    "strength": {
+      "complete": "The supplied snapshot establishes a complete structural baseline for the opening portfolio check.",
+      "partial": "The available fields establish a structural baseline; missing inputs remain explicit rather than inferred.",
+      "baseline": "The supplied positions establish a structural baseline; weight-based strengths remain unscored."
+    },
+    "holes": {
+      "leading_risk": "The leading structural risk in the available snapshot was {label}.",
+      "clean_structure": "This position snapshot did not flag concentration or diversification as a structural risk.",
+      "no_weights": "This opening check establishes a structural baseline without treating unavailable weights as low risk."
+    }
   }
 }
