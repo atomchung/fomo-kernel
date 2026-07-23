@@ -1791,115 +1791,80 @@ def _exit_followup_entries(bundle, copy):
     questions = {(row.get("revisit_id"), str(row.get("checkpoint"))): row
                  for row in plan.get("question_queue") or [] if row.get("kind") == "due_revisit"}
     due_labels = copy.get("due_choices") or {}
-    en = copy.get("language") == "en"
+    text = copy.get("exit_followup") or {}
+    as_of = text["as_of"].format(as_of=price_as_of) if price_as_of else ""
+    frozen_note = text["frozen_note"].format(as_of=price_as_of) if price_as_of else ""
     pairs = []
     lines = []
     for event in bundle.get("revisit_resolutions") or []:
         question = questions.get((event.get("revisit_id"), str(event.get("checkpoint"))))
         if not question:
             continue
-        ticker = question.get("ticker") or ("position" if en else "這筆部位")
-        label = due_labels.get(event.get("status"), event.get("status"))
-        line = (f"{ticker}, {event.get('checkpoint')}-day check: {label}." if en else
-                f"{ticker}，{event.get('checkpoint')} 天複核：{label}。")
+        line = text["check"].format(
+            ticker=question.get("ticker") or text["position_fallback"],
+            checkpoint=event.get("checkpoint"),
+            label=due_labels.get(event.get("status"), event.get("status")))
         if event.get("note"):
-            line += (f' Note: "{event["note"]}".' if en else f' 註記：「{event["note"]}」。')
+            line += text["note"].format(note=event["note"])
         compare = question.get("compare") or {}
         needs = compare.get("needs_prices") or []
         if needs:
-            missing = ", ".join(needs)
-            when = f" as of {price_as_of}" if en and price_as_of else (f"（截至 {price_as_of}）" if price_as_of else "")
-            line += (f" Current prices are missing for {missing}{when}, so no outcome comparison was made." if en else
-                     f" {missing} 缺現價{when}，本期不判結果。")
+            line += text["needs_prices"].format(missing=", ".join(needs), when=as_of)
         elif compare.get("swap_net_pp") is not None:
             swaps = ", ".join(sorted({row.get("ticker") for row in question.get("swaps") or []
-                                      if row.get("ticker")})) or ("the replacement" if en else "換入標的")
-            if en:
-                lead = f" Using prices frozen on {price_as_of}," if price_as_of else ""
-                line += (f"{lead} the original moved {_signed_pct(compare.get('orig_ret'))}; {swaps} moved "
-                         f"{_signed_pct(compare.get('swap_ret'))}; swap net {_signed_pp(compare.get('swap_net_pp'))}.")
-            else:
-                lead = f" 以 {price_as_of} 凍結現價計，" if price_as_of else " "
-                line += (f"{lead}原標的後續 {_signed_pct(compare.get('orig_ret'))}；{swaps}同期 "
-                         f"{_signed_pct(compare.get('swap_ret'))}；swap 淨差 {_signed_pp(compare.get('swap_net_pp'))}。")
+                                      if row.get("ticker")})) or text["replacement_fallback"]
+            # The lead is locale-owned in both directions: with no frozen date
+            # en contributes nothing and zh contributes a space, because their
+            # templates join to the following clause differently.
+            lead = (text["frozen_lead"].format(as_of=price_as_of) if price_as_of
+                    else text["frozen_lead_absent"])
+            line += text["swap"].format(
+                lead=lead, orig=_signed_pct(compare.get("orig_ret")), swaps=swaps,
+                swap=_signed_pct(compare.get("swap_ret")),
+                net=_signed_pp(compare.get("swap_net_pp")))
         elif compare.get("idle_cash") and compare.get("orig_ret") is not None:
-            when = f" using prices frozen on {price_as_of}" if en and price_as_of else (f"（以 {price_as_of} 凍結現價計）" if price_as_of else "")
-            line += (f" Proceeds stayed idle while the original moved {_signed_pct(compare.get('orig_ret'))}{when}." if en else
-                     f" 賣後資金閒置，原標的同期 {_signed_pct(compare.get('orig_ret'))}{when}。")
+            line += text["idle"].format(orig=_signed_pct(compare.get("orig_ret")),
+                                        when=frozen_note)
         pairs.append((question.get("ticker"), line))
     backlog = (((plan.get("state_snapshot") or {}).get("exit_backlog")) or {})
     summary = backlog.get("summary") or {}
     if summary.get("count"):
         top = ", ".join(f"{ticker} ×{count}" for ticker, count in summary.get("top_tickers") or [])
         span = summary.get("span") or {}
-        if en:
-            line = (f"Historical exit backlog: {summary.get('count')} unresolved exits "
-                    f"({summary.get('full')} full, {summary.get('reduce')} reductions)")
-            if span.get("first") and span.get("last"):
-                line += f" from {span['first']} to {span['last']}"
-            if top:
-                line += f"; most frequent: {top}"
-            line += "."
-        else:
-            line = (f"歷史出場 backlog 尚有 {summary.get('count')} 筆未複核"
-                    f"（清倉 {summary.get('full')}、減倉 {summary.get('reduce')}）")
-            if span.get("first") and span.get("last"):
-                line += f"，期間 {span['first']} 到 {span['last']}"
-            if top:
-                line += f"；最常出現：{top}"
-            line += "。"
+        line = text["backlog"].format(count=summary.get("count"), full=summary.get("full"),
+                                      reduce=summary.get("reduce"))
+        if span.get("first") and span.get("last"):
+            line += text["backlog_span"].format(first=span["first"], last=span["last"])
+        if top:
+            line += text["backlog_top"].format(top=top)
+        line += text["sentence_end"]
         if summary.get("priced"):
-            if en:
-                line += (f" Across {summary.get('priced')} price-covered exits, the average post-exit move was "
-                         f"{_signed_pp(summary.get('avg_hindsight_pp'))}; "
-                         f"{summary.get('sold_before_rise')} later rose.")
-            else:
-                line += (f" 有現價可回看的 {summary.get('priced')} 筆，出場後平均走勢為 "
-                         f"{_signed_pp(summary.get('avg_hindsight_pp'))}；其中 "
-                         f"{summary.get('sold_before_rise')} 筆後續上漲。")
+            line += text["backlog_priced"].format(
+                priced=summary.get("priced"),
+                avg=_signed_pp(summary.get("avg_hindsight_pp")),
+                rose=summary.get("sold_before_rise"))
         lines.append(line)
         for item in (backlog.get("items") or [])[:2]:
-            ticker = item.get("ticker") or ("position" if en else "這筆部位")
-            kind = item.get("kind")
-            if en:
-                action = "full exit" if kind == "full" else "reduction"
-                detail = f"Backlog focus: {ticker}, {action} on {item.get('exit_date')}."
-            else:
-                action = "清倉" if kind == "full" else "減倉"
-                detail = f"Backlog 優先回看：{ticker}，{item.get('exit_date')} {action}。"
+            detail = text["focus"].format(
+                ticker=item.get("ticker") or text["position_fallback"],
+                action=text["action_full"] if item.get("kind") == "full" else text["action_reduce"],
+                exit_date=item.get("exit_date"))
             compare = item.get("compare") or {}
             needs = compare.get("needs_prices") or []
             if needs:
-                missing = ", ".join(needs)
-                when = f" as of {price_as_of}" if en and price_as_of else (f"（截至 {price_as_of}）" if price_as_of else "")
-                detail += (f" No frozen-price comparison for {missing}{when}." if en else
-                           f" {missing} 缺凍結現價{when}，不判結果。")
+                detail += text["focus_needs_prices"].format(
+                    missing=", ".join(needs), when=as_of)
             elif compare.get("swap_net_pp") is not None:
-                if en:
-                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
-                    detail += (f" The original moved {_signed_pct(compare.get('orig_ret'))}{when}; "
-                               f"the replacement moved {_signed_pct(compare.get('swap_ret'))}; "
-                               f"swap net {_signed_pp(compare.get('swap_net_pp'))}.")
-                else:
-                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
-                    detail += (f" 原標的後續 {_signed_pct(compare.get('orig_ret'))}{when}；"
-                               f"換入標的同期 {_signed_pct(compare.get('swap_ret'))}；"
-                               f"swap 淨差 {_signed_pp(compare.get('swap_net_pp'))}。")
+                detail += text["focus_swap"].format(
+                    orig=_signed_pct(compare.get("orig_ret")), when=frozen_note,
+                    swap=_signed_pct(compare.get("swap_ret")),
+                    net=_signed_pp(compare.get("swap_net_pp")))
             elif compare.get("idle_cash") and compare.get("orig_ret") is not None:
-                if en:
-                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
-                    detail += (f" Proceeds stayed idle while the original moved "
-                               f"{_signed_pct(compare.get('orig_ret'))}{when}.")
-                else:
-                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
-                    detail += f" 賣後資金閒置，原標的同期 {_signed_pct(compare.get('orig_ret'))}{when}。"
+                detail += text["focus_idle"].format(
+                    orig=_signed_pct(compare.get("orig_ret")), when=frozen_note)
             elif compare.get("orig_ret") is not None:
-                if en:
-                    when = f" using prices frozen on {price_as_of}" if price_as_of else ""
-                    detail += f" The original moved {_signed_pct(compare.get('orig_ret'))}{when}."
-                else:
-                    when = f"（以 {price_as_of} 凍結現價計）" if price_as_of else ""
-                    detail += f" 原標的後續 {_signed_pct(compare.get('orig_ret'))}{when}。"
+                detail += text["focus_orig"].format(
+                    orig=_signed_pct(compare.get("orig_ret")), when=frozen_note)
             lines.append(detail)
     return pairs, lines
 
@@ -1909,40 +1874,31 @@ def _problem_lines(bundle, copy):
              .get("problem_stats")) or {})
     if not stats:
         return []
-    en = copy.get("language") == "en"
+    text = copy.get("problems") or {}
     names = copy.get("problem_keys") or {}
     trends = copy.get("trends") or {}
     lines = []
     for key in (stats.get("top") or [])[:3]:
         row = (stats.get("per_key") or {}).get(key) or {}
-        name = names.get(key, key.replace("_", " "))
-        trend = trends.get(row.get("trend"), row.get("trend"))
-        if en:
-            lines.append(f"{name}: {row.get('recent_count', 0)} events in the recent window versus "
-                         f"{row.get('prev_count', 0)} before ({trend}).")
-        else:
-            lines.append(f"{name}：近期 {row.get('recent_count', 0)} 次，前期 {row.get('prev_count', 0)} 次（{trend}）。")
+        lines.append(text["trend_line"].format(
+            name=names.get(key, key.replace("_", " ")),
+            recent=row.get("recent_count", 0), prev=row.get("prev_count", 0),
+            trend=trends.get(row.get("trend"), row.get("trend"))))
     decisions = copy.get("rule_breach_decisions") or {}
     decided_rules = set()
     for event in bundle.get("rule_breach_decisions") or []:
         decided_rules.add(event.get("rule_id"))
-        rule = event.get("rule_text") or event.get("rule_id")
-        label = decisions.get(event.get("decision"), event.get("decision"))
-        if en:
-            line = f'Rule "{rule}": {label}.'
-            if event.get("note"):
-                line += f' Note: "{event["note"]}".'
-        else:
-            line = f"規矩「{rule}」：{label}。"
-            if event.get("note"):
-                line += f' 註記：「{event["note"]}」。'
+        line = text["breach_decision"].format(
+            rule=event.get("rule_text") or event.get("rule_id"),
+            label=decisions.get(event.get("decision"), event.get("decision")))
+        if event.get("note"):
+            line += text["breach_note"].format(note=event["note"])
         lines.append(line)
     for rule in stats.get("rules_check") or []:
         if (rule.get("rule_id") not in decided_rules and rule.get("verdict") == "held"
                 and int(rule.get("held_streak") or 0) == 1):
-            text = rule.get("text") or rule.get("rule_id")
-            lines.append((f'Rule "{text}" was kept in the latest observable period.' if en else
-                          f"規矩「{text}」在最近一個可觀測週期守住了。"))
+            lines.append(text["rule_held"].format(
+                rule=rule.get("text") or rule.get("rule_id")))
     return lines
 
 

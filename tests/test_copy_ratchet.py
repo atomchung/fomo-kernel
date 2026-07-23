@@ -107,7 +107,29 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # ternary into the new copy/*.json `account_gate` group, because the engine now
 # hands the renderer a structured {status, data} blocker instead of a hardcoded
 # zh sentence — the gate's six reasons are copy keys, not branches. 74 -> 73.
-BASELINE = 73
+#
+# #368 Phase 2 batch 3 (2026-07-23): the Risks cluster's two data-driven
+# helpers -- `_exit_followup_entries` (19) into `exit_followup.*` (23 leaf
+# keys: the per-revisit checkpoint line and its note, the three price-basis
+# suffixes, the swap / idle comparisons, and the whole exit-backlog cluster
+# including its focus rows) and `_problem_lines` (4) into `problems.*` (4
+# leaf keys: the trend line, a breach decision and its note, and the
+# rule-kept line). 74 -> 51 (-23).
+#
+# `_hole_line`'s single branch is deliberately NOT in this batch. It is not a
+# bilingual pair: the zh side reads `hole["number_line"]` (narrated by v1's
+# `trade_recap.number_line()`) while the en side builds the sentence in the
+# renderer from raw dimension fields. Collapsing it into copy means deciding
+# what happens to that cross-file mirror, which CLAUDE.md's "Hole number-line
+# copy" row documents as a standing obligation -- a design call, not a
+# mechanical move.
+#
+# 50, not 51 or 73: #375 and batch 3 were open at the same time and each
+# lowered BASELINE from 74 on its own — by 1 and by 23, over disjoint
+# branches. Merging took the measured count on the merged tree rather than
+# either side's number, which is the only resolution that banks both
+# reductions instead of leaving the ratchet a notch loose.
+BASELINE = 50
 
 
 def test_language_branch_count_only_ratchets_down():

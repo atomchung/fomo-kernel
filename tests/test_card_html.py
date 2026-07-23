@@ -738,6 +738,171 @@ def _markdown_block(markdown, language, block):
     return _markdown_section(markdown, blocks[block])
 
 
+def _due_revisit(revisit_id, checkpoint, ticker, compare, swaps=()):
+    return {"kind": "due_revisit", "revisit_id": revisit_id, "checkpoint": checkpoint,
+            "ticker": ticker, "compare": compare, "swaps": list(swaps)}
+
+
+def _exit_followup_bundle():
+    """Every branch of `_exit_followup_entries` on one bundle, with a frozen price date."""
+    return {
+        "engine_state": {"price_snapshot": {"as_of": "2026-07-20"}},
+        "review_plan": {
+            "question_queue": [
+                _due_revisit("r1", 30, "AAA", {}),
+                _due_revisit("r2", 60, "BBB", {"needs_prices": ["BBB", "CCC"]}),
+                _due_revisit("r3", 90, "DDD",
+                             {"swap_net_pp": 4.0, "orig_ret": -0.1, "swap_ret": 0.2},
+                             [{"ticker": "EEE"}]),
+                _due_revisit("r4", 30, "FFF", {"idle_cash": True, "orig_ret": 0.33}),
+            ],
+            "state_snapshot": {"exit_backlog": {
+                "summary": {"count": 4, "full": 3, "reduce": 1,
+                            "span": {"first": "2026-01-02", "last": "2026-05-06"},
+                            "top_tickers": [["GGG", 2]], "priced": 2,
+                            "avg_hindsight_pp": 5.5, "sold_before_rise": 1},
+                "items": [
+                    {"ticker": "HHH", "kind": "full", "exit_date": "2026-02-03",
+                     "compare": {"swap_net_pp": 1.0, "orig_ret": 0.1, "swap_ret": 0.2}},
+                    # Only two backlog rows render (`items[:2]`), so the
+                    # idle-proceeds row is exercised by the fallback test below.
+                    {"ticker": "JJJ", "kind": "full", "exit_date": "2026-04-05",
+                     "compare": {"needs_prices": ["JJJ"]}},
+                ]}}},
+        "revisit_resolutions": [
+            {"revisit_id": "r1", "checkpoint": 30, "status": "still_valid", "note": "NOTE"},
+            {"revisit_id": "r2", "checkpoint": 60, "status": "modified"},
+            {"revisit_id": "r3", "checkpoint": 90, "status": "falsified"},
+            {"revisit_id": "r4", "checkpoint": 30, "status": "still_valid"},
+        ],
+    }
+
+
+def test_exit_followup_lines_render_verbatim_in_both_locales():
+    """#368 batch 3 pin: `_exit_followup_entries`' sentences moved into
+    `copy.exit_followup`, and 14 of its 23 keys had no gate at all.
+
+    They render only from review history — a revisit checkpoint that matured,
+    or an exit backlog carried forward — so most of them are dark to the
+    persona sweep's byte-parity comparison, which is otherwise the migration's
+    main gate. The expected strings below are **hardcoded**, deliberately: a
+    version of this test that read them back from `load_copy()` would pass
+    with the catalog broken, since both sides would break together.
+    """
+    bundle = _exit_followup_bundle()
+    expected = {
+        "en": {
+            "pairs": [
+                'AAA, 30-day check: Still valid. Note: "NOTE".',
+                "BBB, 60-day check: Partly right. Current prices are missing for BBB, CCC "
+                "as of 2026-07-20, so no outcome comparison was made.",
+                "DDD, 90-day check: Wrong call. Using prices frozen on 2026-07-20, the "
+                "original moved -10.0%; EEE moved +20.0%; swap net +400.0 pp.",
+                "FFF, 30-day check: Still valid. Proceeds stayed idle while the original "
+                "moved +33.0% using prices frozen on 2026-07-20.",
+            ],
+            "lines": [
+                "Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from "
+                "2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered "
+                "exits, the average post-exit move was +550.0 pp; 1 later rose.",
+                "Backlog focus: HHH, full exit on 2026-02-03. The original moved +10.0% "
+                "using prices frozen on 2026-07-20; the replacement moved +20.0%; swap "
+                "net +100.0 pp.",
+                "Backlog focus: JJJ, full exit on 2026-04-05. No frozen-price comparison "
+                "for JJJ as of 2026-07-20.",
+            ],
+        },
+        "zh-TW": {
+            "pairs": [
+                "AAA，30 天複核：還成立。 註記：「NOTE」。",
+                "BBB，60 天複核：部分對，要調。 BBB, CCC 缺現價（截至 2026-07-20），本期不判結果。",
+                "DDD，90 天複核：看錯了。 以 2026-07-20 凍結現價計，原標的後續 -10.0%；EEE同期 "
+                "+20.0%；swap 淨差 +400.0 pp。",
+                "FFF，30 天複核：還成立。 賣後資金閒置，原標的同期 +33.0%（以 2026-07-20 凍結現價計）。",
+            ],
+            "lines": [
+                "歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；"
+                "最常出現：GGG ×2。 有現價可回看的 2 筆，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。",
+                "Backlog 優先回看：HHH，2026-02-03 清倉。 原標的後續 +10.0%（以 2026-07-20 凍結現價計）；"
+                "換入標的同期 +20.0%；swap 淨差 +100.0 pp。",
+                "Backlog 優先回看：JJJ，2026-04-05 清倉。 JJJ 缺凍結現價（截至 2026-07-20），不判結果。",
+            ],
+        },
+    }
+    for language, want in expected.items():
+        pairs, lines = card_renderer._exit_followup_entries(
+            bundle, card_renderer.load_copy(language))
+        assert [line for _ticker, line in pairs] == want["pairs"], language
+        assert lines == want["lines"], language
+
+
+def test_exit_followup_falls_back_without_a_price_date_or_a_ticker():
+    """The fallback strings are locale-owned too, including an asymmetry.
+
+    With no frozen price date the English swap lead contributes nothing and the
+    Chinese one contributes a single space, because the two templates join to
+    the clause that follows differently. That space is `frozen_lead_absent` in
+    the catalog, not an accident of formatting."""
+    bundle = {
+        "review_plan": {
+            "question_queue": [_due_revisit(
+                "r1", 30, None, {"swap_net_pp": 2.0, "orig_ret": 0.1, "swap_ret": 0.3})],
+            "state_snapshot": {"exit_backlog": {
+                "summary": {"count": 1, "full": 1, "reduce": 0, "span": {}, "top_tickers": []},
+                "items": [{"ticker": None, "kind": "full", "exit_date": "2026-02-03",
+                           "compare": {"orig_ret": 0.12}},
+                          {"ticker": "III", "kind": "reduce", "exit_date": "2026-03-04",
+                           "compare": {"idle_cash": True, "orig_ret": -0.05}}]}}},
+        "revisit_resolutions": [{"revisit_id": "r1", "checkpoint": 30, "status": "still_valid"}],
+    }
+    expected = {
+        "en": (["position, 30-day check: Still valid. the original moved +10.0%; "
+                "the replacement moved +30.0%; swap net +200.0 pp."],
+               ["Historical exit backlog: 1 unresolved exits (1 full, 0 reductions).",
+                "Backlog focus: position, full exit on 2026-02-03. The original moved +12.0%.",
+                "Backlog focus: III, reduction on 2026-03-04. Proceeds stayed idle while "
+                "the original moved -5.0%."]),
+        "zh-TW": (["這筆部位，30 天複核：還成立。 原標的後續 +10.0%；換入標的同期 +30.0%；"
+                   "swap 淨差 +200.0 pp。"],
+                  ["歷史出場 backlog 尚有 1 筆未複核（清倉 1、減倉 0）。",
+                   "Backlog 優先回看：這筆部位，2026-02-03 清倉。 原標的後續 +12.0%。",
+                   "Backlog 優先回看：III，2026-03-04 減倉。 賣後資金閒置，原標的同期 -5.0%。"]),
+    }
+    for language, (want_pairs, want_lines) in expected.items():
+        pairs, lines = card_renderer._exit_followup_entries(
+            bundle, card_renderer.load_copy(language))
+        assert [line for _ticker, line in pairs] == want_pairs, language
+        assert lines == want_lines, language
+
+
+def test_problem_ledger_lines_render_verbatim_in_both_locales():
+    """#368 batch 3 pin: `_problem_lines` moved into `copy.problems`, and all
+    four of its keys were ungated — the whole function reads `problem_stats`,
+    which only a review with history carries, so no first-review card renders
+    a single one of these sentences. Expected strings are hardcoded for the
+    same reason as the test above."""
+    bundle = {
+        "review_plan": {"state_snapshot": {"problem_stats": {
+            "top": ["oversize"],
+            "per_key": {"oversize": {"recent_count": 3, "prev_count": 1, "trend": "worse"}},
+            "rules_check": [{"rule_id": "r-kept", "text": "RULE_KEPT",
+                             "verdict": "held", "held_streak": 1}]}}},
+        "rule_breach_decisions": [{"rule_id": "r-broken", "rule_text": "RULE_BROKEN",
+                                   "decision": "exception", "note": "NOTE_TEXT"}],
+    }
+    expected = {
+        "en": ["Oversized position: 3 events in the recent window versus 1 before (worsening).",
+               'Rule "RULE_BROKEN": recorded as a justified exception. Note: "NOTE_TEXT".',
+               'Rule "RULE_KEPT" was kept in the latest observable period.'],
+        "zh-TW": ["單一部位過重：近期 3 次，前期 1 次（惡化）。",
+                  "規矩「RULE_BROKEN」：記為正當例外。 註記：「NOTE_TEXT」。",
+                  "規矩「RULE_KEPT」在最近一個可觀測週期守住了。"],
+    }
+    for language, want in expected.items():
+        assert card_renderer._problem_lines(
+            bundle, card_renderer.load_copy(language)) == want, language
+
+
 def test_stress_line_rides_block1_exposure_for_any_hole_dimension():
     """Output contract §2 (supersedes the #263/#265 split placement): the
     stress line rides Block 1's exposure indicator area unconditionally when
@@ -2077,6 +2242,9 @@ def main():
         test_sparkline_caption_names_peak_and_trough_without_the_window,
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
+        test_exit_followup_lines_render_verbatim_in_both_locales,
+        test_exit_followup_falls_back_without_a_price_date_or_a_ticker,
+        test_problem_ledger_lines_render_verbatim_in_both_locales,
         test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
         test_widget_fragment_css_stays_mirrored_with_card_template,
         test_layout_uses_the_token_scales_not_ad_hoc_pixels,
