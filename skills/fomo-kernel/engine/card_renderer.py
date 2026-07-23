@@ -956,7 +956,14 @@ def _private_split_lines(market, row, language):
     return [line]
 
 
-def _alpha_interval_line(ab, language):
+def _alpha_interval_line(ab, language, lead=True):
+    """The alpha-interval sentence; ``lead=False`` drops the headline "alpha
+    was +X% annualized" clause (#344: that figure already is the "年化 α" KPI
+    tile's value). The 95%-interval and its plain-language caveat — the part
+    a tile cannot hold — are unaffected either way. Callers that render the
+    headline number elsewhere (the HTML story block, when the alpha tile is
+    on the same card) pass ``lead=False``; every other caller keeps the
+    default so the sentence still stands alone."""
     stat = ab.get("alpha_stat") or {}
     alpha = _finite_number(stat.get("alpha_ann"))
     ci = stat.get("ci95")
@@ -977,13 +984,17 @@ def _alpha_interval_line(ab, language):
         plain = (" (The interval includes a negative value, meaning this period's "
                   "stock-picking edge is not yet statistically confirmed as a "
                   "durable skill.)" if low < 0 else "")
-        return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
-                f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
+        if lead:
+            return (f"Risk-adjusted alpha{scope_en} was {alpha * 100:+.0f}% annualized, "
+                    f"with a 95% interval from {low * 100:+.0f}% to {high * 100:+.0f}%; "
+                    "the interval controls how strong the conclusion may be." + plain)
+        return (f"A 95% interval ran from {low * 100:+.0f}% to {high * 100:+.0f}%; "
                 "the interval controls how strong the conclusion may be." + plain)
     plain_zh = ("（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）"
                 if low < 0 else "")
     # #272: Arabic digits for the interval level — one digit style per sentence.
-    return (f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，"
+    head_zh = f"風險調整後 alpha{scope_zh}年化 {alpha * 100:+.0f}%，" if lead else ""
+    return (head_zh +
             f"95% 區間為 {low * 100:+.0f}% 到 {high * 100:+.0f}%；"
             "定論強度以這個區間為準。" + plain_zh)
 
@@ -1094,27 +1105,32 @@ def _honesty_lines(bundle, copy):
 
 
 def _etf_lines(card, language):
+    """Each triggered ETF classification as one sentence: which tickers, and
+    the rule that explains why they were split into that bucket. Wording is
+    copy-templated like every other rendered string (#315: these two
+    sentences were hardcoded per-language literals here, bypassing
+    ``load_copy()`` — the only spot in the renderer that did). Returns a
+    list of 0-2 sentences; empty when the card holds no classified ETFs.
+
+    The caller routes this into the collected Block-2 caveat rather than the
+    fact-bullet list (#315): "why X was excluded/exempted" is a
+    classification-rule explanation, not a fact about the user's own
+    behavior, so it belongs with the card's other collected disclosures
+    instead of standing alone in the body."""
     ps = card.get("portfolio_structure") or {}
     allocation = ps.get("allocation_etfs") or []
     concentrated = ps.get("concentrated_etfs") or []
     if not allocation and not concentrated:
         return []
-    if language == "en":
-        lines = []
-        if allocation:
-            lines.append("Diversified allocation ETFs were separated from single-name concentration: " +
-                         ", ".join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in allocation) + ".")
-        if concentrated:
-            lines.append("Sector, thematic, or leveraged ETFs remained concentration risk: " +
-                         ", ".join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in concentrated) + ".")
-        return lines
+    etf_copy = load_copy(language).get("etf_classification") or {}
+    joiner = ", " if language == "en" else "、"
     lines = []
-    if allocation:
-        lines.append("配置型 ETF 已從單一股票集中度排除：" +
-                     "、".join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in allocation) + "。")
-    if concentrated:
-        lines.append("產業／主題／槓桿 ETF 仍算集中風險：" +
-                     "、".join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in concentrated) + "。")
+    if allocation and etf_copy.get("allocation"):
+        listed = joiner.join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in allocation)
+        lines.append(etf_copy["allocation"].format(list=listed))
+    if concentrated and etf_copy.get("concentrated"):
+        listed = joiner.join(f"{x['ticker']} {_pct(x.get('weight'))}" for x in concentrated)
+        lines.append(etf_copy["concentrated"].format(list=listed))
     return lines
 
 
@@ -1214,6 +1230,19 @@ def _exit_entries(bundle, copy):
 # of unrealized_coverage (cause before symptom), so that reading order is
 # preserved by the ledger itself, not by a host-number race.
 
+# ── Block 1 KPI-tile / story-line overlap (#344) ─────────────────────────────
+# The HTML surface renders the KPI grid (facts["kpi"], built by _kpi_tiles)
+# directly above these same items rendered as prose — a number a tile already
+# carries must not also stand as a sentence right below it. Markdown has no
+# tile grid, so its indicator lines stay the sole carrier of every figure and
+# are never touched by this mechanism. An item that a KPI tile can fully or
+# partly replace on HTML carries ``kpi_id`` (the matching tile's ``id``) and
+# ``html_text`` (what HTML shows instead when that tile actually rendered on
+# this card — "" omits the line entirely, a shorter string keeps only what
+# the tile cannot hold, e.g. the alpha confidence interval). render_html's
+# indicator_items() reads these two keys; render_private ignores them and
+# always uses the full ``text``, exactly as before this change.
+
 
 def _performance_items(card, language):
     """Block-1 indicator lines as tagged items, in the contract §2 order:
@@ -1233,10 +1262,16 @@ def _performance_items(card, language):
     kpi_copy = copy.get("kpi") or {}
     items = []
 
-    def line(tag, text, market=None):
+    def line(tag, text, market=None, kpi_id=None, html_text=""):
         item = {"kind": "line", "tag": tag, "text": text}
         if market:
             item["market"] = market
+        if kpi_id:
+            # #344: only the exact KPI-tile-mirror branches pass kpi_id; a
+            # fallback sentence (e.g. _overview_lines below) never does, so it
+            # always renders in full on every surface, HTML included.
+            item["kpi_id"] = kpi_id
+            item["html_text"] = html_text
         items.append(item)
 
     # ① absolute P&L: one numbers-summary line mirroring the HTML KPI tile
@@ -1250,8 +1285,11 @@ def _performance_items(card, language):
             and kpi_copy.get("pnl") and kpi_copy.get("pnl_sub")):
         sub = kpi_copy["pnl_sub"].format(realized=_display_money(realized, display),
                                          unrealized=_display_money(unrealized, display))
+        # #344: this sentence is byte-for-byte what the pnl KPI tile already
+        # shows (label + value + sub) — HTML omits it whenever that tile
+        # rendered; Markdown (no tile grid) always keeps it.
         line("pnl", f"{kpi_copy['pnl']} {_display_money(total, display)}"
-             + (f" ({sub})" if en else f"（{sub}）"))
+             + (f" ({sub})" if en else f"（{sub}）"), kpi_id="pnl")
     else:
         for text in _overview_lines(card, language):
             line("pnl", text)
@@ -1265,8 +1303,10 @@ def _performance_items(card, language):
         if (avg_win is not None and avg_loss is not None
                 and kpi_copy.get("payoff") and kpi_copy.get("payoff_sub")):
             sub = kpi_copy["payoff_sub"].format(win=avg_win, loss=avg_loss)
+            # #344: byte-for-byte the payoff KPI tile's own label+value+sub —
+            # same HTML-omits/Markdown-keeps treatment as the pnl line above.
             line("payoff", f"{kpi_copy['payoff']} {float(payoff):.1f}"
-                 + (f" ({sub})" if en else f"（{sub}）"))
+                 + (f" ({sub})" if en else f"（{sub}）"), kpi_id="payoff")
         else:
             line("payoff", (f"Realized payoff ratio was {payoff:.1f}; average gain/loss amounts remain "
                             "in original currencies." if en else
@@ -1353,7 +1393,13 @@ def _performance_items(card, language):
         if benchmark_rows:
             alpha_line = _alpha_interval_line(ab, language)
             if alpha_line:
-                line("alpha", alpha_line)
+                # #344: the headline "alpha was +X% annualized" clause repeats
+                # the "年化 α" KPI tile's own value; HTML keeps only the 95%
+                # interval and its plain-language caveat (lead=False) whenever
+                # that tile rendered on this card. Markdown always gets the
+                # full sentence — it has no tile to carry the headline number.
+                compact = _alpha_interval_line(ab, language, lead=False)
+                line("alpha", alpha_line, kpi_id="alpha", html_text=compact or "")
         attribution = _attribution_facts(card)
         if attribution:
             items.append({"kind": "attr_rows", "tag": None,
@@ -1840,8 +1886,14 @@ def _problem_lines(bundle, copy):
 # (snapshot, insufficient, fx gaps) keep today's plainer shape.
 
 
-def _kpi_tiles(card, context, copy):
-    """Up to four headline tiles: P&L, payoff, benchmark excess, alpha."""
+def _kpi_tiles(card, context, copy, period_line=None):
+    """Up to four headline tiles: P&L, payoff, benchmark excess, alpha.
+
+    ``period_line`` (#344) is the same combined review-window/SPY/VIX string
+    ``_period_line`` builds for Block 1's top line; when the excess tile
+    renders, it folds in here (the tile's sub) instead of standing as its own
+    sentence beneath the grid. ``None``/absent leaves the excess tile exactly
+    as before (e.g. direct callers that only need beta)."""
     overview = card.get("overview") or {}
     kpi_copy = copy.get("kpi") or {}
     tiles = []
@@ -1879,7 +1931,12 @@ def _kpi_tiles(card, context, copy):
     excess = _finite_number(ab.get("excess_vs_spy")) if single_scope else None
     if excess is not None and kpi_copy.get("excess"):
         beta_text = _beta_text(ab.get("beta"))
-        sub = kpi_copy["excess_sub"].format(beta=beta_text) if beta_text and kpi_copy.get("excess_sub") else None
+        sub_parts = []
+        if beta_text and kpi_copy.get("excess_sub"):
+            sub_parts.append(kpi_copy["excess_sub"].format(beta=beta_text))
+        if period_line:
+            sub_parts.append(period_line)
+        sub = " · ".join(sub_parts) if sub_parts else None
         tiles.append({"id": "excess", "label": kpi_copy["excess"],
                       "value": f"{_benchmark_pp(excess)}pp",
                       "tone": "neg" if excess < 0 else "pos", "sub": sub})
@@ -2006,8 +2063,12 @@ def _card_facts(bundle, copy):
         # Snapshot cards intentionally suppress history-performance panels; the
         # rich layout has nothing honest to add there yet.
         return {"kpi": [], "instruments": [], "stress": [], "attribution": None}
+    # #344: the same combined period/SPY/VIX string _performance_block prints
+    # as Block 1's top line folds into the excess tile's sub here too — both
+    # call sites read the one _period_line so the two never drift apart.
+    period_line = _period_line(bundle, copy)
     return {
-        "kpi": _kpi_tiles(card, context, copy),
+        "kpi": _kpi_tiles(card, context, copy, period_line=period_line),
         "instruments": _instrument_rows(card, context, language),
         "stress": _stress_lines(card, context, language),
         "attribution": _attribution_facts(card),
@@ -2042,7 +2103,15 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     items = []
     period = _period_line(bundle, copy)
     if period:
-        items.append({"kind": "line", "tag": "period", "text": period})
+        # #344: the review-window span and the SPY/VIX backdrop it carries
+        # fold into the "相對大盤" (excess) KPI tile's sub line when that tile
+        # renders on this card (built in _kpi_tiles from this same
+        # _period_line call) — HTML omits the standalone line then. A card
+        # with no excess tile this period (month-gated, mixed-market, or
+        # missing benchmark data) has nowhere else for this line to live, so
+        # HTML keeps it exactly as before; Markdown always keeps it.
+        items.append({"kind": "line", "tag": "period", "text": period,
+                      "kpi_id": "excess", "html_text": ""})
     perf = _performance_items(card, language)
     if not any(item.get("tag") == "pnl" for item in perf):
         perf.insert(0, {"kind": "line", "tag": None, "text": missing.get("absolute_pnl", "")})
@@ -2129,11 +2198,20 @@ def _trades_block(bundle, card, copy, facts, etf_lines, etf_honesty, snapshot):
             blocks.append(("paragraph", [note]))
     if loose:
         blocks.append(("bullets", loose))
-    if etf_lines:
-        blocks.append(("bullets", etf_lines))
+    if etf_lines or etf_honesty:
+        # #315: an ETF classification sentence ("allocation ETFs are excluded
+        # from concentration: TICKER X%") explains a classification rule, not
+        # a fact about the user's own behavior, so — like the etf_metadata
+        # honesty sentence it already sits beside — it rides the collected
+        # caveat instead of standing alone as its own fact bullet. Both join
+        # into one caveat line rather than one each: S-3 bans consecutive
+        # caveat paragraphs precisely because a stack of them is the same
+        # "caveat wall" root cause the 2026-07-22 footnote ruling removed
+        # from Block 1; a second wall must not reappear here in Block 2.
+        caveats = list(etf_lines)
         if etf_honesty:
-            # §4: the etf_metadata sentence rides the ETF facts it qualifies.
-            blocks.append(("caveat", [etf_honesty]))
+            caveats.append(etf_honesty)
+        blocks.append(("caveat", [" ".join(caveats)]))
     return blocks
 
 
@@ -2430,7 +2508,7 @@ def _card_structure(bundle):
 
     # #82: honesty sentences are woven next to the numbers they qualify (§4) —
     # never printed as a standalone checklist section. etf_metadata rides the
-    # ETF facts in Block 2 when they render; every unhosted sentence collapses
+    # ETF lines in Block 2 when they render; every unhosted sentence collapses
     # into the Block-1 footnote so a triggered disclosure can never be dropped.
     honesty = _honesty_lines(bundle, copy)
     etf_lines = _etf_lines(card, copy["language"])
@@ -3040,6 +3118,13 @@ def render_html(bundle):
         # _is_bulletable's sentence-counting would misread as a second
         # sentence — that check is for honesty text specifically
         # (digit-free by contract), not this.
+        # #344: an item whose kpi_id names a tile that actually rendered on
+        # this card (grid built above from the same facts["kpi"]) swaps in
+        # html_text instead of its full text — "" drops the line entirely
+        # (the tile already carries it in full), a shorter string keeps only
+        # what the tile cannot hold. render_private never reads these two
+        # keys, so Markdown (no tile grid) is untouched by this branch.
+        tile_ids = {tile["id"] for tile in facts["kpi"]}
         parts = []
         markets = {item.get("market") for item in items if item.get("market")}
         current_market = None
@@ -3060,7 +3145,8 @@ def render_html(bundle):
                 if market:
                     parts.append(f'<p class="panel-label">[{e(market)}]</p>')
             current_market = market
-            text = item.get("text")
+            kpi_id = item.get("kpi_id")
+            text = item.get("html_text") if kpi_id and kpi_id in tile_ids else item.get("text")
             if not text:
                 continue
             if market:

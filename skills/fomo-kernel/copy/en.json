@@ -66,6 +66,10 @@
     "alpha_unreliable": "not yet statistically credible",
     "spark_caption": "{start} ~ {end} · peak {peak} · trough {trough}"
   },
+  "etf_classification": {
+    "allocation": "Diversified allocation ETFs were separated from single-name concentration: {list}.",
+    "concentrated": "Sector, thematic, or leveraged ETFs remained concentration risk: {list}."
+  },
   "dimensions": {
     "exit_discipline": "exit discipline",
     "position_sizing": "position sizing",
