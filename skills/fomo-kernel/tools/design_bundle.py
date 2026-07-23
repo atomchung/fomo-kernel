@@ -80,9 +80,8 @@ CARD = """\
 .rc2 .sec{padding:var(--sp-5) var(--sp-6); display:flex; flex-direction:column; gap:var(--sp-3);}
 .rc2 .sec+.sec{border-top:1px solid var(--c-border);}
 .rc2 p{margin:0; font-size:var(--tx-body); color:var(--c-secondary); line-height:1.7;}
-.rc2 h1{margin:0; font-size:var(--tx-figure); font-weight:600; line-height:1.35; letter-spacing:-.01em;}
-.rc2 h2{margin:0; font-size:var(--tx-small); font-weight:600; color:var(--c-muted);
-  text-transform:uppercase; letter-spacing:.1em;}
+.rc2 h1{margin:0; font-size:var(--tx-figure); font-weight:500; line-height:1.35;}
+.rc2 h2{margin:0 0 var(--sp-2); font-size:var(--tx-lead); font-weight:500; color:var(--c-primary);}
 .rc2 .eyebrow{margin:0; font-size:var(--tx-small); color:var(--c-muted);}
 .rc2 .keynote-meta{margin:0; font-size:var(--tx-small); color:var(--c-muted);
   font-family:ui-monospace,"SF Mono",Menlo,monospace;}

@@ -198,8 +198,8 @@ These are not preferences. Each was a bug report from dogfooding.
 7. **One value is expressed once per card.** The excess figure used to appear
    three times — as a KPI tile, as a sentence in the prose, and as a display
    figure heading the comparator block. The tile keeps it; the prose keeps
-   only what a tile cannot hold (raw returns, an interval and its reading);
-   the comparator headline is gone.
+   only what a tile cannot hold (an interval and its reading, a
+   decomposition); the comparator headline is gone.
 8. **Exactly one L1, and it is Block 4.** The product's promise is a single
    action, so the section carrying it has its own ground while every other
    section shares the card surface. Previously Block 3's panels and Block 4's

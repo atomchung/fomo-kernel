@@ -1981,10 +1981,10 @@ def _kpi_tiles(card, context, copy, backdrop=None):
     grid's row stretch padded the entire row. ``None``/absent leaves the
     excess tile exactly as before (e.g. direct callers that only need beta).
 
-    A tile carries no chart: the period curve is block-scoped and renders as
-    the trend strip below this grid (2026-07-23 layout ruling, R5). The same
-    row-stretch mechanic described above is why — a tile allowed to grow sets
-    the height for every neighbour."""
+    The period curve is one more cell in this grid (2026-07-23 layout
+    ruling, R5 as corrected): its line takes the value slot and its caption
+    the sub line, so the row keeps one bounded height — a cell allowed to
+    grow sets the height for every neighbour."""
     overview = card.get("overview") or {}
     kpi_copy = copy.get("kpi") or {}
     tiles = []
@@ -3017,10 +3017,6 @@ stroke-linejoin:round;opacity:.85}
 .rc .spark.neg path{stroke:var(--rc-text-danger)}
 .rc .pos{color:var(--rc-text-success)}
 .rc .neg{color:var(--rc-text-danger)}
-.rc .trend{display:flex;align-items:center;gap:var(--rc-sp-3);background:var(--rc-surface-1);
-border-radius:var(--rc-r-md);padding:var(--rc-sp-2) var(--rc-sp-3);margin:var(--rc-sp-2) 0 0}
-.rc .trend .spark{flex:1;height:26px}
-.rc .trend .cap{margin:0;white-space:nowrap;font-size:var(--rc-tx-micro)}
 .rc .kpi{display:grid;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
 .rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
 .rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -3261,7 +3257,7 @@ def render_html(bundle):
         if caption_tail:
             # Re-tag it as a sub so it sits exactly where every other tile's
             # sub sits, keeping all cells the same height.
-            parts.append('<p class="sub">' + caption_tail.replace("</p>", "</p>", 1))
+            parts.append('<p class="sub">' + caption_tail)
         return '<div class="m curve">' + "".join(parts) + "</div>"
 
     def kpi_block():

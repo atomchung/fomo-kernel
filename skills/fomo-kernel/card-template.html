@@ -118,8 +118,6 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .m .lbl{font-size:var(--tx-small);color:var(--text-secondary);margin:0}
 .rc .m .val{font-size:var(--tx-figure);font-weight:500;margin:var(--sp-1) 0 0;line-height:1.25}
 .rc .m .sub{font-size:var(--tx-micro);color:var(--text-muted);margin:var(--sp-1) 0 0;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.rc .trend{display:flex;align-items:center;gap:var(--sp-3);background:var(--surface-1);border-radius:var(--r-md);padding:var(--sp-2) var(--sp-3);margin:var(--sp-2) 0 0}
-.rc .trend .spark{display:block;flex:1;height:26px}
 /* Five cells is four metrics plus the curve: two rows of three with the
    curve spanning two fills both rows exactly. */
 .rc .kpi[data-n="5"]{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -129,10 +127,6 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .m.curve .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
 .rc .m.curve .spark.pos path{stroke:var(--text-success)}
 .rc .m.curve .spark.neg path{stroke:var(--text-danger)}
-.rc .trend .spark path{fill:none;stroke:var(--text-muted);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
-.rc .trend .spark.pos path{stroke:var(--text-success)}
-.rc .trend .spark.neg path{stroke:var(--text-danger)}
-.rc .trend .cap{margin:0;white-space:nowrap;font-size:var(--tx-micro)}
 .rc .pos{color:var(--text-success)}.rc .neg{color:var(--text-danger)}
 .rc .story{font-size:14px;color:var(--text-secondary);line-height:1.7;margin:14px 0 0}
 .rc h2{font-size:15px;font-weight:500;margin:0 0 12px;display:flex;align-items:center;gap:8px}
@@ -165,14 +159,11 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 .rc .hrow .k{font-size:12px;color:var(--text-muted);font-weight:500;padding-top:1px}
 .rc .hrow .v{font-size:13px;color:var(--text-primary);line-height:1.65}
 .rc .mono{font-family:var(--font-mono)}
-.rc .attr-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;font-size:14px;margin:0 0 14px}
-.rc .attr-head .big{font-size:19px;font-weight:500}
 .rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
 .rc .arow .al{font-size:13px;color:var(--text-secondary)}
 .rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:var(--font-mono)}
 .rc .abar{height:4px;border-radius:99px;background:var(--surface-1);margin:5px 0 0;overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--text-muted);opacity:.7}
-@media (max-width:300px){.rc .attr-head .big{font-size:16px}}
 @media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
 .rc .sec.keystep{background:var(--surface-key);border-top:0.5px solid var(--border-key)}
 .rc .rule{background:transparent;border:0;border-left:3px solid var(--text-accent);border-radius:0;padding:0 0 0 var(--sp-4)}
@@ -281,7 +272,6 @@ body{margin:0;background:var(--surface-0);padding:28px 16px;display:flex;justify
 
   <div class="sec">
     <h2><i class="ti ti-arrows-split-2" aria-hidden="true"></i>Return attribution · theme exposure or selection skill?</h2>
-    <p class="attr-head"><span class="big pos">+261pp</span><span style="color:var(--text-secondary)">above market (+321% vs SPY +60%)</span></p>
     <div class="arow"><span class="al">Selection vs QQQ <span style="color:var(--text-muted)">(neutral comparison)</span></span><span class="av pos">+243pp</span></div>
     <div class="abar"><div style="width:100%"></div></div>
     <div class="arow" style="margin-top:12px"><span class="al">Selection vs SOXX <span style="color:var(--text-muted)">(strongest hindsight comparison)</span></span><span class="av pos">+96pp</span></div>
