@@ -365,7 +365,10 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
     #     時,回滾會把後來才存進來的錢當成期初就有的現金,帳戶 TWR 被系統性低估(合成案例
     #     差 33pp),而舊版對此完全零揭露。implied_start_cash_share 給出這個前提有多重
     #     ——它同時是觸發條件與失真代理量,所以不對「錢在期初就全投進去」的帳戶空吠。
-    external_flow_rows = sum(1 for cf in cash_flows if cf["kind"] in ("deposit", "withdrawal"))
+    # 口徑用 _EXT_KINDS(對帳口徑,含 other=ACH/Transfer)而不是 deposit/withdrawal:
+    # 這裡問的是「外部金錢進出看不看得見」,而鏈式 TWR 本來就把 other 當真外部流處理
+    # (見檔頭拍板四)。用窄口徑會對「其實有一筆 ACH 轉帳在檔裡」的來源誤判成不可見。
+    external_flow_rows = sum(1 for cf in cash_flows if cf["kind"] in _EXT_KINDS)
     start_share = (C[0] / V[0]) if V[0] > EPS else None
     basis = {"cash_source": (cash_data or {}).get("source"),
              "unanchored": sorted(c for c, v in by_ccy.items() if not v.get("reliable")),
