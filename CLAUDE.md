@@ -63,7 +63,7 @@ When multiple sessions are active:
 - Claim the issue before editing and check for overlapping PRs.
 - Fetch before creating a branch from the latest `origin/main`.
 - Search fixtures, documentation, and tests for other instances of the same root cause.
-- Before merging several PRs, review semantic overlap as well as textual conflicts. If the engine changed, run the persona sweep — `python3 tests/persona_sweep.py` (every mock persona × both locales as offline pre-commitment first-review renders; gates S-1..S-4, the HTML layout invariants, and locale purity (an English card carries no CJK, #356); weekly-only surfaces stay covered by the fixture suites; add `--baseline <other-checkout>/skills/fomo-kernel/engine` to prove Markdown parity against pre-change main) — and require a clean exit.
+- Before merging several PRs, review semantic overlap as well as textual conflicts. The persona sweep (`tests/persona_sweep.py`) runs inside `tests/run_all.py`, so its gates are already enforced; what is **not** automatic is its byte-parity half. When the engine changed, run `python3 tests/persona_sweep.py --baseline <other-checkout>/skills/fomo-kernel/engine` and read the Markdown drift against pre-change main — every drifting card should be one you meant to change.
 - Remove worktrees and local branches only after confirming the merged commit is reachable from main and no other session uses them.
 
 ## Mirrored surfaces

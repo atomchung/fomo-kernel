@@ -38,6 +38,15 @@ SUITES = [
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),
+    # #368: the sweep used to be a prose rule in CLAUDE.md ("if the engine
+    # changed, run the persona sweep") — i.e. enforced by whoever remembered.
+    # It renders every persona x locale x decision variant in about the time
+    # one fixture suite takes, so there is no cost argument for leaving the
+    # repo's widest renderer gate to self-discipline. The byte-parity half
+    # (--baseline) stays a manual tool by design: it needs a second engine
+    # checkout, and requiring byte-identity on a PR would fail every
+    # legitimate copy change.
+    ("Persona sweep (all personas x locales x variants)", "tests/persona_sweep.py"),
 ]
 
 
