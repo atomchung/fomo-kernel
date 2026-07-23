@@ -27,6 +27,10 @@ import test_review_v2 as v2  # noqa: E402  (shared CLI fixtures and helpers)
 import card_renderer  # noqa: E402  (engine path added by test_review_v2)
 
 SVG_RE = re.compile(r"<svg.*?</svg>(?:<p class=\"cap\">.*?</p>)?", re.S)
+# The curve is block-scoped, not tile-scoped: it renders as
+# <div class="trend"> svg + optional caption </div> under the KPI grid, so a
+# card without curve data drops the whole strip rather than an inline <svg>.
+TREND_RE = re.compile(r'<div class="trend">.*?</div>', re.S)
 CURVE_POINTS = [
     {"date": "2026-06-30", "cum_ret": 0.0},
     {"date": "2026-07-04", "cum_ret": -0.012},
@@ -246,15 +250,15 @@ def test_sparkline_renders_only_with_curve_points():
     without["engine_card"].pop("pnl_curve", None)
     html_without = card_renderer.render_html(without)
     assert "<svg" not in html_without
-    assert SVG_RE.sub("", html) == html_without, \
-        "removing curve data may only remove the sparkline, nothing else"
+    assert TREND_RE.sub("", html) == html_without, \
+        "removing curve data may only remove the trend strip, nothing else"
 
     note_form = copy.deepcopy(run["bundle"])
     note_form["engine_card"]["pnl_curve"] = {"note": "無資料"}
     html_note = card_renderer.render_html(note_form)
     assert "<svg" not in html_note and "無資料" not in html_note, \
         "note-form curve must be omitted silently, not printed"
-    assert SVG_RE.sub("", html) == html_note
+    assert TREND_RE.sub("", html) == html_note
 
 
 def test_sparkline_caption_shows_date_range_and_peak_trough():
@@ -284,7 +288,7 @@ def test_sparkline_caption_shows_date_range_and_peak_trough():
     html_no_dates = card_renderer.render_html(bundle)
     assert "<svg" in html_no_dates and 'class="cap"' not in html_no_dates, \
         "points missing dates must drop only the caption, never the sparkline line"
-    assert SVG_RE.sub("", run["html"]) == SVG_RE.sub("", html_no_dates), \
+    assert TREND_RE.sub("", run["html"]) == TREND_RE.sub("", html_no_dates), \
         "dropping the caption alone must not change any other text on the card"
 
 
@@ -328,10 +332,15 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     bundle = _rich_bundle("zh-TW")
     html = card_renderer.render_html(bundle)
     markdown = card_renderer.render_private(bundle)
-    assert 'class="grid4"' in html and html.count('<div class="m">') == 4
+    assert 'class="kpi" data-n="4"' in html and html.count('<div class="m">') == 4
     assert html.count('<div class="trow">') == 3
     assert html.count('class="track"') == 3
-    assert 'class="attr-head"' in html and html.count('<div class="arow">') == 2
+    # The comparator rows stay; their headline figure does not. It is the same
+    # excess the KPI tile already carries in full, and printing it again as a
+    # display figure made a secondary fact the heaviest element in the block.
+    assert 'class="attr-head"' not in html, \
+        "the attribution headline must not restate the excess KPI tile"
+    assert html.count('<div class="arow">') == 2
     assert '<div class="rx">' not in html, \
         "#301: the improve prescription list must not render on the card"
     assert "砍損耗" not in html and "砍損耗" not in markdown, \
@@ -345,20 +354,33 @@ def test_rich_layout_renders_template_blocks_from_shared_facts():
     # Alpha below the credibility gate stays starred with its caveat.
     assert "+33% *" in html and "* 統計上還不可信" in html
 
+    # Dropping the excess figure drops the comparator block as a whole: the
+    # attribution facts and the excess tile read the same engine field under
+    # the same single-scope gate, so a card cannot have one without the other.
+    # That coupling is why the renderer's "tile already carries it" guard is
+    # defensive rather than a live branch — asserted here so a future widening
+    # of _attribution_facts does not silently resurrect the duplicate headline.
+    no_excess = _rich_bundle("zh-TW")
+    no_excess["engine_card"]["alpha_beta_breakdown"].pop("excess_vs_spy", None)
+    no_excess_html = card_renderer.render_html(no_excess)
+    assert 'class="attr-head"' not in no_excess_html \
+        and '<div class="arow">' not in no_excess_html, \
+        "without the excess figure the whole comparator block must be absent"
+
 
 def test_rich_layout_degrades_to_plain_sections_when_facts_missing():
     """The stock fixture lacks the rich fields: KPI tiles still come from the
     overview, and every other rich block stays absent instead of inventing."""
     html = _session("zh-TW")["html"]
-    assert 'class="grid4"' in html
+    assert 'class="kpi"' in html
     for marker in ('class="trow"', 'class="attr-head"', 'class="rx"'):
         assert marker not in html, f"unexpected rich block on plain fixture: {marker}"
 
 
-def test_kpi_dashboard_uses_grid4_metric_boxes_not_flat_paragraphs():
+def test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs():
     """#310: Total P&L, (realized) payoff ratio, benchmark excess, and
     annualized alpha — the four metrics #310 named — must render as
-    card-template.html's `.grid4` row of labeled `.m` metric boxes, never
+    card-template.html's `.kpi` row of labeled `.m` metric boxes, never
     degrade to bare `<p>` paragraphs with no dashboard structure around them.
 
     `<p class="lbl">` is emitted from exactly one place in the renderer (the
@@ -373,26 +395,32 @@ def test_kpi_dashboard_uses_grid4_metric_boxes_not_flat_paragraphs():
         # The plain/default fixture only lights pnl + payoff (no
         # alpha_beta_breakdown data), but those two must still be tiles.
         plain_html = _session(language)["html"]
-        assert plain_html.count('<div class="grid4">') == 1, \
+        assert plain_html.count('<div class="kpi" data-n="') == 1, \
             f"{language} plain card must carry exactly one KPI dashboard row"
+        # The column count is the tile count: this fixture lights two, so a
+        # hardcoded four-column grid would leave half the row empty.
+        assert '<div class="kpi" data-n="2">' in plain_html, \
+            f"{language} plain card lights 2 tiles, so the grid must declare 2 columns"
         for key in ("pnl", "payoff"):
             tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
             assert tile_open in plain_html, \
-                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .grid4 .m box"
+                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
 
         # The rich fixture also lights benchmark excess + annualized alpha —
         # all four of #310's named metrics, all four as metric boxes.
         rich_html = card_renderer.render_html(_rich_bundle(language))
-        assert rich_html.count('<div class="grid4">') == 1
+        assert rich_html.count('<div class="kpi" data-n="') == 1
         assert rich_html.count('<div class="m">') == 4
+        assert '<div class="kpi" data-n="4">' in rich_html, \
+            f"{language} rich card lights 4 tiles, so the grid must declare 4 columns"
         for key in ("pnl", "payoff", "excess", "alpha"):
             tile_open = f'<div class="m"><p class="lbl">{html.escape(kpi_copy[key])}</p>'
             assert tile_open in rich_html, \
-                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .grid4 .m box"
+                f"{language} {key!r} metric ({kpi_copy[key]!r}) is not inside a .kpi .m box"
 
 
-def test_grid4_metric_box_css_stays_mirrored_with_card_template():
-    """CLAUDE.md "Mirrored surfaces": card-template.html's `.grid4`/`.m` rules
+def test_kpi_metric_box_css_stays_mirrored_with_card_template():
+    """CLAUDE.md "Mirrored surfaces": card-template.html's `.kpi`/`.m` rules
     are the documented design intent for the KPI dashboard (#310); the runtime
     `_HTML_WIDGET_CSS` must keep matching layout constraints for the classes
     that give the dashboard its shape. This does not require byte-identical
@@ -417,12 +445,84 @@ def test_grid4_metric_box_css_stays_mirrored_with_card_template():
 
     # Selectors as written differ only in the `.rc ` ancestor prefix the
     # runtime widget fragment always renders under; compare their bodies.
-    for selector in (".grid4", ".m", ".m .lbl", ".m .val", ".m .sub"):
+    for selector in (".kpi", ".m", ".m .lbl", ".m .val", ".m .sub",
+                     ".trend", ".rule"):
         template_props = _normalize(_rule(template, ".rc " + selector))
         runtime_props = _normalize(_rule(card_renderer._HTML_WIDGET_CSS, ".rc " + selector))
         missing = template_props - runtime_props
         assert not missing, \
             f"{selector} lost {missing!r} vs card-template.html (runtime has {runtime_props!r})"
+
+
+def test_layout_uses_the_token_scales_not_ad_hoc_pixels():
+    """Spacing and type must come from the declared scales, not loose pixels.
+
+    Colour was tokenized from the start; layout was not. That asymmetry is why
+    every layout ruling had to name a pixel (`.m .sub` is 11px, the review
+    window may not sit in a tile) instead of a scale, and why 16 different
+    spacing values accumulated. Any spacing/type declaration that hardcodes a
+    value bypasses the scale and starts that drift again, so this fails on the
+    declaration rather than waiting for the visual regression.
+
+    Geometry (bar heights, fixed column widths, hairline borders, pill radii)
+    and media-query breakpoints legitimately carry raw pixels: they are not
+    positions on a rhythm scale. Only the scale properties are checked, and
+    1px optical adjustments are allowed.
+
+    Scope is the runtime stylesheet, which is what actually renders. The
+    static card-template.html also documents demo-only elements the runtime
+    has no counterpart for (`.lens`, `.meta`, `.good-bar`, `.hrow`, `.quote`);
+    its agreement with the runtime is enforced per-selector by
+    ``test_kpi_metric_box_css_stays_mirrored_with_card_template`` instead."""
+    scale_props = ("font-size", "padding", "margin", "gap",
+                   "padding-left", "padding-top", "margin-top")
+    pattern = re.compile(r"(?<![-a-z])(" + "|".join(scale_props) + r")\s*:\s*([^;}]+)")
+    # Custom-property definitions are where the scales are declared.
+    body = re.sub(r"--rc-[a-z0-9-]+:[^;}]+", "", card_renderer._HTML_WIDGET_CSS)
+    offenders = [(match.group(1), match.group(2).strip(), px)
+                 for match in pattern.finditer(body)
+                 for px in re.findall(r"(?<![\w.-])(\d+(?:\.\d+)?)px", match.group(2))
+                 if float(px) > 1]
+    assert not offenders, (
+        "spacing/type declarations must use the token scales, "
+        f"found hardcoded pixels: {offenders!r}")
+
+
+def test_kpi_tile_never_hosts_the_sparkline():
+    """The curve describes the whole period, so it belongs to the block.
+
+    Hosting it inside one tile is what padded a whole KPI row to 209px: grid
+    rows stretch to their tallest cell, so the one tile carrying a chart plus
+    its caption set the height for every neighbour, leaving the others with
+    roughly 110px of dead space each."""
+    for bundle in (_rich_bundle("zh-TW"), _rich_bundle("en")):
+        card = card_renderer.render_html(bundle)
+        tiles = re.findall(r'<div class="m">.*?</div>', card, re.S)
+        assert tiles, "the rich fixture must render KPI tiles"
+        for tile in tiles:
+            assert "<svg" not in tile, f"a KPI tile must not host the sparkline: {tile[:80]!r}"
+        # ...and the curve still renders, as a block-scoped strip below the grid.
+        assert '<div class="trend">' in card and "<svg" in card, \
+            "the curve must still render as a block-scoped trend strip"
+        assert re.search(r'</div><div class="trend">', card), \
+            "the trend strip must follow the KPI grid, not float elsewhere"
+
+
+def test_next_step_is_the_cards_only_emphasis_ground():
+    """The product promises exactly one thing to change, so exactly one
+    section may carry the emphasis ground. Block 3's panels and Block 4's rule
+    were previously the same `.panel` treatment, which left the single
+    committed action visually indistinguishable from the diagnosis above it."""
+    for language in ("zh-TW", "en"):
+        for card in (card_renderer.render_html(_rich_bundle(language)),
+                     _session(language)["html"]):
+            assert card.count('<div class="sec keystep">') == 1, \
+                f"{language}: exactly one section may carry the L1 ground"
+            # It is the last content section: nothing may outrank the one action.
+            keystep_at = card.index('<div class="sec keystep">')
+            later = card.count('<div class="sec">', keystep_at)
+            assert later == 0, \
+                f"{language}: no ordinary section may follow the next-step block ({later} found)"
 
 
 def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
@@ -431,7 +531,7 @@ def test_rich_layout_zh_engine_strings_stay_off_the_english_card():
     no read-time migration for these by owner ruling on #279 — zh renders them
     verbatim, en omits them."""
     html = card_renderer.render_html(_rich_bundle("en"))
-    assert 'class="grid4"' in html and 'class="trow"' in html
+    assert 'class="kpi"' in html and 'class="trow"' in html
     assert "押太重" not in html and "撐得住嗎" not in html
     assert 'class="rx"' not in html
 
@@ -535,7 +635,7 @@ def test_closing_synthesis_renders_as_fifth_block_after_next_step():
             "closing synthesis must render as an unadorned <p>, reusing existing markup"
         assert 'class="panel' not in summary_html, \
             "closing synthesis is prose, not a strength/hole/rule panel"
-        assert 'class="grid4"' not in summary_html and 'class="trow"' not in summary_html, \
+        assert 'class="kpi"' not in summary_html and 'class="trow"' not in summary_html, \
             "closing synthesis must not invent a new KPI-tile or instrument-bar shape"
 
 
@@ -1452,8 +1552,11 @@ def main():
         test_sparkline_caption_shows_date_range_and_peak_trough,
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
-        test_kpi_dashboard_uses_grid4_metric_boxes_not_flat_paragraphs,
-        test_grid4_metric_box_css_stays_mirrored_with_card_template,
+        test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
+        test_kpi_metric_box_css_stays_mirrored_with_card_template,
+        test_layout_uses_the_token_scales_not_ad_hoc_pixels,
+        test_kpi_tile_never_hosts_the_sparkline,
+        test_next_step_is_the_cards_only_emphasis_ground,
         test_rich_layout_zh_engine_strings_stay_off_the_english_card,
         test_stress_line_rides_block1_exposure_for_any_hole_dimension,
         test_keynote_and_four_blocks_in_order_on_both_surfaces,

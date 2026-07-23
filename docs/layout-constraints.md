@@ -113,29 +113,44 @@ values:
 Dark mode is driven by `prefers-color-scheme`. Any new colour must exist in
 both themes.
 
-**Type scale** — eight steps in use: `11 12 13 14 15 16 19 20` px. 11px is the
-smallest and is used for sub-lines and footnotes; 19–20px is reserved for the
-few headline figures. Introducing a new size is a real cost, because the two
-copies of this CSS (see below) must stay in sync.
+**Spacing, type, and radius are tokenized too** (2026-07-23). Before that date
+colour was the only tokenized axis, which is why every layout ruling in §6 had
+to name a pixel instead of a scale — 16 distinct spacing values had
+accumulated. The scales now are:
+
+```
+--rc-sp-1..6    4 8 12 16 20 24 px
+--rc-tx-*       micro 11 · small 12 · body 14 · lead 15 · rule 17 · figure 20
+--rc-r-*        sm 6 · md 8 · lg 12
+```
+
+`13px` and `19px` were retired into `14`/`20`. `17px` exists for exactly one
+thing: the Block-4 rule, the card's single L1. A spacing or type declaration
+that hardcodes a pixel now fails a test — geometry (bar heights, fixed column
+widths, hairline borders) legitimately does not, since those are not positions
+on a rhythm scale.
 
 **Layout primitives**
 
-- KPI tile grid: `repeat(4, 1fr)`, 10px gap
+- KPI tile grid: columns follow the tile count via `data-n` (1–4), 8px gap.
+  A tile is label + value + sub, the sub capped at two lines; tiles never
+  host a chart.
+- Trend strip: the period curve at full block width, caption inline right.
 - Attribution rows: `1fr 70px`
 - Trade rows: flex, with fixed-width ticker (52px) and amount (78px) columns
 
-**Responsive breakpoints** — three, all max-width:
+**Responsive breakpoints** — two, both max-width:
 
 | Breakpoint | What changes |
 |---|---|
-| 520px | KPI grid drops to two columns |
-| 380px | KPI grid drops to one column |
+| 560px | KPI grid drops to two columns (from three or four) |
 | 300px | Trade rows wrap, tags shrink to 11px, attribution rows collapse to one column |
 
-The 300px tier was added in response to a squeeze report and **has not yet
-been confirmed against a real client window width** — if the actual narrow
-case is 400–500px, that tier never fires. Worth verifying before designing
-around it.
+The old 380px "drop to one column" tier was removed: a single-column KPI area
+turns the block into a long stack, and `data-n` already prevents the empty
+columns that tier was working around. The 300px tier came from a squeeze
+report and **still has not been confirmed against a real client window
+width** — if the actual narrow case is 400–500px, that tier never fires.
 
 **Two copies of the CSS.** The stylesheet exists as a reference HTML template
 *and* as string literals inside the renderer. They must stay identical;
@@ -161,30 +176,47 @@ These are not preferences. Each was a bug report from dogfooding.
 5. **Card-level metadata goes at the top, not inside an indicator.** The
    review window was briefly folded into a KPI tile's sub-line; that made one
    cell roughly three times the text of its neighbours, and grid row-stretch
-   padded the whole row. It now leads the card.
+   padded the whole row. It now leads the card. **Superseded 2026-07-23 by
+   the tile contract in §5** — this ruling named one field, so the same defect
+   came back through another: the sparkline plus its caption held one tile at
+   209px and stretched all four to match. The rule is now about what bounds a
+   tile's height, not about which field is banned from it.
 6. **A section with nothing to say does not render.** No empty headers, no
    placeholder text, no "N/A".
+7. **One value is expressed once per card.** The excess figure used to appear
+   three times — as a KPI tile, as a sentence in the prose, and as a display
+   figure heading the comparator block. The tile keeps it; the prose keeps
+   only what a tile cannot hold (raw returns, an interval and its reading);
+   the comparator headline is gone.
+8. **Exactly one L1, and it is Block 4.** The product's promise is a single
+   action, so the section carrying it has its own ground while every other
+   section shares the card surface. Previously Block 3's panels and Block 4's
+   rule were the same treatment, which left the one committed action
+   indistinguishable from the diagnosis above it.
 
 ## 7. What is open for design
 
 Genuinely unresolved, and where an outside eye would help most:
 
-- **Information hierarchy within Block 1.** Four tiles plus prose plus a
-  footnote is the densest region of the card, and it is where readers report
-  the most friction. Is the tile grid even the right primitive?
+- **Information hierarchy within Block 1.** Still the densest region: tiles,
+  a trend strip, prose, a comparator row, and a footnote. The 2026-07-23 pass
+  removed the dead space and the duplicate figure, but did not answer whether
+  the tile grid is the right primitive for this content in the first place.
 - **Density of Block 2.** Each instrument row carries a ticker, an amount, and
   a variable number of verdict tags, some of which now also carry a current
   price and average cost. Rows are single-line by rule, but tag overflow is
   unsolved.
-- **The `[v]` / `[X]` / `[?]` panels.** Currently three visually similar
-  panels distinguished mainly by a bracket glyph. They carry very different
-  weights of meaning (praise, the single most important problem, and an
-  unjudged observation).
-- **Whether the card should have a visual center of gravity at all.** Today it
-  reads as a flat sequence of sections. The product's promise is one action —
-  arguably Block 4 should dominate, and currently it does not.
+- **Whether the two gap notes should merge.** A month-gated card renders
+  "cannot compute annualized return: …" and "cannot compare to market: …" as
+  two separate sentences that both say *this period lacks data*. Merging them
+  is a copy change, not a layout one, so it was left out of the layout pass.
 - **Dark mode has never been reviewed by a designer.** It exists because the
   tokens exist.
+
+Resolved on 2026-07-23, recorded here so a reviewer knows why they look
+settled: the `[v]` / `[X]` / `[?]` panels now encode severity in a coloured
+left stripe rather than only a bracket glyph, and the card does have a visual
+centre of gravity — Block 4 carries its own ground as the single L1.
 
 ## 8. What a usable design deliverable looks like here
 

@@ -1979,7 +1979,12 @@ def _kpi_tiles(card, context, copy, backdrop=None):
     the top of the card (see ``_period_span``), because carrying both made
     this one cell roughly three times the text of its neighbours and the
     grid's row stretch padded the entire row. ``None``/absent leaves the
-    excess tile exactly as before (e.g. direct callers that only need beta)."""
+    excess tile exactly as before (e.g. direct callers that only need beta).
+
+    A tile carries no chart: the period curve is block-scoped and renders as
+    the trend strip below this grid (2026-07-23 layout ruling, R5). The same
+    row-stretch mechanic described above is why — a tile allowed to grow sets
+    the height for every neighbour."""
     overview = card.get("overview") or {}
     kpi_copy = copy.get("kpi") or {}
     tiles = []
@@ -1996,7 +2001,7 @@ def _kpi_tiles(card, context, copy, backdrop=None):
         if realized_text and unrealized_text and kpi_copy.get("pnl_sub"):
             sub = kpi_copy["pnl_sub"].format(realized=realized_text, unrealized=unrealized_text)
         tiles.append({"id": "pnl", "label": kpi_copy.get("pnl"), "value": total_text,
-                      "tone": "neg" if total < 0 else "pos", "sub": sub, "spark": True})
+                      "tone": "neg" if total < 0 else "pos", "sub": sub})
 
     payoff = _finite_number(overview.get("payoff"))
     if payoff is not None and kpi_copy.get("payoff"):
@@ -2963,90 +2968,127 @@ font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
 # Widget-fragment styles. Host theme variables (--surface-*, --text-*, --border,
 # --radius) win when present; the var() fallbacks keep the fragment readable in
 # hosts without them, with a prefers-color-scheme dark set of fallbacks.
+#
+# Layout tokens (--rc-sp-*, --rc-tx-*, --rc-r-*) exist because colour was the
+# only tokenized axis: spacing used 16 ad-hoc values and type used 7 steps, so
+# every layout ruling had to name a pixel instead of a scale.  See
+# docs/layout-constraints.md §5.  Mirrored in card-template.html per CLAUDE.md.
 _HTML_WIDGET_CSS = """\
 .rc{--rc-surface-2:var(--surface-2,#ffffff);--rc-surface-1:var(--surface-1,#f5f4ef);
+--rc-surface-key:var(--surface-key,#f0eee6);
 --rc-text-primary:var(--text-primary,#1a1915);--rc-text-secondary:var(--text-secondary,#5f5e5a);
 --rc-text-muted:var(--text-muted,#8a8980);--rc-text-success:var(--text-success,#3b6d11);
 --rc-text-danger:var(--text-danger,#a32d2d);--rc-text-accent:var(--text-accent,#185fa5);
---rc-border:var(--border,rgba(0,0,0,0.10));--rc-radius:var(--radius,8px)}
+--rc-border:var(--border,rgba(0,0,0,0.10));--rc-border-key:var(--border-key,rgba(24,95,165,0.35));
+--rc-radius:var(--radius,8px);
+--rc-sp-1:4px;--rc-sp-2:8px;--rc-sp-3:12px;--rc-sp-4:16px;--rc-sp-5:20px;--rc-sp-6:24px;
+--rc-tx-micro:11px;--rc-tx-small:12px;--rc-tx-body:14px;--rc-tx-lead:15px;--rc-tx-rule:17px;
+--rc-tx-figure:20px;
+--rc-r-sm:6px;--rc-r-md:var(--rc-radius);--rc-r-lg:12px}
 @media (prefers-color-scheme:dark){.rc{--rc-surface-2:var(--surface-2,#2b2a27);
---rc-surface-1:var(--surface-1,#232220);--rc-text-primary:var(--text-primary,#f5f4ef);
+--rc-surface-1:var(--surface-1,#232220);--rc-surface-key:var(--surface-key,#26282b);
+--rc-text-primary:var(--text-primary,#f5f4ef);
 --rc-text-secondary:var(--text-secondary,#b4b2a9);--rc-text-muted:var(--text-muted,#8a8980);
 --rc-text-success:var(--text-success,#a7be83);--rc-text-danger:var(--text-danger,#df8b84);
---rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10))}}
+--rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10));
+--rc-border-key:var(--border-key,rgba(169,181,194,0.42))}}
 .rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;font-weight:400;
 color:var(--rc-text-primary);background:var(--rc-surface-2);border:0.5px solid var(--rc-border);
-border-radius:12px;overflow:hidden;line-height:1.6}
-.rc .sec{padding:18px 22px}
+border-radius:var(--rc-r-lg);overflow:hidden;line-height:1.6;font-variant-numeric:tabular-nums}
+.rc .sec{padding:var(--rc-sp-5) var(--rc-sp-6)}
 .rc .sec+.sec{border-top:0.5px solid var(--rc-border)}
-.rc .eyebrow{font-size:12px;color:var(--rc-text-muted);margin:0 0 6px}
-.rc h1{font-size:20px;font-weight:500;margin:0;line-height:1.35}
-.rc .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
-.rc .tag{display:inline-flex;align-items:center;font-size:12px;padding:1px 8px;border-radius:6px;
+.rc .eyebrow{font-size:var(--rc-tx-small);color:var(--rc-text-muted);margin:0 0 var(--rc-sp-1)}
+.rc h1{font-size:var(--rc-tx-figure);font-weight:500;margin:0;line-height:1.35}
+.rc .tags{display:flex;flex-wrap:wrap;gap:var(--rc-sp-1);margin:var(--rc-sp-2) 0 0}
+.rc .tag{display:inline-flex;align-items:center;font-size:var(--rc-tx-small);padding:1px var(--rc-sp-2);
+border-radius:var(--rc-r-sm);
 line-height:1.5;background:transparent;border:0.5px solid var(--rc-border);color:var(--rc-text-secondary)}
-.rc .lead{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:12px 0 0}
-.rc h2{font-size:15px;font-weight:500;margin:0 0 10px;color:var(--rc-text-primary)}
-.rc p{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:0}
-.rc p+p,.rc ul+p,.rc p+ul{margin-top:8px}
-.rc ul{margin:0;padding-left:20px}
-.rc li{font-size:14px;color:var(--rc-text-secondary);line-height:1.7;margin:0 0 8px}
+.rc .lead{font-size:var(--rc-tx-body);color:var(--rc-text-secondary);line-height:1.7;margin:var(--rc-sp-3) 0 0}
+.rc h2{font-size:var(--rc-tx-lead);font-weight:500;margin:0 0 var(--rc-sp-2);color:var(--rc-text-primary)}
+.rc p{font-size:var(--rc-tx-body);color:var(--rc-text-secondary);line-height:1.7;margin:0}
+.rc p+p,.rc ul+p,.rc p+ul{margin-top:var(--rc-sp-2)}
+.rc ul{margin:0;padding-left:var(--rc-sp-5)}
+.rc li{font-size:var(--rc-tx-body);color:var(--rc-text-secondary);line-height:1.7;margin:0 0 var(--rc-sp-2)}
 .rc li:last-child{margin-bottom:0}
-.rc .spark{display:block;width:100%;height:34px;margin:12px 0 0}
+.rc .spark{display:block;width:100%;height:34px;margin:0}
 .rc .spark path{fill:none;stroke:var(--rc-text-muted);stroke-width:1.5;stroke-linecap:round;
 stroke-linejoin:round;opacity:.85}
 .rc .spark.pos path{stroke:var(--rc-text-success)}
 .rc .spark.neg path{stroke:var(--rc-text-danger)}
 .rc .pos{color:var(--rc-text-success)}
 .rc .neg{color:var(--rc-text-danger)}
-.rc .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 4px}
-@media (max-width:520px){.rc .grid4{grid-template-columns:repeat(2,1fr)}}
-@media (max-width:380px){.rc .grid4{grid-template-columns:1fr}}
-.rc .m{background:var(--rc-surface-1);border-radius:var(--rc-radius);padding:13px 15px}
-.rc .m .lbl{font-size:12px;color:var(--rc-text-secondary);margin:0}
-.rc .m .val{font-size:19px;font-weight:500;margin:5px 0 0;line-height:1.25;color:var(--rc-text-primary)}
+.rc .trend{display:flex;align-items:center;gap:var(--rc-sp-3);background:var(--rc-surface-1);
+border-radius:var(--rc-r-md);padding:var(--rc-sp-2) var(--rc-sp-3);margin:var(--rc-sp-2) 0 0}
+.rc .trend .spark{flex:1;height:26px}
+.rc .trend .cap{margin:0;white-space:nowrap;font-size:var(--rc-tx-micro)}
+.rc .kpi{display:grid;gap:var(--rc-sp-2);margin:0 0 var(--rc-sp-1)}
+.rc .kpi[data-n="1"]{grid-template-columns:minmax(0,1fr)}
+.rc .kpi[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rc .kpi[data-n="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rc .kpi[data-n="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:560px){.rc .kpi[data-n="3"],.rc .kpi[data-n="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rc .m{background:var(--rc-surface-1);border-radius:var(--rc-r-md);
+padding:var(--rc-sp-3) var(--rc-sp-4)}
+.rc .m .lbl{font-size:var(--rc-tx-small);color:var(--rc-text-secondary);margin:0}
+.rc .m .val{font-size:var(--rc-tx-figure);font-weight:500;margin:var(--rc-sp-1) 0 0;line-height:1.25;
+color:var(--rc-text-primary)}
 .rc .m .val.pos{color:var(--rc-text-success)}
 .rc .m .val.neg{color:var(--rc-text-danger)}
-.rc .m .sub{font-size:11px;color:var(--rc-text-muted);margin:4px 0 0;line-height:1.4}
-.rc .m .spark{height:22px;margin:8px 0 0}
-.rc .trow{margin:0 0 11px}
+.rc .m .sub{font-size:var(--rc-tx-micro);color:var(--rc-text-muted);margin:var(--rc-sp-1) 0 0;
+line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rc .trow{margin:0 0 var(--rc-sp-3)}
 .rc .trow:last-of-type{margin-bottom:0}
-.rc .ttop{display:flex;align-items:baseline;gap:10px}
-.rc .tk{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px;font-weight:500;min-width:52px}
-.rc .tamt{font-size:14px;font-weight:500;min-width:78px;text-align:right}
-.rc .ttags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+.rc .ttop{display:flex;align-items:baseline;gap:var(--rc-sp-3)}
+.rc .tk{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:var(--rc-tx-body);
+font-weight:500;min-width:52px}
+.rc .tamt{font-size:var(--rc-tx-body);font-weight:500;min-width:78px;text-align:right}
+.rc .ttags{display:flex;flex-wrap:wrap;gap:var(--rc-sp-1);flex:1}
 @media (max-width:300px){.rc .ttop{flex-wrap:wrap}}
-@media (max-width:300px){.rc .ttags .tag{font-size:11px}}
-.rc .track{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:6px 0 0;overflow:hidden}
+@media (max-width:300px){.rc .ttags .tag{font-size:var(--rc-tx-micro)}}
+.rc .track{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:var(--rc-sp-1) 0 0;
+overflow:hidden}
 .rc .fill{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
 .rc .fill.neg{background:var(--rc-text-danger);opacity:.85}
-.rc .cap{font-size:12px;color:var(--rc-text-muted);margin:12px 0 0;line-height:1.6}
-.rc .attr-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin:0 0 14px}
-.rc .attr-head .big{font-size:19px;font-weight:500}
-.rc .arow{display:grid;grid-template-columns:1fr 70px;gap:12px;align-items:center;margin:8px 0}
-.rc .arow .al{font-size:13px;color:var(--rc-text-secondary)}
-.rc .arow .av{font-size:14px;font-weight:500;text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace}
-.rc .abar{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:5px 0 0;overflow:hidden}
+.rc .cap{font-size:var(--rc-tx-small);color:var(--rc-text-muted);margin:var(--rc-sp-3) 0 0;line-height:1.6}
+.rc .arow{display:grid;grid-template-columns:1fr 70px;gap:var(--rc-sp-3);align-items:center;
+margin:var(--rc-sp-2) 0}
+.rc .arow .al{font-size:var(--rc-tx-body);color:var(--rc-text-secondary)}
+.rc .arow .av{font-size:var(--rc-tx-body);font-weight:500;text-align:right;
+font-family:ui-monospace,"SF Mono",Menlo,monospace}
+.rc .abar{height:4px;border-radius:99px;background:var(--rc-surface-1);margin:var(--rc-sp-1) 0 0;
+overflow:hidden}
 .rc .abar div{height:100%;border-radius:99px;background:var(--rc-text-muted);opacity:.7}
-@media (max-width:300px){.rc .attr-head .big{font-size:16px}}
 @media (max-width:300px){.rc .arow{grid-template-columns:1fr}}
 .rc .panel{background:var(--rc-surface-1);border:0.5px solid var(--rc-border);
-border-radius:var(--rc-radius);padding:16px 18px}
-.rc .panel+.panel{margin-top:10px}
-.rc .panel-label{font-size:12px;font-weight:500;margin:0 0 8px}
+border-left:3px solid var(--rc-text-muted);
+border-radius:var(--rc-r-md);padding:var(--rc-sp-3) var(--rc-sp-4)}
+.rc .panel+.panel{margin-top:var(--rc-sp-2)}
+.rc .panel-label{font-size:var(--rc-tx-small);font-weight:500;margin:0 0 var(--rc-sp-1)}
+.rc .strength{border-left-color:var(--rc-text-success)}
 .rc .strength .panel-label{color:var(--rc-text-success)}
+.rc .hole{border-left-color:var(--rc-text-danger)}
 .rc .hole .panel-label{color:var(--rc-text-danger)}
 .rc .pattern .panel-label{color:var(--rc-text-muted)}
-.rc .rule .panel-label{color:var(--rc-text-accent)}
-.rc .rule .rmain{font-size:15px;color:var(--rc-text-primary);line-height:1.65;font-weight:500}
-.rc .rule .rground{font-size:13px;color:var(--rc-text-muted);line-height:1.6}
-.rc .cavt{font-size:12px;color:var(--rc-text-muted);line-height:1.6;padding-left:14px}
-.rc p+.cavt{margin-top:2px}
-.rc .rsub{font-size:12px;color:var(--rc-text-muted);line-height:1.55;margin:2px 0 8px;padding-left:14px}
-.rc .fnote{margin:12px 0 0}
-.rc .fnote summary{font-size:12px;color:var(--rc-text-muted);cursor:pointer}
-.rc .fnote p{font-size:12px;color:var(--rc-text-muted);margin:6px 0 0}
-.rc .fnote li{font-size:12px;color:var(--rc-text-muted);margin:6px 0 0}
-.rc .foot{font-size:11px;color:var(--rc-text-muted);line-height:1.6;background:var(--rc-surface-1)}"""
+.rc .sec.keystep{background:var(--rc-surface-key);border-top:0.5px solid var(--rc-border-key)}
+.rc .rule{background:transparent;border:0;border-left:3px solid var(--rc-text-accent);
+border-radius:0;padding:0 0 0 var(--rc-sp-4)}
+.rc .rule .panel-label{color:var(--rc-text-accent);font-size:var(--rc-tx-micro);
+letter-spacing:.1em;margin:0 0 var(--rc-sp-2)}
+.rc .rule .rmain{font-size:var(--rc-tx-rule);color:var(--rc-text-primary);line-height:1.5;font-weight:600;
+letter-spacing:-.01em}
+.rc .rule .rground{font-size:var(--rc-tx-small);color:var(--rc-text-muted);line-height:1.6;
+margin-top:var(--rc-sp-2)}
+.rc .cavt{font-size:var(--rc-tx-small);color:var(--rc-text-muted);line-height:1.6;
+border-top:0.5px solid var(--rc-border);padding-top:var(--rc-sp-2);margin-top:var(--rc-sp-3)}
+.rc p+.cavt{margin-top:var(--rc-sp-3)}
+.rc .rsub{font-size:var(--rc-tx-small);color:var(--rc-text-muted);line-height:1.55;
+margin:var(--rc-sp-1) 0 var(--rc-sp-2);padding-left:var(--rc-sp-2)}
+.rc .fnote{margin:var(--rc-sp-3) 0 0;border-top:0.5px solid var(--rc-border);padding-top:var(--rc-sp-2)}
+.rc .fnote summary{font-size:var(--rc-tx-small);color:var(--rc-text-muted);cursor:pointer}
+.rc .fnote p{font-size:var(--rc-tx-small);color:var(--rc-text-muted);margin:var(--rc-sp-1) 0 0}
+.rc .fnote li{font-size:var(--rc-tx-small);color:var(--rc-text-muted);margin:var(--rc-sp-1) 0 0}
+.rc .foot{font-size:var(--rc-tx-micro);color:var(--rc-text-muted);line-height:1.6;
+background:var(--rc-surface-1);padding:var(--rc-sp-3) var(--rc-sp-6)}"""
 
 
 def _sparkline_svg(card, copy=None):
@@ -3156,6 +3198,24 @@ def render_html(bundle):
     facts = structure["facts"]
 
     def kpi_grid():
+        """The KPI tile row.
+
+        Two layout rules are load-bearing here (docs/layout-constraints.md §5):
+
+        * The column count is the number of tiles that actually lit up, not a
+          fixed four.  A month-gated review renders two tiles, and a hardcoded
+          ``repeat(4,1fr)`` left more than half the row empty.
+        * A tile is label + value + a sub capped at two lines, and never hosts
+          the sparkline.  Grid rows stretch to their tallest cell, so a tile
+          allowed to grow without bound pads every neighbour -- that is how a
+          sparkline plus its caption once forced a whole row to 209px.  The
+          two-line cap bounds the tallest cell instead of forbidding one
+          particular field, which is what the narrower "the review window may
+          not sit in a tile" ruling did; that one only blocked a single source
+          of the same defect.  The sub wraps rather than truncating: dropping
+          half of "realized X · unrealized Y" loses a figure the reader
+          needs.
+        """
         tiles = []
         for tile in facts["kpi"]:
             tone = f' {tile["tone"]}' if tile.get("tone") else ""
@@ -3165,10 +3225,19 @@ def render_html(bundle):
             parts.append(f'<p class="val{tone}">{e(tile["value"])}</p>')
             if tile.get("sub"):
                 parts.append(f'<p class="sub">{e(tile["sub"])}</p>')
-            if tile.get("spark") and spark:
-                parts.append(spark)
             tiles.append('<div class="m">' + "".join(parts) + "</div>")
-        return '<div class="grid4">' + "".join(tiles) + "</div>" if tiles else ""
+        if not tiles:
+            return ""
+        return f'<div class="kpi" data-n="{len(tiles)}">' + "".join(tiles) + "</div>"
+
+    def trend_strip():
+        """The cumulative-P&L curve as a block-scoped strip.
+
+        The curve describes the whole period, not the single metric whose tile
+        used to host it, so it sits under the grid at full width instead of
+        inside one cell.  ``_sparkline_svg`` may append its own caption
+        paragraph; both go in the strip."""
+        return f'<div class="trend">{spark}</div>' if spark else ""
 
     def instrument_bars(rows):
         parts = []
@@ -3188,9 +3257,20 @@ def render_html(bundle):
         return parts
 
     def attribution_bars():
+        """Comparator rows for the alternative benchmarks.
+
+        The headline figure is deliberately absent when the excess KPI tile
+        rendered: it is the same number the tile already carries in full, and
+        printing it again as a 19px display figure made a secondary fact the
+        heaviest element in the block.  On a card with no excess tile (mixed
+        market, month-gated, missing benchmark data) nothing else carries it,
+        so the headline stays."""
         attribution = facts["attribution"]
-        tone = f' {attribution["tone"]}' if attribution.get("tone") else ""
-        parts = [f'<p class="attr-head"><span class="big{tone}">{e(attribution["headline"])}</span></p>']
+        parts = []
+        if "excess" not in {tile["id"] for tile in facts["kpi"]}:
+            tone = f' {attribution["tone"]}' if attribution.get("tone") else ""
+            parts.append(
+                f'<p class="attr-head"><span class="big{tone}">{e(attribution["headline"])}</span></p>')
         for row in attribution["rows"]:
             parts.append(f'<div class="arow"><span class="al">vs {e(row["label"])}</span>'
                          f'<span class="av">{e(row["pp"])}</span></div>'
@@ -3303,15 +3383,20 @@ def render_html(bundle):
                                  len(rendered))
                 rendered[insert_at:insert_at] = attribution_bars()
             grid = kpi_grid()
+            strip = trend_strip()
             if grid:
-                # The tiles restate the opening indicator lines as the
-                # template's KPI row; the lines stay below as the story block.
+                # Tiles first, then the period curve, then the story block:
+                # the prose keeps only what a tile cannot hold (#344).
                 rendered.insert(0, grid)
-                if spark and not any(t.get("spark") for t in facts["kpi"]):
-                    rendered.insert(1, spark)
-            elif spark:
-                rendered.insert(1 if rendered else 0, spark)
-        body.append(f'<div class="sec"><h2>{e(section["title"])}</h2>'
+                if strip:
+                    rendered.insert(1, strip)
+            elif strip:
+                rendered.insert(0, strip)
+        # Block 4 is the card's single visual centre of gravity: the product
+        # promises exactly one thing to change, so the section carrying it gets
+        # its own ground while every other section shares the card surface.
+        section_class = "sec keystep" if sid == "next" else "sec"
+        body.append(f'<div class="{section_class}"><h2>{e(section["title"])}</h2>'
                     + "".join(rendered) + "</div>")
     body.append('<div class="sec foot">'
                 f"session_id: {e(str(structure['session_id']))} · "
