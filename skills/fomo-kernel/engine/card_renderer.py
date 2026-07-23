@@ -8,6 +8,7 @@ are rejected to keep the engine's numeric authority enforceable in code.
 """
 from __future__ import annotations
 
+import datetime as dt
 import html
 import json
 import math
@@ -1331,13 +1332,16 @@ def _performance_items(card, language):
     # Cash drag stays a neutral observation, never a verdict on holding cash.
     ap = card.get("acct_perf") or {}
     if ap.get("hold_twr") is not None:
-        window = (ap.get("window") or {}).get("days")
+        # #363: no day count here, and no second date range either. The card
+        # states its window once, at the top (_period_span), and that window
+        # now ends on the same price date this return is measured to — both
+        # are px.index[-1]. A raw "1296-day window" made the reader convert a
+        # duration into a period the card had already given them in dates.
         if en:
-            line("account_hold", f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}"
-                 + (f" over the {int(window)}-day window." if window else "."))
+            line("account_hold",
+                 f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}.")
         else:
-            line("account_hold", f"僅計持倉的時間加權報酬為 {_pct(ap.get('hold_twr'))}"
-                 + (f"（{int(window)} 天窗口）。" if window else "。"))
+            line("account_hold", f"僅計持倉的時間加權報酬為 {_pct(ap.get('hold_twr'))}。")
         if ap.get("acct_twr") is not None:
             if en:
                 text = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
@@ -1637,6 +1641,17 @@ def _signed_pp(value, digits=1):
     return "—" if value is None else f"{float(value) * 100:+.{digits}f} pp"
 
 
+def _is_after(candidate, reference):
+    """True when both are parseable ISO dates and ``candidate`` is the later
+    one. Fail-closed: an unparseable or malformed value answers False, so a
+    bad date can never push a rendered window past the engine's own."""
+    try:
+        return (dt.date.fromisoformat(str(candidate))
+                > dt.date.fromisoformat(str(reference)))
+    except (TypeError, ValueError):
+        return False
+
+
 def _period_span(bundle, copy):
     """The review window on its own (contract §2): which stretch of the user's
     history this card covers.
@@ -1648,13 +1663,29 @@ def _period_span(bundle, copy):
     the market backdrop (#344), which pushed that one cell to roughly three
     times the text of its neighbours and, under the grid's default row
     stretch, padded the whole tile row. Split from ``_market_backdrop`` so
-    each lands where it belongs."""
+    each lands where it belongs.
+
+    Owner ruling 2026-07-23 (#363): one range, and it ends where the card's
+    numbers actually end. ``engine_state.date_end`` is the last *trade* date,
+    but every unrealized figure on the card — market value, exposure, the
+    drawdown scenario, the holdings-only return — is priced as of the latest
+    close the engine retrieved (``price_snapshot.as_of``, the same
+    ``px.index[-1]`` that ``acct_perf.window.end`` comes from). For anyone who
+    has not traded recently the two differ by months, and labelling the card
+    with the trade dates alone understated the stretch its numbers cover. So
+    the span runs to the price date whenever that is later. This is a
+    display-layer extension only: ``date_end`` keeps its own meaning
+    everywhere it is load-bearing (the vs-market month gate, session override
+    order), and a card with no retrieved prices renders exactly as before."""
     state = bundle.get("engine_state") or {}
     context = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("market_context") or {})
     period_copy = copy.get("period") or {}
     start = state.get("date_start") or context.get("start")
     end = state.get("date_end") or context.get("end")
+    as_of = (state.get("price_snapshot") or {}).get("as_of")
+    if end and as_of and _is_after(as_of, end):
+        end = as_of
     try:
         if start and end and period_copy.get("span"):
             return period_copy["span"].format(start=start, end=end)
