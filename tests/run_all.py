@@ -37,6 +37,7 @@ SUITES = [
     ("Cross-client interaction trajectory", "tests/test_interaction_trajectory.py"),
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
+    ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),
 ]
 
 
