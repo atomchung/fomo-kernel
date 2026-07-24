@@ -745,11 +745,40 @@ def _money_abs(value, currency):
     return f"{symbol}{abs(float(value)):,.0f}"
 
 
+def _money_compact(value, currency):
+    """Signed money, rounded to the nearest thousand once |value| >= $10,000
+    (e.g. +$119k), else identical to `_money`.
+
+    A metric cell's sub has room for roughly one 3-4 digit figure per
+    wrapped line; a realized/unrealized pair at 5-6 digit magnitudes never
+    fits two-up in that slot no matter how the surrounding words are
+    trimmed (#382), so the figure itself has to shrink there. Below the
+    threshold the full amount is already short enough to fit, and rounding
+    a $200 gain to "$0k" would misstate it, so this defers to `_money`
+    unchanged."""
+    if value is None:
+        return "—"
+    if abs(float(value)) < 10000:
+        return _money(value, currency)
+    symbol = "$" if currency == "USD" else currency + " "
+    signed = f"{float(value) / 1000.0:+,.0f}"
+    return f"{signed[0]}{symbol}{signed[1:]}k"
+
+
 def _display_money(value, context, absolute=False):
     if not context.get("currency") or context.get("factor") is None:
         return None
     converted = None if value is None else float(value) * float(context["factor"])
     return (_money_abs if absolute else _money)(converted, context["currency"])
+
+
+def _display_money_compact(value, context):
+    """`_display_money`'s FX-conversion step, formatted through
+    `_money_compact` instead of `_money` -- see that docstring for why."""
+    if not context.get("currency") or context.get("factor") is None:
+        return None
+    converted = None if value is None else float(value) * float(context["factor"])
+    return _money_compact(converted, context["currency"])
 
 
 def _currency_note(card, language):
@@ -2038,8 +2067,14 @@ def _kpi_tiles(card, context, copy, backdrop=None):
     total_text = _display_money(total, context)
     if total is not None and total_text:
         sub = None
-        realized_text = _display_money(realized, context)
-        unrealized_text = (_display_money(unrealized, context)
+        # #382: the tile's sub -- unlike its value -- has room for roughly
+        # one figure per wrapped line, so a 5-6 digit realized/unrealized
+        # pair goes through the compact ($119k) formatter here even though
+        # the headline total_text above stays full precision. Markdown's
+        # mirror of this same sub (_performance_items) has no such width
+        # limit and keeps full precision, via plain _display_money.
+        realized_text = _display_money_compact(realized, context)
+        unrealized_text = (_display_money_compact(unrealized, context)
                            if unrealized_is_measured(overview) else None)
         if realized_text and unrealized_text and kpi_copy.get("pnl_sub"):
             sub = kpi_copy["pnl_sub"].format(realized=realized_text, unrealized=unrealized_text)

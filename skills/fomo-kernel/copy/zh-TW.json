@@ -63,7 +63,7 @@
     "pnl": "帳面總損益",
     "pnl_sub": "已實現 {realized} · 未實現 {unrealized}",
     "payoff": "已實現盈虧比",
-    "payoff_sub": "平均賺 {win} vs 賠 {loss}",
+    "payoff_sub": "賺 {win} vs 賠 {loss}",
     "excess": "相對大盤",
     "excess_sub": "β {beta}",
     "alpha": "年化 α",
