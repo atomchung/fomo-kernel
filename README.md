@@ -88,6 +88,7 @@ ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averag
 - The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
 - `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
 - Precisely: the local Python engine reads a normalized trade CSV or snapshot JSON envelope. The coding agent you invoke may read a source table or screenshot locally to transcribe broker-declared facts, but it does not use engine OCR or a cloud OCR/upload path. It keeps the temporary normalized JSON outside the repository (for example under `/tmp`) and never calculates weights or hand-builds card/state artifacts. Nothing is sent to the author. This differs from handing a statement to a SaaS whose retained data you cannot inspect.
+- If your AI client offers an in-chat rich-rendering surface (for example, Claude's Artifact feature), the agent may use it to display your private card. That surface is private by default under the client's own terms — visible only to you unless you choose to share it — so using it is not the same as publishing your data. The rule that never changes: your trade content is never posted, published, or sent to a third party (a public GitHub issue, a shared link, a chat channel) by the skill or the author.
 
 ## 📁 Where your coach memory lives / how to maintain it
 
