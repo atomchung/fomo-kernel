@@ -5,7 +5,7 @@
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-8A2BE2.svg)](skills/fomo-kernel)
 [![Engine: Deterministic](https://img.shields.io/badge/Engine-Deterministic-green.svg)](skills/fomo-kernel/engine)
 
-[English](README.md) · **繁體中文**
+[English](README.md) · **繁體中文** · [简体中文](README.zh-CN.md)
 
 > 一個給 Claude Code、Codex、Cursor 等 coding agent 使用的本機交易復盤 skill：先用確定性診斷找出行為漏洞，再透過一段判斷對話收斂成**一張卡**——
 > 你做對的一件事 + 一個最大的洞（用你自己的數字）+ 一條你親選、下次可驗的規矩。下次復盤會先對帳這條規矩有沒有守。

@@ -12,6 +12,7 @@ CJK = re.compile(r"[\u3400-\u9fff]")
 GTM_MARKDOWN_ALLOWLIST = {
     Path("README.md"),
     Path("README.zh-TW.md"),
+    Path("README.zh-CN.md"),
 }
 ROOT_IMPLEMENTATION_DOCS = {
     Path("AGENTS.md"),
@@ -133,6 +134,7 @@ PP_VALUE_RE = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?pp")
 README_LINK_ALLOWLIST = {
     "README.md",
     "README.zh-TW.md",
+    "README.zh-CN.md",
     "docs/demo-card.png",
     "docs/demo-card-en.png",
 }

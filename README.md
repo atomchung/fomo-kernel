@@ -5,7 +5,7 @@
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-8A2BE2.svg)](skills/fomo-kernel)
 [![Engine: Deterministic](https://img.shields.io/badge/Engine-Deterministic-green.svg)](skills/fomo-kernel/engine)
 
-**English** · [繁體中文](README.zh-TW.md)
+**English** · [繁體中文](README.zh-TW.md) · [简体中文](README.zh-CN.md)
 
 > A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It turns your real trades into **one review card** through deterministic diagnosis and a short judgment dialogue —
 > the one thing you did right + your biggest leak (in your own numbers) + one checkable rule you choose. On the next review, it starts by reconciling whether you kept that rule.
