@@ -59,13 +59,29 @@ def _git(repo_root: Path, *args: str) -> str:
 
 
 def _revision(repo_root: Path, remote_freshness: str) -> dict[str, Any]:
-    """Describe local revision facts without treating cached refs as fresh."""
+    """Describe local revision facts without treating cached refs as fresh.
+
+    ``origin/main`` is a best-effort lookup, not a guaranteed one: a shallow
+    or narrow-refspec checkout (this repo's own CI included -- caught by
+    ``test_cli_status_prints_json`` running the real CLI, not the mocked
+    unit tests) may never populate that remote-tracking ref at all, and a
+    missing ref must not crash `status`, which promises to work network-free
+    on whatever is already on disk. Right after a fetch, ``FETCH_HEAD`` is a
+    reliable fallback -- it is always set by `git fetch`, independent of how
+    the checkout's fetch refspec maps remote-tracking branches."""
     head = _git(repo_root, "rev-parse", "--short", "HEAD")
-    origin_main = _git(repo_root, "rev-parse", "--short", "origin/main")
+    origin_main = None
+    candidates = ("origin/main", "FETCH_HEAD") if remote_freshness == "refreshed" else ("origin/main",)
+    for ref in candidates:
+        try:
+            origin_main = _git(repo_root, "rev-parse", "--short", ref)
+            break
+        except PreflightError:
+            continue
     return {
         "head": head,
         "origin_main": origin_main,
-        "head_matches_origin_main": head == origin_main,
+        "head_matches_origin_main": origin_main is not None and head == origin_main,
         "remote_freshness": remote_freshness,
     }
 

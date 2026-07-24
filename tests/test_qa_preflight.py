@@ -35,6 +35,46 @@ def test_base_report_never_claims_formal_or_host_ux():
     }
 
 
+def test_status_survives_a_checkout_with_no_resolvable_origin_main():
+    """A shallow or narrow-refspec checkout -- this repo's own CI included --
+    may never populate the origin/main remote-tracking ref. status promises
+    to work network-free on whatever is already on disk, so a missing ref
+    must report origin_main:None, not raise."""
+    def flaky_git(_root, *args):
+        if args[-1] == "origin/main":
+            raise qa_preflight.PreflightError("fatal: Needed a single revision")
+        return "head"
+    with mock.patch.object(qa_preflight, "_git", side_effect=flaky_git):
+        report = qa_preflight._base_report(ROOT, "unverified")
+    assert report["revision"] == {
+        "head": "head",
+        "origin_main": None,
+        "head_matches_origin_main": False,
+        "remote_freshness": "unverified",
+    }
+
+
+def test_refresh_falls_back_to_fetch_head_when_origin_main_ref_never_updates():
+    """Right after a fetch, FETCH_HEAD is always set -- unlike origin/main,
+    which depends on the checkout's fetch refspec actually mapping remote
+    branches. A refreshed report must not go blind just because that mapping
+    is absent (the exact CI failure test_cli_status_prints_json caught)."""
+    def flaky_git(_root, *args):
+        if args[-1] == "origin/main":
+            raise qa_preflight.PreflightError("fatal: Needed a single revision")
+        if args[-1] == "FETCH_HEAD":
+            return "fetched"
+        return "head"
+    with mock.patch.object(qa_preflight, "_git", side_effect=flaky_git):
+        report = qa_preflight._base_report(ROOT, "refreshed")
+    assert report["revision"] == {
+        "head": "head",
+        "origin_main": "fetched",
+        "head_matches_origin_main": False,
+        "remote_freshness": "refreshed",
+    }
+
+
 def test_tool_docs_preserve_temporary_fixture_boundary():
     assert "temporary review and receipt fixtures" in qa_preflight.__doc__
     assert "not attributable QA evidence" in qa_preflight.__doc__
