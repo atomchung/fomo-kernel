@@ -1223,6 +1223,62 @@ def test_account_gate_sentence_names_the_actual_blocker():
             f"{language}: every blocker needs its own wording, got {sorted(sentences)}"
 
 
+def test_account_gate_sentences_are_pinned_in_rendered_output():
+    """#363 mutation-probe: the sentences themselves, not just their shape.
+
+    `test_account_gate_sentence_names_the_actual_blocker` above asserts each
+    status renders exactly one line and that the six lines are *distinct*. It
+    never reads their content, so corrupting any single status's wording keeps
+    it distinct from the other five and the suite stays green. Measured: with
+    that test in place, 10 of the 12 `account_gate` strings (five statuses x
+    two locales) were ungated — a corruption of any of them shipped silently,
+    which is not hypothetical, it happened while this change was being written.
+
+    Hardcoded literals, deliberately: a version reading expectations back from
+    `load_copy()` compares the catalog against itself and passes with the
+    catalog broken (the false green recorded in #373, and the shape the
+    neighbouring `..._degrades_instead_of_rendering_blank` still has for
+    `default`).
+
+    Register: `_GATE_STATUSES` + the `default` fallback, both locales."""
+    expected = {
+        "zh-TW": {
+            "default": "補齊現金錨點，就能看到含現金的帳戶級報酬。",
+            "no_cash_anchor": "補一個目前的現金餘額，就能看到含現金的帳戶級報酬。",
+            "mixed_trade_footprint": "交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史。",
+            "negative_cash_rollback": "補上還沒有錨點的那個幣別，就能看到含現金的帳戶級報酬。",
+            "cash_residual": "更新那一段的現金部位，就能看到含現金的帳戶級報酬。",
+            "chain_unavailable": "這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬。",
+        },
+        "en": {
+            "default": "Complete the cash anchor, and you'll see the account-level "
+                       "return with cash included.",
+            "no_cash_anchor": "Add one current cash balance, and you'll see the "
+                              "account-level return with cash included.",
+            "mixed_trade_footprint": "Only part of the trade history carries the broker's "
+                                     "cash amount, and the two bases cannot share one cash "
+                                     "history.",
+            "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see "
+                                      "the account-level return with cash included.",
+            "cash_residual": "Update the cash position for that stretch, and you'll see the "
+                             "account-level return with cash included.",
+            "chain_unavailable": "No day in this window produced a usable account value to "
+                                 "chain into a return.",
+        },
+    }
+    for status in _GATE_STATUSES + ("default",):
+        for language in ("zh-TW", "en"):
+            # "default" is not an engine status: it is what an unrecognized one
+            # falls back to, so reach it the way a legacy bundle does.
+            gate = ({"status": "a_status_added_later", "data": {}} if status == "default"
+                    else {"status": status, "data": {}})
+            card = {"acct_perf": {"hold_twr": 0.5, "acct_twr": None, "gate": gate}}
+            texts = [item["text"] for item in card_renderer._performance_items(card, language)
+                     if item.get("tag") == "account_gate"]
+            assert texts == [expected[language][status]], \
+                f"{language}/{status}: account_gate sentence altered — got {texts}"
+
+
 def test_account_gate_degrades_instead_of_rendering_blank():
     """A legacy bundle (free-text `note`, no status) and a status this renderer
     has never heard of both fall back to the generic sentence. Silence would be
@@ -1815,6 +1871,81 @@ def test_best_strength_no_signal_copy_is_pinned_in_rendered_output():
             f"{language}: best_strength fallback sentence missing/altered on HTML"
 
 
+def test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output():
+    """#363 mutation-probe: corrupting alpha_interval.tile_sub / below_unreliable
+    / below_negative is invisible to tests/persona_sweep.py --baseline (the
+    offline sweep never populates alpha_beta_breakdown -- no persona has live
+    prices) and to test_rich_layout_renders_template_blocks_from_shared_facts
+    (that fixture has no alpha_stat/ci95 at all, so it only ever exercises the
+    pre-#363 fallback sub, never the new tile_sub/standalone-note path). Pins
+    the exact, copy-resolved strings on a fixture that does carry ci95, across
+    all four (credible, interval-sign) combinations -- confirming the two
+    below-grid triggers are independent, not merged, as #363 requires."""
+    # Hardcoded, not read from copy/*.json -- see the reconciliation pin test
+    # above for why: the whole point is to catch a corruption of that file.
+    tile_sub_template = {
+        "zh-TW": "95% 區間 {low}%～{high}%",
+        "en": "95% interval {low}% to {high}%",
+    }
+    below_unreliable = {
+        "zh-TW": "* 年化 α 統計上還不可信。",
+        "en": "* The annualized α is not yet statistically credible.",
+    }
+    below_negative = {
+        "zh-TW": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。",
+        "en": ("The annualized α interval includes a negative value, meaning this "
+               "period's stock-picking edge is not yet statistically confirmed as "
+               "a durable skill."),
+    }
+    # (credible, ci95, expect_unreliable, expect_negative, low_text, high_text)
+    cases = [
+        ("both_clean", True, [0.07, 0.54], False, False, "+7", "+54"),
+        ("negative_only", True, [-0.05, 0.74], False, True, "-5", "+74"),
+        ("unreliable_only", False, [0.05, 0.74], True, False, "+5", "+74"),
+        ("both_triggered", False, [-0.10, 0.74], True, True, "-10", "+74"),
+    ]
+    for label, credible, ci95, expect_unreliable, expect_negative, low, high in cases:
+        for language in ("zh-TW", "en"):
+            bundle = _rich_bundle(language)
+            ab = bundle["engine_card"]["alpha_beta_breakdown"]
+            ab["credible"] = credible
+            ab["alpha_stat"] = {"alpha_ann": ab["alpha_ann"], "ci95": ci95}
+            html_card = html.unescape(card_renderer.render_html(bundle))
+            markdown = card_renderer.render_private(bundle)
+
+            expected_sub = tile_sub_template[language].format(low=low, high=high)
+            assert expected_sub in html_card, \
+                f"{label}/{language}: alpha tile sub must carry the interval: {expected_sub!r}"
+            # The tile value's own " *" suffix logic is unchanged by #363 (it
+            # is driven by `credible` alone, independent of the sub) — pin it
+            # here too, since a regression that swapped the two conditions
+            # would otherwise slip past every assertion above.
+            expected_value = "+33% *" if not credible else "+33%"
+            assert f'<p class="val">{expected_value}</p>' in html_card, \
+                f"{label}/{language}: alpha tile value's \"*\" suffix must track `credible` alone"
+
+            note_unreliable = below_unreliable[language]
+            note_negative = below_negative[language]
+            assert (note_unreliable in html_card) == expect_unreliable, \
+                f"{label}/{language}: below_unreliable trigger mismatch"
+            assert (note_negative in html_card) == expect_negative, \
+                f"{label}/{language}: below_negative trigger mismatch"
+            if not expect_unreliable and not expect_negative:
+                # #363: the point of the change -- a credible, wholly-positive
+                # card prints no alpha prose line below the grid at all.
+                assert note_unreliable not in html_card and note_negative not in html_card
+
+            # Markdown has no tile: it must still carry the complete original
+            # sentence (headline + interval + caveat), untouched by any of
+            # this -- the existing kpi_id/html_text mechanism, not a special
+            # case. The tile-sized short form must NOT be what Markdown shows.
+            assert expected_sub not in markdown, \
+                f"{label}/{language}: Markdown must not carry the tile-sized short form"
+            if expect_negative:
+                assert "區間包含負值" in markdown or "includes a negative value" in markdown, \
+                    f"{label}/{language}: Markdown must keep its own full negative_caveat clause"
+
+
 def test_delivery_contract_exists_and_is_routed():
     contract = SKILL / "references" / "card-delivery.md"
     assert contract.is_file(), "references/card-delivery.md must exist"
@@ -2293,8 +2424,10 @@ def main():
         test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
         test_standing_rule_placeholder_carries_the_user_cap_override,
         test_account_gate_sentence_names_the_actual_blocker,
+        test_account_gate_sentences_are_pinned_in_rendered_output,
         test_account_gate_degrades_instead_of_rendering_blank,
         test_annualized_gap_note_names_the_actual_blocker,
+        test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output,
     ]
     for test in tests:
         test()

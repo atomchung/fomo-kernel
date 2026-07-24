@@ -170,8 +170,10 @@ These are not preferences. Each was a bug report from dogfooding.
    add a line explaining it. Piling on explanations is what made the card
    bloated in the first place.
 2. **A tile and the prose beneath it must never state the same figure.** The
-   prose's job is what a tile cannot hold: decomposition, an interval and its
-   plain-language reading, cross-period narrative.
+   prose's job is what a tile cannot hold: decomposition, a caveat's
+   plain-language reading, cross-period narrative. (**Refined 2026-07-24,
+   #363**: an interval turned out to be something a tile *can* hold, in a
+   short form sized for its sub — see rule 7.)
 3. **Everything ranks by size of money impact, never by percentage return.**
    A metric that ranked by return rate was removed outright because it
    surfaced a trivially small trade next to figures ordered by amount.
@@ -198,8 +200,16 @@ These are not preferences. Each was a bug report from dogfooding.
 7. **One value is expressed once per card.** The excess figure used to appear
    three times — as a KPI tile, as a sentence in the prose, and as a display
    figure heading the comparator block. The tile keeps it; the prose keeps
-   only what a tile cannot hold (an interval and its reading, a
-   decomposition); the comparator headline is gone.
+   only what a tile cannot hold (a caveat's reading, a decomposition); the
+   comparator headline is gone. The alpha tile's own sub picked up a second
+   figure the same way (2026-07-24, #363): the 95% interval, in a short form
+   that fits the sub's two-line cap, whenever the data can build one — a
+   card with no usable interval falls back to what the sub held before. What
+   the sub still cannot hold when the interval does render there — the
+   not-yet-credible legend, the negative-interval caveat — is exactly the
+   "reading" this rule already meant; it moved to one line below the whole
+   grid instead of standing directly under the tile, since two tiles' worth
+   of prose no longer fit under just one of them.
 8. **Exactly one L1, and it is Block 4.** The product's promise is a single
    action, so the section carrying it has its own ground while every other
    section shares the card surface. Previously Block 3's panels and Block 4's

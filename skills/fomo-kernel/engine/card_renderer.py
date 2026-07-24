@@ -862,6 +862,26 @@ def _benchmark_pp(value):
     return f"{points:+d}"
 
 
+def _pp(value, digits=0):
+    """Format a *difference of two returns* as signed percentage points, with
+    the unit baked in like ``_pct()`` bakes in "%" -- never percent (output
+    contract §5: "% means absolute return, pp means excess").
+
+    ``cash_drag = acct_twr − hold_twr`` is exactly this kind of value; the
+    account-level TWR and holdings-only TWR it is built from are each an
+    absolute return and stay on ``_pct()``. Signed and negative-zero-free like
+    ``_benchmark_pp``/``_signed_pp``, but (a) keyed next to ``_pct()`` as a
+    drop-in unit fix for that call shape, and (b) parameterized on ``digits``
+    like ``_pct()`` rather than fixed at one precision."""
+    number = _finite_number(value)
+    if number is None:
+        return "—"
+    points = round(number * 100, digits)
+    if points == 0:
+        points = 0.0  # avoid "-0"/"-0.0"
+    return f"{points:+.{digits}f}pp"
+
+
 def _beta_text(value):
     """Format a finite beta to two decimals without exposing negative zero."""
     number = _finite_number(value)
@@ -962,14 +982,25 @@ def _private_split_lines(market, row, language):
     return [line]
 
 
-def _alpha_interval_line(ab, language, lead=True):
-    """The alpha-interval sentence; ``lead=False`` drops the headline "alpha
-    was +X% annualized" clause (#344: that figure already is the "年化 α" KPI
-    tile's value). The 95%-interval and its plain-language caveat — the part
-    a tile cannot hold — are unaffected either way. Callers that render the
-    headline number elsewhere (the HTML story block, when the alpha tile is
-    on the same card) pass ``lead=False``; every other caller keeps the
-    default so the sentence still stands alone."""
+def _alpha_interval_line(ab, language):
+    """The full alpha-interval sentence: headline "alpha was +X% annualized",
+    its 95% interval, and (#313) a plain-language caveat when the interval's
+    lower bound is negative.
+
+    This is Markdown's only carrier of the interval — no tile grid exists
+    there — and it is also what HTML falls back to on any card whose alpha
+    tile did not render this period (mixed-market, month-gated): the caller,
+    ``_performance_items``, tags this item ``kpi_id="alpha"``, and HTML only
+    swaps in the trimmed ``html_text`` variant when that tile actually
+    rendered (render_html's ``indicator_items``). On a card whose alpha tile
+    *did* render, the interval instead lives in the tile's own sub
+    (``_alpha_tile_sub``, #363) and this full sentence is Markdown-only; what
+    a tile's sub still cannot hold is ``_alpha_standalone_note``. Before #363
+    this function also had a ``lead=False``/"compact" mode that dropped the
+    headline clause for a below-grid HTML line holding just the interval —
+    that line no longer exists (the interval moved into the tile itself), so
+    the mode and the copy key it read (``alpha_interval.compact``) are gone
+    rather than left unreachable."""
     stat = ab.get("alpha_stat") or {}
     alpha = _finite_number(stat.get("alpha_ann"))
     ci = stat.get("ci95")
@@ -992,10 +1023,70 @@ def _alpha_interval_line(ab, language, lead=True):
     alpha_text = f"{alpha * 100:+.0f}"
     low_text = f"{low * 100:+.0f}"
     high_text = f"{high * 100:+.0f}"
-    if lead:
-        return alpha_copy["lead"].format(scope=scope, alpha=alpha_text,
-                                          low=low_text, high=high_text) + plain
-    return alpha_copy["compact"].format(low=low_text, high=high_text) + plain
+    return alpha_copy["lead"].format(scope=scope, alpha=alpha_text,
+                                      low=low_text, high=high_text) + plain
+
+
+def _alpha_tile_sub(ab, language):
+    """The alpha KPI tile's sub slot: the 95% interval, in the short form a
+    tile's sub can actually hold (design-guidelines §6: capped at two lines).
+
+    Returns ``None`` when ``alpha_stat.ci95`` is absent or not finite — the
+    interval cannot be built — so the caller (``_kpi_tiles``) can fall back to
+    the pre-#363 sub (the not-yet-credible legend, or nothing). That fallback
+    matters: without it, a non-credible alpha whose ci95 happens to be missing
+    would lose the only legend for its value's "*" suffix. The condition is
+    read once, from the data (ci95 present and finite), not enumerated per
+    scenario (design-guidelines §3.3) — a future caller with a differently
+    shaped gap still degrades the same way."""
+    stat = ab.get("alpha_stat") or {}
+    ci = stat.get("ci95")
+    if not isinstance(ci, (list, tuple)) or len(ci) != 2:
+        return None
+    low, high = (_finite_number(ci[0]), _finite_number(ci[1]))
+    if low is None or high is None:
+        return None
+    template = (load_copy(language).get("alpha_interval") or {}).get("tile_sub")
+    if not template:
+        return None
+    return template.format(low=f"{low * 100:+.0f}", high=f"{high * 100:+.0f}")
+
+
+def _alpha_standalone_note(ab, language):
+    """#363: what the alpha tile's sub can no longer hold once ``_alpha_tile_sub``
+    fills it with the interval — the not-yet-credible legend for the value's
+    "*" suffix, and the #313 plain-language reading of a negative lower bound.
+
+    Each half fires on its own pre-existing, independent trigger (``credible``;
+    ``ci95``'s low bound) exactly as it always has — this only changes *where*
+    each renders, never *when*. The two triggers are not merged: a card can
+    hit either, both, or neither. Both halves name their own subject ("年化
+    α"/"annualized α") because this line no longer sits directly beneath a
+    lead clause that already named alpha for it (the way the pre-#363 prose
+    line, or the tile's own label, did) — see the #363 ruling in
+    docs/output-contract.md for why a bare "the interval..." would be
+    orphaned here. Returns "" when neither triggers, which is what lets HTML
+    print no line at all beneath a credible tile with a wholly-positive
+    interval — the point of moving the interval into the tile in the first
+    place."""
+    stat = ab.get("alpha_stat") or {}
+    ci = stat.get("ci95")
+    if not isinstance(ci, (list, tuple)) or len(ci) != 2:
+        return ""
+    low = _finite_number(ci[0])
+    if low is None:
+        return ""
+    alpha_copy = load_copy(language).get("alpha_interval") or {}
+    parts = []
+    if not ab.get("credible"):
+        note = alpha_copy.get("below_unreliable")
+        if note:
+            parts.append(note)
+    if low < 0:
+        note = alpha_copy.get("below_negative")
+        if note:
+            parts.append(note)
+    return " ".join(parts)
 
 
 def _hole_line(hole, language):
@@ -1361,29 +1452,27 @@ def _performance_items(card, language):
         # now ends on the same price date this return is measured to — both
         # are px.index[-1]. A raw "1296-day window" made the reader convert a
         # duration into a period the card had already given them in dates.
-        if en:
-            line("account_hold",
-                 f"Holdings-only time-weighted return was {_pct(ap.get('hold_twr'))}.")
-        else:
-            line("account_hold", f"僅計持倉的時間加權報酬為 {_pct(ap.get('hold_twr'))}。")
+        # #363 also renames this indicator (and the account-level one below)
+        # "cumulative return": the engine field (hold_twr/acct_twr) and its
+        # computation are unchanged, only the word a reader sees — "time-
+        # weighted return" named the methodology, not what it measures, and
+        # read as unexplained jargon. `irr_annual` below is a genuinely
+        # different, already-annualized indicator and keeps its own wording.
+        account_copy = copy.get("account_perf") or {}
+        line("account_hold", account_copy["holdings_only"].format(value=_pct(ap.get("hold_twr"))))
         if ap.get("acct_twr") is not None:
-            if en:
-                text = f"Account-level time-weighted return was {_pct(ap.get('acct_twr'))}"
-                if ap.get("irr_annual") is not None:
-                    # Output contract: plain phrase, not the IRR jargon token.
-                    text += f"; annualized return was {_pct(ap.get('irr_annual'))}"
-                if ap.get("cash_drag") is not None:
-                    text += (f"; the gap versus the holdings pillar, {_pct(ap.get('cash_drag'))}, "
-                             "is explained by holding cash — an observation, not a verdict")
-                line("account", text + ".")
-            else:
-                text = f"帳戶級時間加權報酬為 {_pct(ap.get('acct_twr'))}"
-                if ap.get("irr_annual") is not None:
-                    # Output contract: plain phrase, not the IRR jargon token.
-                    text += f"，年化報酬 {_pct(ap.get('irr_annual'))}"
-                if ap.get("cash_drag") is not None:
-                    text += f"；與僅計持倉的差距 {_pct(ap.get('cash_drag'))} 來自持有現金——這是觀察，不是對錯判定"
-                line("account", text + "。")
+            text = account_copy["account_base"].format(value=_pct(ap.get("acct_twr")))
+            if ap.get("irr_annual") is not None:
+                # Output contract: plain phrase, not the IRR jargon token.
+                text += account_copy["annualized_suffix"].format(value=_pct(ap.get("irr_annual")))
+            if ap.get("cash_drag") is not None:
+                # #363: cash_drag = acct_twr − hold_twr is a difference of two
+                # returns, so its unit is percentage points, never percent —
+                # _pp(), not _pct() (output contract §5's "% means absolute
+                # return, pp means excess"; this sentence used to render it as
+                # "-33%" instead of "-33pp").
+                text += account_copy["cash_drag_suffix"].format(value=_pp(ap.get("cash_drag")))
+            line("account", text + account_copy["terminator"])
         elif ap.get("gate") or ap.get("note"):
             # #375 (contract §4: a gap note names the *actual* blocker): the
             # engine hands over a structured {status, data} reason and the
@@ -1440,13 +1529,21 @@ def _performance_items(card, language):
         if benchmark_rows:
             alpha_line = _alpha_interval_line(ab, language)
             if alpha_line:
-                # #344: the headline "alpha was +X% annualized" clause repeats
-                # the "年化 α" KPI tile's own value; HTML keeps only the 95%
-                # interval and its plain-language caveat (lead=False) whenever
-                # that tile rendered on this card. Markdown always gets the
-                # full sentence — it has no tile to carry the headline number.
-                compact = _alpha_interval_line(ab, language, lead=False)
-                line("alpha", alpha_line, kpi_id="alpha", html_text=compact or "")
+                # #363: the 95% interval moved into the alpha tile's own sub
+                # (_alpha_tile_sub) whenever that tile renders, so HTML no
+                # longer needs this line to carry it. html_text now holds only
+                # what the tile's sub still cannot — the not-yet-credible
+                # legend and the #313 negative-interval caveat, each on its
+                # own trigger, joined into one self-anchored standalone line
+                # (_alpha_standalone_note) — or "" when neither fires, which
+                # is the common case: a credible alpha with a wholly-positive
+                # interval now prints nothing below the grid at all. Markdown
+                # always gets the full sentence above — it has no tile to
+                # carry any of this, and a card with no alpha tile this
+                # period (mixed-market, month-gated) keeps the full sentence
+                # on HTML too, via the same kpi_id/html_text mechanism.
+                line("alpha", alpha_line, kpi_id="alpha",
+                     html_text=_alpha_standalone_note(ab, language))
         attribution = _attribution_facts(card)
         if attribution:
             items.append({"kind": "attr_rows", "tag": None,
@@ -1982,10 +2079,21 @@ def _kpi_tiles(card, context, copy, backdrop=None):
     if alpha is not None and kpi_copy.get("alpha"):
         credible = bool(ab.get("credible"))
         value = _signed_pct(alpha, digits=0)
+        # #363: the sub carries the 95% interval whenever alpha_stat.ci95 can
+        # build one (_alpha_tile_sub); a card with no usable ci95 falls back
+        # to exactly the pre-#363 sub, so a non-credible alpha never loses the
+        # footnote for its value's "*" just because no interval exists. What
+        # a tile's sub still cannot hold when the interval *does* render
+        # there — that same "*" legend, and the #313 negative-interval
+        # caveat — moves to the standalone line below the grid
+        # (_alpha_standalone_note, read via the "alpha" item's html_text in
+        # _performance_items). The value's own " *" suffix is unchanged.
+        interval_sub = _alpha_tile_sub(ab, copy["language"])
+        sub = (interval_sub if interval_sub is not None
+               else (None if credible else "* " + (kpi_copy.get("alpha_unreliable") or "")))
         tiles.append({"id": "alpha", "label": kpi_copy["alpha"],
                       "value": value if credible else f"{value} *",
-                      "tone": None,
-                      "sub": None if credible else "* " + (kpi_copy.get("alpha_unreliable") or "")})
+                      "tone": None, "sub": sub})
     return tiles
 
 
@@ -2750,17 +2858,25 @@ def render_private(bundle):
                 # single-market card has nothing to disambiguate, so it stays
                 # exactly as before. No caveat items reach this loop anymore
                 # (§4 2026-07-22 ruling): every honesty sentence is footnoted.
-                # 2026-07-22 owner bullet pass: only the grouped vs-market
-                # lines (those carrying a market key) get a "- " bullet; the
-                # main Block-1 number lines (pnl/payoff/account/cash/stress/
-                # ...) are left exactly as before — owner asked for bullets
-                # only in the footnote and inside the TW/US modules. Bullet
-                # unconditionally here (no _is_bulletable check): these lines
-                # are engine-templated and always exactly one sentence by
-                # construction, but they are full of decimal numbers (e.g.
-                # "β 1.10") that _is_bulletable's sentence-counting would
-                # misread as a second sentence — that check is for honesty
-                # text specifically (digit-free by contract), not this.
+                # 2026-07-24 owner bullet pass (#363) supersedes the
+                # 2026-07-22 one recorded here through 2026-07-23: that
+                # ruling bulleted only the grouped vs-market lines and left
+                # the main Block-1 number lines (pnl/payoff/account/cash/
+                # stress/...) as plain paragraphs, reserving bullets for the
+                # footnote and the TW/US modules. The owner has now ruled
+                # that every Block-1 indicator line gets a "- " bullet on
+                # this (Markdown) surface. The HTML surface is unchanged — it
+                # keeps <p> paragraphs there, because its KPI tile grid
+                # already carries the visual structure and its own Block-1
+                # prose runs to only about four lines, unlike Markdown, which
+                # has no tile grid to lean on and renders every figure as
+                # prose. Bullet unconditionally here (no _is_bulletable
+                # check): these lines are engine-templated and always
+                # exactly one sentence by construction, but they are full of
+                # decimal numbers (e.g. "β 1.10") that _is_bulletable's
+                # sentence-counting would misread as a second sentence —
+                # that check is for honesty text specifically (digit-free by
+                # contract), not this.
                 markets = {item.get("market") for item in block if item.get("market")}
                 current_market = None
                 for item in block:
@@ -2768,7 +2884,7 @@ def render_private(bundle):
                     if market and market != current_market:
                         lines.append(f"[{market}]")
                     current_market = market
-                    lines.append(f"- {item['text']}" if market else item["text"])
+                    lines.append(f"- {item['text']}")
                 lines.append("")
             elif kind == "footnote":
                 # One sentence per line (not one joined paragraph): the same

@@ -129,7 +129,16 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # branches. Merging took the measured count on the merged tree rather than
 # either side's number, which is the only resolution that banks both
 # reductions instead of leaving the ratchet a notch loose.
-BASELINE = 50
+#
+# #363 (2026-07-24): while rewriting the account_hold/account cumulative-
+# return sentences (batch 4's leftover list names `_performance_items` at 13
+# branches), the two `if en` branches these particular sentences used moved
+# into the new copy/*.json `account_perf` group (holdings_only, account_base,
+# annualized_suffix, cash_drag_suffix, terminator — split at each optional
+# clause so the existing irr_annual/cash_drag conditional-concatenation code
+# keeps working unchanged). The rest of `_performance_items`'s branches
+# (pnl/payoff/drag/cash) are untouched — out of this issue's scope. 50 -> 48.
+BASELINE = 48
 
 
 def test_language_branch_count_only_ratchets_down():
