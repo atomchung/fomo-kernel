@@ -2169,7 +2169,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "status": "awaiting_answers",
         "route": route,
         "flow_path": flow_path,
-        "language": "en" if str(language).lower().startswith("en") else "zh-TW",
+        "language": card_renderer.resolve_language(language),
         "persist": bool(persist),
         "state_root": root,
         "input": {"paths": [os.path.abspath(p) for p in paths],
@@ -2263,7 +2263,10 @@ def _pending_for_agent(bundle):
 
 def cmd_prepare(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
-    language = args.language
+    # Resolve once at the boundary (#389): everything downstream — fingerprint,
+    # plan, renderer, display currency — sees only a canonical supported locale.
+    # args.language is rewritten so helpers that read the namespace agree.
+    language = args.language = card_renderer.resolve_language(args.language)
     route = args.route
     persist = not args.test_drive
     if args.snapshot_json:
@@ -3253,7 +3256,9 @@ def build_parser():
     prepare = sub.add_parser("prepare", help="run engine and emit a resumable Review Plan")
     prepare.add_argument("paths", nargs="*", help="normalized trade CSV files")
     prepare.add_argument("--root")
-    prepare.add_argument("--language", default="zh-TW", choices=("zh-TW", "en"))
+    prepare.add_argument("--language", default="en",
+                         help="any language tag; unsupported tags fall back to en "
+                              "(supported locales are the copy/<locale>.json files)")
     prepare.add_argument("--route", default="auto",
                          choices=("auto", "first_review", "weekly_review", "snapshot_review"))
     prepare.add_argument("--test-drive", action="store_true")

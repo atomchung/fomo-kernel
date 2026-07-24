@@ -37,9 +37,36 @@ MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
 
+DEFAULT_LANGUAGE = "en"
+
+
+def supported_languages():
+    """Locales that have a copy file. Dropping a new copy/<locale>.json here is
+    the complete registration step (output-language contract §2); nothing else
+    hardcodes the locale list."""
+    return {os.path.splitext(name)[0] for name in os.listdir(COPY_DIR)
+            if name.endswith(".json")}
+
+
+def resolve_language(language):
+    """Map a requested language tag to a supported copy locale.
+
+    Owner ruling 2026-07-24 (#389): an unknown or unsupported tag falls back to
+    English, never to zh-TW. Matching is exact up to case (``zh-tw`` → ``zh-TW``);
+    there is deliberately no base-tag negotiation — whether zh variants should
+    exception-map to zh-TW is an open product question on #389, and until it is
+    ruled they follow the strict fallback. Idempotent for canonical values.
+    """
+    requested = str(language or "").strip().lower()
+    for candidate in sorted(supported_languages()):
+        if requested == candidate.lower():
+            return candidate
+    return DEFAULT_LANGUAGE
+
+
 def load_copy(language):
-    language = "en" if str(language).lower().startswith("en") else "zh-TW"
-    with open(os.path.join(COPY_DIR, language + ".json"), encoding="utf-8") as f:
+    with open(os.path.join(COPY_DIR, resolve_language(language) + ".json"),
+              encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -59,15 +86,18 @@ def load_copy(language):
 # a numeral character are exempted through an explicit allowlist that is punched
 # out of the text before scanning.
 
-# CJK numerals that can head a spelled-out quantity.
-_CJK_NUMERALS = "零〇一二兩三四五六七八九十百千萬億兆"
+# CJK numerals that can head a spelled-out quantity. Simplified variants
+# (两/万/亿) sit alongside Traditional so a zh-CN narrative cannot smuggle
+# "五万" through a table tuned for "五萬" (#387).
+_CJK_NUMERALS = "零〇一二兩两三四五六七八九十百千萬万億亿兆"
 # "Hard" units are almost never word-heads, so a numeral in front is always a
 # quantity claim (percent / colloquial percent / multiple).
 _CJK_HARD_UNITS = "％%趴倍"
 # "Soft" units also head common words (成本, 個人, 天氣…), so a numeral+unit only
 # counts when the unit sits at a word boundary (not glued to another non-numeral
-# Han letter that would form a compound word).
-_CJK_SOFT_UNITS = "成元塊股張檔天日週月年季次個點"
+# Han letter that would form a compound word). Simplified variants included
+# (块张档个点周 for 塊張檔個點週).
+_CJK_SOFT_UNITS = "成元塊块股張张檔档天日週周月年季次個个點点"
 
 # Idioms that reuse a numeral character without asserting a quantity.  They are
 # removed before scanning so the rules below never see them.  Tunable: extend
@@ -85,6 +115,14 @@ _ZH_IDIOMS = (
     "兩難", "兩者", "兩極", "兩全", "兩可", "兩相", "兩敗", "兩性", "兩岸", "兩用",
     "第一", "第二", "第三", "第四", "第五",
     "一次性", "再一次", "一次到位", "一次又一次",
+    # Simplified counterparts of the idioms above whose characters differ
+    # (shared-form idioms like 一起/十分/第一 need no duplicate).
+    "一时", "一连", "一举", "一样", "一体", "一线", "一员", "一环",
+    "统一", "专一", "进一步",
+    "三三两两", "两两", "三两", "三天两头",
+    "千万别", "千万不", "千万勿", "千万要", "千万记", "千万得", "千万莫", "千万请",
+    "万一", "万分", "万万", "万全", "万难", "万象", "万能", "万无",
+    "两难", "两者", "两极", "两全", "两可", "两相", "两败", "两性", "两岸", "两用",
 )
 
 # Consecutive CJK numerals (三十, 一百, 五萬, 二〇二六) read as an actual number.
@@ -95,9 +133,9 @@ _CJK_HARD_RE = re.compile(f"[{_CJK_NUMERALS}][{_CJK_HARD_UNITS}]")
 _CJK_SOFT_RE = re.compile(f"[{_CJK_NUMERALS}][{_CJK_SOFT_UNITS}]")
 # Percentage spelled as 百分之X (百分之三十, 百分之五); 百分之百 is an idiom, stripped first.
 _CJK_PCT_RE = re.compile(f"百分之[{_CJK_NUMERALS}]")
-# Approximate quantifiers (幾十, 數百, 幾成, 幾倍) — 幾/數 only count before a
-# magnitude/unit, so 數字/幾乎/多數 stay clean.
-_CJK_APPROX_RE = re.compile(f"[幾數](?=[十百千萬億{_CJK_HARD_UNITS}成])")
+# Approximate quantifiers (幾十, 數百, 幾成, 幾倍; simplified 几十/数百) — 幾/數/几/数
+# only count before a magnitude/unit, so 數字/幾乎/多數/数字/几乎 stay clean.
+_CJK_APPROX_RE = re.compile(f"[幾數几数](?=[十百千萬万億亿{_CJK_HARD_UNITS}成])")
 
 # English number words and the units that turn them into quantity claims.
 _EN_SMALL = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
@@ -669,12 +707,10 @@ def _currency(card):
 
 
 def default_display_currency(language):
-    normalized = str(language or "zh-TW").strip().lower()
-    if normalized.startswith("en"):
-        return DISPLAY_CURRENCY_BY_LANGUAGE["en"]
-    if normalized.startswith("zh-cn") or normalized.startswith("zh-hans"):
-        return DISPLAY_CURRENCY_BY_LANGUAGE["zh-CN"]
-    return DISPLAY_CURRENCY_BY_LANGUAGE["zh-TW"]
+    # Resolve first so an unsupported tag inherits the en fallback's currency
+    # (#389) instead of a zh-TW bias; canonical locales keep their mapping.
+    return DISPLAY_CURRENCY_BY_LANGUAGE.get(resolve_language(language),
+                                            DISPLAY_CURRENCY_BY_LANGUAGE["en"])
 
 
 def _positive_rate(value):
@@ -3061,7 +3097,7 @@ def render_public(bundle):
 # fragment below is self-contained and does not depend on this shim.
 _HTML_SHIM_CSS = """\
 body{margin:0;background:#eceae1;color:#1a1915;padding:28px 16px;display:flex;justify-content:center;
-font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
+font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",sans-serif}
 @media (prefers-color-scheme:dark){body{background:#1a1917;color:#f5f4ef}}
 .page{width:680px;max-width:100%}"""
 
@@ -3092,7 +3128,7 @@ _HTML_WIDGET_CSS = """\
 --rc-text-success:var(--text-success,#a7be83);--rc-text-danger:var(--text-danger,#df8b84);
 --rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10));
 --rc-border-key:var(--border-key,rgba(169,181,194,0.42))}}
-.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;font-weight:400;
+.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",sans-serif;font-weight:400;
 color:var(--rc-text-primary);background:var(--rc-surface-2);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-r-lg);overflow:hidden;line-height:1.6;font-variant-numeric:tabular-nums}
 .rc .sec{padding:var(--rc-sp-5) var(--rc-sp-6)}

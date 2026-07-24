@@ -7,7 +7,7 @@
 
 Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it converges on one checkable change you choose and checks it next review.**
 
-> 📝 **Language.** The same review contract renders in Traditional Chinese or English (`--language zh-TW|en`). Translation changes the questions and card copy, not the engine facts or analysis policy.
+> 📝 **Language.** The same review contract renders in Traditional Chinese, Simplified Chinese, or English (`--language zh-TW|zh-CN|en`); any other language tag falls back to English. Translation changes the questions and card copy, not the engine facts or analysis policy.
 
 ## Quick start
 

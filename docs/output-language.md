@@ -12,13 +12,29 @@
 1. **Conversation language wins.** The agent must pass `--language` matching
    the language the user is conversing in (already enforced at the QA layer;
    a zh conversation that yields an en card is a defect, #262).
-2. **Stored user preference** is the fallback when the conversation language
+2. **Unsupported tags fall back to `en`.** A requested language with no
+   `copy/<locale>.json` resolves to English — never to zh-TW. Matching is
+   exact up to case (`zh-tw` → `zh-TW`); there is no base-tag negotiation.
+   zh variants without a copy file (zh-HK, zh-Hans) follow the same strict
+   fallback — ruled 2026-07-24, owner confirmed no exception mapping on
+   [#389](https://github.com/atomchung/fomo-kernel/issues/389).
+   `card_renderer.resolve_language()` is the single implementation;
+   `review.py prepare` resolves once at the CLI boundary so fingerprints,
+   plans, and renderers only see canonical locales.
+3. **Stored user preference** is the fallback when the conversation language
    is ambiguous or the run is headless (cron, scripted). *Storage mechanism
    (coach state) is phase 2 — not yet implemented.*
-3. **Default `zh-TW`** only when neither signal exists.
+4. **Default `en`** when no signal exists (no `--language`, no stored
+   preference).
 
 > Ruled 2026-07-21: owner confirmed conversation-first; the stored preference
 > serves non-interactive runs only.
+> Ruled 2026-07-24 ([#389](https://github.com/atomchung/fomo-kernel/issues/389)):
+> unknown or unsupported languages fall back to `en`, and the no-signal
+> default flips from `zh-TW` to `en`. This supersedes the 2026-07-21 default.
+> Card surfaces falling back to `en` does not change the conversation-layer
+> rule: the agent keeps conversing in the user's language and must not
+> hand-translate card text (SKILL.md "Language and sharing").
 
 ## 2. Architecture rule (existing policy, restated with teeth)
 
@@ -42,7 +58,10 @@ Consequences this contract makes explicit:
   locale; depth may shrink for *data* reasons only, never for language.
 - Adding a locale must require **only** a new `copy/<locale>.json` (plus
   format rules, §5) — zero engine edits. That is the definition of done for
-  the neutrality refactor.
+  the neutrality refactor. Since #389 the CLI no longer hardcodes the locale
+  list (`resolve_language()` discovers supported locales from the copy
+  directory), so this promise holds mechanically: dropping the file in makes
+  the tag resolvable.
 
 ## 3. Known violations to repair (phase 1 target)
 
@@ -62,6 +81,18 @@ scenario/prescription kinds); `copy/<locale>.json` gains the label strings;
 renderer resolves codes → copy. Persisted artifacts that already store zh
 literals need no compatibility mapping — dev-phase ruling (owner
 2026-07-21): stale data is cleaned up on demand, not migrated.
+
+**zh-CN transitional waiver (owner-ruled 2026-07-24,
+[#387](https://github.com/atomchung/fomo-kernel/issues/387)):** `zh-CN`
+shipped as a mechanically-converted copy file before the engine's hardcoded
+Traditional stem/option literals were migrated, so zh-CN question surfaces
+mix Simplified (copy) with Traditional (engine ternaries) today. This is a
+deliberate interim exception to the #356 "mixed language is a defect" rule,
+scoped to Traditional/Simplified mixing on zh-CN only. The leak inventory
+and migration plan live on #387;
+`tests/test_review_v2.py::test_prepare_zh_cn_renders_simplified_copy_with_documented_mixed_script`
+pins the current state and flips into the purity gate when the migration
+lands.
 
 Repaired, kept here as the worked example (#356): Block 4's standing-rule
 placeholder interpolated `engine_state.rule` — a v1-only zh sentence
