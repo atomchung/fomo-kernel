@@ -131,7 +131,11 @@ python3 skills/fomo-kernel/tools/qa_preflight.py refresh
 After it succeeds, record the reported `origin_main` SHA and confirm that the
 dogfood worktree's `HEAD` equals that SHA before starting. A feature-branch
 preflight remains useful developer evidence, but it is never a formal dogfood
-run against latest main.
+run against latest main. `origin_main` itself can come back `null` in a
+checkout whose fetch never populates a `origin/main` remote-tracking ref
+(some CI checkouts do this) -- if `refresh` reports `null`, fall back to
+`git fetch origin main && git log -1 --format='%h %s' FETCH_HEAD` to get the
+SHA by hand.
 
 ### 1. Isolate
 

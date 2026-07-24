@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Focused checks for the non-UX automated QA preflight command."""
 
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import subprocess
@@ -163,6 +165,41 @@ def test_cli_status_prints_json():
     report = json.loads(result.stdout)
     assert report["kind"] == "fomo_kernel_contract_preflight"
     assert report["formal_qa"] is False
+
+
+def test_run_with_refresh_flag_fetches_before_the_suite_and_reports_refreshed():
+    with mock.patch.object(qa_preflight, "_git", side_effect=("head", "main")), \
+            mock.patch.object(qa_preflight, "_refresh") as refresh, \
+            mock.patch.object(qa_preflight, "_run_suite", return_value=0), \
+            mock.patch.object(qa_preflight, "_emit") as emit:
+        assert qa_preflight.main(["--repo-root", str(ROOT), "run", "--refresh"]) == 0
+    refresh.assert_called_once_with(ROOT)
+    report = emit.call_args.args[0]
+    assert report["revision"]["remote_freshness"] == "refreshed"
+    assert report["status"] == "engine_contract_pass"
+
+
+def test_repo_root_validator_accepts_a_checkout_and_rejects_a_bare_directory():
+    assert qa_preflight._repo_root(str(ROOT)) == ROOT
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            qa_preflight._repo_root(tmp)
+            raised = False
+        except Exception as exc:
+            raised = isinstance(exc, qa_preflight.argparse.ArgumentTypeError)
+        assert raised, "a directory with no .git and no tests/run_all.py must be rejected"
+
+
+def test_report_path_writes_the_same_json_emitted_to_stdout():
+    report = {"status": "ready"}
+    with tempfile.TemporaryDirectory() as tmp:
+        target = pathlib.Path(tmp) / "nested" / "preflight.json"
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            qa_preflight._emit(report, target)
+        printed = captured.getvalue().strip()
+        written = target.read_text(encoding="utf-8").strip()
+    assert printed == written == json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def main():

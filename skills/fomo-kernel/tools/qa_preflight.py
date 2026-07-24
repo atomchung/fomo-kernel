@@ -106,9 +106,14 @@ def _emit(report: dict[str, Any], report_path: Path | None) -> None:
 
 
 def _refresh(repo_root: Path) -> None:
-    result = subprocess.run(["git", "-C", str(repo_root), "fetch", "origin", "main"])
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "fetch", "origin", "main"],
+        capture_output=True,
+        text=True,
+    )
     if result.returncode:
-        raise PreflightError("could not refresh origin/main")
+        detail = result.stderr.strip() or result.stdout.strip() or "could not refresh origin/main"
+        raise PreflightError(detail)
 
 
 def _run_suite(repo_root: Path, runner: Path | None = None) -> int:
