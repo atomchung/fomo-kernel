@@ -51,12 +51,12 @@
     "annualized_reconciliation": "本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。"
   },
   "account_gate": {
-    "default": "帳戶級報酬先不出，等現金錨點補齊即解鎖；上面的僅計持倉不受影響。",
-    "no_cash_anchor": "帳戶級報酬先不出：現金還沒有錨點，補一個目前的現金餘額即解鎖；上面的僅計持倉不受影響。",
-    "mixed_trade_footprint": "帳戶級報酬先不出：交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史；上面的僅計持倉不受影響。",
-    "negative_cash_rollback": "帳戶級報酬先不出：沒有錨點的幣別回推現金會變成負值，這條現金史確定是錯的，補上該幣別的錨點即解鎖；上面的僅計持倉不受影響。",
-    "cash_residual": "帳戶級報酬先不出：有一段現金史跟前後的錨點對不上，更新那一段的現金部位即解鎖；上面的僅計持倉不受影響。",
-    "chain_unavailable": "帳戶級報酬先不出：這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬；上面的僅計持倉不受影響。"
+    "default": "補齊現金錨點，就能看到含現金的帳戶級報酬。",
+    "no_cash_anchor": "補一個目前的現金餘額，就能看到含現金的帳戶級報酬。",
+    "mixed_trade_footprint": "交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史。",
+    "negative_cash_rollback": "補上還沒有錨點的那個幣別，就能看到含現金的帳戶級報酬。",
+    "cash_residual": "更新那一段的現金部位，就能看到含現金的帳戶級報酬。",
+    "chain_unavailable": "這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬。"
   },
   "footnote_label": "資料備註",
   "kpi": {
@@ -262,8 +262,10 @@
   "alpha_interval": {
     "scope_suffix": "（{market} 部位）",
     "negative_caveat": "（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）",
-    "lead": "風險調整後 alpha{scope}年化 {alpha}%，95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。",
-    "compact": "95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。"
+    "lead": "風險調整後 alpha{scope} 年化 {alpha}%，95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。",
+    "tile_sub": "95% 區間 {low}%～{high}%",
+    "below_unreliable": "* 年化 α 統計上還不可信。",
+    "below_negative": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。"
   },
   "best_strength": {
     "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。"
@@ -325,5 +327,12 @@
     "focus_swap": " 原標的後續 {orig}{when}；換入標的同期 {swap}；swap 淨差 {net}。",
     "focus_idle": " 賣後資金閒置，原標的同期 {orig}{when}。",
     "focus_orig": " 原標的後續 {orig}{when}。"
+  },
+  "account_perf": {
+    "holdings_only": "僅計持倉的累積報酬為 {value}。",
+    "account_base": "帳戶級累積報酬為 {value}",
+    "annualized_suffix": "，年化報酬 {value}",
+    "cash_drag_suffix": "；與僅計持倉的差距 {value} 來自持有現金——這是觀察，不是對錯判定",
+    "terminator": "。"
   }
 }

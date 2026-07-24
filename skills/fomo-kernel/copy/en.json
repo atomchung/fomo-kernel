@@ -51,12 +51,12 @@
     "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists."
   },
   "account_gate": {
-    "default": "Account-level return stays locked until cash has a complete anchor; the holdings pillar above is unaffected.",
-    "no_cash_anchor": "Account-level return stays locked because cash has no anchor yet; one current cash balance unlocks it, and the holdings pillar above is unaffected.",
-    "mixed_trade_footprint": "Account-level return stays locked because only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history; the holdings pillar above is unaffected.",
-    "negative_cash_rollback": "Account-level return stays locked because reconstructing cash for a currency with no anchor runs it negative, so the reconstruction is known to be wrong; anchoring that currency unlocks it, and the holdings pillar above is unaffected.",
-    "cash_residual": "Account-level return stays locked because one stretch of cash history does not reconcile against the anchors around it; updating the cash position for that stretch unlocks it, and the holdings pillar above is unaffected.",
-    "chain_unavailable": "Account-level return stays locked because no day in this window produced a usable account value to chain; the holdings pillar above is unaffected."
+    "default": "Complete the cash anchor, and you'll see the account-level return with cash included.",
+    "no_cash_anchor": "Add one current cash balance, and you'll see the account-level return with cash included.",
+    "mixed_trade_footprint": "Only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history.",
+    "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see the account-level return with cash included.",
+    "cash_residual": "Update the cash position for that stretch, and you'll see the account-level return with cash included.",
+    "chain_unavailable": "No day in this window produced a usable account value to chain into a return."
   },
   "footnote_label": "Data notes",
   "kpi": {
@@ -263,7 +263,9 @@
     "scope_suffix": " for {market} holdings",
     "negative_caveat": " (The interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill.)",
     "lead": "Risk-adjusted alpha{scope} was {alpha}% annualized, with a 95% interval from {low}% to {high}%; the interval controls how strong the conclusion may be.",
-    "compact": "A 95% interval ran from {low}% to {high}%; the interval controls how strong the conclusion may be."
+    "tile_sub": "95% interval {low}% to {high}%",
+    "below_unreliable": "* The annualized α is not yet statistically credible.",
+    "below_negative": "The annualized α interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill."
   },
   "best_strength": {
     "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak."
@@ -325,5 +327,12 @@
     "focus_swap": " The original moved {orig}{when}; the replacement moved {swap}; swap net {net}.",
     "focus_idle": " Proceeds stayed idle while the original moved {orig}{when}.",
     "focus_orig": " The original moved {orig}{when}."
+  },
+  "account_perf": {
+    "holdings_only": "Holdings-only cumulative return was {value}.",
+    "account_base": "Account-level cumulative return was {value}",
+    "annualized_suffix": "; annualized return was {value}",
+    "cash_drag_suffix": "; the gap versus the holdings pillar, {value}, is explained by holding cash — an observation, not a verdict",
+    "terminator": "."
   }
 }

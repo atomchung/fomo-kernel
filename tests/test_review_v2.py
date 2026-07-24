@@ -3754,14 +3754,20 @@ def test_account_performance_pillar_gate_and_full_render():
     gated = {"acct_perf": {"hold_twr": 0.12, "acct_twr": None, "irr_annual": None,
                            "cash_drag": None, "note": "gate", "window": {"days": 30}}}
     lines = card_renderer._performance_lines(gated, "en", {})
-    assert any("Holdings-only time-weighted return was 12%" in x for x in lines)
-    assert any("stays locked until cash has a complete anchor" in x for x in lines), \
+    # #363: "time-weighted return" -> "cumulative return" (wording only; the
+    # engine field and its number are unchanged).
+    assert any("Holdings-only cumulative return was 12%" in x for x in lines)
+    # #363: the account-gate sentence is now action-only copy (owner ruling) —
+    # no "stays locked"/"unaffected" framing. This is the `default` fallback
+    # (no `gate.status` on this fixture), still resolved from copy, not from
+    # the engine's internal note text.
+    assert any("Complete the cash anchor" in x for x in lines), \
         "#181: gate must render the unlock invitation, not the engine note text"
     assert not any("錨點" in x for x in lines), "engine's internal zh note must not leak into en cards"
     full = {"acct_perf": {"hold_twr": 0.12, "acct_twr": 0.10, "irr_annual": 0.15,
                           "cash_drag": -0.02, "note": None, "window": {"days": 30}}}
     zh = card_renderer._performance_lines(full, "zh-TW", {})
-    assert any("帳戶級時間加權報酬為 10%" in x and "年化報酬 15%" in x for x in zh)
+    assert any("帳戶級累積報酬為 10%" in x and "年化報酬 15%" in x for x in zh)
     assert not any("IRR" in x for x in zh), \
         "#279/#272 output contract: the IRR jargon token is banned from the zh card"
     en_full = card_renderer._performance_lines(full, "en", {})
@@ -3769,17 +3775,38 @@ def test_account_performance_pillar_gate_and_full_render():
     assert not any("IRR" in x for x in en_full), \
         "#279/#272 output contract: the IRR jargon token is banned from the en card"
     assert any("不是對錯判定" in x for x in zh), "#179: cash drag stays neutral, never a verdict"
+    # #363: cash_drag = acct_twr − hold_twr is a difference of two returns, so
+    # it renders in percentage points, never percent (output contract §5).
+    assert any("-2pp" in x for x in zh), f"cash_drag must render in pp, not %: {zh}"
+    assert any("-2pp" in x for x in en_full), f"cash_drag must render in pp, not %: {en_full}"
+    assert not any("-2%" in x for x in zh), f"cash_drag must not render in %: {zh}"
+    # #368 Phase 2 continuation (#363): account_hold/account moved into the
+    # account_perf copy group (holdings_only, account_base, annualized_suffix,
+    # cash_drag_suffix, terminator). Pin the complete, exact sentence each
+    # renders to — hardcoded here, not read from copy/*.json (see the
+    # test_card_html.py reconciliation pin test for why this pattern exists)
+    # — so a corruption of any one of those five keys is caught even though
+    # persona_sweep can never reach this code path (no mock persona has live
+    # prices, so acct_perf never populates in the offline sweep).
+    assert ("僅計持倉的累積報酬為 12%。" in zh
+            and "帳戶級累積報酬為 10%，年化報酬 15%；與僅計持倉的差距 -2pp 來自持有現金——"
+                "這是觀察，不是對錯判定。" in zh), zh
+    assert ("Holdings-only cumulative return was 12%." in en_full
+            and "Account-level cumulative return was 10%; annualized return was 15%; "
+                "the gap versus the holdings pillar, -2pp, is explained by holding cash "
+                "— an observation, not a verdict." in en_full), en_full
     assert card_renderer._performance_lines({"acct_perf": {"note": "offline"}}, "en", {}) == [], \
         "no holdings pillar computed -> no account section"
     # #314: the internal 持倉柱 (holdings-pillar) metaphor must not leak onto the
     # zh card; user-facing wording (僅計持倉) replaces it everywhere it appeared —
     # the hold_twr line, the cash-drag comparison, and the gated unlock-invitation.
-    assert any("僅計持倉的時間加權報酬為 12%" in x for x in zh)
+    assert any("僅計持倉的累積報酬為 12%" in x for x in zh)
     assert any("與僅計持倉的差距" in x for x in zh)
     assert not any("持倉柱" in x for x in zh), \
         "#314: internal pillar jargon must not appear on the rendered zh card"
     gated_zh = card_renderer._performance_lines(gated, "zh-TW", {})
-    assert any("上面的僅計持倉不受影響" in x for x in gated_zh)
+    assert any("補齊現金錨點" in x for x in gated_zh), \
+        "#363: account-gate default is now action-only copy"
 
 
 def test_alpha_interval_line_uses_arabic_digits_for_the_interval_level():
