@@ -3190,6 +3190,42 @@ def test_prepare_unknown_language_falls_back_to_en_and_stays_idempotent():
             assert zh["language"] == "zh-TW"
 
 
+def test_prepare_zh_cn_renders_simplified_copy_with_documented_mixed_script():
+    """#387 option (b) light-up, owner-ruled 2026-07-24: copy/zh-CN.json makes
+    zh-CN supported through the #389 directory scan alone — zero engine edits.
+
+    Positive gates: the plan carries the canonical tag, question copy is CJK
+    (not the en fallback), Simplified-only characters appear (the zh-CN file is
+    actually selected), and the render differs from zh-TW.
+
+    TRANSITIONAL PIN — mixed script is a known, owner-waived state: engine
+    ternaries still hardcode Traditional stem/option text (leak inventory on
+    #387), so zh-CN surfaces mix scripts today. The pin below asserts that
+    leak still exists. When the #387 copy migration lands and this pin turns
+    red, do not delete it — flip it into the purity gate
+    (``assert not set(joined) & traditional_only``)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        cn = _prepare(tmp, root, language="zh-CN")
+        assert cn["language"] == "zh-CN"
+        cn_stems = [row["question"] for row in cn["question_queue"]]
+        assert cn_stems and all(re.search(r"[一-鿿]", s) for s in cn_stems), \
+            "zh-CN stems must be CJK, not the en fallback"
+        joined = "".join(cn_stems)
+        simplified_only = set("风险亏损复币账买卖张档时实际转动价还这为么后")
+        traditional_only = set("風險虧損復幣賬買賣張檔時實際轉動價還這為麼後")
+        assert set(joined) & simplified_only, \
+            f"no Simplified-only characters — zh-CN copy not selected: {joined[:120]}"
+        assert set(joined) & traditional_only, \
+            "Traditional leak is gone — the #387 migration must have landed; " \
+            "flip this pin into the purity gate (see docstring)"
+    with tempfile.TemporaryDirectory() as tmp2:
+        root2 = pathlib.Path(tmp2) / "coach"
+        tw = _prepare(tmp2, root2, language="zh-TW")
+        tw_stems = [row["question"] for row in tw["question_queue"]]
+        assert tw_stems != cn_stems, "zh-CN must not silently render the zh-TW copy"
+
+
 def test_exit_capture_english_copy_uses_review_card_language():
     item = {"revisit_id": "BIG#2026-07-01#1#2026-07-10#10.0", "ticker": "BIG",
             "cycle_id": "BIG#2026-07-01#1", "exit_date": "2026-07-10",

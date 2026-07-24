@@ -1,0 +1,338 @@
+{
+  "language": "zh-CN",
+  "title": "复盘卡",
+  "private_badge": "复盘卡，只留在本机",
+  "public_badge": "可分享版，已移除金额、日期、标的与精确部位",
+  "public_custom_rule": "已承诺一条自订流程规矩；内容只留在复盘卡。",
+  "demo_badge": "示范资料／演练，不是你的真实交易，也不写入正式教练记忆",
+  "markdown_summary": {
+    "risk": "主要风险",
+    "next": "下次规则"
+  },
+  "snapshot_numbers": "第一次持仓结构",
+  "snapshot_strength": "这份快照建立了什么",
+  "snapshot_hole": "主要结构风险",
+  "sections": {
+    "performance": "相对绩效",
+    "strength": "你做对的一件事",
+    "hole": "最大的行为漏洞",
+    "etf": "ETF 与组合结构",
+    "rule": "下次只改这一件"
+  },
+  "blocks": {
+    "performance": "这期的绩效",
+    "trades": "关键交易 · 按金额排序",
+    "risks": "风险与问题",
+    "next": "下一步",
+    "summary": "总结"
+  },
+  "period": {
+    "span": "复盘区间 {start} → {end}",
+    "as_of": "截至 {end}",
+    "vix": "VIX {value}"
+  },
+  "block_missing": {
+    "absolute_pnl": "本期算不出账面损益：缺交易或估值基础。",
+    "annualized": "本期算不出年化报酬：现金流锚点不完整。",
+    "annualized_prices": "本期算不出年化报酬：现价取不到，整体持仓没有可用的估值基础。",
+    "vs_market": "本期无法比对大盘：缺可用的基准序列。",
+    "vs_market_prices": "本期无法比对大盘：基准指数的价格取不到。",
+    "trades": "本期没有可排序的标的层诊断。",
+    "trades_traded": "本期没有可排序的标的层诊断；这期交易过：{tickers}。",
+    "risks": "本期没有行为诊断：引擎没有可评分的维度。",
+    "rule": "这次没有新的规矩承诺；下次复盘可再选一条。",
+    "rule_standing": "这期不改规矩；现行规矩维持：“{rule}”",
+    "rule_skip": "你这次选择不设新承诺；下次仍可用同一份基线对账。",
+    "rule_snapshot": "这次开场检查先保留结构基线，不强迫设定承诺。",
+    "rule_structural": "这次是开场结构检查：先立基线、不硬塞承诺。之后补上含买卖的完整交易纪录，就能解锁出场纪律、持有时间与胜负的完整行为复盘。",
+    "rule_insufficient_data": "样本仍短，这次不硬塞承诺；先把它当基线。",
+    "snapshot_unlock": "汇入交易历史 CSV 可解锁行为诊断（胜率、盈亏比、摊平纪律等）。",
+    "annualized_short_series": "本期算不出年化报酬：价格序列不足两天，没有可衡量的变化。",
+    "annualized_reconciliation": "本期算不出年化报酬：汇入的交易纪录推不出快照锚定的持仓，没有可用的账户估值基础。"
+  },
+  "account_gate": {
+    "default": "补齐现金锚点，就能看到含现金的账户级报酬。",
+    "no_cash_anchor": "补一个目前的现金余额，就能看到含现金的账户级报酬。",
+    "mixed_trade_footprint": "交易纪录里只有一部分带券商的现金金额，两种口径并不成同一条现金史。",
+    "negative_cash_rollback": "补上还没有锚点的那个币别，就能看到含现金的账户级报酬。",
+    "cash_residual": "更新那一段的现金部位，就能看到含现金的账户级报酬。",
+    "chain_unavailable": "这个区间没有任何一天算得出可用的账户净值可以串成报酬。"
+  },
+  "footnote_label": "资料备注",
+  "kpi": {
+    "pnl": "账面总损益",
+    "pnl_sub": "已实现 {realized} · 未实现 {unrealized}",
+    "payoff": "已实现盈亏比",
+    "payoff_sub": "赚 {win} vs 赔 {loss}",
+    "excess": "相对大盘",
+    "excess_sub": "β {beta}",
+    "alpha": "年化 α",
+    "alpha_unreliable": "统计上还不可信",
+    "curve": "这期走势",
+    "spark_caption": "高点 {peak} · 低点 {trough}"
+  },
+  "etf_classification": {
+    "allocation": "配置型 ETF 已从单一股票集中度排除：{list}。",
+    "concentrated": "产业／主题／杠杆 ETF 仍算集中风险：{list}。"
+  },
+  "dimensions": {
+    "exit_discipline": "出场纪律",
+    "position_sizing": "部位 sizing",
+    "diversification": "分散",
+    "holding_period": "持有时间",
+    "averaging_down": "加码摊平",
+    "alpha_beta": "大盘与选股归因",
+    "entry_style": "进场风格"
+  },
+  "public_patterns": {
+    "exit_discipline": "这次浮现的模式，关乎出场决策如何被安排与检验。",
+    "position_sizing": "这次浮现的模式，关乎风险如何分配到不同部位。",
+    "diversification": "这次浮现的模式，关乎组合是否代表彼此不同的底层风险。",
+    "holding_period": "这次浮现的模式，关乎持有时间是否对齐一致的决策时间轴。",
+    "averaging_down": "这次浮现的模式，关乎亏损部位的加码如何受到界线约束。",
+    "alpha_beta": "这次浮现的模式，关乎相对大盘结果如何拆分为市场暴险与选择。",
+    "entry_style": "这次浮现的模式，关乎进场时点与近期价格移动的关系。"
+  },
+  "rules": {
+    "exit_discipline": "出场前先写下交易论述已完成或失效的事实；只因害怕回吐，不卖。",
+    "position_sizing": "单笔部位上限定死 {cap}；超过就减，不新增。",
+    "diversification": "新增部位前先看是否仍是同一个驱动因子；同一注已过重，不新增。",
+    "holding_period": "进场时先标短线、波段或长线；出场只用同一时间框架的理由。",
+    "averaging_down": "往下加码前写出一个进场时不知道的新证据；写不出，不加。"
+  },
+  "rule_grounding": {
+    "position_sizing": "本期实况：最大单一部位 {ticker} 占 {pct}。",
+    "diversification": "本期实况：前几大部位 {tickers} 合计占 {pct}。",
+    "holding_period": "本期实况：{tickers} 同一档既有短进短出、也有长抱。",
+    "averaging_down": "本期实况：你在亏损部位往下加码 {count} 次，包括 {tickers}。"
+  },
+  "rule_targets": {
+    "line": "本期会被它拦下的：{items}",
+    "count_unit": " 次",
+    "more_suffix": "、及其他 {n} 档"
+  },
+  "rule_tradeoff": {
+    "sizing_vs_proven_edge": "上限管的是单笔爆掉，不跟“选股是真 edge”冲突。",
+    "sizing_vs_hypothesis": "上限管的是单笔爆掉；押对赛道还没验证，更不该靠加大单注押它。"
+  },
+  "patterns_panel": {
+    "label": "一个模式，还没下判断（不用回答）",
+    "sold_winner_early": "这期卖掉的 {total} 笔有 {early} 笔卖完还涨，最明显是 {tickers}。"
+  },
+  "exit_consistency": {
+    "question": "这是你出场规则里一致的做法、情绪反应，还是外部限制？"
+  },
+  "add_choices": {
+    "planned_tranche": "事先规划的分批",
+    "new_evidence": "有新的可验证证据",
+    "valuation_change": "估值或赔率变了",
+    "price_only": "只有价格下跌／想摊低成本",
+    "skip": "先跳过"
+  },
+  "headline_motive_choices": {
+    "deliberate_plan": "事先规划",
+    "emotional_reaction": "情绪反应",
+    "external_constraint": "外部限制"
+  },
+  "initial_thesis_choices": {
+    "planned_entry": "进场前就有明确论点",
+    "momentum_follow": "追了动能／FOMO",
+    "external_call": "别人推荐的",
+    "no_clear_thesis": "没有明确论点",
+    "skip": "先跳过"
+  },
+  "exit_choices": {
+    "full": {
+      "price_target": "到价了",
+      "thesis_broken": "原本判断失效",
+      "swap": "换到更好的标的",
+      "anxiety": "想先落袋",
+      "other": "其他理由",
+      "skip": "先不回答"
+    },
+    "reduce": {
+      "price_target": "到了减码点",
+      "thesis_broken": "信心动摇",
+      "swap": "换到更好的标的",
+      "anxiety": "想先落袋一部分",
+      "other": "其他理由",
+      "skip": "先不回答"
+    }
+  },
+  "honesty": {
+    "snapshot_scope": "交易历史维度——摊平、出场纪律、持有行为、胜率、盈亏比、alpha 与历史动机——不在这次持仓快照的评分范围内。",
+    "alpha_credibility": "Alpha 的样本或统计强度不足，不能当成稳定能力。",
+    "sector_attribution": "部分标的缺板块基准，赛道与选股拆帐不完整。",
+    "unclassified_drivers": "部分标的尚未分类，组合集中度可能被低估。",
+    "price_source": "这期的现价不是引擎自己抓到的：不是来自明确标示的外部资料源与截止日，就是根本取不到，卡上会说明是哪一种。",
+    "price_plausibility": "有供给的收盘价与该档最近一次实际成交价落差过大，这个来源在采信前应该重新核实。",
+    "unrealized_coverage": "部分持仓缺现价，未实现损益不是完整账面。",
+    "orphan_sells": "有卖出缺少已知建仓，相关已实现损益未纳入。",
+    "currency_mix": "组合含多币别；聚合数字使用共同币别，部分汇率可能为近似。",
+    "cash_reliability": "现金余额缺完整锚点，含现金的账户判读有限。",
+    "acct_perf_basis": "账户绩效建立在近似的地基上——部分锚点、成本平线计价、汇率近似、用量×价估算的交易现金金额，或一段完全没有存提款纪录的期间——需保留不确定性。",
+    "accounting_reconciliation": "汇入交易未能重现快照锚定的目前持仓，因此这次不评分部位大小、分散与未实现损益。",
+    "snapshot_reconciliation": "这份持仓宣告已与账本推导持仓对账；一致即标记为已对账，若有差异则以明确的调整事件保留纪录，并改以较新宣告为记账锚点，不猜测差异原因。",
+    "etf_metadata": "ETF 费用率或 tracking error 资料不完整，本卡没有把缺值猜成零。",
+    "prior_commitment_breach": "这条规矩本期已经记到一笔违规事件，在这次复盘结算之前就已经发生。"
+  },
+  "instrument_tags": {
+    "suspected_averaging_down_losing": "✗疑似凹单：只在亏损加码 {n_adds} 次、现亏 {cur_pct}{price_note}(待你确认交易论述)",
+    "suspected_averaging_down_recovered": "⚠疑似凹单(现赚):只在亏损加码 {n_adds} 次——赚回来像运气，不是纪律",
+    "adds_pending_confirmation": "？加码 {n_adds} 次待确认：是定投还是凹单，要你定",
+    "suspected_dca": "✓疑似定投：涨跌都买/规律 {n_adds} 次，不是凹单",
+    "deep_underwater": "✗套牢:{cur_pct}{price_note} 还抱着没处理",
+    "too_heavy": "⚠押太重：占组合 {wpct_pct}",
+    "disciplined_hold": "✓纪律持有：赚 {cur_pct}{price_note}",
+    "roughly_neutral": "— 大致中性"
+  },
+  "stress_test": {
+    "labels": {
+      "ai_thematic": "AI 概念股(跨板块)",
+      "sector": "“{sector}”板块",
+      "single_ticker": "单档 {ticker}"
+    },
+    "line": "你 {label} 暴险约 {exposure}（占 {pct}）；回档 30% → 账面 −{drop30}、回档 50% → −{drop50}，撑得住吗？"
+  },
+  "prescription_kinds": {
+    "amplify": "扬长",
+    "amplify_hypothesis": "扬长(假设，待验证)",
+    "selection_inconclusive": "选股：资料不足以判定",
+    "outsource": "外包短板(渐进)",
+    "cut_loss": "砍损耗"
+  },
+  "prescription_texts": {
+    "amplify_hypothesis": "你赢大盘 {excess_pp}pp 里，押对赛道占 {alloc_pp}pp(拆帐)。那还只是假设，不是已证实的 edge——押对 AI 也可能只是站到风口，要靠下次的赛道判断才验得出来。",
+    "selection_inconclusive": "拆帐看，板块内选股贡献 {sel_pp}pp(描述性、这数字站得住);但 {t_note}，统计上还分不出选股是本事还是运气。",
+    "selection_inconclusive_t_wide": "α 的 95% 区间还太宽(t={t})",
+    "selection_inconclusive_t_unstable": "α 统计量还算不稳",
+    "outsource_selection": "扣掉赛道，你板块内选股贡献 {sel_pp}pp、α 统计上站得住地差。这不是说‘别选股’(你享受它、ETF 也会错过妖股),而是可以拨一部分资金被动化托底，选股当卫星。(流程观察，非标的建议)",
+    "amplify_selection_edge": "扣掉赛道红利，你板块内选股仍贡献 {sel_pp}pp、α 统计上站得住——这是真 edge。",
+    "cut_averaging_down": "亏损中加码 {count} 次是你操盘损耗的大宗——这是最该先砍的纯扣分动作。",
+    "cut_oversize": "最大一笔 {ticker} 占 {max_pct_pct},单一押注过重。"
+  },
+  "due_choices": {
+    "still_valid": "还成立",
+    "modified": "部分对，要调",
+    "falsified": "看错了",
+    "skip": "先跳过"
+  },
+  "rule_breach_choices": {
+    "keep_tracking": "这次守不住",
+    "revise_rule": "规矩需要修订",
+    "exception": "这次是正当例外"
+  },
+  "rule_breach_decisions": {
+    "keep_tracking": "这次没守住，继续追踪",
+    "revise_rule": "标记为需要修订",
+    "exception": "记为正当例外"
+  },
+  "horizons": {
+    "weeks": "周",
+    "quarters": "季",
+    "years": "年"
+  },
+  "problem_keys": {
+    "avgdown_breach": "摊平越过部位界线",
+    "sell_winner_early": "卖出赢家的机会成本",
+    "oversize": "单一部位过重",
+    "concentration": "同一驱动因子集中",
+    "hold_inconsistency": "持有时间轴混用",
+    "exit_anxiety": "焦虑驱动出场",
+    "fomo_entry": "FOMO 进场",
+    "horizon_break": "交易论述时间轴破戒"
+  },
+  "trends": {
+    "worse": "恶化",
+    "flat": "持平",
+    "better": "改善"
+  },
+  "pnl_lines": {
+    "display": {
+      "total": "账面总损益 {total}，其中已实现 {realized}、未实现 {unrealized}。",
+      "realized_only": "已实现损益 {realized}；目前未实现损益未评分。",
+      "unrealized_only": "未实现损益 {unrealized}；已实现损益无法取得。"
+    },
+    "original": {
+      "both": "{currency} 账面损益 {total}，其中已实现 {realized}、未实现 {unrealized}。",
+      "realized_only": "{currency} 已实现损益 {realized}。",
+      "unrealized_only": "{currency} 未实现损益 {unrealized}。"
+    }
+  },
+  "alpha_interval": {
+    "scope_suffix": "（{market} 部位）",
+    "negative_caveat": "（区间包含负值，代表这段期间的选股优势在统计上还不能视为稳定能力）",
+    "lead": "风险调整后 alpha{scope} 年化 {alpha}%，95% 区间为 {low}% 到 {high}%；定论强度以这个区间为准。",
+    "tile_sub": "95% 区间 {low}%～{high}%",
+    "below_unreliable": "* 年化 α 统计上还不可信。",
+    "below_negative": "年化 α 的区间包含负值，代表这段期间的选股优势在统计上还不能视为稳定能力。"
+  },
+  "best_strength": {
+    "no_signal": "这期没有足够强的正向讯号；先把注意力留给最大的洞。"
+  },
+  "reconciliation": {
+    "statement": "上次你承诺：“{rule}”。",
+    "statement_with_metric": "上次你承诺：“{rule}”——追踪的数字当时 {then}，这次 {now}。"
+  },
+  "snapshot": {
+    "overview": {
+      "subject_with_count": "使用者提供的 {positions} 个持仓",
+      "subject_generic": "使用者提供的持仓",
+      "opening": "这是针对{subject}的开场组合检查。",
+      "opening_as_of": "这是针对{subject}的开场组合检查，快照截至 {as_of}。",
+      "valuation_market_value": "结构权重采使用者提供的市值口径。",
+      "valuation_cost": "结构权重采使用者提供的成本口径。",
+      "valuation_unavailable": "目前没有可靠估值口径，因此不评分依赖权重的组合结构。",
+      "missing_avg_cost": "以下持仓缺少平均成本：{tickers}。",
+      "missing_fx": "以下币别缺少可靠汇率：{currencies}。"
+    },
+    "strength": {
+      "complete": "这份持仓快照已建立完整的开场组合结构基线。",
+      "partial": "现有字段已建立组合结构基线；缺少的输入维持明示，不用推测补齐。",
+      "baseline": "已用使用者提供的持仓建立结构基线；依赖权重的优势暂不评分。"
+    },
+    "holes": {
+      "leading_risk": "现有快照的主要结构风险是“{label}”。",
+      "clean_structure": "这次持仓快照没有触发集中度或分散度的结构风险。",
+      "no_weights": "这次开场检查只建立结构基线；无法取得的权重不会被当成低风险。"
+    }
+  },
+  "problems": {
+    "trend_line": "{name}：近期 {recent} 次，前期 {prev} 次（{trend}）。",
+    "breach_decision": "规矩“{rule}”：{label}。",
+    "breach_note": " 注记：“{note}”。",
+    "rule_held": "规矩“{rule}”在最近一个可观测周期守住了。"
+  },
+  "exit_followup": {
+    "position_fallback": "这笔部位",
+    "check": "{ticker}，{checkpoint} 天复核：{label}。",
+    "note": " 注记：“{note}”。",
+    "as_of": "（截至 {as_of}）",
+    "needs_prices": " {missing} 缺现价{when}，本期不判结果。",
+    "replacement_fallback": "换入标的",
+    "frozen_lead": " 以 {as_of} 冻结现价计，",
+    "frozen_lead_absent": " ",
+    "swap": "{lead}原标的后续 {orig}；{swaps}同期 {swap}；swap 净差 {net}。",
+    "frozen_note": "（以 {as_of} 冻结现价计）",
+    "idle": " 卖后资金闲置，原标的同期 {orig}{when}。",
+    "backlog": "历史出场 backlog 尚有 {count} 笔未复核（清仓 {full}、减仓 {reduce}）",
+    "backlog_span": "，期间 {first} 到 {last}",
+    "backlog_top": "；最常出现：{top}",
+    "sentence_end": "。",
+    "backlog_priced": " 有现价可回看的 {priced} 笔，出场后平均走势为 {avg}；其中 {rose} 笔后续上涨。",
+    "action_full": "清仓",
+    "action_reduce": "减仓",
+    "focus": "Backlog 优先回看：{ticker}，{exit_date} {action}。",
+    "focus_needs_prices": " {missing} 缺冻结现价{when}，不判结果。",
+    "focus_swap": " 原标的后续 {orig}{when}；换入标的同期 {swap}；swap 净差 {net}。",
+    "focus_idle": " 卖后资金闲置，原标的同期 {orig}{when}。",
+    "focus_orig": " 原标的后续 {orig}{when}。"
+  },
+  "account_perf": {
+    "holdings_only": "仅计持仓的累积报酬为 {value}。",
+    "account_base": "账户级累积报酬为 {value}",
+    "annualized_suffix": "，年化报酬 {value}",
+    "cash_drag_suffix": "；与仅计持仓的差距 {value} 来自持有现金——这是观察，不是对错判定",
+    "terminator": "。"
+  }
+}

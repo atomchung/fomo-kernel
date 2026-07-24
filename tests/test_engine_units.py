@@ -1312,11 +1312,13 @@ def test_resolve_language_fallback_contract():
     import card_renderer as cr
 
     # 未知/不支持 → en(舊行為是掉回 zh-TW,#389 的核心翻轉)。zh 變體不做
-    # 例外映射(owner 2026-07-24 確認嚴格版「沒問題」)。zh-CN 在 copy 檔
-    # 落地(#387 staging)之前同樣走 en;檔案一進 copy/ 它就自動 supported,
-    # 屆時把它從這排移到下方的 supported 斷言即可。
-    for tag in ("ja", "fr-CA", "de", "xx-YY", "zh-CN", "zh-Hans", "zh-HK"):
+    # 例外映射(owner 2026-07-24 確認嚴格版「沒問題」)。
+    for tag in ("ja", "fr-CA", "de", "xx-YY", "zh-Hans", "zh-HK"):
         assert cr.resolve_language(tag) == "en", tag
+    # zh-CN 有 copy/zh-CN.json 即精確命中(#387 option b light-up)——
+    # 「加 locale 只丟 copy 檔,零 engine 改動」的實證
+    assert cr.resolve_language("zh-CN") == "zh-CN"
+    assert cr.resolve_language("zh-cn") == "zh-CN"
     # 無訊號(空/None)→ en(取代 2026-07-21 的 zh-TW default 拍板)
     for tag in (None, "", "   "):
         assert cr.resolve_language(tag) == "en", repr(tag)
@@ -1329,7 +1331,7 @@ def test_resolve_language_fallback_contract():
     for tag in sorted(cr.supported_languages()):
         assert cr.resolve_language(tag) == tag
     # supported 集合來自 copy/ 目錄——加 locale 只需丟 copy 檔,零 engine 改動
-    assert {"en", "zh-TW"} <= cr.supported_languages()
+    assert {"en", "zh-TW", "zh-CN"} <= cr.supported_languages()
     # 顯示幣跟隨 resolve:未知語言拿 en 的幣別,不再有 zh-TW 偏置
     assert cr.default_display_currency("ja") == cr.default_display_currency("en")
     assert cr.default_display_currency("zh-TW") != cr.default_display_currency("en")

@@ -3097,7 +3097,7 @@ def render_public(bundle):
 # fragment below is self-contained and does not depend on this shim.
 _HTML_SHIM_CSS = """\
 body{margin:0;background:#eceae1;color:#1a1915;padding:28px 16px;display:flex;justify-content:center;
-font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
+font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",sans-serif}
 @media (prefers-color-scheme:dark){body{background:#1a1917;color:#f5f4ef}}
 .page{width:680px;max-width:100%}"""
 
@@ -3128,7 +3128,7 @@ _HTML_WIDGET_CSS = """\
 --rc-text-success:var(--text-success,#a7be83);--rc-text-danger:var(--text-danger,#df8b84);
 --rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10));
 --rc-border-key:var(--border-key,rgba(169,181,194,0.42))}}
-.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;font-weight:400;
+.rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",sans-serif;font-weight:400;
 color:var(--rc-text-primary);background:var(--rc-surface-2);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-r-lg);overflow:hidden;line-height:1.6;font-variant-numeric:tabular-nums}
 .rc .sec{padding:var(--rc-sp-5) var(--rc-sp-6)}
