@@ -151,6 +151,7 @@ A module contract that is not checked will drift. Current coverage:
 |---|---|
 | Cells are uniform three-slot shapes | `test_every_kpi_cell_has_the_same_three_part_shape` |
 | Cells in a row are the same height | measured spread = 0 across cell counts and locales |
+| A sub's content fits its two-line cap at the narrowest supported width, both locales, realistic magnitudes | `test_pnl_and_payoff_tile_subs_fit_the_two_line_cap_at_narrow_widths` |
 | Column count equals cell count | `test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs` |
 | Spacing and type come from the scales | `test_layout_uses_the_token_scales_not_ad_hoc_pixels` |
 | Exactly one L1, and nothing after it | `test_next_step_is_the_cards_only_emphasis_ground` |

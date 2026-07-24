@@ -61,9 +61,9 @@
   "footnote_label": "Data notes",
   "kpi": {
     "pnl": "Total P&L",
-    "pnl_sub": "Realized {realized} · unrealized {unrealized}",
+    "pnl_sub": "{realized}, {unrealized} unrealized",
     "payoff": "Realized payoff ratio",
-    "payoff_sub": "Average win {win} vs loss {loss}",
+    "payoff_sub": "{win} win vs {loss} loss",
     "excess": "Benchmark excess",
     "excess_sub": "β {beta}",
     "alpha": "Annualized alpha",

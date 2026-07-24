@@ -1946,6 +1946,98 @@ def test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output():
                     f"{label}/{language}: Markdown must keep its own full negative_caveat clause"
 
 
+def test_pnl_and_payoff_tile_subs_fit_the_two_line_cap_at_narrow_widths():
+    """#382: `.sub`'s `-webkit-line-clamp:2; overflow:hidden` silently
+    truncated the pnl and payoff tiles' realized/unrealized and win/loss
+    breakdown at 5-6 digit magnitudes -- the alpha caveat #363 fixed (see
+    the mutation-probe test above) was one of three clipped tiles that
+    day, not the only one, because the fixtures every existing test drew
+    on used 3-digit amounts (`avg_win: 140`, `total_pnl: -300`) short
+    enough to never hit the cap.
+
+    Measured with a real viewport resize, not `--window-size` (this
+    Chrome build floors that flag around 500px, the same trap #363's
+    ruling-log entry recorded, too coarse for the 320-390px band this
+    tile actually clips in): both new templates, at the large-magnitude
+    values below (the README's own headline figures -- #382 "these are
+    the demo card's own magnitudes"), clear `scrollHeight<=clientHeight`
+    *and* `scrollWidth<=clientWidth` (a single long token can silently
+    overflow the box sideways instead of wrapping, which a height-only
+    check misses) at every 2-column breakpoint tested: en 320/360/390px,
+    zh-TW 320/360px -- the narrowest width each locale was reported
+    broken at in the issue. zh-TW keeps both "already realized"/"not yet
+    realized" words at full sentence structure once their figures compact
+    to "k" (denser glyphs afford it at the same width); en needed the
+    leading "realized" word dropped too -- the number stays, first and
+    unlabeled, since the realized/unrealized order convention is already
+    established elsewhere in this catalog (`pnl_lines.total`) -- while
+    "unrealized" keeps its explicit label, since that is the figure a
+    caveat actually attaches to (README lede: "almost all of it is held
+    and never sold").
+
+    Hardcoded literals, deliberately -- see
+    test_account_gate_sentences_are_pinned_in_rendered_output above for why
+    a version reading expectations back from load_copy() would compare the
+    catalog against itself and stay green through a corruption."""
+    large = {"total_pnl": 138058.0, "realized": 19000.0, "unrealized": 119058.0,
+             "avg_win": 20000.0, "avg_loss": -8000.0, "payoff": 2.5}
+    negative_unrealized = {"total_pnl": -100058.0, "realized": 19000.0, "unrealized": -119058.0,
+                           "avg_win": 20000.0, "avg_loss": -8000.0, "payoff": 2.5}
+    # (case, overrides) x language -> (expected pnl sub, expected payoff sub).
+    # "small" is the unmodified _rich_bundle fixture (realized 200 / unrealized
+    # -500 / avg_win 140 / avg_loss -100): below the $10,000 compaction
+    # threshold, so it must render full precision, same as before #382 --
+    # proof the fix does not misstate a small account's real number as "$0k".
+    cases = (("large", large), ("small", {}), ("negative_unrealized", negative_unrealized))
+    expected = {
+        "en": {
+            "large": ("+$19k, +$119k unrealized", "+$20,000 win vs $8,000 loss"),
+            "small": ("+$200, -$500 unrealized", "+$140 win vs $100 loss"),
+            "negative_unrealized": ("+$19k, -$119k unrealized", "+$20,000 win vs $8,000 loss"),
+        },
+        "zh-TW": {
+            "large": ("已實現 +$19k · 未實現 +$119k", "賺 +$20,000 vs 賠 $8,000"),
+            "small": ("已實現 +$200 · 未實現 -$500", "賺 +$140 vs 賠 $100"),
+            "negative_unrealized": ("已實現 +$19k · 未實現 -$119k", "賺 +$20,000 vs 賠 $8,000"),
+        },
+    }
+    for language in ("zh-TW", "en"):
+        for case, overrides in cases:
+            bundle = _rich_bundle(language)
+            if overrides:
+                bundle["engine_card"]["overview"].update(overrides)
+            # Isolate defect 2 from the already-fixed defect 1 (#363): give
+            # alpha a usable ci95 so its own sub takes the short interval
+            # form, not the pre-#363 fallback legend _rich_bundle otherwise
+            # exercises (see the #363 mutation-probe test's docstring above)
+            # -- that legend clips on its own and would confound this test.
+            ab = bundle["engine_card"]["alpha_beta_breakdown"]
+            ab["credible"] = True
+            ab["alpha_stat"] = {"alpha_ann": ab["alpha_ann"], "ci95": [0.07, 0.54]}
+            html_card = html.unescape(card_renderer.render_html(bundle))
+            pnl_expected, payoff_expected = expected[language][case]
+            assert f'<p class="sub">{pnl_expected}</p>' in html_card, \
+                f"{language}/{case}: pnl tile sub altered — expected {pnl_expected!r}"
+            assert f'<p class="sub">{payoff_expected}</p>' in html_card, \
+                f"{language}/{case}: payoff tile sub altered — expected {payoff_expected!r}"
+
+    # Markdown has no line-clamp, so its mirror of the same sentence (#344's
+    # kpi_id/html_text mechanism) keeps full precision -- the HTML tile's
+    # compaction is a presentation-layer concession to one narrow box, not a
+    # change to what the card knows or states elsewhere.
+    for language, full_precision_fragment in (
+        ("en", "+$19,000, +$119,058 unrealized"),
+        ("zh-TW", "已實現 +$19,000 · 未實現 +$119,058"),
+    ):
+        bundle = _rich_bundle(language)
+        bundle["engine_card"]["overview"].update(large)
+        markdown = card_renderer.render_private(bundle)
+        assert full_precision_fragment in markdown, \
+            f"{language}: Markdown pnl line must stay full precision, not the HTML tile's compact form"
+        assert "$19k" not in markdown and "$119k" not in markdown, \
+            f"{language}: Markdown must never show the HTML tile's compact ($Nk) values"
+
+
 def test_delivery_contract_exists_and_is_routed():
     contract = SKILL / "references" / "card-delivery.md"
     assert contract.is_file(), "references/card-delivery.md must exist"
