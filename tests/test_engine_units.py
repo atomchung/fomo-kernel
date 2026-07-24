@@ -1311,7 +1311,10 @@ def test_resolve_language_fallback_contract():
     """
     import card_renderer as cr
 
-    # 未知/不支持 → en(舊行為是掉回 zh-TW,#389 的核心翻轉)
+    # 未知/不支持 → en(舊行為是掉回 zh-TW,#389 的核心翻轉)。zh 變體不做
+    # 例外映射(owner 2026-07-24 確認嚴格版「沒問題」)。zh-CN 在 copy 檔
+    # 落地(#387 staging)之前同樣走 en;檔案一進 copy/ 它就自動 supported,
+    # 屆時把它從這排移到下方的 supported 斷言即可。
     for tag in ("ja", "fr-CA", "de", "xx-YY", "zh-CN", "zh-Hans", "zh-HK"):
         assert cr.resolve_language(tag) == "en", tag
     # 無訊號(空/None)→ en(取代 2026-07-21 的 zh-TW default 拍板)

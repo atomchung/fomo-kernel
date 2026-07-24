@@ -188,7 +188,10 @@ def test_every_section_heading_has_a_renderer_that_reads_it():
     persona holds an ETF)."""
     source = CARD_RENDERER.read_text(encoding="utf-8")
     read = {key for pattern in SECTION_READ_PATTERNS for key in pattern.findall(source)}
-    for locale in ("en", "zh-TW"):
+    # Every copy locale is held to the same key contract — enumerate the
+    # directory (the #389 supported-locale source of truth), not a fixed pair,
+    # so a new locale file cannot ship with dead or missing section keys.
+    for locale in sorted(path.stem for path in COPY_DIR.glob("*.json")):
         defined = set(json.loads(
             (COPY_DIR / f"{locale}.json").read_text(encoding="utf-8"))["sections"])
         unread = sorted(defined - read)

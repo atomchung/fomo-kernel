@@ -44,6 +44,10 @@ CJK_CLAIMS = [
     "三成", "五萬", "兩倍", "三十趴", "佔了三成五", "賺了九成", "虧了五萬元",
     "加了兩成", "報酬翻了三倍", "幾十趴", "數百檔", "百分之三十", "百分之五",
     "十股", "五張", "第三名賺了兩成",  # 第三 is an idiom, but 兩成 still fires
+    # Simplified-script variants (#387): a zh-CN narrative must not slip
+    # quantities through tables tuned for Traditional forms.
+    "五万", "两成", "两倍", "亏了五万元", "赚了九成", "几十趴", "数百档",
+    "百分之五十", "十张", "三个", "五点", "两块",
 ]
 
 
@@ -111,6 +115,11 @@ IDIOMS_OK = [
     "數字只來自引擎", "數據不會說謊", "幾乎沒有懸念", "多數時候你是對的",
     "把缺值當成零", "零成本的錯覺", "這個動作只是修補成本", "變成可被推翻的判斷",
     "達成共識", "成本控制", "兩者之間的取捨", "十字路口上的抉擇",
+    # Simplified-script idioms and ordinary words (#387) — the extended
+    # tables must not turn zh-CN prose into false positives.
+    "万一行情反转", "千万别追高", "进一步观察", "两难的处境", "两者之间的取舍",
+    "数字只来自引擎", "几乎没有悬念", "统一的纪律", "一时冲动不是理由",
+    "止损纪律", "一点也不意外的模式",
 ]
 
 # English prose that reuses risky tokens without a quantity.
