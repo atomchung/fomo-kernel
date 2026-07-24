@@ -12,6 +12,28 @@ real user reviewing their own trades follows the product skill
 ([skills/fomo-kernel/SKILL.md](../skills/fomo-kernel/SKILL.md)) and never needs
 this document.
 
+## Choose the evidence lane deliberately
+
+Maintainers may choose the inexpensive automated lane or the owner-live lane,
+but the results are intentionally not interchangeable.
+
+| Lane | Command | Result | What it proves |
+|---|---|---|---|
+| Contract preflight | `python3 skills/fomo-kernel/tools/qa_preflight.py run` | `engine_contract_pass` | The deterministic regression suite and artifact contracts passed. It creates no attributable dogfood session or receipt, and makes no UX claim. |
+| Formal dogfood | This runbook's full flow | archived owner/agent receipt | The named host walked the product lifecycle with attributable presentation evidence. Only an `owner_live` run can support a user-experience claim. |
+
+`qa_preflight.py` is deliberately content-free: it accepts no trade CSV, never
+records a maintainer `card_presented`, and always reports `formal_qa:false`,
+`human_involvement:agent_simulated`, and `ux_evidence:not_assessed`. A green
+preflight is a useful cheap gate before dogfood; it is not a QA pass and must
+not be archived as one. Its deterministic suite may create isolated temporary
+fixtures, but those are test internals rather than attributable QA evidence.
+The runner strips `TRADE_COACH_HOME` and inherited `TR_*` input, state, and
+network overrides (including `TR_TEST_NETWORK`), then runs under a temporary
+`HOME`. Test fixtures therefore cannot write into the caller's real or dogfood
+root or become a live-network run. It preserves only the local Python
+dependency import path and user-site base needed by this managed runtime.
+
 ## What counts as a QA run (fail closed)
 
 A dogfood session is a QA run **only if all of the following hold**. A session
@@ -68,6 +90,12 @@ A drifted run therefore surfaces *before* its results are trusted or posted,
 not in a post-hoc audit — but only the checks in the middle column are
 self-executing; the right column is on the runner.
 
+The manifest's `human_involvement` is an evidence label, not an option to
+upgrade after the fact. Set `owner_live` only when the owner answered every
+required question, made the rule choice (or skip), saw both cards in the named
+host, and supplied the verdict. Automated answers are `agent_simulated`; an
+agent-run flow with only a final owner verdict is `agent_with_owner_verdict`.
+
 ## Hard guardrails
 
 - **Real trade CSVs are read-only, always.** Nothing in a QA run ever writes
@@ -93,11 +121,21 @@ and its routed flows — this runbook does not restate it, it wraps it.
 ### 0. Version gate
 
 ```bash
-git fetch origin main
-git log -1 --format='%h %s' origin/main   # record this sha — it is what you are testing
+python3 skills/fomo-kernel/tools/qa_preflight.py refresh
 # test on a checkout of exactly origin/main (a detached worktree is ideal);
 # if your checkout is behind, update it before continuing.
 ```
+
+`qa_preflight.py status` is network-free and labels remote freshness
+`unverified`; it cannot make a run QA-eligible. `refresh` performs the fetch.
+After it succeeds, record the reported `origin_main` SHA and confirm that the
+dogfood worktree's `HEAD` equals that SHA before starting. A feature-branch
+preflight remains useful developer evidence, but it is never a formal dogfood
+run against latest main. `origin_main` itself can come back `null` in a
+checkout whose fetch never populates a `origin/main` remote-tracking ref
+(some CI checkouts do this) -- if `refresh` reports `null`, fall back to
+`git fetch origin main && git log -1 --format='%h %s' FETCH_HEAD` to get the
+SHA by hand.
 
 ### 1. Isolate
 
@@ -148,6 +186,13 @@ Non-negotiables while walking (each has burned a real QA run before):
 - `--language` follows the conversation language.
 - The `answers_received → card_presented(preview)` timestamp gap is the
   user-visible machine wait — report it in the wrap-up (#236).
+- For a weekly run, reuse the exact isolated root of a finalized first review.
+  Do not force a `weekly_review` route: `prepare` must select it. Before the
+  first question or card, present and record `prior_commitment` or `prior_skip`,
+  plus any `exit_reason` or `due_revisit` returned by the plan.
+- `--test-drive` always selects `test_drive` and uses the emitted `state_root`
+  for every later engine and receipt command. It is a demo route, not evidence
+  for first-review or weekly-memory behavior.
 
 ### 4. Wrap up
 
@@ -207,11 +252,16 @@ verbatim.
 - **Claude Code (owner's machine)** — the local `/fomo-qa` skill automates the
   version gate, dogfood worktree, isolated root, and receipt archiving. The
   skill is the convenience wrapper; *this runbook is the contract it wraps.*
-- **Codex, Antigravity, Cursor, others** — no wrapper exists: follow the flow
-  above manually. Set `--client` truthfully in the receipt so cross-client
-  runs stay attributable (#273). Begin unknown hosts in the complete text
-  route; absence of rich cards or native options is not a reason to skip the
-  receipt. Promote an adapter only after a separate real-host dogfood pass.
+- **Codex, Antigravity, Cursor, others** — no dogfood-lifecycle wrapper exists:
+  follow the flow above manually. An optional local preflight tool (see
+  "Choose the evidence lane deliberately" above) may offer the same
+  version-gate and setup conveniences, but it cannot turn an automated result
+  into host UX evidence — set `--client` truthfully in the receipt so
+  cross-client runs stay attributable (#273), and record `card_presented`
+  only after the owner actually sees the card. Begin unknown hosts in the
+  complete text route; absence of rich cards or native options is not a
+  reason to skip the receipt. Promote an adapter only after a separate
+  real-host dogfood pass.
 - **Any client**: if you realize mid-run that a gate was violated (wrong root,
   stale checkout, missing receipt), stop, note it, and restart the run — do
   not retrofit compliance onto a drifted session.

@@ -8,6 +8,11 @@ Trigger when a user asks for a trade review, transaction postmortem, brokerage-s
 
 **Maintainer QA is a different route.** If the task is dogfooding or QA-verifying this repository itself (rather than reviewing a real user's trades), follow [docs/qa-runbook.md](docs/qa-runbook.md): latest-main version gate, isolated `TRADE_COACH_HOME` root, a `ux_receipt` through the walk, an archived manifest, and `tools/privacy_lint.py` on real-data findings before posting them publicly. A run that skips those gates does not count as a QA run.
 
+`python3 skills/fomo-kernel/tools/qa_preflight.py run` is an optional automated
+contract preflight, not a substitute for that QA route. Its report deliberately
+contains no presentation receipt or owner verdict, so it may never be described
+as a user-experience pass.
+
 ## Workflow
 
 1. Read `skills/fomo-kernel/SKILL.md` completely.
