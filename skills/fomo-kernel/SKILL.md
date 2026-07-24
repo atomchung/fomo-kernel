@@ -109,7 +109,7 @@ python3 engine/review.py repair-projections
 
 ## Language and sharing
 
-`--language zh-TW|en` controls user-visible questions, rules, and cards. Always pass the language the user is conversing in: a zh-TW conversation must run with `--language zh-TW`. The `en` values in this file's command examples are placeholders, not defaults to copy verbatim. Both locales use the same engine facts and policy; localization is a rendering concern, not a second analysis workflow.
+`--language` controls user-visible questions, rules, and cards. Always pass the language the user is conversing in: a zh-TW conversation must run with `--language zh-TW`. If the user's language has no copy asset (any tag other than `zh-TW` or `en` today) or you cannot tell what it is, pass `--language en` — the engine applies the same fallback to unrecognized tags, so card surfaces come out in English either way; keep conversing in the user's language and do not hand-translate card text. The `en` values in this file's command examples are placeholders, not defaults to copy verbatim. Both locales use the same engine facts and policy; localization is a rendering concern, not a second analysis workflow.
 
 Each completed session produces:
 

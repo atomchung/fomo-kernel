@@ -37,9 +37,36 @@ MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
 
+DEFAULT_LANGUAGE = "en"
+
+
+def supported_languages():
+    """Locales that have a copy file. Dropping a new copy/<locale>.json here is
+    the complete registration step (output-language contract §2); nothing else
+    hardcodes the locale list."""
+    return {os.path.splitext(name)[0] for name in os.listdir(COPY_DIR)
+            if name.endswith(".json")}
+
+
+def resolve_language(language):
+    """Map a requested language tag to a supported copy locale.
+
+    Owner ruling 2026-07-24 (#389): an unknown or unsupported tag falls back to
+    English, never to zh-TW. Matching is exact up to case (``zh-tw`` → ``zh-TW``);
+    there is deliberately no base-tag negotiation — whether zh variants should
+    exception-map to zh-TW is an open product question on #389, and until it is
+    ruled they follow the strict fallback. Idempotent for canonical values.
+    """
+    requested = str(language or "").strip().lower()
+    for candidate in sorted(supported_languages()):
+        if requested == candidate.lower():
+            return candidate
+    return DEFAULT_LANGUAGE
+
+
 def load_copy(language):
-    language = "en" if str(language).lower().startswith("en") else "zh-TW"
-    with open(os.path.join(COPY_DIR, language + ".json"), encoding="utf-8") as f:
+    with open(os.path.join(COPY_DIR, resolve_language(language) + ".json"),
+              encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -669,12 +696,10 @@ def _currency(card):
 
 
 def default_display_currency(language):
-    normalized = str(language or "zh-TW").strip().lower()
-    if normalized.startswith("en"):
-        return DISPLAY_CURRENCY_BY_LANGUAGE["en"]
-    if normalized.startswith("zh-cn") or normalized.startswith("zh-hans"):
-        return DISPLAY_CURRENCY_BY_LANGUAGE["zh-CN"]
-    return DISPLAY_CURRENCY_BY_LANGUAGE["zh-TW"]
+    # Resolve first so an unsupported tag inherits the en fallback's currency
+    # (#389) instead of a zh-TW bias; canonical locales keep their mapping.
+    return DISPLAY_CURRENCY_BY_LANGUAGE.get(resolve_language(language),
+                                            DISPLAY_CURRENCY_BY_LANGUAGE["en"])
 
 
 def _positive_rate(value):

@@ -1465,7 +1465,8 @@ def test_prepare_is_resumable_without_rerunning_artifacts():
         resumed = _run("resume", "--root", root, "--session-id", plan["session_id"])
         assert resumed.returncode == 0 and json.loads(resumed.stdout)["plan"]["session_id"] == plan["session_id"]
         card, state = _artifacts(tmp)
-        again = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        again = _run("prepare", "--root", root, "--card-json", card, "--state-json", state,
+                     "--language", "zh-TW")
         assert json.loads(again.stdout)["status"] == "resumed"
 
 
@@ -1555,7 +1556,8 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
         root = pathlib.Path(tmp) / "demo-root"
         card, state = _artifacts(tmp)
         prepared = _run("prepare", "--test-drive", "--root", root,
-                        "--card-json", card, "--state-json", state)
+                        "--card-json", card, "--state-json", state,
+                        "--language", "zh-TW")
         plan = json.loads(prepared.stdout)["review_plan"]
         assert plan["route"] == "test_drive" and plan["persist"] is False
         # #273: cross-client test-drive artifacts must stay attributable — the
@@ -3163,6 +3165,31 @@ def test_ingestion_tolerates_cash_flow_rows_in_the_same_csv():
         assert ingest3["skipped_non_trade"] == 4 and ingest3["appended"] > 0, ingest3
 
 
+def test_prepare_unknown_language_falls_back_to_en_and_stays_idempotent():
+    """#389: an unsupported --language must not fail argparse and must not fall
+    back to zh-TW. The tag resolves to en at the CLI boundary, so the plan
+    carries the canonical locale and the session fingerprint matches an
+    explicit en run (resolve happens before fingerprinting — a retry that
+    spells the tag differently resumes the same session instead of forking)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="ja")
+        assert plan["language"] == "en"
+        # en question copy actually selected, not just the label rewritten
+        stems = [row["question"] for row in plan["question_queue"]]
+        assert all(not re.search(r"[一-鿿]", stem) for stem in stems), stems
+
+        resumed = _prepare(tmp, root, language="en")
+        assert resumed["session_id"] == plan["session_id"], \
+            "ja and en must fingerprint identically after boundary resolution"
+
+        # Case variants of a supported locale normalize instead of falling back
+        with tempfile.TemporaryDirectory() as tmp2:
+            root2 = pathlib.Path(tmp2) / "coach"
+            zh = _prepare(tmp2, root2, language="zh-tw")
+            assert zh["language"] == "zh-TW"
+
+
 def test_exit_capture_english_copy_uses_review_card_language():
     item = {"revisit_id": "BIG#2026-07-01#1#2026-07-10#10.0", "ticker": "BIG",
             "cycle_id": "BIG#2026-07-01#1", "exit_date": "2026-07-10",
@@ -4626,7 +4653,7 @@ def test_week_two_question_stems_quote_the_week_one_thesis_verbatim():
         w1_state = pathlib.Path(tmp) / "memory_state_w1.json"
         w1_state.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         run = _run("prepare", w1_csv, "--root", root, "--card-json", card_path,
-                   "--state-json", w1_state)
+                   "--state-json", w1_state, "--language", "zh-TW")
         assert run.returncode == 0, run.stdout + run.stderr
         plan1 = json.loads(run.stdout)["review_plan"]
         answers1 = _answer_queue(plan1, _week1_choices, "skip")
@@ -4653,7 +4680,8 @@ def test_week_two_question_stems_quote_the_week_one_thesis_verbatim():
         dated = pathlib.Path(tmp) / "memory_state_w2.json"
         dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         run = _run("prepare", w2_csv, "--root", root, "--card-json", card_path,
-                   "--state-json", dated, "--session-nonce", "memory-w2")
+                   "--state-json", dated, "--session-nonce", "memory-w2",
+                   "--language", "zh-TW")
         assert run.returncode == 0, run.stdout + run.stderr
         queue = json.loads(run.stdout)["review_plan"]["question_queue"]
         assert [(q["kind"], q["ticker"]) for q in queue] == \

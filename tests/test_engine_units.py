@@ -1300,6 +1300,40 @@ def test_fetch_splits_parallel_preserves_serial_semantics():
     assert out["AAPL"] == out["NVDA"]
 
 
+# ─────────────────── #389:語言 fallback 契約 ───────────────────
+
+def test_resolve_language_fallback_contract():
+    """#389 拍板(2026-07-24):未知/不支持的語言一律 fallback 到 en,絕不掉回 zh-TW。
+
+    鎖三件事:嚴格 fallback(含 zh 變體——zh 家族要不要例外映射到 zh-TW 是 #389
+    未決題,現行從嚴)、大小寫規範化到 canonical 檔名、supported 集合由 copy/
+    目錄推導(output-language 契約 §2 zero-engine-edits 的機制保證)。
+    """
+    import card_renderer as cr
+
+    # 未知/不支持 → en(舊行為是掉回 zh-TW,#389 的核心翻轉)
+    for tag in ("ja", "fr-CA", "de", "xx-YY", "zh-CN", "zh-Hans", "zh-HK"):
+        assert cr.resolve_language(tag) == "en", tag
+    # 無訊號(空/None)→ en(取代 2026-07-21 的 zh-TW default 拍板)
+    for tag in (None, "", "   "):
+        assert cr.resolve_language(tag) == "en", repr(tag)
+    # 大小寫/空白規範化到 canonical 檔名(argparse 不再 choices 硬擋)
+    assert cr.resolve_language("zh-tw") == "zh-TW"
+    assert cr.resolve_language("ZH-TW") == "zh-TW"
+    assert cr.resolve_language("EN") == "en"
+    assert cr.resolve_language("  en  ") == "en"
+    # canonical 值冪等(resolve 可安全重複套用)
+    for tag in sorted(cr.supported_languages()):
+        assert cr.resolve_language(tag) == tag
+    # supported 集合來自 copy/ 目錄——加 locale 只需丟 copy 檔,零 engine 改動
+    assert {"en", "zh-TW"} <= cr.supported_languages()
+    # 顯示幣跟隨 resolve:未知語言拿 en 的幣別,不再有 zh-TW 偏置
+    assert cr.default_display_currency("ja") == cr.default_display_currency("en")
+    assert cr.default_display_currency("zh-TW") != cr.default_display_currency("en")
+    # load_copy 對未知語言開的是 en 資產
+    assert cr.load_copy("ja")["language"] == "en"
+
+
 # ─────────────────── 標準庫 runner(免 pytest 即可跑,與 test_sample_styles 一致)───────────────────
 
 def _main():
