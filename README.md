@@ -1,5 +1,10 @@
 # FOMO Kernel
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-8A2BE2.svg)](skills/fomo-kernel)
+[![Engine: Deterministic](https://img.shields.io/badge/Engine-Deterministic-green.svg)](skills/fomo-kernel/engine)
+
 **English** · [繁體中文](README.zh-TW.md)
 
 > A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It turns your real trades into **one review card** through deterministic diagnosis and a short judgment dialogue —

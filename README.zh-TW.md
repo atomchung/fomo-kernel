@@ -1,11 +1,18 @@
 # FOMO Kernel
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-8A2BE2.svg)](skills/fomo-kernel)
+[![Engine: Deterministic](https://img.shields.io/badge/Engine-Deterministic-green.svg)](skills/fomo-kernel/engine)
+
 [English](README.md) · **繁體中文**
 
 > 一個給 Claude Code、Codex、Cursor 等 coding agent 使用的本機交易復盤 skill：先用確定性診斷找出行為漏洞，再透過一段判斷對話收斂成**一張卡**——
-> 你做對的一件事 + 一個最大的洞(用你自己的數字)+ 一條你親選、下次可驗的規矩。下次復盤會先對帳這條規矩有沒有守。
+> 你做對的一件事 + 一個最大的洞（用你自己的數字）+ 一條你親選、下次可驗的規矩。下次復盤會先對帳這條規矩有沒有守。
 
-不是又一份統計報表。它做的是報表做不到的事:**先算出你看不見的行為漏洞,再問出你不願承認的動機,最後收斂到你親選的一個可驗改變,下次復盤再回來對帳。**
+不是又一份統計報表。它做的是報表做不到的事：**先算出你看不見的行為漏洞，再問出你不願承認的動機，最後收斂到你親選的一個可驗改變，下次復盤再回來對帳。**
+
+> 📝 **語言與語系。** 同一套復盤契約可渲染為繁體中文或英文（`--language zh-TW|en`）。切換語言僅改變問題與卡片文案，不改變引擎計算事實與分析策略。
 
 
 ## Quick start
