@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -957,10 +958,14 @@ def _receipt_cli_surface():
             for arg in sub._actions:
                 flags.update(opt for opt in arg.option_strings
                              if opt.startswith("--") and opt != "--help")
-                if arg.dest == "event" and arg.choices:
-                    events.update(arg.choices)
-                elif arg.dest in ("adapter", "question_mode", "card_mode") and arg.choices:
-                    vocabulary.update(arg.choices)
+                if not arg.choices:
+                    continue
+                # Every closed vocabulary, not a hand-picked subset: an agent
+                # that cannot see a legal value cannot record it, so route,
+                # stage, surface source, memory kind, cash outcome, and the
+                # verdict scales all belong here alongside adapter and modes.
+                (events if arg.dest == "event" else vocabulary).update(
+                    str(choice) for choice in arg.choices)
     return flags, events, vocabulary
 
 
@@ -979,6 +984,63 @@ def test_runtime_contract_documents_the_whole_receipt_cli():
         assert not missing, f"{label} no runtime doc mentions: {missing}"
 
 
+def test_documented_receipt_commands_actually_run():
+    """Every ux_receipt command shown in the docs must execute successfully.
+
+    String mirroring proves a flag is mentioned somewhere; it cannot prove the
+    command an agent copies is runnable. A `widget_attempt_failed` example
+    shipped without its required --stage and nothing noticed, because every
+    individual token in it was present. Parsing is not enough either: that
+    requirement is enforced in the handler, not by argparse, so parse_args
+    accepts the broken command. Only running it catches this class, so each
+    documented event runs against its own fresh trace.
+    """
+    placeholders = {
+        "<session_id>": "s", "<id>": "s", "<client>": "c", "<route>": "first_review",
+        "<surface_digest>": "a" * 64,
+    }
+    doc = re.sub(r"\\\n\s*", " ", RECEIPT_SPEC.read_text(encoding="utf-8"))
+    commands = [shlex.split(line)[2:] for line in
+                re.findall(r"^python3 tools/ux_receipt\.py .*$", doc, re.M)]
+    assert commands, "the receipt reference documents no commands at all"
+    starts = [c for c in commands if c and c[0] == "start"]
+    events = [c for c in commands if c and c[0] == "event"]
+    assert starts and events, "expected both start and event examples"
+
+    def resolve(argv, root, scratch):
+        out = []
+        for token in argv:
+            token = placeholders.get(token, token)
+            if token.startswith("<") and token.endswith(">"):
+                # Any remaining placeholder is a path the example writes or reads.
+                token = str(scratch / "artifact.md")
+            out.append(token)
+        return [sys.executable, str(TOOL)] + out + ["--state-root", str(root)]
+
+    failures = []
+    for command in starts + events:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, scratch = pathlib.Path(tmp), pathlib.Path(tmp)
+            (scratch / "artifact.md").write_text("card", encoding="utf-8")
+            (scratch / "grounding.json").write_text(
+                json.dumps({"candidates": [{"id": "candidate_0"}],
+                            "presented_text": "text"}), encoding="utf-8")
+            if command[0] == "event":
+                # Declare the widest capability so widget/native examples are
+                # legal, then run the documented event against that trace.
+                subprocess.run(resolve(starts[-1][:], root, scratch),
+                               capture_output=True, text=True)
+            argv = resolve(command[:], root, scratch)
+            if "--grounding-check-file" in argv:
+                argv[argv.index("--grounding-check-file") + 1] = str(scratch / "grounding.json")
+            result = subprocess.run(argv, capture_output=True, text=True)
+            if result.returncode != 0:
+                failures.append(f"{' '.join(command)}\n    -> "
+                                f"{(result.stderr or result.stdout).strip().splitlines()[-1]}")
+    assert not failures, ("documented commands that fail when run:\n" +
+                          "\n".join(failures))
+
+
 def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
     text = SPEC.read_text(encoding="utf-8") + "\n" + RECEIPT_SPEC.read_text(encoding="utf-8")
     for fragment in (
@@ -991,9 +1053,10 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         # this stated rule is the only thing standing between the two.
         "Artifact generation is not presentation",
         "A file path or attachment without inline card content is not presentation",
-        # The trace holds session-linked evidence; naming its trust boundary is
-        # what keeps it out of the repository and off any shared surface.
-        "protected state directory",
+        # The trace holds session-linked evidence. Naming the directory is not
+        # the protection — these two prohibitions are, and a doc could keep the
+        # phrase "protected state directory" while dropping both.
+        "never committed and never published",
         # Backfilling a trace at wrap-up would fake the very evidence the trace
         # exists to provide. verify's timing heuristic catches only the crude
         # case, so the instruction carries the rest.

@@ -57,6 +57,8 @@ Letters are presentation only; write the mapped engine `value` to `answers.json`
 
 Show the full question and one complete option set, accept the reply, confirm the mapped choice briefly, then move to the next question. An interruption resumes the same unresolved `question_id` with its complete canonical presentation.
 
+Each question needs its own visible turn. Do not leave a required question buried in an earlier message and follow it with a bare "reply now" prompt, and do not repeat an option set the user is already looking at. The engine can see that an answer is missing; it cannot see that the question was hard to find, and a user who scrolls back to work out what is being asked is answering a different question than the one the queue ranked.
+
 `native_options` and `plain_text` present the same frozen surface and write the same canonical answer, so both record the same `surface_digest` — that digest is how copy drift stays visible without the trace ever holding the question text itself.
 
 `none_of_above` is not a new canonical choice. Preserve the user's exact words in `response_provenance.user_statement`. A mapped interpretation requires `summary_author=ai_interpretation`, a confidence, and explicit user confirmation. If the mapping stays ambiguous, write `choice=skip`, keep the exact statement in `note`, and mark the provenance low-confidence and unresolved — an honest gap is recoverable next review, a forced classification is not.

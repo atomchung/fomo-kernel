@@ -60,7 +60,7 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 When a declared widget attempt fails, record it before falling back to Markdown; one recorded failure covers the rest of the session, since widget capability is fixed per host:
 
 ```bash
-python3 tools/ux_receipt.py event --session-id <id> --event widget_attempt_failed
+python3 tools/ux_receipt.py event --session-id <id> --event widget_attempt_failed --stage preview
 ```
 
 ## Rule choice and grounding fidelity

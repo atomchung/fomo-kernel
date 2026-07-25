@@ -81,7 +81,11 @@ axis works for backward-looking review, where every number has exactly one
 source of truth in the user's own file. It breaks for forward-looking work,
 because a future state has no ledger to be faithful to.
 
-Replace it with this test:
+Replace that *classification axis* with the test below. This does not relax
+today's rule: the agent still may not compute a number, because Layer 1 below
+still belongs to the engine alone. What changes is how a **new** capability
+gets assigned, which the numeric/qualitative axis answers wrongly once
+forward-looking work enters the picture.
 
 > **Given the same data, should two different agents produce the identical
 > answer?**
@@ -91,6 +95,14 @@ Replace it with this test:
 | Yes — one correct value, derived from the user's own record | **Engine only** |
 | Yes *once a premise is supplied*, but the premise is proposed rather than recorded | **Engine computes, model interprets** |
 | No — a second thoughtful person would reasonably disagree | **Model, with provenance labelling** |
+
+Two refinements the test needs to stay honest. First, "one correct value" means
+*one value once the policy is fixed* — FIFO P&L is unique only because the
+accounting policy is chosen and held constant, so the engine owns the policy as
+much as the arithmetic. Second, landing in the third row does not mean
+unconstrained: motive interpretation legitimately varies between agents, yet it
+still writes canonical choices, requires user confirmation, and is versioned in
+state. Latitude in *judgment* is not latitude in *recording*.
 
 ### Layer 1 — facts (engine only)
 
@@ -109,11 +121,15 @@ Deterministic arithmetic over a premise the model or user supplies. The engine
 today ingests only history, so this layer barely exists: `prepare` accepts
 transactions, snapshots, prices, cash, and maps — no hypothesis input.
 
-Two Layer 2 primitives already ship, which proves the shape is sound rather
-than speculative: the stress scenario in `trade_recap.py` ("this driver falls
-30%, the account loses $X") and the realized-drag `counterfactual`. Both are
-what-ifs. The limitation is that the engine can only answer what-ifs it
-invented itself.
+The engine already computes two what-ifs internally — the stress scenario in
+`trade_recap.py` ("this driver falls 30%, the account loses $X") and the
+realized-drag `counterfactual`. They are worth noting as evidence that the
+*arithmetic* is tractable, but by this document's own definition **neither is a
+Layer 2 primitive**: the stress scenario picks the largest exposure itself and
+hardcodes its drawdown, and the counterfactual only removes the worst historical
+drag. Neither accepts a premise from the model or the user. What is missing is
+not the calculation but the interface that lets a premise in, which is exactly
+the work.
 
 **Layer 2 is what makes an opinion honest.** The model may say "I would buy
 this"; the engine states what that does to the user's actual book beside it.
@@ -147,9 +163,20 @@ Most of this is extension of shipped assets rather than new construction.
 
 The rule backtest is ranked first for build order. It converts the product's
 weakest moment into its strongest: choosing a rule today is a sermon ("you
-should size positions better"), and after backtesting it is a computed decision
-("this rule would have saved $15k net over 14 months"). It needs no external
-data, no market view, and no relaxation of any existing boundary.
+should size positions better"), and after backtesting it becomes a computed
+decision. It needs no external data, no market view, and no relaxation of any
+existing boundary.
+
+Its claim has to be scoped carefully, though, because the ledger cannot support
+a general net counterfactual. It records the path that happened, not the one the
+rule would have created: no prices for positions never entered, no answer for
+where the freed capital would have gone, no slippage, taxes, or stop-trigger
+data. What it *can* say is exactly what the record holds — **which of the user's
+own trades the rule would have blocked, and what those trades actually did.**
+"This rule would have stopped four adds that together lost $23k" is a fact about
+their history. "This rule would have made you $15k" is a simulation the data
+cannot back, and stating it that way would repeat the fabricated-precision
+mistake this document warns about elsewhere.
 
 ## 5. Capabilities are tools, not skills
 
@@ -208,17 +235,34 @@ action and the direction one believes, rather than to refuse.
 
 Split the current non-goal in two:
 
-- **Security recommendations — to be lifted.** Conditional on Layer 2 existing.
-  A recommendation is admissible when it carries the engine-computed
-  consequence for that user's book, a falsifier stating what would prove it
-  wrong, and per-claim provenance. Because a recommendation is written into the
-  same append-only ledger with the same falsifier field as a user's own thesis,
-  the next review reconciles the agent's own calls with the same machinery it
-  uses on the user's. The agent may advise, but it may not advise and forget.
+- **Security recommendations — to be lifted.** A recommendation is admissible
+  when it carries the engine-computed consequence for that user's book, a
+  falsifier stating what would prove it wrong, and per-claim provenance.
+  Because it is written into the same append-only ledger with the same
+  falsifier field as a user's own thesis, the next review reconciles the
+  agent's own calls with the same machinery it uses on the user's. The agent
+  may advise, but it may not advise and forget.
 - **Market forecasts — kept as a non-goal.** "This position takes your
   semiconductor exposure to 48%" is anchored in the user's record and checkable
   now. "NVDA reaches $250" has no engine support and no falsification date.
-  Keeping this boundary is what makes lifting the other one credible.
+
+  This line leaks and the leak should be stated rather than papered over: any
+  buy recommendation implicitly forecasts that the instrument's risk-adjusted
+  outcome beats the alternatives, even with no price target attached. What the
+  boundary actually buys is that the *stated* claim stays checkable — the
+  implicit forecast rides along, but it is never what the card asserts, and it
+  is never what the next review reconciles against.
+
+**Layer 2 is necessary, not sufficient.** Position consequence covers weight,
+concentration, driver exposure, and cash. It says nothing about how stale the
+market data is, whether the thesis is any good, whether the position suits this
+person's circumstances, what the realistic maximum loss is, or whether the
+instrument is liquid enough to exit. A falsifier, provenance labels, and a
+ledger that reconciles later add *accountability after the fact*; they do not
+supply *safety before it*. So Layer 2 is the gate for starting, not the proof
+that the result is safe — the remaining gaps above need their own answers, and
+the honest interim position is that a recommendation should say which of them it
+has not checked.
 
 **Sequencing.** Lifting the recommendation ban before Layer 2 exists would be
 worse than keeping it: the model would fill the consequence gap with invented
