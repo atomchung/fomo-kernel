@@ -1218,8 +1218,9 @@ def _hole_line(hole, language):
     d = hole.get("raw") or {}
     dim = dimension_id(d.get("dim"))
     copy = (load_copy(language).get("hole_lines") or {})
-    tickers = lambda values, limit: (copy.get("ticker_joiner") or ", ").join(
-        str(t) for t in (values or [])[:limit])
+    def tickers(values, limit):
+        return (copy.get("ticker_joiner") or ", ").join(
+            str(t) for t in (values or [])[:limit])
 
     if dim == "exit_discipline":
         parts = []
