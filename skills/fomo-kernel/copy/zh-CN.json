@@ -334,5 +334,87 @@
     "annualized_suffix": "，年化报酬 {value}",
     "cash_drag_suffix": "；与仅计持仓的差距 {value} 来自持有现金——这是观察，不是对错判定",
     "terminator": "。"
+  },
+  "currency_note": {
+    "cached_dated": "显示换算沿用上次对账汇率（截至 {when}）。",
+    "cached": "显示换算沿用上次对账汇率。",
+    "portfolio_fx_gap": "至少一个持仓币别缺少可靠汇率；金额保留原币，不把近似聚合值当成精确换算。",
+    "no_rate": "找不到可靠的 {currency} 显示汇率；金额保留原币，不做猜测换算。"
+  },
+  "benchmark_line": {
+    "line": "{subject}对 {comparator} 的超额报酬 {excess} 个百分点{beta}。",
+    "subject_market": "{market} 部位",
+    "subject_default": "持仓",
+    "comparator_default": "市场大盘",
+    "beta_suffix": "；β {beta}"
+  },
+  "split_lines": {
+    "line": "{subject}赢大盘的 {excess} 个百分点拆为：市场／赛道配置 {allocation} 个百分点、标的选择 {selection} 个百分点。",
+    "subject_market": "{market} ",
+    "subject_default": ""
+  },
+  "decision_entries": {
+    "line": "{ticker}：{label}。这个判断与证据边界已保存，供下次对账。",
+    "ticker_default": "position"
+  },
+  "motive_entries": {
+    "subject_default": "这次浮现的行为",
+    "context": "引擎脉络：{fact}。",
+    "recorded": "“{subject}”的动机记为：{label}。",
+    "saved": "这个选项已保存，供后续复盘对账。",
+    "terminator": "。"
+  },
+  "exit_entries": {
+    "line": "{ticker}：你把这次{action}记为“{label}”。这里只保存当时的理由，尚未判断决策结果。",
+    "ticker_default": "这笔部位",
+    "action_full": "清仓",
+    "action_partial": "减仓"
+  },
+  "review_milestone": {
+    "line": "开始这次复盘时，你已有 {completed} 次完成纪录。",
+    "noun_one": "",
+    "noun_many": ""
+  },
+  "horizon_entries": {
+    "ticker_default": "这笔部位",
+    "voice_inferred": "原先推测",
+    "voice_recorded": "已记录",
+    "exit_too_fast": "{ticker}：{voice}的 thesis 时间轴是“{horizon}”，{days} 天后就出场；这是时间轴不一致，不替动机下定论。",
+    "held_too_long": "{ticker}：{voice}的 thesis 时间轴是“{horizon}”，持有 {days} 天后仍未结束；时间轴已漂移，仍需厘清。"
+  },
+  "public_band": {
+    "low": "低",
+    "moderate": "中",
+    "high": "高",
+    "very_high": "很高"
+  },
+  "public_performance": {
+    "line": "{subject}：相对各自市场大盘 {excess} 个百分点；β {beta}。",
+    "subject_default": "可比较部位"
+  },
+  "payoff_lines": {
+    "sub_wrap": "（{sub}）",
+    "original_currency": "已实现盈亏比 {payoff}；平均盈亏金额因显示汇率缺失而保留原币。",
+    "drag_with_amount": "最大已实现拖累是 {ticker}，净影响 {drag}；拿掉它后盈亏比会是 {after}。",
+    "drag_plain": "最大已实现拖累是 {ticker}；拿掉它后盈亏比会是 {after}。"
+  },
+  "cash_lines": {
+    "anchored_with_weight": "有余额锚点的账户现金为 {cash}，占账户 {weight}。",
+    "anchored": "有余额锚点的账户现金为 {cash}。",
+    "by_currency": "有余额锚点的账户现金（原币）：{amounts}。",
+    "amount_joiner": "、"
+  },
+  "public_mirror": {
+    "structural_with_severity": "这次开场组合检查把“{dim}”列为主要结构风险，风险压力为{severity}。",
+    "structural": "这次开场组合检查把“{dim}”列为主要结构风险。",
+    "structural_dim_default": "组合结构",
+    "snapshot_baseline": "这次开场组合检查只建立结构基线；交易历史行为维度维持未评分。",
+    "no_holes": "这次可用历史不足以排序出主要行为模式。",
+    "behavioral": "这次复盘在“{dim}”看见{severity}程度的行为压力。",
+    "behavioral_dim_default": "主要行为维度",
+    "structure": "配置型 ETF 与单一标的风险分开计算；产业、主题与杠杆 ETF 仍保留集中风险。"
+  },
+  "tag_values": {
+    "price_note": "(现 {px}／均 {avg_cost})"
   }
 }

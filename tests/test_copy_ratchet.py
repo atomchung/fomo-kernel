@@ -140,7 +140,24 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # clause so the existing irr_annual/cash_drag conditional-concatenation code
 # keeps working unchanged). The rest of `_performance_items`'s branches
 # (pnl/payoff/drag/cash) are untouched — out of this issue's scope. 50 -> 48.
-BASELINE = 48
+#
+# #387 (2026-07-25): the card-surface half of the copy migration. Twelve
+# functions moved their sentences into copy/*.json — `_currency_note`,
+# `_private_benchmark_line`, `_private_split_lines`, `_decision_entries`,
+# `_headline_motive_entries`, `_exit_entries`, `_review_opening_lines`,
+# `_horizon_entries`, `_public_band`, `_public_performance_lines`,
+# `_tag_format_values`, and `render_public`'s mirror/structure block — plus
+# the payoff/drag/cash branches #363 explicitly left behind. Verified
+# behaviour-preserving the whole way: persona_sweep --baseline reported
+# 156/156 byte-identical after every batch. 48 -> 17.
+#
+# What the remaining 17 are: `numeric_claim`'s script-specific validation
+# tables and the joiner/punctuation picks that are grammar rather than prose
+# (`_forms_word`, list joiners). Those are #281's territory (split check logic
+# from language data, parked), not prose migration — so 17 is not obviously
+# reducible by moving more sentences, and the next PR to touch this number
+# should say which category it is draining.
+BASELINE = 17
 
 
 def test_language_branch_count_only_ratchets_down():
