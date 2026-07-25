@@ -2074,58 +2074,72 @@ def _problem_lines(bundle, copy):
 # (snapshot, insufficient, fx gaps) keep today's plainer shape.
 
 
-def _kpi_tiles(card, context, copy, backdrop=None):
-    """Up to four headline tiles: P&L, payoff, benchmark excess, alpha.
+def kpi_tile_plan(card):
+    """Which headline tiles a card earns — as a locale-neutral decision.
 
-    ``backdrop`` (#344) is the VIX level that qualifies the excess reading;
-    when the excess tile renders it folds into its sub instead of standing as
-    its own sentence beneath the grid. The primary benchmark's window return
-    rode here too until owner ruling 2026-07-23 cut it (#366 — a window-scoped
-    return under a whole-history excess, with nothing period-local on the card
-    to compare it against). The review
-    span deliberately does NOT ride along — owner ruling 2026-07-22 put it at
-    the top of the card (see ``_period_span``), because carrying both made
-    this one cell roughly three times the text of its neighbours and the
-    grid's row stretch padded the entire row. ``None``/absent leaves the
-    excess tile exactly as before (e.g. direct callers that only need beta).
+    This is the judgment half of the KPI grid, split out of ``_kpi_tiles``
+    so that *what the card says* stops being decided in the same breath as
+    *how it reads in one language*. Nothing here loads copy, takes a
+    ``language``, or formats a number: every tile carries its raw engine
+    value plus the copy KEY its slot should resolve to, and the presentation
+    half below turns that into text for one locale.
 
-    The period curve is one more cell in this grid (2026-07-23 layout
-    ruling, R5 as corrected): its line takes the value slot and its caption
-    the sub line, so the row keeps one bounded height — a cell allowed to
-    grow sets the height for every neighbour."""
+    Why it matters beyond tidiness: with the two halves fused, adding a
+    locale or restyling the grid both meant editing this logic, and a wording
+    change could not be made without touching engine code (measured at
+    P(engine | copy) = 0.96 by ``tools/change_surface.py``). Split, the plan
+    is the thing tests and future non-card surfaces can consume directly.
+
+    Slot vocabulary follows the metric-cell contract in
+    docs/design-guidelines.md §2 — ``label`` / ``value`` / ``sub``, where the
+    value slot holds exactly one figure and the sub slot at most one
+    qualifying line. A ``fmt`` names the formatter the presentation half must
+    apply; a ``sub`` names a copy key plus the raw params it interpolates.
+
+    Tiles are *candidates*: a slot whose value cannot be formatted in the
+    active display context (no currency, no FX factor) is dropped by the
+    presentation half, not predicted here. That keeps data availability — an
+    engine fact — separate from display capability, which is not.
+    """
     overview = card.get("overview") or {}
-    kpi_copy = copy.get("kpi") or {}
     tiles = []
 
     total = _finite_number(overview.get("total_pnl"))
-    realized = _finite_number(overview.get("realized"))
-    unrealized = _finite_number(overview.get("unrealized"))
-    total_text = _display_money(total, context)
-    if total is not None and total_text:
-        sub = None
+    if total is not None:
         # #382: the tile's sub -- unlike its value -- has room for roughly
         # one figure per wrapped line, so a 5-6 digit realized/unrealized
-        # pair goes through the compact ($119k) formatter here even though
-        # the headline total_text above stays full precision. Markdown's
-        # mirror of this same sub (_performance_items) has no such width
-        # limit and keeps full precision, via plain _display_money.
-        realized_text = _display_money_compact(realized, context)
-        unrealized_text = (_display_money_compact(unrealized, context)
-                           if unrealized_is_measured(overview) else None)
-        if realized_text and unrealized_text and kpi_copy.get("pnl_sub"):
-            sub = kpi_copy["pnl_sub"].format(realized=realized_text, unrealized=unrealized_text)
-        tiles.append({"id": "pnl", "label": kpi_copy.get("pnl"), "value": total_text,
-                      "tone": "neg" if total < 0 else "pos", "sub": sub})
+        # pair goes through the compact ($119k) formatter even though the
+        # headline value stays full precision. Markdown's mirror of this same
+        # sub (_performance_items) has no such width limit and keeps full
+        # precision, via plain money.
+        # An unmeasured unrealized leg is an ABSENT slot (``None``), not a
+        # slot holding ``None``. The distinction is load-bearing: a present
+        # slot whose value is missing still formats as an em dash, which is
+        # how a measured-but-empty figure reads, whereas an absent slot
+        # resolves to nothing and collapses the whole sub. Printing
+        # "— unrealized" would state a measurement that was never taken.
+        # The key stays in the dict either way — dropping it would break the
+        # template outright instead of degrading.
+        sub_params = {
+            "realized": {"fmt": "money_compact",
+                         "value": _finite_number(overview.get("realized"))},
+            "unrealized": ({"fmt": "money_compact",
+                            "value": _finite_number(overview.get("unrealized"))}
+                           if unrealized_is_measured(overview) else None),
+        }
+        tiles.append({"id": "pnl", "label_key": "pnl",
+                      "value": {"fmt": "money", "value": total},
+                      "tone": "neg" if total < 0 else "pos",
+                      "sub": {"key": "pnl_sub", "params": sub_params}})
 
     payoff = _finite_number(overview.get("payoff"))
-    if payoff is not None and kpi_copy.get("payoff"):
-        sub = None
-        win_text = _display_money(_finite_number(overview.get("avg_win")), context)
-        loss_text = _display_money(_finite_number(overview.get("avg_loss")), context, absolute=True)
-        if win_text and loss_text and kpi_copy.get("payoff_sub"):
-            sub = kpi_copy["payoff_sub"].format(win=win_text, loss=loss_text)
-        tiles.append({"id": "payoff", "label": kpi_copy["payoff"],
-                      "value": f"{payoff:.1f}", "tone": None, "sub": sub})
+    if payoff is not None:
+        tiles.append({"id": "payoff", "label_key": "payoff",
+                      "value": {"fmt": "ratio1", "value": payoff}, "tone": None,
+                      "sub": {"key": "payoff_sub", "params": {
+                          "win": {"fmt": "money", "value": _finite_number(overview.get("avg_win"))},
+                          "loss": {"fmt": "money_abs",
+                                   "value": _finite_number(overview.get("avg_loss"))}}}})
 
     ab = card.get("alpha_beta_breakdown") or {}
     # Mixed-market cards keep their per-market text rows (#205); a synthetic
@@ -2133,38 +2147,120 @@ def _kpi_tiles(card, context, copy, backdrop=None):
     # The excess and alpha tiles belong to the month-gated vs-market segment
     # (#284): on a gated review they disappear with the rest of ③.
     single_scope = not ab.get("by_market") and not vs_market_suppressed(card)
+
     excess = _finite_number(ab.get("excess_vs_spy")) if single_scope else None
-    if excess is not None and kpi_copy.get("excess"):
-        beta_text = _beta_text(ab.get("beta"))
-        sub_parts = []
-        if beta_text and kpi_copy.get("excess_sub"):
-            sub_parts.append(kpi_copy["excess_sub"].format(beta=beta_text))
-        if backdrop:
-            sub_parts.append(backdrop)
-        sub = " · ".join(sub_parts) if sub_parts else None
-        tiles.append({"id": "excess", "label": kpi_copy["excess"],
-                      "value": f"{_benchmark_pp(excess)}pp",
-                      "tone": "neg" if excess < 0 else "pos", "sub": sub})
+    if excess is not None:
+        tiles.append({"id": "excess", "label_key": "excess",
+                      "value": {"fmt": "pp", "value": excess},
+                      "tone": "neg" if excess < 0 else "pos",
+                      "sub": {"key": "excess_sub", "params": {
+                          "beta": {"fmt": "beta", "value": ab.get("beta")}},
+                          # #344: the VIX backdrop that qualifies the excess
+                          # reading folds into this sub rather than standing
+                          # as its own sentence beneath the grid.
+                          "appends_backdrop": True}})
 
     alpha = _finite_number(ab.get("alpha_ann")) if single_scope else None
-    if alpha is not None and kpi_copy.get("alpha"):
-        credible = bool(ab.get("credible"))
-        value = _signed_pct(alpha, digits=0)
+    if alpha is not None:
         # #363: the sub carries the 95% interval whenever alpha_stat.ci95 can
-        # build one (_alpha_tile_sub); a card with no usable ci95 falls back
-        # to exactly the pre-#363 sub, so a non-credible alpha never loses the
-        # footnote for its value's "*" just because no interval exists. What
-        # a tile's sub still cannot hold when the interval *does* render
-        # there — that same "*" legend, and the #313 negative-interval
-        # caveat — moves to the standalone line below the grid
-        # (_alpha_standalone_note, read via the "alpha" item's html_text in
-        # _performance_items). The value's own " *" suffix is unchanged.
-        interval_sub = _alpha_tile_sub(ab, copy["language"])
-        sub = (interval_sub if interval_sub is not None
-               else (None if credible else "* " + (kpi_copy.get("alpha_unreliable") or "")))
-        tiles.append({"id": "alpha", "label": kpi_copy["alpha"],
-                      "value": value if credible else f"{value} *",
-                      "tone": None, "sub": sub})
+        # build one; a card with no usable ci95 falls back to exactly the
+        # pre-#363 sub, so a non-credible alpha never loses the footnote for
+        # its value's "*" just because no interval exists. What a tile's sub
+        # still cannot hold when the interval *does* render there — that same
+        # "*" legend, and the #313 negative-interval caveat — moves to the
+        # standalone line below the grid (_alpha_standalone_note, read via
+        # the "alpha" item's html_text in _performance_items).
+        credible = bool(ab.get("credible"))
+        tiles.append({"id": "alpha", "label_key": "alpha",
+                      "value": {"fmt": "signed_pct0", "value": alpha},
+                      "tone": None, "credible": credible,
+                      "sub": {"kind": "alpha_interval_or_legend"}})
+    return tiles
+
+
+def _format_slot(spec, context):
+    """Resolve one plan slot's raw value into display text for this context.
+
+    Returns ``None`` when the slot is absent, or when the context cannot
+    render it (no currency, no FX factor) — every caller treats that as "this
+    slot did not survive", which is what keeps a missing price from printing
+    as zero. A *present* slot holding no value is different: it formats as an
+    em dash, because a measured-but-empty figure and an unmeasured one are
+    not the same claim.
+    """
+    if not spec:
+        return None
+    fmt, value = spec.get("fmt"), spec.get("value")
+    if fmt == "money":
+        return _display_money(value, context)
+    if fmt == "money_abs":
+        return _display_money(value, context, absolute=True)
+    if fmt == "money_compact":
+        return _display_money_compact(value, context)
+    if value is None:
+        return None
+    if fmt == "ratio1":
+        return f"{float(value):.1f}"
+    if fmt == "pp":
+        return f"{_benchmark_pp(value)}pp"
+    if fmt == "signed_pct0":
+        return _signed_pct(value, digits=0)
+    if fmt == "beta":
+        return _beta_text(value)
+    raise RenderError(f"unknown KPI slot format: {fmt!r}")
+
+
+def _kpi_tiles(card, context, copy, backdrop=None):
+    """Up to four headline tiles: P&L, payoff, benchmark excess, alpha.
+
+    The presentation half of ``kpi_tile_plan`` — it resolves that plan's copy
+    keys against one locale and its raw values against one display context.
+    A tile whose label copy is missing, or whose value cannot be formatted in
+    this context, is dropped rather than rendered half-empty.
+
+    ``backdrop`` (#344) is the VIX level that qualifies the excess reading;
+    when the excess tile renders it folds into its sub. The primary
+    benchmark's window return rode here too until owner ruling 2026-07-23 cut
+    it (#366 — a window-scoped return under a whole-history excess, with
+    nothing period-local on the card to compare it against). The review span
+    deliberately does NOT ride along — owner ruling 2026-07-22 put it at the
+    top of the card (see ``_period_span``), because carrying both made this
+    one cell roughly three times the text of its neighbours and the grid's
+    row stretch padded the entire row. ``None``/absent leaves the excess tile
+    exactly as before (e.g. direct callers that only need beta).
+
+    The period curve is one more cell in this grid (2026-07-23 layout
+    ruling, R5 as corrected): its line takes the value slot and its caption
+    the sub line, so the row keeps one bounded height — a cell allowed to
+    grow sets the height for every neighbour."""
+    kpi_copy = copy.get("kpi") or {}
+    tiles = []
+    for plan in kpi_tile_plan(card):
+        label = kpi_copy.get(plan["label_key"])
+        value_text = _format_slot(plan["value"], context)
+        if not value_text or (plan["id"] != "pnl" and not label):
+            continue
+
+        spec = plan.get("sub") or {}
+        if spec.get("kind") == "alpha_interval_or_legend":
+            interval = _alpha_tile_sub(card.get("alpha_beta_breakdown") or {}, copy["language"])
+            sub = (interval if interval is not None
+                   else (None if plan["credible"]
+                         else "* " + (kpi_copy.get("alpha_unreliable") or "")))
+        else:
+            parts = {name: _format_slot(s, context) for name, s in (spec.get("params") or {}).items()}
+            template = kpi_copy.get(spec.get("key"))
+            resolved = (template.format(**parts)
+                        if template and parts and all(parts.values()) else None)
+            sub_parts = [p for p in (resolved,) if p]
+            if spec.get("appends_backdrop") and backdrop:
+                sub_parts.append(backdrop)
+            sub = " · ".join(sub_parts) if sub_parts else None
+
+        if plan["id"] == "alpha" and not plan["credible"]:
+            value_text = f"{value_text} *"
+        tiles.append({"id": plan["id"], "label": label, "value": value_text,
+                      "tone": plan["tone"], "sub": sub})
     return tiles
 
 
