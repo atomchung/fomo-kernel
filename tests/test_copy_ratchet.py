@@ -38,9 +38,11 @@ trying to stop.
 recursive key set (#279). That test already exists and runs in the "Card
 HTML and delivery contract" suite, so it is not duplicated here.
 """
+import ast
 import json
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CARD_RENDERER = ROOT / "skills" / "fomo-kernel" / "engine" / "card_renderer.py"
@@ -206,6 +208,105 @@ def test_every_section_heading_has_a_renderer_that_reads_it():
         assert not missing, (
             f"card_renderer.py reads sections {missing}, which copy/{locale}.json "
             "does not define — that is a KeyError on the rendering path.")
+
+
+# --- Plan/presentation split -------------------------------------------
+#
+# The ratchet above stops new inline language branches from appearing. It
+# cannot stop the deeper version of the same problem: a function that decides
+# *what the card says* while also resolving *how it reads*, so the two can
+# never be changed independently. `kpi_tile_plan` was the first function split
+# along that seam (the judgment half emits raw values plus copy KEYS; the
+# presentation half resolves them against one locale and one display
+# context). These two tests keep that seam from silently closing again, and
+# are where the next split function gets registered.
+PLAN_LAYER_FUNCTIONS = ("kpi_tile_plan",)
+
+# Names that only a presentation function has any business touching.
+COPY_BOUND_NAMES = {"copy", "language", "load_copy", "kpi_copy", "sections_copy",
+                    "blocks_copy", "localized_dimension", "localized_rule"}
+
+
+def test_plan_layer_functions_never_reach_for_copy_or_language():
+    """A plan function that can see copy will eventually read it.
+
+    Checked structurally rather than by naming convention: every identifier
+    the function body mentions, plus its own parameters, must be free of the
+    copy/locale vocabulary. A plan function is then locale-neutral by
+    construction, which is what lets a new locale ship as a copy file with no
+    ``.py`` change at all (#368's finish line, measured as P(engine | copy) by
+    ``tools/change_surface.py``)."""
+    tree = ast.parse(CARD_RENDERER.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name in PLAN_LAYER_FUNCTIONS):
+            continue
+        found.add(node.name)
+        params = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        leaked = sorted((params | {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+                         | {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)})
+                        & COPY_BOUND_NAMES)
+        assert not leaked, (
+            f"{node.name}() is registered as a plan-layer (locale-neutral) function "
+            f"but reaches for {leaked}. Decide what the card says here using engine "
+            "values and copy KEYS only; resolve the wording in the presentation half. "
+            "If this function is no longer plan-layer, remove it from "
+            "PLAN_LAYER_FUNCTIONS and say why.")
+        # Natural-language text in a plan function is the same defect wearing
+        # a different hat: a sentence here is a sentence no locale can replace.
+        for text in (n.value for n in ast.walk(node) if isinstance(n, ast.Constant)):
+            assert not (isinstance(text, str) and re.search(r"[一-鿿]", text)), (
+                f"{node.name}() contains CJK literal {text!r}. Plan-layer functions "
+                "emit copy keys, never prose.")
+    assert found == set(PLAN_LAYER_FUNCTIONS), (
+        f"PLAN_LAYER_FUNCTIONS names {sorted(set(PLAN_LAYER_FUNCTIONS) - found)}, which "
+        "card_renderer.py does not define — a renamed or deleted function silently "
+        "stops being checked.")
+
+
+# A card rich enough to earn all four KPI tiles, so the assertion below sees
+# every slot shape the plan can emit rather than whichever subset a sparse
+# fixture happens to trigger.
+FULL_KPI_CARD = {
+    "overview": {"total_pnl": 38500.0, "realized": 30000.0, "unrealized": 8500.0,
+                 "unrealized_coverage": {"held_n": 3, "priced_n": 3},
+                 "payoff": 1.8, "avg_win": 5200.0, "avg_loss": -2900.0},
+    "alpha_beta_breakdown": {"excess_vs_spy": 0.042, "beta": 1.13,
+                             "alpha_ann": 0.061, "credible": True,
+                             "alpha_stat": {"ci95": [0.012, 0.11]}},
+}
+
+
+def test_kpi_tile_plan_emits_keys_and_numbers_but_no_display_text():
+    """The plan's every string must be an identifier, not something a reader sees.
+
+    This is the runtime half of the split: even a plan function that imports
+    no copy could still bake in an English label or a pre-formatted "+$38.5k".
+    Requiring snake_case identifiers throughout makes that impossible to do by
+    accident — and makes the plan safe to hand to a future non-card surface
+    (a different host's native widget, an export) that has its own vocabulary.
+    """
+    sys.path.insert(0, str(ROOT / "skills" / "fomo-kernel" / "engine"))
+    import card_renderer  # noqa: E402  (engine path inserted just above)
+
+    plan = card_renderer.kpi_tile_plan(FULL_KPI_CARD)
+    assert [tile["id"] for tile in plan] == ["pnl", "payoff", "excess", "alpha"], (
+        f"a full card should earn all four KPI tiles, got {[t['id'] for t in plan]}")
+
+    identifier = re.compile(r"^[a-z][a-z0-9_]*$")
+    def walk(node, where):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, f"{where}.{key}")
+        elif isinstance(node, (list, tuple)):
+            for i, value in enumerate(node):
+                walk(value, f"{where}[{i}]")
+        elif isinstance(node, str):
+            assert identifier.match(node), (
+                f"kpi_tile_plan{where} = {node!r} is display text, not an identifier. "
+                "The plan carries copy keys and raw numbers; the presentation half "
+                "turns them into something a person reads.")
+    walk(plan, "")
 
 
 def main():

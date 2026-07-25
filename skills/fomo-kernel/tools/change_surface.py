@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Measure how many mirrored surfaces one change has to cross.
+
+`CLAUDE.md` lists seven "Mirrored surfaces" — pairs of files that must stay
+synchronized by hand. That table says *what* must stay in sync; it does not
+say what obeying it costs. This tool measures the cost, so a claim like
+"iteration got cheaper" can be checked against a baseline instead of a
+feeling.
+
+The unit of work is one commit. History is squash-merged, so one commit is
+one PR is one change.
+
+Three readings, in order of usefulness:
+
+1. **Fan-out** — how many distinct surfaces a change touches. This is the
+   direct proxy for how much of the repository a maintainer must hold in
+   their head to make one edit.
+
+2. **Coupling** — P(touches B | touches A). A pair near 1.0 means B is not
+   really a separate decision: it is bookkeeping that follows from A. Those
+   pairs are the automation candidates, because a surface that always moves
+   with another one can be generated from it instead of mirrored by hand.
+
+3. **Pure-copy share** — the fraction of changes that touch `copy/*.json`
+   and no `.py` file at all. Issue #368's finish line is that a wording
+   change needs no engine edit; this number is that finish line, measured.
+
+Read-only. Runs no checks, enforces no thresholds, and is not wired into
+`tests/run_all.py` — #368's owner ruling rejected standalone checkers that
+only ever accrete rules, and a measurement that fails a build would become
+one. It reports; the decisions stay with the maintainer.
+
+Usage:
+
+    python3 skills/fomo-kernel/tools/change_surface.py             # last 60 commits
+    python3 skills/fomo-kernel/tools/change_surface.py --since 2026-07-18
+    python3 skills/fomo-kernel/tools/change_surface.py -n 200 --json
+"""
+import argparse
+import collections
+import json
+import os
+import statistics
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
+
+# One surface = one thing a maintainer has to think about separately. The
+# order matters: the first matching rule wins, so narrower paths precede the
+# directory they live in.
+SURFACES = (
+    ("engine", lambda p: p.startswith("skills/fomo-kernel/engine/") and p.endswith(".py")),
+    ("copy", lambda p: p.startswith("skills/fomo-kernel/copy/")),
+    ("schema", lambda p: p.startswith("skills/fomo-kernel/schemas/")),
+    ("template", lambda p: p.endswith("card-template.html")
+        or p.endswith("tools/design_bundle.py")
+        or p.startswith("ds-bundle/")),
+    ("skill-runtime", lambda p: p.endswith("SKILL.md") or p == "AGENTS.md"
+        or p.startswith("skills/fomo-kernel/flows/")
+        or p.startswith("skills/fomo-kernel/references/")
+        or p.endswith("card-spec.md")),
+    ("contract-doc", lambda p: p in {
+        "docs/output-contract.md", "docs/output-language.md",
+        "docs/design-guidelines.md", "docs/layout-constraints.md",
+        "docs/language-policy.md", "docs/eval-design.md"}),
+    ("gtm", lambda p: p.startswith("README") or p.startswith("docs/demo-card")),
+    ("test", lambda p: p.startswith("tests/") or p.endswith("test_state_loop.py")),
+    ("eval", lambda p: p.startswith("evals/") or p.startswith("skills/fomo-kernel/evals/")),
+    ("tooling", lambda p: p.startswith("skills/fomo-kernel/tools/")
+        or p.startswith(".github/") or p.startswith(".claude/")),
+    ("maintainer-doc", lambda p: p in {"CLAUDE.md", "BACKLOG.md"} or p.startswith("docs/")),
+    ("fixture", lambda p: p.startswith("skills/fomo-kernel/mock/")),
+)
+
+
+def classify(path):
+    """Return the surface a repository path belongs to, or None if unmapped."""
+    for name, match in SURFACES:
+        if match(path):
+            return name
+    return None
+
+
+def git(*args):
+    out = subprocess.run(("git", "-C", REPO) + args, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"git {' '.join(args)} failed: {out.stderr.strip()}")
+    return out.stdout
+
+
+def commits(limit=None, since=None):
+    """Yield (sha, subject, [paths]) newest first."""
+    # git expands %x00/%x01 into the delimiters; passing raw control bytes as
+    # argv would fail before git ever runs.
+    args = ["log", "--no-merges", "--name-only", "--format=%x00%H%x01%s"]
+    if since:
+        args.append(f"--since={since}")
+    if limit:
+        args.append(f"-{limit}")
+    for block in git(*args).split("\x00"):
+        if not block.strip():
+            continue
+        head, _, body = block.partition("\n")
+        sha, _, subject = head.partition("\x01")
+        paths = [line for line in body.splitlines() if line.strip()]
+        yield sha.strip(), subject.strip(), paths
+
+
+def analyze(rows):
+    """Reduce commits to the three readings. Commits touching no mapped
+    surface (pure housekeeping) are excluded from every denominator."""
+    records = []
+    for sha, subject, paths in rows:
+        surfaces = {s for s in (classify(p) for p in paths) if s}
+        if not surfaces:
+            continue
+        records.append({
+            "sha": sha[:7],
+            "subject": subject,
+            "surfaces": sorted(surfaces),
+            "fan_out": len(surfaces),
+            "files": len(paths),
+            # A change is "product-facing" when it alters what a user reads or
+            # sees. Test-only and docs-only commits pay a different cost and
+            # would otherwise flatten the fan-out distribution.
+            "product": bool(surfaces & {"engine", "copy", "template", "skill-runtime"}),
+            "pure_copy": surfaces <= {"copy", "test", "contract-doc", "maintainer-doc"}
+                         and "copy" in surfaces,
+        })
+    return records
+
+
+def coupling(records, floor=6):
+    """P(B | A) for every ordered surface pair, over commits that touched A.
+
+    `floor` drops pairs whose base rate is too small to read as a habit
+    rather than a coincidence.
+    """
+    seen = collections.Counter()
+    joint = collections.Counter()
+    for r in records:
+        for a in r["surfaces"]:
+            seen[a] += 1
+            for b in r["surfaces"]:
+                if a != b:
+                    joint[(a, b)] += 1
+    out = []
+    for (a, b), n in joint.items():
+        if seen[a] >= floor:
+            out.append({"when": a, "also": b, "p": n / seen[a], "base": seen[a], "n": n})
+    return sorted(out, key=lambda d: -d["p"])
+
+
+def hotspots(records, top=8):
+    counts = collections.Counter()
+    for r in records:
+        for s in r["surfaces"]:
+            counts[s] += 1
+    return counts.most_common(top)
+
+
+def report(records, window):
+    product = [r for r in records if r["product"]]
+    fan = [r["fan_out"] for r in product] or [0]
+    copy_changes = [r for r in records if "copy" in r["surfaces"]]
+
+    print(f"\n{'=' * 66}")
+    print(f"  Change-surface fan-out — {window}")
+    print(f"{'=' * 66}")
+    print(f"  commits analyzed        {len(records)} ({len(product)} product-facing)")
+    print()
+    print(f"  FAN-OUT (surfaces per product-facing change)")
+    print(f"    median                {statistics.median(fan):.0f}")
+    print(f"    mean                  {statistics.mean(fan):.1f}")
+    print(f"    worst                 {max(fan)}  ({max(product, key=lambda r: r['fan_out'])['sha']})")
+    print(f"    changes crossing 4+   {sum(1 for f in fan if f >= 4)}/{len(fan)}"
+          f"  ({100 * sum(1 for f in fan if f >= 4) / len(fan):.0f}%)")
+    print()
+
+    print(f"  COUPLING — when a change touches A, how often it also touches B")
+    print(f"  (p near 1.00 = B is bookkeeping that follows A, not a separate decision)")
+    strong = [c for c in coupling(records) if c["p"] >= 0.55][:10]
+    if not strong:
+        print("    (no pair above 0.55)")
+    for c in strong:
+        print(f"    {c['when']:<14} -> {c['also']:<14} {c['p']:.2f}   ({c['n']}/{c['base']})")
+    print()
+
+    print(f"  PURE-COPY SHARE  (#368 finish line: wording changes need no .py edit)")
+    if copy_changes:
+        pure = sum(1 for r in copy_changes if r["pure_copy"])
+        print(f"    copy changes          {len(copy_changes)}")
+        print(f"    of those, no engine   {pure}  ({100 * pure / len(copy_changes):.0f}%)")
+    else:
+        print("    (no copy changes in window)")
+    print()
+
+    print(f"  SURFACE TOUCH COUNT")
+    for name, n in hotspots(records):
+        print(f"    {name:<20} {n:>4}  ({100 * n / len(records):.0f}% of changes)")
+    print()
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("-n", "--limit", type=int, default=60,
+                    help="how many commits back to read (default 60)")
+    ap.add_argument("--since", help="date floor, e.g. 2026-07-18 (overrides -n)")
+    ap.add_argument("--json", action="store_true", help="emit raw records instead of a report")
+    args = ap.parse_args(argv)
+
+    limit = None if args.since else args.limit
+    records = analyze(commits(limit=limit, since=args.since))
+    if not records:
+        print("no commits matched", file=sys.stderr)
+        return 1
+
+    if args.json:
+        json.dump({"records": records, "coupling": coupling(records)},
+                  sys.stdout, indent=2)
+        print()
+        return 0
+
+    window = f"since {args.since}" if args.since else f"last {args.limit} commits"
+    report(records, window)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
