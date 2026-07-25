@@ -84,6 +84,12 @@ flowchart LR
 
 ## Explicit non-goals
 
+> Partially superseded on 2026-07-25 by
+> [decision-fomo-kernel-shape.md](decision-fomo-kernel-shape.md) §7. The
+> security-recommendation half of the second item is being lifted, conditional
+> on the consequence layer (Layer 2) existing first; market forecasts remain a
+> non-goal. Read that section before treating the line below as current.
+
 - Cloud account or synchronization system.
 - Security recommendations or market forecasts.
 - A large portfolio governance wiki.
