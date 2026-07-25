@@ -17,7 +17,7 @@ The product's value is continuity: this review reconciles against the last one, 
 4. **Never invent, interpolate, or recall a market price.** When a host blocks the engine's own retrieval, `review_plan.input.price_feed.request` names what is unpriced; look those closes up from a recognized market-data source, transcribe them into the envelope in `references/price-feed.md`, and rerun `prepare --prices`. A price you cannot find stays missing — a missing price is never a delisting verdict or a zero return.
 5. **Trade data stays local.** The source CSV, session bundles, and the ledger never enter cloud memory. The review card is private to the user: show `card-private.*` by default per `references/card-delivery.md`. Local files, terminal output, and private-by-default in-client rendering are all fine; publishing, posting, or sending it to a third party is not. `card-public.md` is the one share-safe artifact, and only if the user asks.
 6. **Transcribe snapshots, do not analyze them.** For a position table or screenshot, copy only broker-declared facts into the JSON envelope and keep that file outside the repository, such as under `/tmp`. Do not derive weights, P&L, cycle IDs, metrics, or ETF classifications, and do not use a cloud OCR service — there is no engine OCR or upload path.
-7. **`sessions/<session_id>/bundle.json` is the completed result.** Projections are rebuilt from it, never hand-edited as if they were authoritative.
+7. **`sessions/<session_id>/bundle.json` is the completed result.** Projections are rebuilt from it.
 
 ## Canonical entry point
 
@@ -92,7 +92,7 @@ The engine validates completeness, provenance, identity, and gates at `preview`;
 - **Theses**: add one `thesis_updates` entry per missing-thesis `cycle_id`, using the field vocabulary in `review_plan.authoring_contract` — the unchanged `cycle_id` plus the qualitative fields; the engine prefills the mechanical ones and assigns all identity. State the inference source, and never present an inferred thesis as user-confirmed.
 - **Questions**: `prepare` ranks motive, recent-exit, matured checkpoint, and first-review entry-thesis questions by engine-owned impact and returns a route-scoped count (first review three to five, weekly one to three, snapshot none). Ask all of them; it never pads to reach a minimum. `skip` semantics differ by kind: skipping an exit-reason capture is durable, while a skipped `due_revisit` legitimately returns next review.
 - **Evidence**: a confirmed evidence delta means "the user confirmed this was part of the decision," not that the claim is externally true. Do not invent `observed_at`.
-- **Instruments**: do not guess ETF classes. Use a local `--instrument-map` for uncommon instruments; unknown instruments get no allocation exemption.
+- **Instruments**: use a local `--instrument-map` for uncommon instruments; unknown instruments get no allocation exemption.
 
 A snapshot review is an opening portfolio check, not a transaction-history diagnosis. Discuss engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. Averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, and historical motives need transaction history — invite the user to add it later. Ledger-derived current holdings stay canonical until an explicit snapshot reconciliation succeeds, so an incomplete snapshot can produce a bounded review but never becomes an accounting anchor.
 
