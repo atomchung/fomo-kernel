@@ -24,7 +24,7 @@ The queue is the engine's ranking, so do not change route, kind, priority, requi
 
 **8. When `state_snapshot.problem_stats` is present,** weave the top recurring problems into the mirror. A `held_streak >= 2` stays silent; `skipped` periods are never claimed as held. Call a rule broken only after a `rule_breach` question has qualified the exact-period evidence.
 
-**9. A `rule_breach` question always offers `keep_tracking` and `exception`,** plus `revise_rule` only when an engine metric can track a replacement for that same problem key. `exception` and `revise_rule` require a short note. If the user chooses `revise_rule`, use the one final commitment as the replacement and set `commitment.revises_rule_id` to the question's `rule_id`; never append a second independent revision. Prepare asks only the first unqualified breach or a later worsening.
+**9. A `rule_breach` question always offers `keep_tracking` and `exception`,** plus `revise_rule` only when an engine metric can track a replacement for that same problem key. `exception` and `revise_rule` require a short note. If the user chooses `revise_rule`, use the one final commitment as the replacement and set `commitment.revises_rule_id` to the question's `rule_id`. Prepare asks only the first unqualified breach or a later worsening.
 
 **10. Treat every `missing_thesis_positions` item** as a new cycle or a historical gap and fill it with the inference-first contract from the first-review flow.
 

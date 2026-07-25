@@ -64,7 +64,7 @@ Field rules:
 - Each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency`. One row per instrument.
 - `history` is optional: `[date, close]` pairs. When present it must agree with `close` on the shared date.
 - `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it only when the source shows it; omitted means no split adjustment is applied.
-- `fx` is optional and only matters for a mixed-currency portfolio. Rates are USD per one unit of the currency. `USD` is fixed at 1.0 and must not be supplied. Omit a rate you cannot find.
+- `fx` is optional and only matters for a mixed-currency portfolio. Rates are USD per one unit of the currency. Omit a rate you cannot find.
 
 ## Coverage tiers
 

@@ -102,7 +102,7 @@ If a new observation could overturn the top behavioral leak, add it to `observat
 
 `--language` controls user-visible questions, rules, and cards. Always pass the language the user is conversing in: a zh-TW conversation runs with `--language zh-TW`, zh-CN with `--language zh-CN`. If the user's language has no copy asset (anything other than `zh-TW`, `zh-CN`, `en` today) or you cannot tell, pass `--language en`; the engine applies the same fallback, so card surfaces come out in English either way. Keep conversing in the user's language and do not hand-translate card text. The `en` in the examples above is a placeholder, not a default.
 
-Each completed session produces `card-private.md` and `card-private.html` (the complete local card) and `card-public.md` (a separately rendered share-safe artifact — no amounts, dates, tickers, exact weights, session IDs, or agent free text; it is never uploaded).
+Each completed session produces `card-private.md` and `card-private.html` (the complete local card) and `card-public.md` (a separately rendered share-safe artifact — no amounts, dates, tickers, exact weights, session IDs, or agent free text; no upload path exists).
 
 ## Test drive
 
