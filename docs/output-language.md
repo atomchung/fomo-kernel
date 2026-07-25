@@ -95,14 +95,33 @@ section-heading counts must match persona-for-persona; any nonzero delta means
 a locale gap has reappeared. At the time of this rewrite the delta was 0 across
 all 156 bundles.
 
-Two consequences worth stating, because later work depends on them:
+**Structure parity is not content parity — corrected 2026-07-25.** The check
+above compares line and section counts, and an earlier revision of this section
+read that as proof that "English is a complete canonical source." It was not.
+Both cards printed exactly one leading-hole line, so the counts matched while
+the *sentences* differed in how much they said. A `holding_period` hole read:
 
-- **A locale gap is now a defect with evidence behind it**, not an aspiration
-  (§2). The en card is no longer a reduced card.
-- **English is a complete canonical source.** Any design that renders or
-  translates outward from English — see the multilingual direction on
+- zh — the range, the median, **and** that 2 of 2 names were both day-traded
+  and held long, naming them, and that this means no consistent framework
+- en — the range and the median
+
+The en reader was never told what the leak was. The cause was structural: the
+zh path returned a sentence `trade_recap.number_line` had already rendered,
+while `en` fell back to a shorter one written natively in the renderer. The
+same split existed for the strength line.
+
+Both now rank and render from the same raw dimensions through copy
+(`hole_lines`, `best_strength`), so the two consequences below hold on content,
+not only on shape:
+
+- **A locale gap is a defect with evidence behind it** (§2), measured on what
+  a sentence says and not only on whether the line exists.
+- **English is a complete canonical source.** Designs that render or translate
+  outward from English — see
   [#390](https://github.com/atomchung/fomo-kernel/issues/390) — can rely on the
-  English card carrying the full story, which was not true in phase 1.
+  English card carrying the full story. This became true with the #387
+  migration; it was not true before, and the claim should not be re-derived
+  from a structure-only check again.
 
 **zh-CN transitional waiver (owner-ruled 2026-07-24,
 [#387](https://github.com/atomchung/fomo-kernel/issues/387)):** `zh-CN`
@@ -131,8 +150,31 @@ the prior review, which is where a zh literal has the most room to hide).
 
 ## 4. Out of scope for this contract
 
-- **v1 zh human card** (`trade_recap.py`) is zh-only legacy; the CLAUDE.md
-  number-line mirror obligation is unchanged. Do not i18n v1.
+- **The v1 zh human card** — `trade_recap.main()` and `rich_card.py` — is
+  zh-only legacy; the CLAUDE.md number-line mirror obligation is unchanged.
+  Do not i18n v1.
+
+  **The exclusion is the v1 card, not the file.** An earlier wording fenced off
+  `trade_recap.py` wholesale, which reads as "this whole file is legacy" and is
+  wrong: the file is ~2300 lines of live computation engine (FIFO matching,
+  round trips, cash, FX, prices, splits, alpha/beta, P&L curve, market context)
+  that `review.py` and `snapshot_adapter.py` import directly. Only `main()` and
+  the `rich_card.py` it drives are the v1 card.
+
+  That mislabel had a cost, so it is worth stating plainly: because the file
+  looked out of scope, nobody checked what else it emitted, and the values it
+  writes into `engine_card` — sector labels, hole number-lines, strength
+  sentences — kept reaching **v2** cards. The en path escaped it (v2 re-derives
+  those through copy), the zh path did not, and every mechanical purity gate we
+  own asserts on **en**. The gate that would have caught it was pointed at the
+  one locale without the problem.
+- **`trade_recap`-sourced values that reach a v2 card are in scope**, and are
+  handled on the v2 side: v2 re-derives them through copy rather than consuming
+  the raw zh literal (the pattern `DIMENSION_ID_BY_LEGACY_LABEL`,
+  `_hole_line()`, and `_best_strength()` already follow). Owner ruling
+  2026-07-25 on [#387](https://github.com/atomchung/fomo-kernel/issues/387):
+  re-derive on the v2 side rather than widen this exclusion, because that is
+  what v2 already does and it leaves the fenced-off file untouched.
 - **Conversation-layer prose** (agent-authored option copy, chat wording)
   follows SKILL.md instructions and the LLM judge — mechanical checks here
   cover card surfaces only. #262-style mixing in *options* is a SKILL/judge

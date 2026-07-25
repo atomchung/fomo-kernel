@@ -268,7 +268,13 @@
     "below_negative": "年化 α 的区间包含负值，代表这段期间的选股优势在统计上还不能视为稳定能力。"
   },
   "best_strength": {
-    "no_signal": "这期没有足够强的正向讯号；先把注意力留给最大的洞。"
+    "no_signal": "这期没有足够强的正向讯号；先把注意力留给最大的洞。",
+    "exit_discipline": "该获利了结时你不手软：卖掉的赚钱单只有 {winner_early} 事后继续涨，代表你不会“抱着赚钱的舍不得卖、结果回吐”",
+    "position_sizing": "单笔部位有控制：押最重的一档也只占 {max_pct},没把身家压在一档上",
+    "averaging_down": "你往下加码 {count} 次，却都守在自己的部位上限内、没让任何一档越摊越重{example}",
+    "averaging_down_example": "(例:{ticker})",
+    "diversification": "{n} 档分布在不同驱动因子，没有全押在同一个故事上",
+    "holding_period": "进出有一致的节奏：中位持有 {median_hold} 天，不是随机乱买乱卖"
   },
   "reconciliation": {
     "statement": "上次你承诺：“{rule}”。",
@@ -416,5 +422,36 @@
   },
   "tag_values": {
     "price_note": "(现 {px}／均 {avg_cost})"
+  },
+  "sectors": {
+    "bonds": "债券",
+    "crypto": "加密",
+    "regional_etf": "区域ETF",
+    "semiconductors": "半导体",
+    "commodities": "商品",
+    "broad_market_etf": "大盘ETF",
+    "unclassified": "未分类",
+    "consumer": "消费",
+    "drones_defense": "无人机国防",
+    "rare_earth_materials": "稀土材料",
+    "datacenter_power": "资料中心电力",
+    "software_cloud": "软件云",
+    "fintech": "金融科技",
+    "telecom": "电信",
+    "ev_ai": "电动车AI"
+  },
+  "hole_lines": {
+    "joiner": "；",
+    "ticker_joiner": ", ",
+    "exit_forward": "{n_rt} 笔决策卖出（{n_scored} 有 fwd、{n_trunc} 截断）中 {early_rate} 在 {n_fwd} 天后更高、平均续涨 {avg_forgone}{winner_early}",
+    "exit_winner_early": "；卖掉赚钱的有 {winner_early} 续涨（卖太早）",
+    "exit_holding": "赚钱抱 {hold_win} 天 / 赔钱抱 {hold_lose} 天（处置缺口 {disp_gap}）",
+    "position_sizing": "你最大一笔 {max_ticker} 占 {max_pct}，其余平均 {avg_pct}",
+    "diversification": "你持有 {n} 档看似分散，但 AI capex 暴险 {ai_pct}、最大板块“{max_sector}”{max_sector_pct}、top3 {top3}——同一个驱动因子",
+    "holding_no_data": "暂无已实现 round-trip,持有时间统计待生成（只看买进尚未卖出的不纳入）",
+    "holding_base": "你持有时间 {min}~{max} 天、中位 {median_hold} 天",
+    "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 档同一档又当冲又长抱（{tickers}）——同档没有一致框架",
+    "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同档框架大致一致）",
+    "averaging_down": "你有 {count} 次在亏损仓往下加码（{tickers}），其中 {breach} 次加码当下占成本 >25%"
   }
 }

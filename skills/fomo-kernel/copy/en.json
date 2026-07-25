@@ -268,7 +268,13 @@
     "below_negative": "The annualized α interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill."
   },
   "best_strength": {
-    "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak."
+    "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak.",
+    "exit_discipline": "you take profit without flinching: only {winner_early} of the winners you sold kept climbing afterwards, so you are not the kind who clings to a gain until it gives itself back",
+    "position_sizing": "single-position size is under control: even your heaviest name is only {max_pct}, so your net worth is not riding on one ticker",
+    "averaging_down": "you added down {count} times and still stayed inside your own position limit, never letting one name grow heavy on the way down{example}",
+    "averaging_down_example": " (for example {ticker})",
+    "diversification": "{n} names spread across different drivers, so you are not all-in on one story",
+    "holding_period": "your entries and exits keep a consistent rhythm: a median hold of {median_hold} days, not random buying and selling"
   },
   "reconciliation": {
     "statement": "Last time you committed: \"{rule}\".",
@@ -416,5 +422,36 @@
   },
   "tag_values": {
     "price_note": " (now {px} / cost {avg_cost})"
+  },
+  "sectors": {
+    "bonds": "bonds",
+    "crypto": "crypto",
+    "regional_etf": "regional ETFs",
+    "semiconductors": "semiconductors",
+    "commodities": "commodities",
+    "broad_market_etf": "broad-market ETFs",
+    "unclassified": "unclassified",
+    "consumer": "consumer",
+    "drones_defense": "drones and defense",
+    "rare_earth_materials": "rare-earth materials",
+    "datacenter_power": "data-center power",
+    "software_cloud": "software and cloud",
+    "fintech": "fintech",
+    "telecom": "telecom",
+    "ev_ai": "EV and AI"
+  },
+  "hole_lines": {
+    "joiner": "; ",
+    "ticker_joiner": ", ",
+    "exit_forward": "of {n_rt} decision exits ({n_scored} with forward data, {n_trunc} truncated), {early_rate} were higher {n_fwd} days later, climbing {avg_forgone} on average{winner_early}",
+    "exit_winner_early": "; {winner_early} of the winners you sold kept climbing (sold too early)",
+    "exit_holding": "winners held {hold_win} days / losers held {hold_lose} days (disposition gap {disp_gap})",
+    "position_sizing": "your largest single position {max_ticker} was {max_pct}, against a {avg_pct} average across the rest",
+    "diversification": "you hold {n} names that look diversified, but AI-capex exposure is {ai_pct}, the largest sector ({max_sector}) is {max_sector_pct} and the top three are {top3} — one and the same driver",
+    "holding_no_data": "no closed round trips yet, so holding-time statistics are still pending (positions bought and not yet sold are not counted)",
+    "holding_base": "your holding periods run {min}–{max} days, median {median_hold} days",
+    "holding_inconsistent": "{base}; {n_incon} of {n_multi} names were both day-traded and held long ({tickers}) — no consistent framework within the same name",
+    "holding_consistent": "{base} (median {median_hold} days = your main framework; frameworks within a name are broadly consistent)",
+    "averaging_down": "you added to losing positions {count} times ({tickers}); {breach} of those adds put the position over 25% of cost basis at the moment of the add"
   }
 }
