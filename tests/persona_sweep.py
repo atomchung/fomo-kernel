@@ -28,9 +28,16 @@ For every ``mock/sample_*.csv`` persona x locale (zh-TW, en) x **review**
    ``.sec.keystep`` emphasis ground exists (R3/R4, docs/design-guidelines.md)
    — and an English card must carry no CJK on any surface (#356).
 5. With ``--baseline``: every Markdown card must be byte-identical to the
-   baseline engine's render of the same bundle. HTML may differ by design;
-   silent Markdown drift is the red flag, because that surface is the only
-   carrier of every figure on clients without widget rendering.
+   baseline engine's render of the same bundle. Markdown drift FAILS, because
+   that surface is the only carrier of every figure on clients without widget
+   rendering. HTML drift is REPORTED, not failed — a deliberate design change
+   legitimately moves those bytes, so a red light there would be noise — but
+   it is never silent. It was, until 2026-07-25: a refactor of ``_kpi_tiles``
+   (an HTML-only code path) changed 112 of 156 cards while this sweep printed
+   "all gates pass", because only ``*.md`` was ever compared. A byte-parity
+   check that cannot see the primary visual surface is a false green light;
+   read the reported count and confirm every drifting card is one you meant
+   to change.
 
 Exit code 0 only when every persona passes every gate on every variant.
 
@@ -652,6 +659,21 @@ def main():
                     failures.append(f"baseline missing {md.name}")
                 elif md.read_bytes() != other.read_bytes():
                     failures.append(f"markdown drift vs baseline: {md.name}")
+            # HTML is the primary visual surface and has code paths Markdown
+            # never reaches (the KPI tile grid among them), so leaving it out
+            # of the comparison made an entire class of change invisible here.
+            # Reported rather than failed: a design change is supposed to move
+            # these bytes. Zero is the signal that a refactor was behavior-
+            # preserving; anything else is a list to read, card by card.
+            cards = sorted((out / "render").glob("*.html"))
+            drift = [c.name for c in cards
+                     if not (out / "baseline" / "render" / c.name).exists()
+                     or c.read_bytes() != (out / "baseline" / "render" / c.name).read_bytes()]
+            notes.append(
+                f"html vs baseline: {len(cards) - len(drift)}/{len(cards)} byte-identical"
+                + (f"; {len(drift)} drifted — confirm each was intended: "
+                   + ", ".join(drift[:4]) + (" ..." if len(drift) > 4 else "")
+                   if drift else " (refactor was behavior-preserving)"))
 
     count = len(list(bundles.glob("*.bundle.json")))
     for line in notes:
