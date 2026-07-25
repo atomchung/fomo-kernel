@@ -1146,7 +1146,6 @@ def _rule_breach_options(language, can_revise=True):
 
 def _breach_evidence_text(last_breach, language):
     events = (last_breach or {}).get("events") or []
-    en = str(language).lower().startswith("en")
     parts = []
     for event in events:
         ticker = event.get("ticker")
