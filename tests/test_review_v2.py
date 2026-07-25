@@ -613,7 +613,13 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
             md = card_renderer.render_private(bundle)
             assert "2330.TW" in md and "65" in md, \
                 f"[{language}] single-position concentration must render as main content"
-            sector_marker = "top three non-allocation risks" if language == "en" else "top3"
+            # #387: the en marker was "top three non-allocation risks", the
+            # renderer's own short sentence for this dimension. That sentence
+            # is gone — both locales now render the richer narration from copy
+            # `hole_lines.diversification` — so the marker follows the content
+            # it was always meant to assert (the top-three concentration is
+            # present), not the wording that happened to carry it.
+            sector_marker = "top three" if language == "en" else "top3"
             assert sector_marker in md, \
                 f"[{language}] driver/sector concentration must also render, not be dropped"
 

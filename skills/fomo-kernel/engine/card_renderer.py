@@ -33,6 +33,27 @@ DIMENSION_ID_BY_LEGACY_LABEL = {
     "alpha/beta": "alpha_beta",
     "進場": "entry_style",
 }
+# Sector labels arrive from `trade_recap.SECTOR_MAP` as zh literals, the same
+# shape as the dimension labels above and mapped the same way (#387). A label
+# with no entry here is a user-supplied driver-map category, which passes
+# through verbatim — the engine cannot localize a name the user invented.
+SECTOR_ID_BY_LEGACY_LABEL = {
+    "債券": "bonds",
+    "加密": "crypto",
+    "區域ETF": "regional_etf",
+    "半導體": "semiconductors",
+    "商品": "commodities",
+    "大盤ETF": "broad_market_etf",
+    "未分類": "unclassified",
+    "消費": "consumer",
+    "無人機國防": "drones_defense",
+    "稀土材料": "rare_earth_materials",
+    "資料中心電力": "datacenter_power",
+    "軟體雲": "software_cloud",
+    "金融科技": "fintech",
+    "電信": "telecom",
+    "電動車AI": "ev_ai",
+}
 MARKET_BENCHMARKS = {"TW": "^TWII", "US": "SPY"}
 DISPLAY_CURRENCY_BY_LANGUAGE = {"en": "USD", "zh-TW": "TWD", "zh-CN": "CNY"}
 
@@ -245,6 +266,19 @@ def localized_dimension(dim, language):
     copy = load_copy(language)
     dim_id = dimension_id(dim)
     return (copy.get("dimensions") or {}).get(dim_id, dim_id.replace("_", " "))
+
+
+def localized_sector(sector, language):
+    """Resolve an engine sector label to display text (#387).
+
+    Unmapped labels are user-supplied driver-map categories and pass through
+    unchanged; there is nothing to translate them to."""
+    if not sector:
+        return ""
+    sector_id = SECTOR_ID_BY_LEGACY_LABEL.get(sector)
+    if not sector_id:
+        return sector
+    return (load_copy(language).get("sectors") or {}).get(sector_id, sector)
 
 
 def localized_rule(dim, language, cap=None):
@@ -1166,46 +1200,134 @@ def _alpha_standalone_note(ab, language):
 
 
 def _hole_line(hole, language):
-    if language != "en":
-        return hole.get("number_line") or ""
+    """The leading hole's number narration, computed from the raw dimension.
+
+    Until #387 this function had two unequal halves: any non-``en`` locale
+    returned ``hole["number_line"]`` — a zh sentence ``trade_recap.number_line``
+    had already rendered — while ``en`` got a shorter sentence written natively
+    here. That was a locale gap of the kind §2 of the output-language contract
+    calls a defect, and it hid behind the structure-equivalence check because
+    both cards print exactly one line: the en reader of a ``holding_period``
+    hole saw a range and a median and was never told what the leak *was* (that
+    the same name is both day-traded and held long).
+
+    Both locales now render the richer narration from the same raw dimension
+    through copy ``hole_lines``. ``number_line`` stays on the engine card for
+    the v1 card, and the CLAUDE.md mirror obligation between the two now covers
+    two genuinely independent implementations rather than one string reused."""
     d = hole.get("raw") or {}
     dim = dimension_id(d.get("dim"))
+    copy = (load_copy(language).get("hole_lines") or {})
+    def tickers(values, limit):
+        return (copy.get("ticker_joiner") or ", ").join(
+            str(t) for t in (values or [])[:limit])
+
     if dim == "exit_discipline":
-        rate = _pct(d.get("early_rate"))
-        return (f"Across {d.get('n_rt', 0)} decision exits, {rate} were higher after the review window; "
-                f"winning positions were held {d.get('hold_win', 0):.0f} days versus "
-                f"{d.get('hold_lose', 0):.0f} days for losing positions.")
+        parts = []
+        if d.get("early_rate") is not None:
+            winner_early = ""
+            if d.get("winner_early") is not None:
+                winner_early = _format_copy(copy.get("exit_winner_early"),
+                                            winner_early=_pct(d.get("winner_early"))) or ""
+            parts.append(_format_copy(
+                copy.get("exit_forward"), n_rt=d.get("n_rt", 0),
+                n_scored=d.get("n_scored", 0), n_trunc=d.get("n_trunc", 0),
+                early_rate=_pct(d.get("early_rate")), n_fwd=d.get("n_fwd", ""),
+                avg_forgone=f"{float(d.get('avg_forgone') or 0) * 100:+.1f}%",
+                winner_early=winner_early))
+        parts.append(_format_copy(
+            copy.get("exit_holding"),
+            hold_win=f"{float(d.get('hold_win') or 0):.0f}",
+            hold_lose=f"{float(d.get('hold_lose') or 0):.0f}",
+            disp_gap=f"{float(d.get('disp_gap') or 0):+.0f}"))
+        return (copy.get("joiner") or "; ").join(p for p in parts if p)
     if dim == "position_sizing":
-        return (f"The largest single-risk position was {d.get('max_ticker')}, at {_pct(d.get('max_pct'))}; "
-                f"the average of the other risk positions was {_pct(d.get('avg_pct'))}.")
+        return _format_copy(copy.get("position_sizing"),
+                            max_ticker=d.get("max_ticker"),
+                            max_pct=_pct(d.get("max_pct")),
+                            avg_pct=_pct(d.get("avg_pct"))) or ""
     if dim == "diversification":
-        return (f"The portfolio held {d.get('n', 0)} positions, but the top three non-allocation risks were "
-                f"{_pct(d.get('top3'))} and the largest classified driver was {_pct(d.get('max_sector_pct'))}.")
+        return _format_copy(copy.get("diversification"), n=d.get("n", 0),
+                            ai_pct=_pct(d.get("ai_pct")),
+                            max_sector=localized_sector(d.get("max_sector"), language),
+                            max_sector_pct=_pct(d.get("max_sector_pct")),
+                            top3=_pct(d.get("top3"))) or ""
     if dim == "holding_period":
         if d.get("no_data"):
-            return "There are not yet enough closed round trips to diagnose holding-time consistency."
-        return (f"Holding periods ranged from {d.get('min', 0)} to {d.get('max', 0)} days, "
-                f"with a median of {d.get('median_hold', 0):.0f} days.")
+            return copy.get("holding_no_data") or ""
+        median = f"{float(d.get('median_hold') or 0):.0f}"
+        base = _format_copy(copy.get("holding_base"), min=d.get("min", 0),
+                            max=d.get("max", 0), median_hold=median)
+        if d.get("n_incon", 0) > 0:
+            return _format_copy(copy.get("holding_inconsistent"), base=base,
+                                n_incon=d.get("n_incon"), n_multi=d.get("n_multi"),
+                                tickers=tickers(d.get("incon_tickers"), 5)) or ""
+        return _format_copy(copy.get("holding_consistent"), base=base,
+                            median_hold=median) or ""
     if dim == "averaging_down":
         # #348: "crossed the position-size boundary" read like today's market-value
         # concentration and collided with the sizing dimension's wording. Both anchors
         # must be in the sentence: "at the moment of that add" (not now) and "cost
         # basis" (not market value).
-        return (f"There were {d.get('count', 0)} adds to losing positions; "
-                f"{d.get('breach', 0)} pushed the position's share of cost basis over "
-                f"25% at the moment of that add.")
+        return _format_copy(copy.get("averaging_down"), count=d.get("count", 0),
+                            tickers=tickers(d.get("tickers"), 6),
+                            breach=d.get("breach", 0)) or ""
     return ""
 
 
 def _best_strength(card, language):
-    if language != "en" and card.get("strength"):
-        return card["strength"]
-    dims = card.get("dims_raw") or []
-    safe = [d for d in dims if not d.get("triggered")]
-    if not safe:
-        return (load_copy(language).get("best_strength") or {}).get("no_signal", "")
-    dim = min(safe, key=lambda d: float(d.get("severity") or 0)).get("dim")
-    return f"The cleanest part of this review was {localized_dimension(dim, language)}."
+    """The "one thing you did right" line, ranked from the raw dimensions.
+
+    Same #387 story as ``_hole_line``: the zh path returned the sentence
+    ``trade_recap.dim_strength`` had already rendered, while ``en`` fell back to
+    a generic "the cleanest part of this review was <dimension>". Both locales
+    now rank the same weighted candidates here and render through copy.
+
+    Known gap, deliberate: ``dim_strength``'s exit-discipline candidate can
+    append a worked example ("you sold X up 40%, it moved +1% after"), built
+    from the round-trip list. The v2 engine card does not carry round trips —
+    ``ticker_diagnosis`` holds impact and tags, not per-trade ret/fwd — so that
+    parenthetical cannot be rebuilt here, and this branch renders the base
+    sentence in both locales. Restoring it needs the engine to emit a
+    structured strength (code + params) the way ``top_holes[].raw`` already
+    does, which is a change inside the v1 file the contract fences off."""
+    dims = {dimension_id(d.get("dim")): d for d in (card.get("dims_raw") or [])
+            if d.get("dim")}
+    copy = (load_copy(language).get("best_strength") or {})
+    candidates = []
+
+    exit_dim = dims.get("exit_discipline") or {}
+    winner_early = _finite_number(exit_dim.get("winner_early"))
+    if winner_early is not None and winner_early < 0.35 and not exit_dim.get("low_conf"):
+        candidates.append((0.7 + (0.35 - winner_early),
+                           _format_copy(copy.get("exit_discipline"),
+                                        winner_early=_pct(winner_early))))
+    size_dim = dims.get("position_sizing") or {}
+    max_pct = _finite_number(size_dim.get("max_pct"))
+    if max_pct is not None and max_pct < 0.22:
+        candidates.append((1 - max_pct, _format_copy(copy.get("position_sizing"),
+                                                     max_pct=_pct(max_pct))))
+    avg_dim = dims.get("averaging_down") or {}
+    if avg_dim.get("breach", 1) == 0 and avg_dim.get("count", 0) >= 2:
+        first = (avg_dim.get("tickers") or [""])[0]
+        example = _format_copy(copy.get("averaging_down_example"), ticker=first) if first else ""
+        candidates.append((0.65, _format_copy(copy.get("averaging_down"),
+                                              count=avg_dim.get("count"),
+                                              example=example or "")))
+    div_dim = dims.get("diversification") or {}
+    if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
+        candidates.append((0.6, _format_copy(copy.get("diversification"),
+                                             n=div_dim.get("n"))))
+    hold_dim = dims.get("holding_period") or {}
+    median_hold = _finite_number(hold_dim.get("median_hold"))
+    if not hold_dim.get("triggered") and median_hold:
+        candidates.append((0.5, _format_copy(copy.get("holding_period"),
+                                             median_hold=f"{median_hold:.0f}")))
+
+    ranked = [text for _weight, text in sorted(candidates, key=lambda c: -c[0]) if text]
+    if ranked:
+        return ranked[0]
+    return copy.get("no_signal", "")
 
 
 # ── Monthly vs-market cadence (#284, output contract §3) ─────────────────────

@@ -268,7 +268,13 @@
     "below_negative": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。"
   },
   "best_strength": {
-    "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。"
+    "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。",
+    "exit_discipline": "該獲利了結時你不手軟：賣掉的賺錢單只有 {winner_early} 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」",
+    "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct},沒把身家壓在一檔上",
+    "averaging_down": "你往下加碼 {count} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重{example}",
+    "averaging_down_example": "(例:{ticker})",
+    "diversification": "{n} 檔分布在不同驅動因子，沒有全押在同一個故事上",
+    "holding_period": "進出有一致的節奏：中位持有 {median_hold} 天，不是隨機亂買亂賣"
   },
   "reconciliation": {
     "statement": "上次你承諾：「{rule}」。",
@@ -416,5 +422,36 @@
   },
   "tag_values": {
     "price_note": "(現 {px}／均 {avg_cost})"
+  },
+  "sectors": {
+    "bonds": "債券",
+    "crypto": "加密",
+    "regional_etf": "區域ETF",
+    "semiconductors": "半導體",
+    "commodities": "商品",
+    "broad_market_etf": "大盤ETF",
+    "unclassified": "未分類",
+    "consumer": "消費",
+    "drones_defense": "無人機國防",
+    "rare_earth_materials": "稀土材料",
+    "datacenter_power": "資料中心電力",
+    "software_cloud": "軟體雲",
+    "fintech": "金融科技",
+    "telecom": "電信",
+    "ev_ai": "電動車AI"
+  },
+  "hole_lines": {
+    "joiner": "；",
+    "ticker_joiner": ", ",
+    "exit_forward": "{n_rt} 筆決策賣出（{n_scored} 有 fwd、{n_trunc} 截斷）中 {early_rate} 在 {n_fwd} 天後更高、平均續漲 {avg_forgone}{winner_early}",
+    "exit_winner_early": "；賣掉賺錢的有 {winner_early} 續漲（賣太早）",
+    "exit_holding": "賺錢抱 {hold_win} 天 / 賠錢抱 {hold_lose} 天（處置缺口 {disp_gap}）",
+    "position_sizing": "你最大一筆 {max_ticker} 佔 {max_pct}，其餘平均 {avg_pct}",
+    "diversification": "你持有 {n} 檔看似分散，但 AI capex 暴險 {ai_pct}、最大板塊「{max_sector}」{max_sector_pct}、top3 {top3}——同一個驅動因子",
+    "holding_no_data": "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）",
+    "holding_base": "你持有時間 {min}~{max} 天、中位 {median_hold} 天",
+    "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 檔同一檔又當沖又長抱（{tickers}）——同檔沒有一致框架",
+    "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同檔框架大致一致）",
+    "averaging_down": "你有 {count} 次在虧損倉往下加碼（{tickers}），其中 {breach} 次加碼當下佔成本 >25%"
   }
 }
