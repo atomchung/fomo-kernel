@@ -29,6 +29,13 @@ Distributable surface
 
 The shared core calculates what happened and whether a recorded thesis or process rule survived evidence. It never answers what security should be bought.
 
+> Superseded in part on 2026-07-25 by
+> [decision-fomo-kernel-shape.md](decision-fomo-kernel-shape.md) §7. The core
+> stays the single authority on facts, but the recommendation prohibition is
+> being replaced by an admissibility contract: a recommendation must carry its
+> engine-computed consequence, a falsifier, and per-claim provenance, and it is
+> written into the same append-only ledger so the next review reconciles it.
+
 ## Surface matrix
 
 | Concern | Owner surface | Distributable surface |

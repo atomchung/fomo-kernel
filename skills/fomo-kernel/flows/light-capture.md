@@ -14,4 +14,4 @@ Use when the Review Plan has `state_snapshot.cadence.tier == "light"` (issue #23
 
 4. Tell the user in one or two sentences what was captured. There is no card to show and no rule to choose — this is deferred to the next full-tier review, which will fold every capture since then into its normal reconciliation.
 
-`ux_receipt.py` does not apply to this flow: nothing is presented (no question surface beyond plain text, no card), so there is no presentation trace to declare or verify. See `references/interaction-delivery.md`.
+`ux_receipt.py` does not apply to this flow: nothing is presented (no question surface beyond plain text, no card), so there is no presentation trace to declare or verify. This is the documented scope exception in `references/interaction-delivery.md`; the commands it exempts you from are in `references/ux-receipt.md`.

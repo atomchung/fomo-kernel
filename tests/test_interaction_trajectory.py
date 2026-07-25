@@ -12,6 +12,8 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -20,6 +22,11 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
 SPEC = ROOT / "skills" / "fomo-kernel" / "references" / "interaction-delivery.md"
+# The runtime contract is two files: interaction-delivery.md states what must be
+# presented, ux-receipt.md states how to record that it was. The mirror check
+# below spans both, so splitting the file cannot drop a clause. Keep them listed
+# in test_doc_language.AGENT_RUNTIME_SURFACES so neither can vanish silently.
+RECEIPT_SPEC = ROOT / "skills" / "fomo-kernel" / "references" / "ux-receipt.md"
 SURFACE_DIGEST = "a" * 64
 
 module_spec = importlib.util.spec_from_file_location("ux_receipt", TOOL)
@@ -925,30 +932,139 @@ def test_cli_rejects_undeclared_stage_choice():
 
 
 # --- Contract mirror ---------------------------------------------------------
+#
+# Pinning prose is expensive: it makes the contract unrewritable, and every pin
+# fires on rewording rather than on a real defect. So a pin belongs here only
+# when the sentence *is* the mechanism — a rule with no code that can enforce
+# it. Anything the CLI already knows is derived from the CLI instead, which is
+# both cheaper to maintain and strictly stronger: a hardcoded list can only
+# notice a doc that lost a flag, while derivation also catches a CLI that grew
+# one nobody documented. Do not add a pin without a comment saying why that
+# exact wording is load-bearing.
+
+def _receipt_cli_surface():
+    """Every ux_receipt flag, event kind, and adapter/mode name, taken from
+    build_parser() itself rather than a list that has to be maintained twice."""
+    import argparse
+    tools_dir = str(ROOT / "skills" / "fomo-kernel" / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import ux_receipt as _receipt
+    flags, events, vocabulary = set(), set(), set()
+    for action in _receipt.build_parser()._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for sub in action.choices.values():
+            for arg in sub._actions:
+                flags.update(opt for opt in arg.option_strings
+                             if opt.startswith("--") and opt != "--help")
+                if not arg.choices:
+                    continue
+                # Every closed vocabulary, not a hand-picked subset: an agent
+                # that cannot see a legal value cannot record it, so route,
+                # stage, surface source, memory kind, cash outcome, and the
+                # verdict scales all belong here alongside adapter and modes.
+                (events if arg.dest == "event" else vocabulary).update(
+                    str(choice) for choice in arg.choices)
+    return flags, events, vocabulary
+
+
+def test_runtime_contract_documents_the_whole_receipt_cli():
+    # An agent can only record what the contract told it about, so a flag,
+    # event kind, or adapter name that exists but is documented nowhere is dead
+    # capability. Deriving the baseline means this fails when the CLI grows too,
+    # not only when a doc drops something.
+    text = SPEC.read_text(encoding="utf-8") + "\n" + RECEIPT_SPEC.read_text(encoding="utf-8")
+    flags, events, vocabulary = _receipt_cli_surface()
+    undocumented = sorted(f for f in flags
+                          if not re.search(re.escape(f) + r"(?![\w-])", text))
+    assert not undocumented, f"ux_receipt flags no runtime doc mentions: {undocumented}"
+    for label, names in (("event kinds", events), ("adapter/mode names", vocabulary)):
+        missing = sorted(n for n in names if n not in text)
+        assert not missing, f"{label} no runtime doc mentions: {missing}"
+
+
+def test_documented_receipt_commands_actually_run():
+    """Every ux_receipt command shown in the docs must execute successfully.
+
+    String mirroring proves a flag is mentioned somewhere; it cannot prove the
+    command an agent copies is runnable. A `widget_attempt_failed` example
+    shipped without its required --stage and nothing noticed, because every
+    individual token in it was present. Parsing is not enough either: that
+    requirement is enforced in the handler, not by argparse, so parse_args
+    accepts the broken command. Only running it catches this class, so each
+    documented event runs against its own fresh trace.
+    """
+    placeholders = {
+        "<session_id>": "s", "<id>": "s", "<client>": "c", "<route>": "first_review",
+        "<surface_digest>": "a" * 64,
+    }
+    doc = re.sub(r"\\\n\s*", " ", RECEIPT_SPEC.read_text(encoding="utf-8"))
+    commands = [shlex.split(line)[2:] for line in
+                re.findall(r"^python3 tools/ux_receipt\.py .*$", doc, re.M)]
+    assert commands, "the receipt reference documents no commands at all"
+    starts = [c for c in commands if c and c[0] == "start"]
+    events = [c for c in commands if c and c[0] == "event"]
+    assert starts and events, "expected both start and event examples"
+
+    def resolve(argv, root, scratch):
+        out = []
+        for token in argv:
+            token = placeholders.get(token, token)
+            if token.startswith("<") and token.endswith(">"):
+                # Any remaining placeholder is a path the example writes or reads.
+                token = str(scratch / "artifact.md")
+            out.append(token)
+        return [sys.executable, str(TOOL)] + out + ["--state-root", str(root)]
+
+    failures = []
+    for command in starts + events:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, scratch = pathlib.Path(tmp), pathlib.Path(tmp)
+            (scratch / "artifact.md").write_text("card", encoding="utf-8")
+            (scratch / "grounding.json").write_text(
+                json.dumps({"candidates": [{"id": "candidate_0"}],
+                            "presented_text": "text"}), encoding="utf-8")
+            if command[0] == "event":
+                # Declare the widest capability so widget/native examples are
+                # legal, then run the documented event against that trace.
+                subprocess.run(resolve(starts[-1][:], root, scratch),
+                               capture_output=True, text=True)
+            argv = resolve(command[:], root, scratch)
+            if "--grounding-check-file" in argv:
+                argv[argv.index("--grounding-check-file") + 1] = str(scratch / "grounding.json")
+            result = subprocess.run(argv, capture_output=True, text=True)
+            if result.returncode != 0:
+                failures.append(f"{' '.join(command)}\n    -> "
+                                f"{(result.stderr or result.stdout).strip().splitlines()[-1]}")
+    assert not failures, ("documented commands that fail when run:\n" +
+                          "\n".join(failures))
+
 
 def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
-    text = SPEC.read_text(encoding="utf-8")
+    text = SPEC.read_text(encoding="utf-8") + "\n" + RECEIPT_SPEC.read_text(encoding="utf-8")
     for fragment in (
+        # The literal template agents copy for the text route. Reword it and
+        # every plain_text host renders a different question shape.
         "A. <label> — <description>",
         "Reply with one option label: A, B, ...",
+        # #239: a generated file was being reported as a delivered card. No
+        # engine check can see whether content reached the conversation, so
+        # this stated rule is the only thing standing between the two.
         "Artifact generation is not presentation",
         "A file path or attachment without inline card content is not presentation",
-        "--require-owner-verdict",
-        "protected state directory",
-        "--surface-source",
-        "--surface-digest",
-        "--question-specificity",
-        "--answer-fit",
-        "answers_received",
-        "rule_choice_presented",
-        "Capability resolution",
-        "validated_widget",
-        "Unknown hosts",
-        "stamped with a UTC ISO-8601 `ts`",
-        "--grounding-check-file",
-        "--require-timing-integrity",
-        "owner_live_eligible=false",
+        # The trace holds session-linked evidence. Naming the directory is not
+        # the protection — these two prohibitions are, and a doc could keep the
+        # phrase "protected state directory" while dropping both.
+        "never committed and never published",
+        # Backfilling a trace at wrap-up would fake the very evidence the trace
+        # exists to provide. verify's timing heuristic catches only the crude
+        # case, so the instruction carries the rest.
         "never replace it or reconstruct earlier events",
+        # A suspect receipt must not be cited as owner-live ground truth; that
+        # limit lives in prose because it is a claim about how to use evidence,
+        # not a property the tool can assert about itself.
+        "owner_live_eligible=false",
     ):
         assert fragment in text, fragment
 

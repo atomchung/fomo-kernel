@@ -2,7 +2,7 @@
 
 How an agent shows an engine-rendered review card to the user. This contract applies at both card moments: the preview shown at the rule-choice step and the final card after finalize.
 
-Record the actual user-visible mode following `interaction-delivery.md`. Artifact creation and a file path are not evidence that the card appeared inline.
+Record the actual user-visible mode following `ux-receipt.md`. Artifact creation and a file path are not evidence that the card appeared inline.
 
 ## Never re-render by hand
 

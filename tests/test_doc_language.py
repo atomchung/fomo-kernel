@@ -637,6 +637,8 @@ def test_agent_runtime_surface_scope_is_bounded():
         SKILL_DIR / "references/card-delivery.md",
         # #230: host capabilities and presented-vs-generated evidence are shared.
         SKILL_DIR / "references/interaction-delivery.md",
+        # The receipt command reference is the second half of that contract.
+        SKILL_DIR / "references/ux-receipt.md",
         SKILL_DIR / "schemas/answers.schema.json",
         SKILL_DIR / "schemas/narrative.schema.json",
         SKILL_DIR / "schemas/review-plan.schema.json",
@@ -686,6 +688,12 @@ def test_snapshot_runtime_uses_raw_facts_through_review_only():
     contract = (ROOT / SKILL_DIR / "references/data-contract.md").read_text(encoding="utf-8")
     for field in ('"as_of"', '"positions"', '"ticker"', '"shares"', '"market"', '"currency"'):
         assert field in contract, f"snapshot contract omits {field}"
+    # Both of these are prose-as-mechanism, which is why they are pinned: there
+    # is no engine path to intercept either mistake. An agent that uploads a
+    # statement for OCR has already leaked it before any code of ours runs, and
+    # an agent that computes weights itself produces a number the engine never
+    # emitted and cannot later reconcile. Nothing but the instruction prevents
+    # either, so a rewrite must not quietly drop them.
     assert "no OCR or cloud-upload path" in flow
     assert "Do not calculate weights" in flow
     # #214: *.json cannot be blanket-ignored, so the gitignore backstop only
