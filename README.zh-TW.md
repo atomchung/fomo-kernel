@@ -86,6 +86,7 @@ ChatGPT 算不出 FIFO 配對的真實 α/β、分不清你是「定投」還是
 - 作者拿不到你的交易明細。唯一(自願)回收的是一句「這張卡有沒有用」,不含交易內容——願意給的話走 [card feedback 表單](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml),30 秒。
 - `.gitignore` 已設:**任何 `.csv` 都不會被 commit**,只有 mock/sample 假資料例外。
 - 精確說：本機 Python engine 讀標準化後的交易 CSV 或 snapshot JSON envelope。你使用的 coding agent 可能在本機讀持倉表或截圖，把券商已顯示的事實逐欄轉錄；不走 engine OCR，也沒有雲端 OCR／上傳路徑。暫存 JSON 會放在 repo 外（例如 `/tmp`），agent 更不會自行計算權重或手組 card/state。資料不回作者。這跟把對帳單交給一個會保留資料、你看不到的 SaaS 是兩回事。
+- 如果你用的 AI client 有內建的豐富渲染介面（例如 Claude 的 Artifact 功能），agent 可能會用它來顯示你的私人卡片。那個介面在該 client 自己的條款下預設是私有的——只有你看得到，除非你自己選擇分享出去——所以用它渲染不等於把你的資料公開。不變的規矩是：你的交易內容永遠不會被 skill 或作者貼到公開 GitHub issue、分享連結，或送給任何第三方。
 
 ## 📁 你的教練記憶在哪 / 怎麼維護
 
