@@ -149,15 +149,17 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # `_tag_format_values`, and `render_public`'s mirror/structure block — plus
 # the payoff/drag/cash branches #363 explicitly left behind. Verified
 # behaviour-preserving the whole way: persona_sweep --baseline reported
-# 156/156 byte-identical after every batch. 48 -> 17.
+# 156/156 byte-identical after every batch. 48 -> 16 (17 after the migration
+# itself; the last one was a dead `en` local the migration stranded in
+# `_headline_motive_entries`, found reviewing the PR).
 #
-# What the remaining 17 are: `numeric_claim`'s script-specific validation
+# What the remaining 16 are: `numeric_claim`'s script-specific validation
 # tables and the joiner/punctuation picks that are grammar rather than prose
 # (`_forms_word`, list joiners). Those are #281's territory (split check logic
 # from language data, parked), not prose migration — so 17 is not obviously
 # reducible by moving more sentences, and the next PR to touch this number
 # should say which category it is draining.
-BASELINE = 17
+BASELINE = 16
 
 
 def test_language_branch_count_only_ratchets_down():

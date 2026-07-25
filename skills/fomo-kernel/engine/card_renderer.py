@@ -1350,7 +1350,6 @@ def _headline_motive_entries(bundle, copy):
     """
     labels = copy.get("headline_motive_choices") or {}
     entries = []
-    en = copy.get("language") == "en"
     for event in bundle.get("headline_motive_events") or []:
         choice = event.get("decision")
         label = labels.get(choice, choice)
