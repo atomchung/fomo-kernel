@@ -266,13 +266,19 @@ are structural, not linguistic:
 
 ## 7. Known debt (not part of the contract's steady state)
 
-- ~~**Locale gaps on the en card**~~ — repaired 2026-07-25. The engine no
-  longer bakes zh vocabulary into data values; en and zh-TW cards render the
-  same sections with the same line counts across every persona. Kept here as a
-  pointer only: `docs/output-language.md` §3 records the five former sites and
-  the re-verification command. The remaining live locale debt is the zh-CN
-  mixed-script waiver (same section) and the copy migration on
-  [#387](https://github.com/atomchung/fomo-kernel/issues/387).
+- **Locale debt: zh-CN renders mixed script.** Roughly seventy Traditional
+  stem and option literals are still hardcoded in the engine rather than
+  living in `copy/`, so zh-CN question surfaces mix Simplified copy with
+  Traditional engine text. Owner-waived as a documented interim state; the
+  inventory and migration plan are on
+  [#387](https://github.com/atomchung/fomo-kernel/issues/387), the waiver in
+  `docs/output-language.md` §3.
+
+  *Locale gaps on the en card* — the older debt in this slot, where the engine
+  baked zh vocabulary into data values and en cards lost stress, improve, and
+  behavior-tag content — was repaired 2026-07-25. en and zh-TW now render the
+  same sections with the same line counts on every persona. `output-language.md`
+  §3 keeps the record and the re-verification command.
 
 ## 8. Enforcement
 

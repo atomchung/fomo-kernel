@@ -74,14 +74,19 @@ on main `f3f77c8`, 2026-07-25):
 | Stress scenario label was engine zh text; template sentence zh-only | `_stress_lines` resolves a locale-neutral scenario code through copy `stress_test` |
 | Prescription texts (preserve/test/cut) were engine zh strings | `_improve_rows` no longer exists; the rows render from copy |
 | Behavior tags were engine zh vocabulary, dropped on en | `_instrument_rows` tags are stable engine codes resolved through copy (#279) |
-| A zh literal printed "annualized IRR", violating the no-jargon rule | gone; survives only in a code comment |
-| A spelled-out zh numeral for "95%" mixed digit styles (#272) | gone |
+| A zh literal printed "annualized IRR", violating the no-jargon rule | the engine literal is gone (only a code comment retains the phrase); the wording now lives in copy `alpha_interval` |
+| A spelled-out zh numeral for "95%" mixed digit styles (#272) | the sentence moved to copy `alpha_interval.lead` and uses Arabic digits throughout, in both locales |
 
 The repair direction was: engine emits stable codes (`averaging_in`,
 `oversized`, scenario/prescription kinds); `copy/<locale>.json` carries the
 label strings; the renderer resolves codes → copy. Persisted artifacts that
 still store zh literals need no compatibility mapping — dev-phase ruling
 (owner 2026-07-21): stale data is cleaned up on demand, not migrated.
+
+Scope note on row 4: what is repaired is the **neutrality** half — no engine
+literal, wording in copy. Whether "annualized" is acceptable card vocabulary at
+all is a copy-wording question under the no-jargon rule, judged per locale in
+`copy/`, and it is not settled by this section.
 
 **How to re-verify** (this is also the §6 structure-equivalence check in its
 strongest form): run `python3 tests/persona_sweep.py --out <dir>` and compare
