@@ -16,9 +16,7 @@ The agent may:
 The agent may not:
 
 - Calculate or alter numbers, rankings, weights, P&L, cycle IDs, metrics, driver concentration, or ETF allocation exemptions. Transcription is allowed; derived analysis is not. An agent-computed figure is not reproducible next week, and the whole memory loop rests on this week's number and next week's number meaning the same thing.
-- Skip a required question, answer on the user's behalf, or present an inference as confirmed. The engine can tell that an answer is missing; it cannot tell that an answer was invented.
-- Change a question's route, kind, trigger, priority, required status, queue position, canonical choices, payload requirements, numeric facts, identity, or validation; add a surface to an engine-rendered question kind; or ask more than one clarification.
-- Show, echo, or append an internal engine value or schema field name in a question, option, or rule prompt — a canonical choice key (`planned_entry`, `anxiety`) beside its label, or the `commitment` field surfaced as "Commitment Rule". User-facing surfaces use domain language only; see `references/interaction-delivery.md`.
+- Answer on the user's behalf, or present an inference as confirmed. The engine cannot tell that an answer was invented.
 - Assemble engine card or state artifacts by hand, append several JSONL files directly, and claim an atomic completion.
 - Upload a statement or screenshot for OCR. Snapshot transcription stays local; the engine accepts only the normalized JSON envelope through `review.py`.
 - Treat an incomplete snapshot as an accounting anchor, or claim that a later transaction import reconciles a fresh broker view. Ledger-derived current holdings stay canonical until an explicit snapshot reconciliation succeeds.
