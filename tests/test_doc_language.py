@@ -138,6 +138,12 @@ FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```", re.S)
 TRAILING_SHELL_COMMENT_RE = re.compile(r"(?:^|\s)#.*$")
 LANGUAGE_FLAG_RE = re.compile(r"--language\s+\S+")
 LANGUAGE_FLAG_VALUE_RE = re.compile(r"--language\s+(\S+)")
+# The prose language note's locale enumeration, e.g. `--language zh-TW|zh-CN|en`.
+# Requires at least one `|` so a single-locale example command never matches.
+LANGUAGE_NOTE_LOCALES_RE = re.compile(
+    r"`--language\s+([A-Za-z][A-Za-z-]*(?:\|[A-Za-z][A-Za-z-]*)+)`"
+)
+COPY_DIR = ROOT / "skills/fomo-kernel/copy"
 MARKDOWN_LINK_TARGET_RE = re.compile(r"\[[^\]]*\]\(([^)]*)\)")
 HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+.*$", re.M)
 DOLLAR_AMOUNT_RE = re.compile(r"[+-]?\$[0-9][0-9,]*[kK]?")
@@ -244,6 +250,37 @@ def test_readme_language_flag_values_match_locale():
     assert zh_values == {"zh-TW"}, (
         f"README.zh-TW.md --language flags should all be 'zh-TW', found {sorted(zh_values)}"
     )
+
+
+def test_readme_language_note_enumerates_every_supported_locale():
+    """Each README's prose language note must name exactly the locales that
+    ship, derived from `copy/` -- the same source of truth
+    `card_renderer.resolve_language()` builds its supported set from.
+
+    Why this gate exists: `language_flag_values` above deliberately reads only
+    ```bash blocks, so the one sentence that actually states *which languages
+    the product supports* was ungated. #385 was authored against a tree where
+    only zh-TW and en existed and still claimed `--language zh-TW|en` after
+    #391 shipped zh-CN -- a stale product claim on the public landing page
+    that every one of the 24 suites passed over. Deriving from the filesystem
+    means adding `copy/<locale>.json` fails here until the READMEs say so.
+    """
+    supported = {path.stem for path in COPY_DIR.glob("*.json")}
+    assert supported, f"no copy/<locale>.json found under {COPY_DIR} -- extraction likely broken"
+    for rel in sorted(GTM_MARKDOWN_ALLOWLIST):
+        text = FENCED_CODE_BLOCK_RE.sub("", (ROOT / rel).read_text(encoding="utf-8"))
+        matches = LANGUAGE_NOTE_LOCALES_RE.findall(text)
+        assert matches, (
+            f"{rel} has no `--language a|b|c` language note. Every landing page must state "
+            f"the supported locales; expected {sorted(supported)}."
+        )
+        for enumerated in matches:
+            listed = set(enumerated.split("|"))
+            assert listed == supported, (
+                f"{rel} language note lists {sorted(listed)} but copy/ ships {sorted(supported)}:\n"
+                f"  missing from the README: {sorted(supported - listed)}\n"
+                f"  claimed but not shipped: {sorted(listed - supported)}"
+            )
 
 
 def test_readme_links_match_across_languages():
@@ -718,6 +755,27 @@ def test_engine_import_bypass_mutations_are_caught():
         assert expected_module in found, f"{label}: expected {expected_module}, found {sorted(found)}"
 
 
+_REGISTERED_TESTS = []  # populated by main(); see the registration self-check below
+
+
+def test_every_test_in_this_module_is_registered():
+    """`main()` runs a hand-maintained list, so a `test_*` added to this file
+    but not to that list is silently dead -- it reports nothing and gates
+    nothing. Caught in practice while adding
+    `test_readme_language_note_enumerates_every_supported_locale`: the new
+    test was defined, ran zero times, and the suite still printed PASS.
+    """
+    defined = {name for name, obj in globals().items()
+               if name.startswith("test_") and callable(obj)}
+    registered = {test.__name__ for test in _REGISTERED_TESTS}
+    assert defined == registered, (
+        "tests defined in this module but never run by main():\n"
+        f"  {sorted(defined - registered)}\n"
+        "registered but not defined:\n"
+        f"  {sorted(registered - defined)}"
+    )
+
+
 def main():
     tests = [
         test_implementation_markdown_is_english_only,
@@ -725,6 +783,7 @@ def main():
         test_gtm_locale_pair_exists,
         test_readme_bash_commands_match_across_languages,
         test_readme_language_flag_values_match_locale,
+        test_readme_language_note_enumerates_every_supported_locale,
         test_readme_links_match_across_languages,
         test_demo_card_numbers_match_across_all_surfaces,
         test_readme_heading_structure_matches_across_languages,
@@ -736,7 +795,10 @@ def main():
         test_snapshot_runtime_uses_raw_facts_through_review_only,
         test_engine_script_bypass_mutations_are_caught,
         test_engine_import_bypass_mutations_are_caught,
+        test_every_test_in_this_module_is_registered,
     ]
+    global _REGISTERED_TESTS
+    _REGISTERED_TESTS = tests
     for test in tests:
         test()
         print(f"PASS {test.__name__}")
