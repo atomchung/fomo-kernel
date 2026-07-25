@@ -183,6 +183,51 @@ def test_draft_file_mode():
     with_reference(check)
 
 
+def test_rendered_cards_are_ignored_at_every_depth():
+    """#409 file-channel backstop for the *output* side of the privacy rule.
+
+    `.gitignore` blocked the inputs (`*.csv`, `ledger.jsonl`) and
+    `privacy_lint.py` blocks the text channel, but a rendered card is a file
+    that is not a CSV and carries the same facts as the ledger. One was found
+    untracked in the repository root after a dogfood run started outside an
+    isolated `TRADE_COACH_HOME`; `git add -A` would have committed it.
+
+    Asserted through `git check-ignore` rather than by re-reading the pattern,
+    so this fails if the rule is deleted, reordered behind a negation, or
+    shadowed by a later entry.
+    """
+    paths = [
+        "card-private.md", "card-private.html", "card-public.md",
+        "skills/fomo-kernel/card-private.html",
+        "docs/nested/deep/card-public.md",
+    ]
+    done = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--"] + paths,
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    ignored = set(done.stdout.split())
+    missing = [p for p in paths if p not in ignored]
+    assert not missing, f"rendered cards reachable by `git add`: {missing}"
+
+
+def test_mock_fixtures_are_still_reachable():
+    """The card rules must not shadow the tracked fixtures the suite reads.
+
+    `*.csv` already uses the ignore-then-except shape; a broad card pattern
+    added later must not quietly take committed files out of the tree.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "skills/fomo-kernel/mock"],
+        cwd=ROOT, capture_output=True, text=True,
+    ).stdout.split()
+    assert tracked, "no tracked mock fixtures found — extraction likely broken"
+    done = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--"] + tracked,
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert not done.stdout.split(), f"tracked fixtures became ignored: {done.stdout.split()}"
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
