@@ -22,5 +22,14 @@ ledger.jsonl
 # No leading slash: matches at any path depth.
 fomo-kernel-positions.json
 
+# #409 rendered-card backstop: a card carries the same facts as the ledger —
+# tickers, amounts, dates, position weights, agent free text. `*.csv` and
+# `ledger.jsonl` above cover the inputs; these cover the outputs. Card rendering
+# writes relative to the working directory, so a dogfood run started from the
+# repository root instead of an isolated TRADE_COACH_HOME (docs/qa-runbook.md)
+# drops them here. No leading slash: matches at any path depth.
+card-private.*
+card-public.*
+
 # Generated Claude Design bundle (rebuild with tools/design_bundle.py)
 skills/fomo-kernel/tools/ds-bundle/
