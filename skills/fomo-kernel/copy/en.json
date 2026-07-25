@@ -453,5 +453,64 @@
     "holding_inconsistent": "{base}; {n_incon} of {n_multi} names were both day-traded and held long ({tickers}) — no consistent framework within the same name",
     "holding_consistent": "{base} (median {median_hold} days = your main framework; frameworks within a name are broadly consistent)",
     "averaging_down": "you added to losing positions {count} times ({tickers}); {breach} of those adds put the position over 25% of cost basis at the moment of the add"
+  },
+  "add_descriptions": {
+    "planned_tranche": "The tranche schedule existed before the price move.",
+    "new_evidence": "Requires a claim and source that a later review can test.",
+    "valuation_change": "The thesis is unchanged, but price changed the odds or margin of safety.",
+    "price_only": "No new fact; the main motive was lowering the cost basis or getting back to even.",
+    "skip": "Leave the motive unclassified for now."
+  },
+  "generic_choices": {
+    "deliberate_plan": "Deliberate plan",
+    "emotional_reaction": "Emotional reaction",
+    "external_constraint": "External constraint",
+    "skip": "Skip"
+  },
+  "generic_descriptions": {
+    "deliberate_plan": "The action followed a rule set before the trade.",
+    "emotional_reaction": "Fear, regret, or urgency drove the action.",
+    "external_constraint": "Liquidity, tax, or another constraint drove it.",
+    "skip": "Leave the motive unresolved for now."
+  },
+  "initial_thesis_descriptions": {
+    "planned_entry": "You had an explicit thesis before entering.",
+    "momentum_follow": "You chased price momentum or FOMO.",
+    "external_call": "A KOL, friend, or research recommendation drove it.",
+    "no_clear_thesis": "You are holding without a clear thesis.",
+    "skip": "Leave the entry motive unresolved for now."
+  },
+  "exit_descriptions": {
+    "price_target": "A target or planned reduction condition was reached.",
+    "thesis_broken": "New facts broke or weakened the original thesis.",
+    "swap": "Capital was reallocated to another position or use.",
+    "anxiety": "The main motive was protecting gains from a possible reversal.",
+    "other": "None of these fit; save a short explanation in your own words.",
+    "skip": "Save this as skipped so this exit's reason is not asked again."
+  },
+  "due_descriptions": {
+    "still_valid": "The reason holds; selling early can still be discipline.",
+    "modified": "The reason was partly right and needs an adjustment.",
+    "falsified": "The reason was wrong; record it as a lesson.",
+    "skip": "Not saved as answered; the same checkpoint returns next review."
+  },
+  "rule_breach_descriptions": {
+    "keep_tracking": "The rule still fits, but it was not kept; record it and keep tracking.",
+    "revise_rule": "The rule itself does not fit; note why it needs revision, then use the one final commitment for the replacement.",
+    "exception": "This was a justified exception; record why in the note while keeping the event in history."
+  },
+  "asked_because": {
+    "pnl_impact": "it is the position with the largest P&L impact this week",
+    "position_cost": "it is your largest position by cost this week",
+    "exit_notional": "it is one of your largest recent exits by amount"
+  },
+  "breach_evidence": {
+    "none": "a recorded event",
+    "more": "; and {extra} more",
+    "joiner": "; "
+  },
+  "candidate_comparison": {
+    "line": "{top} scored higher than {others} on this period's severity ranking -- that reflects which pattern showed up more strongly this period, not which rule is the right fit for you.",
+    "joiner": " and "
   }
 }

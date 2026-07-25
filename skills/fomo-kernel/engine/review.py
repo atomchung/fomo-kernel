@@ -1059,37 +1059,19 @@ def _active_positions(state):
 
 def _add_options(language):
     copy = card_renderer.load_copy(language)
-    descriptions = {
-        "planned_tranche": ("進場前已定好節奏，價格下跌不是新增理由。",
-                            "The tranche schedule existed before the price move."),
-        "new_evidence": ("必須補 claim 與 source，之後能回頭驗證。",
-                         "Requires a claim and source that a later review can test."),
-        "valuation_change": ("判斷沒變，但價格讓賠率或安全邊際改變。",
-                             "The thesis is unchanged, but price changed the odds or margin of safety."),
-        "price_only": ("沒有新事實，主要是想攤低成本或等回本。",
-                       "No new fact; the main motive was lowering the cost basis or getting back to even."),
-        "skip": ("先不定性，卡上只標未確認。", "Leave the motive unclassified for now."),
-    }
-    en = copy["language"] == "en"
+    descriptions = copy.get("add_descriptions") or {}
     return [{"value": key, "label": copy["add_choices"][key],
-             "description": descriptions[key][1 if en else 0]}
+             "description": descriptions[key]}
             for key in ("new_evidence", "planned_tranche", "valuation_change", "price_only", "skip")]
 
 
 def _generic_options(language):
-    if str(language).lower().startswith("en"):
-        return [
-            {"value": "deliberate_plan", "label": "Deliberate plan", "description": "The action followed a rule set before the trade."},
-            {"value": "emotional_reaction", "label": "Emotional reaction", "description": "Fear, regret, or urgency drove the action."},
-            {"value": "external_constraint", "label": "External constraint", "description": "Liquidity, tax, or another constraint drove it."},
-            {"value": "skip", "label": "Skip", "description": "Leave the motive unresolved for now."},
-        ]
-    return [
-        {"value": "deliberate_plan", "label": "事先規劃", "description": "行動遵循交易前就存在的規則。"},
-        {"value": "emotional_reaction", "label": "情緒反應", "description": "恐懼、後悔或急迫感主導了行動。"},
-        {"value": "external_constraint", "label": "外部限制", "description": "資金、稅務或其他限制主導了行動。"},
-        {"value": "skip", "label": "先跳過", "description": "這次先不替動機下定論。"},
-    ]
+    copy = card_renderer.load_copy(language)
+    labels = copy.get("generic_choices") or {}
+    descriptions = copy.get("generic_descriptions") or {}
+    return [{"value": key, "label": labels[key], "description": descriptions[key]}
+            for key in ("deliberate_plan", "emotional_reaction",
+                        "external_constraint", "skip")]
 
 
 def _exit_consistency_question(card, language):
@@ -1128,21 +1110,9 @@ def _initial_thesis_options(language):
     """
     copy = card_renderer.load_copy(language)
     labels = copy.get("initial_thesis_choices") or {}
-    en = copy["language"] == "en"
-    descriptions = {
-        "planned_entry": ("進場前就有明確的論點。",
-                          "You had an explicit thesis before entering."),
-        "momentum_follow": ("追了價格動能或 FOMO。",
-                            "You chased price momentum or FOMO."),
-        "external_call": ("KOL、朋友或研究報告推薦的。",
-                          "A KOL, friend, or research recommendation drove it."),
-        "no_clear_thesis": ("在沒有明確論點下持有。",
-                            "You are holding without a clear thesis."),
-        "skip": ("這次先不替進場動機下定論。",
-                 "Leave the entry motive unresolved for now."),
-    }
+    descriptions = copy.get("initial_thesis_descriptions") or {}
     return [{"value": key, "label": labels[key],
-             "description": descriptions[key][1 if en else 0]}
+             "description": descriptions[key]}
             for key in ("planned_entry", "momentum_follow", "external_call",
                         "no_clear_thesis", "skip")]
 
@@ -1150,60 +1120,28 @@ def _initial_thesis_options(language):
 def _exit_options(language, exit_kind):
     copy = card_renderer.load_copy(language)
     labels = (copy.get("exit_choices") or {}).get(exit_kind) or {}
-    en = copy["language"] == "en"
-    descriptions = {
-        "price_target": ("原先設定的目標或減碼條件已經完成。",
-                         "A target or planned reduction condition was reached."),
-        "thesis_broken": ("原本判斷失效，或信心因新事實而下降。",
-                          "New facts broke or weakened the original thesis."),
-        "swap": ("資金改放到另一個標的或用途。",
-                 "Capital was reallocated to another position or use."),
-        "anxiety": ("主要是怕回吐，所以先鎖住全部或部分成果。",
-                    "The main motive was protecting gains from a possible reversal."),
-        "other": ("以上都不符合，用自己的話留下一句。",
-                  "None of these fit; save a short explanation in your own words."),
-        "skip": ("保存為已略過，之後不再追問這筆的賣出理由。",
-                 "Save this as skipped so this exit's reason is not asked again."),
-    }
+    descriptions = copy.get("exit_descriptions") or {}
     return [{"value": key, "label": labels[key],
-             "description": descriptions[key][1 if en else 0]}
+             "description": descriptions[key]}
             for key in ("price_target", "thesis_broken", "swap", "anxiety", "other", "skip")]
 
 
 def _due_options(language):
     copy = card_renderer.load_copy(language)
     labels = copy.get("due_choices") or {}
-    en = copy["language"] == "en"
-    descriptions = {
-        "still_valid": ("理由仍成立，賣早也是紀律。",
-                        "The reason holds; selling early can still be discipline."),
-        "modified": ("理由部分成立，需要修正。",
-                     "The reason was partly right and needs an adjustment."),
-        "falsified": ("真的判斷錯誤，記進教訓。",
-                      "The reason was wrong; record it as a lesson."),
-        "skip": ("不算已回答，下次復盤同一關會再出現。",
-                 "Not saved as answered; the same checkpoint returns next review."),
-    }
+    descriptions = copy.get("due_descriptions") or {}
     return [{"value": key, "label": labels[key],
-             "description": descriptions[key][1 if en else 0]}
+             "description": descriptions[key]}
             for key in ("still_valid", "modified", "falsified", "skip")]
 
 
 def _rule_breach_options(language, can_revise=True):
     copy = card_renderer.load_copy(language)
     labels = copy.get("rule_breach_choices") or {}
-    en = copy["language"] == "en"
-    descriptions = {
-        "keep_tracking": ("規矩合理，但這次沒有守住；照實記錄並繼續追。",
-                          "The rule still fits, but it was not kept; record it and keep tracking."),
-        "revise_rule": ("規矩本身不合理；在 note 簡述為何要改，收尾時用唯一 commitment 寫替代規矩。",
-                        "The rule itself does not fit; note why it needs revision, then use the one final commitment for the replacement."),
-        "exception": ("這次有正當例外；在 note 留下理由，事件仍保留在帳上。",
-                      "This was a justified exception; record why in the note while keeping the event in history."),
-    }
+    descriptions = copy.get("rule_breach_descriptions") or {}
     keys = ("keep_tracking", "revise_rule", "exception") if can_revise else ("keep_tracking", "exception")
     return [{"value": key, "label": labels[key],
-             "description": descriptions[key][1 if en else 0]} for key in keys]
+             "description": descriptions[key]} for key in keys]
 
 
 def _breach_evidence_text(last_breach, language):
@@ -1217,12 +1155,13 @@ def _breach_evidence_text(last_breach, language):
             parts.append(f"{ticker}: {note}")
         elif ticker or note:
             parts.append(str(ticker or note))
+    breach_copy = (card_renderer.load_copy(language).get("breach_evidence") or {})
     if not parts:
-        return "a recorded event" if en else "帳上有一筆事件"
-    shown = "; ".join(parts)
+        return breach_copy.get("none") or ""
+    shown = (breach_copy.get("joiner") or "; ").join(parts)
     extra = int((last_breach or {}).get("event_count") or 0) - len(events)
     if extra > 0:
-        shown += (f"; and {extra} more" if en else f"；另有 {extra} 筆")
+        shown += (breach_copy.get("more") or "").format(extra=extra)
     return shown
 
 
@@ -1412,18 +1351,8 @@ def _asked_because(basis, language):
     Only vetted display strings leave the engine; the raw basis key remains an
     internal sort detail that `_question_queue` strips with `_importance`.
     """
-    table = {
-        "pnl_impact": ("它是你本週影響損益最大的部位",
-                       "it is the position with the largest P&L impact this week"),
-        "position_cost": ("它是你本週成本最大的部位",
-                          "it is your largest position by cost this week"),
-        "exit_notional": ("它是你近期金額最大的出場之一",
-                          "it is one of your largest recent exits by amount"),
-    }
-    row = table.get(basis)
-    if not row:
-        return None
-    return row[1] if str(language).lower().startswith("en") else row[0]
+    table = (card_renderer.load_copy(language).get("asked_because") or {})
+    return table.get(basis) or None
 
 
 def _exit_question(item, language, card=None, prior=None):
@@ -1857,14 +1786,10 @@ def _candidate_comparison(candidates, card, language):
         return None  # tie at the top: no honest "ranked lower" claim to make
     top_label = card_renderer.localized_dimension(top.get("dim"), language)
     other_labels = [card_renderer.localized_dimension(c.get("dim"), language) for _, c in others]
-    if str(language).lower().startswith("en"):
-        others_text = " and ".join(other_labels)
-        return (f"{top_label} scored higher than {others_text} on this period's severity "
-                f"ranking -- that reflects which pattern showed up more strongly this period, "
-                f"not which rule is the right fit for you.")
-    others_text = "、".join(other_labels)
-    return (f"本期「{top_label}」的訊號比「{others_text}」更強——"
-            f"這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。")
+    comparison = (card_renderer.load_copy(language).get("candidate_comparison") or {})
+    others_text = (comparison.get("joiner") or ", ").join(other_labels)
+    return (comparison.get("line") or "").format(
+        top=top_label, others=others_text) or None
 
 
 def _problem_snapshot(root, state):

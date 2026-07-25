@@ -453,5 +453,64 @@
     "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 档同一档又当冲又长抱（{tickers}）——同档没有一致框架",
     "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同档框架大致一致）",
     "averaging_down": "你有 {count} 次在亏损仓往下加码（{tickers}），其中 {breach} 次加码当下占成本 >25%"
+  },
+  "add_descriptions": {
+    "planned_tranche": "进场前已定好节奏，价格下跌不是新增理由。",
+    "new_evidence": "必须补 claim 与 source，之后能回头验证。",
+    "valuation_change": "判断没变，但价格让赔率或安全边际改变。",
+    "price_only": "没有新事实，主要是想摊低成本或等回本。",
+    "skip": "先不定性，卡上只标未确认。"
+  },
+  "generic_choices": {
+    "deliberate_plan": "事先规划",
+    "emotional_reaction": "情绪反应",
+    "external_constraint": "外部限制",
+    "skip": "先跳过"
+  },
+  "generic_descriptions": {
+    "deliberate_plan": "行动遵循交易前就存在的规则。",
+    "emotional_reaction": "恐惧、后悔或急迫感主导了行动。",
+    "external_constraint": "资金、税务或其他限制主导了行动。",
+    "skip": "这次先不替动机下定论。"
+  },
+  "initial_thesis_descriptions": {
+    "planned_entry": "进场前就有明确的论点。",
+    "momentum_follow": "追了价格动能或 FOMO。",
+    "external_call": "KOL、朋友或研究报告推荐的。",
+    "no_clear_thesis": "在没有明确论点下持有。",
+    "skip": "这次先不替进场动机下定论。"
+  },
+  "exit_descriptions": {
+    "price_target": "原先设定的目标或减码条件已经完成。",
+    "thesis_broken": "原本判断失效，或信心因新事实而下降。",
+    "swap": "资金改放到另一个标的或用途。",
+    "anxiety": "主要是怕回吐，所以先锁住全部或部分成果。",
+    "other": "以上都不符合，用自己的话留下一句。",
+    "skip": "保存为已略过，之后不再追问这笔的卖出理由。"
+  },
+  "due_descriptions": {
+    "still_valid": "理由仍成立，卖早也是纪律。",
+    "modified": "理由部分成立，需要修正。",
+    "falsified": "真的判断错误，记进教训。",
+    "skip": "不算已回答，下次复盘同一关会再出现。"
+  },
+  "rule_breach_descriptions": {
+    "keep_tracking": "规矩合理，但这次没有守住；照实记录并继续追。",
+    "revise_rule": "规矩本身不合理；在 note 简述为何要改，收尾时用唯一 commitment 写替代规矩。",
+    "exception": "这次有正当例外；在 note 留下理由，事件仍保留在账上。"
+  },
+  "asked_because": {
+    "pnl_impact": "它是你本周影响损益最大的部位",
+    "position_cost": "它是你本周成本最大的部位",
+    "exit_notional": "它是你近期金额最大的出场之一"
+  },
+  "breach_evidence": {
+    "none": "账上有一笔事件",
+    "more": "；另有 {extra} 笔",
+    "joiner": "; "
+  },
+  "candidate_comparison": {
+    "line": "本期“{top}”的讯号比“{others}”更强——这只反映本期哪个模式更明显，不代表哪条规矩更适合你。",
+    "joiner": "、"
   }
 }

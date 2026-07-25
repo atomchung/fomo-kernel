@@ -453,5 +453,64 @@
     "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 檔同一檔又當沖又長抱（{tickers}）——同檔沒有一致框架",
     "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同檔框架大致一致）",
     "averaging_down": "你有 {count} 次在虧損倉往下加碼（{tickers}），其中 {breach} 次加碼當下佔成本 >25%"
+  },
+  "add_descriptions": {
+    "planned_tranche": "進場前已定好節奏，價格下跌不是新增理由。",
+    "new_evidence": "必須補 claim 與 source，之後能回頭驗證。",
+    "valuation_change": "判斷沒變，但價格讓賠率或安全邊際改變。",
+    "price_only": "沒有新事實，主要是想攤低成本或等回本。",
+    "skip": "先不定性，卡上只標未確認。"
+  },
+  "generic_choices": {
+    "deliberate_plan": "事先規劃",
+    "emotional_reaction": "情緒反應",
+    "external_constraint": "外部限制",
+    "skip": "先跳過"
+  },
+  "generic_descriptions": {
+    "deliberate_plan": "行動遵循交易前就存在的規則。",
+    "emotional_reaction": "恐懼、後悔或急迫感主導了行動。",
+    "external_constraint": "資金、稅務或其他限制主導了行動。",
+    "skip": "這次先不替動機下定論。"
+  },
+  "initial_thesis_descriptions": {
+    "planned_entry": "進場前就有明確的論點。",
+    "momentum_follow": "追了價格動能或 FOMO。",
+    "external_call": "KOL、朋友或研究報告推薦的。",
+    "no_clear_thesis": "在沒有明確論點下持有。",
+    "skip": "這次先不替進場動機下定論。"
+  },
+  "exit_descriptions": {
+    "price_target": "原先設定的目標或減碼條件已經完成。",
+    "thesis_broken": "原本判斷失效，或信心因新事實而下降。",
+    "swap": "資金改放到另一個標的或用途。",
+    "anxiety": "主要是怕回吐，所以先鎖住全部或部分成果。",
+    "other": "以上都不符合，用自己的話留下一句。",
+    "skip": "保存為已略過，之後不再追問這筆的賣出理由。"
+  },
+  "due_descriptions": {
+    "still_valid": "理由仍成立，賣早也是紀律。",
+    "modified": "理由部分成立，需要修正。",
+    "falsified": "真的判斷錯誤，記進教訓。",
+    "skip": "不算已回答，下次復盤同一關會再出現。"
+  },
+  "rule_breach_descriptions": {
+    "keep_tracking": "規矩合理，但這次沒有守住；照實記錄並繼續追。",
+    "revise_rule": "規矩本身不合理；在 note 簡述為何要改，收尾時用唯一 commitment 寫替代規矩。",
+    "exception": "這次有正當例外；在 note 留下理由，事件仍保留在帳上。"
+  },
+  "asked_because": {
+    "pnl_impact": "它是你本週影響損益最大的部位",
+    "position_cost": "它是你本週成本最大的部位",
+    "exit_notional": "它是你近期金額最大的出場之一"
+  },
+  "breach_evidence": {
+    "none": "帳上有一筆事件",
+    "more": "；另有 {extra} 筆",
+    "joiner": "; "
+  },
+  "candidate_comparison": {
+    "line": "本期「{top}」的訊號比「{others}」更強——這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。",
+    "joiner": "、"
   }
 }
