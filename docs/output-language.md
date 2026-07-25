@@ -63,24 +63,41 @@ Consequences this contract makes explicit:
   directory), so this promise holds mechanically: dropping the file in makes
   the tag resolvable.
 
-## 3. Known violations to repair (phase 1 target)
+## 3. Phase 1 violations — repaired
 
-Engine currently bakes zh vocabulary into data values, so en cards silently
-lose content (all line refs at main `08a5606`):
+Phase 1 targeted five sites where the engine baked zh vocabulary into data
+values, so en cards silently lost content. **All five are repaired** (verified
+on main `f3f77c8`, 2026-07-25):
 
-| Violation | Site | en-card effect |
-|---|---|---|
-| Stress scenario label is engine zh text; template sentence zh-only | `card_renderer.py:1338-1352` (`_stress_lines`, `if language == "en": return []`) | stress line absent |
-| Prescription texts (preserve/test/cut) are engine zh strings | `card_renderer.py:1393-1403` (`_improve_rows`) | improve rows absent |
-| Behavior tags (zh labels for "likely DCA", "too heavy", …) are engine zh vocabulary | `_instrument_rows` (tags dropped when `language == "en"`) | rows lose verdict tags |
-| The zh literal printing "annualized IRR" violates the no-jargon rule | `card_renderer.py:773` | jargon token on zh card |
-| The spelled-out zh numeral for "95%" (fullwidth percent) mixes digit styles (#272) | `card_renderer.py:583` | mixed-style sentence |
+| Former violation | Repair |
+|---|---|
+| Stress scenario label was engine zh text; template sentence zh-only | `_stress_lines` resolves a locale-neutral scenario code through copy `stress_test` |
+| Prescription texts (preserve/test/cut) were engine zh strings | `_improve_rows` no longer exists; the rows render from copy |
+| Behavior tags were engine zh vocabulary, dropped on en | `_instrument_rows` tags are stable engine codes resolved through copy (#279) |
+| A zh literal printed "annualized IRR", violating the no-jargon rule | gone; survives only in a code comment |
+| A spelled-out zh numeral for "95%" mixed digit styles (#272) | gone |
 
-Repair direction: engine emits stable codes (`averaging_in`, `oversized`,
-scenario/prescription kinds); `copy/<locale>.json` gains the label strings;
-renderer resolves codes → copy. Persisted artifacts that already store zh
-literals need no compatibility mapping — dev-phase ruling (owner
-2026-07-21): stale data is cleaned up on demand, not migrated.
+The repair direction was: engine emits stable codes (`averaging_in`,
+`oversized`, scenario/prescription kinds); `copy/<locale>.json` carries the
+label strings; the renderer resolves codes → copy. Persisted artifacts that
+still store zh literals need no compatibility mapping — dev-phase ruling
+(owner 2026-07-21): stale data is cleaned up on demand, not migrated.
+
+**How to re-verify** (this is also the §6 structure-equivalence check in its
+strongest form): run `python3 tests/persona_sweep.py --out <dir>` and compare
+each persona's `-en.` and `-zh-TW.` rendered Markdown. Line counts and
+section-heading counts must match persona-for-persona; any nonzero delta means
+a locale gap has reappeared. At the time of this rewrite the delta was 0 across
+all 156 bundles.
+
+Two consequences worth stating, because later work depends on them:
+
+- **A locale gap is now a defect with evidence behind it**, not an aspiration
+  (§2). The en card is no longer a reduced card.
+- **English is a complete canonical source.** Any design that renders or
+  translates outward from English — see the multilingual direction on
+  [#390](https://github.com/atomchung/fomo-kernel/issues/390) — can rely on the
+  English card carrying the full story, which was not true in phase 1.
 
 **zh-CN transitional waiver (owner-ruled 2026-07-24,
 [#387](https://github.com/atomchung/fomo-kernel/issues/387)):** `zh-CN`

@@ -266,10 +266,13 @@ are structural, not linguistic:
 
 ## 7. Known debt (not part of the contract's steady state)
 
-- **Locale gaps on the en card** — the engine bakes zh vocabulary into data
-  values, so stress/improve/behavior-tag content drops off en cards. Full
-  inventory, repair direction, and phase plan: `docs/output-language.md` §3.
-  Until repaired, en cards cut depth but must keep the four-block skeleton.
+- ~~**Locale gaps on the en card**~~ — repaired 2026-07-25. The engine no
+  longer bakes zh vocabulary into data values; en and zh-TW cards render the
+  same sections with the same line counts across every persona. Kept here as a
+  pointer only: `docs/output-language.md` §3 records the five former sites and
+  the re-verification command. The remaining live locale debt is the zh-CN
+  mixed-script waiver (same section) and the copy migration on
+  [#387](https://github.com/atomchung/fomo-kernel/issues/387).
 
 ## 8. Enforcement
 
