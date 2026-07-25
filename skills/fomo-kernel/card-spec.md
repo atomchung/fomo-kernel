@@ -1,108 +1,77 @@
 # Review card content specification
 
-> Structure authority is [docs/output-contract.md](../../docs/output-contract.md): its keynote + four-block order outranks the display priorities below, which now rank numbers *inside* the performance block only. Execution authority in v2 is `engine/card_renderer.py` plus `references/card-policy.md`. This file records the design rationale and acceptance boundaries. Agents do not assemble or redact cards manually.
+> Structure authority is [docs/output-contract.md](../../docs/output-contract.md);
+> execution is `engine/card_renderer.py` plus `references/card-policy.md`. This
+> file records what the card is for and how to word the honesty sentences the
+> agent owns. Agents do not assemble or redact cards manually.
 
 ## Purpose
 
-Produce one conclusion card after all required motive questions are answered. The card should connect the user's own numbers to one behavioral leak, one qualitative thesis interpretation, and one user-chosen next-time rule.
+One conclusion card after the required motive questions are answered, connecting the user's own numbers to one behavioral leak, one qualitative thesis reading, and one rule they chose.
 
-The target reader understands a brokerage statement. Use standard account language directly: realized and unrealized P&L, payoff ratio, position, weight, and stop. Translate internal field names and explain academic terms in plain language.
+Write for a reader who understands a brokerage statement. Use account language directly — realized and unrealized P&L, payoff ratio, position, weight, stop — and translate internal field names and academic terms into plain language.
 
-## Required properties
+## What a good card does
 
-- Lead with account impact, not trade count or win rate.
-- Name one real strength before the largest leak.
-- Ground the largest leak in an engine-owned number and a concrete transaction when available. When the leak is an averaging-down pattern with a recorded add-motive classification, name that classification beside the dollar cost so outcome does not stand in for process — a reasoned add that still lost money is a different problem from adding only to lower the cost basis.
-- Include qualitative motive or thesis interpretation only after the user answers required questions.
-- Surface every triggered honesty-ledger limitation in natural prose.
-- End with at most one user-chosen if-then rule. Skipping is valid.
-- Optionally close with a synthesis (`narrative.synthesis`, #345): two to three sentences condensing the period's single most important cross-section judgment into one point of view, rendered as the card's final section after the rule. It must connect facts that otherwise sit in separate sections (concentration level, dollar exposure, and what a drawdown would mean, for example) into one conclusion. Omit it entirely — never write a placeholder — when nothing rises to that synthesis; a restated number, tile, or sentence already on the card is not a synthesis and should not be written.
-- Keep the writing coherent. A card is a story, not several dashboards pasted together.
+- Leads with account impact, not trade count or win rate.
+- Names one real strength before the largest leak. The strength is not politeness; it is what makes the leak audible.
+- Grounds the leak in an engine-owned number and a concrete transaction. When the leak is averaging down and an add-motive classification was recorded, name that classification beside the dollar cost — a reasoned add that still lost money is a different problem from adding only to lower the cost basis.
+- Adds qualitative motive or thesis interpretation only after the user has answered.
+- States every triggered honesty-ledger limitation in natural prose.
+- Ends with at most one if-then rule the user chose. Skipping is valid.
+- May close with a synthesis (`narrative.synthesis`): two or three sentences condensing the period's most important cross-section judgment — concentration level, dollar exposure, and what a drawdown would mean, for example — into one conclusion. Omit it rather than writing a placeholder.
 
-## Prohibited content
+Keep it coherent. A card is a story, not several dashboards pasted together.
 
-- Raw five-dimension severity tables.
-- Raw `thesis_questions` or unanswered questions.
-- Internal labels such as `max_pos_pct`, `metric_key`, `baseline_note`, or implementation notes.
-- Agent-computed numbers or rewritten engine facts.
-- Several recommendations or action items.
-- Buy or sell advice for a security.
-- Shaming or personality judgments.
-- A rule selected by the agent on the user's behalf.
+## Not on a card
 
-## Private and public cards
-
-The private card may include account amounts, dates, tickers, position weights, transaction examples, thesis evidence, and the qualitative agent narrative.
-
-The public card is a separately rendered structured view. It excludes:
-
-- absolute amounts and share counts
-- exact dates
-- tickers and full holdings
-- exact position weights
-- session IDs
-- evidence text and agent-authored free prose
-
-It may retain a fixed, de-identified behavior-pattern sentence plus engine-owned beta and benchmark-excess percentage points. For mixed-market portfolios, public comparison lines use only the market labels and say "market benchmark"; benchmark symbols and holding tickers remain private.
-
-Do not create the public card by applying regular-expression redaction to the private card. Independent rendering prevents portfolio reconstruction and accidental disclosure.
-
-## Numeric truth
-
-The renderer is the only bridge from engine facts to displayed numbers. Agent narrative contains no digits so it cannot become a competing truth source.
-
-Important display priorities:
-
-1. Realized and unrealized P&L, with coverage limitations when triggered.
-2. Payoff ratio and average gain/loss, rather than win-count framing.
-3. Portfolio versus benchmark and the alpha interval when available.
-4. Reliable cash position and account-level performance when the engine allows it.
-5. Largest realized drag and its engine-computed counterfactual.
-6. ETF portfolio structure and explicit metadata gaps.
-
-When a field is unavailable, omit it or use renderer-owned honesty copy. Never infer a value and never treat missing data as zero.
+Raw severity tables, raw or unanswered `thesis_questions`, internal labels such as `max_pos_pct` or `metric_key`, agent-computed or rewritten numbers, several competing action items, buy or sell advice for a security, shaming or personality judgments, and a rule the agent picked on the user's behalf.
 
 ## Honesty ledger
 
-`build_honesty_ledger()` determines which caveats must appear; the agent writes how each one is said (#82: conditions in the engine, wording with the agent). The Review Plan exposes the triggered keys as `card_plan.required_honesty_keys`; the agent supplies one qualitative, digit-free sentence per key in `narrative.honesty`, and preview fails when any key is missing or extra. Per [output-contract.md §4](../../docs/output-contract.md) (2026-07-22 ruling), the renderer collapses every performance-related sentence into the single Block-1 footnote — none of them ride an individual number anymore, since real high-density accounts fragmented the indicator list when they did. ETF metadata gaps still render in Block 2 (a separate, unaffected placement) — since #315, sharing one collected caveat line with the ETF classification sentences (why allocation ETFs are excluded from concentration, why sector/thematic/leveraged ones still count) rather than each riding its own line, so this second, smaller collection point does not grow into the same caveat-wall shape the Block-1 footnote was built to avoid. Neither ever becomes a standalone checklist section. Fixed copy strings exist only as a fallback for re-rendering bundles committed before this contract.
+`build_honesty_ledger()` decides which caveats must appear; the agent decides how each is said. The Review Plan exposes the triggered keys as `card_plan.required_honesty_keys`, and you supply one qualitative, digit-free sentence per key in `narrative.honesty`. Preview fails on a missing or extra key.
 
-Per-key wording guidance: `alpha_credibility` names the sample or interval limit without calling skill durable, and states that the excess return may still trace mostly to market or sector exposure rather than selection — self-attribution credits skill for wins and blames the market for losses, so this matters most exactly when the period looks good; `sector_attribution` says part of the allocation-versus-selection split is unattributed; `unclassified_drivers` says concentration may be understated; `price_source` names where the current prices came from — an external source and its as-of date when one was supplied, or the fact that price retrieval failed and no portfolio-level return could be computed — and never reads a missing price as a delisting or as a zero return; `price_plausibility` names the ticker(s) whose supplied closing price differs sharply from that instrument's own last recorded trade price and says the source should be re-verified — this is a caveat, not a correction, so it never overrides or hedges the price actually used to compute the numbers on the card; `unrealized_coverage` says unrealized P&L is incomplete; `orphan_sells` says some realized P&L was excluded for lacking a known entry; `currency_mix` says aggregate figures cross currencies; `cash_reliability` says cash lacks a complete anchor and what unlocks it; `acct_perf_basis` says what the account-level figures rest on, reading `status` for which limit dominates — `external_flows_absent` says the record holds no deposit or withdrawal at all, so the reconstruction assumes account cash moved only through trading and any money paid in during the period is understating the return (`data.implied_start_cash_share` is how much of the opening account value that assumption carries, so the sentence can be specific about the size of the doubt); `estimated_footprint` says each trade's cash effect was estimated as quantity times price because the source carried no broker amount, excluding commissions and taxes; the remaining statuses say partial anchors, cost-line pricing, or FX approximation. Never state more than the dominant one, and never imply the number is wrong — it is uncertain by a stated amount; `etf_metadata` says missing expense-ratio or tracking-error data was not treated as zero.
+Placement is not yours to choose: the renderer collapses performance-related sentences into the single Block-1 footnote, and ETF metadata gaps render in Block 2 beside the ETF classification lines. Neither becomes a standalone checklist section.
 
-Examples include:
+State each limitation neutrally and narrowly. Never guess the cause of an unexplained residual, and never imply the number is wrong — it is uncertain by a stated amount.
 
-- alpha interval is not statistically credible
-- unrealized P&L covers only part of the open portfolio
-- some drivers lack a sector benchmark
-- some instruments are unclassified
-- orphan sells imply incomplete transaction history
-- currency conversion is approximate
-- cash balances or account performance are not fully anchored
-- ETF expense ratio or tracking error is missing
+| Key | What the sentence should say |
+|---|---|
+| `alpha_credibility` | Names the sample or interval limit without calling skill durable, and says the excess may still trace mostly to market or sector exposure rather than selection. This matters most exactly when the period looks good, because self-attribution credits skill for wins and the market for losses. |
+| `sector_attribution` | Part of the allocation-versus-selection split is unattributed. |
+| `unclassified_drivers` | Some instruments are unclassified, so concentration may be understated. |
+| `price_source` | Where current prices came from — an external source and its as-of date, or that retrieval failed and no portfolio-level return could be computed. Never read a missing price as a delisting or a zero return. |
+| `price_plausibility` | Names the ticker whose supplied close differs sharply from that instrument's own last recorded trade price, and says the source should be re-verified. This is a caveat, not a correction: it never hedges the price actually used on the card. |
+| `unrealized_coverage` | Unrealized P&L covers only part of the open portfolio. |
+| `orphan_sells` | Some realized P&L was excluded for lacking a known entry, implying incomplete history. |
+| `currency_mix` | Aggregate figures cross currencies and conversion is approximate. |
+| `cash_reliability` | Cash lacks a complete anchor, and what would unlock it. |
+| `acct_perf_basis` | What the account-level figures rest on. Read `status` for the dominant limit and state only that one — see below. |
+| `etf_metadata` | Missing expense-ratio or tracking-error data was not treated as zero. |
 
-The card must state the limitation neutrally and narrowly. It must not guess the cause of an unexplained residual.
+`acct_perf_basis` statuses:
+
+- `external_flows_absent` — the record holds no deposit or withdrawal at all, so the reconstruction assumes account cash moved only through trading; money paid in during the period understates the return. `data.implied_start_cash_share` says how much of the opening value that assumption carries, so the sentence can be specific about the size of the doubt.
+- `estimated_footprint` — each trade's cash effect was estimated as quantity times price because the source carried no broker amount, excluding commissions and taxes.
+- Remaining statuses name partial anchors, cost-line pricing, or FX approximation.
 
 ## Performance framing
 
-- Compare the held portfolio with the appropriate market benchmark only when engine output supports the comparison.
-- In multi-market portfolios, show each market against its own benchmark; never synthesize a total alpha. The renderer consumes `by_market` directly and ignores the top-level compatibility row for these comparison lines.
-- Treat account TWR, holding TWR, cash drag, and IRR as different questions. Use only engine-provided values and copy.
-- Interpret positive cash drag as protection in a falling market and negative cash drag as diluted participation; do not treat cash as inherently wrong.
-- Use alpha capability language only when the engine marks it credible. Otherwise show the interval and uncertainty.
+- Compare against a market benchmark only when engine output supports it. In multi-market portfolios each market meets its own benchmark; never synthesize a total alpha.
+- Account TWR, holding TWR, cash drag, and IRR answer different questions. Use engine-provided values and copy only.
+- Read positive cash drag as protection in a falling market and negative cash drag as diluted participation. Cash is not inherently a mistake.
+- Use alpha capability language only when the engine marks it credible; otherwise show the interval and the uncertainty.
 
 ## Prescription boundary
 
-The product coaches process rather than selecting securities. A prescription may:
+This product coaches process rather than selecting securities. A prescription may amplify a demonstrated strength, outsource a decision layer that consistently destroys value, or remove a measurable leak with a mechanical rule. It may not recommend what to buy or sell.
 
-- amplify a demonstrated strength
-- outsource a decision layer that consistently destroys value
-- remove a measurable behavioral leak with a mechanical rule
+Candidate rules bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips. A candidate may carry an engine-authored `grounding` sentence citing this period's actual positions; the reusable rule text stays generic, because that generic text is what `rules.jsonl` tracks across weeks, and the grounding renders only on private surfaces.
 
-It may not recommend what to buy or sell. Candidate rules must bind to an engine metric so the next review can evaluate them. The user chooses, rewrites, or skips the final rule. A candidate may carry an engine-authored `grounding` sentence citing this period's actual positions; the reusable rule text stays generic (it is what rules.jsonl tracks across weeks), and the grounding renders only on private surfaces, never on the share-safe card.
-
-Where each class renders is fixed by `docs/output-contract.md` §2 and is not a wording choice (#301): an **amplify** row describes what the period proved, so it sits beside the Block-3 `[v]` strength (strongest one only); an **outsource** row is a weakness finding, so it sits under the Block-3 `[X]` hole; a **cut** row is already represented by the rule the engine derived from it, so it is not printed again. Block 4 holds one action. A prescription list beside the committed rule is a regression, not a richer card — it made the card issue several imperatives at once, some of them opposing.
+Where each class renders is fixed by `docs/output-contract.md` §2, not a wording choice: an **amplify** row describes what the period proved, so it sits beside the Block-3 strength; an **outsource** row is a weakness finding, so it sits under the Block-3 hole; a **cut** row is already represented by the rule the engine derived from it and is not printed twice. Block 4 holds one action — a prescription list beside the committed rule makes the card issue several imperatives at once, some of them opposing.
 
 ## Rendering
 
-`card_renderer.py` renders every card artifact from one shared structured assembly: the canonical private Markdown (`card-private.md`, the card text source of truth), the separately structured public Markdown, and a styled self-contained HTML card (`card-private.html` at finalize, `card-private-preview.html` at preview). Deliver those artifacts rather than rewriting the card in chat; the per-surface delivery decision tree for agents is `references/card-delivery.md`.
+`card_renderer.py` renders every artifact from one shared structured assembly: canonical private Markdown (the card text source of truth), the independently structured public Markdown, and a self-contained HTML card. Deliver those artifacts rather than rewriting the card in chat; the per-surface decision tree is `references/card-delivery.md`.
 
-The HTML card renders at the visual level of the `card-template.html` design reference: flat, light and dark via `prefers-color-scheme`, system font stack, a single heading, outlined tags, neutral section surfaces with semantic color only on section labels and P&L accents, no emoji, no icon font, and zero external requests. The rich layout blocks come from the same structured facts both surfaces share (#247): a KPI tile grid for the headline figures, ranked per-instrument money bars with engine behavior tags, the concentration stress row (inside the hole panel only when the top hole is itself a concentration-family dimension; as its own titled section otherwise, so an unrelated leak never absorbs it), and benchmark-comparison attribution bars — each block renders only when its engine fields exist and degrades silently otherwise. Prescription rows are no longer a block of their own (#301); see the prescription boundary below for where each class renders. An optional closing-synthesis block (`narrative.synthesis`, #345) may render as a 5th section after Next step — a single plain paragraph, no KPI tile or panel bracket — when the agent authors it, and is silently absent (no header, no placeholder) otherwise, the same conditional-rendering shape as the sparkline above. The engine emits stable English snake_case codes plus raw params for behavior tags, the stress scenario, and prescriptions (#279); the renderer resolves them through `copy/<locale>.json`, so every locale — including English — receives these blocks from its copy file alone. Legacy bundles that persisted pre-#279 zh literals render them verbatim on the zh card only and omit them elsewhere; there is no read-time migration (owner ruling on #279). The document wraps a host-independent widget fragment between `<!-- WIDGET-FRAGMENT-START -->` and `<!-- WIDGET-FRAGMENT-END -->` markers for graphical surfaces. When `pnl_curve.points` carries at least two points, the HTML adds a small inline-SVG P&L sparkline colored by the final sign, with a caption underneath giving the start~end date range and the peak/trough of the same points (#312) — no full axis, just enough context that the line is interpretable; note-form or missing curve data omits the sparkline (and its caption) silently, and a point missing only its date drops the caption while the line itself still renders. This must not create a new user-facing caveat unless the honesty ledger requires one.
+The HTML card follows `card-template.html`: flat, light and dark via `prefers-color-scheme`, system fonts, one heading, outlined tags, semantic color only on section labels and P&L accents, no emoji, no icon font, zero external requests. Rich blocks — the KPI tile grid, ranked per-instrument money bars, the concentration stress row, benchmark attribution bars, and an optional P&L sparkline — each render only when their engine fields exist and degrade silently otherwise. The document wraps a host-independent widget fragment between `<!-- WIDGET-FRAGMENT-START -->` and `<!-- WIDGET-FRAGMENT-END -->` markers for graphical surfaces. Behavior tags, stress scenarios, and prescriptions travel as stable English snake_case codes plus raw params and resolve through `copy/<locale>.json`, so every locale including English gets these blocks from its copy file alone.

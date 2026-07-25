@@ -50,7 +50,8 @@ support. Present a coherent opening check and one clear next step.
 6. Run preview. If validation fails, fix the artifact the error names; do not
    bypass the gate.
 7. Show the review-card preview inline following `references/card-delivery.md`
-   and record the actual presentation following `references/interaction-delivery.md`.
+   following `references/interaction-delivery.md`, and record the actual
+   presentation following `references/ux-receipt.md`.
    A commitment is **not** forced on this tier: offer a candidate rule only if
    the engine surfaced one, and make clear the user may skip it and simply keep
    this structural check as the baseline. When more than one candidate is
