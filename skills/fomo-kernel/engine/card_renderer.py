@@ -70,6 +70,23 @@ def load_copy(language):
         return json.load(f)
 
 
+def _format_copy(template, **values):
+    """Fill a copy template, or return ``None`` if it is missing or malformed.
+
+    The #368 migration routes prose through ``copy/*.json`` instead of inline
+    language branches, which makes "the key is absent" a reachable state during
+    a partial migration. Returning ``None`` keeps that a dropped line rather
+    than a crashed render; key parity across locales is gated mechanically by
+    ``tests/test_card_html.py::test_locale_copy_files_keep_key_parity``, so an
+    absent key fails the suite rather than silently shipping."""
+    if not template:
+        return None
+    try:
+        return template.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
 # ── Spelled-out numeric-claim detection (issue #194 item 1) ──────────────────
 # The narrative contract is "no numbers; magnitudes come only from the engine".
 # ``re.search(r"\d", ...)`` already rejects ASCII and Unicode digits (30, ３０,
@@ -610,8 +627,9 @@ def _tag_format_values(params, language):
     px = _finite_number((params or {}).get("px"))
     avg_cost = _finite_number((params or {}).get("avg_cost"))
     if px is not None and avg_cost is not None:
-        values["price_note"] = (f" (now {px:,.2f} / cost {avg_cost:,.2f})" if language == "en"
-                                else f"(現 {px:,.2f}／均 {avg_cost:,.2f})")
+        template = (load_copy(language).get("tag_values") or {}).get("price_note")
+        values["price_note"] = _format_copy(
+            template, px=f"{px:,.2f}", avg_cost=f"{avg_cost:,.2f}") or ""
     else:
         values["price_note"] = ""
     return values
@@ -819,22 +837,17 @@ def _display_money_compact(value, context):
 
 def _currency_note(card, language):
     context = _display_context(card, language)
+    note = load_copy(language).get("currency_note") or {}
     if context.get("source") == "cached":
         when = context.get("as_of")
-        if language == "en":
-            return (f"Display conversion uses the FX rate cached at the prior review ({when})."
-                    if when else "Display conversion uses the FX rate cached at the prior review.")
-        return (f"顯示換算沿用上次對帳匯率（截至 {when}）。"
-                if when else "顯示換算沿用上次對帳匯率。")
+        if when:
+            return _format_copy(note.get("cached_dated"), when=when)
+        return note.get("cached")
     if context.get("source") == "unavailable":
         if context.get("reason") == "portfolio_fx_gap":
-            if language == "en":
-                return "At least one held-currency FX rate was unavailable; amounts remain in original currencies."
-            return "至少一個持倉幣別缺少可靠匯率；金額保留原幣，不把近似聚合值當成精確換算。"
+            return note.get("portfolio_fx_gap")
         requested = context.get("requested") or default_display_currency(language)
-        if language == "en":
-            return f"No reliable {requested} display rate was available; amounts remain in original currencies."
-        return f"找不到可靠的 {requested} 顯示匯率；金額保留原幣，不做猜測換算。"
+        return _format_copy(note.get("no_rate"), currency=requested)
     return None
 
 
@@ -1011,16 +1024,15 @@ def _private_benchmark_line(market, bench, row, language):
     stands alone on Markdown and on any card with no such tile."""
     excess = _finite_number(row.get("excess_vs_spy"))
     beta = _beta_text(row.get("beta"))
-    beta_suffix = ((f"; β {beta}" if language == "en" else f"；β {beta}")
-                   if beta is not None else "")
-    if language == "en":
-        subject = f"{market} holdings" if market else "The holdings"
-        comparator = bench or "their market benchmark"
-        return (f"{subject} beat {comparator} by "
-                f"{_benchmark_pp(excess)} pp{beta_suffix}.")
-    subject = f"{market} 部位" if market else "持倉"
-    comparator = bench or "市場大盤"
-    return f"{subject}對 {comparator} 的超額報酬 {_benchmark_pp(excess)} 個百分點{beta_suffix}。"
+    copy = load_copy(language).get("benchmark_line") or {}
+    beta_suffix = ("" if beta is None
+                   else _format_copy(copy.get("beta_suffix"), beta=beta) or "")
+    subject = (_format_copy(copy.get("subject_market"), market=market) if market
+               else copy.get("subject_default"))
+    comparator = bench or copy.get("comparator_default")
+    return _format_copy(copy.get("line"), subject=subject or "",
+                        comparator=comparator or "",
+                        excess=_benchmark_pp(excess), beta=beta_suffix)
 
 
 def _private_split_lines(market, row, language):
@@ -1031,16 +1043,15 @@ def _private_split_lines(market, row, language):
     selection = _finite_number(split.get("selection"))
     if excess is None or excess <= 0 or allocation is None or selection is None:
         return []
-    subject_en = f"{market}'s" if market else "The portfolio's"
-    prefix_zh = f"{market} " if market else ""
-    if language == "en":
-        line = (f"{subject_en} {_benchmark_pp(excess)} pp excess split into "
-                f"{_benchmark_pp(allocation)} pp from market/sector allocation and "
-                f"{_benchmark_pp(selection)} pp from security selection.")
-    else:
-        line = (f"{prefix_zh}贏大盤的 {_benchmark_pp(excess)} 個百分點拆為："
-                f"市場／賽道配置 {_benchmark_pp(allocation)} 個百分點、"
-                f"標的選擇 {_benchmark_pp(selection)} 個百分點。")
+    copy = load_copy(language).get("split_lines") or {}
+    subject = (_format_copy(copy.get("subject_market"), market=market) if market
+               else copy.get("subject_default"))
+    line = _format_copy(copy.get("line"), subject=subject or "",
+                        excess=_benchmark_pp(excess),
+                        allocation=_benchmark_pp(allocation),
+                        selection=_benchmark_pp(selection))
+    if line is None:
+        return []
     # Coverage limitations belong to the engine-triggered sector_attribution
     # honesty entry, which collapses into the Block-1 footnote rather than
     # appearing next to this split (2026-07-22 ruling, §4).
@@ -1322,13 +1333,11 @@ def _decision_entries(bundle, copy):
     entries = []
     for event in bundle.get("thesis_decisions") or []:
         label = labels.get(event.get("decision"), event.get("decision"))
-        ticker = event.get("ticker") or "position"
-        if copy.get("language") == "en":
-            entries.append((event.get("ticker"),
-                            f"{ticker}: {label}. The decision and its evidence boundary were saved for the next review."))
-        else:
-            entries.append((event.get("ticker"),
-                            f"{ticker}：{label}。這個判斷與證據邊界已保存，供下次對帳。"))
+        entry_copy = copy.get("decision_entries") or {}
+        ticker = event.get("ticker") or entry_copy.get("ticker_default")
+        line = _format_copy(entry_copy.get("line"), ticker=ticker or "", label=label)
+        if line:
+            entries.append((event.get("ticker"), line))
     return entries
 
 
@@ -1341,7 +1350,6 @@ def _headline_motive_entries(bundle, copy):
     """
     labels = copy.get("headline_motive_choices") or {}
     entries = []
-    en = copy.get("language") == "en"
     for event in bundle.get("headline_motive_events") or []:
         choice = event.get("decision")
         label = labels.get(choice, choice)
@@ -1349,20 +1357,17 @@ def _headline_motive_entries(bundle, copy):
         dimension = (context.get("headline_dimension") or {}).get("label")
         ticker = context.get("ticker")
         fact = context.get("asked_because")
-        subject = dimension or ("highlighted behavior" if en else "這次浮現的行為")
-        if en:
-            parts = []
-            if fact:
-                parts.append(f"Engine context: {str(fact).rstrip('.')}.")
-            parts.append(f"Motive recorded for {subject}: {label}.")
-            parts.append("This recorded choice was saved for a later review.")
-        else:
-            parts = []
-            if fact:
-                parts.append(f"引擎脈絡：{str(fact).rstrip('。')}。")
-            parts.append(f"「{subject}」的動機記為：{label}。")
-            parts.append("這個選項已保存，供後續復盤對帳。")
-        entries.append((ticker, " ".join(parts)))
+        motive_copy = copy.get("motive_entries") or {}
+        subject = dimension or motive_copy.get("subject_default")
+        terminator = motive_copy.get("terminator") or ""
+        parts = []
+        if fact:
+            parts.append(_format_copy(motive_copy.get("context"),
+                                      fact=str(fact).rstrip(terminator)))
+        parts.append(_format_copy(motive_copy.get("recorded"),
+                                  subject=subject or "", label=label))
+        parts.append(motive_copy.get("saved"))
+        entries.append((ticker, " ".join(part for part in parts if part)))
     return entries
 
 
@@ -1380,17 +1385,13 @@ def _exit_entries(bundle, copy):
             continue
         if reason and note:
             label = f"{label} ({note})"
-        ticker = event.get("ticker") or ("position" if copy.get("language") == "en" else "這筆部位")
-        if copy.get("language") == "en":
-            action = "exit" if kind == "full" else "reduction"
-            entries.append((event.get("ticker"),
-                            f"{ticker}: you recorded the {action} reason as “{label}”. "
-                            "This preserves the reason at the time; it does not judge the outcome yet."))
-        else:
-            action = "清倉" if kind == "full" else "減倉"
-            entries.append((event.get("ticker"),
-                            f"{ticker}：你把這次{action}記為「{label}」。"
-                            "這裡只保存當時的理由，尚未判斷決策結果。"))
+        exit_copy = copy.get("exit_entries") or {}
+        ticker = event.get("ticker") or exit_copy.get("ticker_default")
+        action = exit_copy.get("action_full" if kind == "full" else "action_partial")
+        line = _format_copy(exit_copy.get("line"), ticker=ticker or "",
+                            action=action or "", label=label)
+        if line:
+            entries.append((event.get("ticker"), line))
     return entries
 
 
@@ -1437,6 +1438,7 @@ def _performance_items(card, language):
     rows by market (#276 2026-07-22 dogfood note) — absent for single-market
     cards, where grouping has nothing to disambiguate."""
     copy = load_copy(language)
+    payoff_copy = copy.get("payoff_lines") or {}
     overview = card.get("overview") or {}
     display = _display_context(card, language)
     en = language == "en"
@@ -1487,26 +1489,22 @@ def _performance_items(card, language):
             # #344: byte-for-byte the payoff KPI tile's own label+value+sub —
             # same HTML-omits/Markdown-keeps treatment as the pnl line above.
             line("payoff", f"{kpi_copy['payoff']} {float(payoff):.1f}"
-                 + (f" ({sub})" if en else f"（{sub}）"), kpi_id="payoff")
+                 + (_format_copy(payoff_copy.get("sub_wrap"), sub=sub) or ""),
+                 kpi_id="payoff")
         else:
-            line("payoff", (f"Realized payoff ratio was {payoff:.1f}; average gain/loss amounts remain "
-                            "in original currencies." if en else
-                            f"已實現盈虧比 {payoff:.1f}；平均盈虧金額因顯示匯率缺失而保留原幣。"))
+            line("payoff", _format_copy(payoff_copy.get("original_currency"),
+                                        payoff=f"{payoff:.1f}"))
     pa = card.get("payoff_attribution") or {}
     cf = pa.get("counterfactual") or {}
     if cf.get("ticker"):
         after = "—" if cf.get("payoff") is None else f"{float(cf['payoff']):.1f}"
         drag = _display_money(cf.get("drag"), display)
-        if en and drag is not None:
-            line("drag", f"The largest realized drag was {cf['ticker']} at {drag}; "
-                         f"without it, the payoff ratio would have been {after}.")
-        elif not en and drag is not None:
-            line("drag", f"最大已實現拖累是 {cf['ticker']}，淨影響 {drag}；"
-                         f"拿掉它後盈虧比會是 {after}。")
+        if drag is not None:
+            line("drag", _format_copy(payoff_copy.get("drag_with_amount"),
+                                      ticker=cf["ticker"], drag=drag, after=after))
         else:
-            line("drag", (f"The largest realized drag was {cf['ticker']}; without it, the payoff ratio "
-                          f"would have been {after}." if en else
-                          f"最大已實現拖累是 {cf['ticker']}；拿掉它後盈虧比會是 {after}。"))
+            line("drag", _format_copy(payoff_copy.get("drag_plain"),
+                                      ticker=cf["ticker"], after=after))
     # ② annualized return / account pillar (#179/#181): verbatim engine numbers;
     # a gated account level renders the unlock invitation, never the raw note.
     # Cash drag stays a neutral observation, never a verdict on holding cash.
@@ -1556,20 +1554,23 @@ def _performance_items(card, language):
     cash = card.get("cash") or {}
     if cash.get("reliable") and cash.get("balance") is not None:
         display_cash = _display_money(cash.get("balance"), display)
-        if en and display_cash is not None:
-            line("cash", f"Anchored account cash was {display_cash}"
-                 + (f", {_pct(cash.get('weight'))} of the account." if cash.get("weight") is not None else "."))
-        elif not en and display_cash is not None:
-            line("cash", f"有餘額錨點的帳戶現金為 {display_cash}"
-                 + (f"，佔帳戶 {_pct(cash.get('weight'))}。" if cash.get("weight") is not None else "。"))
+        cash_copy = copy.get("cash_lines") or {}
+        if display_cash is not None:
+            if cash.get("weight") is not None:
+                line("cash", _format_copy(cash_copy.get("anchored_with_weight"),
+                                          cash=display_cash,
+                                          weight=_pct(cash.get("weight"))))
+            else:
+                line("cash", _format_copy(cash_copy.get("anchored"), cash=display_cash))
         else:
             original = []
             for currency, row in sorted((cash.get("by_currency") or {}).items()):
                 if (row or {}).get("balance") is not None:
                     original.append(_money((row or {}).get("balance"), currency))
             if original:
-                line("cash", ("Anchored account cash by original currency: " + ", ".join(original) + "."
-                              if en else "有餘額錨點的帳戶現金（原幣）：" + "、".join(original) + "。"))
+                joiner = cash_copy.get("amount_joiner") or ", "
+                line("cash", _format_copy(cash_copy.get("by_currency"),
+                                          amounts=joiner.join(original)))
     # ③ vs market: benchmark rows, the winning split, the alpha interval, then
     # the alternative comparators the HTML bars show (md keeps them as one line).
     # Monthly cadence (#284, contract §3): a prepare-time gate suppresses the
@@ -1693,11 +1694,10 @@ def _review_opening_lines(bundle, language):
         completed = 0
     milestone = None
     if progress.get("returning") is True and completed > 0:
-        if language == "en":
-            noun = "review" if completed == 1 else "reviews"
-            milestone = f"When this review started, you already had {completed} completed {noun}."
-        else:
-            milestone = f"開始這次復盤時，你已有 {completed} 次完成紀錄。"
+        milestone_copy = load_copy(language).get("review_milestone") or {}
+        noun = milestone_copy.get("noun_one" if completed == 1 else "noun_many")
+        milestone = _format_copy(milestone_copy.get("line"),
+                                 completed=completed, noun=noun or "")
     if milestone and reconciliation:
         reconciliation[0] = f"{reconciliation[0]} {milestone}"
     elif milestone:
@@ -1912,35 +1912,21 @@ def _horizon_entries(bundle, copy):
     markers = ((((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                 .get("horizon_markers")) or [])
     labels = copy.get("horizons") or {}
-    en = copy.get("language") == "en"
+    horizon_copy = copy.get("horizon_entries") or {}
     entries = []
     for marker in markers:
-        ticker = marker.get("ticker") or ("Position" if en else "這筆部位")
+        kind = marker.get("kind")
+        if kind not in ("exit_too_fast", "held_too_long"):
+            continue
+        ticker = marker.get("ticker") or horizon_copy.get("ticker_default")
         horizon_label = labels.get(marker.get("horizon"), marker.get("horizon"))
-        days = marker.get("holding_days")
         inferred = marker.get("maturity") == "inferred"
-        if marker.get("kind") == "exit_too_fast":
-            if en:
-                voice = "inferred" if inferred else "recorded"
-                entries.append((marker.get("ticker"),
-                                f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it ended after {days} days; "
-                                "this is a timeline mismatch, not a verdict about the motive."))
-            else:
-                voice = "原先推測" if inferred else "已記錄"
-                entries.append((marker.get("ticker"),
-                                f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，{days} 天後就出場；"
-                                "這是時間軸不一致，不替動機下定論。"))
-        elif marker.get("kind") == "held_too_long":
-            if en:
-                voice = "inferred" if inferred else "recorded"
-                entries.append((marker.get("ticker"),
-                                f"{ticker}: the {voice} thesis horizon was {horizon_label}, but it is still open after {days} days; "
-                                "the horizon has drifted and needs clarification."))
-            else:
-                voice = "原先推測" if inferred else "已記錄"
-                entries.append((marker.get("ticker"),
-                                f"{ticker}：{voice}的 thesis 時間軸是「{horizon_label}」，持有 {days} 天後仍未結束；"
-                                "時間軸已漂移，仍需釐清。"))
+        voice = horizon_copy.get("voice_inferred" if inferred else "voice_recorded")
+        line = _format_copy(horizon_copy.get(kind), ticker=ticker or "",
+                            voice=voice or "", horizon=horizon_label,
+                            days=marker.get("holding_days"))
+        if line:
+            entries.append((marker.get("ticker"), line))
     return entries
 
 
@@ -3079,29 +3065,30 @@ def render_private(bundle):
 
 def _public_band(value, language):
     value = float(value or 0)
+    bands = load_copy(language).get("public_band") or {}
     if value < 0.25:
-        return "低" if language != "en" else "low"
+        return bands.get("low")
     if value < 0.40:
-        return "中" if language != "en" else "moderate"
+        return bands.get("moderate")
     if value < 0.60:
-        return "高" if language != "en" else "high"
-    return "很高" if language != "en" else "very high"
+        return bands.get("high")
+    return bands.get("very_high")
 
 
 def _public_performance_lines(card, language):
     """Share only allowlisted market labels and engine-owned relative scalars."""
+    perf_copy = load_copy(language).get("public_performance") or {}
     lines = []
     for market, _bench, row in _benchmark_rows(card):
         excess = _finite_number(row.get("excess_vs_spy"))
         beta = _beta_text(row.get("beta"))
         if excess is None or beta is None:
             continue
-        if language == "en":
-            subject = market or "Portfolio"
-            lines.append(f"{subject}: {_benchmark_pp(excess)} pp versus its market benchmark; β {beta}.")
-        else:
-            subject = market or "可比較部位"
-            lines.append(f"{subject}：相對各自市場大盤 {_benchmark_pp(excess)} 個百分點；β {beta}。")
+        subject = market or perf_copy.get("subject_default")
+        line = _format_copy(perf_copy.get("line"), subject=subject or "",
+                            excess=_benchmark_pp(excess), beta=beta)
+        if line:
+            lines.append(line)
     return lines
 
 
@@ -3139,29 +3126,20 @@ def render_public(bundle):
             rule = copy.get("public_custom_rule")
     structural_hole = (snapshot and snapshot_summary.get("weights_available") is True
                        and bool(holes) and dim_id in {"position_sizing", "diversification"})
-    if copy["language"] == "en":
-        if structural_hole:
-            mirror = f"This opening portfolio check identified {dim_label or 'portfolio structure'} as the leading structural risk"
-            mirror += f", with {severity} pressure." if severity else "."
-        elif snapshot:
-            mirror = ("This opening portfolio check establishes a structural baseline; "
-                      "transaction-history behavior remains unscored.")
-        elif not holes:
-            mirror = "This review did not rank a leading behavior pattern from the available history."
-        else:
-            mirror = f"This review found {severity} behavioral pressure in {dim_label or 'the leading diagnostic dimension'}."
-        structure = "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
+    mirror_copy = copy.get("public_mirror") or {}
+    if structural_hole:
+        dim = dim_label or mirror_copy.get("structural_dim_default")
+        key = "structural_with_severity" if severity else "structural"
+        mirror = _format_copy(mirror_copy.get(key), dim=dim or "", severity=severity)
+    elif snapshot:
+        mirror = mirror_copy.get("snapshot_baseline")
+    elif not holes:
+        mirror = mirror_copy.get("no_holes")
     else:
-        if structural_hole:
-            mirror = f"這次開場組合檢查把「{dim_label or '組合結構'}」列為主要結構風險"
-            mirror += f"，風險壓力為{severity}。" if severity else "。"
-        elif snapshot:
-            mirror = "這次開場組合檢查只建立結構基線；交易歷史行為維度維持未評分。"
-        elif not holes:
-            mirror = "這次可用歷史不足以排序出主要行為模式。"
-        else:
-            mirror = f"這次復盤在「{dim_label or '主要行為維度'}」看見{severity}程度的行為壓力。"
-        structure = "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
+        dim = dim_label or mirror_copy.get("behavioral_dim_default")
+        mirror = _format_copy(mirror_copy.get("behavioral"), dim=dim or "",
+                              severity=severity)
+    structure = mirror_copy.get("structure")
     if pattern:
         mirror += " " + pattern
     lines = [

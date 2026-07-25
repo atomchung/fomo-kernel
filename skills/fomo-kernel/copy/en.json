@@ -334,5 +334,87 @@
     "annualized_suffix": "; annualized return was {value}",
     "cash_drag_suffix": "; the gap versus the holdings pillar, {value}, is explained by holding cash — an observation, not a verdict",
     "terminator": "."
+  },
+  "currency_note": {
+    "cached_dated": "Display conversion uses the FX rate cached at the prior review ({when}).",
+    "cached": "Display conversion uses the FX rate cached at the prior review.",
+    "portfolio_fx_gap": "At least one held-currency FX rate was unavailable; amounts remain in original currencies.",
+    "no_rate": "No reliable {currency} display rate was available; amounts remain in original currencies."
+  },
+  "benchmark_line": {
+    "line": "{subject} beat {comparator} by {excess} pp{beta}.",
+    "subject_market": "{market} holdings",
+    "subject_default": "The holdings",
+    "comparator_default": "their market benchmark",
+    "beta_suffix": "; β {beta}"
+  },
+  "split_lines": {
+    "line": "{subject} {excess} pp excess split into {allocation} pp from market/sector allocation and {selection} pp from security selection.",
+    "subject_market": "{market}'s",
+    "subject_default": "The portfolio's"
+  },
+  "decision_entries": {
+    "line": "{ticker}: {label}. The decision and its evidence boundary were saved for the next review.",
+    "ticker_default": "position"
+  },
+  "motive_entries": {
+    "subject_default": "highlighted behavior",
+    "context": "Engine context: {fact}.",
+    "recorded": "Motive recorded for {subject}: {label}.",
+    "saved": "This recorded choice was saved for a later review.",
+    "terminator": "."
+  },
+  "exit_entries": {
+    "line": "{ticker}: you recorded the {action} reason as “{label}”. This preserves the reason at the time; it does not judge the outcome yet.",
+    "ticker_default": "position",
+    "action_full": "exit",
+    "action_partial": "reduction"
+  },
+  "review_milestone": {
+    "line": "When this review started, you already had {completed} completed {noun}.",
+    "noun_one": "review",
+    "noun_many": "reviews"
+  },
+  "horizon_entries": {
+    "ticker_default": "Position",
+    "voice_inferred": "inferred",
+    "voice_recorded": "recorded",
+    "exit_too_fast": "{ticker}: the {voice} thesis horizon was {horizon}, but it ended after {days} days; this is a timeline mismatch, not a verdict about the motive.",
+    "held_too_long": "{ticker}: the {voice} thesis horizon was {horizon}, but it is still open after {days} days; the horizon has drifted and needs clarification."
+  },
+  "public_band": {
+    "low": "low",
+    "moderate": "moderate",
+    "high": "high",
+    "very_high": "very high"
+  },
+  "public_performance": {
+    "line": "{subject}: {excess} pp versus its market benchmark; β {beta}.",
+    "subject_default": "Portfolio"
+  },
+  "payoff_lines": {
+    "sub_wrap": " ({sub})",
+    "original_currency": "Realized payoff ratio was {payoff}; average gain/loss amounts remain in original currencies.",
+    "drag_with_amount": "The largest realized drag was {ticker} at {drag}; without it, the payoff ratio would have been {after}.",
+    "drag_plain": "The largest realized drag was {ticker}; without it, the payoff ratio would have been {after}."
+  },
+  "cash_lines": {
+    "anchored_with_weight": "Anchored account cash was {cash}, {weight} of the account.",
+    "anchored": "Anchored account cash was {cash}.",
+    "by_currency": "Anchored account cash by original currency: {amounts}.",
+    "amount_joiner": ", "
+  },
+  "public_mirror": {
+    "structural_with_severity": "This opening portfolio check identified {dim} as the leading structural risk, with {severity} pressure.",
+    "structural": "This opening portfolio check identified {dim} as the leading structural risk.",
+    "structural_dim_default": "portfolio structure",
+    "snapshot_baseline": "This opening portfolio check establishes a structural baseline; transaction-history behavior remains unscored.",
+    "no_holes": "This review did not rank a leading behavior pattern from the available history.",
+    "behavioral": "This review found {severity} behavioral pressure in {dim}.",
+    "behavioral_dim_default": "the leading diagnostic dimension",
+    "structure": "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
+  },
+  "tag_values": {
+    "price_note": " (now {px} / cost {avg_cost})"
   }
 }
