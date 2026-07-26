@@ -998,7 +998,21 @@ def _project_legacy_locked(root, bundle, private_md):
     # forever, which is exactly the "held means held" corruption the Opportunity
     # Check exists to prevent.
     slot_rows = [dict(commitment["condition"])] if commitment and commitment.get("condition") else []
+    # #412: a criterion the user re-stated because this review questioned its
+    # basis. A new row on the same line, never an edit — the old row is a fact
+    # about what they meant when they wrote it, and every check already recorded
+    # points at it. Same file, same firewall: still never rules.jsonl.
+    slot_rows += [dict(row) for row in bundle.get("condition_revisions") or []]
     reports.append(_append_session_rows(os.path.join(root, "conditions.jsonl"), session_id, slot_rows))
+
+    # #412: one row per (condition, review period), including the periods where
+    # nothing was looked up. Its own store because a check is an event and a slot
+    # is identity; the same idempotent-append discipline as every projection
+    # above, so a documented-safe finalize retry rewrites nothing and a changed
+    # payload under a committed session id fails closed rather than overwriting
+    # what the user was actually told.
+    reports.append(_append_session_rows(os.path.join(root, "condition_checks.jsonl"), session_id,
+                                        [dict(row) for row in bundle.get("condition_checks") or []]))
 
     rule_rows = []
     if commitment and commitment.get("rule") and not commitment.get("condition"):

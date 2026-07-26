@@ -72,6 +72,20 @@ HEADLINE_MOTIVE_CHOICES = {"deliberate_plan", "emotional_reaction", "external_co
 # (deliberate / emotional / external), so it reuses the choice contract and the
 # `_generic_options` labels — only the durable event stream is kept separate.
 EXIT_CONSISTENCY_CHOICES = HEADLINE_MOTIVE_CHOICES
+# #434: how many condition slots one review asks the agent to look up. The plan
+# used to send every stored slot raw, so a user with thirty standing conditions
+# got a review whose per-turn context grew without bound and whose lookup work
+# had no ceiling. The bound is on the *plan*, never on the record: the rest stay
+# in conditions.jsonl, return next review (oldest-last-checked first), and the
+# card says how many were left — a bounded surface must say what it dropped.
+CONDITION_LOOKUP_CAP = 8
+# At most one crossing question per review. A week that trips four conditions is
+# a week with one conversation to have, not four; the rest state their facts and
+# come back. (Owner ruling, #412.)
+CONDITION_CROSSING_LIMIT = 1
+CONDITION_CROSSING_NUMERIC_CHOICES = {"confirmed", "overridden", "skip"}
+CONDITION_CROSSING_EVENT_CHOICES = {"yes", "no", "skip"}
+CONDITION_BASIS_CHOICES = {"revise_threshold", "revise_metric", "keep", "skip"}
 
 
 class ReviewError(ValueError):
@@ -147,7 +161,8 @@ def _jsonl(path):
     return thesis.read_jsonl(path)
 
 
-def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None):
+def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None,
+                 condition_checks=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -171,6 +186,12 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
         except (TypeError, ValueError):
             canonical_cash = str(cash)
         h.update(b"cash\0" + canonical_cash.encode())
+    if condition_checks:
+        # Same #289 class again (#412): the first prepare publishes what is due
+        # and the second carries the results back. Without this the second pass
+        # would resume the check-less pending session, and the crossing question
+        # the lookups just earned would never be asked.
+        h.update(b"condition_checks\0" + session.canonical(condition_checks).encode())
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -1215,6 +1236,336 @@ def _rule_breach_questions(problem_stats, history, language):
     return candidates
 
 
+# ──────────────── the per-period condition check flow (#412 / #434) ────────────────
+#
+# A condition slot without a check flow is a promise made into a file. The plan
+# now names what is due, the agent performs each frozen query and submits the
+# result, and the engine — never the agent's prose — decides whether a line was
+# crossed. Two exchanges can follow, and only two: a crossing worth one
+# two-sided question, and a doubt about whether the threshold still measures
+# what it measured. Everything else is recorded and stays quiet.
+#
+# The two-turn shape mirrors the price envelope (#289, references/price-feed.md):
+# `prepare` publishes the request, the agent looks the figures up, and reruns
+# `prepare --condition-checks <path>` so the questions can be posed against real
+# evidence. Skipping the second pass is a legal, degraded run — the checks still
+# arrive with `answers` and are still recorded, only without the conversation.
+
+def _condition_paths(root):
+    return (os.path.join(root, "conditions.jsonl"),
+            os.path.join(root, "condition_checks.jsonl"))
+
+
+def _condition_store(root):
+    """Both append-only condition stores, read once per review.
+
+    Returns ``(slots, checks, unreadable)`` where ``unreadable`` counts the
+    lines each file lost. Corruption is reported, never silently skipped: a
+    dropped row would otherwise read as a condition the user never wrote."""
+    slots_path, checks_path = _condition_paths(root)
+    slots, slots_unreadable = conditions.load_slots(slots_path)
+    checks, checks_unreadable = conditions.load_checks(checks_path)
+    return slots, checks, {"slots": slots_unreadable, "checks": checks_unreadable}
+
+
+def _last_check_summary(check):
+    """What the plan says about a line's most recent check — four fields, not
+    the row. The full history is on disk; what the next lookup needs to know is
+    when it last happened, whether it worked, whether it found anything new,
+    and what the verdict of record was."""
+    if not check:
+        return None
+    return {"date_end": check.get("date_end"), "lookup_status": check.get("lookup_status"),
+            "information_state": check.get("information_state"),
+            "final_verdict": check.get("final_verdict")}
+
+
+def _condition_due(root):
+    """``(due, summary)`` — the bounded lookup request this review publishes.
+
+    One entry per *line* (a revised criterion is the same line, so the user is
+    never asked to look the same thing up twice), ordered oldest-last-checked
+    first so a bounded surface rotates instead of starving the tail, and capped
+    at ``CONDITION_LOOKUP_CAP``. The summary is what makes the cap honest: it
+    states the total, the number sent, and the number held back, so no reader —
+    agent or card — can mistake this list for the whole record."""
+    slots, checks, unreadable = _condition_store(root)
+    lines = conditions.latest_by_line(slots)
+    entries = []
+    for line_id, slot in lines.items():
+        last = conditions.last_check_for(checks, slots, slot)
+        entries.append((str(last.get("date_end") or "") if last else "", str(line_id),
+                        {**slot, "last_check": _last_check_summary(last)}))
+    # A never-checked line sorts first on the empty string, which is exactly
+    # "oldest": nothing has ever been looked up for it.
+    entries.sort(key=lambda item: (item[0], item[1]))
+    due = [entry[2] for entry in entries[:CONDITION_LOOKUP_CAP]]
+    summary = {"lines_total": len(entries), "due_now": len(due),
+               "beyond_cap": max(0, len(entries) - len(due)),
+               "unmapped_lines": sum(1 for _d, _l, row in entries if row.get("tier") == "unmapped"),
+               "unreadable_slots": unreadable["slots"],
+               "unreadable_checks": unreadable["checks"]}
+    return due, summary
+
+
+_CHECK_ENVELOPE_KEYS = frozenset({"slot_id", "check"})
+
+
+def _condition_check_envelopes(raw, where):
+    """Normalize the agent's submitted lookups into ``[(slot_id, check_input)]``.
+
+    One shape in both places it can arrive — ``prepare --condition-checks`` and
+    ``answers.condition_checks`` — because they are the same envelope submitted
+    at two moments, and two shapes would make the equality gate below compare
+    apples to pears."""
+    if raw is None:
+        return []
+    rows = raw.get("condition_checks") if isinstance(raw, dict) else raw
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise ReviewError(f"{where}.condition_checks must be an array")
+    out, seen = [], set()
+    for index, row in enumerate(rows):
+        label = f"{where}.condition_checks[{index}]"
+        if not isinstance(row, dict):
+            raise ReviewError(f"{label} must be an object")
+        unknown = set(row) - _CHECK_ENVELOPE_KEYS
+        if unknown:
+            raise ReviewError(f"{label} has unknown fields: " + ", ".join(sorted(unknown)))
+        slot_id = str(row.get("slot_id") or "").strip()
+        if not slot_id:
+            raise ReviewError(f"{label} requires slot_id")
+        if slot_id in seen:
+            raise ReviewError(f"{label}: two checks for the same condition in one review — "
+                              "a period has one result per line, not a running commentary")
+        seen.add(slot_id)
+        check = row.get("check")
+        if not isinstance(check, dict):
+            raise ReviewError(f"{label}.check must be the lookup envelope object")
+        out.append((slot_id, check))
+    return out
+
+
+def _check_id(session_id, slot_id):
+    """Content-addressed, so re-finalizing the same session rebuilds byte-identical
+    rows and the idempotent append stays a no-op instead of doubling the record."""
+    digest = hashlib.sha256(f"{session_id}|{slot_id}".encode("utf-8")).hexdigest()[:16]
+    return "check-" + digest
+
+
+def _resolve_check_slot(slots, slot_id):
+    """The live head of the line ``slot_id`` belongs to.
+
+    A check always evaluates the criterion that is current, and a revision
+    changes slot_id while keeping the line — so an envelope naming a superseded
+    version still lands on the right line rather than being refused for naming
+    an id the user never saw change."""
+    by_id = {row["slot_id"]: row for row in slots if isinstance(row, dict) and row.get("slot_id")}
+    named = by_id.get(slot_id)
+    if named is None:
+        return None
+    return conditions.latest_by_line(slots).get(conditions.slot_line_id(named)) or named
+
+
+def _build_condition_checks(slots, checks, envelopes, session_id, date_end, responses=None):
+    """Validate every submitted lookup into a durable check row.
+
+    ``responses`` maps a line id to the extra fields the user's own answer
+    contributes (``user_response`` / ``basis_resolution``). They are folded into
+    the envelope *before* ``build_check`` runs, so one row carries the complete
+    story — the evidence, the engine's comparison, and what the user said about
+    it — rather than a row written now and patched later.
+
+    A rejection is the agent's to fix and is reported as such. In particular an
+    answer paired with a lookup that did not succeed this period is refused by
+    ``build_check`` rather than quietly attached: there is no fresh evidence for
+    that answer to be about."""
+    responses = responses or {}
+    built = []
+    for slot_id, envelope in envelopes:
+        slot = _resolve_check_slot(slots, slot_id)
+        if slot is None:
+            raise ReviewError(
+                f"condition check names an unknown condition: {slot_id!r}. A check is a result for "
+                "a condition the user committed to; there is no such condition in the record")
+        line_id = conditions.slot_line_id(slot)
+        payload = dict(envelope)
+        payload.update(responses.get(line_id) or {})
+        try:
+            built.append(conditions.build_check(
+                payload, slot=slot,
+                previous=conditions.previous_check_for(checks, slots, slot),
+                check_id=_check_id(session_id, slot["slot_id"]),
+                session_id=session_id or None, date_end=date_end))
+        except conditions.ConditionError as exc:
+            raise ReviewError(f"condition check rejected ({slot['slot_id']}): {exc}") from exc
+    return built
+
+
+def _synthesized_not_checked(slots, checks, due, built, session_id, date_end):
+    """One row per due condition nobody submitted a result for.
+
+    Absence is recorded on the ``lookup_status`` axis rather than left as a gap
+    in the file, because a gap and a successful quiet period are indistinguishable
+    when read back — and "we did not look" is the one thing the record must never
+    lose. Silence about a condition is exactly how a user comes to believe a
+    tripwire is set."""
+    answered = {row["slot_id"] for row in built}
+    rows = []
+    for entry in due:
+        slot = _resolve_check_slot(slots, entry.get("slot_id")) or entry
+        if slot.get("slot_id") in answered:
+            continue
+        try:
+            rows.append(conditions.build_check(
+                {"lookup_status": "not_checked", "reason": "not submitted this review"},
+                slot=slot, previous=conditions.previous_check_for(checks, slots, slot),
+                check_id=_check_id(session_id, slot["slot_id"]),
+                session_id=session_id or None, date_end=date_end))
+        except conditions.ConditionError as exc:            # pragma: no cover - defensive
+            raise ReviewError(f"condition check rejected ({slot.get('slot_id')}): {exc}") from exc
+    return rows
+
+
+def _crossing_distance(slot, check):
+    """How far this observation sits past the user's line, relative to the line.
+
+    Positive means crossed; a ``near_line`` reading is negative and approaches
+    zero as it approaches the line. Sorting descending therefore ranks the
+    deepest breach first and, among the not-yet-crossed, the nearest — one
+    ordering over both states, so a `met` reading is never out-ranked by a
+    `near_line` one."""
+    threshold = slot.get("threshold") or {}
+    line = card_renderer._finite_number(threshold.get("value"))
+    value = card_renderer._finite_number((check.get("observation") or {}).get("value"))
+    if line is None or value is None:
+        return 0.0
+    past = (line - value) if threshold.get("direction") == "below" else (value - line)
+    scale = abs(line) or abs(card_renderer._finite_number(slot.get("near_line")) or 0) or 1.0
+    return past / scale
+
+
+def _condition_evidence(check, slot):
+    """The one evidence string a question stem may be grounded in: what was found,
+    where, and as of when. Never a verdict — the verdict is the engine's field."""
+    observation = check.get("observation") or {}
+    if "value" in observation:
+        found = card_renderer.condition_value(observation["value"],
+                                              (slot.get("threshold") or {}).get("unit"))
+    else:
+        found = str(observation.get("summary") or "").strip()
+    source, as_of = observation.get("source"), observation.get("as_of")
+    if source and as_of:
+        return f"{found} ({source}, as of {as_of})"
+    return found
+
+
+def _condition_question_id(prefix, session_id, line_id):
+    digest = hashlib.sha256(f"{prefix}|{session_id}|{line_id}".encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{digest}"
+
+
+def _options_from_copy(language, register, values):
+    """Engine-owned option rows from one copy register. Same shape every other
+    kind emits (`value` / `label` / `description`), so a `plain_text` host
+    renders them without a special case — and a missing key surfaces as an
+    empty label rather than an internal enum value on the user's screen (#262)."""
+    copy = card_renderer.load_copy(language)
+    labels = copy.get(register) or {}
+    descriptions = copy.get(register + "_descriptions") or {}
+    return [{"value": value, "label": labels.get(value, ""),
+             "description": descriptions.get(value, "")} for value in values]
+
+
+def _condition_crossing_options(condition_kind, language):
+    values = (("yes", "no") if condition_kind == "event" else ("confirmed", "overridden"))
+    return _options_from_copy(language, "condition_crossing_choices", values + ("skip",))
+
+
+def _condition_basis_options(language):
+    return _options_from_copy(language, "condition_basis_choices",
+                              ("revise_threshold", "revise_metric", "keep", "skip"))
+
+
+def _condition_questions(built_checks, slots, session_id, language, rejected):
+    """The at-most-one crossing question and every basis question this review earns.
+
+    A crossing is emitted only from a lookup that succeeded — the engine's own
+    comparison came back ``met``/``near_line``, or an event check carried the
+    agent's alert. The stem is agent-authored (``question_opportunity``), which
+    is the point: a crossing needs one sentence for acting and one for not, and
+    a frozen template can only ever write one of them.
+
+    `rejected` collects the crossings that lost the budget, so the plan states
+    the deferral rather than the queue quietly shrinking."""
+    by_id = {row["slot_id"]: row for row in slots if isinstance(row, dict) and row.get("slot_id")}
+    crossings, basis = [], []
+    for check in built_checks:
+        slot = by_id.get(check.get("slot_id"))
+        if slot is None or check.get("lookup_status") != "ok":
+            continue
+        line_id = conditions.slot_line_id(slot)
+        condition_kind = slot.get("kind") or "numeric"
+        evidence = _condition_evidence(check, slot)
+        if check.get("basis_alert"):
+            note = check["basis_alert"]["note"]
+            row = {"id": _condition_question_id("condition_basis", session_id, line_id),
+                   "kind": "condition_basis", "required": True,
+                   "question": _condition_basis_stem(slot, note, language),
+                   "options": _condition_basis_options(language),
+                   "slot_id": slot["slot_id"], "line_id": line_id,
+                   "condition_kind": condition_kind, "criterion": slot.get("criterion"),
+                   "evidence": evidence, "basis_note": note,
+                   "_priority": 1, "_importance": 0.5, "_tie": 4}
+            row["question_opportunity"] = question_surface.build_opportunity(row, language)
+            basis.append(row)
+        alerted = bool(check.get("event_alert"))
+        if not alerted and check.get("engine_verdict") not in ("met", "near_line"):
+            continue
+        row = {"id": _condition_question_id("condition_crossing", session_id, line_id),
+               "kind": "condition_crossing", "required": True,
+               "question": _condition_crossing_stem(slot, check, evidence, language),
+               "options": _condition_crossing_options(condition_kind, language),
+               "slot_id": slot["slot_id"], "line_id": line_id,
+               "condition_kind": condition_kind, "criterion": slot.get("criterion"),
+               "evidence": evidence,
+               # An alerted event outranks every numeric reading: the engine can
+               # re-derive a number next week, but an occurrence the user never
+               # confirmed decays into "nobody said".
+               "_priority": 1, "_tie": 0,
+               "_crossing_rank": (0 if alerted else 1, -_crossing_distance(slot, check),
+                                  str(slot["slot_id"]))}
+        row["question_opportunity"] = question_surface.build_opportunity(row, language)
+        crossings.append(row)
+    crossings.sort(key=lambda row: row["_crossing_rank"])
+    for row in crossings:
+        row.pop("_crossing_rank", None)
+        row["_importance"] = 1.0
+    for row in crossings[CONDITION_CROSSING_LIMIT:]:
+        rejected.append(_rejection(row.get("id"), "condition_crossing", "condition_crossing_limit"))
+    return crossings[:CONDITION_CROSSING_LIMIT] + basis
+
+
+def _condition_crossing_stem(slot, check, evidence, language):
+    """The engine's fallback stem. Deliberately the flattest possible sentence:
+    it states the criterion, what came back, and asks. The two-sided version is
+    the agent's to author against `question_opportunity` — this one exists so an
+    unauthored surface is still answerable, never so it reads well."""
+    criterion = slot.get("criterion") or ""
+    copy = card_renderer.load_copy(language).get("condition_crossing") or {}
+    key = "event" if (slot.get("kind") or "numeric") == "event" else (
+        "near_line" if check.get("engine_verdict") == "near_line" else "met")
+    template = copy.get(key) or "{criterion} — {evidence}"
+    return card_renderer._format_copy(template, criterion=criterion, evidence=evidence)
+
+
+def _condition_basis_stem(slot, note, language):
+    copy = card_renderer.load_copy(language).get("condition_basis") or {}
+    template = copy.get("stem") or "{criterion} — {note}"
+    return card_renderer._format_copy(template, criterion=slot.get("criterion") or "", note=note)
+
+
 def _due_question(row, language, card=None):
     """One 30/60/90 checkpoint question that replays the user's own recorded reason.
 
@@ -1452,7 +1803,8 @@ def _rejection(id_, kind, reason, cycle_id=None):
 
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
-                    route=None, missing_thesis_positions=None, tier=None):
+                    route=None, missing_thesis_positions=None, tier=None,
+                    condition_questions=None):
     """Return (queue, selection_report). The report states, plan-internally, how
     the route's density band was filled: the eligible/selected counts, why the
     queue fell short of the route minimum, and every candidate rejected with its
@@ -1597,6 +1949,11 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
         initial_candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
         candidates.extend(initial_candidates[:INITIAL_THESIS_LIMIT])
         initial_overflow = initial_candidates[INITIAL_THESIS_LIMIT:]
+    # #412: a crossing or a doubted basis is evidence the user themselves asked
+    # to be watched for, so it enters the ranking beside a rule breach rather
+    # than behind the motive questions. Built by _build_plan (it needs the
+    # store), budgeted there too — this only ranks what arrives.
+    candidates.extend(condition_questions or [])
     breach_questions = _rule_breach_questions(problem_stats, rule_history, language)
     candidates.extend(breach_questions[:RULE_BREACH_LIMIT])
     for row in breach_questions[RULE_BREACH_LIMIT:]:
@@ -2027,7 +2384,8 @@ def _price_feed_status(card):
 
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None,
-                due_revisits=None, exit_backlog=None, problem_stats=None):
+                due_revisits=None, exit_backlog=None, problem_stats=None,
+                submitted_condition_checks=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
     session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
@@ -2083,13 +2441,26 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # #306: a thin first file is an opening structural check, not a full
         # behavioral review — send the agent to the structural flow.
         flow_path = "flows/first-review-structural.md"
+    # #412/#434: what this review asks the agent to look up, bounded, plus the
+    # results the agent already submitted (the second `prepare` pass). Snapshot
+    # reviews are excluded for the same reason they queue no questions: a
+    # position snapshot carries no review history to reconcile against.
+    condition_due, condition_summary = ([], None) if route == "snapshot_review" else _condition_due(root)
+    condition_checks, condition_questions, condition_deferred = [], [], []
+    if route != "snapshot_review" and submitted_condition_checks:
+        condition_slots, prior_checks, _unreadable = _condition_store(root)
+        condition_checks = _build_condition_checks(
+            condition_slots, prior_checks, submitted_condition_checks, session_id,
+            state.get("date_end"))
+        condition_questions = _condition_questions(
+            condition_checks, condition_slots, session_id, language, condition_deferred)
     question_queue, question_selection = _question_queue(
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
-        missing_thesis_positions=missing, tier=review_tier["tier"])
+        missing_thesis_positions=missing, tier=review_tier["tier"],
+        condition_questions=condition_questions)
+    question_selection["rejected"].extend(condition_deferred)
     candidate_rules = _candidate_rules(card, state, language)
-    condition_slots, slots_unreadable = conditions.load_slots(
-        os.path.join(root, "conditions.jsonl"))
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -2106,17 +2477,21 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "ledger_ingest": ledger_ingest,
                   "price_feed": _price_feed_status(card)},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
-                           # #412: conditions the engine cannot compute, read back
-                           # so the user sees what they committed to. The record is
-                           # the product — a slot nobody reads back is a promise
-                           # made into a file. Per-period adjudication is the check
-                           # flow's job and is not built yet, so these arrive as
-                           # standing facts, never as verdicts.
-                           "condition_slots": condition_slots,
-                           # Present only when the file lost rows: corruption must
-                           # not read as a condition the user never wrote.
-                           **({"condition_slots_unreadable": slots_unreadable}
-                              if slots_unreadable else {}),
+                           # #412/#434: the conditions the engine cannot compute,
+                           # as a bounded lookup request rather than the whole
+                           # store. Each entry is the line's live row plus what
+                           # its last check found; the summary beside it states
+                           # the total, so nobody can mistake this list for the
+                           # complete record. Look each one up per its frozen
+                           # query and submit the results — the engine decides the
+                           # verdict, never the prose (references/condition-slots.md).
+                           "condition_slots_due": condition_due,
+                           "condition_slots_summary": condition_summary,
+                           # The results already submitted on this pass, validated
+                           # into durable rows. Present only on the second prepare;
+                           # a crossing question below was posed against these.
+                           **({"condition_checks": condition_checks}
+                              if condition_checks else {}),
                            "review_progress": {
                                "completed_reviews_before_start": completed_reviews,
                                "returning": completed_reviews > 0,
@@ -2236,6 +2611,18 @@ def cmd_prepare(args):
             supplied_prices = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
             raise ReviewError(f"price feed rejected: {exc}") from exc
+    # #412: the results of this period's condition lookups, submitted the same
+    # way prices are — the plan publishes what is due, the agent runs each
+    # frozen query, and this second pass is what lets a crossing be posed as a
+    # question instead of only recorded. Parsed here, before any engine work,
+    # so a malformed envelope is an input error the agent can fix and retry.
+    submitted_checks = []
+    if getattr(args, "condition_checks", None):
+        if route == "snapshot_review":
+            raise ReviewError("--condition-checks applies to a review with history; a position "
+                              "snapshot has no standing conditions to check")
+        submitted_checks = _condition_check_envelopes(
+            _load_json(args.condition_checks, "condition checks"), "input")
     if route == "snapshot_review" and not args.snapshot_json and not (args.card_json and args.state_json):
         raise ReviewError("snapshot_review requires --snapshot-json")
     paths = ([args.snapshot_json] if args.snapshot_json else
@@ -2279,7 +2666,8 @@ def cmd_prepare(args):
         engine_meta = "prepared artifacts"
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
                                nonce=args.session_nonce or "", prices=supplied_prices,
-                               cash=getattr(args, "cash", None))
+                               cash=getattr(args, "cash", None),
+                               condition_checks=submitted_checks)
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
@@ -2316,7 +2704,8 @@ def cmd_prepare(args):
                        args.session_nonce or "", persist,
                        recent_exits=recent_exits, ledger_ingest=ledger_ingest,
                        due_revisits=due_revisits,
-                       exit_backlog=exit_backlog, problem_stats=problem_stats)
+                       exit_backlog=exit_backlog, problem_stats=problem_stats,
+                       submitted_condition_checks=submitted_checks)
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
         _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
@@ -2331,6 +2720,19 @@ def cmd_prepare(args):
         # discover on their own; without this handoff they report "pending session
         # not found" against the default root.
         next_action += f"; test drive is isolated — pass --root {root} to every later command"
+    due = ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])
+    if due and not submitted_checks:
+        # #412: the same recoverable-gap posture as the price request. A review
+        # that never runs the lookups still finalizes — every due slot is
+        # recorded as not_checked — but the crossing it might have caught is
+        # never asked about, so say what is outstanding at the point the agent
+        # decides what to do next.
+        next_action = (f"{len(due)} standing condition(s) are due: run each frozen "
+                       "state_snapshot.condition_slots_due[].query, transcribe the results into "
+                       "the envelope in references/condition-slots.md, and rerun prepare with "
+                       "--condition-checks <path>. Never assert a verdict — the engine performs "
+                       "the comparison and the user answers an event; otherwise continue: "
+                       + next_action)
     price_status = ((plan.get("input") or {}).get("price_feed") or {})
     if price_status.get("request"):
         # #289: a host that cannot retrieve prices is a recoverable input gap,
@@ -2723,6 +3125,191 @@ def _build_initial_thesis_events(plan, answers, amap=None):
     return events
 
 
+_REVISION_KEYS = frozenset({"of_line_id", "condition"})
+_CONDITION_REVISE_CHOICES = ("revise_threshold", "revise_metric")
+
+
+def _condition_answers(plan, answers, amap):
+    """What the user said about this review's condition questions, keyed by line.
+
+    Returns ``(responses, revise_lines, crossed_lines)``:
+
+    - ``responses`` are the extra check fields the answer contributes, folded
+      into the envelope before ``build_check`` runs so one row carries the
+      evidence, the engine's comparison and the user's word together.
+    - ``revise_lines`` maps a line that answered `revise_*` to its question, and
+      ``crossed_lines`` is every line that answered a crossing question — the
+      two guards below are the only readers.
+
+    A `skip` records nothing at all. It is the honest shape of "the question was
+    posed and not answered": the check row still lands with the engine's own
+    verdict, and nothing pretends the user weighed in."""
+    responses, revise_lines, crossed_lines = {}, {}, set()
+    date_end = (plan.get("engine_state") or {}).get("date_end")
+    for question in plan.get("question_queue") or []:
+        kind = question.get("kind")
+        if kind not in ("condition_crossing", "condition_basis"):
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        offered = {option.get("value") for option in question.get("options") or []}
+        valid = (CONDITION_BASIS_CHOICES if kind == "condition_basis" else
+                 (CONDITION_CROSSING_EVENT_CHOICES if question.get("condition_kind") == "event"
+                  else CONDITION_CROSSING_NUMERIC_CHOICES))
+        if choice not in valid or choice not in offered:
+            raise ReviewError(f"unsupported condition decision: {choice}")
+        if answer.get("evidence_delta") is not None:
+            raise ReviewError(f"{question['id']}: evidence_delta is not valid for a condition answer")
+        line_id = question.get("line_id")
+        if choice == "skip":
+            continue
+        if kind == "condition_crossing":
+            crossed_lines.add(line_id)
+            response = {"answer": choice, "answered_at": date_end}
+            note = _clean_note(question["id"], answer, "a condition crossing")
+            if note:
+                response["note"] = note
+            responses.setdefault(line_id, {})["user_response"] = response
+            continue
+        if choice == "keep":
+            responses.setdefault(line_id, {})["basis_resolution"] = "kept"
+            continue
+        revise_lines[line_id] = question
+        responses.setdefault(line_id, {})["basis_resolution"] = "revised"
+    return responses, revise_lines, crossed_lines
+
+
+def _condition_revisions(plan, answers, revise_lines, crossed_lines, slots, session_id):
+    """Turn `revise_threshold`/`revise_metric` into new slot rows on the same lines.
+
+    A re-stated criterion is a new row, never an edit: the old row is a fact
+    about what the user meant when they wrote it, and every check already
+    recorded points at it. ``build_slot(revises=...)`` carries the line forward
+    so the history is not restarted.
+
+    Three refusals, all firewalls rather than validation:
+
+    - The revision must answer a basis question that was actually asked, and a
+      basis question answered `revise_*` must carry one. Either half alone is a
+      contradiction the engine names instead of resolving.
+    - One change per line per session. A line that also answered a crossing this
+      review has already been acted on; revising it in the same breath means the
+      answer the user just gave was about a criterion that no longer exists.
+      Same shape as #416's muted-then-revised rule guard.
+    - The line must be live. A revision of something not in the record would
+      create a second root rather than continue a line."""
+    raw = answers.get("condition_revision")
+    rows = []
+    if raw is None:
+        if revise_lines:
+            question = next(iter(revise_lines.values()))
+            raise ReviewError(
+                f"{question['id']}: a revise answer requires answers.condition_revision carrying "
+                "the re-stated condition — otherwise the user asked for a change that was never made")
+        return rows
+    submitted = raw if isinstance(raw, list) else [raw]
+    seen = set()
+    for index, entry in enumerate(submitted):
+        label = f"answers.condition_revision[{index}]"
+        if not isinstance(entry, dict):
+            raise ReviewError(f"{label} must be an object")
+        unknown = set(entry) - _REVISION_KEYS
+        if unknown:
+            raise ReviewError(f"{label} has unknown fields: " + ", ".join(sorted(unknown)))
+        line_id = str(entry.get("of_line_id") or "").strip()
+        if not line_id:
+            raise ReviewError(f"{label} requires of_line_id")
+        if line_id in seen:
+            raise ReviewError(f"{label}: one change per condition per review")
+        seen.add(line_id)
+        if line_id not in revise_lines:
+            raise ReviewError(
+                f"{label}: no condition question this review asked to re-state {line_id!r}. A "
+                "condition is re-stated because its basis was questioned, never on its own")
+        if line_id in crossed_lines:
+            raise ReviewError(
+                f"{label}: condition {line_id!r} was also answered as a crossing this review — "
+                "the answer you just gave is about the criterion as it stands, so replacing that "
+                "criterion in the same review would leave the answer pointing at nothing. "
+                "Re-state it next review, or answer the crossing without a replacement")
+        parent = conditions.latest_by_line(slots).get(line_id)
+        if parent is None:
+            raise ReviewError(f"{label}: {line_id!r} is not a live condition in this record")
+        try:
+            rows.append(conditions.build_slot(
+                entry.get("condition"),
+                slot_id=f"slot-{session_id.split('__')[-1]}-r{index}",
+                created=(plan.get("engine_state") or {}).get("date_end"),
+                session_id=session_id or None, revises=parent))
+        except conditions.ConditionError as exc:
+            raise ReviewError(f"condition revision rejected ({line_id}): {exc}") from exc
+    missing = sorted(set(revise_lines) - seen)
+    if missing:
+        raise ReviewError(
+            f"{revise_lines[missing[0]]['id']}: a revise answer requires a replacement condition "
+            f"for {missing[0]!r}")
+    return rows
+
+
+def _build_condition_records(plan, answers, amap):
+    """``(check_rows, revision_rows)`` — everything this review learned about the
+    user's standing conditions, ready for the append-only stores.
+
+    Order matters and is deliberate: the answers are resolved first so a check
+    row is written *complete*, then the missing due slots are synthesized so the
+    period has no silent gaps, then the revisions are built against the slots as
+    they stood when the checks were taken."""
+    root = plan.get("state_root")
+    if not root or not os.path.isdir(root) or plan.get("route") == "snapshot_review":
+        return [], []
+    session_id = str(plan.get("session_id") or "")
+    date_end = (plan.get("engine_state") or {}).get("date_end")
+    slots, checks, _unreadable = _condition_store(root)
+    responses, revise_lines, crossed_lines = _condition_answers(plan, answers, amap)
+    envelopes = _condition_check_envelopes(answers, "answers")
+    built = _build_condition_checks(slots, checks, envelopes, session_id, date_end, responses)
+    _refuse_check_drift(plan, built)
+    due = ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])
+    built += _synthesized_not_checked(slots, checks, due, built, session_id, date_end)
+    revisions = _condition_revisions(plan, answers, revise_lines, crossed_lines, slots, session_id)
+    return built, revisions
+
+
+# What the user's own answer is allowed to move: their response, how the basis
+# question ended, and the two verdict-of-record fields those derive. Everything
+# else — the observation, `engine_verdict`, the alerts — is the evidence the
+# question was posed against and must come back identical.
+_ANSWER_ONLY_CHECK_FIELDS = ("user_response", "basis_resolution",
+                             "final_verdict", "verdict_source")
+
+
+def _refuse_check_drift(plan, built):
+    """The question was posed against a number; the record must be that number.
+
+    The plan freezes the check rows the crossing question was built from. If the
+    envelope resubmitted with the answers produces a different row, the user
+    answered about one reading and the file would store another — which is
+    exactly the class of silent divergence the frozen question surfaces exist to
+    prevent. The user's own contribution is excluded from the comparison,
+    because adding it is the entire point of the second submission."""
+    frozen = {row.get("slot_id"): row
+              for row in ((plan.get("state_snapshot") or {}).get("condition_checks") or [])}
+    if not frozen:
+        return
+
+    def _evidence(row):
+        return session.canonical({key: value for key, value in row.items()
+                                  if key not in _ANSWER_ONLY_CHECK_FIELDS})
+
+    for row in built:
+        prior = frozen.get(row.get("slot_id"))
+        if prior is not None and _evidence(prior) != _evidence(row):
+            raise ReviewError(
+                f"condition check for {row.get('slot_id')!r} changed between the question and the "
+                "answer: the user was asked about one reading and this would record another. "
+                "Rerun prepare with the corrected envelope and ask again")
+
+
 def _refuse_revision_of_a_muted_line(plan, expected_revision):
     """A rule silenced this session cannot also be replaced this session (#416)."""
     root = plan.get("state_root")
@@ -2875,6 +3462,7 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     headline_motive_events = _build_headline_motive_events(plan, answers, amap)
     exit_consistency_events = _build_exit_consistency_events(plan, answers, amap)
     initial_thesis_events = _build_initial_thesis_events(plan, answers, amap)
+    condition_checks, condition_revisions = _build_condition_records(plan, answers, amap)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every required honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the plan does not require —
@@ -2924,6 +3512,14 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     # first-review-only, and only when at least one entry motive was classified.
     if initial_thesis_events:
         bundle["initial_thesis_events"] = initial_thesis_events
+    # #412: this period's condition results, and any criterion the user re-stated
+    # because its basis was questioned. Absent-when-empty for the same reason —
+    # a session committed before the check flow existed must re-draft to the
+    # identical canonical bundle or its documented-safe finalize retry fails.
+    if condition_checks:
+        bundle["condition_checks"] = condition_checks
+    if condition_revisions:
+        bundle["condition_revisions"] = condition_revisions
     return bundle
 
 
@@ -3398,6 +3994,10 @@ def build_parser():
     prepare.add_argument("--prices",
                          help="agent-supplied price envelope (references/price-feed.md); "
                               "use when the host cannot retrieve prices itself")
+    prepare.add_argument("--condition-checks", dest="condition_checks",
+                         help="this period's results for state_snapshot.condition_slots_due "
+                              "(references/condition-slots.md); rerun prepare with it so a "
+                              "crossing can be asked about rather than only recorded")
     prepare.add_argument("--snapshot-json",
                          help="normalized position-snapshot facts; valid only for snapshot_review")
     prepare.add_argument("--card-json", help="precomputed engine card (adapter/testing)")

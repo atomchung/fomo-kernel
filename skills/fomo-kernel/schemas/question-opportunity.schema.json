@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "intent": {
-      "enum": ["classify_losing_position_add", "classify_headline_motive", "classify_initial_thesis", "classify_exit_consistency"]
+      "enum": ["classify_losing_position_add", "classify_headline_motive", "classify_initial_thesis", "classify_exit_consistency", "adjudicate_condition_crossing", "resolve_condition_basis"]
     },
     "context": {
       "type": "object",
@@ -32,6 +32,17 @@
           "properties": {
             "id": {"type": "string", "minLength": 1},
             "label": {"type": "string", "minLength": 1}
+          }
+        },
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["criterion"],
+          "description": "#412: the standing condition a condition_crossing or condition_basis question is about. No ticker and no dimension — a user-authored condition is not one of the engine's diagnostic axes, and grounding the stem in a position would invite it to argue about the position instead of the line.",
+          "properties": {
+            "criterion": {"type": "string", "minLength": 1, "description": "The user's own sentence, verbatim (#396)."},
+            "evidence": {"type": "string", "minLength": 1, "description": "What this period's lookup returned, with its source and as-of date. The engine's own rendering of the observation — never a verdict."},
+            "basis_note": {"type": "string", "minLength": 1, "description": "condition_basis only: why the measurement basis is believed to have changed."}
           }
         }
       }

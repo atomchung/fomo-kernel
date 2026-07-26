@@ -119,7 +119,57 @@
     "already_met": "這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。",
     "unmapped_no_threshold": "這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。",
     "unmapped_no_baseline": "這條記下來了，但背後那個數字查不到，所以現在還沒在盯。",
-    "unmapped_no_adjudicator": "這條記成一個是或否的判斷，由你來下，不是被量出來的。"
+    "unmapped_no_adjudicator": "這條記成一個是或否的判斷，由你來下，不是被量出來的。",
+    "event_watch_started": "這條是一個是或否的判斷：從現在起會幫你盯著，有動靜就來問你——最後怎麼認定還是你說了算。"
+  },
+  "condition_check": {
+    "then_now": "上次你承諾：「{rule}」——當時是 {then}，現在是 {now}。",
+    "then_now_no_baseline": "上次你承諾：「{rule}」——當時查不到數字；現在是 {now}。",
+    "then_now_event": "上次你承諾：「{rule}」——從那時開始盯。最新狀況：{now}。",
+    "verdict_met": "已經過線了。",
+    "verdict_near_line": "離線很近了。",
+    "verdict_not_met": "還沒到線。",
+    "verdict_unknown": "這期沒有結論。",
+    "fact": "{criterion}——{value}（{source}，資料日 {as_of}）。",
+    "fact_no_source": "{criterion}——{value}。",
+    "fact_looks_wrong": "上面哪個數字看起來不對就說一聲，可以重新確認它的算法。",
+    "blind": "{criterion}——這期沒查到，現在是盯不到的狀態。",
+    "blind_with_reason": "{criterion}——這期沒查到（{reason}），現在是盯不到的狀態。",
+    "summary": "這期 {total} 條裡查了 {checked} 條；還有 {deferred} 條沒查，下次會再排進來。"
+  },
+  "condition_crossing": {
+    "met": "你設的是：「{criterion}」。這期查到：{evidence}。這樣算跨過去了嗎？",
+    "near_line": "你設的是：「{criterion}」。這期查到：{evidence}——離線很近。這樣算跨過去了嗎？",
+    "event": "你設的是：「{criterion}」。這期查到：{evidence}。這件事發生了嗎？"
+  },
+  "condition_crossing_choices": {
+    "confirmed": "算，就當它跨過去了",
+    "overridden": "不算，別當它跨過去",
+    "yes": "有，發生了",
+    "no": "沒有，還沒發生",
+    "skip": "先放著"
+  },
+  "condition_crossing_choices_descriptions": {
+    "confirmed": "這個讀數成立，你寫的規矩就該生效。",
+    "overridden": "這個讀數量到的不是你原本的意思——說一下為什麼。",
+    "yes": "你在盯的那件事已經發生了。",
+    "no": "還沒發生，繼續盯。",
+    "skip": "先不回答；讀數本身還是會被記下來。"
+  },
+  "condition_basis": {
+    "stem": "你設的是：「{criterion}」。它在量的東西可能變了：{note}。這條要怎麼處理？"
+  },
+  "condition_basis_choices": {
+    "revise_threshold": "量的東西不變，把線挪一下",
+    "revise_metric": "改成量別的",
+    "keep": "維持原樣",
+    "skip": "先放著"
+  },
+  "condition_basis_choices_descriptions": {
+    "revise_threshold": "要量的還是同一個東西，只是數字該調。",
+    "revise_metric": "這個數字已經量不到你的意思了——把條件重寫一次。",
+    "keep": "這個變動不影響你原本在追的東西。",
+    "skip": "先不回答；條件維持原本寫的樣子。"
   },
   "patterns_panel": {
     "label": "一個模式，還沒下判斷（不用回答）",

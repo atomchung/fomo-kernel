@@ -283,17 +283,18 @@ def _problem_ledger(keys, with_rules):
 
 
 # (name, register(s) claimed, builder). `registers` names the top-level
-def _condition_state(verdict=None, reason=None):
+def _condition_state(verdict=None, reason=None, kind="numeric"):
     """#412: the engine's own read of a user-authored condition, on the card.
 
     No persona reaches this — a condition slot is created by a user writing
     their own rule, which no mock CSV can do — and it is exactly the branch that
-    must not go quiet: a line already crossed at commit time, or a condition
-    nobody could anchor, has to say so where the rule is printed."""
-    condition = {"slot_id": "corpus", "kind": "event" if reason == "no_adjudicator" else "numeric",
+    must not go quiet: a line already crossed at commit time, a condition nobody
+    could anchor, or a yes/no watch that has just started, has to say so where
+    the rule is printed."""
+    condition = {"slot_id": "corpus", "kind": kind,
                  "criterion": "sell if quarterly revenue growth drops under 30%",
                  "query": "what was the most recent quarterly revenue?",
-                 "tier": "researched" if verdict else "unmapped"}
+                 "tier": "unmapped" if reason else "researched"}
     if verdict:
         condition["baseline_verdict"] = verdict
     if reason:
@@ -305,14 +306,122 @@ def _condition_state(verdict=None, reason=None):
     return build
 
 
+# #412 second half. The per-period check lines live in the reconciliation
+# opener, and no persona reaches any of them for the same reason: every one
+# needs a standing condition, which only a user writing their own rule creates.
+_CHECK_CRITERION = "sell if quarterly revenue growth drops under 30%"
+_CHECK_SLOT = {
+    "slot_id": "corpus-slot", "kind": "numeric", "criterion": _CHECK_CRITERION,
+    "query": "what was the most recent quarterly revenue?", "tier": "researched",
+    "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0,
+    "baseline": {"value": 38.0, "as_of": "2026-05-20", "source": "results release"},
+}
+
+
+def _check_row(**over):
+    row = {"check_id": "corpus-check", "slot_id": "corpus-slot", "session_id": "corpus",
+           "date_end": "2026-08-26", "created": "2026-08-26", "lookup_status": "ok",
+           "observation": {"value": 36.0, "as_of": "2026-08-20", "source": "10-Q"},
+           "information_state": "new_period", "engine_verdict": "not_met",
+           "final_verdict": "not_met", "verdict_source": "engine"}
+    row.update(over)
+    return row
+
+
+def _condition_check(prior=None, checks=(), summary=None, slots=None):
+    """One reconciliation-opener scene: the then/now pair, the per-condition
+    readings, and the "what did this review not get to" sentence.
+
+    `condition_slots_due` is what the fact and blind lines resolve a check's
+    criterion through — the plan's own bounded roster — so a scene that omits
+    it renders nothing, which is the visible-diff staleness contract this
+    corpus relies on."""
+    def build(language):
+        snapshot = {"condition_slots_due": list(slots if slots is not None else [_CHECK_SLOT])}
+        if prior is not None:
+            snapshot["prior_commitment"] = prior
+        if summary is not None:
+            snapshot["condition_slots_summary"] = summary
+        return _bundle(language, plan={"state_snapshot": snapshot},
+                       condition_checks=[dict(row) for row in checks])
+    return build
+
+
+def _condition_then_now(kind="numeric", **check_over):
+    prior = {"rule": _CHECK_CRITERION, "condition": dict(_CHECK_SLOT, kind=kind)}
+    if kind == "event":
+        prior["condition"] = {key: value for key, value in prior["condition"].items()
+                              if key not in ("threshold", "near_line", "baseline")}
+    return _condition_check(prior=prior, checks=[_check_row(**check_over)])
+
+
 # `copy/*.json` keys this scene is responsible for lighting; the coverage
 # report below reads them.
 SCENES = (
     ("condition_state/already_met", ("condition_state",), _condition_state(verdict="met")),
     ("condition_state/no_threshold", (), _condition_state(reason="no_threshold")),
     ("condition_state/no_baseline", (), _condition_state(reason="no_baseline")),
-    ("condition_state/no_adjudicator", (), _condition_state(reason="no_adjudicator")),
+    # A pre-check-flow row on disk. It is never rewritten, so its sentence has
+    # to keep resolving long after new event slots stopped being written this way.
+    ("condition_state/no_adjudicator", (),
+     _condition_state(reason="no_adjudicator", kind="event")),
+    ("condition_state/event_watch_started", (), _condition_state(kind="event")),
     ("condition_state/silent_when_watched", (), _condition_state(verdict="not_met")),
+    # The per-period check, on the card. Each verdict wording is its own scene
+    # because the renderer prints exactly one of them per then/now pair.
+    ("condition_check/then_now_not_met", ("condition_check",), _condition_then_now()),
+    ("condition_check/then_now_met", (),
+     _condition_then_now(observation={"value": 21.0, "as_of": "2026-08-20", "source": "10-Q"},
+                         engine_verdict="met", final_verdict="met")),
+    ("condition_check/then_now_near_line", (),
+     _condition_then_now(observation={"value": 31.0, "as_of": "2026-08-20", "source": "10-Q"},
+                         engine_verdict="near_line", final_verdict="near_line")),
+    ("condition_check/then_now_unknown", (),
+     _condition_then_now(observation={"value": 36.0, "as_of": "2026-08-20", "source": "10-Q"},
+                         engine_verdict=None, final_verdict="unknown")),
+    ("condition_check/then_now_event", (),
+     _condition_then_now(kind="event",
+                         observation={"summary": "the CEO is still in role", "as_of": "2026-08-20",
+                                      "source": "8-K"},
+                         engine_verdict=None, final_verdict="unknown")),
+    ("condition_check/then_now_no_baseline", (),
+     _condition_check(prior={"rule": _CHECK_CRITERION,
+                             "condition": {key: value for key, value in _CHECK_SLOT.items()
+                                           if key != "baseline"}},
+                      checks=[_check_row()])),
+    # A condition-anchored commitment whose line nobody checked keeps the bare
+    # statement rather than borrowing the metric branch's shape (#412).
+    ("condition_check/then_now_absent_falls_back", (),
+     _condition_check(prior={"rule": _CHECK_CRITERION, "condition": dict(_CHECK_SLOT)},
+                      checks=[_check_row(lookup_status="failed", observation=None,
+                                         information_state=None, engine_verdict=None,
+                                         final_verdict="unknown",
+                                         reason="the quarter has not been reported")])),
+    ("condition_check/fact_and_looks_wrong", (), _condition_check(checks=[_check_row()])),
+    ("condition_check/fact_without_a_source", (),
+     _condition_check(checks=[_check_row(observation={"value": 36.0, "as_of": "2026-08-20"})])),
+    ("condition_check/blind_with_reason", (),
+     _condition_check(checks=[_check_row(lookup_status="failed", observation=None,
+                                         information_state=None, engine_verdict=None,
+                                         final_verdict="unknown",
+                                         reason="the publisher withdrew the release")])),
+    ("condition_check/blind_without_a_reason", (),
+     _condition_check(checks=[_check_row(lookup_status="failed", observation=None,
+                                         information_state=None, engine_verdict=None,
+                                         final_verdict="unknown")])),
+    ("condition_check/summary_when_something_was_missed", (),
+     _condition_check(checks=[_check_row()],
+                      summary={"lines_total": 4, "due_now": 4, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # Silence is a branch too: a review that checked everything says nothing,
+    # and an unchecked period that never listed the condition prints no facts.
+    ("condition_check/silent_when_everything_was_checked", (),
+     _condition_check(checks=[_check_row()],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    ("condition_check/silent_when_nothing_was_checked", (), _condition_check()),
     *[(f"account_gate/{status}", ("account_gate",), _account_gate(status))
       for status in GATE_STATUSES + ("default",)],
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))

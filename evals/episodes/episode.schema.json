@@ -126,7 +126,8 @@
           "privacy_trace",
           "surface_hygiene",
           "locale_purity",
-          "condition_integrity"
+          "condition_integrity",
+          "condition_check_integrity"
         ]
       },
       "description": "The mechanical validators that bear on this episode. Every one is an invariant — none compares an answer against the wording the product ships today. A declared check with nothing to inspect fails the episode. An empty list is the honest `unmapped` state and requires blocked_on."
@@ -214,7 +215,15 @@
           },
           "condition": {
             "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
-            "description": "#412: the condition envelope this answer would have sent the engine. Not a surface the user reads — condition_integrity grades it against the engine's own validator, and against what the prose claims about it."
+            "description": "#412: the condition envelope this answer would have sent the engine. Not a surface the user reads — condition_integrity grades it against the engine's own validator, and against what the prose claims about it. condition_check_integrity also reads it, as the condition its result is for."
+          },
+          "condition_check": {
+            "$ref": "https://fomo-kernel.local/schemas/condition-check.schema.json#/properties/input",
+            "description": "#412 second half: this period's result for the condition above. Graded by condition_check_integrity against the engine's own build_check, against every figure the prose states, and — when the lookup failed — against whether the answer says so. Requires `condition` on the same answer: a result is always a result for something."
+          },
+          "previous_check": {
+            "type": "object",
+            "description": "An earlier stored check row on the same line, when the episode is about how this period's result compares to it. Passed to build_check as the reference that decides new_period / restated / no_new_data."
           }
         }
       }

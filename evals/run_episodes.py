@@ -31,6 +31,11 @@ What the mechanical half proves, per answer under test:
                         surface (#262: raw option values and metric keys)
 ``locale_purity``       an ``en`` surface carries no CJK; a non-``en`` surface
                         carries no untranslated English metric label (#262)
+``condition_check_integrity``
+                        a per-period condition result survives the engine's own
+                        check validator, every figure in the prose traces to
+                        the record, and a lookup that failed is spoken as a
+                        lookup that failed (#412 second half)
 
 Every check is an **invariant** — something the product must never do. None of
 them compares an answer against the wording the product happens to ship today,
@@ -131,7 +136,8 @@ NOISE_KEYS = {"state_root", "engine_meta", "path", "fingerprint", "session_id",
 HEX_TOKEN = re.compile(r"^[0-9a-f]{12,}$")
 
 CHECK_NAMES = ("number_provenance", "honesty_coverage", "privacy_trace",
-               "surface_hygiene", "locale_purity", "condition_integrity")
+               "surface_hygiene", "locale_purity", "condition_integrity",
+               "condition_check_integrity")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
 
 # ── The question-consumer gate (#429) ────────────────────────────────────────
@@ -165,16 +171,28 @@ QUESTION_CONSUMERS = {
     "rule_breach": ("rule_breach_decisions", ("card", "state:problem_stats")),
     "initial_thesis": ("initial_thesis_events", ()),
     "exit_consistency": ("exit_consistency_events", ()),
+    # #412: a crossing answer becomes the `user_response` on the check row it
+    # was asked about (one row, complete story), and the next review reads the
+    # whole line back through the bounded due list. Both halves are verifiable:
+    # the renderer reads `condition_checks` for the then/now and the fact lines,
+    # and `condition_slots_due` is a real key in a prepared plan.
+    "condition_crossing": ("condition_checks", ("card", "state:condition_slots_due")),
+    # A basis answer either records `basis_resolution` on the same check row or
+    # writes a new slot row on the line — which is what the *next* review's due
+    # list carries forward, criterion and all.
+    "condition_basis": ("condition_checks", ("card", "state:condition_slots_due")),
 }
 # Kinds whose answer reaches nothing, each pinned to the issue that owns the
 # disposition. A ratchet, not an exemption: a kind that becomes wired must leave
 # this list, and a newly unwired kind cannot join it without an issue.
 KNOWN_UNWIRED = {"initial_thesis": "#429", "exit_consistency": "#429"}
 
-# Not an answer surface: the envelope is what the agent would send the engine,
-# graded by `condition_integrity` against the engine's own validator. An answer
-# carrying only this and nothing the user reads is still an empty answer.
-ANSWER_PAYLOAD_KEYS = ("condition",)
+# Not answer surfaces: these are what the agent would send the engine, graded by
+# `condition_integrity` / `condition_check_integrity` against the engine's own
+# validators. An answer carrying only these and nothing the user reads is still
+# an empty answer. `previous_check` is the episode's stated history — the
+# reference `build_check` classifies "new information" against.
+ANSWER_PAYLOAD_KEYS = ("condition", "condition_check", "previous_check")
 
 
 # ─────────────────────────── episode loading ────────────────────────────────
@@ -334,6 +352,36 @@ def load_bank(selected=None):
 
 # ────────────────────────────── engine facts ─────────────────────────────────
 
+def _seed_condition_state(episode, root, workdir):
+    """Give the fixture the standing condition an episode's own answers describe.
+
+    A ``condition_crossing`` question exists only when the user already
+    committed to a condition and this period's lookup came back — state no mock
+    CSV can produce, because a condition is something a person writes. Rather
+    than adding a second place to declare it, the seed is taken from the
+    episode's own answers: they are minimal pairs, so the condition and the
+    lookup are the same across them, and the one the answers are *about* is
+    exactly the one the engine should be asked to queue a question for.
+
+    Returns the ``--condition-checks`` argv, or ``[]`` when the episode is not
+    about a per-period check.
+    """
+    source = next((answer for answer in episode["answers"]
+                   if isinstance(answer.get("condition_check"), dict)
+                   and isinstance(answer.get("condition"), dict)), None)
+    if source is None:
+        return []
+    slot = conditions.build_slot(source["condition"], slot_id="slot-episode-0",
+                                 created="2026-07-01", session_id="episode")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "conditions.jsonl").write_text(
+        json.dumps(slot, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    path = workdir / "condition-checks.json"
+    path.write_text(json.dumps({"condition_checks": [
+        {"slot_id": slot["slot_id"], "check": source["condition_check"]}]}), encoding="utf-8")
+    return ["--condition-checks", str(path)]
+
+
 def prepare_fixture(episode, workdir):
     """Run the real engine offline over the episode's synthetic CSV.
 
@@ -351,10 +399,14 @@ def prepare_fixture(episode, workdir):
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in (str(stubs), env.get("PYTHONPATH")) if part)
     env["TRADE_COACH_HOME"] = str(root)
+    try:
+        condition_argv = _seed_condition_state(episode, root, workdir)
+    except conditions.ConditionError as exc:
+        return None, f"the engine refuses this episode's standing condition: {exc}"
     relative = pathlib.Path(fixture["trades"]).relative_to("skills/fomo-kernel")
     done = subprocess.run(
         [sys.executable, "engine/review.py", "prepare", str(relative),
-         "--language", fixture["locale"], "--route", fixture["route"]],
+         "--language", fixture["locale"], "--route", fixture["route"], *condition_argv],
         cwd=SKILL_DIR, capture_output=True, text=True, env=env)
     plans = list(root.glob(".pending/*/plan.json"))
     if done.returncode != 0 or len(plans) != 1:
@@ -695,6 +747,100 @@ def check_condition_integrity(answer, facts):
     return findings
 
 
+# What a `lookup_status: failed` answer must actually say. An allow-set rather
+# than a required phrase, for the same reason `honesty_coverage` is coverage and
+# not adequacy: the wording will keep changing (#395/#396), and a check that
+# only the current template satisfies is a behavior oracle. What cannot change
+# is that *some* word for "not checked" appears — its absence is the failure.
+BLIND_MARKERS = ("not check", "could not", "couldn't", "cannot", "can't", "unable",
+                 "no figure", "nothing", "blind", "unavailable", "did not find",
+                 "didn't find", "failed", "no reading", "not available",
+                 "沒查到", "查不到", "找不到", "無法", "盯不到", "沒有數字")
+# Phrases a failed lookup must never be narrated with. Deliberately tiny and
+# literal — this half is a floor, not a style gate.
+CHECKED_AND_FINE = ("still clear", "still above", "still below", "no change", "unchanged",
+                    "on track", "within range", "nothing to worry", "all good", "fine")
+
+
+def check_condition_check_integrity(answer, facts):
+    """#412's second half: the per-period check, graded against the engine.
+
+    ``condition_integrity`` settles the *commitment* moment — the criterion, the
+    query, the tier. This settles the moment after it, which fails differently:
+    the condition is already stored and watchable, and what can go wrong is the
+    reading. Three mechanical questions, every one derived from the engine
+    rather than restated here:
+
+    1. **Does the engine accept this result against this condition?** The slot
+       is built with ``build_slot`` and the check with ``build_check``, the two
+       gates that actually ship. A summary sent for a numeric line, a verdict
+       asserted on the envelope, an answer attached to a lookup that failed —
+       all refused here for the same reason they are refused in a live review.
+    2. **Does every number in the prose trace to the record?** The observation,
+       the threshold, and the baseline are what the answer may state. Both sides
+       are read with ``conditions.numbers_in`` — the engine's own number reader,
+       the same one on both sides — so a fiscal-quarter label is not mistaken
+       for a quantity and a criterion quoted verbatim never reddens the check
+       that demands it (the mistake ``condition_integrity`` made first).
+    3. **Is a failed lookup spoken as one?** A check that came back with nothing
+       and is narrated as checked-and-fine is the exact failure the whole tier
+       exists to prevent: the user walks away believing a tripwire is armed. The
+       positive half is an allow-set, never a required sentence.
+
+    Deliberately not paired with ``number_provenance``, for the same reason its
+    sibling is not: a researched figure legitimately comes from outside the
+    engine. Its discipline is the source + as-of anchor, and here also that the
+    figure the prose states is the figure the envelope carried.
+    """
+    envelope = answer.get("condition_check")
+    slot_input = answer.get("condition")
+    if not isinstance(envelope, dict):
+        return ["condition check: the answer carries no check envelope to grade"]
+    try:
+        slot = conditions.build_slot(slot_input, slot_id="episode-slot", created="2026-01-01")
+    except conditions.ConditionError as exc:
+        return [f"condition check: the engine refuses the condition this check is for — {exc}"]
+    try:
+        check = conditions.build_check(envelope, slot=slot, previous=answer.get("previous_check"),
+                                       check_id="episode-check", date_end="2026-08-26")
+    except conditions.ConditionError as exc:
+        return [f"condition check: the engine refuses this result — {exc}"]
+
+    findings = []
+    surfaces = _surfaces(answer)
+    stated = set()
+    for _role, text in surfaces:
+        stated |= conditions.numbers_in(DATE.sub(" ", text))
+    allowed = conditions.numbers_in(slot["criterion"])
+    if slot.get("threshold"):
+        allowed.add(abs(float(slot["threshold"]["value"])))
+    for source in ((slot.get("baseline") or {}), (check.get("observation") or {})):
+        if source.get("value") is not None:
+            allowed.add(float(source["value"]))
+    unsourced = sorted(value for value in stated if not _number_matches(value, allowed))
+    if unsourced:
+        findings.append(f"condition check: the answer states {unsourced}, which is neither the "
+                        "user's own line nor anything this period's lookup returned — an "
+                        "unsourced figure in a coaching answer reads exactly like a checked one")
+    if check["lookup_status"] == "ok" and "value" in (check.get("observation") or {}):
+        if not _number_matches(float(check["observation"]["value"]), stated):
+            findings.append(f"condition check: this period's reading "
+                            f"{check['observation']['value']} was looked up but never shown back "
+                            "— a basis the user cannot see is one they cannot correct")
+    if check["lookup_status"] == "failed":
+        prose = " ".join(text for _role, text in surfaces).casefold()
+        if not any(marker in prose for marker in BLIND_MARKERS):
+            findings.append("condition check: the lookup failed and no surface says so — an "
+                            "unchecked condition presented without that word is how a user comes "
+                            "to believe a tripwire is armed")
+        reassuring = sorted(phrase for phrase in CHECKED_AND_FINE if phrase in prose)
+        if reassuring:
+            findings.append(f"condition check: the lookup failed and the answer says {reassuring} "
+                            "— that is the verdict of a check that succeeded, told about one "
+                            "that did not")
+    return findings
+
+
 def run_check(name, episode, answer, facts):
     """Return ``(findings, looked_at_something)``.
 
@@ -717,6 +863,9 @@ def run_check(name, episode, answer, facts):
         return check_locale_purity(answer, facts), bool(_surfaces(answer))
     if name == "condition_integrity":
         return check_condition_integrity(answer, facts), answer.get("condition") is not None
+    if name == "condition_check_integrity":
+        return (check_condition_check_integrity(answer, facts),
+                answer.get("condition_check") is not None)
     raise AssertionError(f"unknown check {name}")
 
 

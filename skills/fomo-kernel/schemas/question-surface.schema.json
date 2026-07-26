@@ -83,7 +83,10 @@
         "context.ticker",
         "context.prior_thesis.text",
         "context.asked_because",
-        "context.headline_dimension.label"
+        "context.headline_dimension.label",
+        "context.condition.criterion",
+        "context.condition.evidence",
+        "context.condition.basis_note"
       ]
     }
   }

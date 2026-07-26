@@ -34,9 +34,19 @@ date came back with it:
 
 ===========================  ==============  ===================================
 threshold + observation      ``researched``  watchable; adjudicated with evidence
+``kind: "event"``            ``researched``  watchable; the user adjudicates
 no numeric threshold         ``unmapped``    nothing to compare against
 no baseline observation      ``unmapped``    nothing was found to anchor it
 ===========================  ==============  ===================================
+
+An event condition was ``unmapped`` / ``no_adjudicator`` for exactly as long as
+nothing asked the user for the verdict. The per-period check flow does ask
+(``review.py``'s ``condition_crossing`` question), so the honest tier is now
+``researched``: the agent brings evidence against the frozen query, the user
+answers yes or no, and that answer is the verdict of record. Rows written
+before the flow existed keep ``no_adjudicator`` on disk and still render — a
+tier is a fact about what was true when the row was written, and these rows are
+never rewritten.
 
 ``unmapped`` is a first-class state, not a failure: it records that the user
 committed to something real that we cannot check, which is honest and still
@@ -84,11 +94,14 @@ are an event stream and slot rows are identity — mixing the two shapes in one
 file would blur that distinction the moment a reader had to tell them apart by
 content instead of by which file they came from.
 
-Still not built here: the flow that calls any of this during a live review, and
-the surface that shows a check's verdict to the user. Those are ``review.py``
-wiring and land in the next PR of this cut; this module's own test suite is
-what keeps this cut from being the written-never-read debt
-``docs/development-guide.md`` section 3 warns about in the meantime.
+**Two alerts the engine cannot derive.** ``event_alert`` and ``basis_alert``
+are the only judgements a check envelope may carry, and both exist because the
+engine has no way to reach them: whether a body of evidence suggests an event
+occurred is not a comparison, and whether the *measurement* changed underneath
+a frozen threshold is not visible from the number alone. Each raises exactly
+one question and decides nothing (``review.py``'s ``condition_crossing`` and
+``condition_basis``) — false alarms are allowed by owner ruling, because the
+user resolves them and the alternative is silence about a broken basis.
 """
 
 import datetime as dt
@@ -110,6 +123,10 @@ INFORMATION_STATES = ("new_period", "restated", "no_new_data")
 VERDICT_SOURCES = ("engine", "user")
 NUMERIC_ANSWERS = ("confirmed", "overridden")
 EVENT_ANSWERS = ("yes", "no")
+# How a raised `basis_alert` ended. `kept` is the user declining the doubt;
+# `revised` records that a new slot row was written on this line in the same
+# session, so a check row is never silent about the question it raised.
+BASIS_RESOLUTIONS = ("kept", "revised")
 
 # The near-line margin is frozen when the condition is created. Left adjustable
 # it becomes a hidden lever over how often the user is asked (#412).
@@ -123,7 +140,8 @@ _FIELDS = frozenset({"kind", "criterion", "query", "threshold", "near_line", "ob
 # A check envelope's own field set. `revises`/`line_id` are deliberately absent
 # from _FIELDS above (a slot's input never carries them) and from this set too
 # (a check does not revise anything) — both are engine-assigned, never agent input.
-_CHECK_FIELDS = frozenset({"lookup_status", "reason", "observation", "user_response"})
+_CHECK_FIELDS = frozenset({"lookup_status", "reason", "observation", "user_response",
+                           "event_alert", "basis_alert", "basis_resolution"})
 
 # A standalone number: `Q3` and `FY2026` are labels, not quantities, so the digit
 # glued to a word never counts as the threshold leaking into the query. A bare
@@ -302,10 +320,13 @@ def build_slot(raw, *, slot_id, created, session_id=None, revises=None):
         slot["baseline"] = observation
     if kind == "event":
         # An event has no line to compare, so its verdict has to come from the
-        # person: the agent brings evidence, the user answers yes or no, and that
-        # answer is the verdict of record. The flow that asks is not built yet, so
-        # the honest state today is unmapped — never a guessed occurrence.
-        slot["tier"], slot["unmapped_reason"] = "unmapped", "no_adjudicator"
+        # person: the agent brings evidence against the frozen query, the user
+        # answers yes or no, and that answer is the verdict of record. That flow
+        # now exists, and the adjudicator it was missing is the user — so the
+        # honest tier is `researched`, not `unmapped`. What the engine still
+        # never does is guess the occurrence: an event check with no answer
+        # reports `unknown` (see build_check), never `met`.
+        slot["tier"] = "researched"
         return slot
     if threshold is None:
         slot["tier"], slot["unmapped_reason"] = "unmapped", "no_threshold"
@@ -483,6 +504,82 @@ def _user_response(raw, kind):
     return out
 
 
+_BASIS_ALERT_FIELDS = frozenset({"note", "source", "as_of"})
+
+
+def _event_alert(raw, kind, lookup_status):
+    """Whether this period's evidence suggests the event may have occurred.
+
+    The engine cannot derive it: an event has no line, so "the CEO resigned"
+    versus "the CEO was asked about resigning" is a reading of prose, not a
+    comparison. It raises the question and settles nothing — the user's answer
+    is still the verdict of record. A routine event check that found no sign
+    carries its ``observation.summary`` and no alert, and stays silent."""
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise ConditionError("check.event_alert must be true or false")
+    if not raw:
+        return False
+    if kind != "event":
+        raise ConditionError("check.event_alert is for an event condition; this slot is numeric — "
+                             "a numeric crossing is the engine's own comparison, never an assertion")
+    if lookup_status != "ok":
+        raise ConditionError("check.event_alert requires lookup_status ok: an alert with no "
+                             "observation behind it is an assertion, not evidence")
+    return True
+
+
+def _basis_alert(raw, lookup_status):
+    """The agent's belief that the *measurement* changed underneath a frozen
+    threshold — a restated segment, a changed fiscal calendar, a metric the
+    source stopped publishing the same way.
+
+    Not derivable either: the number can look perfectly ordinary while meaning
+    something else. False alarms are allowed by owner ruling (#412) — when in
+    doubt, raise; the user resolves it. Silence about a broken basis is the
+    expensive failure, because every later verdict inherits it."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConditionError("check.basis_alert must be an object")
+    unknown = set(raw) - _BASIS_ALERT_FIELDS
+    if unknown:
+        raise ConditionError("check.basis_alert has unknown fields: " + ", ".join(sorted(unknown)))
+    if lookup_status != "ok":
+        raise ConditionError("check.basis_alert requires lookup_status ok: nothing was read this "
+                             "period, so nothing about the basis was observed to have changed")
+    out = {"note": _text(raw.get("note"), "basis_alert.note", MAX_TEXT)}
+    source = str(raw.get("source") or "").strip()
+    if source:
+        if len(source) > MAX_SOURCE:
+            raise ConditionError(f"check.basis_alert.source is longer than {MAX_SOURCE} characters")
+        out["source"] = source
+    as_of = str(raw.get("as_of") or "").strip()
+    if as_of:
+        try:
+            dt.date.fromisoformat(as_of)
+        except ValueError:
+            raise ConditionError("check.basis_alert.as_of must be an ISO date (YYYY-MM-DD)")
+        out["as_of"] = as_of
+    return out
+
+
+def _basis_resolution(raw, basis_alert):
+    """How the raised basis question ended. Engine-supplied from the user's own
+    answer, so it may only appear on a check that actually raised one — a
+    resolution with no alert behind it would record an exchange that never
+    happened."""
+    if raw is None:
+        return None
+    if raw not in BASIS_RESOLUTIONS:
+        raise ConditionError("check.basis_resolution must be one of " + ", ".join(BASIS_RESOLUTIONS))
+    if basis_alert is None:
+        raise ConditionError("check.basis_resolution requires a basis_alert on the same check: "
+                             "there is no question for it to be the answer to")
+    return raw
+
+
 def _check_identity(observation):
     """The ``(effective_period, document, value-or-summary)`` triple #412
     names as what "new information" is judged against. ``effective_period``
@@ -565,6 +662,9 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
         observation = None
 
     user_response = _user_response(user_response_raw, kind)
+    event_alert = _event_alert(raw.get("event_alert"), kind, lookup_status)
+    basis_alert = _basis_alert(raw.get("basis_alert"), lookup_status)
+    basis_resolution = _basis_resolution(raw.get("basis_resolution"), basis_alert)
 
     check = {"check_id": _text(check_id, "check_id"), "slot_id": _text(slot["slot_id"], "slot_id"),
              "session_id": session_id or None, "date_end": _text(date_end, "date_end"),
@@ -573,6 +673,15 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
         check["reason"] = reason
     if observation is not None:
         check["observation"] = observation
+    if event_alert:
+        # Written only when it fired: a `false` is the ordinary state of every
+        # numeric row and every quiet event row, and storing it everywhere would
+        # make the absence of an alert look like a decision someone recorded.
+        check["event_alert"] = True
+    if basis_alert is not None:
+        check["basis_alert"] = basis_alert
+    if basis_resolution is not None:
+        check["basis_resolution"] = basis_resolution
     if user_response is not None:
         check["user_response"] = user_response
 
@@ -645,18 +754,41 @@ def load_checks(path):
     return checks, unreadable
 
 
-def previous_check_for(checks, slots, slot):
-    """The most recent ok-check anywhere on ``slot``'s line, in file order, or
-    None.
+def checks_for_line(checks, slots, slot):
+    """Every stored check anywhere on ``slot``'s line, in file order.
 
     Resolved via line identity (``slot_line_id``) rather than ``slot_id``, so
     a slot that was revised — a new slot_id on the same line — still inherits
     the check history its earlier slot_id accumulated. A re-stated criterion
-    does not reset "new information" back to unknown; only the criterion text
-    changed, not the world the checks are watching."""
+    does not reset what is known about the line; only the criterion text
+    changed, not the world the checks are watching.
+
+    Every status is included, because "when was this last looked at" and "what
+    did the last successful lookup find" are different questions and the
+    callers need both: the review's due-ordering wants the former (a lookup
+    that failed last week is still attention this line received), while
+    ``build_check`` wants the latter."""
     line = slot_line_id(slot)
     line_slot_ids = {row["slot_id"] for row in slots
                      if isinstance(row, dict) and row.get("slot_id") and slot_line_id(row) == line}
-    candidates = [c for c in checks if isinstance(c, dict) and c.get("slot_id") in line_slot_ids
-                  and c.get("lookup_status") == "ok"]
+    return [row for row in checks
+            if isinstance(row, dict) and row.get("slot_id") in line_slot_ids]
+
+
+def previous_check_for(checks, slots, slot):
+    """The most recent ok-check anywhere on ``slot``'s line, in file order, or
+    None — the reference "new information arrived" is judged against."""
+    candidates = [row for row in checks_for_line(checks, slots, slot)
+                  if row.get("lookup_status") == "ok"]
     return candidates[-1] if candidates else None
+
+
+def last_check_for(checks, slots, slot):
+    """The most recent check of any status on ``slot``'s line, or None.
+
+    What a review means by "last checked": a lookup that failed is still a
+    period in which this line was attended to, and ordering the due list by
+    successful lookups alone would put a line that fails every week at the
+    front forever."""
+    rows = checks_for_line(checks, slots, slot)
+    return rows[-1] if rows else None

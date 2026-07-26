@@ -621,10 +621,37 @@ def condition_state_line(commitment, language):
     elif condition.get("tier") == "unmapped":
         code = {"no_threshold": "unmapped_no_threshold",
                 "no_baseline": "unmapped_no_baseline",
+                # Written before the check flow existed; the row is never
+                # rewritten, so the sentence it resolves to has to stay.
                 "no_adjudicator": "unmapped_no_adjudicator"}.get(condition.get("unmapped_reason"))
+    elif (condition.get("kind") or "numeric") == "event":
+        # #412: an event condition has no baseline comparison to report, so the
+        # commit exchange would otherwise end in silence — and silence is how a
+        # user comes to think nothing was recorded. The watch starting IS the
+        # news; the adjudication is a later review's.
+        code = "event_watch_started"
     if not code:
         return None
     return ((load_copy(language).get("condition_state") or {}).get(code)) or None
+
+
+def condition_value(value, unit):
+    """One condition figure as the user wrote its unit (#412).
+
+    A condition's unit is free text the user chose ("%", "USD", "x", "days"),
+    not one of the engine's own metric families, so this neither converts nor
+    re-scales: it prints the number that was found and the unit it was found
+    in. A `%` unit is glued to the number the way a percentage is written
+    everywhere else on the card; anything else takes a space, because "38 days"
+    is a phrase and "38days" is a typo."""
+    number = _finite_number(value)
+    if number is None:
+        return None
+    text = str(int(number)) if number == int(number) else f"{number:g}"
+    unit = str(unit or "").strip()
+    if not unit:
+        return text
+    return f"{text}%" if unit == "%" else f"{text} {unit}"
 
 
 def localized_rule_grounding(dim, language, card):
@@ -1790,6 +1817,166 @@ def _metric_display(key, value):
     return f"{value}"
 
 
+def _condition_check_rows(bundle):
+    return [row for row in bundle.get("condition_checks") or [] if isinstance(row, dict)]
+
+
+def _condition_now(check, condition, copy):
+    """What this period found for one condition, as one phrase — never a verdict
+    on its own. ``None`` when the lookup did not succeed: an absent figure must
+    read as absent, and a period with no evidence has nothing to put here."""
+    if not check or check.get("lookup_status") != "ok":
+        return None
+    observation = check.get("observation") or {}
+    if "value" in observation:
+        return condition_value(observation["value"],
+                              (condition.get("threshold") or {}).get("unit"))
+    summary = str(observation.get("summary") or "").strip()
+    return summary or None
+
+
+def _condition_verdict_sentence(check, copy):
+    """The engine's one-sentence read of a check's verdict of record.
+
+    Copy-fallback only, like the breach sentence below it — it never consults
+    ``narrative.honesty``, so it reaches the reader however the agent worded
+    anything. A verdict the engine could not reach says so rather than going
+    quiet: silence next to a then/now pair reads as "fine"."""
+    check_copy = copy.get("condition_check") or {}
+    return check_copy.get("verdict_" + str((check or {}).get("final_verdict") or "unknown"))
+
+
+def _condition_reconciliation_line(prior, checks, copy):
+    """The prior commitment's condition, then and now.
+
+    A condition's then/now is the same shape a tracked metric already has, and
+    for the same reason: what makes the loop visible is the pair, not the
+    latest number. ``then`` is what was found when the user committed — the
+    baseline the engine took in that same exchange — and ``now`` is what this
+    period's check found. Returns ``None`` when nothing was checked this
+    period, and the caller falls back to the bare statement: a condition with
+    no fresh reading must not be dressed up as one that has one."""
+    condition = prior.get("condition") or {}
+    if not condition:
+        return None
+    identities = {condition.get("slot_id"), condition.get("line_id")} - {None}
+    check = next((row for row in checks if row.get("slot_id") in identities), None)
+    now = _condition_now(check, condition, copy)
+    if now is None:
+        return None
+    check_copy = copy.get("condition_check") or {}
+    if (condition.get("kind") or "numeric") == "event":
+        line = _format_copy(check_copy.get("then_now_event"), rule=prior["rule"], now=now)
+    else:
+        then = condition_value((condition.get("baseline") or {}).get("value"),
+                               (condition.get("threshold") or {}).get("unit"))
+        template = "then_now" if then is not None else "then_now_no_baseline"
+        line = _format_copy(check_copy.get(template), rule=prior["rule"],
+                            then=then or "", now=now)
+    if not line:
+        return None
+    verdict = _condition_verdict_sentence(check, copy)
+    return f"{line} {verdict}" if verdict else line
+
+
+# How many per-condition lines one card may carry. The record holds every check;
+# the card holds the ones a reader can act on, and the summary line below states
+# how many were checked in total — so trimming here never becomes a claim of
+# completeness. Without a bound a user with eight standing conditions turns the
+# opening of every card into a data table.
+CONDITION_CARD_LINES = 2
+
+
+def _condition_fact_lines(bundle, checks, copy):
+    """This period's readings for the conditions that are simply being watched.
+
+    Only a successful numeric lookup that came back clear of its line: a
+    crossing was a question, an event's verdict is the user's answer, and a
+    failed lookup is a blind line below. The looks-wrong sentence is what makes
+    these lines load-bearing rather than decorative — showing the figure is how
+    a wrong basis exposes itself, and it is only correctable if the user is
+    invited to say so. It is one sentence for the group, not one per line."""
+    check_copy = copy.get("condition_check") or {}
+    conditions_by_id = {}
+    for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                  .get("condition_slots_due") or []):
+        if isinstance(entry, dict) and entry.get("slot_id"):
+            conditions_by_id[entry["slot_id"]] = entry
+    lines = []
+    for check in checks:
+        condition = conditions_by_id.get(check.get("slot_id"))
+        if not condition or check.get("lookup_status") != "ok":
+            continue
+        if (condition.get("kind") or "numeric") == "event" or check.get("final_verdict") != "not_met":
+            continue
+        observation = check.get("observation") or {}
+        value = condition_value(observation.get("value"),
+                                (condition.get("threshold") or {}).get("unit"))
+        if value is None:
+            continue
+        source, as_of = observation.get("source"), observation.get("as_of")
+        line = (_format_copy(check_copy.get("fact"), criterion=condition.get("criterion") or "",
+                             value=value, source=source, as_of=as_of) if source and as_of
+                else _format_copy(check_copy.get("fact_no_source"),
+                                  criterion=condition.get("criterion") or "", value=value))
+        if line:
+            lines.append(line)
+    if not lines:
+        return []
+    lines = lines[:CONDITION_CARD_LINES]
+    looks_wrong = check_copy.get("fact_looks_wrong")
+    return lines + ([looks_wrong] if looks_wrong else [])
+
+
+def _condition_blind_lines(bundle, checks, copy):
+    """The conditions a lookup was attempted for and did not come back from.
+
+    Stated plainly, because the failure mode this whole tier exists to prevent
+    is a user walking away believing a tripwire is set. `not_checked` rows are
+    not listed one by one — they are the summary line's business, and eight
+    apologies would bury the one lookup that actually broke."""
+    check_copy = copy.get("condition_check") or {}
+    conditions_by_id = {}
+    for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                  .get("condition_slots_due") or []):
+        if isinstance(entry, dict) and entry.get("slot_id"):
+            conditions_by_id[entry["slot_id"]] = entry
+    lines = []
+    for check in checks:
+        if check.get("lookup_status") != "failed":
+            continue
+        condition = conditions_by_id.get(check.get("slot_id"))
+        if not condition:
+            continue
+        criterion = condition.get("criterion") or ""
+        reason = str(check.get("reason") or "").strip()
+        line = (_format_copy(check_copy.get("blind_with_reason"), criterion=criterion, reason=reason)
+                if reason else _format_copy(check_copy.get("blind"), criterion=criterion))
+        if line:
+            lines.append(line)
+    return lines[:CONDITION_CARD_LINES]
+
+
+def _condition_summary_line(bundle, checks, copy):
+    """How much of the record this review actually looked at.
+
+    Emitted whenever anything was left unchecked — a lookup that failed, one
+    nobody ran, or a line the plan's cap held back (#434). A bounded surface
+    that does not say what it dropped is the same lie as an unchecked condition
+    presented as fine, one level up. Silent when everything was checked."""
+    summary = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+               .get("condition_slots_summary") or {})
+    total = _finite_number(summary.get("lines_total"))
+    if total is None or total <= 0:
+        return None
+    checked = sum(1 for row in checks if row.get("lookup_status") == "ok")
+    deferred = int(total) - checked
+    if deferred <= 0:
+        return None
+    return _format_copy((copy.get("condition_check") or {}).get("summary"),
+                        checked=checked, total=int(total), deferred=deferred)
+
+
 def _reconciliation_lines(bundle, language):
     """#151/#152 loop anchor: open the card against last time's commitment.
 
@@ -1805,27 +1992,46 @@ def _reconciliation_lines(bundle, language):
     narrative.honesty, so it is guaranteed to reach the reader regardless of
     how the agent's separately-required honesty sentence turns out to be
     worded or where it lands on the card."""
-    prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
-    if not prior.get("rule"):
-        return []
-    key = prior.get("metric_key")
-    then_v = prior.get("metric_value")
-    now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
     copy = load_copy(language)
-    recon_copy = copy.get("reconciliation") or {}
-    if then_v is not None and now_v is not None:
-        # A-12: never print internal metric keys on the card — values only.
-        line = recon_copy["statement_with_metric"].format(
-            rule=prior["rule"], then=_metric_display(key, then_v), now=_metric_display(key, now_v))
-    else:
-        line = recon_copy["statement"].format(rule=prior["rule"])
-    breached = any(entry.get("key") == "prior_commitment_breach"
-                   for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
-    if breached:
-        fallback = (copy.get("honesty") or {}).get("prior_commitment_breach")
-        if fallback:
-            line += f" {fallback}"
-    return [line]
+    checks = _condition_check_rows(bundle)
+    prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
+    lines = []
+    if prior.get("rule"):
+        key = prior.get("metric_key")
+        then_v = prior.get("metric_value")
+        now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
+        recon_copy = copy.get("reconciliation") or {}
+        # #412: a commitment anchored to a condition reconciles the same way a
+        # metric-anchored one does — the baseline taken when it was written
+        # against what this period's check found. It degrades to the bare
+        # statement when nothing was checked, rather than borrowing the
+        # metric branch's shape for numbers it does not have.
+        condition_line = _condition_reconciliation_line(prior, checks, copy)
+        if condition_line:
+            line = condition_line
+        elif then_v is not None and now_v is not None:
+            # A-12: never print internal metric keys on the card — values only.
+            line = recon_copy["statement_with_metric"].format(
+                rule=prior["rule"], then=_metric_display(key, then_v),
+                now=_metric_display(key, now_v))
+        else:
+            line = recon_copy["statement"].format(rule=prior["rule"])
+        breached = any(entry.get("key") == "prior_commitment_breach"
+                       for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
+        if breached:
+            fallback = (copy.get("honesty") or {}).get("prior_commitment_breach")
+            if fallback:
+                line += f" {fallback}"
+        lines.append(line)
+    # The standing conditions from earlier reviews, in the same breath as the
+    # prior commitment: this whole block answers one question — what happened to
+    # the things you asked to be watched.
+    lines += _condition_fact_lines(bundle, checks, copy)
+    lines += _condition_blind_lines(bundle, checks, copy)
+    summary = _condition_summary_line(bundle, checks, copy)
+    if summary:
+        lines.append(summary)
+    return lines
 
 
 def _review_opening_lines(bundle, language):

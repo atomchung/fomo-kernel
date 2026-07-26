@@ -17,14 +17,27 @@ import re
 
 
 SCHEMA_VERSION = 1
+# #412: the two condition kinds are eligible for a reason the motive kinds are
+# not. A crossing needs one sentence for acting and one for not — the user set
+# that line themselves, and the engine's own comparison is exactly the input a
+# person can be wrong about — so a frozen template can only ever write one side
+# of it. The engine still owns the verdict, the choices, and the evidence; what
+# the agent authors is the two sentences.
 ELIGIBLE_KINDS = frozenset({"add_thesis", "headline_motive", "initial_thesis",
-                            "exit_consistency"})
+                            "exit_consistency", "condition_crossing", "condition_basis"})
 MAPPING_CONFIDENCE = frozenset({"high", "medium", "low"})
 GROUNDING_REFS = frozenset({
     "context.ticker",
     "context.prior_thesis.text",
     "context.asked_because",
     "context.headline_dimension.label",
+    # The user's own sentence, and what the lookup returned with its source and
+    # as-of date. A two-sided stem has to be able to cite both: the criterion is
+    # what the user committed to, the evidence is what is being weighed against
+    # it, and a stem grounded in neither is an opinion.
+    "context.condition.criterion",
+    "context.condition.evidence",
+    "context.condition.basis_note",
 })
 # #305: architecture vocabulary observed leaking into a rendered prompt. This
 # is deliberately a short, exact-phrase list (not the bare word "commitment",
@@ -52,6 +65,27 @@ _INITIAL_THESIS_REQUIREMENTS = {
     "no_clear_thesis": [],
     "skip": [],
 }
+# #412. `overridden` is the only choice here that carries a payload requirement,
+# and it is the one that matters: rejecting the engine's own comparison is a
+# claim about the evidence, so the reason goes into the record beside it. The
+# engine keeps its verdict either way — an override out-votes it for this
+# period's verdict of record and never rewrites what was computed.
+_CONDITION_CROSSING_NUMERIC_REQUIREMENTS = {
+    "confirmed": [],
+    "overridden": ["note"],
+    "skip": [],
+}
+_CONDITION_CROSSING_EVENT_REQUIREMENTS = {
+    "yes": [],
+    "no": [],
+    "skip": [],
+}
+_CONDITION_BASIS_REQUIREMENTS = {
+    "revise_threshold": [],
+    "revise_metric": [],
+    "keep": [],
+    "skip": [],
+}
 _DIGIT = re.compile(r"\d+(?:[.,]\d+)?%?")
 
 
@@ -63,7 +97,7 @@ def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _requirement_copy(language, kind):
+def _requirement_copy(language, kind, choices):
     en = str(language).lower().startswith("en")
     if kind == "add_thesis":
         return {
@@ -78,6 +112,15 @@ def _requirement_copy(language, kind):
         }
     if kind == "initial_thesis":
         return {key: "" for key in _INITIAL_THESIS_REQUIREMENTS}
+    if kind == "condition_crossing":
+        # One map covers both vocabularies, keyed off this question's own
+        # canonical choices — a numeric surface never advertises `yes`.
+        return {key: (("Requires a short note saying why the reading is wrong."
+                       if en else "必須用一句短註說明為什麼這個讀數不算數。")
+                      if key == "overridden" else "")
+                for key in choices}
+    if kind == "condition_basis":
+        return {key: "" for key in _CONDITION_BASIS_REQUIREMENTS}
     return {key: "" for key in _HEADLINE_REQUIREMENTS}
 
 
@@ -109,6 +152,25 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
             context["asked_because"] = question["asked_because"]
         intent = "classify_initial_thesis"
         requirements = _INITIAL_THESIS_REQUIREMENTS
+    elif kind in ("condition_crossing", "condition_basis"):
+        # #412: the condition's own facts, and nothing else. No ticker and no
+        # dimension — a user-authored condition is not one of the engine's five
+        # diagnostic axes, and grounding a crossing stem in a position would
+        # invite the stem to argue about the position instead of the line.
+        condition = {"criterion": str(question.get("criterion") or "")}
+        if question.get("evidence"):
+            condition["evidence"] = str(question["evidence"])
+        if question.get("basis_note"):
+            condition["basis_note"] = str(question["basis_note"])
+        context["condition"] = condition
+        if kind == "condition_basis":
+            intent = "resolve_condition_basis"
+            requirements = _CONDITION_BASIS_REQUIREMENTS
+        else:
+            intent = "adjudicate_condition_crossing"
+            requirements = (_CONDITION_CROSSING_EVENT_REQUIREMENTS
+                            if question.get("condition_kind") == "event"
+                            else _CONDITION_CROSSING_NUMERIC_REQUIREMENTS)
     elif kind == "exit_consistency":
         # #303: the same motive answer contract as a headline motive, grounded
         # in the aggregated early-exit facts through the existing ticker /
@@ -143,7 +205,7 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
         "answer_contract": {
             "canonical_choices": choices,
             "requirements_by_choice": {key: list(requirements[key]) for key in choices},
-            "requirement_text_by_choice": _requirement_copy(language, kind),
+            "requirement_text_by_choice": _requirement_copy(language, kind, choices),
             "allow_none_of_above": True,
             "max_clarifications": 1,
         },

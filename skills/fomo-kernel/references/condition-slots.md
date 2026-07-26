@@ -36,7 +36,7 @@ Use a recognized source that publishes the figure, the same standard as [price-f
 }
 ```
 
-- **`kind`** *(optional, defaults to `numeric`)* — `numeric` for a line a quantity crosses; `event` for a yes/no occurrence with no line ("sell if the CEO leaves"). An event's verdict is the user's to give — you bring the evidence, they answer — so send `event` rather than inventing a threshold for it. The flow that asks is not built yet, so an event condition is stored and reported as not-yet-watchable.
+- **`kind`** *(optional, defaults to `numeric`)* — `numeric` for a line a quantity crosses; `event` for a yes/no occurrence with no line ("sell if the CEO leaves"). An event's verdict is the user's to give — you bring the evidence, they answer — so send `event` rather than inventing a threshold for it. Both kinds are watched from the moment they are committed.
 - **`criterion`** — the user's sentence, verbatim. Never tidied into the product's phrasing, never translated. If you also send `rule`, it must be the same string.
 - **`query`** — a neutral factual lookup. **Never the criterion restated as a question.** A yes/no lookup (*"did growth fall below 30%?"*) steers retrieval toward confirmation: the search returns the nearest matching real event and attaches it to the timeframe your question supplied, so you get a real figure, a real source, and a wrong date — indistinguishable from a correct answer at the point of use. The engine refuses a query carrying the threshold value. Written once and frozen, so a later check re-reads the same question rather than re-deriving it.
 - **`threshold`** — the comparison, structured, so the engine performs it. `direction` is which side means the condition is met.
@@ -50,9 +50,9 @@ The engine assigns the rest — identity, tier, and the comparison at commit tim
 | What you sent | Result | What to tell the user |
 |---|---|---|
 | threshold + observation | `researched` — stored, anchored, with the commit-time comparison recorded | the value you found, and whether it is already past their line |
+| `kind: "event"` | `researched` — stored and watched; the user adjudicates | the watch has started, and the call stays theirs |
 | no numeric threshold | `unmapped` / `no_threshold` | it is in their record, and there is no measurable line in it to check |
 | threshold, no observation | `unmapped` / `no_baseline` | you could not find the figure, so this one is watchable in principle but currently blind |
-| `kind: "event"` | `unmapped` / `no_adjudicator` | it is recorded as a yes-or-no call that stays theirs to make |
 
 `unmapped` is an honest state, not a failure: it says the user committed to something real that we could not check this period. Say so plainly, and use the reason — "there is no measurable line in this" and "I could not find the figure" are different things to hear. Never present an unmapped condition as watched, and never state a figure for one — nothing was found, so any number would be yours rather than a source's.
 
@@ -62,6 +62,56 @@ The card carries one engine-authored line when there is something to say — a l
 
 A rejected envelope returns a `ReviewError` naming the field. Fix the envelope and rerun; nothing is committed until finalize succeeds.
 
-## What is not built yet
+## Every review after: check what is due
 
-The per-period check — re-looking-up the quantity, adjudicating a crossing with two-sided reasoning, and the user's override — is not implemented. Standing slots come back in `review_plan.state_snapshot.condition_slots` so the user can see what they committed to; present them as their own standing conditions, never as checked-and-fine.
+`review_plan.state_snapshot.condition_slots_due` is this review's lookup request — the live row of each standing condition, plus what its last check found. It is **bounded at eight** and ordered oldest-last-checked first, so the list rotates instead of growing without limit; `condition_slots_summary` states the total, how many were sent, and how many were held back. Never present the due list as the user's whole record.
+
+For each due condition: run its **frozen `query`** — not a fresh question of your own, and never a yes/no restatement — and submit what came back. Then rerun prepare:
+
+```bash
+python3 engine/review.py prepare <trades.csv> --condition-checks /tmp/fomo-kernel-condition-checks.json
+```
+
+```json
+{"condition_checks": [
+  {"slot_id": "slot-...-0",
+   "check": {"lookup_status": "ok",
+             "observation": {"value": 21.0, "as_of": "2026-08-20",
+                             "source": "Q2 FY2027 results release",
+                             "period": "FY2027Q2", "document": "10-Q 2026-08-20"}}}
+]}
+```
+
+Send the same array again in `answers.condition_checks` so the result is recorded. It must be identical — the engine refuses a reading that changed between the question and the answer, because the user was asked about one number and the file would store another.
+
+**Never assert a verdict in prose.** You supply evidence; the engine performs the comparison from the frozen threshold, and for an event the *user's answer is the verdict of record* — the engine only stores it. Saying "the line was crossed" in your own words puts an assertion where a computation belongs.
+
+### The six states of a check
+
+| `lookup_status` | When | What the record says |
+|---|---|---|
+| `ok` | the query returned a usable figure or fact | the observation, plus the engine's own comparison |
+| `failed` | you looked and could not get a usable answer | blind this period, with your `reason` |
+| `not_checked` | no lookup was attempted | engine-written for every due condition you did not submit |
+
+and, on an `ok` check, the `information_state` axis: `new_period` (a period nobody has seen), `restated` (same period, different document or figure), `no_new_data` (the same result, re-worded — which cannot spoof newness).
+
+An unfindable figure is a legitimate outcome. Send `{"lookup_status": "failed", "reason": "..."}` and say so plainly — never carry the previous quarter's number forward as though it were this one.
+
+### The two things you may raise
+
+Neither is a verdict; each raises exactly one question and decides nothing.
+
+- **`event_alert: true`** *(event conditions, `ok` lookups only)* — the evidence suggests the occurrence may have happened. A routine event check that found no sign carries its `observation.summary`, no alert, and stays silent.
+- **`basis_alert: {note, source?, as_of?}`** — you believe the *measurement* changed underneath the frozen threshold (a restated segment, a shifted fiscal calendar, a metric published differently). **When in doubt, raise it.** A false alarm costs one question; silence about a broken basis poisons every verdict after it.
+
+### What the engine asks the user
+
+- **`condition_crossing`** — at most **one per review**, from a crossing (`met`/`near_line`) or an alerted event. An alerted event outranks any number; among numbers the deepest breach wins, and the rest state their facts and return next review. Author the stem yourself (`question_opportunity`, `references/interaction-delivery.md`): it needs **one sentence for acting and one for not**, both built only from the criterion, the line, and what the lookup returned. `overridden` requires a short note — rejecting the engine's own reading is a claim, and it goes into the record.
+- **`condition_basis`** — from your alert. `keep` records that the user declined the doubt. `revise_threshold` / `revise_metric` require `answers.condition_revision` (`{of_line_id, condition}`) carrying the re-stated criterion in the user's own words; the engine writes it as a new row on the same line, never an edit. A line answered as a crossing this review cannot also be re-stated in it, and a condition revision is never a `revise_rule` replacement.
+
+A skip records nothing, and the reading is still stored with the engine's own verdict.
+
+### On the card
+
+One engine-authored line reconciles the prior commitment's condition then-and-now, plus this period's readings for conditions clear of their line, any lookup that failed, and — whenever anything was left unchecked — one sentence naming how many. You do not write those; do not add your own.
