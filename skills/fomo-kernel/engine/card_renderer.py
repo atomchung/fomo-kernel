@@ -1910,16 +1910,17 @@ def _condition_index(bundle):
             if isinstance(entry, dict) and entry.get("slot_id")}
 
 
-def _asked_about(bundle):
-    """The condition lines this review actually put a crossing question to.
+def _queued_crossings(bundle):
+    """The condition lines this review put a crossing question *to the queue* for.
 
-    A crossing that was asked about is told through the exchange; one that lost
-    the single-question budget was told nothing at all until this existed."""
-    asked = set()
-    for question in ((bundle.get("review_plan") or {}).get("question_queue") or []):
-        if isinstance(question, dict) and question.get("kind") == "condition_crossing":
-            asked.add(question.get("line_id"))
-    return asked
+    Deliberately not the silence condition — being asked is not being answered
+    (external review, round 2). This only separates two different facts once a
+    line is already known to be unresolved: "it lost the one-question budget"
+    and "it was asked and nobody answered" are different things to tell a user,
+    and each gets its own sentence."""
+    return {question.get("line_id")
+            for question in ((bundle.get("review_plan") or {}).get("question_queue") or [])
+            if isinstance(question, dict) and question.get("kind") == "condition_crossing"}
 
 
 def _condition_reading(check, condition):
@@ -1931,84 +1932,144 @@ def _condition_reading(check, condition):
     return str(observation.get("summary") or "").strip() or None
 
 
-def _condition_line(check, condition, copy, template, **extra):
+def _condition_reading_line(check, condition, copy, note_key, **note_values):
+    """One reading, plus the sentence that says where it stands.
+
+    The reading and the status sentence are separate copy keys on purpose: the
+    figure is printed identically whatever its disposition, so only the note
+    varies and no combination needs its own template."""
     reading = _condition_reading(check, condition)
     if reading is None:
         return None
     observation = check.get("observation") or {}
     source, as_of = observation.get("source"), observation.get("as_of")
     check_copy = copy.get("condition_check") or {}
-    values = dict(extra, criterion=condition.get("criterion") or "", value=reading,
-                  source=source, as_of=as_of)
-    if source and as_of:
-        return _format_copy(check_copy.get(template), **values)
-    return _format_copy(check_copy.get(template + "_no_source"), **values)
+    template = "fact" if (source and as_of) else "fact_no_source"
+    line = _format_copy(check_copy.get(template), criterion=condition.get("criterion") or "",
+                        value=reading, source=source, as_of=as_of)
+    if not line:
+        return None
+    if note_key:
+        note = _format_copy(check_copy.get(note_key), **note_values)
+        if note:
+            line = f"{line} {note}"
+    return line
 
 
-def _condition_reading_lines(bundle, checks, copy):
-    """``(lines, shown, describable)`` — every per-condition line this card carries.
+# The disposition of one successful check, as the card and the summary both read
+# it. Deriving this once is the point: the round-1 cut had the lines and the
+# summary each decide independently what counted as unresolved, which is the
+# same two-readers defect that broke the reconciliation match.
+def _condition_outcome(check, condition, queued):
+    """``(kind, note_key, note_values)`` for one check, or ``(None, ...)`` for silence.
 
-    Three groups, in the order a reader needs them:
+    ``settled`` is the only silent state, and it means the user actually
+    answered — **not** that a question was queued. A queued question that ended
+    in a skip, or one an interrupted host never delivered, leaves the row with
+    no ``user_response`` at all; treating "asked" as "answered" put the crossed
+    line straight back into silence through a different door (external review,
+    round 2).
 
-    1. **Deferred crossings.** A line the engine read as crossed (or an event
-       the agent flagged) that lost the one-question budget. Before this it
-       produced nothing at all: no question, no fact line — the fact lines were
-       ``not_met``-only — and no mention in the summary. A crossed line going
-       completely unmentioned is the single worst outcome this whole tier
-       exists to prevent, so it now states its figure and says plainly that it
-       is coming back next review.
-    2. **Readings clear of the line**, with one non-blocking "if a figure looks
-       wrong, say so" for the group — showing the figure is how a wrong basis
-       exposes itself, and that only helps if the user is invited to say so.
-    3. **Failed lookups**, stated plainly with their reason.
-
-    A crossing that *was* asked about renders nothing: the exchange already
-    told that story. ``not_checked`` rows are the summary's business — eight
-    apologies would bury the one lookup that actually broke.
+    Basis alerts are read the same way, and for the same reason: a raised
+    concern with no ``basis_resolution`` was never settled, so a card that
+    prints its reading as an ordinary all-clear fact has quietly dropped the
+    doubt.
     """
+    event = (condition.get("kind") or "numeric") == "event"
+    # Candidacy comes from the engine's own read, never from `final_verdict`:
+    # an override moves the verdict of record to `not_met` while leaving the
+    # engine's finding intact, and that check must stay silent rather than
+    # reappearing as an all-clear reading.
+    crossing = (check.get("engine_verdict") in ("met", "near_line")
+                or bool(check.get("event_alert")))
+    basis_open = bool(check.get("basis_alert")) and not check.get("basis_resolution")
+    if crossing and not check.get("user_response"):
+        if condition.get("line_id") in queued:
+            return "unanswered", ("note_unanswered_event" if event else "note_unanswered"), {}
+        return "deferred", ("note_deferred_event" if event else "note_deferred"), {}
+    if basis_open:
+        return "basis_open", "note_basis_open", {
+            "note": (check.get("basis_alert") or {}).get("note") or ""}
+    if crossing:
+        return "settled", None, {}            # the user answered; the exchange carried it
+    if check.get("final_verdict") == "not_met":
+        return "fact", None, {}
+    return "settled", None, {}
+
+
+# Every kind that means "this review did not close the loop on this condition".
+CONDITION_OPEN_KINDS = ("unanswered", "deferred", "basis_open")
+
+
+def _condition_outcomes(bundle, checks):
+    """``[(check, condition, kind, note_key, note_values)]`` for every readable check.
+
+    One classification, read by both the card lines and the summary count."""
     index = _condition_index(bundle)
-    asked = _asked_about(bundle)
-    deferred, facts, blind = [], [], []
+    queued = _queued_crossings(bundle)
+    out = []
     for check in checks:
         condition = index.get(check.get("slot_id"))
         if not condition:
             continue
         status = check.get("lookup_status")
         if status == "failed":
+            out.append((check, condition, "blind", None, {}))
+        elif status == "ok":
+            kind, note_key, values = _condition_outcome(check, condition, queued)
+            out.append((check, condition, kind, note_key, values))
+    return out
+
+
+def _condition_reading_lines(bundle, checks, copy):
+    """``(lines, shown, describable)`` — every per-condition line this card carries.
+
+    Four groups, in the order a reader needs them:
+
+    1. **Unresolved crossings** — a line the engine read as crossed (or an event
+       the agent flagged) that the user has not answered on. Either it lost the
+       one-question budget, or it was asked and got no answer; the two say so
+       differently, because they are different facts. Before this existed a
+       crossed line could go completely unmentioned, which is the single worst
+       outcome this whole tier exists to prevent.
+    2. **Open basis concerns** — the agent said the measurement may have
+       changed and nobody settled it. Printing its reading as an ordinary
+       all-clear fact would drop the doubt exactly the way a silent crossing
+       dropped the crossing.
+    3. **Readings clear of the line**, with one non-blocking "if a figure looks
+       wrong, say so" for the group — showing the figure is how a wrong basis
+       exposes itself, and that only helps if the user is invited to say so.
+    4. **Failed lookups**, stated plainly with their reason.
+
+    A crossing the user *answered* renders nothing: the exchange told that
+    story. ``not_checked`` rows are the summary's business — eight apologies
+    would bury the one lookup that actually broke.
+    """
+    check_copy = copy.get("condition_check") or {}
+    groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": []}
+    for check, condition, kind, note_key, values in _condition_outcomes(bundle, checks):
+        if kind == "blind":
             criterion = condition.get("criterion") or ""
             reason = str(check.get("reason") or "").strip()
-            check_copy = copy.get("condition_check") or {}
             line = (_format_copy(check_copy.get("blind_with_reason"),
                                  criterion=criterion, reason=reason) if reason
                     else _format_copy(check_copy.get("blind"), criterion=criterion))
-            if line:
-                blind.append(line)
+        elif kind in groups:
+            line = _condition_reading_line(check, condition, copy, note_key, **values)
+        else:
             continue
-        if status != "ok":
-            continue
-        crossing = (check.get("final_verdict") in ("met", "near_line")
-                    or bool(check.get("event_alert")))
-        if crossing:
-            if condition.get("line_id") in asked:
-                continue                      # the question carried it
-            line = _condition_line(check, condition, copy, "deferred")
-            if line:
-                deferred.append(line)
-        elif check.get("final_verdict") == "not_met":
-            line = _condition_line(check, condition, copy, "fact")
-            if line:
-                facts.append(line)
-    describable = len(deferred) + len(facts) + len(blind)
-    kept_deferred = deferred[:CONDITION_CARD_LINES]
-    kept_facts = facts[:CONDITION_CARD_LINES]
-    kept_blind = blind[:CONDITION_CARD_LINES]
-    shown = len(kept_deferred) + len(kept_facts) + len(kept_blind)
-    lines = list(kept_deferred)
-    if kept_facts:
-        lines += kept_facts
-        looks_wrong = (copy.get("condition_check") or {}).get("fact_looks_wrong")
+        if line:
+            groups[kind].append(line)
+    describable = sum(len(rows) for rows in groups.values())
+    kept = {kind: rows[:CONDITION_CARD_LINES] for kind, rows in groups.items()}
+    shown = sum(len(rows) for rows in kept.values())
+    lines = kept["unanswered"] + kept["deferred"] + kept["basis_open"]
+    if kept["fact"]:
+        lines += kept["fact"]
+        looks_wrong = check_copy.get("fact_looks_wrong")
         if looks_wrong:
             lines.append(looks_wrong)
+    kept_blind = kept["blind"]
     lines += kept_blind
     return lines, shown, describable
 
@@ -2018,14 +2079,19 @@ def _condition_summary_line(bundle, checks, copy, shown, describable):
     on this card.
 
     Two ways a card can be incomplete, and it must speak for either. **Not
-    checked**: a failed lookup, one nobody ran, a line the plan's cap held
-    back (#434), or a crossing deferred to next review — none of those is
-    resolved, so none may pass as fine. **Not shown**: the per-kind line caps
-    trimmed a reading that was taken. A card that quietly prints two of five
-    readings is making the same claim of completeness the cap disclosure
-    exists to prevent (external review, round 1).
+    settled**: a failed lookup, one nobody ran, a line the plan's cap held
+    back (#434), a crossing the user has not answered on, or a basis concern
+    nobody resolved — none of those is closed, so none may pass as fine. **Not
+    shown**: the per-kind line caps trimmed a reading that was taken. A card
+    that quietly prints two of five readings is making the same claim of
+    completeness the cap disclosure exists to prevent (external review,
+    round 1).
 
-    Silent only when everything was checked, resolved, and printed."""
+    The unsettled count comes from ``_condition_outcomes`` — the same
+    classification the lines above render — so the card and its own summary
+    cannot disagree about what was left open (external review, round 2).
+
+    Silent only when everything was checked, settled, and printed."""
     summary = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("condition_slots_summary") or {})
     total = _finite_number(summary.get("lines_total"))
@@ -2033,16 +2099,12 @@ def _condition_summary_line(bundle, checks, copy, shown, describable):
         return None
     total = int(total)
     checked = sum(1 for row in checks if row.get("lookup_status") == "ok")
-    asked = _asked_about(bundle)
-    index = _condition_index(bundle)
-    deferred_crossings = sum(
-        1 for row in checks
-        if row.get("lookup_status") == "ok"
-        and (row.get("final_verdict") in ("met", "near_line") or row.get("event_alert"))
-        and (index.get(row.get("slot_id")) or {}).get("line_id") not in asked)
-    # "Open" is anything this review did not settle: never looked at, looked at
-    # and failed, held back by the cap, or read as crossed and not yet asked.
-    open_count = max(0, total - checked) + deferred_crossings
+    unsettled = sum(1 for _check, _condition, kind, _key, _values
+                    in _condition_outcomes(bundle, checks)
+                    if kind in CONDITION_OPEN_KINDS)
+    # "Open" is anything this review did not close: never looked at, looked at
+    # and failed, held back by the cap, or checked and left unresolved.
+    open_count = max(0, total - checked) + unsettled
     trimmed = max(0, describable - shown)
     if open_count <= 0 and trimmed <= 0:
         return None

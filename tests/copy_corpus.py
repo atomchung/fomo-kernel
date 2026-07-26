@@ -355,9 +355,28 @@ def _condition_check(prior=None, checks=(), summary=None, slots=None, queue=()):
 
 
 def _crossed(observation=None, **over):
-    return _check_row(observation=observation or {"value": 21.0, "as_of": "2026-08-20",
-                                                  "source": "10-Q"},
-                      engine_verdict="met", final_verdict="met", **over)
+    """A check the engine read as crossed. `engine_verdict` is what makes it a
+    crossing candidate and never moves; `final_verdict` does (an override sends
+    it to not_met), so callers override it rather than it being pinned here."""
+    fields = {"observation": observation or {"value": 21.0, "as_of": "2026-08-20",
+                                             "source": "10-Q"},
+              "engine_verdict": "met", "final_verdict": "met"}
+    fields.update(over)
+    return _check_row(**fields)
+
+
+_EVENT_SLOT = {key: value for key, value in _CHECK_SLOT.items()
+               if key not in ("threshold", "near_line", "baseline")}
+_EVENT_SLOT.update(kind="event", criterion="sell if the CEO leaves")
+
+
+def _event_alerted():
+    """An event check carrying the agent's alert. The engine never computes an
+    event verdict, so `engine_verdict` is null and the alert is what makes it a
+    crossing candidate."""
+    return _check_row(event_alert=True, engine_verdict=None, final_verdict="unknown",
+                      observation={"summary": "the CEO announced a departure",
+                                   "as_of": "2026-08-20", "source": "8-K"})
 
 
 def _all_clear_slots(count):
@@ -445,10 +464,58 @@ SCENES = (
                       summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
                                "unmapped_lines": 0, "unreadable_slots": 0,
                                "unreadable_checks": 0})),
-    # The counterweight: a crossing the review DID ask about renders nothing
-    # here, because the exchange already told that story.
-    ("condition_check/silent_when_the_crossing_was_asked", (),
+    # External review round 2. The queued-but-unanswered branch: a skip, or a
+    # question an interrupted host never delivered, leaves the row with no
+    # user_response. Silencing on "queued" put the crossed line straight back
+    # into silence, so the card says it was asked and got no answer.
+    ("condition_check/crossing_asked_but_unanswered", (),
      _condition_check(checks=[_crossed()],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # The counterweight, and the only silent crossing: the user ANSWERED, so
+    # the exchange told that story and the card does not re-litigate it.
+    ("condition_check/silent_when_the_crossing_was_answered", (),
+     _condition_check(checks=[_crossed(user_response={"answer": "confirmed",
+                                                      "answered_at": "2026-08-27"},
+                                       verdict_source="user")],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # An override: the verdict of record is not_met while the engine's own
+    # finding stays met. It was answered, so it stays silent — it must not
+    # reappear through the all-clear fact branch.
+    ("condition_check/silent_when_the_crossing_was_overridden", (),
+     _condition_check(checks=[_crossed(user_response={"answer": "overridden",
+                                                      "answered_at": "2026-08-27"},
+                                       final_verdict="not_met", verdict_source="user")],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # The symmetric branch: a raised basis concern nobody settled. It used to
+    # fall through to the ordinary fact line, printing as a clean all-clear.
+    ("condition_check/basis_concern_left_open", (),
+     _condition_check(checks=[_check_row(basis_alert={"note": "the segment was restated"})],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    ("condition_check/basis_concern_settled", (),
+     _condition_check(checks=[_check_row(basis_alert={"note": "the segment was restated"},
+                                         basis_resolution="kept")],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # An alerted event takes the event-flavoured notes, because "past your line"
+    # is a claim an event condition has no line to make. Both dispositions.
+    ("condition_check/event_alert_deferred", (),
+     _condition_check(slots=[_EVENT_SLOT], checks=[_event_alerted()],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    ("condition_check/event_alert_asked_but_unanswered", (),
+     _condition_check(slots=[_EVENT_SLOT], checks=[_event_alerted()],
                       queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
                       summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
                                "unmapped_lines": 0, "unreadable_slots": 0,

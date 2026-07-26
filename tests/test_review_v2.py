@@ -3334,28 +3334,131 @@ def test_the_answer_to_a_crossing_lands_on_the_row_it_was_asked_about():
         assert row["user_response"]["note"].startswith("the filing restated")
 
 
-def test_an_unanswered_crossing_still_records_the_reading():
-    """A question the user never got to, or skipped, must not cost the record
-    the observation behind it. The engine's verdict stands; nothing pretends
-    the user weighed in."""
+# A per-condition reading line, as the card prints it: `criterion — value`.
+# Distinct from the reconciliation opener, which names the same condition when
+# it is also the prior commitment.
+_READING_LINE = _CONDITION["criterion"] + " —"
+
+
+def _crossing_answered(tmp, root, choice, note=None):
+    """One crossed condition, its question posed, and `choice` given to it.
+
+    Returns the finalize result so a caller can read the stored row *and* the
+    card — the round-1 version of this only looked at the row, which is exactly
+    how "asked" got mistaken for "answered" on the card side (external review,
+    round 2)."""
+    _seed_condition(tmp, root)
+    slot_id = json.loads((root / "conditions.jsonl").read_text(
+        encoding="utf-8").splitlines()[0])["slot_id"]
+    envelope = [{"slot_id": slot_id,
+                 "check": {"lookup_status": "ok", "observation": dict(_CROSSED)}}]
+    plan = _prepare_with_checks(tmp, root, envelope)
+    question = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+    answers = _answers(plan, commitment="skip")
+    for row in answers["answers"]:
+        if row["question_id"] == question["id"]:
+            row["choice"] = choice
+            if note:
+                row["note"] = note
+    answers["condition_checks"] = envelope
+    return slot_id, _finalize_plan(tmp, root, plan, answers)
+
+
+def test_a_crossing_that_was_asked_but_not_answered_still_speaks_on_the_card():
+    """External review, round 2 BLOCK: the card silenced a crossing as soon as a
+    question for it sat in `question_queue`. But a skip records no answer, and
+    an undelivered question records nothing at all — in both cases the row
+    finalizes as met/engine with no `user_response`, and the crossed line
+    vanished again. Round 1's silence, reincarnated through a different door.
+
+    The silence condition is ANSWERED, not queued."""
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
-        _seed_condition(tmp, root)
-        slot_id = json.loads((root / "conditions.jsonl").read_text(
-            encoding="utf-8").splitlines()[0])["slot_id"]
-        envelope = [{"slot_id": slot_id,
-                     "check": {"lookup_status": "ok", "observation": dict(_CROSSED)}}]
-        plan = _prepare_with_checks(tmp, root, envelope)
-        question = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+        slot_id, final = _crossing_answered(tmp, root, "skip")
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == slot_id)
+        assert "user_response" not in row, "a skip is not an answer"
+        assert (row["final_verdict"], row["verdict_source"]) == ("met", "engine")
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert _CONDITION["criterion"] in private, \
+            "a crossed line nobody answered on must still reach the card:\n" + private
+        assert "you have not said either way" in private, private
+        assert "Still open and coming back next review: 1." in private, \
+            "and the summary must count it as unresolved:\n" + private
+
+
+def test_a_crossing_the_user_answered_goes_quiet():
+    """The counterweight, and the thing that makes the fix a distinction rather
+    than a blanket. Once the user actually answers, the exchange told the story
+    and the card does not re-litigate it — including an override, whose verdict
+    of record is `not_met` while the engine's own finding stays `met`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot_id, final = _crossing_answered(tmp, root, "confirmed")
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == slot_id)
+        assert row["user_response"]["answer"] == "confirmed"
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        # The reading-line shape specifically. The reconciliation opener legitimately
+        # names this same condition — it is the prior commitment — and that is a
+        # different surface with a different job.
+        assert _READING_LINE not in private, \
+            "an answered crossing is not restated as a reading:\n" + private
+        assert "Still open" not in private, private
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _slot_id, final = _crossing_answered(tmp, root, "overridden", note="the base was restated")
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert _READING_LINE not in private, \
+            "an override moves the verdict of record to not_met; it must not reappear " \
+            "as an all-clear reading:\n" + private
+
+
+def test_an_unresolved_basis_concern_does_not_read_as_a_clean_number():
+    """The symmetric half of the same BLOCK. A basis question that was skipped
+    (or never delivered) leaves the row with a `basis_alert` and no
+    `basis_resolution`. Before this the check fell through to the ordinary fact
+    branch — the reading printed as a clean all-clear and the summary counted
+    nothing open, so the doubt disappeared exactly the way a silent crossing
+    made a crossed line disappear."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot, envelope, plan, question = _basis_fixture(tmp, root)
         answers = _answers(plan, commitment="skip")
         for row in answers["answers"]:
             if row["question_id"] == question["id"]:
                 row["choice"] = "skip"
         answers["condition_checks"] = envelope
-        assert _finalize_plan(tmp, root, plan, answers).returncode == 0
-        row = next(r for r in _check_rows(root) if r["slot_id"] == slot_id)
-        assert "user_response" not in row, "a skip is not an answer"
-        assert (row["final_verdict"], row["verdict_source"]) == ("met", "engine")
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == slot["slot_id"])
+        assert "basis_resolution" not in row, "a skip resolves nothing"
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "the reporting segment was restated" in private, \
+            "the raised concern must stay visible:\n" + private
+        assert "may have changed" in private and "unsettled" in private, private
+        assert "Still open and coming back next review: 1." in private, private
+
+
+def test_a_resolved_basis_concern_goes_quiet():
+    """And the counterweight: `keep` settles it, so the reading prints as the
+    ordinary fact it is and nothing is left open."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot, envelope, plan, question = _basis_fixture(tmp, root)
+        answers = _answers(plan, commitment="skip")
+        for row in answers["answers"]:
+            if row["question_id"] == question["id"]:
+                row["choice"] = "keep"
+        answers["condition_checks"] = envelope
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "may have changed" not in private, private
+        assert "Still open" not in private, private
+        assert _READING_LINE in private, \
+            "the reading itself still prints as an ordinary fact:\n" + private
 
 
 def test_a_reading_that_changes_between_the_question_and_the_answer_fails_closed():
@@ -3668,13 +3771,11 @@ def test_a_crossing_that_lost_the_budget_still_states_its_figure_on_the_card():
         assert f"sell if metric {index} drops under 30%" in private, \
             "the deferred crossing must reach the card at all:\n" + private
         assert "past your line" in private and "next review" in private, private
-        # And the asked-about one stays silent here — the exchange carried it.
-        asked_index = int(asked.pop()[-1])
-        assert private.count(f"sell if metric {asked_index} drops under 30% —") == 0, \
-            "a crossing that was asked about is not also restated as a fact line"
-        assert "Still open and coming back next review: 1." in private, \
-            "a deferred crossing was checked, but it is not settled — the summary must " \
-            "count it as open:\n" + private
+        # The queued one was answered `skip` by the helper, so it is unresolved
+        # too and must also speak — see the round-2 tests below for that branch
+        # in isolation. Both are open, and the summary says two.
+        assert "Still open and coming back next review: 2." in private, \
+            "a checked-but-unresolved crossing must count as open:\n" + private
 
 
 def test_a_prepare_side_check_cannot_be_dropped_into_a_not_checked_row():
