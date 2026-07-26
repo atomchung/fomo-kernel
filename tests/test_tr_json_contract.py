@@ -67,6 +67,8 @@ STATE_METRIC_KEYS = {
     # 什麼」的天花板(review.py 拒收不在 state.metrics 的 metric_key),擴目錄必須動這裡。
     "longest_hold_days", "longest_hold_ticker",
     "worst_cur_ret", "worst_cur_ret_ticker",
+    "worst_drawdown", "worst_drawdown_ticker",             # 需要價格序列,離線 shim 下退 None
+    "worst_bench_lag", "worst_bench_lag_ticker",
 }
 
 PASS = 0

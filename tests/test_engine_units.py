@@ -502,7 +502,7 @@ def test_dim_size_avg_pct_excludes_max():
 
 # ─────────────────────── I. build_state():薄狀態 + 誠實鐵律 ───────────────────────
 
-def _state_from(rows, ab):
+def _state_from(rows, ab, **kwargs):
     """組出 build_state 需要的 dims/overview/rx(離線、成本基礎)。"""
     rts, _ = tr.round_trips(rows)
     held, avg_down = tr.positions(rows)
@@ -511,7 +511,7 @@ def _state_from(rows, ab):
             tr.dim_hold(rts), tr.dim_avgdown(avg_down, held, None, d_size)]
     ov = tr.overview_stats(rts, ab, held, None)
     rx = tr.prescribe(ab, dims, ov)
-    return tr.build_state(rows, rts, held, dims, ov, ab, rx)
+    return tr.build_state(rows, rts, held, dims, ov, ab, rx, **kwargs)
 
 
 def test_build_state_alpha_always_reported_with_uncertainty():
@@ -569,6 +569,70 @@ def test_position_observables_name_the_ticker_and_degrade_independently():
                         ("None 輸入", (None, None, "2026-07-26"))):
         degraded = tr.position_observables(*args)
         assert all(v is None for v in degraded.values()), f"{label} 應全 None,得到 {degraded}"
+
+
+def test_price_series_observables_measure_since_open_with_per_market_benchmark():
+    """#400/#412 第二組觀測量:回落與落後大盤都從「這檔自己的開倉日」量起,不是復盤期間——
+    「自從我買進」是用戶看單一部位的框架,而帳戶層 alpha/excess 是期間視角,講不出這件事。
+
+    最要緊的斷言是基準要選對:TWX 是台股,必須對 ^TWII 而非 SPY。fixture 刻意讓兩個基準
+    漲幅差很遠(SPY +7% / ^TWII +50%),所以基準選錯時 worst_bench_lag 會落在另一檔、數字
+    也對不上——由資料把錯誤逼出來,不是靠註解保證。"""
+    try:
+        import pandas as pd
+    except ImportError:                                   # pandas 是 optional dep,缺了就跳過
+        return _SKIP
+    idx = pd.date_range("2026-01-01", periods=8, freq="D")
+    prices = pd.DataFrame({
+        "AAA":   [100, 120, 150, 130, 110, 105, 100, 90],   # 峰 150 → 90 = -40%,總報酬 -10%
+        "TWX":   [20, 20, 20, 21, 21, 21, 21, 21],          # +5%
+        "SPY":   [400, 404, 408, 412, 416, 420, 424, 428],  # +7%
+        "^TWII": [100, 110, 120, 130, 140, 145, 148, 150],  # +50%
+    }, index=idx)
+    holdings = {"AAA": {"avg_cost": 100.0, "cycle_start": "2026-01-01"},
+                "TWX": {"avg_cost": 20.0, "cycle_start": "2026-01-01"},
+                "ZZZ": {"avg_cost": 10.0, "cycle_start": "2026-01-01"}}  # 價格表裡根本沒這欄
+    markets = {"AAA": "US", "TWX": "TW", "ZZZ": "US"}
+    obs = tr.position_observables(holdings, {"AAA": 90.0, "TWX": 21.0}, "2026-01-08",
+                                  prices=prices, markets=markets)
+    assert _approx(obs["worst_drawdown"], -0.4), f"AAA 從峰值 150 跌到 90,得到 {obs}"
+    assert obs["worst_drawdown_ticker"] == "AAA"
+    assert _approx(obs["worst_bench_lag"], -0.45), \
+        f"TWX +5% vs ^TWII +50% = -0.45;若誤用 SPY 會是 -0.02、且最差變成 AAA。得到 {obs}"
+    assert obs["worst_bench_lag_ticker"] == "TWX", "台股要對 ^TWII,不是 SPY"
+
+    no_prices = tr.position_observables(holdings, {"AAA": 90.0}, "2026-01-08")
+    assert no_prices["worst_drawdown"] is None and no_prices["worst_bench_lag"] is None, \
+        "沒有價格序列 → 這兩個量必須 None,不可用最後價格硬湊"
+    assert no_prices["longest_hold_days"] == 7, "缺價格序列不該影響不需要它的量"
+
+    late = {"AAA": {"avg_cost": 100.0, "cycle_start": "2026-01-08"}}   # 開倉=序列最後一天
+    thin = tr.position_observables(late, {"AAA": 90.0}, "2026-01-08", prices=prices, markets={})
+    assert thin["worst_drawdown"] is None, "開倉後只有一個觀測點,算不出回落 → None 而非 0"
+
+
+def test_build_state_threads_the_price_frame_into_the_catalog():
+    """接線測試。position_observables 自己測綠、build_state 卻沒把 prices 交下去的話,產品
+    會永遠少兩個觀測量而所有測試照樣全綠——單元測試涵蓋函數、涵蓋不到接線,那是最難發現的
+    假綠燈。這裡跑真實 mock CSV 走完整 build_state,斷言值真的落進 state.metrics。"""
+    try:
+        import pandas as pd
+    except ImportError:
+        return _SKIP
+    rows = tr.load([os.path.join(MOCK, "mock_trades.csv")])
+    idx = pd.date_range("2024-01-01", "2024-12-03", freq="D")
+    # PLTR(開倉 2024-03-20)一路走低,是唯一會被選成最深回落的那檔。
+    prices = pd.DataFrame({t: [100.0] * len(idx) for t in ("NVDA", "ORCL", "CRWV", "SPY")},
+                          index=idx)
+    prices["PLTR"] = [100.0 - 40.0 * i / (len(idx) - 1) for i in range(len(idx))]
+    st = _state_from(rows, dict(note="無價格"), prices=prices)
+    metrics = st["metrics"]
+    assert metrics["worst_drawdown_ticker"] == "PLTR", \
+        f"prices 沒被 build_state 交給 position_observables,得到 {metrics}"
+    assert metrics["worst_drawdown"] is not None and metrics["worst_drawdown"] < 0
+    assert metrics["worst_bench_lag_ticker"] == "PLTR", "只有 PLTR 跌,落後大盤的就該是它"
+    assert _state_from(rows, dict(note="無價格"))["metrics"]["worst_drawdown"] is None, \
+        "不傳 prices 時必須誠實退成 None(離線復盤的預設路徑)"
 
 
 # ─────────────────────── J. prescribe():#29 能產 ≥2 候選規矩 ───────────────────────
