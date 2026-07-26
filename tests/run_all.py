@@ -48,6 +48,13 @@ SUITES = [
     # checkout, and requiring byte-identity on a PR would fail every
     # legitimate copy change.
     ("Persona sweep (personas x locales x reviews x variants)", "tests/persona_sweep.py"),
+    # #417's mechanical half. The issue lists "not in default CI" as a
+    # non-goal and gives its reason — non-deterministic, billable runs stay
+    # opt-in — which is the rubric judge, not this. Replaying recorded answers
+    # against recorded fixtures costs no tokens and no clock, and leaving it
+    # out is how the miss-verdict record specified in 2026-07 accumulated zero
+    # entries in three months. The judge half stays out when it lands.
+    ("Question episode bank (#417)", "evals/run_episodes.py"),
 ]
 
 

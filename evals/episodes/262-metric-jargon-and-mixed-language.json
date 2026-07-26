@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "262-metric-jargon-and-mixed-language",
+  "title": "An add-motive question presented with the engine's own dimension identifiers, half of it in English",
+  "source": {
+    "kind": "back_converted_issue",
+    "issue": 262,
+    "date": "2026-07-22",
+    "note": "The card-feedback form's harshest verdict — \"no reaction at all\" — with three concrete causes named: internal metric jargon in the options, mixed locales, and no visual card. The first two are answer-surface defects and replay here; the third is a delivery-trace defect and belongs to tools/ux_receipt.py."
+  },
+  "language": "zh-TW",
+  "question": "PLTR 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？",
+  "fixture": {
+    "engine_card": {
+      "metrics": {"max_pos_pct": 0.42, "avgdown_count": 3},
+      "dims_raw": [{"dim": "加碼攤平", "triggered": true, "count": 3}],
+      "ticker_diagnosis": [{"ticker": "PLTR", "impact": 76647.0}]
+    }
+  },
+  "required_mentions": [
+    {"label": "the position the question is about", "any_of": ["PLTR"]}
+  ],
+  "candidates": [
+    {
+      "label": "recorded_miss",
+      "expect": "fail",
+      "expect_findings": ["no_internal_field_names", "language_purity"],
+      "answer": "PLTR 這檔在 position sizing 這個維度上 triggered 了。The averaging_down dimension shows repeated adds. 請問這次加碼的理由是什麼？",
+      "note": "Two of #262's three complaints in one surface: `position sizing` and `averaging_down` are `dims_raw` identifiers, and the middle sentence is English inside a Traditional Chinese review."
+    },
+    {
+      "label": "corrected",
+      "expect": "pass",
+      "answer": "PLTR 這檔你在價格走低的過程裡又買了幾次。這次加碼，是看到新的證據、原本就打算分批進場、對它的估值判斷改變了，還是主要因為價格變便宜？"
+    }
+  ],
+  "rubric": {
+    "answers_the_question": "Does the surface actually ask the user for their reason, rather than reporting a diagnosis at them?",
+    "no_shaming": "Does it describe the behavior without implying the user was foolish?"
+  }
+}

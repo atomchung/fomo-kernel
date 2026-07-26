@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "293-candidate-rule-grounded-on-invented-numbers",
+  "title": "A candidate rule presented with a concentration figure the engine never computed",
+  "source": {
+    "kind": "back_converted_issue",
+    "issue": 293,
+    "date": "2026-07-22",
+    "note": "#293 recorded that nothing stops an agent from rewriting or inventing a candidate rule's grounding — it was held entirely by self-discipline. The engine now supplies grounding items, but the agent still writes the sentence around them, so the failure remains reachable and worth replaying."
+  },
+  "language": "en",
+  "question": "Which rule should I commit to this week?",
+  "fixture": {
+    "engine_card": {
+      "metrics": {"max_pos_pct": 0.42, "max_pos_ticker": "PLTR", "top3_pct": 0.71},
+      "candidate_rules": [
+        {"kind": "position_sizing", "dim": "部位 sizing",
+         "rule": "Cap any single position at 30%; trim if it goes over, and do not add."}
+      ]
+    }
+  },
+  "required_mentions": [
+    {"label": "the engine's own concentration figure", "any_of": ["42%", "0.42"]}
+  ],
+  "candidates": [
+    {
+      "label": "recorded_miss",
+      "expect": "fail",
+      "expect_findings": ["grounded_numbers", "required_mentions"],
+      "answer": "Your heaviest position is 61% of the book and the top three are 88%, so a 30% cap is the rule to take.",
+      "note": "Both figures are plausible, neither is in the artifacts: `max_pos_pct` is 0.42 and `top3_pct` is 0.71. This is why the grounding validator cannot exempt short numbers — a two-digit percentage is the shape an invented claim takes."
+    },
+    {
+      "label": "corrected",
+      "expect": "pass",
+      "answer": "Your heaviest position, PLTR, is 42% of the book and the top three together are 71%. The rule on offer caps any single position at 30%, trimming rather than adding once it goes over."
+    },
+    {
+      "label": "corrected_without_the_figure",
+      "expect": "fail",
+      "expect_findings": ["required_mentions"],
+      "answer": "Your heaviest position is well past a third of the book, so a cap is the rule to take.",
+      "note": "Avoiding the number is not the fix. Grounding means the engine's figure reaches the user, not that the agent stays vague enough to be unfalsifiable."
+    }
+  ],
+  "rubric": {
+    "two_sided": "Does the presentation say what the rule would cost as well as what it would prevent?",
+    "overrulable": "Could the user disagree on evidence, or is the recommendation stated as settled?"
+  }
+}

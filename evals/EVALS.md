@@ -2,6 +2,8 @@
 
 This is a maintainer checklist, not runtime context. Executable prompts live in `skills/fomo-kernel/evals/evals.json`; deterministic P0 assertions live in `tests/test_review_v2.py` and `tests/run_all.py`.
 
+The checklist below is graded by a reader. What a machine can replay lives in [`episodes/`](episodes/) — one file per recorded miss, each holding the fixture, the question, the answer that failed, and an answer that must pass (`python3 evals/run_episodes.py`). A miss that only appears here is a paragraph; a miss that also appears there is a regression test.
+
 ## Trigger cases
 
 | Input | Expected behavior |

@@ -43,6 +43,12 @@ tests/agent/check_state.py    projection and trajectory helpers
 tests/agent/personas.md       scripted users and differential pairs
 tests/agent/cases/*.yaml      optional headless declarations
 tests/agent/judge_narrative.py optional prose-quality judge
+evals/run_episodes.py         question-episode bank (#417): replays recorded
+                              answers against recorded fixtures through the
+                              mechanical validators. Deterministic and
+                              offline, so it runs in the default suite; the
+                              rubric-judge half it leaves unrun does not
+evals/episodes/*.json         the episodes themselves, one per miss
 ```
 
 The complete deterministic suite runs through `python3 tests/run_all.py`. Headless agent generation and LLM judging are opt-in because they are non-deterministic and may cost money.
@@ -213,6 +219,8 @@ For each miss:
 3. Change one contract surface.
 4. Run the complete deterministic suite and the relevant agent eval.
 5. Recheck a real card.
+
+Step 2's "smallest synthetic case" has a home now. When the miss is an **answer** rather than a lifecycle or rendering defect, convert it into an episode under `evals/episodes/` before filing anything else — the conversion takes about as long as writing the issue body, and it is the difference between a failure that is described and one that can be re-run. The unit is one question answered, the fixture is only the artifacts the answer had to be faithful to, and every episode carries the recorded miss *and* an answer that must pass. `evals/episodes/README.md` holds the procedure; #417 records why the loop above accumulated no records for three months without it.
 
 ## Run cadence
 

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "adversarial-number-spelled-out-and-ledger-id-quoted",
+  "title": "An answer that satisfies the digit rule by writing the number as a word, and cites the ledger's internal position id as its source",
+  "source": {
+    "kind": "adversarial",
+    "date": "2026-07-26",
+    "note": "Not a miss anyone observed — written to keep two validators falsifiable. `spelled_out_numbers` and `privacy_clean` fired on no episode in the bank, and a check that never fires is not evidence (docs/eval-design.md, \"Mutation testing\"). The runner now fails when any validator is unexercised, so this file is what that gate demands rather than an optional extra."
+  },
+  "language": "en",
+  "question": "How concentrated am I right now?",
+  "fixture": {
+    "engine_card": {
+      "metrics": {"max_pos_pct": 0.42, "max_pos_ticker": "PLTR"}
+    }
+  },
+  "candidates": [
+    {
+      "label": "spelled_out_and_sourced_on_a_ledger_id",
+      "expect": "fail",
+      "expect_findings": ["spelled_out_numbers", "privacy_clean"],
+      "answer": "Your largest holding is roughly sixty percent of the book, which you can verify against PLTR#2024-03-11#2 in your ledger.",
+      "note": "Two evasions in one sentence. Writing the figure as a word carries the same claim past a digit scan — the engine's own `numeric_claim` detector is what catches it. Citing the position id looks like diligence and is the format `tools/privacy_lint.py` flags on sight, because printing it leaks the ledger's shape into text a user may paste anywhere."
+    },
+    {
+      "label": "corrected",
+      "expect": "pass",
+      "answer": "Your largest holding, PLTR, is 42% of the book."
+    }
+  ],
+  "rubric": {
+    "no_hedged_precision": "Does the answer avoid dressing an unsourced figure as an approximation?"
+  }
+}

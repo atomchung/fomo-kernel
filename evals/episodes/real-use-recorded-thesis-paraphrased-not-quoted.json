@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "real-use-recorded-thesis-paraphrased-not-quoted",
+  "title": "A question stem that summarizes the user's recorded thesis instead of replaying it verbatim",
+  "source": {
+    "kind": "real_use_miss",
+    "date": "2026-07-23",
+    "note": "First real-data review, caught by the verify step failing closed. Only the failure structure is recorded: the fixture below is synthetic, the thesis text is invented, and no ticker, amount, or date from the real run appears anywhere in this file. `tools/privacy_lint.py` cannot help here — it needs the real CSV as a reference set, which by construction is not in this repository — so the de-identification is the author's responsibility and the rule is to write the shape, never the instance."
+  },
+  "language": "zh-TW",
+  "question": "SIM 這次加碼，是新證據、事先分批、估值改變，還是只有價格下跌？",
+  "fixture": {
+    "engine_card": {
+      "ticker_diagnosis": [{"ticker": "SIM", "impact": 12000.0}]
+    },
+    "review_plan": {
+      "state_snapshot": {
+        "active_theses": [
+          {
+            "ticker": "SIM",
+            "maturity": "testable",
+            "voice": "user_confirmed",
+            "why": "產能開出來之前不會反映在財報上，我願意等兩季"
+          }
+        ]
+      }
+    }
+  },
+  "required_mentions": [
+    {"label": "the recorded thesis, verbatim",
+     "any_of": ["產能開出來之前不會反映在財報上，我願意等兩季"]}
+  ],
+  "forbidden_mentions": [
+    {"label": "an agent-authored paraphrase standing in for the user's words",
+     "none_of": ["你當初看好產能", "你說過會長期持有"]}
+  ],
+  "candidates": [
+    {
+      "label": "recorded_miss",
+      "expect": "fail",
+      "expect_findings": ["required_mentions", "forbidden_mentions"],
+      "answer": "你當初看好產能，所以買了 SIM。這次加碼，是新的證據、事先就打算分批、估值判斷改變，還是只有價格下跌？",
+      "note": "The paraphrase is not wrong, which is exactly the problem: the user cannot tell whether the system remembered them or reconstructed them, and a reconstruction they never said is the thing the verbatim rule exists to prevent."
+    },
+    {
+      "label": "corrected",
+      "expect": "pass",
+      "answer": "你上次記下的是：「產能開出來之前不會反映在財報上，我願意等兩季」。這次加碼，是新的證據、事先就打算分批、估值判斷改變，還是只有價格下跌？"
+    },
+    {
+      "label": "quoted_but_editorialized",
+      "expect": "fail",
+      "expect_findings": ["forbidden_mentions"],
+      "answer": "你上次記下的是：「產能開出來之前不會反映在財報上，我願意等兩季」——你說過會長期持有。這次加碼的理由是什麼？",
+      "note": "Quoting correctly and then adding a claim the record does not hold is the same failure wearing a citation."
+    }
+  ],
+  "rubric": {
+    "voice_fidelity": "Is a confirmed thesis presented as the user's words and an inferred one as a guess?",
+    "no_softening": "Does the stem avoid a preamble that changes what is being asked?"
+  }
+}

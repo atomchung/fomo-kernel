@@ -247,6 +247,26 @@ hand; a passing lint is necessary, not sufficient. Mock-data sessions do not
 need the lint, but the `TICKER#date#seq` format should still never be pasted
 verbatim.
 
+### 6. Convert answer misses into episodes, in the same sitting
+
+An issue records a miss; it cannot re-run one. For three months every dogfood
+finding went only to the issue tracker and the eval loop above accumulated
+zero records (#417). So when the miss is in something the product **said** —
+a figure with no engine source, an internal identifier on screen, two locales
+in one sentence, a fact the answer should have carried and did not — write the
+episode before you close the terminal:
+
+```bash
+$EDITOR evals/episodes/<issue>-<what-went-wrong>.json   # the recorded miss, and a control that must pass
+python3 evals/run_episodes.py --id <issue>-<what-went-wrong>
+```
+
+`evals/episodes/README.md` holds the procedure and the de-identification rule
+for real-data runs: only the failure *structure* survives — synthetic fixture,
+invented instrument, invented wording. A miss in the *trace* (a card that was
+generated but never presented, a skipped cash-anchor check) is not an episode;
+`ux_receipt.py verify` already owns those.
+
 ## Per-client notes
 
 - **Claude Code (owner's machine)** — the local `/fomo-qa` skill automates the

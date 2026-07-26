@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "id": "357-account-return-claimed-while-the-cash-gate-is-closed",
+  "title": "An account-level return quoted on a review whose cash anchor is missing",
+  "source": {
+    "kind": "back_converted_issue",
+    "issue": 357,
+    "date": "2026-07-23",
+    "note": "The cash-anchor gap recurred three times as one-off patches before it was named a design problem (docs/development-guide.md §3). Its answer-surface symptom is the one replayed here: the engine gates the account-level tier and says which blocker closed it, and the answer either carries that blocker to the user or quietly speaks past it."
+  },
+  "language": "en",
+  "question": "What was my actual return this period?",
+  "fixture": {
+    "engine_card": {
+      "acct_perf": {
+        "hold_twr": 0.5,
+        "acct_twr": null,
+        "gate": {"status": "no_cash_anchor", "data": {}}
+      }
+    },
+    "engine_state": {
+      "cash": {"reliable": false}
+    }
+  },
+  "required_mentions": [
+    {"label": "the blocker that closed the account tier",
+     "any_of": ["cash balance", "cash anchor"]},
+    {"label": "the holdings-only figure the engine did compute", "any_of": ["50%"]}
+  ],
+  "candidates": [
+    {
+      "label": "recorded_miss",
+      "expect": "fail",
+      "expect_findings": ["grounded_numbers", "required_mentions"],
+      "answer": "Your account returned about 34% this period once cash is included.",
+      "note": "`acct_twr` is null — the engine declined to compute it — so the figure has no source, and the reason the user cannot see an account-level number never reaches them."
+    },
+    {
+      "label": "recorded_miss_vague",
+      "expect": "fail",
+      "expect_findings": ["required_mentions"],
+      "answer": "Your holdings returned 50% this period. An account-level view is not available right now.",
+      "note": "The second half of #357: the number is honest, but \"not available\" names no blocker, so the user cannot act on it. The engine already knows the answer is one cash balance."
+    },
+    {
+      "label": "corrected",
+      "expect": "pass",
+      "answer": "Counting only the positions you hold, the period returned 50%. The account-level view — the one that includes cash sitting idle — is still closed, because there is no current cash balance on file yet. One number unlocks it."
+    }
+  ],
+  "rubric": {
+    "actionable": "Does the user learn what to supply, not merely that something is missing?",
+    "no_false_precision": "Does the answer avoid implying the holdings figure is the account figure?"
+  }
+}

@@ -40,13 +40,15 @@ python3 tests/run_all.py
 TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional beta-direction and market-context network smoke
 ```
 
-The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, documentation language, and agent workflow boundaries.
+The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, the question-episode bank, documentation language, and agent workflow boundaries.
 
 Do not commit after changing engine output, price handling, sorting, or orchestration unless the complete offline suite passes.
 
 ## Dogfood QA
 
 Maintainer dogfood QA on every client (Claude Code, Codex, Antigravity, ...) follows [docs/qa-runbook.md](docs/qa-runbook.md): latest-main version gate, isolated `TRADE_COACH_HOME` root, `ux_receipt` coverage, an archived manifest, and `tools/privacy_lint.py` on any real-data text before it is posted to this public repository (#274). A run that skips any gate is not a QA run and its results are not citable as QA evidence.
+
+A miss in what the product *said* also converts into an episode under `evals/episodes/` in the same sitting (#417). An issue records a failure; an episode re-runs it. Trace-level misses stay with `ux_receipt verify`.
 
 ## Claude Code hooks
 
