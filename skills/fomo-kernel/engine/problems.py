@@ -254,28 +254,27 @@ def compute_stats_by_marks(events, marks, min_marks=3):
                       "prior_from": prior_from, "recent_days": recent_days, "prior_days": prior_days}
 
 
-def mute_row(rule, muted, session_id=None):
-    """一條規矩的靜音/取消靜音:append 一列指回舊列(同 revises 機制),不改寫舊列。
+def rule_line_id(rule):
+    """一條規矩線的穩定身分 = 這條線最初那列的 rule_id。
 
-    `created` 原封不動複製過來——這是這個功能的整個重點。對位是從 created 之後的
-    期別開始算的(見 check_rules),把 created 換成靜音那天,等於這條規矩的歷史從被
-    靜音起一片空白;那樣「靜默統計中」就是一句謊話,而且是最難發現的那種:你以為
-    資料在累積,回頭看才發現什麼都沒有。
+    規矩會被改寫(revises 鏈),每次改寫都換一個 rule_id;但那是「同一條規矩的新版本」,
+    不是新規矩。使用者說「這條別再問我」時,指的是整條線。用鏈根當身分,改寫不會把
+    靜音弄丟,靜音也不會憑空造出第二個 live head。
     """
-    row = {k: v for k, v in rule.items() if k not in {"rule_id", "revises", "session_id"}}
-    chain = str(rule.get("rule_id"))
-    row["rule_id"] = f"{chain}~{'m' if muted else 't'}"
-    row["revises"] = chain
-    row["status"] = "muted" if muted else "tracking"
-    if session_id:
-        row["session_id"] = session_id
-    return row
+    return str(rule.get("line_id") or rule.get("rule_id") or "")
 
 
-def load_rules(path):
-    """rules.jsonl → (active_tracking[], muted[])。append-only:revises 指回舊 rule_id →
-    舊的 superseded;每條規矩線取 latest;status muted 不進對位但列出(呈現「靜默統計中」)。"""
-    rows, superseded = [], set()
+def load_rules(path, muted_ids=()):
+    """rules.jsonl → (tracking[], muted[])。append-only:revises 指回舊 rule_id →
+    舊的 superseded;每條規矩線取 latest。
+
+    muted_ids(#416):使用者靜音的規矩線 id 集合,由呼叫端從 profile.json 讀進來。
+    靜音是「狀態」不是「身分變更」——rules.jsonl 一列都不會為了靜音而多寫,所以
+    breach 問題的對位鍵(rule_id)不會漂移,revises 鏈也不會分岔。
+
+    每列另外掛上 line_id(鏈根),讓呼叫端不必自己重走鏈。
+    """
+    rows, superseded, parent = [], set(), {}
     if not os.path.exists(path):
         return [], []
     with open(path, encoding="utf-8") as f:
@@ -291,11 +290,29 @@ def load_rules(path):
                 continue
             if r.get("revises"):
                 superseded.add(r["revises"])
+                parent[r["rule_id"]] = r["revises"]
             rows.append(r)
-    latest = [r for r in rows if r["rule_id"] not in superseded]
-    tracking = [r for r in latest if r.get("status", "tracking") == "tracking"]
-    muted = [r for r in latest if r.get("status") == "muted"]
-    return tracking, muted
+
+    def root(rule_id):
+        seen = set()
+        while rule_id in parent and rule_id not in seen:
+            seen.add(rule_id)
+            rule_id = parent[rule_id]
+        return rule_id
+
+    latest = []
+    for r in rows:
+        if r["rule_id"] in superseded:
+            continue
+        row = dict(r)
+        row["line_id"] = root(r["rule_id"])
+        latest.append(row)
+    silent = set(muted_ids or ())
+    # status:"muted" 仍被承認:那是 #137 起就寫在契約裡的列欄位,手改過檔案的人不該
+    # 因為這次改動被靜默忽略。新的靜音一律走 profile,不再寫進這個可重建的投影檔。
+    def is_muted(row):
+        return row.get("status") == "muted" or row["line_id"] in silent
+    return [r for r in latest if not is_muted(r)], [r for r in latest if is_muted(r)]
 
 
 def check_rules(tracking, events, marks, draft_events=None, draft_week=None):
@@ -377,7 +394,7 @@ def check_rules(tracking, events, marks, draft_events=None, draft_week=None):
 
 
 def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=False,
-             draft_events=None, draft_week=None):
+             draft_events=None, draft_week=None, muted_ids=()):
     """Assemble the review-ready stats payload (single source for CLI and review v2).
 
     rules_path=None keeps the CLI's opt-in semantics (rules_check/muted None);
@@ -404,13 +421,14 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
         per, top = compute_stats(events, today, recent_weeks)
     rules_check = muted = None
     if rules_path:
-        tracking, muted_rules = load_rules(rules_path)
+        tracking, muted_rules = load_rules(rules_path, muted_ids)
         rules_check = check_rules(tracking, events, marks,
                                   draft_events=draft_events, draft_week=draft_week)
         # 靜音的規矩走同一條對位,只是不進 rules_check——「靜默統計中」的「統計」
         # 得是真的。少了這一步,靜音只是把規矩丟進黑洞,而使用者以為資料在累積。
         # 分兩個欄位而不是加旗標:呈現層對 rules_check 的注意力調度不必為此改寫,
-        # 也不可能不小心把靜音的規矩排進卡面。
+        # 也不可能不小心把靜音的規矩排進卡面。draft 視窗照樣傳進去,否則靜音期間
+        # 「本期進行中」的破戒會憑空消失,而那正是使用者回頭要看的東西。
         muted = check_rules(muted_rules, events, marks,
                             draft_events=draft_events, draft_week=draft_week)
     return {"as_of": today, "recent_weeks": recent_weeks,

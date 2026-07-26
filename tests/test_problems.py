@@ -235,25 +235,45 @@ def _muting_fixture():
     return events, marks, rule
 
 
-def test_muting_a_rule_keeps_its_history_instead_of_restarting_it():
-    """這條是靜音功能的整個重點,也是它最容易變成謊話的地方。
+def _write_rules(path, rows):
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    對位從 `created` 之後的期別開始算。靜音時若把 created 換成靜音那天,這條規矩
-    的歷史就從那天起一片空白——而使用者被告知的是「靜默統計中」。那不是少一個
-    功能,是給了一個假的保證:回頭看的時候才發現什麼都沒累積。
+
+def test_muting_never_writes_a_rule_row_so_identity_cannot_drift():
+    """靜音是狀態,不是新身分——這條擋的是一整類 bug。
+
+    breach 問題的對位鍵是 rule_id(review.py 用它記住使用者已經回答過哪一次破戒)。
+    第一版把靜音做成「append 一列新 rule_id」,結果 mute→unmute 之後 rule_id 變了,
+    引擎把已經答過的必答題再問一次;而如果中途又有一次 revise,revises 鏈會分岔成
+    兩個 live head,同一次破戒產生兩個問題。改成用鏈根當身分後,靜音一列都不寫。
     """
-    events, marks, rule = _muting_fixture()
-    muted_row = pb.mute_row(rule, muted=True)
-    assert muted_row["created"] == rule["created"], "靜音不得重設 created,否則歷史歸零"
-    assert muted_row["revises"] == "r1", "靜音走既有的 revises 鏈,不改寫舊列"
-    assert muted_row["status"] == "muted" and muted_row["rule_id"] != "r1"
-    assert muted_row["text"] == rule["text"] and muted_row["problem_key"] == rule["problem_key"]
+    _, rules = _mk()
+    rows = [{"rule_id": "rule-a-0", "text": "虧損不加碼", "problem_key": "avgdown_breach",
+             "created": "2026-06-13"}]
+    _write_rules(rules, rows)
+    before = open(rules, encoding="utf-8").read()
 
-    before = pb.check_rules([rule], events, marks)[0]
-    after = pb.check_rules([muted_row], events, marks)[0]
-    assert (after["verdict"], after["held_streak"]) == (before["verdict"], before["held_streak"]), \
-        f"靜音前後的對位結果必須一致:{before} vs {after}"
-    assert after["held_streak"] == 2, "fixture 本身要有東西可以丟,否則這條測試什麼都沒證明"
+    tracking, muted = pb.load_rules(rules, muted_ids=["rule-a-0"])
+    assert open(rules, encoding="utf-8").read() == before, "靜音不得動 rules.jsonl 一個位元組"
+    assert tracking == [] and len(muted) == 1
+    assert muted[0]["rule_id"] == "rule-a-0", "rule_id 不變,對位鍵才不會漂移"
+
+
+def test_a_muted_line_survives_a_later_revision_without_forking_the_chain():
+    """使用者說「這條別再問我」指的是整條規矩線,不是那個版本。"""
+    _, rules = _mk()
+    _write_rules(rules, [
+        {"rule_id": "rule-a-0", "text": "虧損不加碼", "problem_key": "avgdown_breach",
+         "created": "2026-06-13"},
+        {"rule_id": "rule-b-0", "text": "虧損加碼前隔一天", "problem_key": "avgdown_breach",
+         "created": "2026-06-20", "revises": "rule-a-0"},
+    ])
+    tracking, muted = pb.load_rules(rules, muted_ids=["rule-a-0"])
+    assert len(tracking) + len(muted) == 1, "一條線只能有一個 live head"
+    assert muted and muted[0]["rule_id"] == "rule-b-0", "改寫後的版本繼承靜音"
+    assert muted[0]["line_id"] == "rule-a-0", "身分是鏈根,呼叫端不必自己重走鏈"
 
 
 def test_a_muted_rule_is_still_reconciled_just_not_in_the_rotation():
@@ -263,10 +283,8 @@ def test_a_muted_rule_is_still_reconciled_just_not_in_the_rotation():
     pb.append_book(book, events, None)
     for mark in marks:
         pb.append_book(book, [], mark)
-    with open(rules, "w", encoding="utf-8") as f:
-        f.write(json.dumps(rule, ensure_ascii=False) + "\n")
-        f.write(json.dumps(pb.mute_row(rule, muted=True), ensure_ascii=False) + "\n")
-    snap = pb.snapshot(book, rules, today="2026-07-04")
+    _write_rules(rules, [rule])
+    snap = pb.snapshot(book, rules, today="2026-07-04", muted_ids=["r1"])
     assert snap["rules_check"] == [], "靜音的規矩不得進 rules_check——卡面的注意力調度讀那裡"
     assert len(snap["muted_rules"]) == 1
     silent = snap["muted_rules"][0]
@@ -274,15 +292,41 @@ def test_a_muted_rule_is_still_reconciled_just_not_in_the_rotation():
         f"靜音的規矩必須照常對位,實際拿到:{silent}"
     assert silent["text"] == rule["text"], "使用者回頭看時要認得出是哪一條"
 
+    loud = pb.snapshot(book, rules, today="2026-07-04")
+    assert [r["rule_id"] for r in loud["rules_check"]] == ["r1"] and loud["muted_rules"] == [], \
+        "沒靜音時行為必須跟以前一模一樣"
+    assert loud["rules_check"][0]["held_streak"] == silent["held_streak"], \
+        "靜音與否不改變對位結果,只改變它出現在哪一欄"
 
-def test_unmuting_restores_the_rule_with_its_accumulated_history():
+
+def test_a_muted_rule_keeps_its_in_progress_breach_window():
+    """draft 視窗要一起傳進靜音那條路徑。
+
+    少了它,靜音期間「本期進行中」的破戒會憑空消失——而那正是使用者回頭查這條
+    規矩時最想看到的東西。第一版漏傳,29 個 suite 全綠,所以這條測試才存在。
+    """
     events, marks, rule = _muting_fixture()
-    muted_row = pb.mute_row(rule, muted=True)
-    back = pb.mute_row(muted_row, muted=False)
-    assert back["status"] == "tracking" and back["revises"] == muted_row["rule_id"]
-    assert back["created"] == rule["created"], "取消靜音同樣不得重設歷史"
-    restored = pb.check_rules([back], events, marks)[0]
-    assert restored["held_streak"] == 2, "靜音期間累積的守住紀錄要跟著回來"
+    book, rules = _mk()
+    pb.append_book(book, events, None)
+    for mark in marks:
+        pb.append_book(book, [], mark)
+    _write_rules(rules, [rule])
+    draft = [{"key": "avgdown_breach", "week": "2026-07-11", "ticker": "PLTR"}]
+    snap = pb.snapshot(book, rules, today="2026-07-11", muted_ids=["r1"],
+                       draft_events=draft, draft_week="2026-07-11")
+    silent = snap["muted_rules"][0]
+    assert silent["draft_breach"] and silent["draft_breach"]["week"] == "2026-07-11", \
+        f"靜音期間的進行中破戒必須照樣被記錄:{silent}"
+
+
+def test_a_hand_written_muted_status_is_still_honoured():
+    """`status: "muted"` 從 #137 起就寫在契約裡。改用 profile 之後,手改過檔案的
+    使用者不該被靜默忽略。"""
+    _, rules = _mk()
+    _write_rules(rules, [{"rule_id": "r9", "text": "單注上限", "problem_key": "oversize",
+                          "status": "muted"}])
+    tracking, muted = pb.load_rules(rules)
+    assert tracking == [] and [r["rule_id"] for r in muted] == ["r9"]
 
 
 def test_check_rules_three_way_and_streak():

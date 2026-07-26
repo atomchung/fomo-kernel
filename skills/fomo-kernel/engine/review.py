@@ -1809,7 +1809,8 @@ def _problem_snapshot(root, state):
                                 os.path.join(root, "rules.jsonl"),
                                 today=_review_date(state).isoformat(), span_aware=True,
                                 draft_events=state.get("problem_events"),
-                                draft_week=state.get("date_end"))
+                                draft_week=state.get("date_end"),
+                                muted_ids=_muted_rule_ids(root))
     if not payload["events_n"] and not payload["marks_n"]:
         return None
     return payload
@@ -3206,6 +3207,28 @@ def cmd_set_cap(args):
     _emit({"status": "set", "root": root, "max_position_pct": cap})
 
 
+def _muted_rule_ids(root):
+    """The rule lines the user asked not to be asked about (#416).
+
+    Standing preference, so it lives in ``profile.json`` beside the position cap
+    and not in ``rules.jsonl``: that file is a tier-3 rebuildable projection
+    (`references/data-contract.md`), rebuilt from committed bundles by
+    ``repair-projections``, and a bundle carries commitments only. A mute stored
+    there would survive until the first repair and then silently un-mute every
+    rule — the user starts being asked again with no signal that anything
+    changed. Same fail-soft posture as the cap: an unreadable profile means no
+    mutes, never a crash."""
+    path = _profile_path(root)
+    if not os.path.exists(path):
+        return []
+    try:
+        profile = session.read_json(path)
+    except (OSError, ValueError):
+        return []
+    ids = profile.get("muted_rules") if isinstance(profile, dict) else None
+    return [str(rule_id) for rule_id in ids if str(rule_id).strip()] if isinstance(ids, list) else []
+
+
 def cmd_mute_rule(args):
     """Silence a rule without retiring it, or bring it back (#416).
 
@@ -3217,28 +3240,52 @@ def cmd_mute_rule(args):
     Owner direction, 2026-07-26: establish the rule first, keep accumulating,
     look again once there is data. That only works if the accumulation is real,
     which is why `problems.snapshot` reconciles muted rules on the same path as
-    tracked ones and `problems.mute_row` copies `created` forward unchanged.
+    tracked ones.
 
-    Append-only, through the same `revises` chain a rule revision already uses:
-    the previous row is superseded, never rewritten, so the history of what was
-    muted when stays readable.
+    Mute is **state on a stable identity**, never a new rule row. The identity is
+    the rule *line* (`problems.rule_line_id` — the root of the `revises` chain),
+    so a later revision of the same rule inherits the mute, and nothing about
+    muting can move the `rule_id` that `_rule_breach_history` keys answered
+    breach questions on. An earlier cut of this wrote a superseding row instead
+    and produced exactly those two failures: a required question re-asked after
+    an unmute, and a chain with two live heads when a revision landed on top.
     """
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
-    path = os.path.join(root, "rules.jsonl")
-    tracking, muted = problems.load_rules(path)
-    target = "tracking" if args.unmute else "muted"
-    current = {row.get("rule_id"): row for row in tracking + muted}
-    rule = current.get(args.rule_id)
+    os.makedirs(root, exist_ok=True)
+    muted_ids = _muted_rule_ids(root)
+    tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"), muted_ids)
+    lines = {}
+    for row in tracking + muted:
+        lines[problems.rule_line_id(row)] = row
+        lines[str(row.get("rule_id"))] = row          # the head id is what a payload shows
+    rule = lines.get(str(args.rule_id))
     if rule is None:
         raise ReviewError(
-            f"no live rule with id {args.rule_id!r} (a superseded id cannot be muted; "
-            f"live ids: {sorted(current) or 'none'})")
-    if (rule.get("status", "tracking") == "muted") == (target == "muted"):
-        raise ReviewError(f"rule {args.rule_id!r} is already {target}")
-    row = problems.mute_row(rule, muted=target == "muted")
-    ledger.append_events(path, [row])
-    _emit({"status": target, "root": root, "rule_id": row["rule_id"],
-           "revises": row["revises"], "text": row.get("text")})
+            f"no live rule matching {args.rule_id!r} — a superseded id names a version, not a "
+            f"rule (live: {sorted({problems.rule_line_id(r) for r in tracking + muted}) or 'none'})")
+    line_id = problems.rule_line_id(rule)
+    target_muted = not args.unmute
+    if (line_id in set(muted_ids)) == target_muted:
+        raise ReviewError(f"rule {line_id!r} is already {'muted' if target_muted else 'tracking'}")
+    remaining = [rule_id for rule_id in muted_ids if rule_id != line_id]
+    if target_muted:
+        remaining.append(line_id)
+    path = _profile_path(root)
+    profile = {}
+    if os.path.exists(path):
+        try:
+            loaded = session.read_json(path)
+            if isinstance(loaded, dict):
+                profile = loaded
+        except (OSError, ValueError):
+            profile = {}
+    if remaining:
+        profile["muted_rules"] = sorted(remaining)
+    else:
+        profile.pop("muted_rules", None)
+    ledger.atomic_write_text(path, session.pretty(profile))
+    _emit({"status": "muted" if target_muted else "tracking", "root": root,
+           "rule_line_id": line_id, "rule_id": rule.get("rule_id"), "text": rule.get("text")})
 
 
 def cmd_doctor(args):

@@ -2968,49 +2968,124 @@ def test_a_watched_condition_that_is_nowhere_near_its_line_stays_silent():
             assert fragment not in private, f"a clear condition must not add {fragment!r}"
 
 
-def test_mute_rule_is_append_only_and_reversible():
-    """#416: a rule the user stops wanting to be asked about had two exits —
-    keep answering, or lose it. Muting is the third, and it is only worth
-    anything if the old row survives: the history of what was muted when has to
-    stay readable."""
+def _rule_root(tmp, rows=None):
+    root = pathlib.Path(tmp) / "coach"
+    root.mkdir(exist_ok=True)
+    rows = rows or [{"rule_id": "rule-abc-0", "text": "no adding into a loser",
+                     "problem_key": "avgdown_breach", "created": "2026-06-13"}]
+    (root / "rules.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return root
+
+
+def test_mute_rule_is_a_preference_not_a_rule_row():
+    """#416: a rule the user stops wanting to be asked about had two exits — keep
+    answering, or lose it. Muting is the third.
+
+    It lives in `profile.json`, beside the position cap, because `rules.jsonl` is
+    a tier-3 rebuildable projection: `repair-projections` rebuilds it from
+    committed bundles, and a bundle carries commitments only. A mute written
+    there survives until the first repair and then silently un-mutes — the user
+    starts being asked again with no signal. This test pins the file that must
+    change and the file that must not."""
     with tempfile.TemporaryDirectory() as tmp:
-        root = pathlib.Path(tmp) / "coach"
-        root.mkdir()
-        rules = root / "rules.jsonl"
-        rules.write_text(json.dumps({"rule_id": "rule-abc-0", "text": "no adding into a loser",
-                                     "problem_key": "avgdown_breach", "status": "tracking",
-                                     "created": "2026-06-13"}) + "\n", encoding="utf-8")
+        root = _rule_root(tmp)
+        rules_before = (root / "rules.jsonl").read_text(encoding="utf-8")
         muted = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
         assert muted.returncode == 0, muted.stdout + muted.stderr
-        row = json.loads(muted.stdout)
-        assert row["status"] == "muted" and row["revises"] == "rule-abc-0"
+        assert json.loads(muted.stdout)["status"] == "muted"
+        assert (root / "rules.jsonl").read_text(encoding="utf-8") == rules_before, \
+            "muting must not write a rule row — that is what moves the breach-question key"
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert profile["muted_rules"] == ["rule-abc-0"]
 
-        tracking, silent = problems_engine.load_rules(str(rules))
+        tracking, silent = problems_engine.load_rules(
+            str(root / "rules.jsonl"), profile["muted_rules"])
         assert tracking == [] and len(silent) == 1
-        assert silent[0]["created"] == "2026-06-13", "muting must not restart the accumulation"
-        assert len(rules.read_text(encoding="utf-8").strip().splitlines()) == 2, \
-            "the superseded row stays on disk; append-only means append"
+        assert silent[0]["rule_id"] == "rule-abc-0" and silent[0]["created"] == "2026-06-13"
 
-        back = _run("mute-rule", "--root", root, "--rule-id", row["rule_id"], "--unmute")
+        back = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
         assert back.returncode == 0, back.stdout + back.stderr
-        tracking, silent = problems_engine.load_rules(str(rules))
-        assert len(tracking) == 1 and silent == []
-        assert tracking[0]["created"] == "2026-06-13"
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert "muted_rules" not in profile, "unmuting clears the key rather than leaving it empty"
 
 
-def test_mute_rule_fails_closed_on_an_id_that_is_not_live():
+def test_mute_rule_leaves_the_rest_of_the_profile_alone():
     with tempfile.TemporaryDirectory() as tmp:
-        root = pathlib.Path(tmp) / "coach"
-        root.mkdir()
-        (root / "rules.jsonl").write_text(
-            json.dumps({"rule_id": "rule-abc-0", "text": "cap at 20%", "status": "muted",
-                        "problem_key": "oversize", "created": "2026-06-13"}) + "\n",
-            encoding="utf-8")
+        root = _rule_root(tmp)
+        assert _run("set-cap", "--root", root, "--pct", "0.25").returncode == 0
+        assert _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0").returncode == 0
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert profile["max_position_pct"] == 0.25 and profile["muted_rules"] == ["rule-abc-0"]
+
+
+def test_mute_rule_takes_a_rule_line_not_a_superseded_version():
+    """A superseded id names a version, not a rule. Accepting one was how the
+    first cut forked a `revises` chain into two live heads."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp, rows=[
+            {"rule_id": "rule-abc-0", "text": "no adding into a loser",
+             "problem_key": "avgdown_breach", "created": "2026-06-13"},
+            {"rule_id": "rule-def-0", "text": "wait a day before adding",
+             "problem_key": "avgdown_breach", "created": "2026-06-20",
+             "revises": "rule-abc-0"}])
+        # The chain root is the identity, so either id names the same live line.
+        by_head = _run("mute-rule", "--root", root, "--rule-id", "rule-def-0")
+        assert by_head.returncode == 0, by_head.stdout + by_head.stderr
+        assert json.loads(by_head.stdout)["rule_line_id"] == "rule-abc-0"
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert profile["muted_rules"] == ["rule-abc-0"], "one line, one entry, no duplicates"
+        tracking, silent = problems_engine.load_rules(
+            str(root / "rules.jsonl"), profile["muted_rules"])
+        assert tracking == [] and len(silent) == 1, "a revision inherits the mute, chain intact"
+
+
+def test_mute_rule_fails_closed_on_both_halves_of_its_state_guard():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp)
         missing = _run("mute-rule", "--root", root, "--rule-id", "rule-nope-0")
         assert missing.returncode != 0 and "no live rule" in missing.stdout + missing.stderr
+
+        unmute_first = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
+        assert unmute_first.returncode != 0, \
+            "unmuting a tracked rule is a no-op the user should hear about, not a silent write"
+        assert "already tracking" in unmute_first.stdout + unmute_first.stderr
+        assert not (root / "profile.json").exists(), "a refused mute writes nothing"
+
+        assert _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0").returncode == 0
         again = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
-        assert again.returncode != 0, "muting a muted rule is a no-op the user should hear about"
-        assert "already muted" in again.stdout + again.stderr
+        assert again.returncode != 0 and "already muted" in again.stdout + again.stderr
+
+
+def test_a_mute_survives_the_documented_projection_repair():
+    """`repair-projections` rebuilds `rules.jsonl` from committed bundles. The
+    mute has to outlive that, or the recovery path the docs recommend silently
+    un-mutes everything the user silenced."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan)
+        answers["commitment"] = {"choice": "custom", "rule": "cap any single position at 20%",
+                                 "metric_key": "max_pos_pct", "goal": "down"}
+        answers_path = pathlib.Path(tmp) / "answers.json"
+        narrative_path = pathlib.Path(tmp) / "narrative.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
+        assert _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                    "--answers", answers_path, "--narrative", narrative_path).returncode == 0
+        committed = [json.loads(line) for line
+                     in (root / "rules.jsonl").read_text(encoding="utf-8").splitlines() if line]
+        rule_id = committed[0]["rule_id"]
+        assert _run("mute-rule", "--root", root, "--rule-id", rule_id).returncode == 0
+
+        (root / "rules.jsonl").unlink()
+        assert _run("repair-projections", "--root", root).returncode == 0
+        rebuilt = (root / "rules.jsonl").read_text(encoding="utf-8")
+        assert rule_id in rebuilt, "the repair must actually have rebuilt the rule"
+        muted = json.loads((root / "profile.json").read_text(encoding="utf-8"))["muted_rules"]
+        tracking, silent = problems_engine.load_rules(str(root / "rules.jsonl"), muted)
+        assert tracking == [] and len(silent) == 1, \
+            "a rebuilt projection must not resurrect a rule the user silenced"
 
 
 def _commitment_plan():
