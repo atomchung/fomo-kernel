@@ -10,6 +10,7 @@ fomo-kernel · trade-recap engine v0.2
 import csv, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
+import fetch_cache
 import instruments as instrument_policy
 import market_context as market_context_engine
 import price_feed
@@ -502,6 +503,12 @@ def fetch_fx(currencies, feed=None):
         import yfinance as yf
     except ImportError:
         return fx, "yfinance 未安裝(匯率缺,多幣別聚合按原幣近似)"
+    # #235:同 splits/prices,讀取點在 import 之後。只快取「全數抓到」的結果——
+    # 部分失敗當日重試才對,把缺口快取起來等於把一次網路抖動變成當天的結論。
+    cached = fetch_cache.load("fx", todo)
+    if cached is not None:
+        fx.update(cached)
+        return fx, None
     err = None
     for c in todo:
         try:
@@ -515,6 +522,8 @@ def fetch_fx(currencies, feed=None):
     missing = [c for c in todo if c not in fx]
     if missing and not err:
         err = f"匯率無資料: {','.join(missing)}"
+    if not err:
+        fetch_cache.store("fx", todo, {c: fx[c] for c in todo})
     return fx, err
 
 
@@ -610,8 +619,17 @@ def fetch_prices(tickers, start, feed=None):
         import yfinance as yf
     except ImportError:
         return None, "yfinance 未安裝"
+    import pandas as pd                                    # yfinance 的相依,到這行必定可用
+    universe = sorted(set(tickers) | {"SPY", "QQQ", "SOXX", "^VIX"})
+    # #235:同 fetch_splits——快取只在 import 成功後可達,離線 shim 到不了這裡。
+    # 只快取「抓到東西」的結果:失敗與空框每次都該重試,不該被快取成當日結論。
+    key = {"universe": universe, "start": str(start)}
+    cached = fetch_cache.load("prices", key)
+    if cached is not None:
+        return (pd.DataFrame(cached["data"], columns=cached["columns"],
+                             index=pd.to_datetime(cached["index"])), None)
     try:
-        data = yf.download(sorted(set(tickers) | {"SPY", "QQQ", "SOXX", "^VIX"}), start=start,
+        data = yf.download(universe, start=start,
                            progress=False, auto_adjust=True)["Close"]
     except Exception as e:
         return None, f"yfinance 下載失敗: {e}"
@@ -619,6 +637,13 @@ def fetch_prices(tickers, start, feed=None):
         return None, "yfinance 無資料"
     if data.ndim == 1:
         data = data.to_frame()
+    fetch_cache.store("prices", key, {
+        "index": [idx.date().isoformat() for idx in data.index],
+        "columns": [str(c) for c in data.columns],
+        # NaN 不是合法 JSON;None 讀回來由 pandas 還原成 NaN,缺價語意不變。
+        "data": [[None if value != value else float(value) for value in row]
+                 for row in data.to_numpy()],
+    })
     return data, None
 
 
@@ -696,6 +721,15 @@ def fetch_splits(tickers, feed=None):
         import yfinance as yf
     except ImportError:
         return {}
+    # #235:快取只在 import 成功後才可達,離線 shim 走上面那條 return 就先返回了
+    # ——舊快取因此永遠進不了確定性測試。日期不同即整檔作廢(fetch_cache)。
+    todo = sorted(set(tickers))
+    if not todo:
+        return {}
+    cached = fetch_cache.load("splits", todo)
+    if cached is not None:
+        return {t: [(dt.date.fromisoformat(d), float(r)) for d, r in rows]
+                for t, rows in cached.items()}
 
     def one(t):
         try:
@@ -706,12 +740,12 @@ def fetch_splits(tickers, feed=None):
             return None
         return None
 
-    todo = sorted(set(tickers))
-    if not todo:
-        return {}
     with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
         fetched = list(pool.map(one, todo))   # map 保持輸入順序 → 輸出決定論
-    return {t: v for t, v in zip(todo, fetched) if v}
+    out = {t: v for t, v in zip(todo, fetched) if v}
+    fetch_cache.store("splits", todo,
+                      {t: [[d.isoformat(), r] for d, r in rows] for t, rows in out.items()})
+    return out
 
 def adjust_for_splits(rows, splits):
     """把每筆成交換算到『分割後(今日)』基礎,與 yfinance auto_adjust 的價格對齊。
