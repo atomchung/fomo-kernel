@@ -991,8 +991,17 @@ def _project_legacy_locked(root, bundle, private_md):
     reports.append(_append_session_rows(os.path.join(root, "initial_theses.jsonl"), session_id,
                                         list(bundle.get("initial_thesis_events") or [])))
 
+    # #412 firewall: a condition slot is never also a rules.jsonl row. That file
+    # is what `problems.check_rules` reconciles against problem events every
+    # period, and a researched condition has no problem key to join on — a row
+    # there would be reconciled against nothing and counted as `skipped`
+    # forever, which is exactly the "held means held" corruption the Opportunity
+    # Check exists to prevent.
+    slot_rows = [dict(commitment["condition"])] if commitment and commitment.get("condition") else []
+    reports.append(_append_session_rows(os.path.join(root, "conditions.jsonl"), session_id, slot_rows))
+
     rule_rows = []
-    if commitment and commitment.get("rule"):
+    if commitment and commitment.get("rule") and not commitment.get("condition"):
         suffix = session_id.split("__")[-1]
         rule_row = {
             "rule_id": f"rule-{suffix}-0",

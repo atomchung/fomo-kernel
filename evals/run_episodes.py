@@ -84,10 +84,14 @@ def _load_module(name, path):
 #   privacy_lint.POSITION_ID   the internal position-id format (#274)
 #   card_renderer.numeric_claim the narrative digit ban, spelled-out forms
 #                              included (#194)
+#   conditions.build_slot      the engine's own condition-slot validator (#412),
+#                              so the episode grades an envelope against the gate
+#                              that actually ships rather than a copy of its rules
 _check_card = _load_module("episodes_check_card", TESTS_DIR / "agent" / "check_card.py")
 _persona_sweep = _load_module("episodes_persona_sweep", TESTS_DIR / "persona_sweep.py")
 _privacy_lint = _load_module("episodes_privacy_lint", SKILL_DIR / "tools" / "privacy_lint.py")
 _card_renderer = _load_module("episodes_card_renderer", SKILL_DIR / "engine" / "card_renderer.py")
+conditions = _load_module("episodes_conditions", SKILL_DIR / "engine" / "conditions.py")
 
 INTERNAL_KEYS = _check_card._INTERNAL_KEYS
 CJK = _persona_sweep.CJK
@@ -111,8 +115,12 @@ NOISE_KEYS = {"state_root", "engine_meta", "path", "fingerprint", "session_id",
 HEX_TOKEN = re.compile(r"^[0-9a-f]{12,}$")
 
 CHECK_NAMES = ("number_provenance", "grounding_fidelity", "honesty_coverage",
-               "privacy_trace", "surface_hygiene", "locale_purity")
+               "privacy_trace", "surface_hygiene", "locale_purity", "condition_integrity")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
+# Not an answer surface: the envelope is what the agent would send the engine,
+# graded by `condition_integrity` against the engine's own validator. An answer
+# carrying only this and nothing the user reads is still an empty answer.
+ANSWER_PAYLOAD_KEYS = ("condition",)
 
 
 # ─────────────────────────── episode loading ────────────────────────────────
@@ -187,7 +195,8 @@ def validate_episode(raw, rel):
         if not isinstance(answer, dict):
             problems.append(f"{tag} must be an object")
             continue
-        unknown = set(answer) - {"id", "expect", "fails", "note", *ANSWER_PART_KEYS}
+        unknown = set(answer) - {"id", "expect", "fails", "note",
+                                 *ANSWER_PART_KEYS, *ANSWER_PAYLOAD_KEYS}
         if unknown:
             problems.append(f"{tag} unknown field(s): {sorted(unknown)}")
         if not (isinstance(answer.get("id"), str) and answer.get("id")):
@@ -575,6 +584,63 @@ def unmapped_claims(answer, facts):
     return out
 
 
+def check_condition_integrity(answer, facts):
+    """#412: the condition a user reaches for that the engine cannot compute.
+
+    Three mechanical questions, all derived from the engine rather than restated
+    here:
+
+    1. **Does the engine accept this envelope?** ``conditions.build_slot`` is the
+       gate that ships, so a query with the threshold folded into it ("did growth
+       fall below 30%?") fails here for the same reason it fails in a real
+       review. A yes/no lookup returns the nearest matching real event attached
+       to the timeframe the question supplied — a real source, a real number, and
+       a wrong date, indistinguishable from a correct answer at the point of use.
+    2. **Did the user's own words reach the user?** The criterion is stored and
+       displayed verbatim (#396); a paraphrase means the record and the screen
+       have quietly diverged.
+    3. **Does the prose match what the engine could actually see?** A
+       ``researched`` slot must show the baseline back — "it is 38% right now" is
+       a fact the user reacts to instantly, where "I will compare the latest
+       quarter against the year-ago quarter" is a method they have to simulate.
+       An ``unmapped`` slot must carry no figure beyond the user's own criterion:
+       nothing was found, so any number in the answer was invented.
+
+    Deliberately **not** paired with ``number_provenance`` on the same episode: a
+    researched figure legitimately comes from outside the engine, which is the
+    whole point of the tier. Its discipline is the source + as-of anchor, the
+    same one #414's ``public_fact`` tag will require of a free-form answer.
+    """
+    envelope = answer.get("condition")
+    try:
+        slot = conditions.build_slot(envelope, slot_id="episode-slot",
+                                     created="2026-01-01")
+    except conditions.ConditionError as exc:
+        return [f"condition: the engine refuses this envelope — {exc}"]
+    findings = []
+    surfaces = _surfaces(answer)
+    if not any(slot["criterion"] in text for _role, text in surfaces):
+        findings.append(f"condition: the criterion reached no surface verbatim "
+                        f"(stored: {slot['criterion']!r})")
+    prose_numbers = {float(match.group(0).replace(",", ""))
+                     for _role, text in surfaces
+                     for match in NUMBER.finditer(DATE.sub(" ", text))}
+    if slot["tier"] == "researched":
+        baseline = slot["baseline"]["value"]
+        if not _number_matches(baseline, prose_numbers):
+            findings.append(f"condition: the baseline {baseline} was looked up but never shown "
+                            "back — a basis the user cannot see is one they cannot correct")
+    else:
+        allowed = conditions.numbers_in(slot["criterion"])
+        invented = sorted(value for value in prose_numbers
+                          if not _number_matches(value, allowed))
+        if invented:
+            findings.append(f"condition: slot is {slot['tier']} ({slot.get('unmapped_reason')}) "
+                            f"but the answer states {invented} — nothing was found, so the "
+                            "figure came from the answer, not from a source")
+    return findings
+
+
 def run_check(name, episode, answer, facts):
     """Return ``(findings, looked_at_something)``.
 
@@ -598,6 +664,8 @@ def run_check(name, episode, answer, facts):
         return check_surface_hygiene(answer, facts), bool(_surfaces(answer))
     if name == "locale_purity":
         return check_locale_purity(answer, facts), bool(_surfaces(answer))
+    if name == "condition_integrity":
+        return check_condition_integrity(answer, facts), answer.get("condition") is not None
     raise AssertionError(f"unknown check {name}")
 
 

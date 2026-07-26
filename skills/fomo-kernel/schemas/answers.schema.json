@@ -84,7 +84,11 @@
         "metric_key": {"type": "string"},
         "goal": {"enum": ["down", "up", "hold"]},
         "dim": {"type": "string"},
-        "revises_rule_id": {"type": "string"}
+        "revises_rule_id": {"type": "string"},
+        "condition": {
+          "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
+          "description": "#412: the user committed to something state.metrics cannot compute. Only with choice \"custom\", never together with metric_key, and never as a revise_rule replacement. The engine derives the tier, freezes the near-line margin, takes the baseline comparison and stores the slot in conditions.jsonl; `rule` must then be the criterion verbatim, or be omitted."
+        }
       },
       "additionalProperties": false
     },

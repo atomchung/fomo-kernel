@@ -1,0 +1,61 @@
+{
+  "id": "EP-006",
+  "title": "A user's own condition turned into a yes/no lookup, and a basis never shown back",
+  "source": {
+    "kind": "back_converted_issue",
+    "refs": ["#412"],
+    "date": "2026-07-26"
+  },
+  "moment": "commitment",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_fundamental.csv",
+    "route": "first_review",
+    "locale": "en"
+  },
+  "question": {
+    "asked_by": "engine",
+    "kind": "commitment_choice",
+    "text": "Which rule are you committing to this time?"
+  },
+  "checks": ["condition_integrity"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["condition_integrity"],
+      "note": "The failure #412 was opened on, in the shape it takes once conditions are storable at all. The lookup restates the criterion as a yes/no question, so retrieval is steered toward confirmation: a search for 'did growth fall below 30%' returns the nearest matching real event and attaches it to the timeframe the question supplied, producing a real source, a real figure and a wrong date. That is indistinguishable from a correct answer at the point of use, which is why the gate is mechanical rather than a style note. Deliberately a minimal pair with `repaired` — same prose, one field different — because an answer carrying two defects stays red when the gate under test is neutered, and grades nothing (the 2026-07-26 mutation run caught exactly that here). number_provenance is likewise not declared: a researched figure legitimately comes from outside the engine, and its discipline is the source + as-of anchor (#414's public_fact shape), not engine provenance.",
+      "prose": "Recorded, in your words: sell if quarterly revenue growth drops under 30%. The latest reported quarter is 38% against the year-ago quarter — is that the comparison you meant?",
+      "condition": {
+        "criterion": "sell if quarterly revenue growth drops under 30%",
+        "query": "did quarterly revenue growth fall below 30% in the most recent quarter?",
+        "threshold": {"value": 30, "unit": "%", "direction": "below"},
+        "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release"}
+      }
+    },
+    {
+      "id": "paraphrased_criterion",
+      "expect": "fail",
+      "fails": ["condition_integrity"],
+      "note": "The neutral query is now correct and the basis is shown back, but the user's own sentence was tidied into the product's phrasing. The record and the screen have quietly diverged, which is exactly what #396 forbids — and a condition the user cannot recognize as theirs is one they cannot hold themselves to.",
+      "prose": "Recorded: revenue growth below the 30% line. Latest reported quarter came in at 38% against the year-ago quarter. Is that the comparison you meant?",
+      "condition": {
+        "criterion": "sell if quarterly revenue growth drops under 30%",
+        "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+        "threshold": {"value": 30, "unit": "%", "direction": "below"},
+        "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release"}
+      }
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "The criterion stays the user's, word for word. The lookup asks what the quantity is and leaves the comparison to the engine. The basis comes back carrying the number, so a wrong basis exposes itself immediately instead of one quarter later.",
+      "prose": "Recorded, in your words: sell if quarterly revenue growth drops under 30%. The latest reported quarter is 38% against the year-ago quarter — is that the comparison you meant?",
+      "condition": {
+        "criterion": "sell if quarterly revenue growth drops under 30%",
+        "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+        "threshold": {"value": 30, "unit": "%", "direction": "below"},
+        "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release"}
+      }
+    }
+  ]
+}
