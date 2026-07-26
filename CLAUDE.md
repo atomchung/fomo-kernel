@@ -6,6 +6,15 @@
 
 `fomo-kernel` is a public repository that external users can clone and install. The deterministic Python engine lives in `skills/fomo-kernel/engine/`. `SKILL.md` defines runtime orchestration, and `AGENTS.md` routes agents that do not automatically discover skills.
 
+## Development discipline
+
+[docs/development-guide.md](docs/development-guide.md) is the failure-mode ledger distilled from shipped mistakes; update it there, with receipts, when a new pattern earns a place. The four rules that must survive every session:
+
+- A new checker lands with proof its matching mutation fails; a checker that stays green under its mutation is not evidence.
+- Before touching a renderer or output path, list the surfaces the changed code path reaches and name the oracle covering each.
+- Prefer generating a synchronized surface over hand-mirroring it (`skills/fomo-kernel/tools/design_bundle.py` is the precedent).
+- The second recurrence of a symptom is a design issue, not a second patch.
+
 ## Contract synchronization
 
 - Treat `skills/fomo-kernel/SKILL.md` as the runtime contract entry point. If engine behavior changes what a user sees, update the relevant flow, reference, schema, renderer contract, and the thin summary when necessary in the same change.
