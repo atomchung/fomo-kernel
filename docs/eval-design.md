@@ -50,7 +50,10 @@ tests/agent/judge_narrative.py optional prose-quality judge
 evals/episodes/*.json         the question-episode bank: converted misses,
                               replayable (#417)
 evals/run_episodes.py         the bank's mechanical half; deterministic and
-                              offline, so it runs in the default suite
+                              offline, so it runs in the default suite. Also
+                              holds the question-consumer gate: every question
+                              kind must have a verifiable consumer for its
+                              answer, or be a tracked defect (#429)
 tests/test_episode_checkers.py mutation probes for the bank's six checks
 ```
 
@@ -196,8 +199,16 @@ Every important guard should fail under an intentional mutation at least once. H
 - interrupt projection after canonical commit
 - retry one session with conflicting content
 - place non-English text in implementation Markdown
+- let a question kind ship with no consumer for its answer
+- pin an answer's wording as the pass condition (see below)
 
 A checker that stays green under its matching mutation is not evidence.
+
+An episode's passing answer is a **witness that the invariants hold**, never a
+model answer. A check that only the current template can satisfy is a behavior
+oracle in an invariant's clothing: the 2026-07-26 first cut of the bank shipped
+one, and it would have failed the agent-authored reasoning #412 is building.
+Behavior belongs in front of the judge, calibrated against owner ratings.
 
 ## Real-user feedback loop
 

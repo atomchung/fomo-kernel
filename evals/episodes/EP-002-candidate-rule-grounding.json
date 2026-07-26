@@ -1,9 +1,11 @@
 {
   "id": "EP-002",
-  "title": "Candidate rules presented with one grounding paraphrased and one invented",
+  "title": "Candidate rules presented with one grounding paraphrased and one invented (recorded; no mechanical check can grade it yet)",
   "source": {
     "kind": "dogfood_miss",
-    "refs": ["#293"],
+    "refs": [
+      "#293"
+    ],
     "date": "2026-07-21"
   },
   "moment": "commitment",
@@ -17,13 +19,12 @@
     "kind": "commitment_choice",
     "text": "這次要立哪一條規矩？"
   },
-  "checks": ["grounding_fidelity", "number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "checks": [],
   "answers": [
     {
       "id": "recorded_miss",
       "expect": "fail",
-      "fails": ["grounding_fidelity"],
-      "note": "The 2026-07-21 dogfood presentation, replayed on the persona whose candidate set has the same shape as that session's: candidate_0 carries an engine grounding, candidate_1 carries none. Both halves of the miss are here — the grounded candidate's sentence was paraphrased, and the candidate without one received an invented sentence. Only the structure is carried over; every value below is this synthetic fixture's, and nothing from the original session's payload is reproduced.",
+      "note": "The 2026-07-21 dogfood presentation, replayed on the persona whose candidate set has the same shape as that session's: candidate_0 carries an engine grounding, candidate_1 carries none. Both halves of the miss are here — the grounded candidate's sentence was paraphrased, and the candidate without one received an invented sentence. Only the structure is carried over; every value below is this synthetic fixture's.\n\nThis episode is ungraded on purpose. The first cut of the bank gated it with a check requiring every word of a description to be a verbatim substring of an engine field, which is a behavior oracle disguised as an invariant: it would fail the agent-authored, two-sided reasoning #412 is building. What #293 actually violated is narrower — a fabricated fact placed where measured facts live — and nothing can settle that mechanically until #414's answer-provenance gate exists. Recording it unguarded is honest; pretending a byte rule guarded it was not.",
       "presented_options": [
         {
           "maps_to": "candidate_0",
@@ -40,7 +41,7 @@
     {
       "id": "repaired",
       "expect": "pass",
-      "note": "Each candidate presented with the engine's own words: the grounding verbatim where one exists, and nothing standing in for it where none does.",
+      "note": "Each candidate presented with the engine's own words. Kept as the recorded repair, not as a target: once #414 lands, a freely worded description whose factual claims all trace should pass just as this one does.",
       "presented_options": [
         {
           "maps_to": "candidate_0",
@@ -54,5 +55,6 @@
         }
       ]
     }
-  ]
+  ],
+  "blocked_on": "#414"
 }

@@ -5,30 +5,56 @@
   "description": "One replayable miss: a synthetic state fixture, the question that was asked, and answers with the verdict each must receive. The readable contract; evals/run_episodes.py holds the enforcement, because the offline suite carries no jsonschema dependency.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "title", "source", "moment", "fixture", "question", "checks", "answers"],
+  "required": [
+    "id",
+    "title",
+    "source",
+    "moment",
+    "fixture",
+    "question",
+    "checks",
+    "answers"
+  ],
   "properties": {
     "id": {
       "type": "string",
       "pattern": "^EP-[0-9]{3}$",
       "description": "Stable episode id. Sequential, not an issue number: one issue can yield several episodes."
     },
-    "title": {"type": "string", "minLength": 1, "description": "What went wrong, in one line."},
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What went wrong, in one line."
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "refs", "date"],
+      "required": [
+        "kind",
+        "refs",
+        "date"
+      ],
       "properties": {
         "kind": {
-          "enum": ["dogfood_miss", "real_use_miss", "back_converted_issue"],
+          "enum": [
+            "dogfood_miss",
+            "real_use_miss",
+            "back_converted_issue"
+          ],
           "description": "real_use_miss carries only de-identified failure structure; no real ticker, amount, or date survives conversion."
         },
         "refs": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Issue numbers or run identifiers this episode was converted from."
         },
-        "date": {"type": "string", "description": "When the miss was observed (ISO date)."}
+        "date": {
+          "type": "string",
+          "description": "When the miss was observed (ISO date)."
+        }
       }
     },
     "moment": {
@@ -38,7 +64,11 @@
     "fixture": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["trades", "route", "locale"],
+      "required": [
+        "trades",
+        "route",
+        "locale"
+      ],
       "description": "The state fixture. Replayed through review.py prepare on every run, so the episode's engine facts are always the current engine's rather than a committed mirror.",
       "properties": {
         "trades": {
@@ -46,60 +76,109 @@
           "pattern": "^skills/fomo-kernel/mock/",
           "description": "Synthetic CSV. Only mock fixtures are permitted; the privacy boundary in CLAUDE.md is not negotiable."
         },
-        "route": {"enum": ["first_review", "weekly_review"]},
-        "locale": {"type": "string", "description": "A shipped copy/<locale>.json tag."}
+        "route": {
+          "enum": [
+            "first_review",
+            "weekly_review"
+          ]
+        },
+        "locale": {
+          "type": "string",
+          "description": "A shipped copy/<locale>.json tag."
+        }
       }
     },
     "question": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["asked_by", "kind", "text"],
+      "required": [
+        "asked_by",
+        "kind",
+        "text"
+      ],
       "description": "The unit under evaluation: one question, answered.",
       "properties": {
-        "asked_by": {"enum": ["engine", "user"]},
+        "asked_by": {
+          "enum": [
+            "engine",
+            "user"
+          ]
+        },
         "kind": {
           "type": "string",
           "description": "An engine question kind (resolved against the plan's question_queue), commitment_choice (resolved against card_plan.candidate_rules), or free_form for a user's own question. An engine kind the fixture stops queueing fails the episode instead of passing vacuously."
         },
-        "text": {"type": "string", "minLength": 1, "description": "What the user was actually asked."}
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the user was actually asked."
+        }
       }
     },
     "checks": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "uniqueItems": true,
       "items": {
-        "enum": ["number_provenance", "grounding_fidelity", "honesty_coverage",
-                 "privacy_trace", "surface_hygiene", "locale_purity", "condition_integrity"]
+        "enum": [
+          "number_provenance",
+          "honesty_coverage",
+          "privacy_trace",
+          "surface_hygiene",
+          "locale_purity",
+          "condition_integrity"
+        ]
       },
-      "description": "The mechanical validators that bear on this episode. A declared check with nothing to inspect fails the episode."
+      "description": "The mechanical validators that bear on this episode. Every one is an invariant — none compares an answer against the wording the product ships today. A declared check with nothing to inspect fails the episode. An empty list is the honest `unmapped` state and requires blocked_on."
     },
     "must_disclose": {
       "type": "array",
       "uniqueItems": true,
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "Honesty keys this answer's claims depend on. Verified to be a subset of what the fixture triggers. Requires honesty_coverage in checks."
     },
     "answers": {
       "type": "array",
-      "minItems": 2,
-      "description": "At least the recorded miss and one repaired answer. An episode whose every answer passes cannot prove its checks still look at anything.",
+      "minItems": 1,
+      "description": "The recorded miss, and where useful a repaired answer. A graded episode needs at least one answer expecting failure: an episode whose every answer passes cannot prove its checks still look at anything. A passing answer is a witness that the invariants hold, never a model answer to copy — expect wording to keep changing (#395, #396, #412).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "expect"],
+        "required": [
+          "id",
+          "expect"
+        ],
         "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "expect": {"enum": ["pass", "fail"]},
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expect": {
+            "enum": [
+              "pass",
+              "fail"
+            ],
+            "description": "The verdict this answer must receive. On an ungraded (blocked_on) episode it records the intent for when a gate exists, and `fails` must be absent."
+          },
           "fails": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "description": "Required when expect is fail: exactly the checks this answer must fail. Failing a different set is a failure — the episode is no longer grading what it was written to grade."
           },
-          "note": {"type": "string", "description": "Provenance or de-identification notes for a reader."},
-          "prose": {"type": "string", "description": "Free-form answer text the user would read."},
+          "note": {
+            "type": "string",
+            "description": "Provenance or de-identification notes for a reader."
+          },
+          "prose": {
+            "type": "string",
+            "description": "Free-form answer text the user would read."
+          },
           "presented_options": {
             "type": "array",
             "minItems": 1,
@@ -107,21 +186,31 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["maps_to", "label", "description"],
+              "required": [
+                "maps_to",
+                "label",
+                "description"
+              ],
               "properties": {
                 "maps_to": {
                   "type": "string",
                   "description": "The canonical engine value behind this option: a card_plan.candidate_rules[].id at the commitment moment, or a canonical choice value at a question moment."
                 },
-                "label": {"type": "string"},
-                "description": {"type": "string"}
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
               }
             }
           },
           "discloses": {
             "type": "object",
             "description": "honesty key -> the one digit-free sentence that disclosed it.",
-            "additionalProperties": {"type": "string"}
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "condition": {
             "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
@@ -129,6 +218,10 @@
           }
         }
       }
+    },
+    "blocked_on": {
+      "type": "string",
+      "description": "Issue reference this episode waits on. Required when checks is empty: the miss is recorded and replayed, but no mechanical check can settle it yet, so it is reported rather than silently parked. Forbidden when checks is non-empty — an episode is either graded or waiting, not both."
     }
   }
 }

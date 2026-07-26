@@ -69,10 +69,14 @@ finding to read, not harness flake.
 
 ## The seven checks
 
+Every one is an **invariant** — something the product must never do. None
+compares an answer against the wording the product ships today, because the
+question layer is being reshaped (#395, #396, #412) and a test that pinned
+current phrasing would report the improvement as a regression.
+
 | Check | What it settles | Receipt |
 |---|---|---|
 | `number_provenance` | every number on a user-facing surface traces to a number the engine emitted | never-loosen rule 1: agent prose derives nothing |
-| `grounding_fidelity` | a candidate rule quotes the engine's own `grounding` verbatim, and a candidate that has none is presented without one | #293 |
 | `honesty_coverage` | each in-scope honesty key is still triggered by the fixture **and** disclosed, in a digit-free sentence | #82, #357 |
 | `privacy_trace` | every ticker-shaped token traces to the synthetic fixture or the engine artifacts; no internal position-id format | #274 |
 | `surface_hygiene` | no snake_case engine identifier reached a user-facing surface | #262 |
@@ -91,6 +95,53 @@ wrote, so `number_provenance` asks whether the engine emitted the figure — not
 whether prose contains one. Quietly adjusting an engine figure is the violation:
 EP-005 pins both halves, because a check that punished the quantity there would
 forbid faithful replay.
+
+**A passing answer is a witness, not a target.** The first cut of this bank
+copied the product's own v1 phrasing into the passing half of three episodes,
+which quietly declared "the way it asks today is the correct answer" — while
+#395 says one of those questions must be replaced outright and #396 says fixed
+options are going away. Worse, it shipped a `grounding_fidelity` check requiring
+every word of a candidate-rule description to be a verbatim substring of an
+engine field: a behavior oracle in an invariant's clothing, which would have
+failed exactly the agent-authored two-sided reasoning #412 is building. The
+check is gone and those passing answers are now deliberately *not* the engine's
+copy — freely worded, and still passing, which is the demonstration. Owner
+direction, 2026-07-26: expect answers to keep getting freer, more varied and
+more restrained. If you find yourself writing a check that only the current
+template can satisfy, you are pinning behavior; put it in front of the judge
+instead.
+
+## The other question: did asking buy anything
+
+An answer check asks "did it lie". The second gate asks the more expensive
+question — **what did this question buy** — because a question costs the user
+attention, capped at three to five per review by #291, where a dead field only
+costs schema clarity.
+
+`QUESTION_CONSUMERS` in the runner declares, for every question kind the engine
+can ask, where its answer goes. The list of kinds is read from the Review Plan
+schema's own `kind` enum, so a new question that ships without a declaration
+fails the gate rather than slipping in. Two proof modes, both read from real
+artifacts: `card` (the sink key is referenced by the renderer that delivers the
+card) and `state:<key>` (that key exists in a prepared plan's `state_snapshot`,
+which is what the next review reads).
+
+**There is deliberately no `reflection_only` state.** Owner ruling,
+2026-07-26: "pure reflective value, zero mechanical consumption" is not a
+legitimate reason for a question to exist here. The agent reads the Review Plan
+every review, so any stored answer *can* be replayed — `headline_motive_events`
+already is. A missing consumer means nobody wired it, not that it cannot be
+wired. The current shape of an unwired question is the worst of both: the answer
+is persisted, paying the storage and privacy cost, and never read, earning
+nothing. If an answer genuinely should influence nothing, the honest design is
+ask-and-do-not-store.
+
+`KNOWN_UNWIRED` is the one escape, and it is a ratchet, not an exemption: each
+entry is pinned to the issue that owns its disposition, a newly unwired kind
+cannot join without one, and a kind that becomes wired must leave the list or
+the run says so. Today it holds `initial_thesis` and `exit_consistency`, both
+tracked in #429 — a user can answer "I chased the momentum" on their three
+largest positions and get a byte-identical card.
 
 ## What the run says it did not grade
 
@@ -118,9 +169,9 @@ kind of fake green — a check that never observed the thing it names
    other check has stopped grading what it was written to grade. This is the
    interlock that actually catches most no-op mutations — "expected fail, got
    fail" alone would have hidden five of the six.
-3. **A declared check with nothing to inspect fails.** `grounding_fidelity` in
-   front of an answer with no options has abstained, not passed. Abstentions
-   also do not count toward coverage.
+3. **A declared check with nothing to inspect fails.** `honesty_coverage` in
+   front of an episode that puts no key in scope has abstained, not passed.
+   Abstentions also do not count toward coverage.
 
 Plus a bank-level coverage report: every declared check must be observed both
 passing and failing somewhere, or the run says so — `tests/persona_sweep.py`
@@ -139,10 +190,10 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
   honestly is judge work. Its scope is the episode's `must_disclose`, because
   an answer to one question legitimately touches part of the ledger; the card
   surface keeps its own equality gate inside `_draft_bundle`.
-- **`grounding_fidelity` polices descriptions, not labels.** The description
-  hosts the engine's factual grounding; a short option label is a handle the
-  agent may phrase, and it is still covered by `number_provenance` and
-  `surface_hygiene`.
+- **A fabricated *claim* is still ungraded.** #293's miss — an invented
+  sentence in the slot where measured facts live — has no mechanical test today,
+  so EP-002 is recorded and replayed but ungraded, `blocked_on` #414. The first
+  cut of this bank pretended otherwise with a byte rule; see below.
 - **`condition_integrity` gets the numeric leak, not neutrality.** A query that
   restates the criterion while dropping the number ("did growth fall below the
   threshold?") passes it. That is the judge's half; the mechanical half catches
@@ -160,6 +211,8 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
 
 Convert on the spot, while the miss is still in front of you — a miss that only
 becomes an issue is a miss nobody replays. Step 6 of
+[qa-runbook.md](../../docs/qa-runbook.md) is where a QA run is told to do this;
+this section is the how. Step 6 of
 [qa-runbook.md](../../docs/qa-runbook.md) is where a QA run is told to do this;
 this section is the how.
 

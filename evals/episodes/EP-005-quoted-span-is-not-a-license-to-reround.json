@@ -3,7 +3,10 @@
   "title": "An exit question replayed with its amount re-rounded and its date shifted",
   "source": {
     "kind": "real_use_miss",
-    "refs": ["#417", "#293"],
+    "refs": [
+      "#417",
+      "#293"
+    ],
     "date": "2026-07-26"
   },
   "moment": "question_queue",
@@ -17,35 +20,42 @@
     "kind": "revisit",
     "text": "SPY was fully exited on 2024-05-08 for about USD 30,792.00. What mainly drove that decision?"
   },
-  "checks": ["number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "checks": [
+    "number_provenance",
+    "privacy_trace",
+    "surface_hygiene",
+    "locale_purity"
+  ],
   "answers": [
     {
       "id": "recorded_miss",
       "expect": "fail",
-      "fails": ["number_provenance"],
+      "fails": [
+        "number_provenance"
+      ],
       "note": "Converted from a parallel session's finding on #417 (PR #424): a digit inside a span the engine authored is not a violation, because frozen surfaces replay verbatim and a recorded thesis may itself carry a quantity. What is a violation is quietly adjusting one — an amount rounded to a friendlier figure and a date moved to a neighbouring day both read as harmless tidying and are neither, because the user answers about the trade the stem describes.",
       "prose": "SPY was closed out around 2024-05-04 for roughly USD 30,800. What mainly drove that decision?"
     },
     {
       "id": "repaired",
       "expect": "pass",
-      "note": "The engine's stem, digits included, presented unchanged. This half of the episode is the one that matters: a check that punished the quantity here would forbid faithful replay, which the frozen-surface contract requires.",
-      "prose": "SPY was fully exited on 2024-05-08 for about USD 30,792.00. What mainly drove that decision?",
+      "note": "The frame is reworded freely; the two engine figures are carried through untouched. That combination is the whole lesson of this episode: the words are the agent's to choose, the date and the amount are not. A check that punished the quantity here would forbid faithful replay; a check that let 30,800 through would let the user answer about a trade that never happened.",
+      "prose": "You closed SPY out completely on 2024-05-08, taking about USD 30,792.00 off the table. Thinking back to that morning — was that an exit rule you had already set, or was it the position making you uneasy?",
       "presented_options": [
         {
           "maps_to": "price_target",
-          "label": "The target was reached",
-          "description": "A target or planned reduction condition was reached."
+          "label": "A rule I had already set",
+          "description": "The condition I planned to exit on had been met."
         },
         {
           "maps_to": "anxiety",
-          "label": "Locked in the gain",
-          "description": "The main motive was protecting gains from a possible reversal."
+          "label": "I wanted the gain locked",
+          "description": "It was about protecting a profit I could already see."
         },
         {
           "maps_to": "skip",
           "label": "Skip for now",
-          "description": "Save this as skipped so this exit's reason is not asked again."
+          "description": "Leave this exit unexplained for now."
         }
       ]
     }

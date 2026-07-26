@@ -21,9 +21,6 @@ What the mechanical half proves, per answer under test:
 ``number_provenance``   every number on a user-facing surface traces to a number
                         the engine actually emitted (never-loosen rule 1: agent
                         prose derives nothing)
-``grounding_fidelity``  a presented candidate rule quotes the engine's own
-                        ``grounding`` verbatim, and a candidate that has none is
-                        presented without one (#293)
 ``honesty_coverage``    every honesty key this episode puts in scope is both
                         still triggered by the fixture and disclosed by the
                         answer, in a digit-free sentence
@@ -35,14 +32,33 @@ What the mechanical half proves, per answer under test:
 ``locale_purity``       an ``en`` surface carries no CJK; a non-``en`` surface
                         carries no untranslated English metric label (#262)
 
+Every check is an **invariant** — something the product must never do. None of
+them compares an answer against the wording the product happens to ship today,
+because the question layer is being reshaped (#395, #396, #412) and a test that
+pinned current phrasing would report the improvement as a regression. Owner
+direction, 2026-07-26: answers are expected to get freer, more varied and more
+restrained over time, so a passing answer here is a **witness that the
+invariants hold**, never a model answer to copy.
+
+The first cut of this bank got that wrong. It shipped a ``grounding_fidelity``
+check requiring every word of a presented candidate rule to be a verbatim
+substring of an engine field — a behavior oracle in an invariant's clothing,
+which would have failed exactly the agent-authored, two-sided reasoning #412 is
+building. It is gone. What #293 actually violated (an invented fact in the slot
+where measured facts live) has no mechanical test today, so EP-002 stays in the
+bank recorded but ungraded, ``blocked_on`` #414.
+
+Beyond the answer checks, one gate asks the other question — **did asking buy
+anything** (``QUESTION_CONSUMERS`` below, #429).
+
 Three interlocks keep a green run meaningful (development-guide section 2 —
 "a checker that stays green under its mutation is not evidence"):
 
-1. Every episode declares at least one answer that MUST fail, and names the
-   checks it must fail on. A checker that decays into a no-op turns those
+1. Every graded episode declares at least one answer that MUST fail, and names
+   the checks it must fail on. A checker that decays into a no-op turns those
    answers green and this runner red.
 2. A declared check that finds nothing to look at is a failure, not a pass. An
-   answer with no options cannot quietly satisfy ``grounding_fidelity``.
+   answer carrying no options cannot quietly satisfy an option-level check.
 3. Bank coverage: every check must be observed both passing and failing at
    least once across the bank, or the run reports the gap.
 
@@ -114,9 +130,47 @@ NOISE_KEYS = {"state_root", "engine_meta", "path", "fingerprint", "session_id",
               "engine_version", "cycle_id", "id", "thesis_id", "event_id"}
 HEX_TOKEN = re.compile(r"^[0-9a-f]{12,}$")
 
-CHECK_NAMES = ("number_provenance", "grounding_fidelity", "honesty_coverage",
-               "privacy_trace", "surface_hygiene", "locale_purity", "condition_integrity")
+CHECK_NAMES = ("number_provenance", "honesty_coverage", "privacy_trace",
+               "surface_hygiene", "locale_purity", "condition_integrity")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
+
+# ── The question-consumer gate (#429) ────────────────────────────────────────
+#
+# The bank's other half, and the more expensive failure of the two. A check on an
+# *answer* asks "did it lie". This asks "did the question buy anything" — and for
+# two kinds the answer today is no: the user's classification is written to an
+# append-only projection nothing reads, so the card is byte-identical to skipping
+# the question (#429 carries the differential receipt).
+#
+# Owner ruling, 2026-07-26: "pure reflective value, zero mechanical consumption"
+# is NOT a legitimate reason for a question to exist here. The agent reads the
+# Review Plan every review, so any stored answer *can* be replayed —
+# `headline_motive_events` already is. Silence means nobody wired it. There is
+# therefore no `reflection_only` state, by design: a kind with no verifiable
+# consumer fails, and the only way to stay green is the shrinking ratchet below.
+#
+# The list of kinds is NOT maintained here: it is read from the Review Plan
+# schema's own `kind` enum, so a new question kind that ships without a
+# declaration fails this gate instead of slipping in unnoticed.
+#
+#   sink    the bundle key the answer becomes
+#   reaches claims to verify: "card" (the sink is referenced by the renderer that
+#           delivers it) or "state:<key>" (that key exists in a real prepared
+#           plan's state_snapshot, so the next review can see it)
+QUESTION_CONSUMERS = {
+    "add_thesis": ("thesis_decisions", ("card", "state:thesis_states")),
+    "headline_motive": ("headline_motive_events", ("card", "state:headline_motive_events")),
+    "revisit": ("revisit_resolutions", ("card", "state:due_revisits")),
+    "due_revisit": ("revisit_resolutions", ("card", "state:due_revisits")),
+    "rule_breach": ("rule_breach_decisions", ("card", "state:problem_stats")),
+    "initial_thesis": ("initial_thesis_events", ()),
+    "exit_consistency": ("exit_consistency_events", ()),
+}
+# Kinds whose answer reaches nothing, each pinned to the issue that owns the
+# disposition. A ratchet, not an exemption: a kind that becomes wired must leave
+# this list, and a newly unwired kind cannot join it without an issue.
+KNOWN_UNWIRED = {"initial_thesis": "#429", "exit_consistency": "#429"}
+
 # Not an answer surface: the envelope is what the agent would send the engine,
 # graded by `condition_integrity` against the engine's own validator. An answer
 # carrying only this and nothing the user reads is still an empty answer.
@@ -141,6 +195,7 @@ def validate_episode(raw, rel):
     if problems:
         return problems
     unknown = set(raw) - {"id", "title", "source", "moment", "fixture", "question",
+                          "blocked_on",
                           "checks", "must_disclose", "answers"}
     require(not unknown, f"unknown top-level field(s): {sorted(unknown)}")
     for field in ("id", "title", "moment"):
@@ -172,8 +227,18 @@ def validate_episode(raw, rel):
     require(isinstance(question.get("text"), str) and question.get("text"),
             "question.text must record what the user was actually asked")
 
+    # An episode with no checks is the honest `unmapped` state, not a mistake:
+    # the miss is recorded and replayed, and nothing today can grade it. It has
+    # to name what it waits on, so it cannot become a silent parking space.
     checks = raw.get("checks")
-    require(isinstance(checks, list) and checks, "checks must list at least one check")
+    require(isinstance(checks, list), "checks must be a list")
+    blocked_on = raw.get("blocked_on")
+    if isinstance(checks, list) and not checks:
+        require(isinstance(blocked_on, str) and blocked_on,
+                "an episode with no checks must name what it is blocked_on (an issue reference)")
+    elif blocked_on:
+        problems.append(f"{rel}: blocked_on is set on an episode that declares checks — an "
+                        "episode is either graded or waiting, not both")
     if isinstance(checks, list):
         bad = [name for name in checks if name not in CHECK_NAMES]
         require(not bad, f"unknown check(s): {bad}")
@@ -184,9 +249,11 @@ def validate_episode(raw, rel):
         problems.append(f"{rel}: honesty_coverage is declared but must_disclose is empty — the "
                         "check would have no key to look for, and an abstention is not a pass")
 
+    # One answer is enough: the recorded miss is the asset. A repaired answer is
+    # a witness that the invariants can be satisfied, not a required target —
+    # pinning "what good looks like" is what this bank got wrong the first time.
     answers = raw.get("answers")
-    require(isinstance(answers, list) and len(answers) >= 2,
-            "answers must hold at least the recorded miss and one repaired answer")
+    require(isinstance(answers, list) and answers, "answers must hold at least the recorded miss")
     if not isinstance(answers, list):
         return problems
     seen_ids, failing = set(), 0
@@ -209,7 +276,10 @@ def validate_episode(raw, rel):
             problems.append(f"{tag} expect must be pass or fail")
         if not any(answer.get(key) for key in ANSWER_PART_KEYS):
             problems.append(f"{tag} carries no answer surface ({', '.join(ANSWER_PART_KEYS)})")
-        if answer.get("expect") == "fail":
+        if not checks and answer.get("fails"):
+            problems.append(f"{tag} names fails on an ungraded episode — `expect` records the "
+                            "intent for when a gate exists; there is no check to name yet")
+        elif answer.get("expect") == "fail" and checks:
             failing += 1
             fails = answer.get("fails")
             if not (isinstance(fails, list) and fails):
@@ -225,7 +295,7 @@ def validate_episode(raw, rel):
                 problems.append(f"{tag} every presented option needs maps_to")
         if not isinstance(answer.get("discloses", {}), dict):
             problems.append(f"{tag} discloses must be an object of key -> sentence")
-    if not failing:
+    if not failing and checks:
         problems.append(f"{rel}: no answer expects failure — an episode whose every answer "
                         "passes cannot prove its checks still look at anything")
     return problems
@@ -425,40 +495,6 @@ def check_number_provenance(answer, facts):
     return findings
 
 
-def check_grounding_fidelity(answer, facts):
-    """#293: the presented candidate rule must be the engine's, word for word.
-
-    Two halves, both shipped as one miss: a rule whose real ``grounding`` was
-    paraphrased, and a rule with no ``grounding`` that received an invented one.
-    Both reduce to the same mechanical question — is every word of this
-    description engine-authored?
-    """
-    findings = []
-    for index, option in enumerate(answer.get("presented_options") or []):
-        role = f"option[{index}]"
-        candidate = facts["candidates"].get(option.get("maps_to"))
-        if candidate is None:
-            findings.append(f"{role}: maps_to {option.get('maps_to')!r} is not a candidate "
-                            "rule this fixture emits")
-            continue
-        description = (option.get("description") or "").strip()
-        grounding = (candidate.get("grounding") or "").strip()
-        if grounding and grounding not in description:
-            findings.append(f"{role}: engine grounding is not quoted verbatim "
-                            f"(engine: {grounding!r})")
-        engine_text = sorted((str(candidate.get(field)) for field in ("grounding", "rule", "text")
-                              if candidate.get(field)), key=len, reverse=True)
-        residue = description
-        for piece in engine_text:
-            residue = residue.replace(piece, " ")
-        residue = residue.strip(" \t\n·—–-:;,.。、，；：（）()「」〈〉\"'")
-        if residue:
-            findings.append(f"{role}: description carries wording no engine field authored: "
-                            f"{residue!r}" + ("" if grounding else " — this candidate has no "
-                                              "grounding, so it must be presented without one"))
-    return findings
-
-
 def check_honesty_coverage(episode, answer, facts):
     """Coverage, not adequacy: a triggered limitation must be said out loud.
 
@@ -646,15 +682,12 @@ def run_check(name, episode, answer, facts):
 
     The second value is interlock 2: a check with nothing in front of it has not
     passed, it has abstained, and an abstention on a declared check is a
-    failure. Otherwise an answer could satisfy ``grounding_fidelity`` by
-    presenting no options at all.
+    failure. Otherwise an answer could satisfy an option-level or envelope-level
+    check by carrying neither.
     """
     if name == "number_provenance":
         surfaces = _surfaces(answer)
         return check_number_provenance(answer, facts), bool(surfaces)
-    if name == "grounding_fidelity":
-        options = answer.get("presented_options") or []
-        return check_grounding_fidelity(answer, facts), bool(options)
     if name == "honesty_coverage":
         scope = set(episode.get("must_disclose") or [])
         return check_honesty_coverage(episode, answer, facts), bool(scope)
@@ -726,6 +759,80 @@ def replay(episode, facts):
     return failures, observed, unmapped
 
 
+def question_consumers(plan):
+    """#429: every question kind must buy something, and prove it.
+
+    ``(failures, notes)``. Two proof modes, both read from real artifacts rather
+    than from prose: ``card`` means the sink key is referenced by the renderer
+    that delivers the card, ``state:<key>`` means that key exists in a prepared
+    plan's ``state_snapshot``, which is what the next review reads.
+
+    The kind list comes from the Review Plan schema's own enum, so this gate
+    cannot be satisfied by forgetting to mention a kind.
+
+    What it does not prove: that the sentence the sink reaches is worth reading.
+    A card line nobody acts on still counts as reached here — that half is the
+    rubric judge's, calibrated against owner ratings.
+    """
+    failures, notes = [], []
+    schema = json.loads((SKILL_DIR / "schemas" / "review-plan.schema.json")
+                        .read_text(encoding="utf-8"))
+    try:
+        kinds = set(schema["properties"]["question_queue"]["items"]["properties"]["kind"]["enum"])
+    except (KeyError, TypeError):
+        return (["question consumers: the Review Plan schema no longer exposes a question "
+                 "`kind` enum — this gate cannot derive what to check"], notes)
+
+    renderer_source = (SKILL_DIR / "engine" / "card_renderer.py").read_text(encoding="utf-8")
+    state_keys = set((plan.get("state_snapshot") or {}).keys())
+
+    for kind in sorted(kinds - set(QUESTION_CONSUMERS)):
+        failures.append(f"question consumers: {kind!r} is a question the engine can ask, with no "
+                        "declared consumer — declare where its answer goes, or the user is "
+                        "answering into a void (#429)")
+    for kind in sorted(set(QUESTION_CONSUMERS) - kinds):
+        failures.append(f"question consumers: {kind!r} is declared here but the schema no longer "
+                        "lists it as a question kind — remove the declaration")
+
+    for kind in sorted(kinds & set(QUESTION_CONSUMERS)):
+        sink, reaches = QUESTION_CONSUMERS[kind]
+        verified = []
+        for claim in reaches:
+            if claim == "card":
+                if sink in renderer_source:
+                    verified.append("card")
+                else:
+                    failures.append(f"question consumers: {kind!r} claims its answer reaches the "
+                                    f"card, but {sink!r} appears nowhere in card_renderer.py")
+            elif claim.startswith("state:"):
+                key = claim.split(":", 1)[1]
+                if key in state_keys:
+                    verified.append(claim)
+                else:
+                    failures.append(f"question consumers: {kind!r} claims its answer reaches the "
+                                    f"next review through state_snapshot.{key}, which this plan "
+                                    "does not carry")
+            else:
+                failures.append(f"question consumers: {kind!r} declares an unknown proof mode "
+                                f"{claim!r}")
+        if verified:
+            if kind in KNOWN_UNWIRED:
+                failures.append(f"question consumers: {kind!r} is now wired ({', '.join(verified)}) "
+                                f"but still sits in KNOWN_UNWIRED — remove it and close "
+                                f"{KNOWN_UNWIRED[kind]}")
+            continue
+        # Nothing verified. Only the tracked ratchet keeps this green; there is
+        # deliberately no `reflection_only` state (owner ruling, see above).
+        if kind in KNOWN_UNWIRED:
+            notes.append(f"unwired question: {kind!r} — the answer becomes {sink!r} and nothing "
+                         f"reads it; tracked in {KNOWN_UNWIRED[kind]}")
+        else:
+            failures.append(f"question consumers: {kind!r} declares no reachable consumer and is "
+                            "not a tracked defect — wire it, delete the question, or add it to "
+                            "KNOWN_UNWIRED with an issue")
+    return failures, notes
+
+
 def coverage_report(observed_total, declared):
     """Interlock 3: a check nobody exercises both ways is not evidence.
 
@@ -767,6 +874,7 @@ def main():
 
     failures = list(problems)
     observed_total, declared, unmapped = {}, set(), []
+    reference_plan = None
     for episode in episodes:
         declared.update(episode["checks"])
         with tempfile.TemporaryDirectory() as tmp:
@@ -774,7 +882,13 @@ def main():
             if error:
                 failures.append(f"{episode['id']}: {error}")
                 continue
+            if reference_plan is None and episode["fixture"]["route"] == "first_review":
+                reference_plan = plan
             facts = engine_facts(plan, episode)
+        if not episode["checks"]:
+            unmapped.append(f"unmapped: {episode['id']} — recorded but ungraded, no mechanical "
+                            f"check can settle it yet ({episode.get('blocked_on')})")
+            continue
         episode_failures, observed, episode_unmapped = replay(episode, facts)
         failures.extend(episode_failures)
         unmapped.extend(episode_unmapped)
@@ -793,6 +907,13 @@ def main():
     else:
         coverage_failures, notes = coverage_report(observed_total, declared)
         failures.extend(coverage_failures)
+        if reference_plan is None:
+            failures.append("question consumers: no first_review plan was prepared, so the gate "
+                            "could not run — an ungated run is not a green run")
+        else:
+            consumer_failures, consumer_notes = question_consumers(reference_plan)
+            failures.extend(consumer_failures)
+            notes.extend(consumer_notes)
     for line in unmapped + notes:
         print(f"NOTE  {line}")
     for line in failures:
