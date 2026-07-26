@@ -31,6 +31,8 @@ EPISODE_DIR = ROOT / "evals" / "episodes"
 # invented; nothing here comes from a real ledger.
 FACTS = {
     "locale": "en",
+    "engine_text": "This period: your largest single position INTC is 43% of the portfolio.\n"
+                   "Cap any single position at 20%. Trim if it goes over, and do not add.",
     "numbers": {20.0, 43.0, 6.0, 3560.0},
     "dates": {"2024-05-08"},
     "tokens": {"CVS", "INTC", "USD"},
@@ -237,7 +239,7 @@ def test_replay_fails_an_episode_whose_declared_check_abstains():
         "question": {"asked_by": "user", "kind": "free_form", "text": "?"},
         "answers": [{"id": "a", "expect": "pass", "prose": "no options here"}],
     }
-    failures, observed = R.replay(episode, FACTS)
+    failures, observed, _unmapped = R.replay(episode, FACTS)
     assert any("nothing to inspect" in message for message in failures), failures
     assert observed["grounding_fidelity"] == set(), (
         "an abstention must not count as an observed outcome for coverage")
@@ -253,7 +255,7 @@ def test_replay_rejects_an_answer_that_fails_the_wrong_check():
         "answers": [{"id": "miss", "expect": "fail", "fails": ["surface_hygiene"],
                      "prose": "Those two together are 63% of the book."}],
     }
-    failures, _observed = R.replay(episode, FACTS)
+    failures, _observed, _unmapped = R.replay(episode, FACTS)
     assert failures and "but the episode records" in failures[0], failures
 
 
@@ -263,7 +265,7 @@ def test_replay_flags_a_fixture_that_stopped_posing_the_question():
         "question": {"asked_by": "engine", "kind": "initial_thesis", "text": "?"},
         "answers": [{"id": "a", "expect": "pass", "prose": "The cap is 20%."}],
     }
-    failures, _observed = R.replay(episode, FACTS)
+    failures, _observed, _unmapped = R.replay(episode, FACTS)
     assert any("no longer queues" in message for message in failures), failures
 
 
@@ -273,8 +275,38 @@ def test_replay_flags_a_commitment_episode_without_candidates():
         "question": {"asked_by": "engine", "kind": "commitment_choice", "text": "?"},
         "answers": [{"id": "a", "expect": "pass", "prose": "The cap is 20%."}],
     }
-    failures, _observed = R.replay(episode, _facts(candidates={}))
+    failures, _observed, _unmapped = R.replay(episode, _facts(candidates={}))
     assert any("no candidate rule" in message for message in failures), failures
+
+
+def test_unmapped_reports_prose_the_checks_never_inspected():
+    """#412's standard turned on the harness: what could not be decided is
+    reported as `unmapped`, not silently dropped and not guessed."""
+    answer = {"prose": "This felt like the right moment to step back."}
+    ungraded = R.unmapped_claims(answer, FACTS)
+    assert ungraded and ungraded[0][0] == "prose", ungraded
+
+
+def test_unmapped_does_not_report_an_engine_quoted_span():
+    """A verbatim engine sentence was inspected — by the checks that own it."""
+    answer = {"prose": "Cap any single position at 20%"}
+    assert R.unmapped_claims(answer, FACTS) == []
+
+
+def test_unmapped_never_turns_into_a_failure():
+    """It is a report, not a gate. A green replay must stay green while saying
+    out loud how much of the answer nothing verified."""
+    episode = {
+        "id": "EP-000", "checks": ["surface_hygiene"],
+        "question": {"asked_by": "user", "kind": "free_form", "text": "?"},
+        "answers": [{"id": "miss", "expect": "fail", "fails": ["surface_hygiene"],
+                     "prose": "The reason was deliberate_plan, which felt right at the time."},
+                    {"id": "ok", "expect": "pass",
+                     "prose": "This felt like the right moment to step back."}],
+    }
+    failures, _observed, unmapped = R.replay(episode, FACTS)
+    assert failures == [], failures
+    assert unmapped and "graded on hygiene only" in unmapped[0], unmapped
 
 
 def test_coverage_report_demands_both_outcomes_per_check():

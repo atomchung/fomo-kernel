@@ -247,6 +247,36 @@ hand; a passing lint is necessary, not sufficient. Mock-data sessions do not
 need the lint, but the `TICKER#date#seq` format should still never be pasted
 verbatim.
 
+### 6. Convert each miss into an episode
+
+An issue records that something went wrong; it does not make the failure
+replayable, so nothing later checks whether it stayed fixed. #417 measured the
+result: eighteen receipts, one archived manifest, and zero replayable assets
+from a loop `docs/eval-design.md` had specified all along. File the issue **and**
+convert, in the same sitting — the exact wording the agent produced is the
+asset, and it is gone by the next session.
+
+For a miss in an answer or a presented surface:
+
+```bash
+# read what the checks actually say about the recorded answer, then pin it
+python3 evals/run_episodes.py EP-NNN
+python3 evals/run_episodes.py            # coverage is judged only on a full run
+```
+
+[evals/episodes/README.md](../evals/episodes/README.md) holds the field
+contract and the intake steps. Two rules matter more than the rest: the episode
+carries **both** the recorded miss and the repaired answer, naming exactly which
+checks the miss must trip; and a real-data miss keeps only its failure structure
+— run the draft through the privacy gate in step 5, and let `privacy_trace` be
+the backstop, since a symbol or amount that survived from a real account cannot
+trace to a synthetic fixture.
+
+A miss the mechanical checks cannot express is still worth an episode when a
+later judge could grade it, and worth saying out loud when it cannot: whether
+the card ever reached the screen is a receipt question (step 3), not an answer
+question.
+
 ## Per-client notes
 
 - **Claude Code (owner's machine)** — the local `/fomo-qa` skill automates the

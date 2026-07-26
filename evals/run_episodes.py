@@ -357,6 +357,7 @@ def engine_facts(plan, episode):
 
     return {
         "locale": locale,
+        "engine_text": "\n".join(strings),
         "numbers": numbers,
         "dates": {match for text in strings for match in DATE.findall(text)},
         "tokens": tokens,
@@ -546,6 +547,34 @@ def check_locale_purity(answer, facts):
     return findings
 
 
+SENTENCE = re.compile(r"[^.。!！?？\n]+")
+
+
+def unmapped_claims(answer, facts):
+    """What the mechanical half did not grade — reported, never inferred.
+
+    #412's enum-gated-surface standard, turned on this harness: an enum for what
+    is mechanically decidable, `unmapped` as a first-class honest state for what
+    is not, and never a silent drop. A sentence carrying no number, quoting no
+    engine span, and disclosing no honesty key has passed the hygiene checks and
+    nothing else; its substance waits on the rubric judge, and on #414 for the
+    product-side provenance gate. Never a failure — the over-trust would be
+    printing nothing and letting a green run read as "the answer is good".
+    """
+    out = []
+    for role, text in _surfaces(answer):
+        if role.startswith("discloses["):
+            continue
+        for match in SENTENCE.finditer(text):
+            sentence = match.group(0).strip()
+            if len(sentence) < 12 or NUMBER.search(sentence):
+                continue
+            if sentence in facts["engine_text"]:
+                continue
+            out.append((role, sentence))
+    return out
+
+
 def run_check(name, episode, answer, facts):
     """Return ``(findings, looked_at_something)``.
 
@@ -580,7 +609,7 @@ def replay(episode, facts):
     ``observed`` maps check -> set of outcomes seen ("pass"/"fail"), which the
     bank-level coverage report consumes.
     """
-    failures = []
+    failures, unmapped = [], []
     observed = {name: set() for name in episode["checks"]}
     tag = episode["id"]
 
@@ -595,6 +624,12 @@ def replay(episode, facts):
                             f"question (queued: {sorted(facts['question_kinds'])})")
 
     for answer in episode["answers"]:
+        ungraded = unmapped_claims(answer, facts)
+        if ungraded:
+            role, sentence = ungraded[0]
+            unmapped.append(f"unmapped: {tag}/{answer['id']} — {len(ungraded)} sentence(s) "
+                            f"graded on hygiene only, substance waits on the judge "
+                            f"(first, {role}: {sentence[:60]!r})")
         found = {}
         for name in episode["checks"]:
             findings, looked = run_check(name, episode, answer, facts)
@@ -620,7 +655,7 @@ def replay(episode, facts):
                                    for message in messages)
                 failures.append(f"{tag}/{answer['id']}: failed on {sorted(actual)} but the "
                                 f"episode records {sorted(expected)} — {detail}")
-    return failures, observed
+    return failures, observed, unmapped
 
 
 def coverage_report(observed_total, declared):
@@ -663,7 +698,7 @@ def main():
         return 1 if problems else 0
 
     failures = list(problems)
-    observed_total, declared = {}, set()
+    observed_total, declared, unmapped = {}, set(), []
     for episode in episodes:
         declared.update(episode["checks"])
         with tempfile.TemporaryDirectory() as tmp:
@@ -672,8 +707,9 @@ def main():
                 failures.append(f"{episode['id']}: {error}")
                 continue
             facts = engine_facts(plan, episode)
-        episode_failures, observed = replay(episode, facts)
+        episode_failures, observed, episode_unmapped = replay(episode, facts)
         failures.extend(episode_failures)
+        unmapped.extend(episode_unmapped)
         for name, outcomes in observed.items():
             observed_total.setdefault(name, set()).update(outcomes)
         if not episode_failures:
@@ -689,7 +725,7 @@ def main():
     else:
         coverage_failures, notes = coverage_report(observed_total, declared)
         failures.extend(coverage_failures)
-    for line in notes:
+    for line in unmapped + notes:
         print(f"NOTE  {line}")
     for line in failures:
         print(f"FAIL  {line}")

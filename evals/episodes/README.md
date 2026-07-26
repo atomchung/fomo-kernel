@@ -84,6 +84,26 @@ catalogs' dimension keys, the plan's own canonical choice values,
 `card_renderer.numeric_claim`. Adding a dimension or a question kind extends the
 checks without editing them. Nothing here is hand-mirrored.
 
+**A digit inside an engine-authored span is not a violation.** Frozen surfaces
+replay verbatim, and a recorded thesis may itself carry a quantity the user
+wrote, so `number_provenance` asks whether the engine emitted the figure — not
+whether prose contains one. Quietly adjusting an engine figure is the violation:
+EP-005 pins both halves, because a check that punished the quantity there would
+forbid faithful replay.
+
+## What the run says it did not grade
+
+Each replay prints an `unmapped` note per answer: how many sentences passed the
+hygiene checks and nothing else, because they carry no number, quote no engine
+span, and disclose no honesty key. Their substance waits on the rubric judge,
+and on #414 for the product-side provenance gate.
+
+This is #412's enum-gated-surface standard turned on the harness — decide what
+is decidable, keep `unmapped` as a first-class honest state, never silently drop
+— and it is a report, never a failure. Printing nothing would be the
+over-trust: it would let "bank replayed clean" read as "the answers were good"
+when four of five sentences in an answer may be ungraded prose.
+
 ## Why a green run means something
 
 Three interlocks. Without them a bank of passing episodes would be the fifth
@@ -132,7 +152,9 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
 ## Adding an episode
 
 Convert on the spot, while the miss is still in front of you — a miss that only
-becomes an issue is a miss nobody replays.
+becomes an issue is a miss nobody replays. Step 6 of
+[qa-runbook.md](../../docs/qa-runbook.md) is where a QA run is told to do this;
+this section is the how.
 
 1. **Find the fixture that reproduces the structure.** Not the data — the
    shape: a candidate rule without a grounding, a triggered `cash_reliability`,
