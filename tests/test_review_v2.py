@@ -3506,6 +3506,66 @@ def test_a_row_open_on_both_axes_prints_both_notes_and_counts_two_concerns():
             "an unanswered crossing and an open basis are two concerns:\n" + private
 
 
+def test_a_deferred_crossing_beside_an_open_basis_reports_both():
+    """The fourth combined cell, and the second one the round-2 single-value
+    classifier actually broke. Same loss as the unanswered variant — the
+    crossing branch matched first and the basis note went with it — but reached
+    through the other door: this crossing never got a question at all, because
+    a deeper breach on another condition took the one-question budget.
+
+    Two crossed conditions, and the one that *loses* the budget is the one whose
+    basis is also in doubt, so its crossing is `deferred` rather than
+    `unanswered` while its basis stays open."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True, exist_ok=True)
+        rows = [{"slot_id": f"slot-d-{index}", "kind": "numeric",
+                 "criterion": f"sell if metric {index} drops under 30%",
+                 "query": f"what is metric {index}?", "created": "2026-07-01",
+                 "tier": "researched", "near_line": 3.0,
+                 "threshold": {"value": 30, "unit": "%", "direction": "below"}}
+                for index in range(2)]
+        (root / "conditions.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        # slot-d-0 is the deeper breach, so it takes the single crossing slot;
+        # slot-d-1 is the shallower one carrying the basis alert.
+        envelope = [
+            {"slot_id": "slot-d-0",
+             "check": {"lookup_status": "ok", "observation": dict(_CROSSED, value=3.0)}},
+            {"slot_id": "slot-d-1",
+             "check": {"lookup_status": "ok", "observation": dict(_CROSSED, value=27.0),
+                       "basis_alert": {"note": "the reporting segment was restated"}}}]
+        plan = _prepare_with_checks(tmp, root, envelope)
+        queued = {q["slot_id"] for q in plan["question_queue"]
+                  if q["kind"] == "condition_crossing"}
+        assert queued == {"slot-d-0"}, \
+            "the fixture must actually defer slot-d-1's crossing, got " + str(queued)
+        basis = next(q for q in plan["question_queue"]
+                     if q["kind"] == "condition_basis" and q["slot_id"] == "slot-d-1")
+        answers = _answers(plan, commitment="skip")
+        for row in answers["answers"]:
+            if row["question_id"] == basis["id"]:
+                row["choice"] = "skip"
+        answers["condition_checks"] = envelope
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == "slot-d-1")
+        assert "user_response" not in row and "basis_resolution" not in row, row
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        deferred_line = "sell if metric 1 drops under 30% —"
+        assert deferred_line in private, \
+            "the deferred crossing must reach the card:\n" + private
+        assert "past your line; I will ask you about it next review" in private, private
+        assert "the reporting segment was restated" in private, \
+            "the deferred crossing must not swallow the open basis concern:\n" + private
+        assert private.count(deferred_line) == 1, \
+            "one reading, two notes — not the same condition printed twice:\n" + private
+        # slot-d-0's crossing was queued and skipped (one concern), and
+        # slot-d-1 is open on both axes (two) — three in total.
+        assert "Open concerns coming back next review: 3." in private, \
+            "a deferred crossing and its open basis are two separate concerns:\n" + private
+
+
 def test_a_row_settled_on_both_axes_goes_quiet():
     """The closing cell of the combined set: answer both and the card says
     nothing, so the fix is a distinction rather than a blanket."""
