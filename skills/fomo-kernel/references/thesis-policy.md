@@ -23,7 +23,7 @@ Evidence provenance follows `captured -> confirmed -> evaluated`:
 
 - `captured` means a legacy or imported event contains a claim and source, but the newer confirmation contract was not present.
 - `confirmed` means the user confirmed that this claim and source were part of the decision. It does not mean the external claim is objectively true.
-- `evaluated` is reserved for a state a later reconciliation could reach by comparing an observation with the claim or falsifier. P0 provenance capture must not promote evidence to this state automatically. That reconciliation lifecycle lives on condition slots, not on the thesis event: a thesis falsifier can be committed as a watched condition slot ([condition-slots.md](condition-slots.md)), and its adjudication is recorded there.
+- `evaluated` is reserved for a state a later reconciliation could reach by comparing an observation with the claim or falsifier. P0 provenance capture must not promote evidence to this state automatically. That reconciliation lifecycle is being rebuilt on condition slots ([condition-slots.md](condition-slots.md)) instead of on the thesis event: a thesis falsifier can be stored as a condition slot today, but the per-period check and adjudication that would read it back are not built yet.
 
 The engine assigns a stable `evidence_id`, preserves the stated source, and keeps `observed_at` null when the user did not provide it. Review time is capture provenance, not a fabricated observation date.
 
