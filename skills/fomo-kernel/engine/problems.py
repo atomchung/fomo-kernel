@@ -377,12 +377,11 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
     unaffected. See check_rules docstring for exact semantics."""
     events, marks, skipped = load_book(book_path)
     today = today or dt.date.today().isoformat()
-    window = None
     per = top = None
     if span_aware:
         by_marks = compute_stats_by_marks(events, marks)
         if by_marks is not None:
-            per, top, window = by_marks
+            per, top, _ = by_marks
     if per is None:
         per, top = compute_stats(events, today, recent_weeks)
     rules_check = muted = None
@@ -392,7 +391,7 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
                                   draft_events=draft_events, draft_week=draft_week)
         muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
                   "problem_key": r.get("problem_key")} for r in muted_rules]
-    return {"as_of": today, "recent_weeks": recent_weeks, "window": window,
+    return {"as_of": today, "recent_weeks": recent_weeks,
             "per_key": per, "top": top,
             "rules_check": rules_check, "muted_rules": muted,
             "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}

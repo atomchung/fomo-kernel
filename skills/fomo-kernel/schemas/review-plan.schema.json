@@ -304,12 +304,6 @@
               "null"
             ]
           },
-          "horizon_marker": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
           "rule_id": {
             "type": [
               "string",
@@ -377,11 +371,6 @@
           "minItems": 3,
           "maxItems": 3,
           "uniqueItems": true
-        },
-        "question_limit": {
-          "type": "integer",
-          "minimum": 0,
-          "$comment": "The active route's maximum question count (#291). Kept for shape compatibility; the full band is in question_policy."
         },
         "question_policy": {
           "type": "object",

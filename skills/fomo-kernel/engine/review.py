@@ -1477,9 +1477,12 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     positions = _active_positions(state)
     by_ticker = {ticker: row for ticker, row in positions.items()}
     del previous_state  # retained in the call contract for older adapters
+    # #416: no longer read in here — its one use was stamping a per-question
+    # field on queue rows that no flow read, now removed. state_snapshot's
+    # plural roster is the surface flows actually consume, so the parameter
+    # stays for call-contract compatibility with existing positional callers.
+    del horizon_markers
     thesis_states = thesis_states or active
-    horizon_by_cycle = {row.get("cycle_id"): row for row in (horizon_markers or [])
-                        if row.get("cycle_id")}
     candidates = []
     # Exit-reason capture is the only perishable question: its 14-day window
     # cannot be backfilled, while a skipped due checkpoint or an unanswered add
@@ -1497,8 +1500,6 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             continue
         question["prior_thesis_id"] = prior.get("thesis_id")
         question["prior_event_id"] = prior.get("last_event_id") or prior.get("event_id")
-        if item.get("cycle_id") in horizon_by_cycle:
-            question["horizon_marker"] = horizon_by_cycle[item.get("cycle_id")]
         question["_priority"] = 0
         candidates.append(question)
     for row in due_revisits or []:
@@ -2023,7 +2024,7 @@ def _price_feed_status(card):
 
 
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
-                recent_exits=None, ledger_ingest=None, revisit_ingest=None,
+                recent_exits=None, ledger_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
@@ -2041,7 +2042,6 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
             )
     active_rows = [row for row in thesis_states
                    if row.get("cycle_id") in set(cycle_ids) and row.get("position_status") != "closed"]
-    closed_rows = [row for row in thesis_states if row.get("position_status") == "closed"]
     active = {row.get("cycle_id"): row for row in active_rows}
     by_cycle = {row.get("cycle_id"): row for row in thesis_states}
     horizon_markers = ([] if route == "snapshot_review" else
@@ -2108,7 +2108,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            },
                            "cadence": cadence,
                            "review_tier": review_tier,
-                           "active_theses": active_rows, "closed_theses": closed_rows,
+                           "active_theses": active_rows,
                            "thesis_states": thesis_states,
                            # audit summary only — the question payload is the single
                            # complete source the flow reads, so the two can't diverge
@@ -2122,8 +2122,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            "problem_stats": problem_stats,
                            "headline_motive_events": headline_motive_events,
                            "market_context": state.get("market_context"),
-                           "horizon_markers": horizon_markers,
-                           "revisit_ingest": revisit_ingest},
+                           "horizon_markers": horizon_markers},
         "question_queue": question_queue,
         "missing_thesis_positions": missing,
         "authoring_contract": _authoring_contract(route),
@@ -2133,7 +2132,6 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                       # fewer than two candidates or the ranking can't honestly
                       # compare them (see _candidate_comparison).
                       "candidate_comparison": _candidate_comparison(candidate_rules, card, language),
-                      "question_limit": question_selection["max"],
                       "question_policy": {"route": question_selection["route"],
                                           "min": question_selection["min"],
                                           "max": question_selection["max"]},
@@ -2289,16 +2287,20 @@ def cmd_prepare(args):
     elif persist and paths:
         ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
     if route == "snapshot_review":
-        recent_exits, due_revisits, exit_backlog, revisit_ingest = [], [], None, None
+        recent_exits, due_revisits, exit_backlog = [], [], None
         problem_stats = None
     else:
-        recent_exits, due_revisits, exit_backlog, revisit_ingest = \
+        # #416: _prepare_exit_capture still returns (recent, due, backlog,
+        # ingest_meta); the 4th element (revisit-queue enqueue counters) is
+        # discarded here — its only sink in state_snapshot was written but
+        # never read by any flow, and that sink has been removed.
+        recent_exits, due_revisits, exit_backlog, _ = \
             _prepare_exit_capture(root, state, persist)
         problem_stats = _problem_snapshot(root, state) if persist else None
     plan = _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint,
                        args.session_nonce or "", persist,
                        recent_exits=recent_exits, ledger_ingest=ledger_ingest,
-                       revisit_ingest=revisit_ingest, due_revisits=due_revisits,
+                       due_revisits=due_revisits,
                        exit_backlog=exit_backlog, problem_stats=problem_stats)
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
