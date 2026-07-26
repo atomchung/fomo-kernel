@@ -35,6 +35,7 @@ CLI(JSON stdout / 訊息 stderr,同 ledger 慣例):
   python3 problems.py append EVENTS.json [--mark MARK.json] [--session-id S] [--book P]
       # 去重,重跑安全。#166:同 week 的 mark 內容不同時 fail closed(不再靜默丟棄衝突)。
   python3 problems.py stats [--today D] [--rules R] [--book P] [--recent-weeks 4]
+      # --profile P 才會套用使用者靜音的規矩(#416);不給就全部當追蹤中。
 """
 import argparse
 import datetime as dt
@@ -254,12 +255,40 @@ def compute_stats_by_marks(events, marks, min_marks=3):
                       "prior_from": prior_from, "recent_days": recent_days, "prior_days": prior_days}
 
 
-def load_rules(path):
-    """rules.jsonl → (active_tracking[], muted[])。append-only:revises 指回舊 rule_id →
-    舊的 superseded;每條規矩線取 latest;status muted 不進對位但列出(呈現「靜默統計中」)。"""
-    rows, superseded = [], set()
+def rule_line_id(rule):
+    """一條規矩線的穩定身分 = 這條線最初那列的 rule_id。
+
+    規矩會被改寫(revises 鏈),每次改寫都換一個 rule_id;但那是「同一條規矩的新版本」,
+    不是新規矩。使用者說「這條別再問我」時,指的是整條線。用鏈根當身分,改寫不會把
+    靜音弄丟,靜音也不會憑空造出第二個 live head。
+    """
+    return str(rule.get("line_id") or rule.get("rule_id") or "")
+
+
+def load_rules(path, muted_ids=()):
+    """相容包裝:只回 (tracking, muted)。壞行計數見 load_rules_report。"""
+    tracking, muted, _skipped = load_rules_report(path, muted_ids)
+    return tracking, muted
+
+
+def load_rules_report(path, muted_ids=()):
+    """rules.jsonl → (tracking[], muted[])。append-only:revises 指回舊 rule_id →
+    舊的 superseded;每條規矩線取 latest。
+
+    muted_ids(#416):使用者靜音的規矩線 id 集合,由呼叫端從 profile.json 讀進來。
+    靜音是「狀態」不是「身分變更」——rules.jsonl 一列都不會為了靜音而多寫,所以
+    breach 問題的對位鍵(rule_id)不會漂移,revises 鏈也不會分岔。
+
+    每列另外掛上 line_id(鏈根),讓呼叫端不必自己重走鏈。
+
+    回 (tracking, muted, skipped_lines)。壞行照舊跳過不 crash,但要把數目交出去:
+    鏈中間掉一列,鏈會斷成兩截,下半截的 line_id 指向一個沒有任何列擁有的 id——
+    於是它不在 muted_ids 裡,靜音的規矩會無聲地回到輪替中。這正是第一版被否決的
+    那個方向,所以壞行不能只是靜靜跳過。
+    """
+    rows, superseded, parent, skipped = [], set(), {}, 0
     if not os.path.exists(path):
-        return [], []
+        return [], [], 0
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -268,16 +297,37 @@ def load_rules(path):
             try:
                 r = json.loads(line)
             except ValueError:
+                skipped += 1
                 continue
             if not isinstance(r, dict) or not r.get("rule_id"):
+                skipped += 1
                 continue
             if r.get("revises"):
                 superseded.add(r["revises"])
+                parent[r["rule_id"]] = r["revises"]
             rows.append(r)
-    latest = [r for r in rows if r["rule_id"] not in superseded]
-    tracking = [r for r in latest if r.get("status", "tracking") == "tracking"]
-    muted = [r for r in latest if r.get("status") == "muted"]
-    return tracking, muted
+
+    def root(rule_id):
+        seen = set()
+        while rule_id in parent and rule_id not in seen:
+            seen.add(rule_id)
+            rule_id = parent[rule_id]
+        return rule_id
+
+    latest = []
+    for r in rows:
+        if r["rule_id"] in superseded:
+            continue
+        row = dict(r)
+        row["line_id"] = root(r["rule_id"])
+        latest.append(row)
+    silent = set(muted_ids or ())
+    # status:"muted" 仍被承認:那是 #137 起就寫在契約裡的列欄位,手改過檔案的人不該
+    # 因為這次改動被靜默忽略。新的靜音一律走 profile,不再寫進這個可重建的投影檔。
+    def is_muted(row):
+        return row.get("status") == "muted" or row["line_id"] in silent
+    return ([r for r in latest if not is_muted(r)],
+            [r for r in latest if is_muted(r)], skipped)
 
 
 def check_rules(tracking, events, marks, draft_events=None, draft_week=None):
@@ -359,7 +409,7 @@ def check_rules(tracking, events, marks, draft_events=None, draft_week=None):
 
 
 def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=False,
-             draft_events=None, draft_week=None):
+             draft_events=None, draft_week=None, muted_ids=()):
     """Assemble the review-ready stats payload (single source for CLI and review v2).
 
     rules_path=None keeps the CLI's opt-in semantics (rules_check/muted None);
@@ -374,7 +424,13 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
 
     draft_events/draft_week(#292): forwarded verbatim to check_rules; both
     default to None so the CLI `stats` subcommand (no flag for this) is
-    unaffected. See check_rules docstring for exact semantics."""
+    unaffected. See check_rules docstring for exact semantics.
+
+    muted_ids(#416): rule *line* ids the user silenced, read from `profile.json`
+    by the caller (`review.py _muted_rule_ids`, or the CLI's `--profile`). They
+    move a rule from `rules_check` to `muted_rules` — reconciled either way, and
+    only the first list feeds the card's attention rotation. Empty by default, so
+    a caller that knows nothing about the profile behaves exactly as before."""
     events, marks, skipped = load_book(book_path)
     today = today or dt.date.today().isoformat()
     per = top = None
@@ -385,22 +441,49 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
     if per is None:
         per, top = compute_stats(events, today, recent_weeks)
     rules_check = muted = None
+    rules_skipped = 0
     if rules_path:
-        tracking, muted_rules = load_rules(rules_path)
+        tracking, muted_rules, rules_skipped = load_rules_report(rules_path, muted_ids)
         rules_check = check_rules(tracking, events, marks,
                                   draft_events=draft_events, draft_week=draft_week)
-        muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
-                  "problem_key": r.get("problem_key")} for r in muted_rules]
-    return {"as_of": today, "recent_weeks": recent_weeks,
-            "per_key": per, "top": top,
-            "rules_check": rules_check, "muted_rules": muted,
-            "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}
+        # 靜音的規矩走同一條對位,只是不進 rules_check——「靜默統計中」的「統計」
+        # 得是真的。少了這一步,靜音只是把規矩丟進黑洞,而使用者以為資料在累積。
+        # 分兩個欄位而不是加旗標:呈現層對 rules_check 的注意力調度不必為此改寫,
+        # 也不可能不小心把靜音的規矩排進卡面。draft 視窗照樣傳進去,否則靜音期間
+        # 「本期進行中」的破戒會憑空消失,而那正是使用者回頭要看的東西。
+        muted = check_rules(muted_rules, events, marks,
+                            draft_events=draft_events, draft_week=draft_week)
+    payload = {"as_of": today, "recent_weeks": recent_weeks,
+               "per_key": per, "top": top,
+               "rules_check": rules_check, "muted_rules": muted,
+               "events_n": len(events), "marks_n": len(marks), "skipped_lines": skipped}
+    if rules_skipped:
+        # 只在真的掉行時出現:壞行會把 revises 鏈切斷,靜音可能因此失效(見
+        # load_rules_report),所以這不是雜訊,是「這份對位可能不完整」的信號。
+        payload["rules_skipped_lines"] = rules_skipped
+    return payload
 
 
 # ─────────────────────────── CLI ───────────────────────────
 
 def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _muted_from_profile(path):
+    """profile.json 的 muted_rules(#416)。CLI 專用,fail-soft 同 review.py。
+
+    這支 CLI 拿到的是 --rules 路徑,不是 coach root,所以推不出 profile 在哪——
+    沒給就沒有靜音,而不是猜一個位置。review v2 走 review.py 自己那條讀取路徑。"""
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            profile = json.load(f)
+    except (OSError, ValueError):
+        return []
+    ids = profile.get("muted_rules") if isinstance(profile, dict) else None
+    return [str(r) for r in ids if str(r).strip()] if isinstance(ids, list) else []
 
 
 def _load_json_arg(v):
@@ -424,6 +507,8 @@ def main(argv=None):
     p_st.add_argument("--today", default=None, help="統計錨點 YYYY-MM-DD(預設今天;SKILL 傳 date_end)")
     p_st.add_argument("--rules", default=None, help="rules.jsonl 路徑(給了才做規矩對位)")
     p_st.add_argument("--recent-weeks", type=int, default=4)
+    p_st.add_argument("--profile", default=None,
+                      help="profile.json 路徑;不給就不套用使用者靜音的規矩(#416)")
 
     a = ap.parse_args(argv)
 
@@ -448,12 +533,19 @@ def main(argv=None):
 
     if a.cmd == "stats":
         try:
-            payload = snapshot(a.book, a.rules, a.today, a.recent_weeks)
+            payload = snapshot(a.book, a.rules, a.today, a.recent_weeks,
+                               muted_ids=_muted_from_profile(a.profile))
         except ValueError as e:
             print(f"❌ 日期格式錯:{e}", file=sys.stderr)
             return 1
         if payload["skipped_lines"]:
             print(f"⚠️  problems.jsonl 有 {payload['skipped_lines']} 行壞事件被跳過", file=sys.stderr)
+        if payload.get("rules_skipped_lines"):
+            # 比上面那條更嚴重:壞行會切斷 revises 鏈,靜音的規矩可能因此無聲回到
+            # 輪替(#416)。所以講清楚後果,不只報數字。
+            print(f"⚠️  rules.jsonl 有 {payload['rules_skipped_lines']} 行讀不出來——"
+                  "規矩的改寫鏈可能因此斷開,靜音過的規矩會無聲回到提問輪替,"
+                  "這份對位請當成不完整", file=sys.stderr)
         _emit(payload)
         return 0
     return 0

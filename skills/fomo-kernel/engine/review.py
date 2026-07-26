@@ -1809,7 +1809,8 @@ def _problem_snapshot(root, state):
                                 os.path.join(root, "rules.jsonl"),
                                 today=_review_date(state).isoformat(), span_aware=True,
                                 draft_events=state.get("problem_events"),
-                                draft_week=state.get("date_end"))
+                                draft_week=state.get("date_end"),
+                                muted_ids=_muted_rule_ids(root))
     if not payload["events_n"] and not payload["marks_n"]:
         return None
     return payload
@@ -2722,6 +2723,24 @@ def _build_initial_thesis_events(plan, answers, amap=None):
     return events
 
 
+def _refuse_revision_of_a_muted_line(plan, expected_revision):
+    """A rule silenced this session cannot also be replaced this session (#416)."""
+    root = plan.get("state_root")
+    if not root or not os.path.isdir(root):
+        return
+    muted_ids = _muted_rule_ids(root)
+    if not muted_ids:
+        return
+    _tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"), muted_ids)
+    target = str(expected_revision.get("rule_id") or "")
+    for row in muted:
+        if target in {str(row.get("rule_id")), problems.rule_line_id(row)}:
+            raise ReviewError(
+                f"rule {problems.rule_line_id(row)!r} is muted, so it cannot be revised in the "
+                "same review — a replacement would inherit the silence and never be asked "
+                "about. Unmute it first, or answer the breach without a replacement")
+
+
 def _slot_commitment(plan, chosen, condition, expected_revision):
     """#412: a condition the engine cannot compute becomes a stored slot.
 
@@ -2781,6 +2800,14 @@ def _resolve_commitment(plan, answers):
         raise ReviewError("a revise_rule answer requires the one final commitment to revise that rule")
     if not expected_revision and revises_rule_id:
         raise ReviewError("revises_rule_id requires a revise_rule answer for that rule")
+    if expected_revision:
+        # #416: the frozen question was posed before this session could mute that
+        # rule. Without this, muting at step 8 and revising at step 9 both land:
+        # the replacement inherits the line's silence and a rule the user authored
+        # *this week* is born muted, absent from the rotation and from #292's
+        # breach disclosure, with nothing said. The two answers contradict each
+        # other, so the engine names the contradiction instead of picking one.
+        _refuse_revision_of_a_muted_line(plan, expected_revision)
     if selected == "skip":
         if expected_revision:
             raise ReviewError("a revise_rule answer requires a replacement commitment")
@@ -3206,6 +3233,114 @@ def cmd_set_cap(args):
     _emit({"status": "set", "root": root, "max_position_pct": cap})
 
 
+def _muted_rule_ids(root):
+    """The rule lines the user asked not to be asked about (#416).
+
+    Standing preference, so it lives in ``profile.json`` beside the position cap
+    and not in ``rules.jsonl``: that file is a tier-3 rebuildable projection
+    (`references/data-contract.md`), rebuilt from committed bundles by
+    ``repair-projections``, and a bundle carries commitments only. A mute stored
+    there would survive until the first repair and then silently un-mute every
+    rule — the user starts being asked again with no signal that anything
+    changed. Same fail-soft posture as the cap: an unreadable profile means no
+    mutes, never a crash."""
+    path = _profile_path(root)
+    if not os.path.exists(path):
+        return []
+    try:
+        profile = session.read_json(path)
+    except (OSError, ValueError):
+        return []
+    ids = profile.get("muted_rules") if isinstance(profile, dict) else None
+    return [str(rule_id) for rule_id in ids if str(rule_id).strip()] if isinstance(ids, list) else []
+
+
+def _write_mutes(root, line_ids):
+    """Replace the profile's mute list, preserving every other preference."""
+    path = _profile_path(root)
+    profile = {}
+    if os.path.exists(path):
+        try:
+            loaded = session.read_json(path)
+            if isinstance(loaded, dict):
+                profile = loaded
+        except (OSError, ValueError):
+            profile = {}
+    if line_ids:
+        profile["muted_rules"] = sorted(set(line_ids))
+    else:
+        profile.pop("muted_rules", None)
+    ledger.atomic_write_text(path, session.pretty(profile))
+
+
+def _clear_mute(root, line_id, muted_ids):
+    _write_mutes(root, [rule_id for rule_id in muted_ids if rule_id != line_id])
+
+
+def cmd_mute_rule(args):
+    """Silence a rule without retiring it, or bring it back (#416).
+
+    A rule the user no longer wants to be asked about has had exactly two exits:
+    keep answering for it, or lose it. Muting is the third — the rule stops
+    entering the card's attention rotation while its reconciliation keeps
+    running, so the statistics are there when the user comes back to decide.
+
+    Owner direction, 2026-07-26: establish the rule first, keep accumulating,
+    look again once there is data. That only works if the accumulation is real,
+    which is why `problems.snapshot` reconciles muted rules on the same path as
+    tracked ones.
+
+    Mute is **state on a stable identity**, never a new rule row. The identity is
+    the rule *line* (`problems.rule_line_id` — the root of the `revises` chain),
+    so a later revision of the same rule inherits the mute, and nothing about
+    muting can move the `rule_id` that `_rule_breach_history` keys answered
+    breach questions on. An earlier cut of this wrote a superseding row instead
+    and produced exactly those two failures: a required question re-asked after
+    an unmute, and a chain with two live heads when a revision landed on top.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    os.makedirs(root, exist_ok=True)
+    muted_ids = _muted_rule_ids(root)
+    tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"), muted_ids)
+    lines = {}
+    for row in tracking + muted:
+        lines[problems.rule_line_id(row)] = row
+        lines[str(row.get("rule_id"))] = row          # the head id is what a payload shows
+    rule = lines.get(str(args.rule_id))
+    if rule is None:
+        if args.unmute and str(args.rule_id) in set(muted_ids):
+            # A silenced line whose rows are gone (a reset, a hand-edited file):
+            # the profile entry is inert but permanent, and refusing here would
+            # leave the user no way to clear it.
+            _clear_mute(root, str(args.rule_id), muted_ids)
+            _emit({"status": "tracking", "root": root, "rule_line_id": str(args.rule_id),
+                   "rule_id": None, "text": None,
+                   "note": "the rule itself is no longer in rules.jsonl; cleared the stale entry"})
+            return
+        raise ReviewError(
+            f"no live rule matching {args.rule_id!r} — a superseded id names a version, not a "
+            f"rule (live: {sorted({problems.rule_line_id(r) for r in tracking + muted}) or 'none'})")
+    line_id = problems.rule_line_id(rule)
+    target_muted = not args.unmute
+    # Effective state, not the profile's copy of it: `load_rules` also honours a
+    # row-level `status: "muted"` (contract since #137), so asking the profile
+    # would tell a user their rule is tracked while the engine's own reader
+    # silences it — one boolean with two sources of truth.
+    silent_now = any(problems.rule_line_id(row) == line_id for row in muted)
+    if silent_now == target_muted:
+        raise ReviewError(f"rule {line_id!r} is already {'muted' if target_muted else 'tracking'}")
+    if args.unmute and line_id not in set(muted_ids):
+        raise ReviewError(
+            f"rule {line_id!r} is silenced by a `status: \"muted\"` field in rules.jsonl, not by "
+            "a preference this command owns — remove that field from the row to bring it back")
+    remaining = [rule_id for rule_id in muted_ids if rule_id != line_id]
+    if target_muted:
+        remaining.append(line_id)
+    _write_mutes(root, remaining)
+    _emit({"status": "muted" if target_muted else "tracking", "root": root,
+           "rule_line_id": line_id, "rule_id": rule.get("rule_id"), "text": rule.get("text")})
+
+
 def cmd_doctor(args):
     """Report optional runtime dependencies and what each unlocks (#322).
 
@@ -3306,6 +3441,13 @@ def build_parser():
     cap_group.add_argument("--clear", action="store_true",
                            help="remove the override and revert to the universal default")
     setcap.set_defaults(func=cmd_set_cap)
+    mute = sub.add_parser("mute-rule",
+                          help="stop asking about a rule while its statistics keep running (#416)")
+    mute.add_argument("--root")
+    mute.add_argument("--rule-id", required=True)
+    mute.add_argument("--unmute", action="store_true",
+                      help="bring a muted rule back into the card's rotation")
+    mute.set_defaults(func=cmd_mute_rule)
     doctor = sub.add_parser(
         "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
     doctor.set_defaults(func=cmd_doctor)
