@@ -63,6 +63,12 @@ STATE_METRIC_KEYS = {
     "payoff", "ai_pct", "max_sector_pct", "top3_pct", "n_holdings",
     "exit_severity", "hold_severity",                   # skill v2:所有 headline 都有 commitment metric
     "beta", "alpha_ann", "alpha_t", "alpha_credible",   # alpha v2(#80):α 永遠出數,t 一起存
+    # #400/#412 中性可觀測量:無方向、無門檻,由條件自帶判準。這張集合同時是「用戶能承諾
+    # 什麼」的天花板(review.py 拒收不在 state.metrics 的 metric_key),擴目錄必須動這裡。
+    "longest_hold_days", "longest_hold_ticker",
+    "worst_cur_ret", "worst_cur_ret_ticker",
+    "worst_drawdown", "worst_drawdown_ticker",             # 需要價格序列,離線 shim 下退 None
+    "worst_bench_lag", "worst_bench_lag_ticker",
 }
 
 PASS = 0

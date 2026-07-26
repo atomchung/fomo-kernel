@@ -1650,10 +1650,138 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
     return events, opportunities
 
 
+def _column_since(prices, ticker, since):
+    """One ticker's non-null closes from ``since`` onward, or None when unusable.
+
+    Two observations is the floor: a single point cannot express a fall from a
+    peak or a return, and approximating either from one price is exactly the
+    kind of silent fabrication the honesty rules forbid.
+    """
+    if ticker is None or ticker not in list(getattr(prices, "columns", [])):
+        return None
+    try:
+        col = prices[ticker].dropna()
+        window = col[col.index >= since]
+    except (TypeError, ValueError, KeyError):
+        return None
+    return window if len(window) >= 2 else None
+
+
+def _price_series_observables(holdings, prices, markets):
+    """Neutral observables that need the review's price series, not just a last price.
+
+    Both are measured from each position's own open (``cycle_start``) rather than
+    from the review window. "Since you bought" is the frame a user reasons about a
+    holding in, and it is precisely the frame the account-level alpha/excess
+    numbers cannot express, because those are windowed to the period. A condition
+    referencing these therefore says something the existing catalog could not.
+
+    Benchmark choice follows ``MARKET_BENCH``, so a TW listing is compared with
+    ^TWII rather than SPY — comparing a TW position against SPY would mix market
+    and currency, which the sector-attribution code already refuses to do.
+
+    Degrades to None rather than approximating: no pandas, no price frame, an
+    unknown open, an absent column, or fewer than two observations after the open
+    each drop that position from the aggregate.
+    """
+    out = {"worst_drawdown": None, "worst_drawdown_ticker": None,
+           "worst_bench_lag": None, "worst_bench_lag_ticker": None}
+    try:
+        import pandas as pd
+    except ImportError:
+        return out
+    if prices is None or not len(list(getattr(prices, "columns", []))):
+        return out
+    deepest = laggard = None
+    for ticker, row in (holdings or {}).items():
+        start = row.get("cycle_start")
+        if not start:
+            continue                                        # #unknown cycle → no anchor to measure from
+        try:
+            since = pd.Timestamp(start)
+        except (TypeError, ValueError):
+            continue
+        col = _column_since(prices, ticker, since)
+        if col is None:
+            continue
+        first, last, peak = float(col.iloc[0]), float(col.iloc[-1]), float(col.max())
+        if peak > 0:
+            fall = (last - peak) / peak                     # ≤ 0; 0 = still at its high
+            if deepest is None or fall < deepest[0]:
+                deepest = (fall, ticker)
+        bench = _column_since(
+            prices, MARKET_BENCH.get((markets or {}).get(ticker, "US"), "SPY"), since)
+        if bench is not None and first > 0:
+            bench_first = float(bench.iloc[0])
+            if bench_first > 0:                             # (1+r_position) - (1+r_bench) = excess since open
+                lag = (last / first) - (float(bench.iloc[-1]) / bench_first)
+                if laggard is None or lag < laggard[0]:
+                    laggard = (lag, ticker)
+    if deepest:
+        out["worst_drawdown"], out["worst_drawdown_ticker"] = round(deepest[0], 4), deepest[1]
+    if laggard:
+        out["worst_bench_lag"], out["worst_bench_lag_ticker"] = round(laggard[0], 4), laggard[1]
+    return out
+
+
+def position_observables(holdings, last_px, date_end, prices=None, markets=None):
+    """Neutral per-position observables for the metric catalog (#400, #412).
+
+    Measurements, not diagnoses. They carry no direction and no threshold, so
+    whatever condition references them supplies both — unlike the five
+    diagnostic dimensions, which fuse "what is measured" with "what counts as
+    wrong". They exist because ``state.metrics`` is the ceiling on what a user
+    may commit to (``review.py`` rejects a ``metric_key`` absent from it), and
+    until now that ceiling was the diagnostic dimensions alone.
+
+    Aggregation follows ``max_pos_pct``: reduce the per-ticker series to one
+    scalar plus the ticker it came from, so a condition can name the position.
+    A holding missing an input (unknown cycle start, no live price, no average
+    cost) is skipped, and an observable no holding can supply stays ``None`` —
+    never 0, which would read as a measurement that came back clean.
+
+    Keys, each paired with a ``_ticker`` naming the position it came from:
+    ``longest_hold_days`` (days the longest-running open position has been held)
+    and ``worst_cur_ret`` (deepest return against average cost, negative when
+    under water) need only ``last_px``; ``worst_drawdown`` (deepest fall from a
+    peak since the open) and ``worst_bench_lag`` (widest shortfall against that
+    market's benchmark since the open) additionally need ``prices`` — the
+    review's price frame — and stay None without it.
+    """
+    out = {"longest_hold_days": None, "longest_hold_ticker": None,
+           "worst_cur_ret": None, "worst_cur_ret_ticker": None}
+    out.update(_price_series_observables(holdings, prices, markets))
+    try:
+        end = dt.date.fromisoformat(str(date_end))
+    except (TypeError, ValueError):
+        return out                                          # no period end → only the price-series pair survives
+    longest = worst = None
+    for ticker, row in (holdings or {}).items():
+        start = row.get("cycle_start")                      # None on a #unknown cycle (CSV lacks the open)
+        if start:
+            try:
+                days = (end - dt.date.fromisoformat(str(start))).days
+            except (TypeError, ValueError):
+                days = None
+            if days is not None and days >= 0 and (longest is None or days > longest[0]):
+                longest = (days, ticker)
+        avg_cost, px = row.get("avg_cost"), (last_px or {}).get(ticker)
+        if avg_cost and avg_cost > 0 and px is not None:
+            ret = (px - avg_cost) / avg_cost
+            if worst is None or ret < worst[0]:
+                worst = (ret, ticker)
+    if longest:
+        out["longest_hold_days"], out["longest_hold_ticker"] = longest
+    if worst:
+        out["worst_cur_ret"], out["worst_cur_ret_ticker"] = round(worst[0], 4), worst[1]
+    return out
+
+
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
-                max_pos_override=None, price_provenance=None, price_request=None):
+                max_pos_override=None, price_provenance=None, price_request=None,
+                prices=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1721,6 +1849,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                     "add_count": (add_cursors.get(t) or {}).get("add_count", 0),
                     "decision_cursor": (add_cursors.get(t) or {}).get("decision_cursor")}
                 for t, (sh, c) in held.items()}
+    position_obs = position_observables(
+        holdings, last_px, rows[-1]["date"].isoformat() if rows else None,
+        prices=prices, markets={r["ticker"]: r.get("market", "US") for r in rows})
     p_events, p_opps = build_problem_events(
         dims, rts, avg_down, held, last_px,
         rows[-1]["date"].isoformat() if rows else None, prev_end, rows=rows)
@@ -1756,6 +1887,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "alpha_ann": ab.get("alpha_ann"),               # v2(#80):永遠出數;能力語氣由 alpha_credible 管
             "alpha_t": (ab.get("alpha_stat") or {}).get("t"),   # 不確定性一起存,對帳時才知道數字多可信
             "alpha_credible": credible if has_ab else None,
+            # #400/#412:中性可觀測量(無方向、無門檻),條件自帶判準;鍵見 position_observables。
+            # 加觀測量只改該函數,不必再動這張表——目錄本身就是用戶可承諾範圍的天花板。
+            **position_obs,
         },
         "rule": rule,
         "rule_dim": rule_dim,                              # #356:rule 的維度;v2 renderer 據此從 copy "rules" 取當地語系文案(rule 本身是 v1 zh 字面值,不可上卡)
@@ -2321,7 +2455,8 @@ def main():
                             cash=cash_data, portfolio_structure=portfolio_structure,
                             price_snapshot=price_snapshot, market_context=review_market,
                             max_pos_override=max_pos_override,
-                            price_provenance=price_provenance, price_request=price_request)
+                            price_provenance=price_provenance, price_request=price_request,
+                            prices=px)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

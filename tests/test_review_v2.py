@@ -44,6 +44,10 @@ def _artifacts(tmp):
             "max_sector_pct": 0.42, "top3_pct": 0.42, "n_holdings": 2,
             "exit_severity": 0.2, "hold_severity": 0.1,
             "beta": None, "alpha_ann": None, "alpha_t": None, "alpha_credible": None,
+            # #400/#412 neutral observables: consistent with the PLTR position below
+            # (cycle_start 2026-01-01 → date_end 2026-07-14 = 194 days).
+            "longest_hold_days": 194, "longest_hold_ticker": "PLTR",
+            "worst_cur_ret": -0.18, "worst_cur_ret_ticker": "PLTR",
         },
         "rule": None, "insufficient_data": False,
         "holdings": {"as_of": "2026-07-14", "derived_from": "trades_csv", "is_complete": False,
@@ -2762,6 +2766,44 @@ def test_public_card_never_reuses_user_authored_rule_text():
             assert fragment not in public, f"custom rule leaked {fragment!r} into the public card"
         assert "One self-authored process rule" in public
         assert not re.search(r"[一-鿿]", public), "en public card must not mix CJK labels"
+
+
+def test_user_may_commit_to_a_neutral_observable_outside_the_diagnostic_dimensions():
+    """#400/#412: `state.metrics` is the ceiling on what a user may commit to —
+    `_commitment` fail-closes on a metric_key absent from it. Until the neutral
+    observables landed, that ceiling was the five diagnostic dimensions, so a user
+    who wanted to track how deep a position sits under water had no anchor at all
+    and the whole finalize failed rather than the one rule being declined.
+
+    Also pins `goal: "up"`. Direction belongs to the condition, not to the
+    observable: a raw measurement has no inherently good direction, and the older
+    catalog entries could hardcode `down` only because each was a diagnosis."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="en")
+        assert "worst_cur_ret" in plan["engine_state"]["metrics"], \
+            "the neutral observable must reach the plan the agent reads, or nothing can reference it"
+        answers = _answers(plan)
+        answers["commitment"] = {
+            "choice": "custom",
+            "rule": "No position sits more than 30% under water without a written reason",
+            "metric_key": "worst_cur_ret", "goal": "up", "dim": "position_sizing"}
+        answers_path = pathlib.Path(tmp) / "answers.json"
+        narrative_path = pathlib.Path(tmp) / "narrative.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
+        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers_path, "--narrative", narrative_path)
+        assert final.returncode == 0, \
+            "a commitment on a neutral observable must finalize, not fail closed:\n" + final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        assert result["status"] == "committed"
+        committed = json.loads(
+            (root / "last_state.json").read_text(encoding="utf-8"))["commitment"]
+        assert committed["metric_key"] == "worst_cur_ret"
+        assert abs(committed["metric_value"] - (-0.18)) < 1e-9, \
+            f"the anchor freezes this review's reading for next time, got {committed}"
+        assert committed["goal"] == "up", "the condition supplies direction, not the observable"
 
 
 def _mixed_market_card_for_rendering():
