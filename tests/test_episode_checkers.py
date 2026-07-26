@@ -84,43 +84,6 @@ def test_number_provenance_reads_every_surface_not_only_prose():
     assert findings and "option[0].label" in findings[0], findings
 
 
-# ── grounding_fidelity ───────────────────────────────────────────────────────
-
-def _option(maps_to, description, label="x"):
-    return {"presented_options": [{"maps_to": maps_to, "label": label,
-                                   "description": description}]}
-
-
-def test_grounding_fidelity_accepts_a_verbatim_grounding():
-    engine = FACTS["candidates"]["candidate_0"]
-    answer = _option("candidate_0", engine["grounding"] + engine["rule"])
-    assert R.check_grounding_fidelity(answer, FACTS) == []
-
-
-def test_grounding_fidelity_catches_a_paraphrase():
-    """#293's first half: the candidate had a grounding and it was rewritten."""
-    answer = _option("candidate_0", "Your biggest position is way over the cap.")
-    findings = R.check_grounding_fidelity(answer, FACTS)
-    assert any("not quoted verbatim" in message for message in findings), findings
-
-
-def test_grounding_fidelity_catches_an_invented_grounding():
-    """#293's second half: the candidate had none and one was written for it."""
-    answer = _option("candidate_1", "This period you sold three winners early.")
-    findings = R.check_grounding_fidelity(answer, FACTS)
-    assert any("no engine field authored" in message for message in findings), findings
-
-
-def test_grounding_fidelity_accepts_an_ungrounded_candidate_presented_bare():
-    answer = _option("candidate_1", FACTS["candidates"]["candidate_1"]["rule"])
-    assert R.check_grounding_fidelity(answer, FACTS) == []
-
-
-def test_grounding_fidelity_catches_an_unknown_candidate():
-    findings = R.check_grounding_fidelity(_option("candidate_9", "anything"), FACTS)
-    assert findings and "not a candidate rule" in findings[0], findings
-
-
 # ── honesty_coverage ─────────────────────────────────────────────────────────
 
 def test_honesty_coverage_accepts_a_digit_free_disclosure():
@@ -290,9 +253,9 @@ def test_condition_integrity_abstains_when_the_answer_carries_no_envelope():
 # ── the interlocks ───────────────────────────────────────────────────────────
 
 def test_a_declared_check_with_nothing_to_inspect_reports_no_data():
-    """Interlock 2, at the checker layer: grounding_fidelity in front of an
-    answer with no options has abstained, not passed."""
-    _findings, looked = R.run_check("grounding_fidelity", {}, {"prose": "no options here"}, FACTS)
+    """Interlock 2, at the checker layer: honesty_coverage in front of an episode
+    that puts no key in scope has abstained, not passed."""
+    _findings, looked = R.run_check("honesty_coverage", {}, {"prose": "nothing in scope"}, FACTS)
     assert looked is False
 
 
@@ -305,13 +268,13 @@ def test_replay_fails_an_episode_whose_declared_check_abstains():
     ``if not looked`` left the suite green, which is fake-green type 5 (right
     assertion, wrong layer; docs/development-guide.md section 2)."""
     episode = {
-        "id": "EP-000", "checks": ["grounding_fidelity"],
+        "id": "EP-000", "checks": ["honesty_coverage"], "must_disclose": [],
         "question": {"asked_by": "user", "kind": "free_form", "text": "?"},
-        "answers": [{"id": "a", "expect": "pass", "prose": "no options here"}],
+        "answers": [{"id": "a", "expect": "pass", "prose": "nothing in scope"}],
     }
     failures, observed, _unmapped = R.replay(episode, FACTS)
     assert any("nothing to inspect" in message for message in failures), failures
-    assert observed["grounding_fidelity"] == set(), (
+    assert observed["honesty_coverage"] == set(), (
         "an abstention must not count as an observed outcome for coverage")
 
 
@@ -377,6 +340,133 @@ def test_unmapped_never_turns_into_a_failure():
     failures, _observed, unmapped = R.replay(episode, FACTS)
     assert failures == [], failures
     assert unmapped and "graded on hygiene only" in unmapped[0], unmapped
+
+
+# ── the question-consumer gate (#429) ────────────────────────────────────────
+
+# A plan carrying the state_snapshot keys the real engine emits, so the gate's
+# `state:` proofs have something truthful to check against.
+CONSUMER_PLAN = {"state_snapshot": {"thesis_states": [], "headline_motive_events": [],
+                                    "due_revisits": [], "problem_stats": {}}}
+
+
+def _with_consumers(consumers, unwired):
+    """Swap the declarations for one probe, then put them back.
+
+    Both incoming maps are copied first: a probe legitimately passes the live
+    dict (``_with_consumers(R.QUESTION_CONSUMERS, {})`` to change only the
+    ratchet), and clearing the target before updating from the same object would
+    silently wipe it — which made one probe assert against an empty registry
+    instead of the mutation it meant to test."""
+    incoming = (dict(consumers), dict(unwired))
+    saved = (dict(R.QUESTION_CONSUMERS), dict(R.KNOWN_UNWIRED))
+
+    class Swap:
+        def __enter__(self):
+            R.QUESTION_CONSUMERS.clear()
+            R.QUESTION_CONSUMERS.update(incoming[0])
+            R.KNOWN_UNWIRED.clear()
+            R.KNOWN_UNWIRED.update(incoming[1])
+
+        def __exit__(self, *_exc):
+            R.QUESTION_CONSUMERS.clear()
+            R.QUESTION_CONSUMERS.update(saved[0])
+            R.KNOWN_UNWIRED.clear()
+            R.KNOWN_UNWIRED.update(saved[1])
+    return Swap()
+
+
+def test_question_consumers_passes_on_the_shipped_declarations():
+    """The gate is green today only because the two unwired kinds are tracked."""
+    failures, notes = R.question_consumers(CONSUMER_PLAN)
+    assert failures == [], failures
+    assert any("initial_thesis" in note for note in notes), notes
+    assert any("exit_consistency" in note for note in notes), notes
+
+
+def test_question_consumers_catches_an_undeclared_question_kind():
+    """The kind list comes from the schema, so forgetting to declare one fails.
+    This is the mutation that matters: a new question shipping with no consumer."""
+    consumers = {k: v for k, v in R.QUESTION_CONSUMERS.items() if k != "revisit"}
+    with _with_consumers(consumers, R.KNOWN_UNWIRED):
+        failures, _notes = R.question_consumers(CONSUMER_PLAN)
+    assert any("'revisit'" in f and "no declared consumer" in f for f in failures), failures
+
+
+def test_question_consumers_catches_an_unverifiable_card_claim():
+    consumers = dict(R.QUESTION_CONSUMERS)
+    consumers["revisit"] = ("a_sink_no_renderer_mentions", ("card",))
+    with _with_consumers(consumers, R.KNOWN_UNWIRED):
+        failures, _notes = R.question_consumers(CONSUMER_PLAN)
+    assert any("appears nowhere in card_renderer.py" in f for f in failures), failures
+
+
+def test_question_consumers_catches_an_unverifiable_state_claim():
+    consumers = dict(R.QUESTION_CONSUMERS)
+    consumers["revisit"] = ("revisit_resolutions", ("state:a_key_no_plan_carries",))
+    with _with_consumers(consumers, R.KNOWN_UNWIRED):
+        failures, _notes = R.question_consumers(CONSUMER_PLAN)
+    assert any("does not carry" in f for f in failures), failures
+
+
+def test_question_consumers_refuses_an_untracked_unwired_kind():
+    """No `reflection_only` state: an answer nothing reads fails unless an issue
+    owns it. Owner ruling 2026-07-26 — the agent reads state every review, so a
+    missing consumer means nobody wired it, not that it cannot be wired."""
+    with _with_consumers(R.QUESTION_CONSUMERS, {}):
+        failures, _notes = R.question_consumers(CONSUMER_PLAN)
+    assert any("not a tracked defect" in f for f in failures), failures
+
+
+def test_question_consumers_tightens_when_a_tracked_kind_gets_wired():
+    """The ratchet only turns one way: a kind that gains a consumer must leave
+    the list, or the run says so."""
+    consumers = dict(R.QUESTION_CONSUMERS)
+    consumers["initial_thesis"] = ("headline_motive_events", ("card",))
+    with _with_consumers(consumers, R.KNOWN_UNWIRED):
+        failures, _notes = R.question_consumers(CONSUMER_PLAN)
+    assert any("is now wired" in f and "KNOWN_UNWIRED" in f for f in failures), failures
+
+
+def test_question_consumers_fails_when_the_schema_stops_exposing_kinds():
+    """The gate must not silently pass when its own input disappears."""
+    saved = R.SKILL_DIR
+    try:
+        R.SKILL_DIR = pathlib.Path("/nonexistent-skill-dir")
+        try:
+            failures, _notes = R.question_consumers(CONSUMER_PLAN)
+        except FileNotFoundError:
+            return  # a hard error is also a refusal to pass
+        assert failures, "an unreadable schema must not read as a green gate"
+    finally:
+        R.SKILL_DIR = saved
+
+
+# ── the recorded-but-ungraded (unmapped) episode shape ───────────────────────
+
+def test_ungraded_episode_is_valid_when_it_names_what_it_waits_on():
+    episode = _episode(checks=[], blocked_on="#414",
+                       answers=[{"id": "miss", "expect": "fail", "prose": "x"}])
+    assert R.validate_episode(episode, "probe.json") == []
+
+
+def test_ungraded_episode_without_blocked_on_is_rejected():
+    episode = _episode(checks=[], answers=[{"id": "miss", "expect": "fail", "prose": "x"}])
+    problems = R.validate_episode(episode, "probe.json")
+    assert any("blocked_on" in message for message in problems), problems
+
+
+def test_ungraded_episode_may_not_name_fails():
+    episode = _episode(checks=[], blocked_on="#414",
+                       answers=[{"id": "miss", "expect": "fail",
+                                 "fails": ["number_provenance"], "prose": "x"}])
+    problems = R.validate_episode(episode, "probe.json")
+    assert any("no check to name yet" in message for message in problems), problems
+
+
+def test_graded_episode_may_not_claim_blocked_on():
+    problems = R.validate_episode(_episode(blocked_on="#414"), "probe.json")
+    assert any("either graded or waiting" in message for message in problems), problems
 
 
 def test_coverage_report_demands_both_outcomes_per_check():

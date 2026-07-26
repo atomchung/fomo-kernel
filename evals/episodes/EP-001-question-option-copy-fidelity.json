@@ -3,7 +3,9 @@
   "title": "A localized motive question presented with internal option codes and an untranslated metric label",
   "source": {
     "kind": "back_converted_issue",
-    "refs": ["#262"],
+    "refs": [
+      "#262"
+    ],
     "date": "2026-07-22"
   },
   "moment": "question_queue",
@@ -17,12 +19,20 @@
     "kind": "headline_motive",
     "text": "本期實況：最大單一部位 COST 佔 55%。 這次「部位 sizing」背後，主要是事先規劃、情緒反應，還是外部限制？"
   },
-  "checks": ["number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "checks": [
+    "number_provenance",
+    "privacy_trace",
+    "surface_hygiene",
+    "locale_purity"
+  ],
   "answers": [
     {
       "id": "recorded_miss",
       "expect": "fail",
-      "fails": ["surface_hygiene", "locale_purity"],
+      "fails": [
+        "surface_hygiene",
+        "locale_purity"
+      ],
       "note": "#262's first two complaints, reproduced on the one engine question that carries a dimension label in its stem: the option labels were the engine's canonical codes rather than its copy, and the dimension arrived in English inside a Traditional Chinese session. The third complaint in #262 — the HTML card never reaching the screen — is a presentation-trace question (ux_receipt.py card_presented), not an answer-surface question, and no episode can grade it.",
       "prose": "本期實況：最大單一部位 COST 佔 55%。這次 position sizing 背後，主要是什麼原因？",
       "presented_options": [
@@ -51,28 +61,28 @@
     {
       "id": "repaired",
       "expect": "pass",
-      "note": "The engine's own frozen surface for this question, presented unchanged.",
-      "prose": "本期實況：最大單一部位 COST 佔 55%。 這次「部位 sizing」背後，主要是事先規劃、情緒反應，還是外部限制？",
+      "note": "Deliberately NOT the engine's own copy. This answer is freely worded — no v1 template produced it — and it still passes every check, which is the point: the invariants are about not leaking engine identifiers and not mixing an untranslated metric label into a localized surface, never about matching today's phrasing. Owner direction, 2026-07-26: answers should get freer, more varied and more restrained; a pass here is a witness that the invariants hold, not a model answer to copy.",
+      "prose": "COST 目前佔了這個帳戶的 55%。當初把它加到這個份量，是照著進場前就定好的規則，還是當下的情緒推的，或者有資金、稅務上的限制？",
       "presented_options": [
         {
           "maps_to": "deliberate_plan",
-          "label": "事先規劃",
-          "description": "行動遵循交易前就存在的規則。"
+          "label": "照原本的計畫",
+          "description": "這個份量在進場前就決定好了，不是後來才變成這樣。"
         },
         {
           "maps_to": "emotional_reaction",
-          "label": "情緒反應",
-          "description": "恐懼、後悔或急迫感主導了行動。"
+          "label": "當下情緒推的",
+          "description": "加上去的那一刻，主要是怕錯過，或是不想承認看錯。"
         },
         {
           "maps_to": "external_constraint",
-          "label": "外部限制",
-          "description": "資金、稅務或其他限制主導了行動。"
+          "label": "有外部限制",
+          "description": "資金、稅務或其他限制讓它只能是這個份量。"
         },
         {
           "maps_to": "skip",
           "label": "先跳過",
-          "description": "這次先不替動機下定論。"
+          "description": "這次先不替這個份量下定論。"
         }
       ]
     }
