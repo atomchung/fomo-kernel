@@ -3383,7 +3383,7 @@ def test_a_crossing_that_was_asked_but_not_answered_still_speaks_on_the_card():
         assert _CONDITION["criterion"] in private, \
             "a crossed line nobody answered on must still reach the card:\n" + private
         assert "you have not said either way" in private, private
-        assert "Still open and coming back next review: 1." in private, \
+        assert "Open concerns coming back next review: 1." in private, \
             "and the summary must count it as unresolved:\n" + private
 
 
@@ -3404,7 +3404,7 @@ def test_a_crossing_the_user_answered_goes_quiet():
         # different surface with a different job.
         assert _READING_LINE not in private, \
             "an answered crossing is not restated as a reading:\n" + private
-        assert "Still open" not in private, private
+        assert "Open concerns" not in private, private
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         _slot_id, final = _crossing_answered(tmp, root, "overridden", note="the base was restated")
@@ -3438,7 +3438,85 @@ def test_an_unresolved_basis_concern_does_not_read_as_a_clean_number():
         assert "the reporting segment was restated" in private, \
             "the raised concern must stay visible:\n" + private
         assert "may have changed" in private and "unsettled" in private, private
-        assert "Still open and coming back next review: 1." in private, private
+        assert "Open concerns coming back next review: 1." in private, private
+
+
+def _crossed_and_doubted(tmp, root, crossing_choice, basis_choice):
+    """One check that is BOTH a crossing and a basis alert — the combined row.
+
+    `build_check` writes `basis_alert` and `engine_verdict` on the same row and
+    `_condition_questions` emits both questions for that line, so this is not a
+    synthetic shape: it is what a quarter that both crossed a line and restated
+    its segment actually produces."""
+    slot = _seed_condition(tmp, root)
+    envelope = [{"slot_id": slot["slot_id"],
+                 "check": {"lookup_status": "ok", "observation": dict(_CROSSED),
+                           "basis_alert": {"note": "the reporting segment was restated"}}}]
+    plan = _prepare_with_checks(tmp, root, envelope)
+    crossing = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+    basis = next(q for q in plan["question_queue"] if q["kind"] == "condition_basis")
+    answers = _answers(plan, commitment="skip")
+    for row in answers["answers"]:
+        if row["question_id"] == crossing["id"]:
+            row["choice"] = crossing_choice
+        elif row["question_id"] == basis["id"]:
+            row["choice"] = basis_choice
+    answers["condition_checks"] = envelope
+    return slot, _finalize_plan(tmp, root, plan, answers)
+
+
+def test_a_row_that_is_both_crossed_and_doubted_reports_both():
+    """External review, round 3 BLOCK: the crossing and the basis ran through one
+    single-valued if-chain, so whichever matched first won and the other fact
+    was neither printed nor counted. A user could confirm the crossing, skip the
+    basis question, and never hear again that the measurement may have moved
+    underneath the line they just confirmed.
+
+    They are independent axes. This is the cell that proves it: the crossing is
+    answered, the basis is not, and the basis concern must survive."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot, final = _crossed_and_doubted(tmp, root, "confirmed", "skip")
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == slot["slot_id"])
+        assert row["user_response"]["answer"] == "confirmed" and "basis_resolution" not in row, row
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "the reporting segment was restated" in private, \
+            "the answered crossing must not swallow the open basis concern:\n" + private
+        assert "Open concerns coming back next review: 1." in private, private
+
+
+def test_a_row_open_on_both_axes_prints_both_notes_and_counts_two_concerns():
+    """The other combined cell, and the one that makes "count concerns, not
+    rows" load-bearing: an unanswered crossing beside an open basis is two
+    separate things left undone on one reading."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot, final = _crossed_and_doubted(tmp, root, "skip", "skip")
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = next(r for r in _check_rows(root) if r["slot_id"] == slot["slot_id"])
+        assert "user_response" not in row and "basis_resolution" not in row, row
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "you have not said either way" in private, private
+        assert "the reporting segment was restated" in private, \
+            "both notes ride the one reading:\n" + private
+        assert private.count(_READING_LINE) == 1, \
+            "one reading, two notes — not the same condition printed twice:\n" + private
+        assert "Open concerns coming back next review: 2." in private, \
+            "an unanswered crossing and an open basis are two concerns:\n" + private
+
+
+def test_a_row_settled_on_both_axes_goes_quiet():
+    """The closing cell of the combined set: answer both and the card says
+    nothing, so the fix is a distinction rather than a blanket."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _slot, final = _crossed_and_doubted(tmp, root, "confirmed", "keep")
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert _READING_LINE not in private, private
+        assert "the reporting segment was restated" not in private, private
+        assert "Open concerns" not in private, private
 
 
 def test_a_resolved_basis_concern_goes_quiet():
@@ -3456,7 +3534,7 @@ def test_a_resolved_basis_concern_goes_quiet():
         assert final.returncode == 0, final.stdout + final.stderr
         private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
         assert "may have changed" not in private, private
-        assert "Still open" not in private, private
+        assert "Open concerns" not in private, private
         assert _READING_LINE in private, \
             "the reading itself still prints as an ordinary fact:\n" + private
 
@@ -3687,7 +3765,7 @@ def test_the_card_reconciles_a_condition_then_and_now_and_says_what_it_skipped()
         assert "it was 38% when you set it, 36% now" in private, private
         assert "still clear of your line" in private.lower(), private
         assert "Checked 1 of 2 conditions this period." in private, private
-        assert "Still open and coming back next review: 1." in private, private
+        assert "Open concerns coming back next review: 1." in private, private
         public = pathlib.Path(json.loads(final.stdout)["public_card"]).read_text(encoding="utf-8")
         for fragment in ("36%", "38%", "10-Q", "churn"):
             assert fragment not in public, f"condition detail leaked {fragment!r} to the public card"
@@ -3774,7 +3852,7 @@ def test_a_crossing_that_lost_the_budget_still_states_its_figure_on_the_card():
         # The queued one was answered `skip` by the helper, so it is unresolved
         # too and must also speak — see the round-2 tests below for that branch
         # in isolation. Both are open, and the summary says two.
-        assert "Still open and coming back next review: 2." in private, \
+        assert "Open concerns coming back next review: 2." in private, \
             "a checked-but-unresolved crossing must count as open:\n" + private
 
 

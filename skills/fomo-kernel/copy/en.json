@@ -141,7 +141,7 @@
     "blind": "{criterion} — not checked this period, so it is currently blind.",
     "blind_with_reason": "{criterion} — not checked this period ({reason}), so it is currently blind.",
     "summary_checked": "Checked {checked} of {total} conditions this period.",
-    "summary_open": "Still open and coming back next review: {deferred}.",
+    "summary_open": "Open concerns coming back next review: {deferred}.",
     "summary_trimmed": "This card shows {shown} of {describable} readings; the rest are in your record."
   },
   "condition_crossing": {

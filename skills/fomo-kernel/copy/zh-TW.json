@@ -141,7 +141,7 @@
     "blind": "{criterion}——這期沒查到，現在是盯不到的狀態。",
     "blind_with_reason": "{criterion}——這期沒查到（{reason}），現在是盯不到的狀態。",
     "summary_checked": "這期 {total} 條裡查了 {checked} 條。",
-    "summary_open": "還沒結案、下次會再排進來的：{deferred} 條。",
+    "summary_open": "還沒結案、下次會再處理的事項：{deferred} 項。",
     "summary_trimmed": "這張卡列出 {describable} 筆讀數裡的 {shown} 筆，其餘都在你的紀錄裡。"
   },
   "condition_crossing": {

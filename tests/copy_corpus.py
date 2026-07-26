@@ -379,6 +379,10 @@ def _event_alerted():
                                    "as_of": "2026-08-20", "source": "8-K"})
 
 
+_ONE_LINE = {"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+             "unmapped_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
+
+
 def _all_clear_slots(count):
     return [dict(_CHECK_SLOT, slot_id=f"corpus-slot-{i}", line_id=f"corpus-slot-{i}",
                  criterion=f"sell if metric {i} drops under 30%") for i in range(count)]
@@ -507,6 +511,45 @@ SCENES = (
                       summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
                                "unmapped_lines": 0, "unreadable_slots": 0,
                                "unreadable_checks": 0})),
+    # External review round 3. The combined cells: crossing and basis are
+    # independent axes, so one reading can carry both notes and count as two
+    # concerns. The round-2 cut ran them through one single-valued if-chain and
+    # silently dropped whichever lost.
+    ("condition_check/crossed_and_doubted_deferred", (),
+     _condition_check(checks=[_crossed(basis_alert={"note": "the segment was restated"})],
+                      summary=_ONE_LINE)),
+    ("condition_check/crossed_and_doubted_unanswered", (),
+     _condition_check(checks=[_crossed(basis_alert={"note": "the segment was restated"})],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary=_ONE_LINE)),
+    ("condition_check/crossing_answered_basis_still_open", (),
+     _condition_check(checks=[_crossed(user_response={"answer": "confirmed",
+                                                      "answered_at": "2026-08-27"},
+                                       verdict_source="user",
+                                       basis_alert={"note": "the segment was restated"})],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary=_ONE_LINE)),
+    ("condition_check/silent_when_both_axes_are_settled", (),
+     _condition_check(checks=[_crossed(user_response={"answer": "confirmed",
+                                                      "answered_at": "2026-08-27"},
+                                       verdict_source="user",
+                                       basis_alert={"note": "the segment was restated"},
+                                       basis_resolution="kept")],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary=_ONE_LINE)),
+    # The two remaining grid cells: one axis settled, the other not. A resolved
+    # basis says nothing, so only the crossing note rides the reading and only
+    # one concern is counted — the axes really are independent in both
+    # directions, not just when both are open.
+    ("condition_check/crossing_unanswered_basis_resolved", (),
+     _condition_check(checks=[_crossed(basis_alert={"note": "the segment was restated"},
+                                       basis_resolution="kept")],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary=_ONE_LINE)),
+    ("condition_check/crossing_deferred_basis_resolved", (),
+     _condition_check(checks=[_crossed(basis_alert={"note": "the segment was restated"},
+                                       basis_resolution="kept")],
+                      summary=_ONE_LINE)),
     # An alerted event takes the event-flavoured notes, because "past your line"
     # is a claim an event condition has no line to make. Both dispositions.
     ("condition_check/event_alert_deferred", (),

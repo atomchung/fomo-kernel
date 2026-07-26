@@ -1932,12 +1932,14 @@ def _condition_reading(check, condition):
     return str(observation.get("summary") or "").strip() or None
 
 
-def _condition_reading_line(check, condition, copy, note_key, **note_values):
-    """One reading, plus the sentence that says where it stands.
+def _condition_reading_line(check, condition, copy, notes):
+    """One reading, plus every sentence that says where it stands.
 
-    The reading and the status sentence are separate copy keys on purpose: the
-    figure is printed identically whatever its disposition, so only the note
-    varies and no combination needs its own template."""
+    The reading and the status sentences are separate copy keys on purpose. The
+    figure prints identically whatever its disposition, so only the notes vary,
+    and — because a single check can be unresolved on two independent axes at
+    once — a row can carry more than one. No combination needs its own
+    template."""
     reading = _condition_reading(check, condition)
     if reading is None:
         return None
@@ -1949,60 +1951,88 @@ def _condition_reading_line(check, condition, copy, note_key, **note_values):
                         value=reading, source=source, as_of=as_of)
     if not line:
         return None
-    if note_key:
-        note = _format_copy(check_copy.get(note_key), **note_values)
+    for note_key, values in notes:
+        note = _format_copy(check_copy.get(note_key), **values)
         if note:
             line = f"{line} {note}"
     return line
 
 
-# The disposition of one successful check, as the card and the summary both read
-# it. Deriving this once is the point: the round-1 cut had the lines and the
-# summary each decide independently what counted as unresolved, which is the
-# same two-readers defect that broke the reconciliation match.
+# A check row's two dispositions. They are **independent axes**, not competing
+# values of one field, because a single row can genuinely carry both facts:
+# `build_check` writes `basis_alert` and `engine_verdict` on the same row, and
+# `_condition_questions` emits a `condition_basis` *and* a `condition_crossing`
+# for that line. The round-2 cut ran them through one single-valued if-chain, so
+# whichever matched first won and the other fact was neither printed nor counted
+# — a user could answer the crossing, skip the basis question, and never hear
+# again that the measurement may have moved underneath the line they just
+# confirmed (external review, round 3).
+#
+#   crossing axis   None (not a candidate) | settled | unanswered | deferred
+#   basis axis      None (no alert)        | open    | resolved
+CONDITION_CROSSING_STATES = (None, "settled", "unanswered", "deferred")
+CONDITION_BASIS_STATES = (None, "open", "resolved")
+# The states that mean "this review did not close this concern". A row can be
+# open on both axes at once, and that is two concerns, not one.
+CONDITION_OPEN_CROSSING = ("unanswered", "deferred")
+
+
 def _condition_outcome(check, condition, queued):
-    """``(kind, note_key, note_values)`` for one check, or ``(None, ...)`` for silence.
+    """``(crossing_state, basis_state)`` for one successful check.
 
-    ``settled`` is the only silent state, and it means the user actually
-    answered — **not** that a question was queued. A queued question that ended
-    in a skip, or one an interrupted host never delivered, leaves the row with
-    no ``user_response`` at all; treating "asked" as "answered" put the crossed
-    line straight back into silence through a different door (external review,
-    round 2).
+    ``settled`` means the user actually answered — **not** that a question was
+    queued. A queued question that ended in a skip, or one an interrupted host
+    never delivered, leaves the row with no ``user_response`` at all; treating
+    "asked" as "answered" put the crossed line straight back into silence
+    (external review, round 2).
 
-    Basis alerts are read the same way, and for the same reason: a raised
-    concern with no ``basis_resolution`` was never settled, so a card that
-    prints its reading as an ordinary all-clear fact has quietly dropped the
-    doubt.
-    """
-    event = (condition.get("kind") or "numeric") == "event"
+    The basis axis reads the same way and for the same reason: a raised concern
+    with no ``basis_resolution`` was never settled, so a card that prints its
+    reading as an ordinary all-clear fact has quietly dropped the doubt."""
     # Candidacy comes from the engine's own read, never from `final_verdict`:
     # an override moves the verdict of record to `not_met` while leaving the
-    # engine's finding intact, and that check must stay silent rather than
+    # engine's finding intact, and that check must stay quiet rather than
     # reappearing as an all-clear reading.
-    crossing = (check.get("engine_verdict") in ("met", "near_line")
-                or bool(check.get("event_alert")))
-    basis_open = bool(check.get("basis_alert")) and not check.get("basis_resolution")
-    if crossing and not check.get("user_response"):
-        if condition.get("line_id") in queued:
-            return "unanswered", ("note_unanswered_event" if event else "note_unanswered"), {}
-        return "deferred", ("note_deferred_event" if event else "note_deferred"), {}
-    if basis_open:
-        return "basis_open", "note_basis_open", {
-            "note": (check.get("basis_alert") or {}).get("note") or ""}
-    if crossing:
-        return "settled", None, {}            # the user answered; the exchange carried it
-    if check.get("final_verdict") == "not_met":
-        return "fact", None, {}
-    return "settled", None, {}
+    if not (check.get("engine_verdict") in ("met", "near_line")
+            or bool(check.get("event_alert"))):
+        crossing_state = None
+    elif check.get("user_response"):
+        crossing_state = "settled"
+    elif condition.get("line_id") in queued:
+        crossing_state = "unanswered"
+    else:
+        crossing_state = "deferred"
+
+    if not check.get("basis_alert"):
+        basis_state = None
+    elif check.get("basis_resolution"):
+        basis_state = "resolved"
+    else:
+        basis_state = "open"
+    return crossing_state, basis_state
 
 
-# Every kind that means "this review did not close the loop on this condition".
-CONDITION_OPEN_KINDS = ("unanswered", "deferred", "basis_open")
+def _condition_notes(check, condition, crossing_state, basis_state):
+    """The status sentences one reading carries, in fixed order: what the line
+    itself is doing, then what may be wrong with how it is measured."""
+    event = (condition.get("kind") or "numeric") == "event"
+    notes = []
+    if crossing_state in CONDITION_OPEN_CROSSING:
+        suffix = "_event" if event else ""
+        notes.append((f"note_{crossing_state}{suffix}", {}))
+    if basis_state == "open":
+        notes.append(("note_basis_open",
+                      {"note": (check.get("basis_alert") or {}).get("note") or ""}))
+    return notes
+
+
+def _condition_open_concerns(crossing_state, basis_state):
+    """How many separate things this row leaves unresolved — zero, one, or two."""
+    return int(crossing_state in CONDITION_OPEN_CROSSING) + int(basis_state == "open")
 
 
 def _condition_outcomes(bundle, checks):
-    """``[(check, condition, kind, note_key, note_values)]`` for every readable check.
+    """``[(check, condition, status, crossing_state, basis_state)]`` per readable check.
 
     One classification, read by both the card lines and the summary count."""
     index = _condition_index(bundle)
@@ -2014,10 +2044,10 @@ def _condition_outcomes(bundle, checks):
             continue
         status = check.get("lookup_status")
         if status == "failed":
-            out.append((check, condition, "blind", None, {}))
+            out.append((check, condition, "failed", None, None))
         elif status == "ok":
-            kind, note_key, values = _condition_outcome(check, condition, queued)
-            out.append((check, condition, kind, note_key, values))
+            crossing_state, basis_state = _condition_outcome(check, condition, queued)
+            out.append((check, condition, "ok", crossing_state, basis_state))
     return out
 
 
@@ -2041,25 +2071,41 @@ def _condition_reading_lines(bundle, checks, copy):
        exposes itself, and that only helps if the user is invited to say so.
     4. **Failed lookups**, stated plainly with their reason.
 
-    A crossing the user *answered* renders nothing: the exchange told that
-    story. ``not_checked`` rows are the summary's business — eight apologies
-    would bury the one lookup that actually broke.
+    A row is grouped by its most urgent open fact but **prints every one it
+    has**: an unresolved crossing whose basis is also in doubt carries both
+    sentences on one reading, because the two are independent and dropping
+    either loses something the user needs (external review, round 3).
+
+    A check the user settled on both axes renders nothing: the exchange told
+    that story. ``not_checked`` rows are the summary's business — eight
+    apologies would bury the one lookup that actually broke.
     """
     check_copy = copy.get("condition_check") or {}
     groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": []}
-    for check, condition, kind, note_key, values in _condition_outcomes(bundle, checks):
-        if kind == "blind":
+    for check, condition, status, crossing_state, basis_state in _condition_outcomes(
+            bundle, checks):
+        if status == "failed":
             criterion = condition.get("criterion") or ""
             reason = str(check.get("reason") or "").strip()
             line = (_format_copy(check_copy.get("blind_with_reason"),
                                  criterion=criterion, reason=reason) if reason
                     else _format_copy(check_copy.get("blind"), criterion=criterion))
-        elif kind in groups:
-            line = _condition_reading_line(check, condition, copy, note_key, **values)
-        else:
+            if line:
+                groups["blind"].append(line)
             continue
+        notes = _condition_notes(check, condition, crossing_state, basis_state)
+        if notes:
+            # Grouped by the crossing axis when it is open, else by the basis
+            # concern — but the line itself carries both notes either way.
+            group = (crossing_state if crossing_state in CONDITION_OPEN_CROSSING
+                     else "basis_open")
+        elif crossing_state is None and check.get("final_verdict") == "not_met":
+            group = "fact"
+        else:
+            continue                      # settled on every axis; nothing to say
+        line = _condition_reading_line(check, condition, copy, notes)
         if line:
-            groups[kind].append(line)
+            groups[group].append(line)
     describable = sum(len(rows) for rows in groups.values())
     kept = {kind: rows[:CONDITION_CARD_LINES] for kind, rows in groups.items()}
     shown = sum(len(rows) for rows in kept.values())
@@ -2091,6 +2137,12 @@ def _condition_summary_line(bundle, checks, copy, shown, describable):
     classification the lines above render — so the card and its own summary
     cannot disagree about what was left open (external review, round 2).
 
+    It counts **concerns, not rows**: a check whose crossing is unanswered
+    *and* whose basis is in doubt left two separate things open, and a count
+    that said "1" there would be claiming something its own card contradicts
+    (external review, round 3). The copy says "concerns" so the number matches
+    what it names.
+
     Silent only when everything was checked, settled, and printed."""
     summary = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("condition_slots_summary") or {})
@@ -2099,9 +2151,9 @@ def _condition_summary_line(bundle, checks, copy, shown, describable):
         return None
     total = int(total)
     checked = sum(1 for row in checks if row.get("lookup_status") == "ok")
-    unsettled = sum(1 for _check, _condition, kind, _key, _values
-                    in _condition_outcomes(bundle, checks)
-                    if kind in CONDITION_OPEN_KINDS)
+    unsettled = sum(_condition_open_concerns(crossing_state, basis_state)
+                    for _check, _condition, _status, crossing_state, basis_state
+                    in _condition_outcomes(bundle, checks))
     # "Open" is anything this review did not close: never looked at, looked at
     # and failed, held back by the cap, or checked and left unresolved.
     open_count = max(0, total - checked) + unsettled
