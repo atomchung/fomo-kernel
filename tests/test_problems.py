@@ -223,6 +223,68 @@ def test_rules_revises_and_muted():
     assert [r["rule_id"] for r in muted] == ["r2"], "muted 不進對位但列出(靜默統計中)"
 
 
+def _muting_fixture():
+    """一條已經守住兩期的規矩,加上它的事件/期別歷史。"""
+    events = [{"type": "event", "key": "avgdown_breach", "week": "2026-06-16"}]
+    marks = [{"week": "2026-06-13", "opportunities": {"avgdown_breach": True}},
+             {"week": "2026-06-20", "opportunities": {"avgdown_breach": True}},   # broke
+             {"week": "2026-06-27", "opportunities": {"avgdown_breach": True}},   # held
+             {"week": "2026-07-04", "opportunities": {"avgdown_breach": True}}]   # held
+    rule = {"rule_id": "r1", "text": "虧損不加碼", "problem_key": "avgdown_breach",
+            "status": "tracking", "created": "2026-06-13", "source": "user_chosen"}
+    return events, marks, rule
+
+
+def test_muting_a_rule_keeps_its_history_instead_of_restarting_it():
+    """這條是靜音功能的整個重點,也是它最容易變成謊話的地方。
+
+    對位從 `created` 之後的期別開始算。靜音時若把 created 換成靜音那天,這條規矩
+    的歷史就從那天起一片空白——而使用者被告知的是「靜默統計中」。那不是少一個
+    功能,是給了一個假的保證:回頭看的時候才發現什麼都沒累積。
+    """
+    events, marks, rule = _muting_fixture()
+    muted_row = pb.mute_row(rule, muted=True)
+    assert muted_row["created"] == rule["created"], "靜音不得重設 created,否則歷史歸零"
+    assert muted_row["revises"] == "r1", "靜音走既有的 revises 鏈,不改寫舊列"
+    assert muted_row["status"] == "muted" and muted_row["rule_id"] != "r1"
+    assert muted_row["text"] == rule["text"] and muted_row["problem_key"] == rule["problem_key"]
+
+    before = pb.check_rules([rule], events, marks)[0]
+    after = pb.check_rules([muted_row], events, marks)[0]
+    assert (after["verdict"], after["held_streak"]) == (before["verdict"], before["held_streak"]), \
+        f"靜音前後的對位結果必須一致:{before} vs {after}"
+    assert after["held_streak"] == 2, "fixture 本身要有東西可以丟,否則這條測試什麼都沒證明"
+
+
+def test_a_muted_rule_is_still_reconciled_just_not_in_the_rotation():
+    """「靜默統計中」的『統計』要是真的,『靜默』也要是真的。"""
+    events, marks, rule = _muting_fixture()
+    book, rules = _mk()
+    pb.append_book(book, events, None)
+    for mark in marks:
+        pb.append_book(book, [], mark)
+    with open(rules, "w", encoding="utf-8") as f:
+        f.write(json.dumps(rule, ensure_ascii=False) + "\n")
+        f.write(json.dumps(pb.mute_row(rule, muted=True), ensure_ascii=False) + "\n")
+    snap = pb.snapshot(book, rules, today="2026-07-04")
+    assert snap["rules_check"] == [], "靜音的規矩不得進 rules_check——卡面的注意力調度讀那裡"
+    assert len(snap["muted_rules"]) == 1
+    silent = snap["muted_rules"][0]
+    assert silent["held_streak"] == 2 and silent["verdict"] == "held", \
+        f"靜音的規矩必須照常對位,實際拿到:{silent}"
+    assert silent["text"] == rule["text"], "使用者回頭看時要認得出是哪一條"
+
+
+def test_unmuting_restores_the_rule_with_its_accumulated_history():
+    events, marks, rule = _muting_fixture()
+    muted_row = pb.mute_row(rule, muted=True)
+    back = pb.mute_row(muted_row, muted=False)
+    assert back["status"] == "tracking" and back["revises"] == muted_row["rule_id"]
+    assert back["created"] == rule["created"], "取消靜音同樣不得重設歷史"
+    restored = pb.check_rules([back], events, marks)[0]
+    assert restored["held_streak"] == 2, "靜音期間累積的守住紀錄要跟著回來"
+
+
 def test_check_rules_three_way_and_streak():
     events = [{"type": "event", "key": "avgdown_breach", "week": "2026-06-10", "ticker": "PLTR"}]
     marks = [{"week": "2026-06-13", "opportunities": {"avgdown_breach": True}},   # 期1:有事件 → broke

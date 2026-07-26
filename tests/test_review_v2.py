@@ -2968,6 +2968,51 @@ def test_a_watched_condition_that_is_nowhere_near_its_line_stays_silent():
             assert fragment not in private, f"a clear condition must not add {fragment!r}"
 
 
+def test_mute_rule_is_append_only_and_reversible():
+    """#416: a rule the user stops wanting to be asked about had two exits —
+    keep answering, or lose it. Muting is the third, and it is only worth
+    anything if the old row survives: the history of what was muted when has to
+    stay readable."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        rules = root / "rules.jsonl"
+        rules.write_text(json.dumps({"rule_id": "rule-abc-0", "text": "no adding into a loser",
+                                     "problem_key": "avgdown_breach", "status": "tracking",
+                                     "created": "2026-06-13"}) + "\n", encoding="utf-8")
+        muted = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
+        assert muted.returncode == 0, muted.stdout + muted.stderr
+        row = json.loads(muted.stdout)
+        assert row["status"] == "muted" and row["revises"] == "rule-abc-0"
+
+        tracking, silent = problems_engine.load_rules(str(rules))
+        assert tracking == [] and len(silent) == 1
+        assert silent[0]["created"] == "2026-06-13", "muting must not restart the accumulation"
+        assert len(rules.read_text(encoding="utf-8").strip().splitlines()) == 2, \
+            "the superseded row stays on disk; append-only means append"
+
+        back = _run("mute-rule", "--root", root, "--rule-id", row["rule_id"], "--unmute")
+        assert back.returncode == 0, back.stdout + back.stderr
+        tracking, silent = problems_engine.load_rules(str(rules))
+        assert len(tracking) == 1 and silent == []
+        assert tracking[0]["created"] == "2026-06-13"
+
+
+def test_mute_rule_fails_closed_on_an_id_that_is_not_live():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        (root / "rules.jsonl").write_text(
+            json.dumps({"rule_id": "rule-abc-0", "text": "cap at 20%", "status": "muted",
+                        "problem_key": "oversize", "created": "2026-06-13"}) + "\n",
+            encoding="utf-8")
+        missing = _run("mute-rule", "--root", root, "--rule-id", "rule-nope-0")
+        assert missing.returncode != 0 and "no live rule" in missing.stdout + missing.stderr
+        again = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
+        assert again.returncode != 0, "muting a muted rule is a no-op the user should hear about"
+        assert "already muted" in again.stdout + again.stderr
+
+
 def _commitment_plan():
     return {"session_id": "2026-07-14__abc123", "engine_state": {"date_end": "2026-07-14",
                                                                  "metrics": {"max_pos_pct": 0.4}},

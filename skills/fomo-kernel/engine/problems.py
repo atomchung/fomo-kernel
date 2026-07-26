@@ -254,6 +254,24 @@ def compute_stats_by_marks(events, marks, min_marks=3):
                       "prior_from": prior_from, "recent_days": recent_days, "prior_days": prior_days}
 
 
+def mute_row(rule, muted, session_id=None):
+    """一條規矩的靜音/取消靜音:append 一列指回舊列(同 revises 機制),不改寫舊列。
+
+    `created` 原封不動複製過來——這是這個功能的整個重點。對位是從 created 之後的
+    期別開始算的(見 check_rules),把 created 換成靜音那天,等於這條規矩的歷史從被
+    靜音起一片空白;那樣「靜默統計中」就是一句謊話,而且是最難發現的那種:你以為
+    資料在累積,回頭看才發現什麼都沒有。
+    """
+    row = {k: v for k, v in rule.items() if k not in {"rule_id", "revises", "session_id"}}
+    chain = str(rule.get("rule_id"))
+    row["rule_id"] = f"{chain}~{'m' if muted else 't'}"
+    row["revises"] = chain
+    row["status"] = "muted" if muted else "tracking"
+    if session_id:
+        row["session_id"] = session_id
+    return row
+
+
 def load_rules(path):
     """rules.jsonl → (active_tracking[], muted[])。append-only:revises 指回舊 rule_id →
     舊的 superseded;每條規矩線取 latest;status muted 不進對位但列出(呈現「靜默統計中」)。"""
@@ -389,8 +407,12 @@ def snapshot(book_path, rules_path=None, today=None, recent_weeks=4, span_aware=
         tracking, muted_rules = load_rules(rules_path)
         rules_check = check_rules(tracking, events, marks,
                                   draft_events=draft_events, draft_week=draft_week)
-        muted = [{"rule_id": r["rule_id"], "text": r.get("text"),
-                  "problem_key": r.get("problem_key")} for r in muted_rules]
+        # 靜音的規矩走同一條對位,只是不進 rules_check——「靜默統計中」的「統計」
+        # 得是真的。少了這一步,靜音只是把規矩丟進黑洞,而使用者以為資料在累積。
+        # 分兩個欄位而不是加旗標:呈現層對 rules_check 的注意力調度不必為此改寫,
+        # 也不可能不小心把靜音的規矩排進卡面。
+        muted = check_rules(muted_rules, events, marks,
+                            draft_events=draft_events, draft_week=draft_week)
     return {"as_of": today, "recent_weeks": recent_weeks,
             "per_key": per, "top": top,
             "rules_check": rules_check, "muted_rules": muted,

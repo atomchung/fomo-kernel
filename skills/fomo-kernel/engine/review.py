@@ -3206,6 +3206,41 @@ def cmd_set_cap(args):
     _emit({"status": "set", "root": root, "max_position_pct": cap})
 
 
+def cmd_mute_rule(args):
+    """Silence a rule without retiring it, or bring it back (#416).
+
+    A rule the user no longer wants to be asked about has had exactly two exits:
+    keep answering for it, or lose it. Muting is the third — the rule stops
+    entering the card's attention rotation while its reconciliation keeps
+    running, so the statistics are there when the user comes back to decide.
+
+    Owner direction, 2026-07-26: establish the rule first, keep accumulating,
+    look again once there is data. That only works if the accumulation is real,
+    which is why `problems.snapshot` reconciles muted rules on the same path as
+    tracked ones and `problems.mute_row` copies `created` forward unchanged.
+
+    Append-only, through the same `revises` chain a rule revision already uses:
+    the previous row is superseded, never rewritten, so the history of what was
+    muted when stays readable.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    path = os.path.join(root, "rules.jsonl")
+    tracking, muted = problems.load_rules(path)
+    target = "tracking" if args.unmute else "muted"
+    current = {row.get("rule_id"): row for row in tracking + muted}
+    rule = current.get(args.rule_id)
+    if rule is None:
+        raise ReviewError(
+            f"no live rule with id {args.rule_id!r} (a superseded id cannot be muted; "
+            f"live ids: {sorted(current) or 'none'})")
+    if (rule.get("status", "tracking") == "muted") == (target == "muted"):
+        raise ReviewError(f"rule {args.rule_id!r} is already {target}")
+    row = problems.mute_row(rule, muted=target == "muted")
+    ledger.append_events(path, [row])
+    _emit({"status": target, "root": root, "rule_id": row["rule_id"],
+           "revises": row["revises"], "text": row.get("text")})
+
+
 def cmd_doctor(args):
     """Report optional runtime dependencies and what each unlocks (#322).
 
@@ -3306,6 +3341,13 @@ def build_parser():
     cap_group.add_argument("--clear", action="store_true",
                            help="remove the override and revert to the universal default")
     setcap.set_defaults(func=cmd_set_cap)
+    mute = sub.add_parser("mute-rule",
+                          help="stop asking about a rule while its statistics keep running (#416)")
+    mute.add_argument("--root")
+    mute.add_argument("--rule-id", required=True)
+    mute.add_argument("--unmute", action="store_true",
+                      help="bring a muted rule back into the card's rotation")
+    mute.set_defaults(func=cmd_mute_rule)
     doctor = sub.add_parser(
         "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
     doctor.set_defaults(func=cmd_doctor)
