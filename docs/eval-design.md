@@ -47,6 +47,11 @@ tests/agent/check_state.py    projection and trajectory helpers
 tests/agent/personas.md       scripted users and differential pairs
 tests/agent/cases/*.yaml      optional headless declarations
 tests/agent/judge_narrative.py optional prose-quality judge
+evals/episodes/*.json         the question-episode bank: converted misses,
+                              replayable (#417)
+evals/run_episodes.py         the bank's mechanical half; deterministic and
+                              offline, so it runs in the default suite
+tests/test_episode_checkers.py mutation probes for the bank's six checks
 ```
 
 The complete deterministic suite runs through `python3 tests/run_all.py`. Headless agent generation and LLM judging are opt-in because they are non-deterministic and may cost money.
@@ -204,6 +209,8 @@ Automated success does not prove that the card matters. After a real review, rec
 
 Keep raw feedback local because it may contain real tickers or amounts. Convert only the failure structure into a synthetic regression case.
 
+`evals/episodes/` is where that conversion lands, and #417 records why it needed a home: for a year this instruction produced issues and no replayable assets, because "convert the failure structure" depended on whoever remembered. An episode is one miss as data — synthetic fixture, the question asked, and the answers that must pass or fail — replayed through the real `prepare` on every suite run. Convert during the dogfood run rather than after it, and read `evals/episodes/README.md` for the interlocks that make a green replay mean something, and for the limits the mechanical half does not cover.
+
 The host interaction itself has a separate local presentation trace. `skills/fomo-kernel/tools/ux_receipt.py` records capability modes, presentation events, and artifact paths inside the protected state directory (`~/.trade-coach/ux/`), the same trust boundary as the ledger, so placement rather than content scrubbing keeps trade data safe. A complete trace proves the preview and final cards were each presented after they were generated, a declared widget that failed degraded to inline canonical Markdown, and the weekly opening memory was surfaced before the first card. It deliberately distinguishes `artifact_generated` from `card_presented`; only the latter is evidence about what the user could see. Answer and commitment completeness remain the engine's job at preview and finalize.
 
 For cross-client owner dogfood, follow `tests/agent/manual-cross-client-ux.md` and require `owner_verdict`. Automated trace checks prove the trajectory shape, while the owner verdict answers the product question: whether the controls felt usable, the card was actually legible, and the weekly review felt remembered.
@@ -213,7 +220,7 @@ For the first question-surface slice, owner dogfood must also rate whether the s
 For each miss:
 
 1. Determine whether the cause is missing instruction, poor adherence, conflicting instructions, or a wrong product rule.
-2. Add or update the smallest synthetic case.
+2. Add or update the smallest synthetic case. When the miss is an answer or a presented surface, that case is an episode in `evals/episodes/`, carrying the recorded miss alongside the repaired answer.
 3. Change one contract surface.
 4. Run the complete deterministic suite and the relevant agent eval.
 5. Recheck a real card.

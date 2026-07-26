@@ -2,6 +2,8 @@
 
 This is a maintainer checklist, not runtime context. Executable prompts live in `skills/fomo-kernel/evals/evals.json`; deterministic P0 assertions live in `tests/test_review_v2.py` and `tests/run_all.py`.
 
+Converted misses live in [episodes/](episodes/README.md) and replay on every suite run. This checklist states what should hold in general; an episode pins one specific failure that already happened, with the answer that caused it.
+
 ## Trigger cases
 
 | Input | Expected behavior |
@@ -82,3 +84,4 @@ Prefer deterministic checks over an LLM judge, and an LLM judge over manual insp
 | 2026-07-19 | Shared cross-client capability declaration, fixed question fallback, and a local presentation trace separating generated artifacts from user-visible cards (#230; trace slimmed to presentation-only, engine owns answer/commitment completeness, in #239) | `tests/test_interaction_trajectory.py`, owner checklist in `tests/agent/manual-cross-client-ux.md`, and the complete offline suite | Pending owner dogfood; deterministic native/text/widget/Markdown/memory trajectories pass. |
 | 2026-07-19 | Engine-selected `add_thesis` and `headline_motive` opportunities with validated private question surfaces (#238) | `tests/test_question_surfaces.py`, focused lifecycle and mutation probes, differential prior-thesis personas, plus the complete offline suite | Pending owner dogfood; deterministic tests can prove containment, fallback, persistence, and privacy, but not that the questions feel specific or the answers fit. |
 | 2026-07-20 | Artifact provenance: fail-safe `engine_version` stamp (VERSION file → git short SHA + dirty → `unknown`) on the plan, bundle, and private HTML card `<meta>`, excluded from the public card and the card face (#250) | `tests/test_card_html.py` engine-version contract test (present and well-formed on plan/bundle/private HTML, frozen plan→bundle, absent from the public card and Markdown face), mutation-verified, plus the complete offline suite | Passed. |
+| 2026-07-26 | Question-episode bank, mechanical half: four misses (#262, #293, #357, #274) converted into replayable episodes, six derived checks, three interlocks (#417) | `evals/run_episodes.py` over the bank, `tests/test_episode_checkers.py` (36 probes), and a nine-mutation dance — each of the six checks neutered to a no-op turns both gates red, as do the three interlocks | Passed; the dance caught one fake green of its own (an abstain probe asserted at the checker layer while the mutation lived in the consumer), fixed in the same change. |

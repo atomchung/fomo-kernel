@@ -1,0 +1,80 @@
+{
+  "id": "EP-001",
+  "title": "A localized motive question presented with internal option codes and an untranslated metric label",
+  "source": {
+    "kind": "back_converted_issue",
+    "refs": ["#262"],
+    "date": "2026-07-22"
+  },
+  "moment": "question_queue",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_pyramid.csv",
+    "route": "first_review",
+    "locale": "zh-TW"
+  },
+  "question": {
+    "asked_by": "engine",
+    "kind": "headline_motive",
+    "text": "本期實況：最大單一部位 COST 佔 55%。 這次「部位 sizing」背後，主要是事先規劃、情緒反應，還是外部限制？"
+  },
+  "checks": ["number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["surface_hygiene", "locale_purity"],
+      "note": "#262's first two complaints, reproduced on the one engine question that carries a dimension label in its stem: the option labels were the engine's canonical codes rather than its copy, and the dimension arrived in English inside a Traditional Chinese session. The third complaint in #262 — the HTML card never reaching the screen — is a presentation-trace question (ux_receipt.py card_presented), not an answer-surface question, and no episode can grade it.",
+      "prose": "本期實況：最大單一部位 COST 佔 55%。這次 position sizing 背後，主要是什麼原因？",
+      "presented_options": [
+        {
+          "maps_to": "deliberate_plan",
+          "label": "deliberate_plan",
+          "description": "行動遵循交易前就存在的規則。"
+        },
+        {
+          "maps_to": "emotional_reaction",
+          "label": "emotional_reaction",
+          "description": "恐懼、後悔或急迫感主導了行動。"
+        },
+        {
+          "maps_to": "external_constraint",
+          "label": "external_constraint",
+          "description": "資金、稅務或其他限制主導了行動。"
+        },
+        {
+          "maps_to": "skip",
+          "label": "先跳過",
+          "description": "這次先不替動機下定論。"
+        }
+      ]
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "The engine's own frozen surface for this question, presented unchanged.",
+      "prose": "本期實況：最大單一部位 COST 佔 55%。 這次「部位 sizing」背後，主要是事先規劃、情緒反應，還是外部限制？",
+      "presented_options": [
+        {
+          "maps_to": "deliberate_plan",
+          "label": "事先規劃",
+          "description": "行動遵循交易前就存在的規則。"
+        },
+        {
+          "maps_to": "emotional_reaction",
+          "label": "情緒反應",
+          "description": "恐懼、後悔或急迫感主導了行動。"
+        },
+        {
+          "maps_to": "external_constraint",
+          "label": "外部限制",
+          "description": "資金、稅務或其他限制主導了行動。"
+        },
+        {
+          "maps_to": "skip",
+          "label": "先跳過",
+          "description": "這次先不替動機下定論。"
+        }
+      ]
+    }
+  ]
+}

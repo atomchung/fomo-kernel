@@ -1,0 +1,53 @@
+{
+  "id": "EP-005",
+  "title": "An exit question replayed with its amount re-rounded and its date shifted",
+  "source": {
+    "kind": "real_use_miss",
+    "refs": ["#417", "#293"],
+    "date": "2026-07-26"
+  },
+  "moment": "question_queue",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_day_trader.csv",
+    "route": "first_review",
+    "locale": "en"
+  },
+  "question": {
+    "asked_by": "engine",
+    "kind": "revisit",
+    "text": "SPY was fully exited on 2024-05-08 for about USD 30,792.00. What mainly drove that decision?"
+  },
+  "checks": ["number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["number_provenance"],
+      "note": "Converted from a parallel session's finding on #417 (PR #424): a digit inside a span the engine authored is not a violation, because frozen surfaces replay verbatim and a recorded thesis may itself carry a quantity. What is a violation is quietly adjusting one — an amount rounded to a friendlier figure and a date moved to a neighbouring day both read as harmless tidying and are neither, because the user answers about the trade the stem describes.",
+      "prose": "SPY was closed out around 2024-05-04 for roughly USD 30,800. What mainly drove that decision?"
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "The engine's stem, digits included, presented unchanged. This half of the episode is the one that matters: a check that punished the quantity here would forbid faithful replay, which the frozen-surface contract requires.",
+      "prose": "SPY was fully exited on 2024-05-08 for about USD 30,792.00. What mainly drove that decision?",
+      "presented_options": [
+        {
+          "maps_to": "price_target",
+          "label": "The target was reached",
+          "description": "A target or planned reduction condition was reached."
+        },
+        {
+          "maps_to": "anxiety",
+          "label": "Locked in the gain",
+          "description": "The main motive was protecting gains from a possible reversal."
+        },
+        {
+          "maps_to": "skip",
+          "label": "Skip for now",
+          "description": "Save this as skipped so this exit's reason is not asked again."
+        }
+      ]
+    }
+  ]
+}
