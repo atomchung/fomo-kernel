@@ -3282,12 +3282,15 @@ def render_public(bundle):
 
 
 # ── Styled HTML card (#225) ──────────────────────────────────────────────────
-# Design provenance: card-template.html (2026-07-04 UI review). Runtime truth
-# lives here; design-rule changes must land in both files. Constraints: flat,
-# light/dark via prefers-color-scheme, system font stack, one <=20px heading,
-# outlined tags, neutral surfaces, semantic color only on section labels and
-# P&L accents, font weights 400/500, no emoji, no icon font, and zero external
-# requests (no http(s) URLs anywhere in the document).
+# Design provenance: card-template.src.html (2026-07-04 UI review). Runtime
+# truth lives here; the template is GENERATED from the two CSS literals below
+# by tools/gen_card_template.py (#401), so a design-rule change only needs to
+# land here -- rerun that script afterward to refresh the committed
+# card-template.html (tests/test_card_html.py fails if it is stale).
+# Constraints: flat, light/dark via prefers-color-scheme, system font stack,
+# one <=20px heading, outlined tags, neutral surfaces, semantic color only on
+# section labels and P&L accents, font weights 400/500, no emoji, no icon
+# font, and zero external requests (no http(s) URLs anywhere in the document).
 
 # Document-level shim: lets the artifact open directly in a browser. The widget
 # fragment below is self-contained and does not depend on this shim.
@@ -3304,7 +3307,8 @@ font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",san
 # Layout tokens (--rc-sp-*, --rc-tx-*, --rc-r-*) exist because colour was the
 # only tokenized axis: spacing used 16 ad-hoc values and type used 7 steps, so
 # every layout ruling had to name a pixel instead of a scale.  See
-# docs/layout-constraints.md §5.  Mirrored in card-template.html per CLAUDE.md.
+# docs/layout-constraints.md §5.  Generated into card-template.html by
+# tools/gen_card_template.py (#401); see CLAUDE.md.
 _HTML_WIDGET_CSS = """\
 .rc{--rc-surface-2:var(--surface-2,#ffffff);--rc-surface-1:var(--surface-1,#f5f4ef);
 --rc-surface-key:var(--surface-key,#f0eee6);

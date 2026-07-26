@@ -27,6 +27,7 @@ IMPLEMENTATION_DOC_DIRS = (
 )
 ENGLISH_IMPLEMENTATION_ASSETS = (
     Path("skills/fomo-kernel/card-template.html"),
+    Path("skills/fomo-kernel/card-template.src.html"),
     Path("skills/fomo-kernel/copy/en.json"),
     Path("skills/fomo-kernel/evals/evals.json"),
 )
