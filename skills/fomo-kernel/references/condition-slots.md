@@ -82,7 +82,11 @@ python3 engine/review.py prepare <trades.csv> --condition-checks /tmp/fomo-kerne
 ]}
 ```
 
-Send the same array again in `answers.condition_checks` so the result is recorded. It must be identical — the engine refuses a reading that changed between the question and the answer, because the user was asked about one number and the file would store another.
+Send the same array again in `answers.condition_checks` so the result is recorded. It must be identical, and it must be **complete**: a reading ingested at `prepare` that goes missing from the answers would be rewritten into a "nobody looked" row, so the engine refuses that as well as a reading that changed between the question and the answer.
+
+One entry per condition, and **per condition means per line**: a re-stated criterion keeps its line, so a superseded `slot_id` and the live head are two names for the same thing and submitting both is refused.
+
+**`user_response` and `basis_resolution` are not yours to send.** They record what the *user* said, and they reach a row only from their answer to a question that was actually shown. An envelope carrying either is refused by name.
 
 **Never assert a verdict in prose.** You supply evidence; the engine performs the comparison from the frozen threshold, and for an event the *user's answer is the verdict of record* — the engine only stores it. Saying "the line was crossed" in your own words puts an assertion where a computation belongs.
 
@@ -107,11 +111,11 @@ Neither is a verdict; each raises exactly one question and decides nothing.
 
 ### What the engine asks the user
 
-- **`condition_crossing`** — at most **one per review**, from a crossing (`met`/`near_line`) or an alerted event. An alerted event outranks any number; among numbers the deepest breach wins, and the rest state their facts and return next review. Author the stem yourself (`question_opportunity`, `references/interaction-delivery.md`): it needs **one sentence for acting and one for not**, both built only from the criterion, the line, and what the lookup returned. `overridden` requires a short note — rejecting the engine's own reading is a claim, and it goes into the record.
+- **`condition_crossing`** — at most **one per review**, from a crossing (`met`/`near_line`) or an alerted event. An alerted event outranks any number; among numbers the deepest breach wins. Every crossing that loses the budget still states its figure on the card and says it is coming back, and the summary counts it as unresolved — a crossed line is never silent. Author the stem yourself (`question_opportunity`, `references/interaction-delivery.md`): it needs **one sentence for acting and one for not**, both built only from the criterion, the line, and what the lookup returned. `overridden` requires a short note — rejecting the engine's own reading is a claim, and it goes into the record.
 - **`condition_basis`** — from your alert. `keep` records that the user declined the doubt. `revise_threshold` / `revise_metric` require `answers.condition_revision` (`{of_line_id, condition}`) carrying the re-stated criterion in the user's own words; the engine writes it as a new row on the same line, never an edit. A line answered as a crossing this review cannot also be re-stated in it, and a condition revision is never a `revise_rule` replacement.
 
 A skip records nothing, and the reading is still stored with the engine's own verdict.
 
 ### On the card
 
-One engine-authored line reconciles the prior commitment's condition then-and-now, plus this period's readings for conditions clear of their line, any lookup that failed, and — whenever anything was left unchecked — one sentence naming how many. You do not write those; do not add your own.
+One engine-authored line reconciles the prior commitment's condition then-and-now, plus any crossing deferred to next review, this period's readings for conditions clear of their line, any lookup that failed, and — whenever anything is unresolved **or** the card is showing fewer readings than it took — one sentence saying so. You do not write those; do not add your own.

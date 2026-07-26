@@ -77,18 +77,13 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["lookup_status"],
-      "description": "What an agent may place on the check envelope. Everything else in this document is engine-assigned; supplying it is an error.",
+      "description": "What an agent may place on the check envelope: what the lookup found, and the two judgements the engine cannot derive. Everything else in this document is engine-assigned; supplying it is an error. `user_response` and `basis_resolution` are deliberately absent — they are what the USER said, and they reach a row only as build_check keyword arguments filled from an answer to a question that was actually shown. An envelope carrying either is refused by name: an agent able to write `{\"answer\": \"overridden\"}` beside its own lookup could record a verdict for a question nobody was asked, and no later reader could tell that row from a real one.",
       "properties": {
         "lookup_status": {"enum": ["ok", "failed", "not_checked"]},
         "reason": {"type": "string", "maxLength": 500},
         "observation": {"$ref": "#/$defs/observation"},
         "event_alert": {"type": "boolean"},
-        "basis_alert": {"$ref": "#/$defs/basis_alert"},
-        "user_response": {"$ref": "#/$defs/user_response"},
-        "basis_resolution": {
-          "enum": ["kept", "revised"],
-          "description": "Engine-supplied from the user's answer to the basis question; an agent never authors it on a first submission."
-        }
+        "basis_alert": {"$ref": "#/$defs/basis_alert"}
       }
     }
   },

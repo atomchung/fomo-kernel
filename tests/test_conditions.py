@@ -115,15 +115,23 @@ EVENT_OBS_1 = {"summary": "CEO still in role per the latest 8-K", "as_of": "2026
 
 def _check(slot=None, previous=None, check_id="chk-test-0", session_id="2026-08-26__test",
            date_end="2026-08-26", **overrides):
+    """One built check row. ``user_response`` / ``basis_resolution`` are routed to
+    the keyword arguments they now are: they carry what the *user* said, and an
+    envelope may not report that (external review, round 1). Passing them here
+    stands in for the engine folding in an answer to a question it actually
+    posed — the smuggling refusal itself is tested through ``build_check``
+    directly, below."""
     slot = slot if slot is not None else _slot()
     raw = {"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)}
+    engine_assigned = {}
     for key, value in overrides.items():
+        target = engine_assigned if key in conditions._ENGINE_ASSIGNED_CHECK_FIELDS else raw
         if value is None:
-            raw.pop(key, None)
+            target.pop(key, None)
         else:
-            raw[key] = value
+            target[key] = value
     return conditions.build_check(raw, slot=slot, previous=previous, check_id=check_id,
-                                  session_id=session_id, date_end=date_end)
+                                  session_id=session_id, date_end=date_end, **engine_assigned)
 
 
 def _event_check(slot=None, previous=None, **overrides):
@@ -868,6 +876,55 @@ def test_a_basis_alert_does_not_move_the_verdict():
     plain, doubted = _check(), _check(basis_alert={"note": "the segment was restated"})
     assert plain["engine_verdict"] == doubted["engine_verdict"] == "not_met"
     assert plain["final_verdict"] == doubted["final_verdict"]
+
+
+def test_the_envelope_cannot_report_what_the_user_said():
+    """External review (round 1), BLOCK: `user_response` and `basis_resolution`
+    used to be envelope fields. An agent could therefore write
+    `{"answer": "overridden"}` beside its own lookup and record a verdict for a
+    question the user was never shown — and the stored row would be
+    indistinguishable, forever, from one they actually answered. They are
+    keyword arguments now, and the envelope is refused *by name* rather than as
+    a generic unknown field, because the reason matters to whoever hits it."""
+    for smuggled in ({"answer": "overridden", "answered_at": "2026-08-27"},
+                     {"answer": "confirmed", "answered_at": "2026-08-27"}):
+        try:
+            conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1),
+                                    "user_response": smuggled},
+                                   slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26")
+        except conditions.ConditionError as exc:
+            assert "must not carry user_response" in str(exc), exc
+            assert "question they were actually shown" in str(exc), exc
+        else:
+            raise AssertionError("an envelope carrying user_response must be refused")
+    try:
+        conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1),
+                                "basis_alert": {"note": "x"}, "basis_resolution": "kept"},
+                               slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26")
+    except conditions.ConditionError as exc:
+        assert "must not carry basis_resolution" in str(exc), exc
+    else:
+        raise AssertionError("an envelope carrying basis_resolution must be refused")
+
+
+def test_the_engine_may_still_fold_in_an_answer_it_posed():
+    """The other half: the refusal is about the *envelope*, not about the field.
+    An answer to a question the engine actually asked still lands on the row."""
+    row = conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)},
+                                 slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26",
+                                 user_response={"answer": "overridden", "answered_at": "2026-08-27"})
+    assert row["user_response"]["answer"] == "overridden"
+    assert (row["final_verdict"], row["verdict_source"]) == ("not_met", "user")
+    assert row["engine_verdict"] == "not_met", "the engine's own read is never overwritten"
+
+
+def test_the_input_schema_no_longer_advertises_the_engine_assigned_fields():
+    """The readable contract must not invite what the code refuses."""
+    schema = _schema("condition-check.schema.json")
+    offered = set(schema["properties"]["input"]["properties"])
+    assert not (offered & set(conditions._ENGINE_ASSIGNED_CHECK_FIELDS)), offered
+    assert offered == set(conditions._CHECK_FIELDS), \
+        "the documented envelope and the accepted envelope are one fact in two places"
 
 
 def test_a_basis_resolution_requires_the_question_it_answers():

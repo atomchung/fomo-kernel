@@ -1256,6 +1256,24 @@ def _condition_paths(root):
             os.path.join(root, "condition_checks.jsonl"))
 
 
+def _with_condition_line(commitment):
+    """The prior commitment with its condition's line identity resolved.
+
+    A root slot row carries no ``line_id`` on disk (it *is* its line's first
+    row), and a revised one does. Resolving it once here — with the same
+    ``conditions.slot_line_id`` every other reader uses — is what lets the card
+    match this period's check back to last period's commitment without owning a
+    second copy of the line rules. Matching on ``slot_id`` alone silently
+    stopped working after a second revision, because the new check carries the
+    newest slot_id while the prior commitment still names the one before it
+    (external review, round 1)."""
+    condition = (commitment or {}).get("condition")
+    if not isinstance(condition, dict) or not condition.get("slot_id"):
+        return commitment
+    return {**commitment,
+            "condition": {**condition, "line_id": conditions.slot_line_id(condition)}}
+
+
 def _condition_store(root):
     """Both append-only condition stores, read once per review.
 
@@ -1294,8 +1312,13 @@ def _condition_due(root):
     entries = []
     for line_id, slot in lines.items():
         last = conditions.last_check_for(checks, slots, slot)
+        # `line_id` is stamped on every entry, including a root row that has
+        # none on disk. It is how the card resolves a check back to the
+        # condition it belongs to without owning a second copy of the line
+        # semantics — one reader, here (external review, round 1).
         entries.append((str(last.get("date_end") or "") if last else "", str(line_id),
-                        {**slot, "last_check": _last_check_summary(last)}))
+                        {**slot, "line_id": str(line_id),
+                         "last_check": _last_check_summary(last)}))
     # A never-checked line sorts first on the empty string, which is exactly
     # "oldest": nothing has ever been looked up for it.
     entries.sort(key=lambda item: (item[0], item[1]))
@@ -1371,18 +1394,25 @@ def _resolve_check_slot(slots, slot_id):
 def _build_condition_checks(slots, checks, envelopes, session_id, date_end, responses=None):
     """Validate every submitted lookup into a durable check row.
 
-    ``responses`` maps a line id to the extra fields the user's own answer
-    contributes (``user_response`` / ``basis_resolution``). They are folded into
-    the envelope *before* ``build_check`` runs, so one row carries the complete
-    story — the evidence, the engine's comparison, and what the user said about
-    it — rather than a row written now and patched later.
+    ``responses`` maps a line id to what the user's own answer contributes
+    (``user_response`` / ``basis_resolution``). Those reach ``build_check`` as
+    keyword arguments, never through the envelope — an envelope carrying either
+    is refused there by name — so one row carries the complete story (the
+    evidence, the engine's comparison, and what the user said) without the
+    agent ever being able to author the last part.
+
+    Dedup is by *line*, not by the ``slot_id`` the envelope happened to name. A
+    revision changes slot_id while keeping the line, so a superseded id and the
+    live head are two names for one condition; accepting both would append two
+    rows for the same (condition, period), and the second would silently win
+    every later read (external review, round 1).
 
     A rejection is the agent's to fix and is reported as such. In particular an
     answer paired with a lookup that did not succeed this period is refused by
     ``build_check`` rather than quietly attached: there is no fresh evidence for
     that answer to be about."""
     responses = responses or {}
-    built = []
+    built, seen_lines = [], {}
     for slot_id, envelope in envelopes:
         slot = _resolve_check_slot(slots, slot_id)
         if slot is None:
@@ -1390,14 +1420,22 @@ def _build_condition_checks(slots, checks, envelopes, session_id, date_end, resp
                 f"condition check names an unknown condition: {slot_id!r}. A check is a result for "
                 "a condition the user committed to; there is no such condition in the record")
         line_id = conditions.slot_line_id(slot)
-        payload = dict(envelope)
-        payload.update(responses.get(line_id) or {})
+        if line_id in seen_lines:
+            raise ReviewError(
+                f"two condition checks for the same condition in one review: {seen_lines[line_id]!r} "
+                f"and {slot_id!r} are the same line ({line_id!r}) — a re-stated criterion keeps its "
+                "line, so those are two names for one condition, and a period has one result per "
+                "condition, not a running commentary")
+        seen_lines[line_id] = slot_id
+        answer = responses.get(line_id) or {}
         try:
             built.append(conditions.build_check(
-                payload, slot=slot,
+                envelope, slot=slot,
                 previous=conditions.previous_check_for(checks, slots, slot),
                 check_id=_check_id(session_id, slot["slot_id"]),
-                session_id=session_id or None, date_end=date_end))
+                session_id=session_id or None, date_end=date_end,
+                user_response=answer.get("user_response"),
+                basis_resolution=answer.get("basis_resolution")))
         except conditions.ConditionError as exc:
             raise ReviewError(f"condition check rejected ({slot['slot_id']}): {exc}") from exc
     return built
@@ -2476,7 +2514,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
                   "ledger_ingest": ledger_ingest,
                   "price_feed": _price_feed_status(card)},
-        "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
+        "state_snapshot": {"prior_commitment": _with_condition_line(
+                               (previous or {}).get("commitment")),
                            # #412/#434: the conditions the engine cannot compute,
                            # as a bounded lookup request rather than the whole
                            # store. Each entry is the line's live row plus what
@@ -3269,10 +3308,36 @@ def _build_condition_records(plan, answers, amap):
     envelopes = _condition_check_envelopes(answers, "answers")
     built = _build_condition_checks(slots, checks, envelopes, session_id, date_end, responses)
     _refuse_check_drift(plan, built)
+    _refuse_dropped_ingested_check(plan, built)
     due = ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])
     built += _synthesized_not_checked(slots, checks, due, built, session_id, date_end)
     revisions = _condition_revisions(plan, answers, revise_lines, crossed_lines, slots, session_id)
     return built, revisions
+
+
+def _refuse_dropped_ingested_check(plan, built):
+    """A reading this session already took cannot quietly become "not checked".
+
+    ``prepare --condition-checks`` ingests real lookups: they are validated into
+    rows, frozen into the plan, and a crossing question may have been posed
+    against them. If the answers then omit one of those slots, the synthesized
+    ``not_checked`` path — which exists for conditions nobody looked at — would
+    overwrite a lookup that *did* happen with a row saying nobody looked. The
+    user could have been asked about a crossed line and the file would end up
+    claiming the condition went unchecked that period.
+
+    So the synthesized path is legal only for a due condition that never had a
+    prepare-side check. Anything ingested must come back (external review,
+    round 1)."""
+    ingested = {row.get("slot_id")
+                for row in ((plan.get("state_snapshot") or {}).get("condition_checks") or [])}
+    dropped = sorted(ingested - {row.get("slot_id") for row in built})
+    if dropped:
+        raise ReviewError(
+            "condition check(s) " + ", ".join(repr(slot_id) for slot_id in dropped) +
+            " were looked up when this review was prepared but are missing from "
+            "answers.condition_checks. Recording them as not-checked would erase a lookup that "
+            "happened — resubmit the same envelope, or rerun prepare without it")
 
 
 # What the user's own answer is allowed to move: their response, how the basis

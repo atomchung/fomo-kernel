@@ -133,9 +133,13 @@
     "fact": "{criterion}——{value}（{source}，資料日 {as_of}）。",
     "fact_no_source": "{criterion}——{value}。",
     "fact_looks_wrong": "上面哪個數字看起來不對就說一聲，可以重新確認它的算法。",
+    "deferred": "{criterion}——{value}（{source}，資料日 {as_of}）。這個已經過線了，下次復盤會來問你。",
+    "deferred_no_source": "{criterion}——{value}。這個已經過線了，下次復盤會來問你。",
     "blind": "{criterion}——這期沒查到，現在是盯不到的狀態。",
     "blind_with_reason": "{criterion}——這期沒查到（{reason}），現在是盯不到的狀態。",
-    "summary": "這期 {total} 條裡查了 {checked} 條；還有 {deferred} 條沒查，下次會再排進來。"
+    "summary_checked": "這期 {total} 條裡查了 {checked} 條。",
+    "summary_open": "還沒結案、下次會再排進來的：{deferred} 條。",
+    "summary_trimmed": "這張卡列出 {describable} 筆讀數裡的 {shown} 筆，其餘都在你的紀錄裡。"
   },
   "condition_crossing": {
     "met": "你設的是：「{criterion}」。這期查到：{evidence}。這樣算跨過去了嗎？",

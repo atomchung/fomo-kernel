@@ -102,6 +102,13 @@ a frozen threshold is not visible from the number alone. Each raises exactly
 one question and decides nothing (``review.py``'s ``condition_crossing`` and
 ``condition_basis``) — false alarms are allowed by owner ruling, because the
 user resolves them and the alternative is silence about a broken basis.
+
+**What the user said is not envelope content.** ``user_response`` and
+``basis_resolution`` are ``build_check`` keyword arguments and are refused on
+the envelope. An agent that could write ``{"answer": "overridden"}`` beside its
+own lookup could record a verdict for a question the user was never shown, and
+nothing downstream could ever tell that row from one they actually answered.
+The envelope reports what was *found*; the kwargs carry what was *said*.
 """
 
 import datetime as dt
@@ -140,8 +147,13 @@ _FIELDS = frozenset({"kind", "criterion", "query", "threshold", "near_line", "ob
 # A check envelope's own field set. `revises`/`line_id` are deliberately absent
 # from _FIELDS above (a slot's input never carries them) and from this set too
 # (a check does not revise anything) — both are engine-assigned, never agent input.
-_CHECK_FIELDS = frozenset({"lookup_status", "reason", "observation", "user_response",
-                           "event_alert", "basis_alert", "basis_resolution"})
+_CHECK_FIELDS = frozenset({"lookup_status", "reason", "observation",
+                           "event_alert", "basis_alert"})
+# Named separately so refusing them says *why* rather than "unknown field".
+# These are the user's own word and how their basis question ended; both reach
+# a row only as ``build_check`` keyword arguments, filled from an answer to a
+# question that was actually shown (external review, round 1).
+_ENGINE_ASSIGNED_CHECK_FIELDS = frozenset({"user_response", "basis_resolution"})
 
 # A standalone number: `Q3` and `FY2026` are labels, not quantities, so the digit
 # glued to a word never counts as the threshold leaking into the query. A bare
@@ -609,7 +621,8 @@ def _information_state(observation, reference):
     return "restated"
 
 
-def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
+def build_check(raw, *, slot, previous, check_id, session_id=None, date_end,
+                user_response=None, basis_resolution=None):
     """Validate one agent-supplied check envelope into a durable check row.
 
     ``slot`` is the concrete slot row this check evaluates — its kind, frozen
@@ -618,6 +631,16 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
     slot's line, or None (``previous_check_for`` resolves it; this function
     only consumes the result, so it stays a pure function of its arguments,
     exactly like ``build_slot``).
+
+    **What the user said is never part of ``raw``.** ``user_response`` and
+    ``basis_resolution`` are keyword arguments, not envelope fields, and an
+    envelope carrying either is refused as an unknown field. The split is the
+    whole point: an agent that could put ``{"answer": "overridden"}`` on the
+    envelope could record a verdict the user was never shown a question for,
+    and the row would be indistinguishable forever from one they answered.
+    The only writer of ``user_response`` is the engine folding in a
+    ``condition_crossing`` answer; the only writer of ``basis_resolution`` is a
+    ``condition_basis`` answer (external review, round 1).
 
     A lookup that did not succeed this period (``failed`` / ``not_checked``)
     forbids both ``observation`` and ``user_response``, and reports
@@ -634,6 +657,12 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
         raise ConditionError("commitment.check must be an object")
     unknown = set(raw) - _CHECK_FIELDS
     if unknown:
+        smuggled = sorted(unknown & _ENGINE_ASSIGNED_CHECK_FIELDS)
+        if smuggled:
+            raise ConditionError(
+                "commitment.check must not carry " + ", ".join(smuggled) + ": what the user said "
+                "is recorded from their answer to a question they were actually shown, never "
+                "from the envelope that reports the lookup")
         raise ConditionError("commitment.check has unknown fields: " + ", ".join(sorted(unknown)))
     if not isinstance(slot, dict) or not slot.get("slot_id"):
         raise ConditionError("check.slot must be a slot row with a slot_id")
@@ -648,7 +677,6 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
         raise ConditionError("check.reason is longer than 500 characters")
 
     observation_raw = raw.get("observation")
-    user_response_raw = raw.get("user_response")
     if lookup_status == "ok":
         if observation_raw is None:
             raise ConditionError("check.observation is required when lookup_status is ok")
@@ -656,15 +684,15 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
     else:
         if observation_raw is not None:
             raise ConditionError("check.observation is forbidden unless lookup_status is ok")
-        if user_response_raw is not None:
+        if user_response is not None:
             raise ConditionError("check.user_response requires a successful lookup — "
                                  "there is no evidence to answer against")
         observation = None
 
-    user_response = _user_response(user_response_raw, kind)
     event_alert = _event_alert(raw.get("event_alert"), kind, lookup_status)
     basis_alert = _basis_alert(raw.get("basis_alert"), lookup_status)
-    basis_resolution = _basis_resolution(raw.get("basis_resolution"), basis_alert)
+    user_response = _user_response(user_response, kind)
+    basis_resolution = _basis_resolution(basis_resolution, basis_alert)
 
     check = {"check_id": _text(check_id, "check_id"), "slot_id": _text(slot["slot_id"], "slot_id"),
              "session_id": session_id or None, "date_end": _text(date_end, "date_end"),

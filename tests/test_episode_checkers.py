@@ -346,14 +346,15 @@ def test_condition_check_integrity_defers_to_the_engines_own_check_validator():
     assert findings and "refuses this result" in findings[0], findings
 
 
-def test_condition_check_integrity_refuses_an_answer_attached_to_a_failed_lookup():
-    """No fresh evidence means no verdict to answer against — the engine's own
-    rule, reached through the engine's own validator."""
+def test_condition_check_integrity_refuses_an_envelope_that_reports_a_verdict():
+    """External review, BLOCK: `user_response` is what the USER said, and an
+    envelope may not report it — otherwise an episode (and a live agent) could
+    record `overridden` for a question nobody was shown. The refusal comes from
+    the engine's own validator, so the bank and the runtime cannot disagree."""
     findings = R.check_condition_check_integrity(
-        _check_answer(prose="I could not check this one; it is blind this period.",
-                      lookup_status="failed", observation=None,
-                      user_response={"answer": "confirmed", "answered_at": "2026-08-26"}), FACTS)
+        _check_answer(user_response={"answer": "overridden", "answered_at": "2026-08-26"}), FACTS)
     assert findings and "refuses this result" in findings[0], findings
+    assert "must not carry user_response" in findings[0], findings
 
 
 def test_condition_check_integrity_does_not_mistake_a_quarter_label_for_a_figure():

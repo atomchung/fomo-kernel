@@ -1846,7 +1846,7 @@ def _condition_verdict_sentence(check, copy):
     return check_copy.get("verdict_" + str((check or {}).get("final_verdict") or "unknown"))
 
 
-def _condition_reconciliation_line(prior, checks, copy):
+def _condition_reconciliation_line(prior, checks, copy, index):
     """The prior commitment's condition, then and now.
 
     A condition's then/now is the same shape a tracked metric already has, and
@@ -1855,12 +1855,21 @@ def _condition_reconciliation_line(prior, checks, copy):
     baseline the engine took in that same exchange — and ``now`` is what this
     period's check found. Returns ``None`` when nothing was checked this
     period, and the caller falls back to the bare statement: a condition with
-    no fresh reading must not be dressed up as one that has one."""
+    no fresh reading must not be dressed up as one that has one.
+
+    The match is on **line**, never on ``slot_id``. A check names the live head
+    of its line, and after a second revision that head is neither the slot the
+    prior commitment recorded nor its line root — so a slot_id comparison went
+    quiet exactly when the user's condition had the most history behind it. The
+    engine resolves both sides (``review.py`` stamps ``line_id`` on the prior
+    commitment and on every due entry); this reads them (external review,
+    round 1)."""
     condition = prior.get("condition") or {}
-    if not condition:
+    line_id = condition.get("line_id") or condition.get("slot_id")
+    if not condition or not line_id:
         return None
-    identities = {condition.get("slot_id"), condition.get("line_id")} - {None}
-    check = next((row for row in checks if row.get("slot_id") in identities), None)
+    check = next((row for row in checks
+                  if (index.get(row.get("slot_id")) or {}).get("line_id") == line_id), None)
     now = _condition_now(check, condition, copy)
     if now is None:
         return None
@@ -1879,102 +1888,176 @@ def _condition_reconciliation_line(prior, checks, copy):
     return f"{line} {verdict}" if verdict else line
 
 
-# How many per-condition lines one card may carry. The record holds every check;
-# the card holds the ones a reader can act on, and the summary line below states
-# how many were checked in total — so trimming here never becomes a claim of
-# completeness. Without a bound a user with eight standing conditions turns the
-# opening of every card into a data table.
+# How many per-condition lines of each kind one card may carry. The record holds
+# every check; the card holds the ones a reader can act on. Whatever is trimmed
+# here is counted and stated by the summary line below — a card that quietly
+# shows two of five readings is the same defect as a cap that does not say what
+# it dropped, one level down (external review, round 1).
 CONDITION_CARD_LINES = 2
 
 
-def _condition_fact_lines(bundle, checks, copy):
-    """This period's readings for the conditions that are simply being watched.
+def _condition_index(bundle):
+    """``slot_id -> the condition it belongs to``, from the plan's own due list.
 
-    Only a successful numeric lookup that came back clear of its line: a
-    crossing was a question, an event's verdict is the user's answer, and a
-    failed lookup is a blind line below. The looks-wrong sentence is what makes
-    these lines load-bearing rather than decorative — showing the figure is how
-    a wrong basis exposes itself, and it is only correctable if the user is
-    invited to say so. It is one sentence for the group, not one per line."""
+    The due list is where the engine already resolved every line identity, so
+    the card reads ``line_id`` rather than deriving it. That is the point of
+    the field: matching a check to a commitment through ``slot_id`` alone broke
+    silently after a second revision, because the new check names the newest
+    slot while the prior commitment still names the one before it."""
+    return {entry["slot_id"]: entry
+            for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                          .get("condition_slots_due") or [])
+            if isinstance(entry, dict) and entry.get("slot_id")}
+
+
+def _asked_about(bundle):
+    """The condition lines this review actually put a crossing question to.
+
+    A crossing that was asked about is told through the exchange; one that lost
+    the single-question budget was told nothing at all until this existed."""
+    asked = set()
+    for question in ((bundle.get("review_plan") or {}).get("question_queue") or []):
+        if isinstance(question, dict) and question.get("kind") == "condition_crossing":
+            asked.add(question.get("line_id"))
+    return asked
+
+
+def _condition_reading(check, condition):
+    """This period's figure or fact for one condition, as the card prints it."""
+    observation = check.get("observation") or {}
+    if "value" in observation:
+        return condition_value(observation.get("value"),
+                               (condition.get("threshold") or {}).get("unit"))
+    return str(observation.get("summary") or "").strip() or None
+
+
+def _condition_line(check, condition, copy, template, **extra):
+    reading = _condition_reading(check, condition)
+    if reading is None:
+        return None
+    observation = check.get("observation") or {}
+    source, as_of = observation.get("source"), observation.get("as_of")
     check_copy = copy.get("condition_check") or {}
-    conditions_by_id = {}
-    for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
-                  .get("condition_slots_due") or []):
-        if isinstance(entry, dict) and entry.get("slot_id"):
-            conditions_by_id[entry["slot_id"]] = entry
-    lines = []
+    values = dict(extra, criterion=condition.get("criterion") or "", value=reading,
+                  source=source, as_of=as_of)
+    if source and as_of:
+        return _format_copy(check_copy.get(template), **values)
+    return _format_copy(check_copy.get(template + "_no_source"), **values)
+
+
+def _condition_reading_lines(bundle, checks, copy):
+    """``(lines, shown, describable)`` — every per-condition line this card carries.
+
+    Three groups, in the order a reader needs them:
+
+    1. **Deferred crossings.** A line the engine read as crossed (or an event
+       the agent flagged) that lost the one-question budget. Before this it
+       produced nothing at all: no question, no fact line — the fact lines were
+       ``not_met``-only — and no mention in the summary. A crossed line going
+       completely unmentioned is the single worst outcome this whole tier
+       exists to prevent, so it now states its figure and says plainly that it
+       is coming back next review.
+    2. **Readings clear of the line**, with one non-blocking "if a figure looks
+       wrong, say so" for the group — showing the figure is how a wrong basis
+       exposes itself, and that only helps if the user is invited to say so.
+    3. **Failed lookups**, stated plainly with their reason.
+
+    A crossing that *was* asked about renders nothing: the exchange already
+    told that story. ``not_checked`` rows are the summary's business — eight
+    apologies would bury the one lookup that actually broke.
+    """
+    index = _condition_index(bundle)
+    asked = _asked_about(bundle)
+    deferred, facts, blind = [], [], []
     for check in checks:
-        condition = conditions_by_id.get(check.get("slot_id"))
-        if not condition or check.get("lookup_status") != "ok":
-            continue
-        if (condition.get("kind") or "numeric") == "event" or check.get("final_verdict") != "not_met":
-            continue
-        observation = check.get("observation") or {}
-        value = condition_value(observation.get("value"),
-                                (condition.get("threshold") or {}).get("unit"))
-        if value is None:
-            continue
-        source, as_of = observation.get("source"), observation.get("as_of")
-        line = (_format_copy(check_copy.get("fact"), criterion=condition.get("criterion") or "",
-                             value=value, source=source, as_of=as_of) if source and as_of
-                else _format_copy(check_copy.get("fact_no_source"),
-                                  criterion=condition.get("criterion") or "", value=value))
-        if line:
-            lines.append(line)
-    if not lines:
-        return []
-    lines = lines[:CONDITION_CARD_LINES]
-    looks_wrong = check_copy.get("fact_looks_wrong")
-    return lines + ([looks_wrong] if looks_wrong else [])
-
-
-def _condition_blind_lines(bundle, checks, copy):
-    """The conditions a lookup was attempted for and did not come back from.
-
-    Stated plainly, because the failure mode this whole tier exists to prevent
-    is a user walking away believing a tripwire is set. `not_checked` rows are
-    not listed one by one — they are the summary line's business, and eight
-    apologies would bury the one lookup that actually broke."""
-    check_copy = copy.get("condition_check") or {}
-    conditions_by_id = {}
-    for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
-                  .get("condition_slots_due") or []):
-        if isinstance(entry, dict) and entry.get("slot_id"):
-            conditions_by_id[entry["slot_id"]] = entry
-    lines = []
-    for check in checks:
-        if check.get("lookup_status") != "failed":
-            continue
-        condition = conditions_by_id.get(check.get("slot_id"))
+        condition = index.get(check.get("slot_id"))
         if not condition:
             continue
-        criterion = condition.get("criterion") or ""
-        reason = str(check.get("reason") or "").strip()
-        line = (_format_copy(check_copy.get("blind_with_reason"), criterion=criterion, reason=reason)
-                if reason else _format_copy(check_copy.get("blind"), criterion=criterion))
-        if line:
-            lines.append(line)
-    return lines[:CONDITION_CARD_LINES]
+        status = check.get("lookup_status")
+        if status == "failed":
+            criterion = condition.get("criterion") or ""
+            reason = str(check.get("reason") or "").strip()
+            check_copy = copy.get("condition_check") or {}
+            line = (_format_copy(check_copy.get("blind_with_reason"),
+                                 criterion=criterion, reason=reason) if reason
+                    else _format_copy(check_copy.get("blind"), criterion=criterion))
+            if line:
+                blind.append(line)
+            continue
+        if status != "ok":
+            continue
+        crossing = (check.get("final_verdict") in ("met", "near_line")
+                    or bool(check.get("event_alert")))
+        if crossing:
+            if condition.get("line_id") in asked:
+                continue                      # the question carried it
+            line = _condition_line(check, condition, copy, "deferred")
+            if line:
+                deferred.append(line)
+        elif check.get("final_verdict") == "not_met":
+            line = _condition_line(check, condition, copy, "fact")
+            if line:
+                facts.append(line)
+    describable = len(deferred) + len(facts) + len(blind)
+    kept_deferred = deferred[:CONDITION_CARD_LINES]
+    kept_facts = facts[:CONDITION_CARD_LINES]
+    kept_blind = blind[:CONDITION_CARD_LINES]
+    shown = len(kept_deferred) + len(kept_facts) + len(kept_blind)
+    lines = list(kept_deferred)
+    if kept_facts:
+        lines += kept_facts
+        looks_wrong = (copy.get("condition_check") or {}).get("fact_looks_wrong")
+        if looks_wrong:
+            lines.append(looks_wrong)
+    lines += kept_blind
+    return lines, shown, describable
 
 
-def _condition_summary_line(bundle, checks, copy):
-    """How much of the record this review actually looked at.
+def _condition_summary_line(bundle, checks, copy, shown, describable):
+    """How much of the record this review looked at, and how much of that is
+    on this card.
 
-    Emitted whenever anything was left unchecked — a lookup that failed, one
-    nobody ran, or a line the plan's cap held back (#434). A bounded surface
-    that does not say what it dropped is the same lie as an unchecked condition
-    presented as fine, one level up. Silent when everything was checked."""
+    Two ways a card can be incomplete, and it must speak for either. **Not
+    checked**: a failed lookup, one nobody ran, a line the plan's cap held
+    back (#434), or a crossing deferred to next review — none of those is
+    resolved, so none may pass as fine. **Not shown**: the per-kind line caps
+    trimmed a reading that was taken. A card that quietly prints two of five
+    readings is making the same claim of completeness the cap disclosure
+    exists to prevent (external review, round 1).
+
+    Silent only when everything was checked, resolved, and printed."""
     summary = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                .get("condition_slots_summary") or {})
     total = _finite_number(summary.get("lines_total"))
     if total is None or total <= 0:
         return None
+    total = int(total)
     checked = sum(1 for row in checks if row.get("lookup_status") == "ok")
-    deferred = int(total) - checked
-    if deferred <= 0:
+    asked = _asked_about(bundle)
+    index = _condition_index(bundle)
+    deferred_crossings = sum(
+        1 for row in checks
+        if row.get("lookup_status") == "ok"
+        and (row.get("final_verdict") in ("met", "near_line") or row.get("event_alert"))
+        and (index.get(row.get("slot_id")) or {}).get("line_id") not in asked)
+    # "Open" is anything this review did not settle: never looked at, looked at
+    # and failed, held back by the cap, or read as crossed and not yet asked.
+    open_count = max(0, total - checked) + deferred_crossings
+    trimmed = max(0, describable - shown)
+    if open_count <= 0 and trimmed <= 0:
         return None
-    return _format_copy((copy.get("condition_check") or {}).get("summary"),
-                        checked=checked, total=int(total), deferred=deferred)
+    # Composed from single-purpose sentences rather than one template per
+    # combination: the two incompletenesses are independent, and a combined
+    # string has to say "0 still open" in the case where only trimming happened.
+    check_copy = copy.get("condition_check") or {}
+    parts = [_format_copy(check_copy.get("summary_checked"), checked=checked, total=total)]
+    if open_count > 0:
+        parts.append(_format_copy(check_copy.get("summary_open"), deferred=open_count))
+    if trimmed > 0:
+        parts.append(_format_copy(check_copy.get("summary_trimmed"),
+                                  shown=shown, describable=describable))
+    parts = [part for part in parts if part]
+    return " ".join(parts) or None
 
 
 def _reconciliation_lines(bundle, language):
@@ -2006,7 +2089,8 @@ def _reconciliation_lines(bundle, language):
         # against what this period's check found. It degrades to the bare
         # statement when nothing was checked, rather than borrowing the
         # metric branch's shape for numbers it does not have.
-        condition_line = _condition_reconciliation_line(prior, checks, copy)
+        condition_line = _condition_reconciliation_line(prior, checks, copy,
+                                                        _condition_index(bundle))
         if condition_line:
             line = condition_line
         elif then_v is not None and now_v is not None:
@@ -2025,10 +2109,11 @@ def _reconciliation_lines(bundle, language):
         lines.append(line)
     # The standing conditions from earlier reviews, in the same breath as the
     # prior commitment: this whole block answers one question — what happened to
-    # the things you asked to be watched.
-    lines += _condition_fact_lines(bundle, checks, copy)
-    lines += _condition_blind_lines(bundle, checks, copy)
-    summary = _condition_summary_line(bundle, checks, copy)
+    # the things you asked to be watched. The summary reads what the lines
+    # above actually printed, so trimming can never pass as completeness.
+    reading_lines, shown, describable = _condition_reading_lines(bundle, checks, copy)
+    lines += reading_lines
+    summary = _condition_summary_line(bundle, checks, copy, shown, describable)
     if summary:
         lines.append(summary)
     return lines

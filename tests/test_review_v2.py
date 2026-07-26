@@ -3583,7 +3583,8 @@ def test_the_card_reconciles_a_condition_then_and_now_and_says_what_it_skipped()
         private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
         assert "it was 38% when you set it, 36% now" in private, private
         assert "still clear of your line" in private.lower(), private
-        assert "Checked 1 of 2 conditions this period; 1 were not" in private, private
+        assert "Checked 1 of 2 conditions this period." in private, private
+        assert "Still open and coming back next review: 1." in private, private
         public = pathlib.Path(json.loads(final.stdout)["public_card"]).read_text(encoding="utf-8")
         for fragment in ("36%", "38%", "10-Q", "churn"):
             assert fragment not in public, f"condition detail leaked {fragment!r} to the public card"
@@ -3624,6 +3625,207 @@ def test_an_event_condition_is_watched_from_the_moment_it_is_committed():
         assert "yes-or-no call" in private and "the call stays yours" in private, private
         assert "cannot be checked for you" not in private, \
             "an event condition is watched now; saying otherwise is the old state"
+
+
+# ───────────── external review round 1: six findings, six gates ─────────────
+
+def _two_crossings(tmp, root):
+    """Two conditions, both crossed. Only one can be asked about."""
+    root.mkdir(parents=True, exist_ok=True)
+    rows = [{"slot_id": f"slot-x-{i}", "kind": "numeric",
+             "criterion": f"sell if metric {i} drops under 30%",
+             "query": f"what is metric {i}?", "created": "2026-07-01", "tier": "researched",
+             "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0}
+            for i in range(2)]
+    (root / "conditions.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    envelope = [{"slot_id": "slot-x-0",
+                 "check": {"lookup_status": "ok", "observation": dict(_CROSSED, value=4.0)}},
+                {"slot_id": "slot-x-1",
+                 "check": {"lookup_status": "ok", "observation": dict(_CROSSED, value=12.0)}}]
+    return envelope, _prepare_with_checks(tmp, root, envelope)
+
+
+def test_a_crossing_that_lost_the_budget_still_states_its_figure_on_the_card():
+    """External review, BLOCK: a met/near_line reading that lost the one-question
+    budget produced *nothing* — no question, no fact line (those were not_met
+    only), no mention in the summary. A crossed line going completely unmentioned
+    is the worst outcome this tier exists to prevent, and it was the one the card
+    actually produced."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        envelope, plan = _two_crossings(tmp, root)
+        asked = {q["slot_id"] for q in plan["question_queue"]
+                 if q["kind"] == "condition_crossing"}
+        assert len(asked) == 1, "the budget still binds"
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = envelope
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        deferred = ({"slot-x-0", "slot-x-1"} - asked).pop()
+        index = int(deferred[-1])
+        assert f"sell if metric {index} drops under 30%" in private, \
+            "the deferred crossing must reach the card at all:\n" + private
+        assert "past your line" in private and "next review" in private, private
+        # And the asked-about one stays silent here — the exchange carried it.
+        asked_index = int(asked.pop()[-1])
+        assert private.count(f"sell if metric {asked_index} drops under 30% —") == 0, \
+            "a crossing that was asked about is not also restated as a fact line"
+        assert "Still open and coming back next review: 1." in private, \
+            "a deferred crossing was checked, but it is not settled — the summary must " \
+            "count it as open:\n" + private
+
+
+def test_a_prepare_side_check_cannot_be_dropped_into_a_not_checked_row():
+    """External review, BLOCK: prepare ingested a real reading (and may have posed
+    a question about it). If the answers then omit that slot, the synthesized
+    not-checked path — meant for conditions nobody looked at — overwrote the
+    lookup with a row claiming nobody looked."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_condition(tmp, root)
+        slot_id = json.loads((root / "conditions.jsonl").read_text(
+            encoding="utf-8").splitlines()[0])["slot_id"]
+        plan = _prepare_with_checks(tmp, root, [
+            {"slot_id": slot_id, "check": {"lookup_status": "ok", "observation": dict(_CROSSED)}}])
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = []          # the reading silently disappears
+        failed = _finalize_plan(tmp, root, plan, answers)
+        assert failed.returncode != 0, failed.stdout
+        assert "missing from answers.condition_checks" in failed.stdout + failed.stderr
+        assert not _check_rows(root), "nothing is written when the record would lose a lookup"
+
+
+def test_a_due_condition_that_was_never_looked_up_may_still_be_synthesized():
+    """The other half of the same guard: the not-checked path stays legal for a
+    condition that genuinely had no prepare-side check. Without this the fix
+    would have closed the honest branch along with the dishonest one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_conditions(tmp, root, ["sell if a drops under 30%", "sell if b drops under 30%"])
+        plan = _prepare_with_checks(tmp, root, [
+            {"slot_id": "slot-seed-0", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}])
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = [
+            {"slot_id": "slot-seed-0", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}]
+        assert _finalize_plan(tmp, root, plan, answers).returncode == 0
+        rows = {row["slot_id"]: row["lookup_status"] for row in _check_rows(root)}
+        assert rows == {"slot-seed-0": "ok", "slot-seed-1": "not_checked"}
+
+
+def test_an_envelope_cannot_carry_a_verdict_the_user_never_gave():
+    """External review, BLOCK: the submittable envelope accepted `user_response`,
+    so an agent could record `overridden` for a question that was never shown —
+    and the stored row would be indistinguishable from one the user answered."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_conditions(tmp, root, ["sell if a drops under 30%"])
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = [
+            {"slot_id": "slot-seed-0",
+             "check": {"lookup_status": "ok", "observation": dict(_CROSSED),
+                       "user_response": {"answer": "overridden", "answered_at": "2026-07-14"}}}]
+        failed = _finalize_plan(tmp, root, plan, answers)
+        assert failed.returncode != 0, failed.stdout
+        assert "must not carry user_response" in failed.stdout + failed.stderr
+        assert not _check_rows(root)
+
+
+def test_two_names_for_one_condition_cannot_both_be_submitted():
+    """External review, MARK: dedup keyed on the raw slot_id, so a superseded
+    version and the live head both passed and both appended — two rows for one
+    (condition, period), the second silently winning every later read."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True, exist_ok=True)
+        parent = {"slot_id": "slot-root-0", "kind": "numeric",
+                  "criterion": "sell if a drops under 30%", "query": "what is a?",
+                  "created": "2026-06-01", "tier": "researched",
+                  "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0}
+        child = dict(parent, slot_id="slot-root-1", criterion="sell if a drops under 25%",
+                     created="2026-07-01", revises="slot-root-0", line_id="slot-root-0",
+                     threshold={"value": 25, "unit": "%", "direction": "below"})
+        (root / "conditions.jsonl").write_text(
+            json.dumps(parent) + "\n" + json.dumps(child) + "\n", encoding="utf-8")
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = [
+            {"slot_id": "slot-root-0", "check": {"lookup_status": "ok", "observation": dict(_OBS)}},
+            {"slot_id": "slot-root-1", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}]
+        failed = _finalize_plan(tmp, root, plan, answers)
+        assert failed.returncode != 0, failed.stdout
+        assert "are the same line" in failed.stdout + failed.stderr
+        assert not _check_rows(root)
+
+
+def test_a_card_that_trims_readings_says_it_trimmed_them():
+    """External review, MARK: with five all-clear readings the card showed two and
+    the summary stayed silent, because it only spoke when something was
+    unchecked. Three readings vanished without a word — the same completeness
+    claim the cap disclosure exists to prevent, one level up."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_conditions(tmp, root, [f"sell if metric {i} drops under 30%" for i in range(5)])
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan, commitment="skip")
+        answers["condition_checks"] = [
+            {"slot_id": f"slot-seed-{i}",
+             "check": {"lookup_status": "ok", "observation": dict(_OBS)}} for i in range(5)]
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "Checked 5 of 5 conditions this period." in private, private
+        assert "shows 2 of 5 readings" in private, \
+            "a trimmed card must say how much it is showing:\n" + private
+        shown = sum(1 for i in range(5) if f"sell if metric {i} drops under 30% —" in private)
+        assert shown == 2, f"the per-kind cap still binds, showed {shown}"
+
+
+def test_reconciliation_survives_a_second_revision_of_the_same_condition():
+    """External review, MARK: the card matched checks to the prior commitment by
+    slot_id. A check names the live head of its line, so after a second revision
+    that head is neither the commitment's slot nor the line root — the then/now
+    went quiet exactly when the condition had the most history behind it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True, exist_ok=True)
+        # commit -> revise -> revise, written directly: three rows, one line.
+        rows = [{"slot_id": "slot-gen-0", "kind": "numeric",
+                 "criterion": "sell if growth drops under 30%", "query": "what is growth?",
+                 "created": "2026-05-01", "tier": "researched",
+                 "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0,
+                 "baseline": {"value": 38.0, "as_of": "2026-04-20", "source": "release"},
+                 "baseline_verdict": "not_met"}]
+        for index, (line_value, created) in enumerate(((28, "2026-06-01"), (25, "2026-07-01")), 1):
+            rows.append({**rows[0], "slot_id": f"slot-gen-{index}",
+                         "criterion": f"sell if growth drops under {line_value}%",
+                         "created": created, "revises": f"slot-gen-{index - 1}",
+                         "line_id": "slot-gen-0",
+                         "threshold": {"value": line_value, "unit": "%", "direction": "below"}})
+        (root / "conditions.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        # The prior commitment names the ROOT slot — two revisions ago.
+        (root / "last_state.json").write_text(json.dumps({
+            "date_end": "2026-05-01",
+            "commitment": {"rule": rows[0]["criterion"], "origin": "custom",
+                           "condition": rows[0]}}), encoding="utf-8")
+        plan = _prepare(tmp, root, language="en")
+        prior = plan["state_snapshot"]["prior_commitment"]
+        assert prior["condition"]["line_id"] == "slot-gen-0", \
+            "the engine resolves the line once; the card never derives it"
+        answers = _answers(plan, commitment="skip")
+        # The check lands on the NEWEST slot_id, which is what the engine resolves to.
+        answers["condition_checks"] = [
+            {"slot_id": "slot-gen-2", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}]
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        row = _check_rows(root)[0]
+        assert row["slot_id"] == "slot-gen-2", "a check names the line's live head"
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "when you set it, 36% now" in private, \
+            "the then/now must still connect across two revisions:\n" + private
 
 
 def test_a_snapshot_review_has_no_condition_flow():

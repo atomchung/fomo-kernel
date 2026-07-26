@@ -310,8 +310,12 @@ def _condition_state(verdict=None, reason=None, kind="numeric"):
 # opener, and no persona reaches any of them for the same reason: every one
 # needs a standing condition, which only a user writing their own rule creates.
 _CHECK_CRITERION = "sell if quarterly revenue growth drops under 30%"
+# `line_id` is stamped on every due entry by `review.py` (it is how the card
+# resolves a check back to the condition it belongs to without owning a second
+# copy of the line semantics), so the fixture carries it too.
 _CHECK_SLOT = {
-    "slot_id": "corpus-slot", "kind": "numeric", "criterion": _CHECK_CRITERION,
+    "slot_id": "corpus-slot", "line_id": "corpus-slot", "kind": "numeric",
+    "criterion": _CHECK_CRITERION,
     "query": "what was the most recent quarterly revenue?", "tier": "researched",
     "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0,
     "baseline": {"value": 38.0, "as_of": "2026-05-20", "source": "results release"},
@@ -328,23 +332,37 @@ def _check_row(**over):
     return row
 
 
-def _condition_check(prior=None, checks=(), summary=None, slots=None):
+def _condition_check(prior=None, checks=(), summary=None, slots=None, queue=()):
     """One reconciliation-opener scene: the then/now pair, the per-condition
     readings, and the "what did this review not get to" sentence.
 
-    `condition_slots_due` is what the fact and blind lines resolve a check's
-    criterion through — the plan's own bounded roster — so a scene that omits
-    it renders nothing, which is the visible-diff staleness contract this
-    corpus relies on."""
+    `condition_slots_due` is what every reading line resolves a check's
+    criterion and line through — the plan's own bounded roster — so a scene
+    that omits it renders nothing, which is the visible-diff staleness contract
+    this corpus relies on. `queue` carries the crossing questions this review
+    actually posed: a crossing that was asked about is told by the exchange, and
+    one that was not has to say so itself."""
     def build(language):
         snapshot = {"condition_slots_due": list(slots if slots is not None else [_CHECK_SLOT])}
         if prior is not None:
             snapshot["prior_commitment"] = prior
         if summary is not None:
             snapshot["condition_slots_summary"] = summary
-        return _bundle(language, plan={"state_snapshot": snapshot},
+        return _bundle(language,
+                       plan={"state_snapshot": snapshot, "question_queue": list(queue)},
                        condition_checks=[dict(row) for row in checks])
     return build
+
+
+def _crossed(observation=None, **over):
+    return _check_row(observation=observation or {"value": 21.0, "as_of": "2026-08-20",
+                                                  "source": "10-Q"},
+                      engine_verdict="met", final_verdict="met", **over)
+
+
+def _all_clear_slots(count):
+    return [dict(_CHECK_SLOT, slot_id=f"corpus-slot-{i}", line_id=f"corpus-slot-{i}",
+                 criterion=f"sell if metric {i} drops under 30%") for i in range(count)]
 
 
 def _condition_then_now(kind="numeric", **check_over):
@@ -412,6 +430,36 @@ SCENES = (
     ("condition_check/summary_when_something_was_missed", (),
      _condition_check(checks=[_check_row()],
                       summary={"lines_total": 4, "due_now": 4, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # External review round 1. A crossing that lost the one-question budget: it
+    # states its figure and says it is coming back, and the summary counts it as
+    # unresolved. Nothing in the queue asked about it — that is the branch.
+    ("condition_check/deferred_crossing", (),
+     _condition_check(checks=[_crossed()],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    ("condition_check/deferred_crossing_no_source", (),
+     _condition_check(checks=[_crossed(observation={"value": 21.0, "as_of": "2026-08-20"})],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # The counterweight: a crossing the review DID ask about renders nothing
+    # here, because the exchange already told that story.
+    ("condition_check/silent_when_the_crossing_was_asked", (),
+     _condition_check(checks=[_crossed()],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary={"lines_total": 1, "due_now": 1, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # Five all-clear readings, two printed: the summary has to say so, or three
+    # readings vanish without a word.
+    ("condition_check/summary_when_readings_were_trimmed", (),
+     _condition_check(slots=_all_clear_slots(5),
+                      checks=[_check_row(check_id=f"c{i}", slot_id=f"corpus-slot-{i}")
+                              for i in range(5)],
+                      summary={"lines_total": 5, "due_now": 5, "beyond_cap": 0,
                                "unmapped_lines": 0, "unreadable_slots": 0,
                                "unreadable_checks": 0})),
     # Silence is a branch too: a review that checked everything says nothing,
