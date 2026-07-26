@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/condition-check.schema.json",
+  "title": "Fomo Kernel Condition Check",
+  "description": "One per-period check of a condition slot (#412): whether new information arrived this review period, and — for a numeric slot — whether the threshold was crossed. The readable contract; skills/fomo-kernel/engine/conditions.py (build_check) holds the enforcement, because the offline suite carries no jsonschema dependency. Two shapes appear here: `input` is what an agent may put on the check envelope; the rest of the document is the durable row stored in <root>/condition_checks.jsonl — a separate append-only file from conditions.jsonl. Check rows are an event stream and slot rows are identity; the two row shapes are never mixed in one file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["check_id", "slot_id", "session_id", "date_end", "lookup_status",
+               "information_state", "engine_verdict", "final_verdict", "verdict_source", "created"],
+  "properties": {
+    "check_id": {
+      "type": "string",
+      "description": "Engine-assigned identity for this check row."
+    },
+    "slot_id": {
+      "type": "string",
+      "description": "The concrete slot row this check evaluated — not the line id. A check always names exactly the slot version it looked at; previous_check_for resolves history across a revision by walking the slot's line."
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "The session that recorded this check, or null when none was given."
+    },
+    "date_end": {
+      "type": "string",
+      "description": "The review period end this check belongs to."
+    },
+    "lookup_status": {
+      "enum": ["ok", "failed", "not_checked"],
+      "description": "ok: an observation was found and is attached. failed: a lookup was attempted and did not produce a usable observation. not_checked: no lookup was attempted this period."
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Free text explaining a failed or not_checked lookup_status."
+    },
+    "observation": {
+      "allOf": [{"$ref": "#/$defs/observation"}],
+      "description": "This period's evidence. Present only when lookup_status is ok; forbidden otherwise."
+    },
+    "information_state": {
+      "enum": ["new_period", "restated", "no_new_data", null],
+      "description": "Whether this observation is new information, identified by (effective_period, document, value-or-summary) against the previous ok-check's observation, or — absent one — the slot's baseline. null unless lookup_status is ok: there is nothing to classify without a fresh observation."
+    },
+    "engine_verdict": {
+      "enum": ["met", "near_line", "not_met", "unknown", null],
+      "description": "The engine's own comparison for a numeric slot, computed from the slot's frozen threshold and near_line against this observation — never overwritten by a later user override. Always null for an event slot: the engine never computes an event verdict. Also null for any slot whenever lookup_status is not ok, because there is no fresh observation to evaluate."
+    },
+    "final_verdict": {
+      "enum": ["met", "near_line", "not_met", "unknown"],
+      "description": "The verdict of record. For a numeric slot with no user_response this equals engine_verdict (or unknown when the lookup did not succeed); confirmed keeps engine_verdict under verdict_source user; overridden always becomes not_met. For an event slot this is unknown until the user answers yes (met) or no (not_met) — store, never infer."
+    },
+    "verdict_source": {
+      "enum": ["engine", "user"],
+      "description": "Whether final_verdict came from the engine's own comparison or from the user's response on this check."
+    },
+    "user_response": {
+      "allOf": [{"$ref": "#/$defs/user_response"}],
+      "description": "The user's response to this check, when one was given."
+    },
+    "created": {
+      "type": "string",
+      "description": "Matches date_end — the same 'created' convention every other row in this store's family uses."
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lookup_status"],
+      "description": "What an agent may place on the check envelope. Everything else in this document is engine-assigned; supplying it is an error.",
+      "properties": {
+        "lookup_status": {"enum": ["ok", "failed", "not_checked"]},
+        "reason": {"type": "string", "maxLength": 500},
+        "observation": {"$ref": "#/$defs/observation"},
+        "user_response": {"$ref": "#/$defs/user_response"}
+      }
+    }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["as_of", "source"],
+      "description": "One evidence record for this check. Exactly one of value (numeric slot) or summary (event slot) must be present — never both, never neither; conditions.py fails closed on the mismatch.",
+      "properties": {
+        "value": {"type": "number", "description": "Numeric slots only."},
+        "summary": {"type": "string", "maxLength": 500, "description": "Event slots only."},
+        "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date the figure or fact describes, not the date it was read."},
+        "source": {"type": "string", "minLength": 1},
+        "period": {"type": "string", "description": "Period identity (fiscal quarter, month). Half of what identifies new information from a re-worded same-period result."},
+        "document": {"type": "string", "description": "Document identity (filing, release). The other half."}
+      }
+    },
+    "user_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answer", "answered_at"],
+      "description": "The user's reaction to this check. answer's vocabulary depends on the slot's kind: confirmed/overridden for numeric, yes/no for event — conditions.py fails closed on the wrong kind's vocabulary.",
+      "properties": {
+        "answer": {"enum": ["confirmed", "overridden", "yes", "no"]},
+        "note": {"type": "string", "maxLength": 500},
+        "answered_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+      }
+    }
+  }
+}
