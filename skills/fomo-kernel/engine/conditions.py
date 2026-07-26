@@ -523,12 +523,16 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
     exactly like ``build_slot``).
 
     A lookup that did not succeed this period (``failed`` / ``not_checked``)
-    forbids ``observation`` and reports ``final_verdict="unknown"``
-    unconditionally: there is no fresh evidence this period for a user to
-    confirm, override, or answer against, whatever else the envelope carries.
-    An override rejects a met/near_line finding but never touches
-    ``engine_verdict`` — the engine's own read is not overwritten, only
-    out-voted for this check's verdict of record."""
+    forbids both ``observation`` and ``user_response``, and reports
+    ``final_verdict="unknown"`` unconditionally: there is no fresh evidence
+    this period for a user to confirm, override, or answer against, so a
+    ``user_response`` attached to a check that found nothing is a
+    contradiction, not content. Storing one anyway would let an append-only
+    row carry a ``user_response`` beside ``final_verdict="unknown"`` forever —
+    a state every future reader would have to special-case. An override
+    rejects a met/near_line finding but never touches ``engine_verdict`` — the
+    engine's own read is not overwritten, only out-voted for this check's
+    verdict of record."""
     if not isinstance(raw, dict):
         raise ConditionError("commitment.check must be an object")
     unknown = set(raw) - _CHECK_FIELDS
@@ -547,6 +551,7 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
         raise ConditionError("check.reason is longer than 500 characters")
 
     observation_raw = raw.get("observation")
+    user_response_raw = raw.get("user_response")
     if lookup_status == "ok":
         if observation_raw is None:
             raise ConditionError("check.observation is required when lookup_status is ok")
@@ -554,9 +559,12 @@ def build_check(raw, *, slot, previous, check_id, session_id=None, date_end):
     else:
         if observation_raw is not None:
             raise ConditionError("check.observation is forbidden unless lookup_status is ok")
+        if user_response_raw is not None:
+            raise ConditionError("check.user_response requires a successful lookup — "
+                                 "there is no evidence to answer against")
         observation = None
 
-    user_response = _user_response(raw.get("user_response"), kind)
+    user_response = _user_response(user_response_raw, kind)
 
     check = {"check_id": _text(check_id, "check_id"), "slot_id": _text(slot["slot_id"], "slot_id"),
              "session_id": session_id or None, "date_end": _text(date_end, "date_end"),

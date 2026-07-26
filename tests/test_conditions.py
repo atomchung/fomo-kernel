@@ -13,7 +13,8 @@ What this file settles:
   E. Everything that cannot be settled fails closed with a message naming the field.
   F. A re-stated criterion is a new slot row on the same line (the `revises`
      chain), and a reader tolerates a fork rather than raising on one.
-  G. A check's lookup_status branches, and only `ok` may carry an observation.
+  G. A check's lookup_status branches, and only `ok` may carry an observation
+     or a user_response — a non-ok lookup has no fresh evidence for either.
   H. A check's observation is either numeric (`value`) or textual (`summary`),
      never both, never neither, and never the other kind's shape.
   I. A check's user_response vocabulary depends on the slot's kind.
@@ -21,7 +22,10 @@ What this file settles:
      user-overridden (which never rewrites engine_verdict), or — for an event
      slot with no answer yet — honestly unknown rather than guessed.
   K. information_state: new_period / restated / no_new_data, compared against
-     the previous ok-check or, absent one, the slot's own baseline.
+     the previous ok-check or, absent one, the slot's own baseline — including
+     probes pinning that the marker comparison is genuine numeric equality
+     (0.3 == 0.30; +0.0 == -0.0) and not a magnitude/scale-tolerant proxy of it
+     (30 != -30; 30 != 3000).
   L. The check store: previous_check_for across a revision boundary, and
      load_checks' tolerance for corruption and a missing file.
   M. The firewall is physical: conditions.py never imports problems.
@@ -472,6 +476,20 @@ def test_check_envelope_rejects_an_unknown_field():
     _check_rejects("unknown fields", extra_field="nope")
 
 
+def test_user_response_requires_a_successful_lookup():
+    """External review (round 1), BLOCK: a lookup that did not succeed has no
+    fresh evidence this period for a user to confirm, override, or answer
+    against. Without this gate, an append-only row could carry a
+    user_response beside final_verdict="unknown" forever — a contradiction
+    every future reader would have to special-case."""
+    _check_rejects("check.user_response requires a successful lookup",
+                   lookup_status="failed", observation=None,
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+    _check_rejects("check.user_response requires a successful lookup",
+                   lookup_status="not_checked", observation=None,
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+
+
 # ───────────────── H. an observation is numeric xor textual, never both ─────────────────
 
 def test_a_numeric_slot_check_rejects_a_summary_only_observation():
@@ -665,6 +683,54 @@ def test_as_of_is_the_effective_period_when_there_is_no_reporting_period():
     assert same["information_state"] == "no_new_data", "identical as_of, source, and value: nothing new"
 
 
+# External review (round 1), MARK: the numeric marker comparison had no test
+# pinning that it is genuine numeric equality, not some textual proxy of it.
+# All four probes below hold period and document fixed and vary only the
+# marker, so each one isolates the marker comparison specifically.
+
+def _marker_probe(first_value, second_value):
+    obs_1 = {"value": first_value, "as_of": "2026-08-20", "source": "quote",
+             "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+    obs_2 = {"value": second_value, "as_of": "2026-08-27", "source": "quote",
+             "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+    first = _check(observation=obs_1)
+    return _check(previous=first, observation=obs_2)
+
+
+def test_marker_0_3_and_0_30_are_the_same_value_not_different_text():
+    assert _marker_probe(0.3, 0.30)["information_state"] == "no_new_data"
+
+
+def test_marker_30_and_negative_30_are_different_values():
+    """Guards specifically against copy-pasting restates_threshold's
+    magnitude-only (abs-value) comparison style into this gate: that style is
+    correct for detecting a threshold leak (#412, restates_threshold), but
+    wrong here — a swing from +30 to -30 is not "the same number, unsigned",
+    it is a completely different reading."""
+    assert _marker_probe(30, -30)["information_state"] == "restated"
+
+
+def test_marker_30_and_3000_are_different_values():
+    """Guards against a scale-tolerant comparison (the same restates_threshold
+    precedent checks value*100/value/100 for a percent-vs-decimal leak) being
+    reused here, where it would wrongly treat a 100x change as "the same
+    number at a different scale"."""
+    assert _marker_probe(30, 3000)["information_state"] == "restated"
+
+
+def test_marker_positive_and_negative_zero_are_the_same_value():
+    """The genuinely mutation-sensitive pin. 0.3 and 0.30 parse to the exact
+    same float and Python's str() of that one float object is necessarily
+    identical either way (str(0.3) == str(0.30) == '0.3') — no implementation
+    of the marker comparison, correct or broken, can tell those two apart, so
+    that probe alone cannot catch a comparison that silently degraded to
+    string equality. 0.0 and -0.0 can: they are numerically equal
+    (0.0 == -0.0) but stringify to different text ('0.0' vs '-0.0'), so this
+    is the pair that actually goes red under a stringify mutation — see the
+    mutation-verification log in the PR body."""
+    assert _marker_probe(0.0, -0.0)["information_state"] == "no_new_data"
+
+
 # ───────────────────────── L. the check store ─────────────────────────
 
 def test_previous_check_for_resolves_the_previous_ok_check_on_the_same_line():
@@ -748,6 +814,30 @@ def test_condition_check_schema_pins_the_same_vocabulary_as_the_code():
     assert set(schema["properties"]["verdict_source"]["enum"]) == set(conditions.VERDICT_SOURCES)
     answers = set(schema["$defs"]["user_response"]["properties"]["answer"]["enum"])
     assert answers == set(conditions.NUMERIC_ANSWERS) | set(conditions.EVENT_ANSWERS)
+    # External review (round 1), MARK: the answer enum pools two kinds'
+    # vocabularies; the split itself is engine-enforced (_user_response), and
+    # the schema should say so rather than silently look wider than the code.
+    assert "$comment" in schema["$defs"]["user_response"]["properties"]["answer"]
+
+
+def test_check_observation_schema_expresses_the_value_summary_xor():
+    """External review (round 1), MARK: the code already enforces value XOR
+    summary (_check_observation); the schema should say so structurally, not
+    only in prose. This suite has no jsonschema validator (per this schema
+    file's own docstring) and none is added here — a structural read of the
+    oneOf shape is the pin, mirroring this file's existing
+    "no jsonschema dependency, pin the vocabulary" idiom."""
+    schema = _schema("condition-check.schema.json")
+    one_of = schema["$defs"]["observation"]["oneOf"]
+    assert len(one_of) == 2, "value XOR summary is exactly two alternatives"
+    # Pair each branch's own required with its own forbidden — not just
+    # independent membership across the two branches, which could pass on a
+    # mismatched (and useless) pairing too.
+    branches = {frozenset(b["required"]): frozenset(b["not"]["required"]) for b in one_of}
+    assert branches.get(frozenset({"value"})) == frozenset({"summary"}), \
+        "the value branch must require value and forbid summary"
+    assert branches.get(frozenset({"summary"})) == frozenset({"value"}), \
+        "the summary branch must require summary and forbid value"
 
 
 def test_produced_check_rows_match_the_schemas_declared_shape():

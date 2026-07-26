@@ -79,7 +79,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["as_of", "source"],
-      "description": "One evidence record for this check. Exactly one of value (numeric slot) or summary (event slot) must be present — never both, never neither; conditions.py fails closed on the mismatch.",
+      "description": "One evidence record for this check. Exactly one of value (numeric slot) or summary (event slot) must be present — never both, never neither; the oneOf below expresses that XOR at the schema level, and conditions.py's _check_observation is the enforcement (offline suite has no jsonschema validator to run this schema for real).",
       "properties": {
         "value": {"type": "number", "description": "Numeric slots only."},
         "summary": {"type": "string", "maxLength": 500, "description": "Event slots only."},
@@ -87,7 +87,11 @@
         "source": {"type": "string", "minLength": 1},
         "period": {"type": "string", "description": "Period identity (fiscal quarter, month). Half of what identifies new information from a re-worded same-period result."},
         "document": {"type": "string", "description": "Document identity (filing, release). The other half."}
-      }
+      },
+      "oneOf": [
+        {"required": ["value"], "not": {"required": ["summary"]}},
+        {"required": ["summary"], "not": {"required": ["value"]}}
+      ]
     },
     "user_response": {
       "type": "object",
@@ -95,7 +99,10 @@
       "required": ["answer", "answered_at"],
       "description": "The user's reaction to this check. answer's vocabulary depends on the slot's kind: confirmed/overridden for numeric, yes/no for event — conditions.py fails closed on the wrong kind's vocabulary.",
       "properties": {
-        "answer": {"enum": ["confirmed", "overridden", "yes", "no"]},
+        "answer": {
+          "enum": ["confirmed", "overridden", "yes", "no"],
+          "$comment": "This four-value enum pools two mutually exclusive vocabularies: confirmed/overridden apply only to a numeric slot's check, yes/no only to an event slot's. conditions.py's _user_response (called from build_check) is the single source of truth for which pair is legal for which slot kind, and fails closed on the wrong kind's vocabulary (tests/test_conditions.py section I). Not expressible as a schema-level split here, because this document — a check — does not carry the slot's kind; only the paired slot row does."
+        },
         "note": {"type": "string", "maxLength": 500},
         "answered_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
       }
