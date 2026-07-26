@@ -30,6 +30,8 @@ The engine prefills `ticker`, `maturity:"inferred"`, and provenance. Never prese
 
 Present each candidate's engine-authored `grounding` sentence verbatim when the payload carries one — that is what ties a generic rule to this user's real positions — and never invent a grounding for a candidate that has none. When `card_plan.candidate_comparison` is present, show that one sentence once alongside the candidates: it explains why the others ranked lower on this period's severity ranking, not which rule is objectively right for this user, so do not rephrase it into an endorsement.
 
+If the rule they write names a quantity the engine does not compute, it is stored rather than refused — look the quantity up in that same exchange, show the value back, and send it as a condition slot (`references/condition-slots.md`).
+
 If the user states their own single-position cap here ("my limit is 25%"), record it with `review.py set-cap` per `references/data-contract.md` so future reviews reconcile against their number. Do not add a card note explaining the threshold.
 
 **7. Write the choice to `answers.commitment` and `finalize`.** Return the review card (`card-private.md`) per the same delivery contract. Return the share-safe artifact only if the user asks; do not imply the product publishes it.

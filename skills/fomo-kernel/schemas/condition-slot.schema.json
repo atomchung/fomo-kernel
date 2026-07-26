@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/condition-slot.schema.json",
+  "title": "Fomo Kernel Condition Slot",
+  "description": "One condition the user committed to that the engine's own metrics cannot compute (#412). The readable contract; skills/fomo-kernel/engine/conditions.py holds the enforcement, because the offline suite carries no jsonschema dependency. Two shapes appear here: `input` is what an agent may put on commitment.condition, and the rest of the document is the durable row stored in <root>/conditions.jsonl.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slot_id", "criterion", "query", "created", "tier"],
+  "properties": {
+    "slot_id": {
+      "type": "string",
+      "description": "Engine-assigned identity, derived from the session id. Slots carry their own identity and never join through session.PKEY."
+    },
+    "criterion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The user's own words, stored and displayed verbatim and never translated (#396). Stating it as a yes/no threshold is correct and is never rewritten."
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A neutral factual lookup, authored once at commit time and frozen for replayability. Never the criterion restated as a question: a yes/no lookup biases retrieval toward confirmation, returning a real event, a real source, and a wrong date. The engine refuses a query carrying threshold.value."
+    },
+    "created": {"type": "string", "description": "The review's date_end, matching a rules.jsonl row's `created`."},
+    "session_id": {"type": "string", "description": "The session that created the slot."},
+    "tier": {
+      "enum": ["derived", "fetched", "researched", "unmapped"],
+      "description": "Derived from evidence by the engine, never declared by an agent. derived = computed from the user's own trade records; fetched = external feed (prices today); researched = agent lookup, adjudicated with two-sided reasoning; unmapped = committed to, and honestly not watchable."
+    },
+    "unmapped_reason": {
+      "enum": ["no_threshold", "no_baseline"],
+      "description": "Present exactly when tier is unmapped. no_threshold: the criterion carries no numeric line to compare against. no_baseline: nothing was found to anchor it at commit time."
+    },
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "direction"],
+      "description": "The comparison, structured — so the engine performs it rather than an agent asserting the answer.",
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"type": "string", "minLength": 1, "description": "Free text as the user means it: %, USD, x, days."},
+        "direction": {"enum": ["below", "above"], "description": "Which side of the line means the condition is met."}
+      }
+    },
+    "near_line": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Margin, in threshold units, inside which a not-yet-met condition still deserves a question. Frozen at creation: left adjustable it becomes a hidden lever over how often the user is asked. Defaults to 10% of |threshold.value|."
+    },
+    "baseline": {"$ref": "#/$defs/observation"},
+    "baseline_verdict": {
+      "enum": ["met", "near_line", "not_met", "unknown"],
+      "description": "The engine's comparison at commit time. `met` means the user has committed to a line that is already crossed — a decision to make now, not a tripwire to watch."
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterion", "query"],
+      "description": "What an agent may place on answers.commitment.condition. Everything else in this document is engine-assigned; supplying it is an error.",
+      "properties": {
+        "criterion": {"type": "string", "minLength": 1},
+        "query": {"type": "string", "minLength": 1},
+        "threshold": {"$ref": "#/properties/threshold"},
+        "near_line": {"type": "number", "minimum": 0},
+        "observation": {"$ref": "#/$defs/observation"}
+      }
+    }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "as_of", "source"],
+      "description": "One evidence record. source + as_of is the same provenance anchor #414's public_fact tag requires and the price envelope already uses.",
+      "properties": {
+        "value": {"type": "number"},
+        "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date the figure describes, not the date it was read."},
+        "source": {"type": "string", "minLength": 1},
+        "period": {"type": "string", "description": "Period identity (fiscal quarter, month). Half of what a later check uses to tell new information from the same period re-worded."},
+        "document": {"type": "string", "description": "Document identity (filing, release). The other half."}
+      }
+    }
+  }
+}

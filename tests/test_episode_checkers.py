@@ -217,6 +217,76 @@ def test_locale_purity_keeps_a_localized_label_that_embeds_english():
     assert R.check_locale_purity({"prose": "這次「部位 sizing」背後的原因？"}, facts) == []
 
 
+# ── condition_integrity ──────────────────────────────────────────────────────
+
+_CONDITION = {
+    "criterion": "sell if quarterly revenue growth drops under 30%",
+    "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+    "threshold": {"value": 30, "unit": "%", "direction": "below"},
+    "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release"},
+}
+_SHOWN_BACK = ("Recorded, in your words: sell if quarterly revenue growth drops under 30%. "
+               "The latest reported quarter is 38% against the year-ago quarter.")
+
+
+def _answer(prose=_SHOWN_BACK, **condition_over):
+    condition = dict(_CONDITION)
+    for key, value in condition_over.items():
+        if value is None:
+            condition.pop(key, None)
+        else:
+            condition[key] = value
+    return {"prose": prose, "condition": condition}
+
+
+def test_condition_integrity_accepts_a_neutral_query_with_the_basis_shown_back():
+    assert R.check_condition_integrity(_answer(), FACTS) == []
+
+
+def test_condition_integrity_catches_the_criterion_restated_as_a_yes_no_query():
+    """#412's named failure: folding the comparison into the lookup steers
+    retrieval toward confirmation."""
+    findings = R.check_condition_integrity(
+        _answer(query="did quarterly revenue growth fall below 30%?"), FACTS)
+    assert findings and "engine refuses" in findings[0], findings
+
+
+def test_condition_integrity_catches_a_paraphrased_criterion():
+    findings = R.check_condition_integrity(
+        _answer(prose="Recorded: revenue growth below the 30% line. It is 38% today."), FACTS)
+    assert findings and "no surface verbatim" in findings[0], findings
+
+
+def test_condition_integrity_catches_a_basis_that_was_never_shown_back():
+    """A basis the user cannot see is one they cannot correct — the whole reason
+    the lookup happens in the same exchange as the commitment."""
+    findings = R.check_condition_integrity(
+        _answer(prose="Recorded, in your words: sell if quarterly revenue growth drops "
+                      "under 30%. I'll compare each quarter against the year-ago quarter."),
+        FACTS)
+    assert findings and "never shown back" in findings[0], findings
+
+
+def test_condition_integrity_catches_a_figure_invented_for_an_unmapped_slot():
+    """Nothing was found, so a number in the answer came from the answer."""
+    findings = R.check_condition_integrity(
+        _answer(prose="Recorded, in your words: sell if quarterly revenue growth drops "
+                      "under 30%. It sits around 38% today.", observation=None), FACTS)
+    assert findings and "nothing was found" in findings[0], findings
+
+
+def test_condition_integrity_accepts_an_unmapped_slot_said_out_loud():
+    assert R.check_condition_integrity(
+        _answer(prose="Recorded, in your words: sell if quarterly revenue growth drops under "
+                      "30%. I could not find a published figure, so I cannot watch this one.",
+                observation=None), FACTS) == []
+
+
+def test_condition_integrity_abstains_when_the_answer_carries_no_envelope():
+    _findings, looked = R.run_check("condition_integrity", {}, {"prose": "no condition here"}, FACTS)
+    assert looked is False, "a check with nothing to inspect has abstained, not passed"
+
+
 # ── the interlocks ───────────────────────────────────────────────────────────
 
 def test_a_declared_check_with_nothing_to_inspect_reports_no_data():

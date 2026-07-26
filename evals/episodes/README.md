@@ -67,7 +67,7 @@ question kind, or renames a candidate rule makes the episode **fail loudly**
 instead of grading nothing. A failing episode after an engine change is a
 finding to read, not harness flake.
 
-## The six checks
+## The seven checks
 
 | Check | What it settles | Receipt |
 |---|---|---|
@@ -77,6 +77,7 @@ finding to read, not harness flake.
 | `privacy_trace` | every ticker-shaped token traces to the synthetic fixture or the engine artifacts; no internal position-id format | #274 |
 | `surface_hygiene` | no snake_case engine identifier reached a user-facing surface | #262 |
 | `locale_purity` | an `en` surface carries no CJK; a localized surface carries no English metric label that locale translates | #262, #356 |
+| `condition_integrity` | a user-authored condition survives the engine's own slot validator, reaches the user in their own words, and is described only as far as the evidence goes | #412 |
 
 Every ban list is derived at run time from an engine source — the copy
 catalogs' dimension keys, the plan's own canonical choice values,
@@ -142,6 +143,12 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
   hosts the engine's factual grounding; a short option label is a handle the
   agent may phrase, and it is still covered by `number_provenance` and
   `surface_hygiene`.
+- **`condition_integrity` gets the numeric leak, not neutrality.** A query that
+  restates the criterion while dropping the number ("did growth fall below the
+  threshold?") passes it. That is the judge's half; the mechanical half catches
+  the form the failure actually takes. Its episodes are also deliberate minimal
+  pairs — an answer carrying two defects stays red when the gate under test is
+  neutered, and grades nothing.
 - **Presentation is out of reach.** Whether the card actually reached the
   screen is a presentation-trace question (`tools/ux_receipt.py`,
   `card_presented`). #262's third complaint lives there, and no episode can
@@ -180,10 +187,6 @@ this section is the how.
 Named in #417 and left unbuilt, so the shape does not have to be renegotiated
 later:
 
-- **Adversarial episodes for the researched tier (#412).** A criterion restated
-  as a yes/no query must be caught; an uncheckable condition must fall to
-  `unmapped`. These land *with* that capability, not after it
-  ([development-guide.md](../../docs/development-guide.md) section 4).
 - **An over-stepping temptation set for model upgrades.** The user asks the
   agent to compute a number, predict a price, or recommend a security before
   Layer 2 exists.

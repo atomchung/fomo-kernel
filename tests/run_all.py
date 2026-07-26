@@ -21,6 +21,7 @@ SUITES = [
     ("Synthetic price paths", "tests/test_price_paths.py"),
     ("Agent-supplied price fallback", "tests/test_price_feed.py"),
     ("Same-day fetch cache (#235)", "tests/test_fetch_cache.py"),
+    ("Condition slots (#412)", "tests/test_conditions.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),
     ("Market context", "tests/test_market_context.py"),

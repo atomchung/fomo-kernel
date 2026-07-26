@@ -1764,9 +1764,12 @@ def position_observables(holdings, last_px, date_end, prices=None, markets=None)
     Measurements, not diagnoses. They carry no direction and no threshold, so
     whatever condition references them supplies both — unlike the five
     diagnostic dimensions, which fuse "what is measured" with "what counts as
-    wrong". They exist because ``state.metrics`` is the ceiling on what a user
-    may commit to (``review.py`` rejects a ``metric_key`` absent from it), and
-    until now that ceiling was the diagnostic dimensions alone.
+    wrong". They exist because ``state.metrics`` is the ceiling on what the
+    engine can *reconcile mechanically* (``review.py`` rejects a ``metric_key``
+    absent from it), and until now that ceiling was the diagnostic dimensions
+    alone. It stopped being the ceiling on what a user may *commit to* when
+    condition slots landed: a condition outside this catalog is now stored and
+    adjudicated with evidence rather than refused (``conditions.py``, #412).
 
     Aggregation follows ``max_pos_pct``: reduce the per-ticker series to one
     scalar plus the ticker it came from, so a condition can name the position.

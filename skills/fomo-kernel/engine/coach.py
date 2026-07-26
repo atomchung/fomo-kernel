@@ -408,6 +408,7 @@ DATA_FILES = [
     ("profile.md", "text", "交易目標 + 個人原則(第一次復盤時建立,Claude 直接寫檔)"),
     ("profile.json", "json", "標準版偏好(如自訂單一部位上限 max_position_pct;review.py set-cap 寫入,#324)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
+    ("conditions.jsonl", "jsonl", "引擎算不出來、但你仍然承諾要盯的條件(#412;含你自己的原話與當時的基準值)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
     ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),

@@ -70,7 +70,7 @@
       "uniqueItems": true,
       "items": {
         "enum": ["number_provenance", "grounding_fidelity", "honesty_coverage",
-                 "privacy_trace", "surface_hygiene", "locale_purity"]
+                 "privacy_trace", "surface_hygiene", "locale_purity", "condition_integrity"]
       },
       "description": "The mechanical validators that bear on this episode. A declared check with nothing to inspect fails the episode."
     },
@@ -122,6 +122,10 @@
             "type": "object",
             "description": "honesty key -> the one digit-free sentence that disclosed it.",
             "additionalProperties": {"type": "string"}
+          },
+          "condition": {
+            "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
+            "description": "#412: the condition envelope this answer would have sent the engine. Not a surface the user reads — condition_integrity grades it against the engine's own validator, and against what the prose claims about it."
           }
         }
       }

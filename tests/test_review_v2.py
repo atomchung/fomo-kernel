@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "tests" / "agent"))
 import card_renderer  # noqa: E402
 import instruments  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
+import problems as problems_engine  # noqa: E402
 import review as review_engine  # noqa: E402
 import session as session_engine  # noqa: E402
 import thesis as thesis_engine  # noqa: E402
@@ -2806,6 +2807,166 @@ def test_user_may_commit_to_a_neutral_observable_outside_the_diagnostic_dimensio
         assert committed["goal"] == "up", "the condition supplies direction, not the observable"
 
 
+_CONDITION = {
+    "criterion": "sell if quarterly revenue growth drops under 30%",
+    "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+    "threshold": {"value": 30, "unit": "%", "direction": "below"},
+    "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "Q1 FY2027 press release",
+                    "period": "FY2027Q1", "document": "8-K 2026-05-20"},
+}
+
+
+def _finalize_with(tmp, root, commitment, language="en"):
+    plan = _prepare(tmp, root, language=language)
+    answers = _answers(plan)
+    answers["commitment"] = commitment
+    answers_path = pathlib.Path(tmp) / "answers.json"
+    narrative_path = pathlib.Path(tmp) / "narrative.json"
+    answers_path.write_text(json.dumps(answers), encoding="utf-8")
+    narrative_path.write_text(json.dumps(_narrative(language)), encoding="utf-8")
+    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                "--answers", answers_path, "--narrative", narrative_path)
+
+
+def test_a_condition_the_engine_cannot_compute_is_stored_instead_of_refused():
+    """#412: the commitment gate used to have two exits — an engine metric, or
+    ReviewError. The condition a user reaches for that the engine cannot compute
+    is the most informative input a review receives, and it was the one thing
+    thrown away.
+
+    Also pins the firewall in the same run: the slot goes to conditions.jsonl and
+    *not* to rules.jsonl, because `problems.check_rules` reconciles that file
+    against problem events every period and a researched condition has no problem
+    key to join on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        final = _finalize_with(tmp, root, {"choice": "custom", "condition": _CONDITION})
+        assert final.returncode == 0, \
+            "a condition outside state.metrics must be stored, not refused:\n" + final.stdout + final.stderr
+        assert json.loads(final.stdout)["status"] == "committed"
+
+        rows = [json.loads(line) for line in
+                (root / "conditions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(rows) == 1, rows
+        slot = rows[0]
+        assert slot["criterion"] == _CONDITION["criterion"], "the user's words are stored verbatim"
+        assert slot["tier"] == "researched", slot
+        assert slot["baseline_verdict"] == "not_met", "38% is clear of a 30% line"
+        assert slot["baseline"]["source"] and slot["baseline"]["as_of"], \
+            "the evidence anchor is source + as-of date (#414's public_fact shape)"
+        assert slot["near_line"] == 3.0, "the margin is frozen at creation, not left adjustable"
+
+        assert not (root / "rules.jsonl").exists() or not [
+            line for line in (root / "rules.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()], "a condition slot must never become a rules.jsonl row"
+        stats = problems_engine.snapshot(str(root / "problems.jsonl"), str(root / "rules.jsonl"),
+                                         today="2026-07-14")
+        assert not stats["rules_check"], \
+            "a researched condition must not appear in the mechanical rule reconciliation"
+
+
+def test_a_stored_condition_reaches_the_users_own_words_but_never_the_public_card():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        condition = dict(_CONDITION,
+                         criterion="sell PLTR if quarterly revenue growth drops under 30%")
+        final = _finalize_with(tmp, root, {"choice": "custom", "condition": condition})
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        private = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
+        public = pathlib.Path(result["public_card"]).read_text(encoding="utf-8")
+        assert condition["criterion"] in private, "the private card prints the criterion verbatim"
+        for fragment in ("PLTR", "30%", "press release"):
+            assert fragment not in public, f"condition leaked {fragment!r} into the public card"
+
+
+def test_a_stored_condition_is_read_back_into_the_next_review():
+    """The record is the product: a condition nobody reads back is a promise
+    made into a file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        assert _finalize_with(tmp, root, {"choice": "custom", "condition": _CONDITION}).returncode == 0
+        later = _prepare(tmp, root, language="en")
+        slots = later["state_snapshot"]["condition_slots"]
+        assert [row["criterion"] for row in slots] == [_CONDITION["criterion"]]
+        assert slots[0]["query"] == _CONDITION["query"], \
+            "the query is frozen at creation; re-deriving it later reintroduces the restate risk"
+
+
+def test_a_condition_that_could_not_be_looked_up_is_stored_as_unmapped():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        blind = {key: value for key, value in _CONDITION.items() if key != "observation"}
+        final = _finalize_with(tmp, root, {"choice": "custom", "condition": blind})
+        assert final.returncode == 0, final.stdout + final.stderr
+        slot = json.loads((root / "conditions.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert (slot["tier"], slot["unmapped_reason"]) == ("unmapped", "no_baseline")
+        assert "baseline_verdict" not in slot, \
+            "nothing was looked up, so nothing may read as checked and fine"
+
+
+def _commitment_plan():
+    return {"session_id": "2026-07-14__abc123", "engine_state": {"date_end": "2026-07-14",
+                                                                 "metrics": {"max_pos_pct": 0.4}},
+            "card_plan": {"candidate_rules": []}, "question_queue": []}
+
+
+def test_a_condition_cannot_be_smuggled_in_beside_an_engine_metric():
+    plan = _commitment_plan()
+    try:
+        review_engine._resolve_commitment(
+            plan, {"commitment": {"choice": "custom", "rule": "cap at 20%",
+                                  "metric_key": "max_pos_pct", "condition": _CONDITION}})
+    except review_engine.ReviewError as exc:
+        assert "either a metric_key or a condition" in str(exc), exc
+    else:
+        raise AssertionError("two anchors means two answers to what this review tracked")
+
+
+def test_a_condition_cannot_replace_a_mechanically_tracked_rule():
+    """`revise_rule` retires a rule the Opportunity Check reconciles every
+    period. Letting a slot take its place would silently move it somewhere
+    `held_streak` can never count."""
+    plan = _commitment_plan()
+    plan["question_queue"] = [{"id": "q1", "kind": "rule_breach", "rule_id": "rule-abc-0",
+                               "problem_key": "oversize"}]
+    answers = {"commitment": {"choice": "custom", "condition": _CONDITION,
+                              "revises_rule_id": "rule-abc-0"},
+               "answers": [{"question_id": "q1", "choice": "revise_rule", "note": "too tight"}]}
+    try:
+        review_engine._resolve_commitment(plan, answers)
+    except review_engine.ReviewError as exc:
+        assert "cannot enter the rule reconciliation" in str(exc), exc
+    else:
+        raise AssertionError("a slot must not be accepted as a revise_rule replacement")
+
+
+def test_a_restated_criterion_is_refused_at_the_answer_boundary():
+    """The gate belongs where the payload arrives, not one layer deeper: the
+    agent gets a message it can act on before anything is committed."""
+    plan = _commitment_plan()
+    leaked = dict(_CONDITION, query="did quarterly revenue growth fall below 30%?")
+    try:
+        review_engine._resolve_commitment(plan, {"commitment": {"choice": "custom",
+                                                                "condition": leaked}})
+    except review_engine.ReviewError as exc:
+        assert "condition slot rejected" in str(exc) and "after retrieval" in str(exc), exc
+    else:
+        raise AssertionError("a query carrying the threshold must be refused")
+
+
+def test_a_paraphrased_rule_beside_the_criterion_is_refused():
+    plan = _commitment_plan()
+    try:
+        review_engine._resolve_commitment(
+            plan, {"commitment": {"choice": "custom", "condition": _CONDITION,
+                                  "rule": "watch revenue growth closely"}})
+    except review_engine.ReviewError as exc:
+        assert "verbatim" in str(exc), exc
+    else:
+        raise AssertionError("the card's rule text and the stored criterion are one string")
+
+
 def _mixed_market_card_for_rendering():
     """Synthetic renderer input with sentinels in every field public copy must ignore."""
     return {
@@ -5253,7 +5414,7 @@ def test_all_json_schemas_parse():
     names = {"review-plan.schema.json", "answers.schema.json", "narrative.schema.json",
              "session-bundle.schema.json", "question-opportunity.schema.json",
              "question-surface.schema.json", "capture.schema.json",
-             "price-feed.schema.json"}
+             "price-feed.schema.json", "condition-slot.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")

@@ -26,6 +26,7 @@ import sys
 import tempfile
 
 import card_renderer
+import conditions
 import horizon
 import ledger
 import price_feed
@@ -2102,6 +2103,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "ledger_ingest": ledger_ingest,
                   "price_feed": _price_feed_status(card)},
         "state_snapshot": {"prior_commitment": (previous or {}).get("commitment"),
+                           # #412: conditions the engine cannot compute, read back
+                           # so the user sees what they committed to. The record is
+                           # the product — a slot nobody reads back is a promise
+                           # made into a file. Per-period adjudication is the check
+                           # flow's job and is not built yet, so these arrive as
+                           # standing facts, never as verdicts.
+                           "condition_slots": conditions.load_slots(
+                               os.path.join(root, "conditions.jsonl")),
                            "review_progress": {
                                "completed_reviews_before_start": completed_reviews,
                                "returning": completed_reviews > 0,
@@ -2708,6 +2717,47 @@ def _build_initial_thesis_events(plan, answers, amap=None):
     return events
 
 
+def _slot_commitment(plan, chosen, condition, expected_revision):
+    """#412: a condition the engine cannot compute becomes a stored slot.
+
+    The metric-shaped fields (`metric_key`, `metric_value`, `goal`, `dim`) are
+    dropped rather than nulled: they exist to join a commitment to an engine
+    metric, and a slot has none — carrying them would be four written-never-read
+    fields inviting a later reader to join on them anyway.
+
+    Two refusals stay, both firewalls rather than validation:
+
+    - A slot cannot replace a rule under `revise_rule`. `problems.check_rules`
+      reconciles that rule mechanically against problem events every period; a
+      researched condition has no problem key to join on, so accepting it would
+      silently retire a tracked rule into something `held_streak` can never
+      count (`docs/development-guide.md` section 5).
+    - A commitment carries a metric_key or a condition, never both. Two anchors
+      means two answers to "what did this review actually track", and the card's
+      then/now reconciliation would have to pick one.
+    """
+    if expected_revision:
+        raise ReviewError("a revise_rule replacement must be tracked by an engine metric; "
+                          "a condition slot cannot enter the rule reconciliation")
+    if chosen.get("metric_key"):
+        raise ReviewError("a commitment carries either a metric_key or a condition, not both")
+    session_id = str(plan.get("session_id") or "")
+    try:
+        slot = conditions.build_slot(
+            condition,
+            slot_id="slot-" + (session_id.split("__")[-1] or "0") + "-0",
+            created=(plan.get("engine_state") or {}).get("date_end"),
+            session_id=session_id or None)
+    except conditions.ConditionError as exc:
+        raise ReviewError(f"condition slot rejected: {exc}")
+    rule = (chosen.get("rule") or "").strip()
+    if rule and rule != slot["criterion"]:
+        # The card prints `rule`; the record stores `criterion`. One of them
+        # being a paraphrase of the other is exactly what #396 forbids.
+        raise ReviewError("commitment.rule must be the condition's criterion, verbatim")
+    return {"rule": slot["criterion"], "origin": "custom", "condition": slot}
+
+
 def _resolve_commitment(plan, answers):
     choice = answers.get("commitment") or {}
     selected = choice.get("choice")
@@ -2731,21 +2781,31 @@ def _resolve_commitment(plan, answers):
             raise ReviewError("a revise_rule answer requires a replacement commitment")
         return None
     candidates = {row["id"]: row for row in (plan.get("card_plan") or {}).get("candidate_rules") or []}
+    condition = choice.get("condition")
     if selected in candidates:
+        if condition is not None:
+            raise ReviewError("a candidate rule is already tracked by an engine metric; "
+                              "a condition slot belongs to a self-authored commitment")
         chosen = dict(candidates[selected])
         chosen["origin"] = "candidate"
     elif selected == "custom":
         chosen = {"rule": (choice.get("rule") or "").strip(), "metric_key": choice.get("metric_key"),
                   "goal": choice.get("goal") or "down", "dim": choice.get("dim"), "origin": "custom"}
-        if not chosen["rule"]:
+        if not chosen["rule"] and condition is None:
             raise ReviewError("custom commitment requires rule")
     else:
         raise ReviewError("commitment.choice must be a candidate id, custom, or skip")
     metrics = (plan.get("engine_state") or {}).get("metrics") or {}
-    if chosen.get("metric_key") not in metrics:
-        raise ReviewError(f"commitment metric is not in engine state: {chosen.get('metric_key')}")
     chosen.pop("id", None)
-    chosen["metric_value"] = metrics.get(chosen["metric_key"])
+    if condition is not None:
+        chosen = _slot_commitment(plan, chosen, condition, expected_revision)
+    elif chosen.get("metric_key") not in metrics:
+        # Still an error, deliberately: a metric_key the engine does not compute
+        # is an agent mistake, not a user's condition. A condition arrives as a
+        # condition (#412).
+        raise ReviewError(f"commitment metric is not in engine state: {chosen.get('metric_key')}")
+    else:
+        chosen["metric_value"] = metrics.get(chosen["metric_key"])
     chosen["source"] = "user_chosen"
     if expected_revision:
         replacement_key = session.PKEY.get(chosen.get("metric_key"))

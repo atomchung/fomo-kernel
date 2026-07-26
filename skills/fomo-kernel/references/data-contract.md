@@ -4,7 +4,7 @@ Authority order:
 
 1. `sessions/<session_id>/bundle.json`: complete immutable session.
 2. State, plan, answers, narrative, private/public cards, and manifest in the same directory: manifest-locked artifacts.
-3. `last_state.json`, `log.jsonl`, `theses.jsonl`, `thesis_decisions.jsonl`, `rules.jsonl`, `problems.jsonl`, and `cards/`: rebuildable compatibility projections.
+3. `last_state.json`, `log.jsonl`, `theses.jsonl`, `thesis_decisions.jsonl`, `rules.jsonl`, `conditions.jsonl`, `problems.jsonl`, and `cards/`: rebuildable compatibility projections.
 
 If prepare is interrupted, read `.pending/<session_id>` through `review.py resume`; do not refetch live prices.
 
