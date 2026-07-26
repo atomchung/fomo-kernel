@@ -1650,6 +1650,55 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
     return events, opportunities
 
 
+def position_observables(holdings, last_px, date_end):
+    """Neutral per-position observables for the metric catalog (#400, #412).
+
+    Measurements, not diagnoses. They carry no direction and no threshold, so
+    whatever condition references them supplies both — unlike the five
+    diagnostic dimensions, which fuse "what is measured" with "what counts as
+    wrong". They exist because ``state.metrics`` is the ceiling on what a user
+    may commit to (``review.py`` rejects a ``metric_key`` absent from it), and
+    until now that ceiling was the diagnostic dimensions alone.
+
+    Aggregation follows ``max_pos_pct``: reduce the per-ticker series to one
+    scalar plus the ticker it came from, so a condition can name the position.
+    A holding missing an input (unknown cycle start, no live price, no average
+    cost) is skipped, and an observable no holding can supply stays ``None`` —
+    never 0, which would read as a measurement that came back clean.
+
+    Keys: ``longest_hold_days`` / ``longest_hold_ticker`` (days the
+    longest-running open position has been held) and ``worst_cur_ret`` /
+    ``worst_cur_ret_ticker`` (deepest return against average cost, negative
+    when under water).
+    """
+    out = {"longest_hold_days": None, "longest_hold_ticker": None,
+           "worst_cur_ret": None, "worst_cur_ret_ticker": None}
+    try:
+        end = dt.date.fromisoformat(str(date_end))
+    except (TypeError, ValueError):
+        return out                                          # no period end → nothing is measurable
+    longest = worst = None
+    for ticker, row in (holdings or {}).items():
+        start = row.get("cycle_start")                      # None on a #unknown cycle (CSV lacks the open)
+        if start:
+            try:
+                days = (end - dt.date.fromisoformat(str(start))).days
+            except (TypeError, ValueError):
+                days = None
+            if days is not None and days >= 0 and (longest is None or days > longest[0]):
+                longest = (days, ticker)
+        avg_cost, px = row.get("avg_cost"), (last_px or {}).get(ticker)
+        if avg_cost and avg_cost > 0 and px is not None:
+            ret = (px - avg_cost) / avg_cost
+            if worst is None or ret < worst[0]:
+                worst = (ret, ticker)
+    if longest:
+        out["longest_hold_days"], out["longest_hold_ticker"] = longest
+    if worst:
+        out["worst_cur_ret"], out["worst_cur_ret_ticker"] = round(worst[0], 4), worst[1]
+    return out
+
+
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
@@ -1721,6 +1770,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                     "add_count": (add_cursors.get(t) or {}).get("add_count", 0),
                     "decision_cursor": (add_cursors.get(t) or {}).get("decision_cursor")}
                 for t, (sh, c) in held.items()}
+    position_obs = position_observables(
+        holdings, last_px, rows[-1]["date"].isoformat() if rows else None)
     p_events, p_opps = build_problem_events(
         dims, rts, avg_down, held, last_px,
         rows[-1]["date"].isoformat() if rows else None, prev_end, rows=rows)
@@ -1756,6 +1807,9 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "alpha_ann": ab.get("alpha_ann"),               # v2(#80):永遠出數;能力語氣由 alpha_credible 管
             "alpha_t": (ab.get("alpha_stat") or {}).get("t"),   # 不確定性一起存,對帳時才知道數字多可信
             "alpha_credible": credible if has_ab else None,
+            # #400/#412:中性可觀測量(無方向、無門檻),條件自帶判準;鍵見 position_observables。
+            # 加觀測量只改該函數,不必再動這張表——目錄本身就是用戶可承諾範圍的天花板。
+            **position_obs,
         },
         "rule": rule,
         "rule_dim": rule_dim,                              # #356:rule 的維度;v2 renderer 據此從 copy "rules" 取當地語系文案(rule 本身是 v1 zh 字面值,不可上卡)

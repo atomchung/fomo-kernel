@@ -539,6 +539,38 @@ def test_build_state_insufficient_sample_no_commitment():
     assert st["commitment"] is None, "樣本不足不該出 commitment"
 
 
+def test_position_observables_name_the_ticker_and_degrade_independently():
+    """#400/#412:中性可觀測量(無方向、無門檻)把目錄從五個診斷維撐開。目錄就是用戶能承諾的
+    天花板——review.py 拒收不在 state.metrics 的 metric_key,所以少一個量就是少一種用戶能
+    追蹤的東西。這裡釘三件事:
+      ① 取極值要帶回是哪一檔(條件才能指名部位,同 max_pos_pct/max_pos_ticker 的既有模式);
+      ② 缺輸入退成 None 而非 0——0 會被下游讀成「量過了、沒事」,那是假綠燈;
+      ③ 兩個量各自降級,不互相拖累(缺價格不該讓持有天數也消失)。"""
+    holdings = {
+        "AAA": {"avg_cost": 100.0, "cycle_start": "2026-01-01"},
+        "BBB": {"avg_cost": 50.0, "cycle_start": "2026-06-01"},
+        "CCC": {"avg_cost": 20.0, "cycle_start": None},          # CSV 缺開倉 → #unknown cycle
+        "DDD": {"avg_cost": None, "cycle_start": "2025-01-01"},  # 缺均成本,但抱最久
+    }
+    px = {"AAA": 80.0, "BBB": 60.0, "CCC": 10.0}                 # DDD 連價格都沒有
+    obs = tr.position_observables(holdings, px, "2026-07-26")
+    assert obs["longest_hold_days"] == 571, f"2025-01-01→2026-07-26 = 571 天,得到 {obs}"
+    assert obs["longest_hold_ticker"] == "DDD", "極值要帶回是哪一檔,否則條件無法指名部位"
+    assert _approx(obs["worst_cur_ret"], -0.5), f"CCC 10/20-1 = -0.5,得到 {obs}"
+    assert obs["worst_cur_ret_ticker"] == "CCC", "最深水下的是 CCC(-50%),不是 AAA(-20%)"
+
+    no_px = tr.position_observables(holdings, {}, "2026-07-26")  # ③ 獨立降級
+    assert no_px["longest_hold_days"] == 571, "缺價格不該拖垮不需要價格的量"
+    assert no_px["worst_cur_ret"] is None, "缺價格必須 None,不可退成 0(會被讀成『沒虧』)"
+    assert no_px["worst_cur_ret_ticker"] is None
+
+    for label, args in (("無期末日", (holdings, px, None)),
+                        ("空持倉", ({}, {}, "2026-07-26")),
+                        ("None 輸入", (None, None, "2026-07-26"))):
+        degraded = tr.position_observables(*args)
+        assert all(v is None for v in degraded.values()), f"{label} 應全 None,得到 {degraded}"
+
+
 # ─────────────────────── J. prescribe():#29 能產 ≥2 候選規矩 ───────────────────────
 
 def test_prescribe_multiple_candidate_rules():
