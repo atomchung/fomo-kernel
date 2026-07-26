@@ -5,11 +5,15 @@
   "description": "One condition the user committed to that the engine's own metrics cannot compute (#412). The readable contract; skills/fomo-kernel/engine/conditions.py holds the enforcement, because the offline suite carries no jsonschema dependency. Two shapes appear here: `input` is what an agent may put on commitment.condition, and the rest of the document is the durable row stored in <root>/conditions.jsonl.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slot_id", "criterion", "query", "created", "tier"],
+  "required": ["slot_id", "kind", "criterion", "query", "created", "tier"],
   "properties": {
     "slot_id": {
       "type": "string",
       "description": "Engine-assigned identity, derived from the session id. Slots carry their own identity and never join through session.PKEY."
+    },
+    "kind": {
+      "enum": ["numeric", "event"],
+      "description": "What sort of condition this is, written on every row because rows are append-only and never rewritten. numeric: a line the engine compares an observation against. event: a yes/no occurrence with no line — the agent brings evidence, the user answers, and that answer is the verdict of record. Inferring the kind from a missing threshold would be permanent and wrong the first time a numeric condition arrives without one."
     },
     "criterion": {
       "type": "string",
@@ -28,8 +32,8 @@
       "description": "Derived from evidence by the engine, never declared by an agent. derived = computed from the user's own trade records; fetched = external feed (prices today); researched = agent lookup, adjudicated with two-sided reasoning; unmapped = committed to, and honestly not watchable."
     },
     "unmapped_reason": {
-      "enum": ["no_threshold", "no_baseline"],
-      "description": "Present exactly when tier is unmapped. no_threshold: the criterion carries no numeric line to compare against. no_baseline: nothing was found to anchor it at commit time."
+      "enum": ["no_threshold", "no_baseline", "no_adjudicator"],
+      "description": "Present exactly when tier is unmapped, and the three differ in what the user should be told. no_threshold: the criterion carries no numeric line, so it cannot be checked mechanically at all. no_baseline: it is watchable in principle, but nothing was found to anchor it, so it is currently blind. no_adjudicator: an event condition, whose verdict is the user's to give — the flow that asks is not built yet."
     },
     "threshold": {
       "type": "object",
@@ -45,9 +49,12 @@
     "near_line": {
       "type": "number",
       "minimum": 0,
-      "description": "Margin, in threshold units, inside which a not-yet-met condition still deserves a question. Frozen at creation: left adjustable it becomes a hidden lever over how often the user is asked. Defaults to 10% of |threshold.value|."
+      "description": "Margin, in threshold units, inside which a not-yet-met condition still deserves a question. Frozen at creation: left adjustable it becomes a hidden lever over how often the user is asked. Defaults to 10% of |threshold.value|, and is required when the threshold is zero (a line at zero has no magnitude to take a fraction of). Zero disables the band rather than pinning it to exact equality."
     },
-    "baseline": {"$ref": "#/$defs/observation"},
+    "baseline": {
+      "allOf": [{"$ref": "#/$defs/observation"}],
+      "description": "What was found at commit time. Kept on every row that has it, watchable or not: it is what someone actually looked up, and dropping it would leave the record thinner than the conversation that produced it."
+    },
     "baseline_verdict": {
       "enum": ["met", "near_line", "not_met", "unknown"],
       "description": "The engine's comparison at commit time. `met` means the user has committed to a line that is already crossed — a decision to make now, not a tripwire to watch."
@@ -58,8 +65,9 @@
       "required": ["criterion", "query"],
       "description": "What an agent may place on answers.commitment.condition. Everything else in this document is engine-assigned; supplying it is an error.",
       "properties": {
-        "criterion": {"type": "string", "minLength": 1},
-        "query": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["numeric", "event"], "description": "Defaults to numeric."},
+        "criterion": {"type": "string", "minLength": 1, "maxLength": 500},
+        "query": {"type": "string", "minLength": 1, "maxLength": 500},
         "threshold": {"$ref": "#/properties/threshold"},
         "near_line": {"type": "number", "minimum": 0},
         "observation": {"$ref": "#/$defs/observation"}

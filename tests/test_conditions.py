@@ -71,6 +71,35 @@ def test_no_threshold_falls_to_unmapped_not_to_a_guess():
     assert slot["criterion"] and slot["query"], "an unwatchable condition is still stored in full"
 
 
+def test_an_unwatchable_condition_keeps_the_evidence_that_was_found():
+    """`stored in full` has to mean it. The observation was validated (source,
+    ISO as-of, numeric value) and it is what someone actually found — dropping it
+    would leave the record thinner than the conversation that produced it."""
+    slot = _slot(threshold=None)
+    assert "baseline" in slot, f"the evidence found at commit time was dropped: {slot}"
+    assert slot["baseline"]["value"] == 38.0, slot
+    assert slot["baseline"]["source"] and slot["baseline"]["as_of"]
+    assert "baseline_verdict" not in slot, "evidence is not a verdict"
+
+
+def test_an_event_condition_says_it_is_one_rather_than_being_inferred():
+    """These rows are append-only and never rewritten. A row that says what it is
+    costs one field; inferring `event` from a missing threshold would be permanent
+    and wrong the first time a numeric condition arrives without one."""
+    slot = _slot(kind="event", criterion="sell if the CEO leaves",
+                 query="who is the current chief executive, and when did they take the role?",
+                 threshold=None, observation=None)
+    assert slot["kind"] == "event"
+    assert (slot["tier"], slot["unmapped_reason"]) == ("unmapped", "no_adjudicator"), \
+        "an event has no line to compare, so its verdict must come from the user — " \
+        "and the flow that asks is not built yet"
+
+
+def test_a_numeric_condition_is_the_default_kind():
+    assert _slot()["kind"] == "numeric"
+    _rejects("condition.kind", kind="researched")
+
+
 def test_nothing_found_at_commit_time_falls_to_unmapped():
     slot = _slot(observation=None)
     assert (slot["tier"], slot["unmapped_reason"]) == ("unmapped", "no_baseline")
@@ -104,7 +133,27 @@ def test_the_threshold_is_matched_by_value_not_by_spelling():
     assert conditions.restates_threshold("revenue of 1,000 in the latest quarter",
                                          {"value": 1000.0}), "thousands separators still leak"
     assert conditions.restates_threshold("margin of 30.0 percent", {"value": 30})
+    assert conditions.restates_threshold("margin of .5 percent", {"value": 0.5}), \
+        "a bare decimal is a quantity however it is spelled"
     assert not conditions.restates_threshold("margin in the latest quarter", {"value": 30})
+
+
+def test_a_negative_line_cannot_slip_past_the_gate():
+    """The number pattern cannot see a minus sign — a leading `-` in real text is
+    a hyphen or a date separator far more often — so the comparison is made on
+    magnitude. Without this, the whole negative-fundamentals class (#412's
+    canonical case) escaped the one mechanical gate the module has."""
+    _rejects("threshold value",
+             criterion="sell if operating margin falls below -5%",
+             threshold={"value": -5, "unit": "%", "direction": "below"},
+             query="did operating margin fall below -5% last quarter?")
+
+
+def test_the_same_line_written_at_another_scale_still_leaks():
+    """0.30 and 30% are the same line; a gate that reads only one spelling would
+    be bypassed by the more natural phrasing."""
+    assert conditions.restates_threshold("did the margin fall below 30%?", {"value": 0.30})
+    assert conditions.restates_threshold("did the margin fall below 0.3?", {"value": 30})
 
 
 # ───────────────────────── C. the engine compares ─────────────────────────
@@ -153,6 +202,30 @@ def test_negative_near_line_is_rejected():
     _rejects("near_line", near_line=-1)
 
 
+def test_a_line_at_zero_must_state_its_own_margin():
+    """"Sell if free cash flow goes negative" has no magnitude to take a tenth of.
+    Defaulting to zero would disable the near-line state for that whole class
+    without ever saying so."""
+    zero = {"value": 0, "unit": "USD", "direction": "below"}
+    _rejects("near_line is required", threshold=zero,
+             criterion="sell if free cash flow goes negative",
+             query="what was free cash flow in the latest reported quarter?")
+    slot = _slot(threshold=zero, near_line=1_000_000.0,
+                 criterion="sell if free cash flow goes negative",
+                 query="what was free cash flow in the latest reported quarter?",
+                 observation={"value": 400000.0, "as_of": "2026-05-20", "source": "10-Q"})
+    assert slot["baseline_verdict"] == "near_line"
+
+
+def test_a_zero_margin_disables_the_band_instead_of_pinning_it_to_equality():
+    """`near_line` exists to ask early. "Ask me at exactly the line and nowhere
+    else" is not a margin anyone chose."""
+    assert conditions.evaluate({"value": 30.0, "direction": "below"}, {"value": 30.0}, 0.0) \
+        == "not_met"
+    assert conditions.evaluate({"value": 30.0, "direction": "below"}, {"value": 30.0}, 1.0) \
+        == "near_line"
+
+
 # ─────────────────────────── E. everything else fails closed ───────────────────────────
 
 def test_provenance_is_mandatory_on_an_observation():
@@ -181,7 +254,9 @@ def test_criterion_and_query_are_both_required():
 
 # ─────────────────────────────── the store ───────────────────────────────
 
-def test_load_slots_skips_a_corrupt_line_instead_of_losing_the_record():
+def test_load_slots_reports_the_lines_it_could_not_read():
+    """Degrading is right; degrading silently is not. A dropped row would make
+    corruption look like a condition the user never wrote."""
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "conditions.jsonl")
         with open(path, "w", encoding="utf-8") as handle:
@@ -189,12 +264,13 @@ def test_load_slots_skips_a_corrupt_line_instead_of_losing_the_record():
             handle.write("{not json\n")
             handle.write('{"no_slot_id": true}\n')
             handle.write('{"slot_id": "slot-b", "criterion": "growth under 30%"}\n')
-        slots = conditions.load_slots(path)
+        slots, unreadable = conditions.load_slots(path)
         assert [row["slot_id"] for row in slots] == ["slot-a", "slot-b"]
+        assert unreadable == 2, "both the unparseable line and the unidentifiable row count"
 
 
 def test_load_slots_on_a_missing_file_is_empty_not_an_error():
-    assert conditions.load_slots(os.path.join("no", "such", "conditions.jsonl")) == []
+    assert conditions.load_slots(os.path.join("no", "such", "conditions.jsonl")) == ([], 0)
 
 
 def _tests():

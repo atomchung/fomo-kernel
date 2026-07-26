@@ -283,9 +283,36 @@ def _problem_ledger(keys, with_rules):
 
 
 # (name, register(s) claimed, builder). `registers` names the top-level
+def _condition_state(verdict=None, reason=None):
+    """#412: the engine's own read of a user-authored condition, on the card.
+
+    No persona reaches this — a condition slot is created by a user writing
+    their own rule, which no mock CSV can do — and it is exactly the branch that
+    must not go quiet: a line already crossed at commit time, or a condition
+    nobody could anchor, has to say so where the rule is printed."""
+    condition = {"slot_id": "corpus", "kind": "event" if reason == "no_adjudicator" else "numeric",
+                 "criterion": "sell if quarterly revenue growth drops under 30%",
+                 "query": "what was the most recent quarterly revenue?",
+                 "tier": "researched" if verdict else "unmapped"}
+    if verdict:
+        condition["baseline_verdict"] = verdict
+    if reason:
+        condition["unmapped_reason"] = reason
+
+    def build(language):
+        return _bundle(language, commitment={
+            "rule": condition["criterion"], "origin": "custom", "condition": condition})
+    return build
+
+
 # `copy/*.json` keys this scene is responsible for lighting; the coverage
 # report below reads them.
 SCENES = (
+    ("condition_state/already_met", ("condition_state",), _condition_state(verdict="met")),
+    ("condition_state/no_threshold", (), _condition_state(reason="no_threshold")),
+    ("condition_state/no_baseline", (), _condition_state(reason="no_baseline")),
+    ("condition_state/no_adjudicator", (), _condition_state(reason="no_adjudicator")),
+    ("condition_state/silent_when_watched", (), _condition_state(verdict="not_met")),
     *[(f"account_gate/{status}", ("account_gate",), _account_gate(status))
       for status in GATE_STATUSES + ("default",)],
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))

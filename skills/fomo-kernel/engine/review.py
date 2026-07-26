@@ -2087,6 +2087,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         problem_stats, rule_history, horizon_markers, route=route,
         missing_thesis_positions=missing, tier=review_tier["tier"])
     candidate_rules = _candidate_rules(card, state, language)
+    condition_slots, slots_unreadable = conditions.load_slots(
+        os.path.join(root, "conditions.jsonl"))
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -2109,8 +2111,11 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            # made into a file. Per-period adjudication is the check
                            # flow's job and is not built yet, so these arrive as
                            # standing facts, never as verdicts.
-                           "condition_slots": conditions.load_slots(
-                               os.path.join(root, "conditions.jsonl")),
+                           "condition_slots": condition_slots,
+                           # Present only when the file lost rows: corruption must
+                           # not read as a condition the user never wrote.
+                           **({"condition_slots_unreadable": slots_unreadable}
+                              if slots_unreadable else {}),
                            "review_progress": {
                                "completed_reviews_before_start": completed_reviews,
                                "returning": completed_reviews > 0,
@@ -2812,7 +2817,10 @@ def _resolve_commitment(plan, answers):
         if replacement_key != expected_revision.get("problem_key"):
             raise ReviewError("replacement commitment must track the same problem_key as the revised rule")
         chosen["revises_rule_id"] = revises_rule_id
-    if (plan.get("engine_state") or {}).get("insufficient_data"):
+    # `insufficient_data` describes this file's round-trip sample, which is what an
+    # engine metric's baseline is computed from. A slot's baseline came from an
+    # outside source and is not affected by it (#412).
+    if (plan.get("engine_state") or {}).get("insufficient_data") and not chosen.get("condition"):
         chosen["baseline_note"] = "short-sample baseline"
     return chosen
 

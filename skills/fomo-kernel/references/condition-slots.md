@@ -36,10 +36,11 @@ Use a recognized source that publishes the figure, the same standard as [price-f
 }
 ```
 
+- **`kind`** *(optional, defaults to `numeric`)* — `numeric` for a line a quantity crosses; `event` for a yes/no occurrence with no line ("sell if the CEO leaves"). An event's verdict is the user's to give — you bring the evidence, they answer — so send `event` rather than inventing a threshold for it. The flow that asks is not built yet, so an event condition is stored and reported as not-yet-watchable.
 - **`criterion`** — the user's sentence, verbatim. Never tidied into the product's phrasing, never translated. If you also send `rule`, it must be the same string.
 - **`query`** — a neutral factual lookup. **Never the criterion restated as a question.** A yes/no lookup (*"did growth fall below 30%?"*) steers retrieval toward confirmation: the search returns the nearest matching real event and attaches it to the timeframe your question supplied, so you get a real figure, a real source, and a wrong date — indistinguishable from a correct answer at the point of use. The engine refuses a query carrying the threshold value. Written once and frozen, so a later check re-reads the same question rather than re-deriving it.
 - **`threshold`** — the comparison, structured, so the engine performs it. `direction` is which side means the condition is met.
-- **`near_line`** *(optional)* — margin in threshold units. Defaults to 10% of the threshold and is frozen at creation.
+- **`near_line`** *(optional)* — margin in threshold units, inside which a not-yet-crossed line still deserves a question. Defaults to 10% of the threshold and is frozen at creation. **Required when the threshold is zero** ("sell if free cash flow goes negative" has no magnitude to take a tenth of).
 - **`observation`** *(optional)* — what you found, with `source` and `as_of` (the date the figure describes, not the date you read it). `period` and `document` are what a later check uses to tell new information from the same quarter re-worded.
 
 The engine assigns the rest — identity, tier, and the comparison at commit time. Do not send them.
@@ -49,10 +50,15 @@ The engine assigns the rest — identity, tier, and the comparison at commit tim
 | What you sent | Result | What to tell the user |
 |---|---|---|
 | threshold + observation | `researched` — stored, anchored, with the commit-time comparison recorded | the value you found, and whether it is already past their line |
-| no numeric threshold | `unmapped` — stored in full | it is in their record, and it is not something that can be checked for them |
-| no observation | `unmapped` — stored in full | you could not find the figure, so this one is currently blind |
+| no numeric threshold | `unmapped` / `no_threshold` | it is in their record, and there is no measurable line in it to check |
+| threshold, no observation | `unmapped` / `no_baseline` | you could not find the figure, so this one is watchable in principle but currently blind |
+| `kind: "event"` | `unmapped` / `no_adjudicator` | it is recorded as a yes-or-no call that stays theirs to make |
 
-`unmapped` is an honest state, not a failure: it says the user committed to something real that we could not check this period. Say so plainly. Never present an unmapped condition as watched, and never state a figure for one — nothing was found, so any number would be yours rather than a source's.
+`unmapped` is an honest state, not a failure: it says the user committed to something real that we could not check this period. Say so plainly, and use the reason — "there is no measurable line in this" and "I could not find the figure" are different things to hear. Never present an unmapped condition as watched, and never state a figure for one — nothing was found, so any number would be yours rather than a source's.
+
+Whatever you found is kept on the row even when the condition is not watchable, so a later review can read what was known at the time.
+
+The card carries one engine-authored line when there is something to say — a line already crossed, or a condition that is not being watched — and stays silent when the condition is simply being watched and is nowhere near its line. You do not write that sentence; do not add your own.
 
 A rejected envelope returns a `ReviewError` naming the field. Fix the envelope and rerun; nothing is committed until finalize succeeds.
 

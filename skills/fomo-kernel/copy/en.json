@@ -115,6 +115,12 @@
     "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge.",
     "sizing_vs_hypothesis": "The cap limits what a single position can cost you, and the sector call is still unverified — not something to back with a bigger single bet."
   },
+  "condition_state": {
+    "already_met": "This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.",
+    "unmapped_no_threshold": "This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you.",
+    "unmapped_no_baseline": "This one is recorded, but the figure behind it could not be found, so it is not being watched yet.",
+    "unmapped_no_adjudicator": "This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you."
+  },
   "patterns_panel": {
     "label": "A pattern, not yet judged (no answer needed)",
     "sold_winner_early": "{early} of the {total} positions you sold kept rising afterwards, most clearly {tickers}."
