@@ -195,15 +195,13 @@ def test_snapshot_span_aware_falls_back_below_three_marks_and_opts_in_above():
     pb.append_book(book, [], {"week": "2026-06-27", "opportunities": {}})
     classic = pb.snapshot(book, today="2026-06-27", span_aware=False)
     spanning = pb.snapshot(book, today="2026-06-27", span_aware=True)
-    assert spanning["window"] is None
     assert spanning["per_key"] == classic["per_key"] and spanning["top"] == classic["top"]
 
-    # A third mark unlocks the span-aware path with a populated window.
+    # A third mark unlocks the span-aware path (see compute_stats_by_marks'
+    # own tests for the populated-window shape this path computes internally).
     pb.append_book(book, [_ev("avgdown_breach", "2026-07-05", "PLTR")],
                    {"week": "2026-07-07", "opportunities": {}})
     spanning2 = pb.snapshot(book, today="2026-07-07", span_aware=True)
-    assert spanning2["window"] is not None
-    assert spanning2["window"]["recent_from"] == "2026-06-27" and spanning2["window"]["recent_to"] == "2026-07-07"
     classic2 = pb.snapshot(book, today="2026-07-07", span_aware=False)
     assert spanning2["per_key"] != classic2["per_key"], \
         "once 3 marks exist, span-aware must diverge from the fixed 4-week window, not silently match it"

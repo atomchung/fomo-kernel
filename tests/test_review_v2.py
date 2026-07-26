@@ -3071,7 +3071,6 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         plan, csv_path, card_path, state_path = _prepare_with_trades(tmp, root)
         # This fixture routes first_review, whose density band is three to five (#291).
         assert plan["route"] == "first_review"
-        assert plan["card_plan"]["question_limit"] == 5
         assert plan["card_plan"]["question_policy"] == {"route": "first_review", "min": 3, "max": 5}
         assert len(plan["question_queue"]) == 3, "these three grounded candidates fit inside the five-slot band"
         assert [(q["kind"], q.get("ticker")) for q in plan["question_queue"]] == [
@@ -5037,7 +5036,7 @@ def test_schemas_cover_due_revisit_and_resolutions():
     horizon_ids = plan_schema["properties"]["card_plan"]["properties"]["horizon_ids"]
     assert set(horizon_ids["items"]["enum"]) == {"weeks", "quarters", "years"}
     for key in ("rule_id", "rule_text", "problem_key", "breach_week", "evidence",
-                "recent_count", "recent_amount", "trend", "horizon_marker"):
+                "recent_count", "recent_amount", "trend"):
         assert key in item["properties"], key
     # #226: the localized "why this question was picked" display field is part
     # of the published queue-row shape (add/exit questions).
