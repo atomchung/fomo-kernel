@@ -74,9 +74,14 @@ line count.
   exists for, and adding a reading is the right response to a blind spot —
   declaring the knife unmeasurable is not.
 - Transition rule while #390 (single canonical language, generated catalogs)
-  is pending, adopted 2026-07-26: new copy keys land in `en` only; other
-  locales take the documented fallback. Strike this line when #390 ships.
-  Three hand-maintained catalogs are this tax at its purest.
+  is pending, adopted 2026-07-26 and corrected the same day: a new copy key
+  lands in `en` **and** `zh-TW`; only `zh-CN` takes the documented fallback.
+  The first version of this line said `en` only, which
+  `test_locale_copy_files_keep_key_parity` (#279) had already made false —
+  caught by that test on the next copy key added (#412). A prose transition
+  rule cannot loosen a shipped mechanical gate; if the gate is wrong, change
+  the gate deliberately. Strike this line when #390 ships. Three
+  hand-maintained catalogs are this tax at its purest.
 
 ## 2. The fake-green family — five ways a check passes without looking
 

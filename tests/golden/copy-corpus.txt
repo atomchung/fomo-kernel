@@ -3,6 +3,722 @@
 # is a wording or renderer change, and must be an intended one.
 
 ==========================================================================
+condition_state/already_met [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+  └ 這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。
+
+==========================================================================
+condition_state/already_met [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+sell if quarterly revenue growth drops under 30%
+這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_state/already_met [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+## 下次只改這一件
+
+已承諾一條自訂流程規矩；內容只留在復盤卡。
+
+==========================================================================
+condition_state/already_met [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: sell if quarterly revenue growth drops under 30%
+  └ This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.
+
+==========================================================================
+condition_state/already_met [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+sell if quarterly revenue growth drops under 30%
+This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.
+session_id: corpus · language: en
+
+==========================================================================
+condition_state/already_met [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+## Change only this next time
+
+One self-authored process rule was committed; its wording stays on the review card.
+
+==========================================================================
+condition_state/no_threshold [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+  └ 這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。
+
+==========================================================================
+condition_state/no_threshold [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+sell if quarterly revenue growth drops under 30%
+這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_state/no_threshold [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+## 下次只改這一件
+
+已承諾一條自訂流程規矩；內容只留在復盤卡。
+
+==========================================================================
+condition_state/no_threshold [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: sell if quarterly revenue growth drops under 30%
+  └ This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you.
+
+==========================================================================
+condition_state/no_threshold [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+sell if quarterly revenue growth drops under 30%
+This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you.
+session_id: corpus · language: en
+
+==========================================================================
+condition_state/no_threshold [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+## Change only this next time
+
+One self-authored process rule was committed; its wording stays on the review card.
+
+==========================================================================
+condition_state/no_baseline [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+  └ 這條記下來了，但背後那個數字查不到，所以現在還沒在盯。
+
+==========================================================================
+condition_state/no_baseline [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+sell if quarterly revenue growth drops under 30%
+這條記下來了，但背後那個數字查不到，所以現在還沒在盯。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_state/no_baseline [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+## 下次只改這一件
+
+已承諾一條自訂流程規矩；內容只留在復盤卡。
+
+==========================================================================
+condition_state/no_baseline [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: sell if quarterly revenue growth drops under 30%
+  └ This one is recorded, but the figure behind it could not be found, so it is not being watched yet.
+
+==========================================================================
+condition_state/no_baseline [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+sell if quarterly revenue growth drops under 30%
+This one is recorded, but the figure behind it could not be found, so it is not being watched yet.
+session_id: corpus · language: en
+
+==========================================================================
+condition_state/no_baseline [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+## Change only this next time
+
+One self-authored process rule was committed; its wording stays on the review card.
+
+==========================================================================
+condition_state/no_adjudicator [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+  └ 這條記成一個是或否的判斷，由你來下，不是被量出來的。
+
+==========================================================================
+condition_state/no_adjudicator [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+sell if quarterly revenue growth drops under 30%
+這條記成一個是或否的判斷，由你來下，不是被量出來的。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_state/no_adjudicator [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+## 下次只改這一件
+
+已承諾一條自訂流程規矩；內容只留在復盤卡。
+
+==========================================================================
+condition_state/no_adjudicator [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: sell if quarterly revenue growth drops under 30%
+  └ This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you.
+
+==========================================================================
+condition_state/no_adjudicator [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+sell if quarterly revenue growth drops under 30%
+This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you.
+session_id: corpus · language: en
+
+==========================================================================
+condition_state/no_adjudicator [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+## Change only this next time
+
+One self-authored process rule was committed; its wording stays on the review card.
+
+==========================================================================
+condition_state/silent_when_watched [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：sell if quarterly revenue growth drops under 30%
+
+==========================================================================
+condition_state/silent_when_watched [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+sell if quarterly revenue growth drops under 30%
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_state/silent_when_watched [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+## 下次只改這一件
+
+已承諾一條自訂流程規矩；內容只留在復盤卡。
+
+==========================================================================
+condition_state/silent_when_watched [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: sell if quarterly revenue growth drops under 30%
+
+==========================================================================
+condition_state/silent_when_watched [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+sell if quarterly revenue growth drops under 30%
+session_id: corpus · language: en
+
+==========================================================================
+condition_state/silent_when_watched [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+## Change only this next time
+
+One self-authored process rule was committed; its wording stays on the review card.
+
+==========================================================================
 account_gate/no_cash_anchor [zh-TW] private.md
 ==========================================================================
 # Headline.
@@ -4095,8 +4811,8 @@ This review did not rank a leading behavior pattern from the available history.
 ==========================================================================
 copy-key coverage
 ==========================================================================
-[zh-TW] reached 36 · unreached 0 · trivial 20
-[en] reached 53 · unreached 0 · trivial 3
+[zh-TW] reached 40 · unreached 0 · trivial 20
+[en] reached 57 · unreached 0 · trivial 3
 
 registers not claimed by any scene in this corpus (68):
   account_perf

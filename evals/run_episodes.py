@@ -658,22 +658,31 @@ def check_condition_integrity(answer, facts):
     if not any(slot["criterion"] in text for _role, text in surfaces):
         findings.append(f"condition: the criterion reached no surface verbatim "
                         f"(stored: {slot['criterion']!r})")
-    prose_numbers = {float(match.group(0).replace(",", ""))
-                     for _role, text in surfaces
-                     for match in NUMBER.finditer(DATE.sub(" ", text))}
+    # Both sides are scanned with the engine's own number reader. Mixing this
+    # module's NUMBER (which sees the 3 in "Q3") with `conditions.numbers_in`
+    # (which does not) made the check red an honest answer that quoted the user's
+    # criterion verbatim — the very thing it demands three lines above.
+    stated = set()
+    for _role, text in surfaces:
+        stated |= conditions.numbers_in(DATE.sub(" ", text))
+    # A researched figure comes from outside the engine, so it cannot be traced
+    # the way `number_provenance` traces one. What it can be traced to is this
+    # slot's own record: the user's criterion, the line, and what was found.
+    allowed = conditions.numbers_in(slot["criterion"])
+    if slot.get("threshold"):
+        allowed.add(abs(float(slot["threshold"]["value"])))
+    baseline = (slot.get("baseline") or {}).get("value")
+    if baseline is not None:
+        allowed.add(float(baseline))
+    unsourced = sorted(value for value in stated if not _number_matches(value, allowed))
+    if unsourced:
+        findings.append(f"condition: the answer states {unsourced}, which is neither the user's "
+                        "own line nor anything the lookup returned — an unsourced figure in a "
+                        "coaching answer reads exactly like a checked one")
     if slot["tier"] == "researched":
-        baseline = slot["baseline"]["value"]
-        if not _number_matches(baseline, prose_numbers):
+        if not _number_matches(float(baseline), stated):
             findings.append(f"condition: the baseline {baseline} was looked up but never shown "
                             "back — a basis the user cannot see is one they cannot correct")
-    else:
-        allowed = conditions.numbers_in(slot["criterion"])
-        invented = sorted(value for value in prose_numbers
-                          if not _number_matches(value, allowed))
-        if invented:
-            findings.append(f"condition: slot is {slot['tier']} ({slot.get('unmapped_reason')}) "
-                            f"but the answer states {invented} — nothing was found, so the "
-                            "figure came from the answer, not from a source")
     return findings
 
 

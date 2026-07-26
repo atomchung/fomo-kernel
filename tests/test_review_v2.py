@@ -2905,6 +2905,69 @@ def test_a_condition_that_could_not_be_looked_up_is_stored_as_unmapped():
             "nothing was looked up, so nothing may read as checked and fine"
 
 
+def test_a_repeated_finalize_appends_one_condition_row_and_a_changed_one_fails_closed():
+    """Append-only state with an idempotent finalize is on the never-loosen list,
+    and a new projection inherits neither for free. Without this, a retry could
+    silently double every condition in the user's record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="en")
+        answers = _answers(plan)
+        answers["commitment"] = {"choice": "custom", "condition": _CONDITION}
+        answers_path = pathlib.Path(tmp) / "answers.json"
+        narrative_path = pathlib.Path(tmp) / "narrative.json"
+        narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        args = ("finalize", "--root", root, "--session-id", plan["session_id"],
+                "--answers", answers_path, "--narrative", narrative_path)
+
+        def rows():
+            text = (root / "conditions.jsonl").read_text(encoding="utf-8")
+            return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+        assert _run(*args).returncode == 0
+        assert len(rows()) == 1
+        _run(*args)                                   # documented-safe retry
+        assert len(rows()) == 1, "an identical retry must not append a second row"
+
+        answers["commitment"]["condition"] = dict(_CONDITION, criterion="sell if margin drops")
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        changed = _run(*args)
+        assert changed.returncode != 0, "a different condition under a committed session id " \
+                                        "must fail closed, not overwrite the record"
+        assert len(rows()) == 1 and rows()[0]["criterion"] == _CONDITION["criterion"]
+
+
+def test_a_condition_the_engine_reads_as_already_crossed_says_so_on_the_card():
+    """Owner ruling: showing the value back is what makes a wrong basis expose
+    itself. The engine performs this comparison, so the card is where a line the
+    user has already crossed stops being invisible."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        breached = dict(_CONDITION,
+                        observation={"value": 21.0, "as_of": "2026-05-20", "source": "release"})
+        final = _finalize_with(tmp, root, {"choice": "custom", "condition": breached})
+        assert final.returncode == 0, final.stdout + final.stderr
+        result = json.loads(final.stdout)
+        private = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
+        assert "already crossed" in private, \
+            "a line already crossed at commit time is a decision now, not a tripwire:\n" + private
+        public = pathlib.Path(result["public_card"]).read_text(encoding="utf-8")
+        assert "already crossed" not in public, "the public card carries no condition detail"
+
+
+def test_a_watched_condition_that_is_nowhere_near_its_line_stays_silent():
+    """The counterweight to the test above: a card does not explain itself. If
+    every condition earned a sentence, the line that matters would be noise."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        final = _finalize_with(tmp, root, {"choice": "custom", "condition": _CONDITION})
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        for fragment in ("already crossed", "not being watched", "cannot be checked"):
+            assert fragment not in private, f"a clear condition must not add {fragment!r}"
+
+
 def _commitment_plan():
     return {"session_id": "2026-07-14__abc123", "engine_state": {"date_end": "2026-07-14",
                                                                  "metrics": {"max_pos_pct": 0.4}},

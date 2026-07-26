@@ -115,6 +115,12 @@
     "sizing_vs_proven_edge": "上限管的是單筆爆掉，不跟「選股是真 edge」衝突。",
     "sizing_vs_hypothesis": "上限管的是單筆爆掉；押對賽道還沒驗證，更不該靠加大單注押它。"
   },
+  "condition_state": {
+    "already_met": "這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。",
+    "unmapped_no_threshold": "這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。",
+    "unmapped_no_baseline": "這條記下來了，但背後那個數字查不到，所以現在還沒在盯。",
+    "unmapped_no_adjudicator": "這條記成一個是或否的判斷，由你來下，不是被量出來的。"
+  },
   "patterns_panel": {
     "label": "一個模式，還沒下判斷（不用回答）",
     "sold_winner_early": "這期賣掉的 {total} 筆有 {early} 筆賣完還漲，最明顯是 {tickers}。"

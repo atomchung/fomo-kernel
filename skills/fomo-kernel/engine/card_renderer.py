@@ -602,6 +602,31 @@ def rule_tradeoff_line(card, dim, language):
     return ((load_copy(language).get("rule_tradeoff") or {}).get(code)) or None
 
 
+def condition_state_line(commitment, language):
+    """One engine-owned sentence about the condition this commitment carries, or
+    ``None`` when there is nothing the engine can say (#412).
+
+    The engine performed this comparison itself at commit time, so this is the
+    one place a wrong lookup becomes visible to the user: a line already crossed
+    when they committed to it is a decision to make now, not a tripwire to watch,
+    and a condition nobody could anchor must not sit on the card looking watched.
+
+    Copy-fallback only, like the reconciliation opener's breach sentence — it
+    never reads `narrative.honesty`, so it reaches the reader regardless of how
+    the agent worded anything. Digit-free: the magnitudes stay in the record."""
+    condition = (commitment or {}).get("condition") or {}
+    code = None
+    if condition.get("baseline_verdict") == "met":
+        code = "already_met"
+    elif condition.get("tier") == "unmapped":
+        code = {"no_threshold": "unmapped_no_threshold",
+                "no_baseline": "unmapped_no_baseline",
+                "no_adjudicator": "unmapped_no_adjudicator"}.get(condition.get("unmapped_reason"))
+    if not code:
+        return None
+    return ((load_copy(language).get("condition_state") or {}).get(code)) or None
+
+
 def localized_rule_grounding(dim, language, card):
     """One engine-authored sentence citing this period's actual positions for
     a candidate rule, or ``None`` when the dimension has no citable facts."""
@@ -2837,6 +2862,11 @@ def _next_block(bundle, copy, facts, state, snapshot):
             # Same sub-line level as the targets: both qualify the rule above
             # them rather than introducing anything new.
             rule_inner.append(("grounding", [tradeoff]))
+        # #412: the engine's own comparison of a user-authored condition. Same
+        # sub-line level, same reason — it qualifies the rule directly above it.
+        condition_state = condition_state_line(commitment, language)
+        if condition_state:
+            rule_inner.append(("grounding", [condition_state]))
     elif ((bundle.get("answers") or {}).get("commitment") or {}).get("choice") == "skip":
         rule_inner.append(("paragraph", [missing.get("rule_skip", "")]))
     elif snapshot:

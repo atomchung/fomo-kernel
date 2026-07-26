@@ -235,7 +235,31 @@ def test_condition_integrity_catches_a_figure_invented_for_an_unmapped_slot():
     findings = R.check_condition_integrity(
         _answer(prose="Recorded, in your words: sell if quarterly revenue growth drops "
                       "under 30%. It sits around 38% today.", observation=None), FACTS)
-    assert findings and "nothing was found" in findings[0], findings
+    assert findings and "neither the user's own line nor anything the lookup returned" in findings[0], \
+        findings
+
+
+def test_condition_integrity_catches_a_figure_invented_beside_a_real_baseline():
+    """The researched tier's numbers come from outside the engine, so
+    `number_provenance` cannot trace them. What they can be traced to is this
+    slot's own record — the user's line, and what the lookup returned."""
+    findings = R.check_condition_integrity(
+        _answer(prose=_SHOWN_BACK + " It was 55% two years ago and should reach 12% next year."),
+        FACTS)
+    assert findings and "12.0" in findings[0] and "55.0" in findings[0], findings
+
+
+def test_condition_integrity_does_not_mistake_a_quarter_label_for_a_figure():
+    """The check reads both sides with the engine's own number reader. Scanning
+    prose with a looser one made it red an honest answer that quoted the user's
+    criterion verbatim — the very thing it demands one line earlier."""
+    criterion = "sell if Q3 net promoter score falls under 40"
+    answer = {"prose": f"Recorded, in your words: {criterion}. I could not find a published "
+                       "figure, so I cannot watch this one.",
+              "condition": {"criterion": criterion,
+                            "query": "what is the most recently published net promoter score?",
+                            "threshold": {"value": 40, "unit": "points", "direction": "below"}}}
+    assert R.check_condition_integrity(answer, FACTS) == []
 
 
 def test_condition_integrity_accepts_an_unmapped_slot_said_out_loud():
