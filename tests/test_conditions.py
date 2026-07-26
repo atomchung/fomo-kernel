@@ -11,11 +11,34 @@ What this file settles:
      set a tripwire.
   D. The near-line margin is frozen at creation.
   E. Everything that cannot be settled fails closed with a message naming the field.
+  F. A re-stated criterion is a new slot row on the same line (the `revises`
+     chain), and a reader tolerates a fork rather than raising on one.
+  G. A check's lookup_status branches, and only `ok` may carry an observation
+     or a user_response — a non-ok lookup has no fresh evidence for either.
+  H. A check's observation is either numeric (`value`) or textual (`summary`),
+     never both, never neither, and never the other kind's shape.
+  I. A check's user_response vocabulary depends on the slot's kind.
+  J. The verdict of record: engine-computed by default, user-confirmed,
+     user-overridden (which never rewrites engine_verdict), or — for an event
+     slot with no answer yet — honestly unknown rather than guessed.
+  K. information_state: new_period / restated / no_new_data, compared against
+     the previous ok-check or, absent one, the slot's own baseline — including
+     probes pinning that the marker comparison is genuine numeric equality
+     (0.3 == 0.30; +0.0 == -0.0) and not a magnitude/scale-tolerant proxy of it
+     (30 != -30; 30 != 3000).
+  L. The check store: previous_check_for across a revision boundary, and
+     load_checks' tolerance for corruption and a missing file.
+  M. The firewall is physical: conditions.py never imports problems.
+  N. Produced rows carry exactly what the schema declares.
 
 The end-to-end half — a condition surviving finalize, staying out of rules.jsonl,
 and being read back into the next review — lives in tests/test_review_v2.py,
-where the CLI harness already is.
+where the CLI harness already is. The check flow's own end-to-end half (calling
+any of this from a live review) is not built yet — see conditions.py's module
+docstring.
 """
+import ast
+import json
 import os
 import sys
 import tempfile
@@ -53,6 +76,71 @@ def _rejects(expect_fragment, **overrides):
             f"rejected for the wrong reason: wanted {expect_fragment!r}, got {str(exc)!r}"
         return
     raise AssertionError(f"should have been rejected ({expect_fragment})")
+
+
+def _event_slot(**overrides):
+    raw = {"kind": "event", "criterion": "sell if the CEO leaves",
+           "query": "who is the current chief executive, and when did they take the role?"}
+    for key, value in overrides.items():
+        if value is None:
+            raw.pop(key, None)
+        else:
+            raw[key] = value
+    return conditions.build_slot(raw, slot_id="slot-test-evt", created="2026-07-26",
+                                 session_id="2026-07-26__test")
+
+
+def _child_slot(revises, criterion="quarterly revenue growth drops under 25%", slot_id="slot-test-child",
+                created="2026-08-26", **overrides):
+    raw = dict(GROWTH, criterion=criterion)
+    for key, value in overrides.items():
+        if value is None:
+            raw.pop(key, None)
+        else:
+            raw[key] = value
+    return conditions.build_slot(raw, slot_id=slot_id, created=created,
+                                 session_id="2026-07-26__test", revises=revises)
+
+
+# Comfortably clear of GROWTH's threshold (30, below, near_line 3.0), so tests
+# that are not about the verdict itself do not accidentally land on met/near_line.
+NUMERIC_OBS_1 = {"value": 36.0, "as_of": "2026-08-20", "source": "10-Q",
+                 "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+EVENT_OBS_1 = {"summary": "CEO still in role per the latest 8-K", "as_of": "2026-08-20", "source": "8-K"}
+
+
+def _check(slot=None, previous=None, check_id="chk-test-0", session_id="2026-08-26__test",
+           date_end="2026-08-26", **overrides):
+    slot = slot if slot is not None else _slot()
+    raw = {"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)}
+    for key, value in overrides.items():
+        if value is None:
+            raw.pop(key, None)
+        else:
+            raw[key] = value
+    return conditions.build_check(raw, slot=slot, previous=previous, check_id=check_id,
+                                  session_id=session_id, date_end=date_end)
+
+
+def _event_check(slot=None, previous=None, **overrides):
+    overrides.setdefault("observation", dict(EVENT_OBS_1))
+    return _check(slot=slot if slot is not None else _event_slot(), previous=previous, **overrides)
+
+
+def _check_rejects(expect_fragment, slot=None, **overrides):
+    try:
+        _check(slot=slot, **overrides)
+    except conditions.ConditionError as exc:
+        assert expect_fragment in str(exc), \
+            f"rejected for the wrong reason: wanted {expect_fragment!r}, got {str(exc)!r}"
+        return
+    raise AssertionError(f"should have been rejected ({expect_fragment})")
+
+
+def _schema(name):
+    path = os.path.join(REPO, "skills", "fomo-kernel", "schemas", name)
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 # ─────────────────────── A. tier is derived, not declared ───────────────────────
@@ -271,6 +359,510 @@ def test_load_slots_reports_the_lines_it_could_not_read():
 
 def test_load_slots_on_a_missing_file_is_empty_not_an_error():
     assert conditions.load_slots(os.path.join("no", "such", "conditions.jsonl")) == ([], 0)
+
+
+# ────────────────────── F. the revises chain (line identity) ──────────────────────
+
+def test_revises_sets_the_parent_and_a_root_rows_line_id_is_its_own_slot_id():
+    parent = _slot()
+    child = _child_slot(parent)
+    assert child["revises"] == parent["slot_id"]
+    assert child["line_id"] == parent["slot_id"], "a root row's line_id is its own slot_id"
+
+
+def test_revises_inherits_the_chains_root_line_id_not_the_immediate_parents_slot_id():
+    root = _slot()
+    middle = _child_slot(root, criterion="v2", slot_id="slot-test-1", created="2026-08-01")
+    tip = _child_slot(middle, criterion="v3", slot_id="slot-test-2", created="2026-08-26")
+    assert tip["revises"] == middle["slot_id"]
+    assert tip["line_id"] == root["slot_id"], "line_id is the chain's root, not the immediate parent"
+
+
+def test_slot_line_id_falls_back_to_slot_id_for_a_root_row_written_before_this_field_existed():
+    old_root = {"slot_id": "slot-old-0", "criterion": "x"}
+    assert conditions.slot_line_id(old_root) == "slot-old-0"
+
+
+def test_revises_must_be_a_slot_row_with_a_slot_id():
+    try:
+        _child_slot({"not_a_slot": True})
+    except conditions.ConditionError as exc:
+        assert "revises must be a slot row" in str(exc)
+    else:
+        raise AssertionError("a revises value with no slot_id should have been rejected")
+
+
+def test_input_envelope_cannot_smuggle_revises_or_line_id():
+    """revises/line_id are engine-assigned kwargs to build_slot, never content
+    an agent supplies on the payload — the unknown-field guard already covers
+    them since they were never added to the legal field set."""
+    _rejects("unknown fields", revises="slot-x")
+    _rejects("unknown fields", line_id="line-x")
+
+
+def test_fold_slots_groups_a_chain_and_reports_no_fork():
+    root = _slot()
+    child = _child_slot(root, criterion="v2", slot_id="slot-test-1", created="2026-08-01")
+    lines, forked = conditions.fold_slots([root, child])
+    line = conditions.slot_line_id(root)
+    assert set(lines) == {line}
+    assert lines[line]["latest"]["slot_id"] == child["slot_id"]
+    assert [row["slot_id"] for row in lines[line]["chain"]] == [root["slot_id"], child["slot_id"]]
+    assert forked == 0
+
+
+def test_fold_slots_counts_a_fork_and_file_order_wins_the_latest():
+    """Two rows independently revising the same parent is a fork — the
+    write-side guard against creating one is later work; this is the tolerant
+    read side, which must survive a fork that already happened."""
+    root = _slot()
+    head_a = _child_slot(root, criterion="a", slot_id="slot-test-a", created="2026-08-01")
+    head_b = _child_slot(root, criterion="b", slot_id="slot-test-b", created="2026-08-02")
+    lines, forked = conditions.fold_slots([root, head_a, head_b])
+    assert forked == 1
+    line = conditions.slot_line_id(root)
+    assert lines[line]["latest"]["slot_id"] == head_b["slot_id"], \
+        "file order wins ties on a forked line: whichever head appears last"
+
+
+def test_latest_by_line_is_a_thin_view_of_fold_slots():
+    root = _slot()
+    child = _child_slot(root, criterion="v2", slot_id="slot-test-1", created="2026-08-01")
+    latest = conditions.latest_by_line([root, child])
+    assert latest[conditions.slot_line_id(root)]["slot_id"] == child["slot_id"]
+
+
+# ───────────────────── G. a check's lookup_status branches ─────────────────────
+
+def test_lookup_status_must_be_one_of_the_three_named_values():
+    _check_rejects("check.lookup_status", lookup_status="pending")
+
+
+def test_lookup_status_ok_requires_an_observation():
+    _check_rejects("check.observation is required", observation=None)
+
+
+def test_lookup_status_failed_forbids_an_observation():
+    _check_rejects("check.observation is forbidden", lookup_status="failed")
+
+
+def test_lookup_status_not_checked_forbids_an_observation():
+    _check_rejects("check.observation is forbidden", lookup_status="not_checked")
+
+
+def test_lookup_status_failed_with_no_observation_reads_unknown_and_keeps_the_reason():
+    row = _check(lookup_status="failed", observation=None, reason="fetch timed out")
+    assert row["lookup_status"] == "failed"
+    assert "observation" not in row
+    assert row["reason"] == "fetch timed out"
+    assert (row["information_state"], row["engine_verdict"]) == (None, None)
+    assert (row["final_verdict"], row["verdict_source"]) == ("unknown", "engine")
+
+
+def test_lookup_status_not_checked_with_no_observation_reads_unknown_too():
+    row = _check(lookup_status="not_checked", observation=None)
+    assert (row["information_state"], row["engine_verdict"],
+            row["final_verdict"], row["verdict_source"]) == (None, None, "unknown", "engine")
+
+
+def test_reason_is_optional_and_capped():
+    row = _check(lookup_status="failed", observation=None)
+    assert "reason" not in row
+    _check_rejects("check.reason is longer than 500", lookup_status="failed", observation=None,
+                   reason="x" * 501)
+
+
+def test_check_envelope_rejects_an_unknown_field():
+    _check_rejects("unknown fields", extra_field="nope")
+
+
+def test_user_response_requires_a_successful_lookup():
+    """External review (round 1), BLOCK: a lookup that did not succeed has no
+    fresh evidence this period for a user to confirm, override, or answer
+    against. Without this gate, an append-only row could carry a
+    user_response beside final_verdict="unknown" forever — a contradiction
+    every future reader would have to special-case."""
+    _check_rejects("check.user_response requires a successful lookup",
+                   lookup_status="failed", observation=None,
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+    _check_rejects("check.user_response requires a successful lookup",
+                   lookup_status="not_checked", observation=None,
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+
+
+# ───────────────── H. an observation is numeric xor textual, never both ─────────────────
+
+def test_a_numeric_slot_check_rejects_a_summary_only_observation():
+    _check_rejects("summary is for an event condition",
+                   observation={"summary": "growth looks fine", "as_of": "2026-08-20", "source": "10-Q"})
+
+
+def test_an_event_slot_check_rejects_a_value_only_observation():
+    _check_rejects("value is for a numeric condition", slot=_event_slot(),
+                   observation={"value": 1.0, "as_of": "2026-08-20", "source": "8-K"})
+
+
+def test_check_observation_rejects_both_value_and_summary():
+    _check_rejects("exactly one of value or summary",
+                   observation={"value": 36.0, "summary": "x", "as_of": "2026-08-20", "source": "10-Q"})
+
+
+def test_check_observation_rejects_neither_value_nor_summary():
+    _check_rejects("needs value", observation={"as_of": "2026-08-20", "source": "10-Q"})
+
+
+def test_check_observation_provenance_is_mandatory():
+    _check_rejects("observation.source", observation={**NUMERIC_OBS_1, "source": "  "})
+    _check_rejects("observation.as_of", observation={"value": 36.0, "source": "10-Q"})
+    _check_rejects("ISO date", observation={"value": 36.0, "as_of": "August 2026", "source": "10-Q"})
+
+
+def test_check_observation_rejects_an_unknown_field():
+    _check_rejects("check.observation has unknown fields", observation={**NUMERIC_OBS_1, "nonsense": 1})
+
+
+# ───────────────── I. user_response vocabulary depends on the slot's kind ─────────────────
+
+def test_numeric_user_response_accepts_confirmed_and_overridden():
+    confirmed = _check(user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+    assert confirmed["verdict_source"] == "user"
+    overridden = _check(user_response={"answer": "overridden", "answered_at": "2026-08-27"})
+    assert overridden["verdict_source"] == "user"
+
+
+def test_numeric_user_response_rejects_event_vocabulary():
+    _check_rejects("must be one of confirmed, overridden",
+                   user_response={"answer": "yes", "answered_at": "2026-08-27"})
+
+
+def test_event_user_response_accepts_yes_and_no():
+    yes = _event_check(user_response={"answer": "yes", "answered_at": "2026-08-27"})
+    assert yes["verdict_source"] == "user"
+    no = _event_check(user_response={"answer": "no", "answered_at": "2026-08-27"})
+    assert no["verdict_source"] == "user"
+
+
+def test_event_user_response_rejects_numeric_vocabulary():
+    _check_rejects("must be one of yes, no", slot=_event_slot(), observation=dict(EVENT_OBS_1),
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+
+
+def test_user_response_rejects_an_unknown_field():
+    _check_rejects("check.user_response has unknown fields",
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27", "extra": 1})
+
+
+def test_user_response_note_is_optional_and_capped():
+    row = _check(user_response={"answer": "confirmed", "answered_at": "2026-08-27", "note": "looks right"})
+    assert row["user_response"]["note"] == "looks right"
+    _check_rejects("longer than 500",
+                   user_response={"answer": "confirmed", "answered_at": "2026-08-27", "note": "x" * 501})
+
+
+def test_user_response_answered_at_must_be_an_iso_date():
+    _check_rejects("answered_at must be an ISO date",
+                   user_response={"answer": "confirmed", "answered_at": "August 2026"})
+
+
+# ───────────────────────── J. the verdict of record ─────────────────────────
+
+def test_numeric_no_user_response_final_verdict_equals_engine_verdict():
+    row = _check()
+    assert row["final_verdict"] == row["engine_verdict"]
+    assert row["verdict_source"] == "engine"
+
+
+def test_numeric_confirmed_keeps_engine_verdict_under_a_user_source():
+    row = _check(user_response={"answer": "confirmed", "answered_at": "2026-08-27"})
+    assert row["final_verdict"] == row["engine_verdict"]
+    assert row["verdict_source"] == "user"
+
+
+def test_override_preserves_engine_verdict_and_never_overwrites_it():
+    """The design's own words: an override rejects a met/near_line finding,
+    but engine_verdict keeps the engine's original — never overwritten."""
+    met_obs = {"value": 21.0, "as_of": "2026-08-20", "source": "10-Q", "period": "FY2027Q2"}
+    row = _check(observation=met_obs, user_response={"answer": "overridden", "answered_at": "2026-08-27"})
+    assert row["engine_verdict"] == "met", "the engine's own read must survive an override untouched"
+    assert row["final_verdict"] == "not_met", "the override rejects the engine's met finding"
+    assert row["verdict_source"] == "user"
+
+
+def test_event_check_without_a_user_response_is_unknown_not_a_guess():
+    """Store, never infer: without the user's answer there IS no verdict."""
+    row = _event_check()
+    assert row["engine_verdict"] is None, "the engine never computes an event verdict"
+    assert (row["final_verdict"], row["verdict_source"]) == ("unknown", "engine")
+    assert "user_response" not in row
+
+
+def test_event_yes_is_met_and_no_is_not_met_both_user_sourced():
+    yes = _event_check(user_response={"answer": "yes", "answered_at": "2026-08-27"})
+    assert (yes["final_verdict"], yes["verdict_source"]) == ("met", "user")
+    no = _event_check(user_response={"answer": "no", "answered_at": "2026-08-27"})
+    assert (no["final_verdict"], no["verdict_source"]) == ("not_met", "user")
+
+
+def test_a_lookup_that_did_not_succeed_is_unknown_regardless_of_kind():
+    numeric = _check(lookup_status="not_checked", observation=None)
+    event = _event_check(lookup_status="not_checked", observation=None)
+    assert numeric["final_verdict"] == event["final_verdict"] == "unknown"
+    assert numeric["verdict_source"] == event["verdict_source"] == "engine"
+
+
+# ───────────────────────── K. information_state ─────────────────────────
+
+def test_information_state_is_null_unless_lookup_status_is_ok():
+    row = _check(lookup_status="not_checked", observation=None)
+    assert row["information_state"] is None
+
+
+def test_first_check_against_the_slots_own_baseline_is_no_new_data_on_a_match():
+    """GROWTH's baseline: value 38.0, period FY2027Q1, document '8-K 2026-05-20'."""
+    slot = _slot()
+    row = conditions.build_check(
+        {"lookup_status": "ok",
+         "observation": {"value": 38.0, "as_of": "2026-05-21", "source": "Q1 FY2027 press release",
+                         "period": "FY2027Q1", "document": "8-K 2026-05-20"}},
+        slot=slot, previous=None, check_id="chk-1", date_end="2026-08-26")
+    assert row["information_state"] == "no_new_data", \
+        "same period, same document, same value re-read later must not read as new"
+
+
+def test_first_check_against_the_slots_own_baseline_is_restated_on_a_changed_value():
+    slot = _slot()
+    row = conditions.build_check(
+        {"lookup_status": "ok",
+         "observation": {"value": 37.0, "as_of": "2026-05-21", "source": "amended press release",
+                         "period": "FY2027Q1", "document": "8-K 2026-05-20"}},
+        slot=slot, previous=None, check_id="chk-1", date_end="2026-08-26")
+    assert row["information_state"] == "restated"
+
+
+def test_first_check_with_no_slot_baseline_is_new_period():
+    slot = _slot(observation=None)  # unmapped/no_baseline: nothing to compare against yet
+    row = conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)},
+                                 slot=slot, previous=None, check_id="chk-1", date_end="2026-08-26")
+    assert row["information_state"] == "new_period"
+
+
+def test_a_new_effective_period_is_new_period_even_with_a_previous_check():
+    first = _check()
+    second = _check(previous=first, observation={**NUMERIC_OBS_1, "value": 34.0,
+                                                 "period": "FY2027Q3", "document": "10-Q 2026-11-20"})
+    assert second["information_state"] == "new_period"
+
+
+def test_same_period_same_document_same_value_is_no_new_data():
+    first = _check()
+    second = _check(previous=first, observation=dict(NUMERIC_OBS_1))
+    assert second["information_state"] == "no_new_data"
+
+
+def test_same_period_different_value_is_restated():
+    first = _check()
+    second = _check(previous=first, observation={**NUMERIC_OBS_1, "value": 34.0})
+    assert second["information_state"] == "restated"
+
+
+def test_same_period_different_document_is_restated_even_with_the_same_value():
+    first = _check()
+    second = _check(previous=first, observation={**NUMERIC_OBS_1, "document": "10-Q/A 2026-08-25"})
+    assert second["information_state"] == "restated"
+
+
+def test_as_of_is_the_effective_period_when_there_is_no_reporting_period():
+    """Price-like conditions have no reporting period; a new quote date IS new
+    data for them."""
+    price_1 = {"value": 100.0, "as_of": "2026-08-20", "source": "quote"}
+    price_2 = {"value": 100.0, "as_of": "2026-08-21", "source": "quote"}
+    first = _check(observation=price_1)
+    moved = _check(previous=first, observation=price_2)
+    assert moved["information_state"] == "new_period", "no period field: as_of is the effective period"
+    same = _check(previous=first, observation=dict(price_1))
+    assert same["information_state"] == "no_new_data", "identical as_of, source, and value: nothing new"
+
+
+# External review (round 1), MARK: the numeric marker comparison had no test
+# pinning that it is genuine numeric equality, not some textual proxy of it.
+# All four probes below hold period and document fixed and vary only the
+# marker, so each one isolates the marker comparison specifically.
+
+def _marker_probe(first_value, second_value):
+    obs_1 = {"value": first_value, "as_of": "2026-08-20", "source": "quote",
+             "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+    obs_2 = {"value": second_value, "as_of": "2026-08-27", "source": "quote",
+             "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+    first = _check(observation=obs_1)
+    return _check(previous=first, observation=obs_2)
+
+
+def test_marker_0_3_and_0_30_are_the_same_value_not_different_text():
+    assert _marker_probe(0.3, 0.30)["information_state"] == "no_new_data"
+
+
+def test_marker_30_and_negative_30_are_different_values():
+    """Guards specifically against copy-pasting restates_threshold's
+    magnitude-only (abs-value) comparison style into this gate: that style is
+    correct for detecting a threshold leak (#412, restates_threshold), but
+    wrong here — a swing from +30 to -30 is not "the same number, unsigned",
+    it is a completely different reading."""
+    assert _marker_probe(30, -30)["information_state"] == "restated"
+
+
+def test_marker_30_and_3000_are_different_values():
+    """Guards against a scale-tolerant comparison (the same restates_threshold
+    precedent checks value*100/value/100 for a percent-vs-decimal leak) being
+    reused here, where it would wrongly treat a 100x change as "the same
+    number at a different scale"."""
+    assert _marker_probe(30, 3000)["information_state"] == "restated"
+
+
+def test_marker_positive_and_negative_zero_are_the_same_value():
+    """The genuinely mutation-sensitive pin. 0.3 and 0.30 parse to the exact
+    same float and Python's str() of that one float object is necessarily
+    identical either way (str(0.3) == str(0.30) == '0.3') — no implementation
+    of the marker comparison, correct or broken, can tell those two apart, so
+    that probe alone cannot catch a comparison that silently degraded to
+    string equality. 0.0 and -0.0 can: they are numerically equal
+    (0.0 == -0.0) but stringify to different text ('0.0' vs '-0.0'), so this
+    is the pair that actually goes red under a stringify mutation — see the
+    mutation-verification log in the PR body."""
+    assert _marker_probe(0.0, -0.0)["information_state"] == "no_new_data"
+
+
+# ───────────────────────── L. the check store ─────────────────────────
+
+def test_previous_check_for_resolves_the_previous_ok_check_on_the_same_line():
+    slot = _slot()
+    first = _check(slot=slot)
+    assert conditions.previous_check_for([first], [slot], slot) is first
+
+
+def test_previous_check_for_ignores_a_failed_check():
+    slot = _slot()
+    first_ok = _check(slot=slot, check_id="chk-1")
+    failed = _check(slot=slot, check_id="chk-2", lookup_status="failed", observation=None)
+    assert conditions.previous_check_for([first_ok, failed], [slot], slot) is first_ok
+
+
+def test_previous_check_for_crosses_a_revision_boundary():
+    """A revised slot must inherit its line's check history: the criterion's
+    wording changed, not the world the checks were watching."""
+    root = _slot()
+    ok_on_root = _check(slot=root, check_id="chk-1")
+    child = _child_slot(root)
+    assert conditions.previous_check_for([ok_on_root], [root, child], child) is ok_on_root
+
+
+def test_previous_check_for_returns_none_when_the_line_has_no_ok_check_yet():
+    slot = _slot()
+    assert conditions.previous_check_for([], [slot], slot) is None
+
+
+def test_load_checks_reports_the_lines_it_could_not_read():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "condition_checks.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{"check_id": "chk-a", "slot_id": "slot-a"}\n')
+            handle.write("{not json\n")
+            handle.write('{"no_check_id": true}\n')
+            handle.write('{"check_id": "chk-b", "slot_id": "slot-b"}\n')
+        checks, unreadable = conditions.load_checks(path)
+        assert [row["check_id"] for row in checks] == ["chk-a", "chk-b"]
+        assert unreadable == 2, "both the unparseable line and the unidentifiable row count"
+
+
+def test_load_checks_on_a_missing_file_is_empty_not_an_error():
+    assert conditions.load_checks(os.path.join("no", "such", "condition_checks.jsonl")) == ([], 0)
+
+
+# ───────────────────────── M. the firewall is physical ─────────────────────────
+
+def test_conditions_module_never_imports_problems():
+    """Check/verdict data must never reach rules.jsonl, held_streak, or the
+    graduation statistics (docs/development-guide.md section 5). If
+    conditions.py ever imports problems, that door is open even if nothing
+    walks through it yet."""
+    source_path = os.path.join(REPO, "skills", "fomo-kernel", "engine", "conditions.py")
+    with open(source_path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=source_path)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert "problems" not in imported, \
+        "conditions.py must never import problems: that would be a path into rules.jsonl/held_streak"
+
+
+# ─────────────────── N. produced rows match the schema's declared shape ───────────────────
+
+def test_condition_check_schema_pins_the_same_vocabulary_as_the_code():
+    """Offline suite has no jsonschema validator; pin the vocabulary (mirrors
+    test_review_v2.py's test_schemas_cover_due_revisit_and_resolutions)."""
+    schema = _schema("condition-check.schema.json")
+    assert set(schema["properties"]["lookup_status"]["enum"]) == set(conditions.LOOKUP_STATUSES)
+    info_enum = schema["properties"]["information_state"]["enum"]
+    assert set(x for x in info_enum if x is not None) == set(conditions.INFORMATION_STATES)
+    assert None in info_enum
+    verdict_enum = schema["properties"]["engine_verdict"]["enum"]
+    assert set(x for x in verdict_enum if x is not None) == set(conditions.VERDICTS)
+    assert None in verdict_enum
+    assert set(schema["properties"]["final_verdict"]["enum"]) == set(conditions.VERDICTS)
+    assert set(schema["properties"]["verdict_source"]["enum"]) == set(conditions.VERDICT_SOURCES)
+    answers = set(schema["$defs"]["user_response"]["properties"]["answer"]["enum"])
+    assert answers == set(conditions.NUMERIC_ANSWERS) | set(conditions.EVENT_ANSWERS)
+    # External review (round 1), MARK: the answer enum pools two kinds'
+    # vocabularies; the split itself is engine-enforced (_user_response), and
+    # the schema should say so rather than silently look wider than the code.
+    assert "$comment" in schema["$defs"]["user_response"]["properties"]["answer"]
+
+
+def test_check_observation_schema_expresses_the_value_summary_xor():
+    """External review (round 1), MARK: the code already enforces value XOR
+    summary (_check_observation); the schema should say so structurally, not
+    only in prose. This suite has no jsonschema validator (per this schema
+    file's own docstring) and none is added here — a structural read of the
+    oneOf shape is the pin, mirroring this file's existing
+    "no jsonschema dependency, pin the vocabulary" idiom."""
+    schema = _schema("condition-check.schema.json")
+    one_of = schema["$defs"]["observation"]["oneOf"]
+    assert len(one_of) == 2, "value XOR summary is exactly two alternatives"
+    # Pair each branch's own required with its own forbidden — not just
+    # independent membership across the two branches, which could pass on a
+    # mismatched (and useless) pairing too.
+    branches = {frozenset(b["required"]): frozenset(b["not"]["required"]) for b in one_of}
+    assert branches.get(frozenset({"value"})) == frozenset({"summary"}), \
+        "the value branch must require value and forbid summary"
+    assert branches.get(frozenset({"summary"})) == frozenset({"value"}), \
+        "the summary branch must require summary and forbid value"
+
+
+def test_produced_check_rows_match_the_schemas_declared_shape():
+    """Structural drift check: every field a produced row carries is declared
+    in the schema, and every field the schema requires is on the row. Not a
+    full jsonschema validator (this suite carries no such dependency, per the
+    schema file's own docstring) — a same-keys pin that fails the moment the
+    two drift."""
+    schema = _schema("condition-check.schema.json")
+    allowed = set(schema["properties"])
+    required = set(schema["required"])
+    rows = [_check(), _check(lookup_status="failed", observation=None), _event_check(),
+            _event_check(user_response={"answer": "yes", "answered_at": "2026-08-27"})]
+    for row in rows:
+        assert required <= set(row), f"row is missing a required field: {required - set(row)}"
+        assert set(row) <= allowed, f"row has a field the schema does not declare: {set(row) - allowed}"
+
+
+def test_produced_slot_row_with_revises_matches_the_slot_schemas_declared_shape():
+    schema = _schema("condition-slot.schema.json")
+    allowed = set(schema["properties"])
+    parent = _slot()
+    child = _child_slot(parent)
+    assert set(child) <= allowed, f"row has a field the schema does not declare: {set(child) - allowed}"
+    assert set(schema["required"]) <= set(child)
 
 
 def _tests():
