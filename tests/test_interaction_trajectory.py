@@ -65,29 +65,103 @@ def good_markdown_rows():
     ]
 
 
-def weekly_rows():
-    rows = good_markdown_rows()
-    rows[0] = declaration(route="weekly_review")
-    rows.insert(1, row("memory_presented", memory_kind="prior_commitment"))
+# --- Semantic access to a trace (#360) ----------------------------------------
+#
+# Tests below reach into a fixture by *what a row is*, never by where it
+# happens to sit. #357 is the receipt: adding one `cash_anchor_checked` row to
+# `good_markdown_rows()` shifted every downstream index and broke roughly ten
+# tests in this file plus one in `test_question_surfaces.py` — none of them
+# about cash. Raw integers keep the fixture's shape in the reader's head and in
+# trailing comments, which is where it drifts: the latency-marker test carried
+# `# after the preview card` on an insertion that put the row *before* it.
+#
+# `locate` raises on an ambiguous or absent anchor rather than picking one.
+# Silently mutating the wrong row is the failure this whole change exists to
+# stop, and a fixture that has grown a second matching row should say so.
+
+DECLARATION = ("capabilities_declared", {})
+CASH_ANCHOR = ("cash_anchor_checked", {})
+PREVIEW_ARTIFACT = ("artifact_generated", {"stage": "preview"})
+PREVIEW_CARD = ("card_presented", {"stage": "preview"})
+FINAL_ARTIFACT = ("artifact_generated", {"stage": "final"})
+FINAL_CARD = ("card_presented", {"stage": "final"})
+WEEKLY_OPENER = ("memory_presented", {})
+QUESTION = ("question_presented", {})
+RULE_CHOICE = ("rule_choice_presented", {})
+
+
+def locate(rows, anchor):
+    """Index of the one row an anchor names."""
+    event, match = anchor
+    hits = [index for index, value in enumerate(rows)
+            if value.get("event") == event
+            and all(value.get(key) == want for key, want in match.items())]
+    assert len(hits) == 1, f"anchor {anchor} matched {len(hits)} rows, expected exactly one"
+    return hits[0]
+
+
+def at(rows, anchor):
+    """The row itself, for in-place field edits."""
+    return rows[locate(rows, anchor)]
+
+
+def before(rows, anchor, new_row):
+    rows.insert(locate(rows, anchor), new_row)
     return rows
+
+
+def after(rows, anchor, new_row):
+    rows.insert(locate(rows, anchor) + 1, new_row)
+    return rows
+
+
+def drop(rows, anchor):
+    del rows[locate(rows, anchor)]
+    return rows
+
+
+def swap(rows, first, second):
+    a, b = locate(rows, first), locate(rows, second)
+    rows[a], rows[b] = rows[b], rows[a]
+    return rows
+
+
+def redeclare(rows, **overrides):
+    """Replace the capability declaration, keeping its position."""
+    rows[locate(rows, DECLARATION)] = declaration(**overrides)
+    return rows
+
+
+def weekly_rows():
+    rows = redeclare(good_markdown_rows(), route="weekly_review")
+    return after(rows, DECLARATION, row("memory_presented", memory_kind="prior_commitment"))
 
 
 def owner_rows():
     rows = good_markdown_rows()
-    rows.insert(2, row("question_presented", mode="plain_text"))
-    rows.insert(3, row("answers_received"))
+    before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="plain_text"))
+    before(rows, PREVIEW_ARTIFACT, row("answers_received"))
     # #293 (merged after this fixture was authored): rule_choice_presented now
     # requires machine-checked grounding-fidelity evidence. No candidate in
     # this synthetic fixture carries an engine grounding, so the trivially
     # satisfied state applies (mirrors _grounding_fidelity's no-candidates path).
-    rows.insert(6, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=False, grounding_verbatim=True))
+    after(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                  grounding_expected=False, grounding_verbatim=True))
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     return rows
 
 
 def stamp(rows, timestamps):
-    assert len(rows) == len(timestamps)
+    """Positional on purpose — the timing tests assert on the *sequence*.
+
+    This is the one coupling to trace length that #360 leaves in place: a
+    timing test's meaning is the gaps between consecutive stamps, which no
+    anchor can express. When a fixture grows a row, four tests fail here with
+    the message below rather than silently stamping the wrong events.
+    """
+    assert len(rows) == len(timestamps), (
+        f"trace has {len(rows)} rows and {len(timestamps)} timestamps — a fixture "
+        "grew a row; extend this test's timestamp list to match")
     for value, timestamp in zip(rows, timestamps):
         value["ts"] = timestamp
     return rows
@@ -102,40 +176,40 @@ def assert_has(errors, fragment):
 def test_unknown_host_defaults_to_a_first_class_text_fallback():
     # No optional adapter is declared or failed: plain text is the normal
     # unknown-host route, rather than a degraded widget delivery.
-    assert good_markdown_rows()[0]["adapter"] == "plain_text"
+    assert at(good_markdown_rows(), DECLARATION)["adapter"] == "plain_text"
     assert ux_receipt.verify_rows(good_markdown_rows()) == []
 
 
 def test_native_controls_and_widget_pass():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="validated_widget",
-        question_modes=["plain_text", "native_options"],
-        card_modes=["markdown_inline", "widget"],
-    )
-    rows.insert(2, row("question_presented", mode="native_options",
-                       surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
-    rows[4]["mode"] = "widget"   # preview card
-    rows[6]["mode"] = "widget"   # final card
+    redeclare(rows, adapter="validated_widget",
+              question_modes=["plain_text", "native_options"],
+              card_modes=["markdown_inline", "widget"])
+    before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="native_options",
+                                       surface_source="validated_dynamic",
+                                       surface_digest=SURFACE_DIGEST))
+    at(rows, PREVIEW_CARD)["mode"] = "widget"
+    at(rows, FINAL_CARD)["mode"] = "widget"
     assert ux_receipt.verify_rows(rows) == []
 
 
 def test_question_surface_trace_is_content_free():
     rows = good_markdown_rows()
-    rows.insert(2, row("question_presented", mode="plain_text",
-                       surface_source="engine_fallback", surface_digest=SURFACE_DIGEST))
+    before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="plain_text",
+                                       surface_source="engine_fallback",
+                                       surface_digest=SURFACE_DIGEST))
     assert ux_receipt.verify_rows(rows) == []
 
     leaked = [dict(value) for value in rows]
-    leaked[2]["stem"] = "private trade wording"
+    at(leaked, QUESTION)["stem"] = "private trade wording"
     assert_has(ux_receipt.verify_rows(leaked), "question trace contains content fields")
 
     missing = [dict(value) for value in rows]
-    missing[2].pop("surface_digest")
+    at(missing, QUESTION).pop("surface_digest")
     assert_has(ux_receipt.verify_rows(missing), "source and digest must appear together")
 
     invalid = [dict(value) for value in rows]
-    invalid[2]["surface_digest"] = "not-a-digest"
+    at(invalid, QUESTION)["surface_digest"] = "not-a-digest"
     assert_has(ux_receipt.verify_rows(invalid), "invalid surface digest")
 
 
@@ -147,18 +221,25 @@ def test_weekly_opening_memory_passes():
 
 def test_generated_without_presented_fails():
     rows = good_markdown_rows()
-    del rows[3]  # drop the preview card_presented, keep its artifact
+    drop(rows, PREVIEW_CARD)  # keep its artifact
     assert_has(ux_receipt.verify_rows(rows), "preview card_presented must appear exactly once")
 
 
 def test_card_marked_presented_before_artifact_fails():
     rows = good_markdown_rows()
-    rows[2], rows[3] = rows[3], rows[2]  # card before its artifact
+    swap(rows, PREVIEW_ARTIFACT, PREVIEW_CARD)  # card before its artifact
     assert_has(ux_receipt.verify_rows(rows), "before its artifact existed")
 
 
 def test_final_card_before_preview_card_fails():
-    rows = [good_markdown_rows()[0]] + good_markdown_rows()[4:6] + good_markdown_rows()[2:4]
+    # Move the whole final pair ahead of the preview pair, artifacts included,
+    # so the only defect under test is the order the user saw the cards in.
+    rows = good_markdown_rows()
+    final = [at(rows, FINAL_ARTIFACT), at(rows, FINAL_CARD)]
+    drop(rows, FINAL_CARD)
+    drop(rows, FINAL_ARTIFACT)
+    for value in reversed(final):
+        before(rows, PREVIEW_ARTIFACT, value)
     assert_has(ux_receipt.verify_rows(rows), "final card presentation must follow the preview card")
 
 
@@ -166,28 +247,24 @@ def test_final_card_before_preview_card_fails():
 
 def test_declared_widget_silent_markdown_fails():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="validated_widget",
-        question_modes=["plain_text", "native_options"],
-        card_modes=["markdown_inline", "widget"],
-    )
+    redeclare(rows, adapter="validated_widget",
+              question_modes=["plain_text", "native_options"],
+              card_modes=["markdown_inline", "widget"])
     assert_has(ux_receipt.verify_rows(rows), "without recording a failed widget attempt")
 
 
 def test_declared_widget_with_recorded_failure_passes():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="validated_widget",
-        question_modes=["plain_text", "native_options"],
-        card_modes=["markdown_inline", "widget"],
-    )
-    rows.insert(1, row("widget_attempt_failed", stage="preview"))
+    redeclare(rows, adapter="validated_widget",
+              question_modes=["plain_text", "native_options"],
+              card_modes=["markdown_inline", "widget"])
+    after(rows, DECLARATION, row("widget_attempt_failed", stage="preview"))
     assert ux_receipt.verify_rows(rows) == []
 
 
 def test_widget_failure_without_capability_fails():
     rows = good_markdown_rows()
-    rows.insert(1, row("widget_attempt_failed", stage="preview"))
+    after(rows, DECLARATION, row("widget_attempt_failed", stage="preview"))
     assert_has(ux_receipt.verify_rows(rows), "without declared widget capability")
 
 
@@ -195,9 +272,8 @@ def test_widget_failure_without_capability_fails():
 
 def test_missing_universal_fallbacks_fail():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="validated_widget", question_modes=["native_options"], card_modes=["widget"]
-    )
+    redeclare(rows, adapter="validated_widget",
+              question_modes=["native_options"], card_modes=["widget"])
     errors = ux_receipt.verify_rows(rows)
     assert_has(errors, "plain_text as the universal question fallback")
     assert_has(errors, "markdown_inline as the universal card fallback")
@@ -205,37 +281,33 @@ def test_missing_universal_fallbacks_fail():
 
 def test_undeclared_card_mode_fails():
     rows = good_markdown_rows()
-    rows[3]["mode"] = "widget"  # not declared
+    at(rows, PREVIEW_CARD)["mode"] = "widget"  # not declared
     assert_has(ux_receipt.verify_rows(rows), "undeclared mode")
 
 
 def test_undeclared_question_mode_fails():
     rows = good_markdown_rows()
-    rows.insert(1, row("question_presented", mode="native_options"))  # not declared
+    after(rows, DECLARATION, row("question_presented", mode="native_options"))  # not declared
     assert_has(ux_receipt.verify_rows(rows), "question used undeclared mode")
 
 
 def test_adapter_profile_rejects_unverified_capability_claims():
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="plain_text",
-        question_modes=["plain_text", "native_options"],
-        card_modes=["markdown_inline"],
-    )
+    redeclare(rows, adapter="plain_text",
+              question_modes=["plain_text", "native_options"],
+              card_modes=["markdown_inline"])
     assert_has(ux_receipt.verify_rows(rows), "plain_text adapter may declare only")
 
     rows = good_markdown_rows()
-    rows[0] = declaration(
-        adapter="validated_widget",
-        question_modes=["plain_text", "native_options"],
-        card_modes=["markdown_inline"],
-    )
+    redeclare(rows, adapter="validated_widget",
+              question_modes=["plain_text", "native_options"],
+              card_modes=["markdown_inline"])
     assert_has(ux_receipt.verify_rows(rows), "requires card modes")
 
 
 def test_legacy_trace_without_adapter_still_verifies():
     rows = good_markdown_rows()
-    rows[0].pop("adapter")
+    at(rows, DECLARATION).pop("adapter")
     assert ux_receipt.verify_rows(rows) == []
 
 
@@ -243,35 +315,37 @@ def test_legacy_trace_without_adapter_still_verifies():
 
 def test_latency_marker_events_pass_without_ordering_rules():
     rows = good_markdown_rows()
-    rows.insert(1, row("answers_received"))  # before the preview artifact
-    rows.insert(4, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=False, grounding_verbatim=True))  # after the preview card
+    after(rows, DECLARATION, row("answers_received"))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=False, grounding_verbatim=True))
     assert ux_receipt.verify_rows(rows) == []
     # Deliberately no ordering rules for the markers: they verify wherever they
     # appear, including before the weekly opener.
     weekly = weekly_rows()
-    weekly.insert(1, row("answers_received"))
+    after(weekly, DECLARATION, row("answers_received"))
     assert ux_receipt.verify_rows(weekly) == []
 
 
 def test_answers_received_rejects_extra_fields():
     rows = good_markdown_rows()
-    rows.insert(1, row("answers_received", note="private wording"))
+    after(rows, DECLARATION, row("answers_received", note="private wording"))
     assert_has(ux_receipt.verify_rows(rows), "answers_received contains unsupported fields")
 
 
 def test_rule_choice_rejects_extra_fields():
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text", options="A/B/C"))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text", options="A/B/C"))
     assert_has(ux_receipt.verify_rows(rows), "rule_choice_presented contains unsupported fields")
 
 
 def test_rule_choice_undeclared_mode_fails():
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="native_options"))  # only plain_text declared
+    before(rows, PREVIEW_CARD,
+           row("rule_choice_presented", mode="native_options"))  # only plain_text declared
     assert_has(ux_receipt.verify_rows(rows), "rule choice used undeclared mode")
     missing = good_markdown_rows()
-    missing.insert(3, row("rule_choice_presented"))  # no mode at all fails closed
+    before(missing, PREVIEW_CARD,
+           row("rule_choice_presented"))  # no mode at all fails closed
     assert_has(ux_receipt.verify_rows(missing), "rule choice used undeclared mode")
 
 
@@ -279,9 +353,9 @@ def test_rule_choice_undeclared_mode_fails():
 
 def test_rule_choice_faithful_grounding_passes():
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=True, grounding_hash=SURFACE_DIGEST,
-                       grounding_verbatim=True))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=True, grounding_hash=SURFACE_DIGEST,
+                                   grounding_verbatim=True))
     assert ux_receipt.verify_rows(rows) == []
 
 
@@ -289,8 +363,8 @@ def test_rule_choice_no_grounding_expected_passes():
     # A candidate list where no candidate carried an engine grounding: nothing
     # to be verbatim about, so the trivial state must still pass.
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=False, grounding_verbatim=True))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=False, grounding_verbatim=True))
     assert ux_receipt.verify_rows(rows) == []
 
 
@@ -300,7 +374,7 @@ def test_rule_choice_missing_grounding_evidence_fails_closed():
     # no legacy grandfather here — absence must fail exactly like a false
     # result, or an agent could silently keep doing what caused the issue.
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text"))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text"))
     errors = ux_receipt.verify_rows(rows)
     assert_has(errors, "missing grounding-fidelity evidence")
     assert_has(errors, "did not prove its candidates' grounding was presented verbatim")
@@ -310,9 +384,9 @@ def test_rule_choice_paraphrased_grounding_fails():
     # Reproduces the reported failure mode: engine grounding existed but the
     # presented text did not contain it verbatim (paraphrased/rewritten).
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=True, grounding_hash=SURFACE_DIGEST,
-                       grounding_verbatim=False))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=True, grounding_hash=SURFACE_DIGEST,
+                                   grounding_verbatim=False))
     assert_has(
         ux_receipt.verify_rows(rows),
         "did not prove its candidates' grounding was presented verbatim",
@@ -321,8 +395,8 @@ def test_rule_choice_paraphrased_grounding_fails():
 
 def test_rule_choice_expected_without_hash_fails():
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=True, grounding_verbatim=True))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=True, grounding_verbatim=True))
     assert_has(ux_receipt.verify_rows(rows), "invalid or missing grounding_hash")
 
 
@@ -330,9 +404,9 @@ def test_rule_choice_hash_without_expectation_fails():
     # Defensive/consistency check: a hash with no expected grounding is a
     # contradictory row (hand-edited or corrupted), not a legitimate state.
     rows = good_markdown_rows()
-    rows.insert(3, row("rule_choice_presented", mode="plain_text",
-                       grounding_expected=False, grounding_hash=SURFACE_DIGEST,
-                       grounding_verbatim=True))
+    before(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                   grounding_expected=False, grounding_hash=SURFACE_DIGEST,
+                                   grounding_verbatim=True))
     assert_has(ux_receipt.verify_rows(rows), "grounding_hash but no grounding was expected")
 
 
@@ -493,7 +567,7 @@ def test_cli_rule_choice_presented_persists_only_hash_never_raw_grounding():
 def test_legacy_trace_without_ts_still_passes():
     assert ux_receipt.verify_rows(good_markdown_rows()) == []
     mixed = good_markdown_rows()
-    mixed[2]["ts"] = "2026-07-20T13:46:02Z"  # partially stamped traces pass too
+    at(mixed, PREVIEW_ARTIFACT)["ts"] = "2026-07-20T13:46:02Z"  # partially stamped passes too
     assert ux_receipt.verify_rows(mixed) == []
 
 
@@ -508,7 +582,7 @@ def test_malformed_ts_fails():
     for bad in ("2026-07-20 13:46:02", "2026-07-20T13:46:02", "not-a-time",
                 "2026-13-45T99:99:99Z", 1752934962, None):
         rows = good_markdown_rows()
-        rows[1]["ts"] = bad
+        at(rows, CASH_ANCHOR)["ts"] = bad
         assert_has(ux_receipt.verify_rows(rows), "invalid ts")
 
 
@@ -626,13 +700,13 @@ def test_cli_warns_by_default_and_strict_timing_gate_fails_suspect_trace():
 
 def test_weekly_missing_opener_fails():
     rows = good_markdown_rows()
-    rows[0] = declaration(route="weekly_review")
+    redeclare(rows, route="weekly_review")
     assert_has(ux_receipt.verify_rows(rows), "exactly one prior commitment or skip opener")
 
 
 def test_weekly_opener_after_first_card_fails():
     rows = good_markdown_rows()
-    rows[0] = declaration(route="weekly_review")
+    redeclare(rows, route="weekly_review")
     rows.append(row("memory_presented", memory_kind="prior_skip"))  # after both cards
     assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
 
@@ -647,40 +721,41 @@ def test_weekly_opener_after_first_card_fails():
 
 def test_cash_anchor_checked_missing_fails_for_first_review():
     rows = good_markdown_rows()
-    del rows[1]  # drop the cash_anchor_checked row good_markdown_rows() adds
+    drop(rows, CASH_ANCHOR)
     assert_has(ux_receipt.verify_rows(rows), "first_review must record exactly one cash_anchor_checked event")
 
 
 def test_cash_anchor_checked_missing_fails_for_weekly_review():
     rows = weekly_rows()
-    del rows[2]  # weekly_rows() inserts memory_presented at 1, pushing cash to 2
+    drop(rows, CASH_ANCHOR)
     assert_has(ux_receipt.verify_rows(rows), "weekly_review must record exactly one cash_anchor_checked event")
 
 
 def test_cash_anchor_checked_duplicate_fails():
     rows = good_markdown_rows()
-    rows.insert(2, row("cash_anchor_checked", cash_outcome="asked_user"))
+    after(rows, CASH_ANCHOR, row("cash_anchor_checked", cash_outcome="asked_user"))
     assert_has(ux_receipt.verify_rows(rows), "must record exactly one cash_anchor_checked event")
 
 
 def test_cash_anchor_checked_after_first_question_fails():
     rows = good_markdown_rows()
-    del rows[1]  # remove the pre-flight cash check...
-    rows.insert(1, row("question_presented", mode="plain_text"))
-    rows.insert(2, row("cash_anchor_checked", cash_outcome="found_in_source"))  # ...and backfill it late
+    drop(rows, CASH_ANCHOR)  # remove the pre-flight cash check...
+    after(rows, DECLARATION, row("question_presented", mode="plain_text"))
+    after(rows, QUESTION,
+          row("cash_anchor_checked", cash_outcome="found_in_source"))  # ...and backfill it late
     assert_has(ux_receipt.verify_rows(rows), "cash_anchor_checked was recorded after the first question or card")
 
 
 def test_cash_anchor_checked_invalid_outcome_fails():
     rows = good_markdown_rows()
-    rows[1]["cash_outcome"] = "assumed_zero"
+    at(rows, CASH_ANCHOR)["cash_outcome"] = "assumed_zero"
     assert_has(ux_receipt.verify_rows(rows), "unsupported cash outcome")
 
 
 def test_cash_anchor_checked_valid_outcomes_pass():
     for outcome in ux_receipt.CASH_OUTCOMES:
         rows = good_markdown_rows()
-        rows[1]["cash_outcome"] = outcome
+        at(rows, CASH_ANCHOR)["cash_outcome"] = outcome
         assert ux_receipt.verify_rows(rows) == []
 
 
@@ -690,8 +765,8 @@ def test_cash_anchor_checked_not_required_outside_trade_history_routes():
     # data-contract.md) -- neither route carries this requirement.
     for route in ("snapshot_review", "test_drive"):
         rows = good_markdown_rows()
-        del rows[1]  # no cash_anchor_checked at all
-        rows[0] = declaration(route=route)
+        drop(rows, CASH_ANCHOR)
+        redeclare(rows, route=route)
         assert ux_receipt.verify_rows(rows) == []
 
 
@@ -723,24 +798,24 @@ def test_cli_cash_anchor_checked_requires_outcome():
 
 def test_session_id_must_be_consistent():
     rows = good_markdown_rows()
-    rows[2]["session_id"] = "another-session"
+    at(rows, PREVIEW_ARTIFACT)["session_id"] = "another-session"
     assert_has(ux_receipt.verify_rows(rows), "declared session_id")
 
 
 def test_unknown_route_fails():
     rows = good_markdown_rows()
-    rows[0] = declaration(route="bogus_route")
+    redeclare(rows, route="bogus_route")
     assert_has(ux_receipt.verify_rows(rows), "unsupported route")
 
 
 def test_version_mismatch_fails():
     rows = good_markdown_rows()
-    rows[2]["version"] = 1
+    at(rows, PREVIEW_ARTIFACT)["version"] = 1
     assert_has(ux_receipt.verify_rows(rows), "unsupported version")
 
 
 def test_missing_declaration_first_fails():
-    rows = good_markdown_rows()[1:]  # no capabilities_declared row
+    rows = drop(good_markdown_rows(), DECLARATION)
     assert_has(ux_receipt.verify_rows(rows), "capabilities_declared event as its first row")
 
 
@@ -748,7 +823,8 @@ def test_missing_declaration_first_fails():
 
 def test_owner_verdict_must_follow_final_card():
     rows = good_markdown_rows()
-    rows.insert(4, row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
+    before(rows, FINAL_CARD,
+           row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     assert_has(ux_receipt.verify_rows(rows), "must follow the final card presentation")
 
 
@@ -764,8 +840,9 @@ def test_manual_verification_requires_owner_verdict():
 
 def test_dynamic_surface_manual_verdict_requires_specificity_and_answer_fit():
     rows = good_markdown_rows()
-    rows.insert(2, row("question_presented", mode="plain_text",
-                       surface_source="validated_dynamic", surface_digest=SURFACE_DIGEST))
+    before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="plain_text",
+                                       surface_source="validated_dynamic",
+                                       surface_digest=SURFACE_DIGEST))
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     assert_has(
         ux_receipt.verify_rows(rows, require_owner_verdict=True),
@@ -1093,9 +1170,9 @@ def test_final_artifact_before_preview_card_fails():
 def test_weekly_opener_after_first_question_fails():
     # #239 review (Codex): the opener must precede the first QUESTION, not merely the first card.
     rows = good_markdown_rows()
-    rows[0] = declaration(route="weekly_review")
-    rows.insert(1, row("question_presented", mode="plain_text"))
-    rows.insert(2, row("memory_presented", memory_kind="prior_commitment"))
+    redeclare(rows, route="weekly_review")
+    after(rows, DECLARATION, row("question_presented", mode="plain_text"))
+    after(rows, QUESTION, row("memory_presented", memory_kind="prior_commitment"))
     assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
 
 

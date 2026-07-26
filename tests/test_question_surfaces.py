@@ -449,7 +449,11 @@ def test_cross_client_receipts_share_digest_without_private_copy():
             {**base, "event": "card_presented", "stage": "final", "mode": "markdown_inline"},
         ]
         assert ux_receipt.verify_rows(rows) == []
-        receipt_text = json.dumps(rows[2], ensure_ascii=False)
+        # By event, not by position (#360). This is a privacy assertion: an
+        # index that drifted onto a neighbouring row would scan a row that
+        # never carried question copy and pass for the wrong reason.
+        presented = next(value for value in rows if value["event"] == "question_presented")
+        receipt_text = json.dumps(presented, ensure_ascii=False)
         assert "NVDA" not in receipt_text
         assert "Enterprise demand" not in receipt_text
         assert presentation["surface_digest"] in receipt_text
