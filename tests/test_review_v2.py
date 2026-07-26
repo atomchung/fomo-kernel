@@ -3911,7 +3911,8 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
             "source": "earnings call", "source_state": "confirmed",
             "captured_at": "2026-07-14", "observed_at": None,
         }
-        assert evidence_event["evaluation"] == {"state": "pending", "evaluated_at": None}
+        assert "evaluation" not in evidence_event, \
+            "dead thesis evaluation scaffolding must not be re-introduced (refs #416)"
 
         # Canonical bundles remain authoritative even when compatibility
         # projections disappear before repair.
