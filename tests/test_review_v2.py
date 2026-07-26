@@ -3911,7 +3911,9 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
             "source": "earnings call", "source_state": "confirmed",
             "captured_at": "2026-07-14", "observed_at": None,
         }
-        assert evidence_event["evaluation"] == {"state": "pending", "evaluated_at": None}
+        assert "evaluation" not in evidence_event, \
+            "dead thesis evaluation scaffolding must not resurface via " \
+            "build_decision_events's raw persisted event (refs #416)"
 
         # Canonical bundles remain authoritative even when compatibility
         # projections disappear before repair.
@@ -3927,6 +3929,17 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
         assert active["last_evidence"]["source_state"] == "confirmed"
         assert active["last_evidence"]["observed_at"] is None, \
             "review time cannot be substituted for a missing observation date"
+        # Twin guard for the *other* removed write site: build_decision_events's
+        # raw event and _evidence_record's folded evidence are two independent
+        # paths (reconstruct_states re-derives evidence_history/last_evidence
+        # from scratch), so a mutation that reintroduces only one of them would
+        # slip past a test that checks only the other.
+        assert "evaluation" not in active["last_evidence"], \
+            "dead thesis evaluation scaffolding must not resurface via " \
+            "_evidence_record's folded last_evidence (refs #416)"
+        assert "evaluation" not in active["evidence_history"][0], \
+            "dead thesis evaluation scaffolding must not resurface via " \
+            "_evidence_record's folded evidence_history (refs #416)"
 
         state = json.loads(state_path.read_text(encoding="utf-8"))
         position = state["holdings"]["positions"]["PLTR"]

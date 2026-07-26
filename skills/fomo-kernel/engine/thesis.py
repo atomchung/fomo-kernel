@@ -144,7 +144,6 @@ def _evidence_record(event, default_source_state="captured"):
         "falsifier": delta.get("falsifier"),
         "source_state": source_state,
         "captured_at": provenance.get("captured_at") or event.get("review_date"),
-        "evaluation": event.get("evaluation") or {"state": "pending", "evaluated_at": None},
         "decision_event_id": _row_event_id(event),
     }
 
@@ -435,7 +434,6 @@ def build_decision_events(plan, answers, thesis_updates=None):
                 "captured_at": event.get("review_date"),
                 "observed_at": evidence.get("observed_at"),
             }
-            event["evaluation"] = {"state": "pending", "evaluated_at": None}
         identity_payload = dict(event)
         identity_payload.pop("decision_id", None)
         event["event_id"] = stable_event_id("thesis-decision", identity_payload)

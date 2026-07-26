@@ -178,26 +178,6 @@
                 ]
               }
             }
-          },
-          "evaluation": {
-            "type": "object",
-            "properties": {
-              "state": {
-                "enum": [
-                  "pending",
-                  "confirmed",
-                  "weakened",
-                  "falsified",
-                  "insufficient"
-                ]
-              },
-              "evaluated_at": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
           }
         }
       }
