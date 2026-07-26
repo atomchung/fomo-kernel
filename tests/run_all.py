@@ -39,6 +39,12 @@ SUITES = [
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),
+    # #402 knife 5: the copy branches no persona reaches, rendered on all three
+    # delivery surfaces and compared against a generated golden. Unlike the
+    # sweep's --baseline half this one needs no second checkout, so it does
+    # belong in the default gate: the golden is committed, and an intended
+    # wording change regenerates it with `--update`.
+    ("Copy corpus golden (#402 knife 5)", "tests/copy_corpus.py"),
     # #368: the sweep used to be a prose rule in CLAUDE.md ("if the engine
     # changed, run the persona sweep") — i.e. enforced by whoever remembered.
     # It renders every persona x locale x decision variant in about the time
