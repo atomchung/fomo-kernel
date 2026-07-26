@@ -53,7 +53,10 @@
                         "context.ticker",
                         "context.prior_thesis.text",
                         "context.asked_because",
-                        "context.headline_dimension.label"
+                        "context.headline_dimension.label",
+                        "context.condition.criterion",
+                        "context.condition.evidence",
+                        "context.condition.basis_note"
                       ]
                     }
                   },
@@ -92,7 +95,53 @@
       },
       "additionalProperties": false
     },
+    "condition_checks": {
+      "type": "array",
+      "description": "#412: this review's result for each condition in review_plan.state_snapshot.condition_slots_due — one entry per condition, at most. Submitting the same envelope that was passed to `prepare --condition-checks` is what lets the engine record the reading the crossing question was actually posed against; a differing envelope fails closed. A due condition with no entry is recorded as not_checked rather than left as a gap in the file.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot_id", "check"],
+        "properties": {
+          "slot_id": {
+            "type": "string",
+            "description": "The condition this result is for. A slot_id held back by the plan's lookup cap is still accepted; an unknown one is an error."
+          },
+          "check": {
+            "$ref": "https://fomo-kernel.local/schemas/condition-check.schema.json#/properties/input",
+            "description": "The lookup envelope. `user_response` and `basis_resolution` are engine-supplied from the user's own answer to the condition question and must not be authored here."
+          }
+        }
+      }
+    },
+    "condition_revision": {
+      "type": ["object", "array"],
+      "description": "#412: the re-stated criterion for a condition whose basis question was answered revise_threshold or revise_metric. Required by such an answer and refused without one. Never a rules revise_rule replacement — a condition line and a tracked rule are separate records, and a slot can never enter the mechanical rule reconciliation. Refused when the same line also answered a crossing this review (one change per line per session) or when of_line_id names no live condition.",
+      "items": {"$ref": "#/$defs/condition_revision"},
+      "properties": {
+        "of_line_id": {"$ref": "#/$defs/condition_revision/properties/of_line_id"},
+        "condition": {"$ref": "#/$defs/condition_revision/properties/condition"}
+      },
+      "additionalProperties": false
+    },
     "thesis_updates": {"type": "array", "items": {"type": "object"}},
     "observations": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "condition_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["of_line_id", "condition"],
+      "properties": {
+        "of_line_id": {
+          "type": "string",
+          "description": "The condition line being re-stated — the `line_id` the condition_basis question carried, not a slot_id."
+        },
+        "condition": {
+          "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
+          "description": "The replacement criterion, in the user's own words. Stored as a new row on the same line with `revises` pointing at the row this review checked — never an edit to the old one."
+        }
+      }
+    }
   }
 }

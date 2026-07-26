@@ -274,6 +274,106 @@ def test_condition_integrity_abstains_when_the_answer_carries_no_envelope():
     assert looked is False, "a check with nothing to inspect has abstained, not passed"
 
 
+# ── condition_check_integrity ────────────────────────────────────────────────
+
+_THIS_PERIOD = {"lookup_status": "ok",
+                "observation": {"value": 21.0, "as_of": "2026-08-20", "source": "10-Q",
+                                "period": "FY2027Q2", "document": "10-Q 2026-08-20"}}
+_TWO_SIDED = ("You set this: sell if quarterly revenue growth drops under 30%. This period it "
+              "came back at 21%, against the 38% on record when you wrote the rule. If you think "
+              "that figure is measuring something else, say so and I will record it as not "
+              "crossed.")
+
+
+def _check_answer(prose=_TWO_SIDED, condition=None, **check_over):
+    envelope = json.loads(json.dumps(_THIS_PERIOD))
+    for key, value in check_over.items():
+        if value is None:
+            envelope.pop(key, None)
+        else:
+            envelope[key] = value
+    return {"prose": prose,
+            "condition": condition if condition is not None else dict(_CONDITION),
+            "condition_check": envelope}
+
+
+def test_condition_check_integrity_accepts_a_two_sided_answer_whose_numbers_trace():
+    assert R.check_condition_check_integrity(_check_answer(), FACTS) == []
+
+
+def test_condition_check_integrity_catches_a_figure_the_lookup_never_returned():
+    """The shape a one-sided push takes in practice: the argument needs a fact
+    the record does not have, so it reaches for one."""
+    findings = R.check_condition_check_integrity(
+        _check_answer(prose=_TWO_SIDED + " It was 34.5% last quarter, so this is a trend."), FACTS)
+    assert findings and "34.5" in findings[0], findings
+
+
+def test_condition_check_integrity_catches_a_reading_that_was_never_shown_back():
+    findings = R.check_condition_check_integrity(
+        _check_answer(prose="You set this: sell if quarterly revenue growth drops under 30%. "
+                            "Your line was crossed this period."), FACTS)
+    assert findings and "never shown back" in findings[0], findings
+
+
+def test_condition_check_integrity_catches_a_failed_lookup_told_as_a_clean_one():
+    """The failure the whole tier exists to prevent: a period nobody could look
+    at, narrated as a period where everything was fine."""
+    findings = R.check_condition_check_integrity(
+        _check_answer(prose="Quarterly revenue growth is still clear of your 30% line at 38%.",
+                      lookup_status="failed", observation=None,
+                      reason="the quarter has not been reported"), FACTS)
+    assert findings, findings
+    assert any("no surface says so" in f for f in findings), findings
+    assert any("still clear" in f for f in findings), findings
+
+
+def test_condition_check_integrity_accepts_a_failed_lookup_said_out_loud():
+    assert R.check_condition_check_integrity(
+        _check_answer(prose="I could not check this one this period: the quarter has not been "
+                            "reported. It is currently blind rather than clear.",
+                      lookup_status="failed", observation=None,
+                      reason="the quarter has not been reported"), FACTS) == []
+
+
+def test_condition_check_integrity_defers_to_the_engines_own_check_validator():
+    """The gate that ships is the gate that grades. A summary sent for a numeric
+    line is refused here for the same reason a live review refuses it — and the
+    rule is never restated in this file, so the two cannot drift."""
+    findings = R.check_condition_check_integrity(
+        _check_answer(observation={"summary": "growth fell", "as_of": "2026-08-20",
+                                   "source": "10-Q"}), FACTS)
+    assert findings and "refuses this result" in findings[0], findings
+
+
+def test_condition_check_integrity_refuses_an_envelope_that_reports_a_verdict():
+    """External review, BLOCK: `user_response` is what the USER said, and an
+    envelope may not report it — otherwise an episode (and a live agent) could
+    record `overridden` for a question nobody was shown. The refusal comes from
+    the engine's own validator, so the bank and the runtime cannot disagree."""
+    findings = R.check_condition_check_integrity(
+        _check_answer(user_response={"answer": "overridden", "answered_at": "2026-08-26"}), FACTS)
+    assert findings and "refuses this result" in findings[0], findings
+    assert "must not carry user_response" in findings[0], findings
+
+
+def test_condition_check_integrity_does_not_mistake_a_quarter_label_for_a_figure():
+    """Both sides read with the engine's own number reader. Scanning prose with
+    a looser one would redden an answer that quoted the user's criterion
+    verbatim — the mistake its sibling check made first."""
+    condition = dict(_CONDITION, criterion="sell if Q3 revenue growth drops under 30%")
+    answer = _check_answer(
+        prose="You set this: sell if Q3 revenue growth drops under 30%. This period: 21%.",
+        condition=condition)
+    assert R.check_condition_check_integrity(answer, FACTS) == []
+
+
+def test_condition_check_integrity_abstains_when_the_answer_carries_no_check():
+    _findings, looked = R.run_check("condition_check_integrity", {},
+                                    {"prose": "no check here"}, FACTS)
+    assert looked is False, "a check with nothing to inspect has abstained, not passed"
+
+
 # ── the interlocks ───────────────────────────────────────────────────────────
 
 def test_a_declared_check_with_nothing_to_inspect_reports_no_data():
@@ -371,7 +471,8 @@ def test_unmapped_never_turns_into_a_failure():
 # A plan carrying the state_snapshot keys the real engine emits, so the gate's
 # `state:` proofs have something truthful to check against.
 CONSUMER_PLAN = {"state_snapshot": {"thesis_states": [], "headline_motive_events": [],
-                                    "due_revisits": [], "problem_stats": {}}}
+                                    "due_revisits": [], "problem_stats": {},
+                                    "condition_slots_due": []}}
 
 
 def _with_consumers(consumers, unwired):

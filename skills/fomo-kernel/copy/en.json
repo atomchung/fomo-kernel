@@ -119,7 +119,64 @@
     "already_met": "This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.",
     "unmapped_no_threshold": "This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you.",
     "unmapped_no_baseline": "This one is recorded, but the figure behind it could not be found, so it is not being watched yet.",
-    "unmapped_no_adjudicator": "This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you."
+    "unmapped_no_adjudicator": "This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you.",
+    "event_watch_started": "This one is a yes-or-no call: it is being watched from now on, and when something turns up you get asked — the call stays yours."
+  },
+  "condition_check": {
+    "then_now": "Last time you committed: \"{rule}\" — it was {then} when you set it, {now} now.",
+    "then_now_no_baseline": "Last time you committed: \"{rule}\" — nothing was on record when you set it; it is {now} now.",
+    "then_now_event": "Last time you committed: \"{rule}\" — you started watching for it then. Latest: {now}.",
+    "verdict_met": "That is past your line.",
+    "verdict_near_line": "That is close to your line.",
+    "verdict_not_met": "That is still clear of your line.",
+    "verdict_unknown": "There is no verdict on it this period.",
+    "fact": "{criterion} — {value} ({source}, as of {as_of}).",
+    "fact_no_source": "{criterion} — {value}.",
+    "fact_looks_wrong": "If a figure there looks wrong, say so — the basis can be re-checked.",
+    "note_deferred": "That is past your line; I will ask you about it next review.",
+    "note_deferred_event": "That may be the thing you were watching for; I will ask you about it next review.",
+    "note_unanswered": "That is past your line and you have not said either way; I will ask again next review.",
+    "note_unanswered_event": "That may be the thing you were watching for and you have not said either way; I will ask again next review.",
+    "note_basis_open": "What this measures may have changed ({note}), and that is still unsettled; I will ask about it next review.",
+    "blind": "{criterion} — not checked this period, so it is currently blind.",
+    "blind_with_reason": "{criterion} — not checked this period ({reason}), so it is currently blind.",
+    "summary_checked": "Checked {checked} of {total} conditions this period.",
+    "summary_open": "Open concerns coming back next review: {deferred}.",
+    "summary_trimmed": "This card shows {shown} of {describable} readings; the rest are in your record."
+  },
+  "condition_crossing": {
+    "met": "You set this: \"{criterion}\". This period: {evidence}. Does that count as crossed?",
+    "near_line": "You set this: \"{criterion}\". This period: {evidence} — close to the line. Does that count as crossed?",
+    "event": "You set this: \"{criterion}\". This period: {evidence}. Did it happen?"
+  },
+  "condition_crossing_choices": {
+    "confirmed": "Yes, treat it as crossed",
+    "overridden": "No, do not treat it as crossed",
+    "yes": "Yes, it happened",
+    "no": "No, it did not",
+    "skip": "Leave it for now"
+  },
+  "condition_crossing_choices_descriptions": {
+    "confirmed": "The reading stands, and the rule you wrote applies.",
+    "overridden": "The reading is measuring something other than what you meant — say why.",
+    "yes": "The thing you were watching for has happened.",
+    "no": "It has not happened; keep watching.",
+    "skip": "Leave it unanswered; the reading is recorded either way."
+  },
+  "condition_basis": {
+    "stem": "You set this: \"{criterion}\". What is being measured may have changed: {note}. What should happen to it?"
+  },
+  "condition_basis_choices": {
+    "revise_threshold": "Keep the measure, move the line",
+    "revise_metric": "Measure something else",
+    "keep": "Leave it as it is",
+    "skip": "Leave it for now"
+  },
+  "condition_basis_choices_descriptions": {
+    "revise_threshold": "The same quantity is still the right one; the number should change.",
+    "revise_metric": "That quantity no longer captures what you meant — write the condition again.",
+    "keep": "The change does not affect what you were tracking.",
+    "skip": "Leave it unanswered; the condition stands as written."
   },
   "patterns_panel": {
     "label": "A pattern, not yet judged (no answer needed)",

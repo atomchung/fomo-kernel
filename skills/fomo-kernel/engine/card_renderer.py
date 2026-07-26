@@ -621,10 +621,37 @@ def condition_state_line(commitment, language):
     elif condition.get("tier") == "unmapped":
         code = {"no_threshold": "unmapped_no_threshold",
                 "no_baseline": "unmapped_no_baseline",
+                # Written before the check flow existed; the row is never
+                # rewritten, so the sentence it resolves to has to stay.
                 "no_adjudicator": "unmapped_no_adjudicator"}.get(condition.get("unmapped_reason"))
+    elif (condition.get("kind") or "numeric") == "event":
+        # #412: an event condition has no baseline comparison to report, so the
+        # commit exchange would otherwise end in silence — and silence is how a
+        # user comes to think nothing was recorded. The watch starting IS the
+        # news; the adjudication is a later review's.
+        code = "event_watch_started"
     if not code:
         return None
     return ((load_copy(language).get("condition_state") or {}).get(code)) or None
+
+
+def condition_value(value, unit):
+    """One condition figure as the user wrote its unit (#412).
+
+    A condition's unit is free text the user chose ("%", "USD", "x", "days"),
+    not one of the engine's own metric families, so this neither converts nor
+    re-scales: it prints the number that was found and the unit it was found
+    in. A `%` unit is glued to the number the way a percentage is written
+    everywhere else on the card; anything else takes a space, because "38 days"
+    is a phrase and "38days" is a typo."""
+    number = _finite_number(value)
+    if number is None:
+        return None
+    text = str(int(number)) if number == int(number) else f"{number:g}"
+    unit = str(unit or "").strip()
+    if not unit:
+        return text
+    return f"{text}%" if unit == "%" else f"{text} {unit}"
 
 
 def localized_rule_grounding(dim, language, card):
@@ -1790,6 +1817,363 @@ def _metric_display(key, value):
     return f"{value}"
 
 
+def _condition_check_rows(bundle):
+    return [row for row in bundle.get("condition_checks") or [] if isinstance(row, dict)]
+
+
+def _condition_now(check, condition, copy):
+    """What this period found for one condition, as one phrase — never a verdict
+    on its own. ``None`` when the lookup did not succeed: an absent figure must
+    read as absent, and a period with no evidence has nothing to put here."""
+    if not check or check.get("lookup_status") != "ok":
+        return None
+    observation = check.get("observation") or {}
+    if "value" in observation:
+        return condition_value(observation["value"],
+                              (condition.get("threshold") or {}).get("unit"))
+    summary = str(observation.get("summary") or "").strip()
+    return summary or None
+
+
+def _condition_verdict_sentence(check, copy):
+    """The engine's one-sentence read of a check's verdict of record.
+
+    Copy-fallback only, like the breach sentence below it — it never consults
+    ``narrative.honesty``, so it reaches the reader however the agent worded
+    anything. A verdict the engine could not reach says so rather than going
+    quiet: silence next to a then/now pair reads as "fine"."""
+    check_copy = copy.get("condition_check") or {}
+    return check_copy.get("verdict_" + str((check or {}).get("final_verdict") or "unknown"))
+
+
+def _condition_reconciliation_line(prior, checks, copy, index):
+    """The prior commitment's condition, then and now.
+
+    A condition's then/now is the same shape a tracked metric already has, and
+    for the same reason: what makes the loop visible is the pair, not the
+    latest number. ``then`` is what was found when the user committed — the
+    baseline the engine took in that same exchange — and ``now`` is what this
+    period's check found. Returns ``None`` when nothing was checked this
+    period, and the caller falls back to the bare statement: a condition with
+    no fresh reading must not be dressed up as one that has one.
+
+    The match is on **line**, never on ``slot_id``. A check names the live head
+    of its line, and after a second revision that head is neither the slot the
+    prior commitment recorded nor its line root — so a slot_id comparison went
+    quiet exactly when the user's condition had the most history behind it. The
+    engine resolves both sides (``review.py`` stamps ``line_id`` on the prior
+    commitment and on every due entry); this reads them (external review,
+    round 1)."""
+    condition = prior.get("condition") or {}
+    line_id = condition.get("line_id") or condition.get("slot_id")
+    if not condition or not line_id:
+        return None
+    check = next((row for row in checks
+                  if (index.get(row.get("slot_id")) or {}).get("line_id") == line_id), None)
+    now = _condition_now(check, condition, copy)
+    if now is None:
+        return None
+    check_copy = copy.get("condition_check") or {}
+    if (condition.get("kind") or "numeric") == "event":
+        line = _format_copy(check_copy.get("then_now_event"), rule=prior["rule"], now=now)
+    else:
+        then = condition_value((condition.get("baseline") or {}).get("value"),
+                               (condition.get("threshold") or {}).get("unit"))
+        template = "then_now" if then is not None else "then_now_no_baseline"
+        line = _format_copy(check_copy.get(template), rule=prior["rule"],
+                            then=then or "", now=now)
+    if not line:
+        return None
+    verdict = _condition_verdict_sentence(check, copy)
+    return f"{line} {verdict}" if verdict else line
+
+
+# How many per-condition lines of each kind one card may carry. The record holds
+# every check; the card holds the ones a reader can act on. Whatever is trimmed
+# here is counted and stated by the summary line below — a card that quietly
+# shows two of five readings is the same defect as a cap that does not say what
+# it dropped, one level down (external review, round 1).
+CONDITION_CARD_LINES = 2
+
+
+def _condition_index(bundle):
+    """``slot_id -> the condition it belongs to``, from the plan's own due list.
+
+    The due list is where the engine already resolved every line identity, so
+    the card reads ``line_id`` rather than deriving it. That is the point of
+    the field: matching a check to a commitment through ``slot_id`` alone broke
+    silently after a second revision, because the new check names the newest
+    slot while the prior commitment still names the one before it."""
+    return {entry["slot_id"]: entry
+            for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                          .get("condition_slots_due") or [])
+            if isinstance(entry, dict) and entry.get("slot_id")}
+
+
+def _queued_crossings(bundle):
+    """The condition lines this review put a crossing question *to the queue* for.
+
+    Deliberately not the silence condition — being asked is not being answered
+    (external review, round 2). This only separates two different facts once a
+    line is already known to be unresolved: "it lost the one-question budget"
+    and "it was asked and nobody answered" are different things to tell a user,
+    and each gets its own sentence."""
+    return {question.get("line_id")
+            for question in ((bundle.get("review_plan") or {}).get("question_queue") or [])
+            if isinstance(question, dict) and question.get("kind") == "condition_crossing"}
+
+
+def _condition_reading(check, condition):
+    """This period's figure or fact for one condition, as the card prints it."""
+    observation = check.get("observation") or {}
+    if "value" in observation:
+        return condition_value(observation.get("value"),
+                               (condition.get("threshold") or {}).get("unit"))
+    return str(observation.get("summary") or "").strip() or None
+
+
+def _condition_reading_line(check, condition, copy, notes):
+    """One reading, plus every sentence that says where it stands.
+
+    The reading and the status sentences are separate copy keys on purpose. The
+    figure prints identically whatever its disposition, so only the notes vary,
+    and — because a single check can be unresolved on two independent axes at
+    once — a row can carry more than one. No combination needs its own
+    template."""
+    reading = _condition_reading(check, condition)
+    if reading is None:
+        return None
+    observation = check.get("observation") or {}
+    source, as_of = observation.get("source"), observation.get("as_of")
+    check_copy = copy.get("condition_check") or {}
+    template = "fact" if (source and as_of) else "fact_no_source"
+    line = _format_copy(check_copy.get(template), criterion=condition.get("criterion") or "",
+                        value=reading, source=source, as_of=as_of)
+    if not line:
+        return None
+    for note_key, values in notes:
+        note = _format_copy(check_copy.get(note_key), **values)
+        if note:
+            line = f"{line} {note}"
+    return line
+
+
+# A check row's two dispositions. They are **independent axes**, not competing
+# values of one field, because a single row can genuinely carry both facts:
+# `build_check` writes `basis_alert` and `engine_verdict` on the same row, and
+# `_condition_questions` emits a `condition_basis` *and* a `condition_crossing`
+# for that line. The round-2 cut ran them through one single-valued if-chain, so
+# whichever matched first won and the other fact was neither printed nor counted
+# — a user could answer the crossing, skip the basis question, and never hear
+# again that the measurement may have moved underneath the line they just
+# confirmed (external review, round 3).
+#
+#   crossing axis   None (not a candidate) | settled | unanswered | deferred
+#   basis axis      None (no alert)        | open    | resolved
+CONDITION_CROSSING_STATES = (None, "settled", "unanswered", "deferred")
+CONDITION_BASIS_STATES = (None, "open", "resolved")
+# The states that mean "this review did not close this concern". A row can be
+# open on both axes at once, and that is two concerns, not one.
+CONDITION_OPEN_CROSSING = ("unanswered", "deferred")
+
+
+def _condition_outcome(check, condition, queued):
+    """``(crossing_state, basis_state)`` for one successful check.
+
+    ``settled`` means the user actually answered — **not** that a question was
+    queued. A queued question that ended in a skip, or one an interrupted host
+    never delivered, leaves the row with no ``user_response`` at all; treating
+    "asked" as "answered" put the crossed line straight back into silence
+    (external review, round 2).
+
+    The basis axis reads the same way and for the same reason: a raised concern
+    with no ``basis_resolution`` was never settled, so a card that prints its
+    reading as an ordinary all-clear fact has quietly dropped the doubt."""
+    # Candidacy comes from the engine's own read, never from `final_verdict`:
+    # an override moves the verdict of record to `not_met` while leaving the
+    # engine's finding intact, and that check must stay quiet rather than
+    # reappearing as an all-clear reading.
+    if not (check.get("engine_verdict") in ("met", "near_line")
+            or bool(check.get("event_alert"))):
+        crossing_state = None
+    elif check.get("user_response"):
+        crossing_state = "settled"
+    elif condition.get("line_id") in queued:
+        crossing_state = "unanswered"
+    else:
+        crossing_state = "deferred"
+
+    if not check.get("basis_alert"):
+        basis_state = None
+    elif check.get("basis_resolution"):
+        basis_state = "resolved"
+    else:
+        basis_state = "open"
+    return crossing_state, basis_state
+
+
+def _condition_notes(check, condition, crossing_state, basis_state):
+    """The status sentences one reading carries, in fixed order: what the line
+    itself is doing, then what may be wrong with how it is measured."""
+    event = (condition.get("kind") or "numeric") == "event"
+    notes = []
+    if crossing_state in CONDITION_OPEN_CROSSING:
+        suffix = "_event" if event else ""
+        notes.append((f"note_{crossing_state}{suffix}", {}))
+    if basis_state == "open":
+        notes.append(("note_basis_open",
+                      {"note": (check.get("basis_alert") or {}).get("note") or ""}))
+    return notes
+
+
+def _condition_open_concerns(crossing_state, basis_state):
+    """How many separate things this row leaves unresolved — zero, one, or two."""
+    return int(crossing_state in CONDITION_OPEN_CROSSING) + int(basis_state == "open")
+
+
+def _condition_outcomes(bundle, checks):
+    """``[(check, condition, status, crossing_state, basis_state)]`` per readable check.
+
+    One classification, read by both the card lines and the summary count."""
+    index = _condition_index(bundle)
+    queued = _queued_crossings(bundle)
+    out = []
+    for check in checks:
+        condition = index.get(check.get("slot_id"))
+        if not condition:
+            continue
+        status = check.get("lookup_status")
+        if status == "failed":
+            out.append((check, condition, "failed", None, None))
+        elif status == "ok":
+            crossing_state, basis_state = _condition_outcome(check, condition, queued)
+            out.append((check, condition, "ok", crossing_state, basis_state))
+    return out
+
+
+def _condition_reading_lines(bundle, checks, copy):
+    """``(lines, shown, describable)`` — every per-condition line this card carries.
+
+    Four groups, in the order a reader needs them:
+
+    1. **Unresolved crossings** — a line the engine read as crossed (or an event
+       the agent flagged) that the user has not answered on. Either it lost the
+       one-question budget, or it was asked and got no answer; the two say so
+       differently, because they are different facts. Before this existed a
+       crossed line could go completely unmentioned, which is the single worst
+       outcome this whole tier exists to prevent.
+    2. **Open basis concerns** — the agent said the measurement may have
+       changed and nobody settled it. Printing its reading as an ordinary
+       all-clear fact would drop the doubt exactly the way a silent crossing
+       dropped the crossing.
+    3. **Readings clear of the line**, with one non-blocking "if a figure looks
+       wrong, say so" for the group — showing the figure is how a wrong basis
+       exposes itself, and that only helps if the user is invited to say so.
+    4. **Failed lookups**, stated plainly with their reason.
+
+    A row is grouped by its most urgent open fact but **prints every one it
+    has**: an unresolved crossing whose basis is also in doubt carries both
+    sentences on one reading, because the two are independent and dropping
+    either loses something the user needs (external review, round 3).
+
+    A check the user settled on both axes renders nothing: the exchange told
+    that story. ``not_checked`` rows are the summary's business — eight
+    apologies would bury the one lookup that actually broke.
+    """
+    check_copy = copy.get("condition_check") or {}
+    groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": []}
+    for check, condition, status, crossing_state, basis_state in _condition_outcomes(
+            bundle, checks):
+        if status == "failed":
+            criterion = condition.get("criterion") or ""
+            reason = str(check.get("reason") or "").strip()
+            line = (_format_copy(check_copy.get("blind_with_reason"),
+                                 criterion=criterion, reason=reason) if reason
+                    else _format_copy(check_copy.get("blind"), criterion=criterion))
+            if line:
+                groups["blind"].append(line)
+            continue
+        notes = _condition_notes(check, condition, crossing_state, basis_state)
+        if notes:
+            # Grouped by the crossing axis when it is open, else by the basis
+            # concern — but the line itself carries both notes either way.
+            group = (crossing_state if crossing_state in CONDITION_OPEN_CROSSING
+                     else "basis_open")
+        elif crossing_state is None and check.get("final_verdict") == "not_met":
+            group = "fact"
+        else:
+            continue                      # settled on every axis; nothing to say
+        line = _condition_reading_line(check, condition, copy, notes)
+        if line:
+            groups[group].append(line)
+    describable = sum(len(rows) for rows in groups.values())
+    kept = {kind: rows[:CONDITION_CARD_LINES] for kind, rows in groups.items()}
+    shown = sum(len(rows) for rows in kept.values())
+    lines = kept["unanswered"] + kept["deferred"] + kept["basis_open"]
+    if kept["fact"]:
+        lines += kept["fact"]
+        looks_wrong = check_copy.get("fact_looks_wrong")
+        if looks_wrong:
+            lines.append(looks_wrong)
+    kept_blind = kept["blind"]
+    lines += kept_blind
+    return lines, shown, describable
+
+
+def _condition_summary_line(bundle, checks, copy, shown, describable):
+    """How much of the record this review looked at, and how much of that is
+    on this card.
+
+    Two ways a card can be incomplete, and it must speak for either. **Not
+    settled**: a failed lookup, one nobody ran, a line the plan's cap held
+    back (#434), a crossing the user has not answered on, or a basis concern
+    nobody resolved — none of those is closed, so none may pass as fine. **Not
+    shown**: the per-kind line caps trimmed a reading that was taken. A card
+    that quietly prints two of five readings is making the same claim of
+    completeness the cap disclosure exists to prevent (external review,
+    round 1).
+
+    The unsettled count comes from ``_condition_outcomes`` — the same
+    classification the lines above render — so the card and its own summary
+    cannot disagree about what was left open (external review, round 2).
+
+    It counts **concerns, not rows**: a check whose crossing is unanswered
+    *and* whose basis is in doubt left two separate things open, and a count
+    that said "1" there would be claiming something its own card contradicts
+    (external review, round 3). The copy says "concerns" so the number matches
+    what it names.
+
+    Silent only when everything was checked, settled, and printed."""
+    summary = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+               .get("condition_slots_summary") or {})
+    total = _finite_number(summary.get("lines_total"))
+    if total is None or total <= 0:
+        return None
+    total = int(total)
+    checked = sum(1 for row in checks if row.get("lookup_status") == "ok")
+    unsettled = sum(_condition_open_concerns(crossing_state, basis_state)
+                    for _check, _condition, _status, crossing_state, basis_state
+                    in _condition_outcomes(bundle, checks))
+    # "Open" is anything this review did not close: never looked at, looked at
+    # and failed, held back by the cap, or checked and left unresolved.
+    open_count = max(0, total - checked) + unsettled
+    trimmed = max(0, describable - shown)
+    if open_count <= 0 and trimmed <= 0:
+        return None
+    # Composed from single-purpose sentences rather than one template per
+    # combination: the two incompletenesses are independent, and a combined
+    # string has to say "0 still open" in the case where only trimming happened.
+    check_copy = copy.get("condition_check") or {}
+    parts = [_format_copy(check_copy.get("summary_checked"), checked=checked, total=total)]
+    if open_count > 0:
+        parts.append(_format_copy(check_copy.get("summary_open"), deferred=open_count))
+    if trimmed > 0:
+        parts.append(_format_copy(check_copy.get("summary_trimmed"),
+                                  shown=shown, describable=describable))
+    parts = [part for part in parts if part]
+    return " ".join(parts) or None
+
+
 def _reconciliation_lines(bundle, language):
     """#151/#152 loop anchor: open the card against last time's commitment.
 
@@ -1805,27 +2189,48 @@ def _reconciliation_lines(bundle, language):
     narrative.honesty, so it is guaranteed to reach the reader regardless of
     how the agent's separately-required honesty sentence turns out to be
     worded or where it lands on the card."""
-    prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
-    if not prior.get("rule"):
-        return []
-    key = prior.get("metric_key")
-    then_v = prior.get("metric_value")
-    now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
     copy = load_copy(language)
-    recon_copy = copy.get("reconciliation") or {}
-    if then_v is not None and now_v is not None:
-        # A-12: never print internal metric keys on the card — values only.
-        line = recon_copy["statement_with_metric"].format(
-            rule=prior["rule"], then=_metric_display(key, then_v), now=_metric_display(key, now_v))
-    else:
-        line = recon_copy["statement"].format(rule=prior["rule"])
-    breached = any(entry.get("key") == "prior_commitment_breach"
-                   for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
-    if breached:
-        fallback = (copy.get("honesty") or {}).get("prior_commitment_breach")
-        if fallback:
-            line += f" {fallback}"
-    return [line]
+    checks = _condition_check_rows(bundle)
+    prior = ((bundle.get("review_plan") or {}).get("state_snapshot") or {}).get("prior_commitment") or {}
+    lines = []
+    if prior.get("rule"):
+        key = prior.get("metric_key")
+        then_v = prior.get("metric_value")
+        now_v = ((bundle.get("engine_state") or {}).get("metrics") or {}).get(key) if key else None
+        recon_copy = copy.get("reconciliation") or {}
+        # #412: a commitment anchored to a condition reconciles the same way a
+        # metric-anchored one does — the baseline taken when it was written
+        # against what this period's check found. It degrades to the bare
+        # statement when nothing was checked, rather than borrowing the
+        # metric branch's shape for numbers it does not have.
+        condition_line = _condition_reconciliation_line(prior, checks, copy,
+                                                        _condition_index(bundle))
+        if condition_line:
+            line = condition_line
+        elif then_v is not None and now_v is not None:
+            # A-12: never print internal metric keys on the card — values only.
+            line = recon_copy["statement_with_metric"].format(
+                rule=prior["rule"], then=_metric_display(key, then_v),
+                now=_metric_display(key, now_v))
+        else:
+            line = recon_copy["statement"].format(rule=prior["rule"])
+        breached = any(entry.get("key") == "prior_commitment_breach"
+                       for entry in (bundle.get("engine_card") or {}).get("honesty_ledger") or [])
+        if breached:
+            fallback = (copy.get("honesty") or {}).get("prior_commitment_breach")
+            if fallback:
+                line += f" {fallback}"
+        lines.append(line)
+    # The standing conditions from earlier reviews, in the same breath as the
+    # prior commitment: this whole block answers one question — what happened to
+    # the things you asked to be watched. The summary reads what the lines
+    # above actually printed, so trimming can never pass as completeness.
+    reading_lines, shown, describable = _condition_reading_lines(bundle, checks, copy)
+    lines += reading_lines
+    summary = _condition_summary_line(bundle, checks, copy, shown, describable)
+    if summary:
+        lines.append(summary)
+    return lines
 
 
 def _review_opening_lines(bundle, language):

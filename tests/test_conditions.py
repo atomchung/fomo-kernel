@@ -30,12 +30,16 @@ What this file settles:
      load_checks' tolerance for corruption and a missing file.
   M. The firewall is physical: conditions.py never imports problems.
   N. Produced rows carry exactly what the schema declares.
+  O. The two alerts the engine cannot derive (`event_alert`, `basis_alert`):
+     each raises one question and decides nothing, and neither may exist
+     without evidence behind it.
+  P. Line history: "when was this last looked at" and "what did the last
+     successful lookup find" are different questions, and both cross a
+     revision boundary.
 
 The end-to-end half — a condition surviving finalize, staying out of rules.jsonl,
-and being read back into the next review — lives in tests/test_review_v2.py,
-where the CLI harness already is. The check flow's own end-to-end half (calling
-any of this from a live review) is not built yet — see conditions.py's module
-docstring.
+being read back into the next review, checked each period, and adjudicated by
+the user — lives in tests/test_review_v2.py, where the CLI harness already is.
 """
 import ast
 import json
@@ -111,15 +115,23 @@ EVENT_OBS_1 = {"summary": "CEO still in role per the latest 8-K", "as_of": "2026
 
 def _check(slot=None, previous=None, check_id="chk-test-0", session_id="2026-08-26__test",
            date_end="2026-08-26", **overrides):
+    """One built check row. ``user_response`` / ``basis_resolution`` are routed to
+    the keyword arguments they now are: they carry what the *user* said, and an
+    envelope may not report that (external review, round 1). Passing them here
+    stands in for the engine folding in an answer to a question it actually
+    posed — the smuggling refusal itself is tested through ``build_check``
+    directly, below."""
     slot = slot if slot is not None else _slot()
     raw = {"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)}
+    engine_assigned = {}
     for key, value in overrides.items():
+        target = engine_assigned if key in conditions._ENGINE_ASSIGNED_CHECK_FIELDS else raw
         if value is None:
-            raw.pop(key, None)
+            target.pop(key, None)
         else:
-            raw[key] = value
+            target[key] = value
     return conditions.build_check(raw, slot=slot, previous=previous, check_id=check_id,
-                                  session_id=session_id, date_end=date_end)
+                                  session_id=session_id, date_end=date_end, **engine_assigned)
 
 
 def _event_check(slot=None, previous=None, **overrides):
@@ -178,9 +190,42 @@ def test_an_event_condition_says_it_is_one_rather_than_being_inferred():
                  query="who is the current chief executive, and when did they take the role?",
                  threshold=None, observation=None)
     assert slot["kind"] == "event"
-    assert (slot["tier"], slot["unmapped_reason"]) == ("unmapped", "no_adjudicator"), \
-        "an event has no line to compare, so its verdict must come from the user — " \
-        "and the flow that asks is not built yet"
+    assert slot["tier"] == "researched", \
+        "an event has no line to compare, so its verdict comes from the user — and now that " \
+        "the check flow asks, the adjudicator it was missing exists"
+    assert "unmapped_reason" not in slot, slot
+    assert "baseline_verdict" not in slot, \
+        "the engine never computes an event verdict, at commit time or any other time"
+
+
+def test_an_event_condition_is_watchable_without_a_threshold_a_numeric_one_is_not():
+    """The flip is scoped to events. A numeric condition with no line is still
+    `unmapped`: there is nothing for the engine to compare and no yes/no question
+    a user could answer in its place."""
+    assert _slot(kind="event", criterion="sell if the CEO leaves",
+                 query="who is the current chief executive?",
+                 threshold=None, observation=None)["tier"] == "researched"
+    blind = _slot(threshold=None)
+    assert (blind["tier"], blind["unmapped_reason"]) == ("unmapped", "no_threshold")
+
+
+def test_a_pre_flow_event_row_still_reads_as_an_event_row():
+    """`no_adjudicator` rows were written while nothing asked the user for the
+    verdict. They are facts about what was true then and are never rewritten, so
+    the reason stays a documented enum member and the readers keep handling it."""
+    assert "no_adjudicator" in conditions.UNMAPPED_REASONS
+    legacy = {"slot_id": "slot-old-0", "kind": "event", "criterion": "sell if the CEO leaves",
+              "query": "who is the current chief executive?", "created": "2026-07-01",
+              "tier": "unmapped", "unmapped_reason": "no_adjudicator"}
+    assert conditions.slot_line_id(legacy) == "slot-old-0"
+    lines, forked = conditions.fold_slots([legacy])
+    assert forked == 0 and lines["slot-old-0"]["latest"] is legacy
+    # A check against it still builds: the tier is a display fact, not a gate.
+    row = conditions.build_check({"lookup_status": "ok",
+                                  "observation": dict(EVENT_OBS_1)},
+                                 slot=legacy, previous=None, check_id="chk-legacy",
+                                 date_end="2026-08-26")
+    assert row["final_verdict"] == "unknown" and row["engine_verdict"] is None
 
 
 def test_a_numeric_condition_is_the_default_kind():
@@ -777,6 +822,147 @@ def test_load_checks_on_a_missing_file_is_empty_not_an_error():
     assert conditions.load_checks(os.path.join("no", "such", "condition_checks.jsonl")) == ([], 0)
 
 
+# ─────────── O. the two alerts the engine cannot derive (#412 / #434) ───────────
+
+def test_an_event_alert_is_stored_only_when_it_fired():
+    """A `false` is the ordinary state of every quiet event check. Writing it
+    everywhere would make the absence of an alert look like a recorded decision."""
+    quiet = _event_check()
+    assert "event_alert" not in quiet, quiet
+    assert _event_check(event_alert=False).get("event_alert") is None
+    assert _event_check(event_alert=True)["event_alert"] is True
+
+
+def test_an_event_alert_never_decides_the_event():
+    """It raises the question and settles nothing: without the user's answer the
+    verdict is still unknown, alert or no alert."""
+    row = _event_check(event_alert=True)
+    assert (row["final_verdict"], row["verdict_source"]) == ("unknown", "engine")
+    assert row["engine_verdict"] is None
+
+
+def test_an_event_alert_is_refused_on_a_numeric_slot():
+    """A numeric crossing is the engine's own comparison. Accepting an asserted
+    one would put an agent's reading on the same footing as the computation."""
+    _check_rejects("event_alert is for an event condition", event_alert=True)
+
+
+def test_an_event_alert_requires_an_observation_behind_it():
+    _check_rejects("event_alert requires lookup_status ok", slot=_event_slot(),
+                   lookup_status="failed", observation=None, event_alert=True)
+
+
+def test_a_basis_alert_carries_a_note_and_optional_provenance():
+    row = _check(basis_alert={"note": "the reporting segment was restated this quarter",
+                              "source": "10-Q", "as_of": "2026-08-20"})
+    assert row["basis_alert"]["note"].startswith("the reporting segment")
+    assert row["basis_alert"]["source"] == "10-Q" and row["basis_alert"]["as_of"] == "2026-08-20"
+    bare = _check(basis_alert={"note": "the fiscal calendar shifted"})
+    assert set(bare["basis_alert"]) == {"note"}
+
+
+def test_a_basis_alert_fails_closed_on_its_own_fields():
+    _check_rejects("basis_alert.note is required", basis_alert={"source": "10-Q"})
+    _check_rejects("basis_alert has unknown fields", basis_alert={"note": "x", "verdict": "met"})
+    _check_rejects("basis_alert.as_of must be an ISO date",
+                   basis_alert={"note": "x", "as_of": "last quarter"})
+    _check_rejects("basis_alert requires lookup_status ok", lookup_status="failed",
+                   observation=None, basis_alert={"note": "x"})
+
+
+def test_a_basis_alert_does_not_move_the_verdict():
+    """Doubt about the basis is not a verdict on the line. The comparison the
+    engine can still perform is still performed and still reported."""
+    plain, doubted = _check(), _check(basis_alert={"note": "the segment was restated"})
+    assert plain["engine_verdict"] == doubted["engine_verdict"] == "not_met"
+    assert plain["final_verdict"] == doubted["final_verdict"]
+
+
+def test_the_envelope_cannot_report_what_the_user_said():
+    """External review (round 1), BLOCK: `user_response` and `basis_resolution`
+    used to be envelope fields. An agent could therefore write
+    `{"answer": "overridden"}` beside its own lookup and record a verdict for a
+    question the user was never shown — and the stored row would be
+    indistinguishable, forever, from one they actually answered. They are
+    keyword arguments now, and the envelope is refused *by name* rather than as
+    a generic unknown field, because the reason matters to whoever hits it."""
+    for smuggled in ({"answer": "overridden", "answered_at": "2026-08-27"},
+                     {"answer": "confirmed", "answered_at": "2026-08-27"}):
+        try:
+            conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1),
+                                    "user_response": smuggled},
+                                   slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26")
+        except conditions.ConditionError as exc:
+            assert "must not carry user_response" in str(exc), exc
+            assert "question they were actually shown" in str(exc), exc
+        else:
+            raise AssertionError("an envelope carrying user_response must be refused")
+    try:
+        conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1),
+                                "basis_alert": {"note": "x"}, "basis_resolution": "kept"},
+                               slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26")
+    except conditions.ConditionError as exc:
+        assert "must not carry basis_resolution" in str(exc), exc
+    else:
+        raise AssertionError("an envelope carrying basis_resolution must be refused")
+
+
+def test_the_engine_may_still_fold_in_an_answer_it_posed():
+    """The other half: the refusal is about the *envelope*, not about the field.
+    An answer to a question the engine actually asked still lands on the row."""
+    row = conditions.build_check({"lookup_status": "ok", "observation": dict(NUMERIC_OBS_1)},
+                                 slot=_slot(), previous=None, check_id="chk", date_end="2026-08-26",
+                                 user_response={"answer": "overridden", "answered_at": "2026-08-27"})
+    assert row["user_response"]["answer"] == "overridden"
+    assert (row["final_verdict"], row["verdict_source"]) == ("not_met", "user")
+    assert row["engine_verdict"] == "not_met", "the engine's own read is never overwritten"
+
+
+def test_the_input_schema_no_longer_advertises_the_engine_assigned_fields():
+    """The readable contract must not invite what the code refuses."""
+    schema = _schema("condition-check.schema.json")
+    offered = set(schema["properties"]["input"]["properties"])
+    assert not (offered & set(conditions._ENGINE_ASSIGNED_CHECK_FIELDS)), offered
+    assert offered == set(conditions._CHECK_FIELDS), \
+        "the documented envelope and the accepted envelope are one fact in two places"
+
+
+def test_a_basis_resolution_requires_the_question_it_answers():
+    _check_rejects("basis_resolution requires a basis_alert", basis_resolution="kept")
+    _check_rejects("basis_resolution must be one of",
+                   basis_alert={"note": "x"}, basis_resolution="ignored")
+    kept = _check(basis_alert={"note": "x"}, basis_resolution="kept")
+    assert kept["basis_resolution"] == "kept"
+
+
+# ───────── P. line history: what was last looked at vs last found ─────────
+
+def test_last_check_for_counts_a_failed_lookup_as_attention():
+    """Ordering the due list by successful lookups alone would park a line that
+    fails every week at the front of the queue forever."""
+    slot = _slot()
+    ok = _check(check_id="chk-1", date_end="2026-08-01")
+    failed = _check(check_id="chk-2", date_end="2026-08-26",
+                    lookup_status="failed", observation=None)
+    checks = [ok, failed]
+    assert conditions.previous_check_for(checks, [slot], slot)["check_id"] == "chk-1"
+    assert conditions.last_check_for(checks, [slot], slot)["check_id"] == "chk-2"
+    assert conditions.last_check_for([], [slot], slot) is None
+
+
+def test_line_history_crosses_a_revision_boundary():
+    parent = _slot()
+    child = _child_slot(parent)
+    checks = [_check(check_id="chk-parent", date_end="2026-08-01"),
+              _check(slot=child, check_id="chk-child", date_end="2026-09-01",
+                     lookup_status="not_checked", observation=None)]
+    rows = conditions.checks_for_line(checks, [parent, child], child)
+    assert [row["check_id"] for row in rows] == ["chk-parent", "chk-child"], \
+        "a re-stated criterion inherits its line's history rather than starting over"
+    assert conditions.last_check_for(checks, [parent, child], child)["check_id"] == "chk-child"
+    assert conditions.previous_check_for(checks, [parent, child], child)["check_id"] == "chk-parent"
+
+
 # ───────────────────────── M. the firewall is physical ─────────────────────────
 
 def test_conditions_module_never_imports_problems():
@@ -818,6 +1004,9 @@ def test_condition_check_schema_pins_the_same_vocabulary_as_the_code():
     # vocabularies; the split itself is engine-enforced (_user_response), and
     # the schema should say so rather than silently look wider than the code.
     assert "$comment" in schema["$defs"]["user_response"]["properties"]["answer"]
+    assert set(schema["properties"]["basis_resolution"]["enum"]) == set(conditions.BASIS_RESOLUTIONS)
+    assert schema["properties"]["event_alert"]["const"] is True, \
+        "a stored event_alert is only ever the fired state; false is written as absence"
 
 
 def test_check_observation_schema_expresses_the_value_summary_xor():
@@ -850,7 +1039,10 @@ def test_produced_check_rows_match_the_schemas_declared_shape():
     allowed = set(schema["properties"])
     required = set(schema["required"])
     rows = [_check(), _check(lookup_status="failed", observation=None), _event_check(),
-            _event_check(user_response={"answer": "yes", "answered_at": "2026-08-27"})]
+            _event_check(user_response={"answer": "yes", "answered_at": "2026-08-27"}),
+            _event_check(event_alert=True),
+            _check(basis_alert={"note": "the segment was restated", "source": "10-Q",
+                                "as_of": "2026-08-20"}, basis_resolution="kept")]
     for row in rows:
         assert required <= set(row), f"row is missing a required field: {required - set(row)}"
         assert set(row) <= allowed, f"row has a field the schema does not declare: {set(row) - allowed}"

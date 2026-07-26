@@ -67,7 +67,7 @@ question kind, or renames a candidate rule makes the episode **fail loudly**
 instead of grading nothing. A failing episode after an engine change is a
 finding to read, not harness flake.
 
-## The seven checks
+## The checks
 
 Every one is an **invariant** — something the product must never do. None
 compares an answer against the wording the product ships today, because the
@@ -82,6 +82,7 @@ current phrasing would report the improvement as a regression.
 | `surface_hygiene` | no snake_case engine identifier reached a user-facing surface | #262 |
 | `locale_purity` | an `en` surface carries no CJK; a localized surface carries no English metric label that locale translates | #262, #356 |
 | `condition_integrity` | a user-authored condition survives the engine's own slot validator, reaches the user in their own words, and is described only as far as the evidence goes | #412 |
+| `condition_check_integrity` | a per-period result survives the engine's own check validator, every figure in the prose traces to the record, and a lookup that failed is spoken as one | #412 second half, #434 |
 
 Every ban list is derived at run time from an engine source — the copy
 catalogs' dimension keys, the plan's own canonical choice values,
@@ -143,6 +144,17 @@ the run says so. Today it holds `initial_thesis` and `exit_consistency`, both
 tracked in #429 — a user can answer "I chased the momentum" on their three
 largest positions and get a byte-identical card.
 
+## The fixture can carry a standing condition
+
+A `condition_crossing` question exists only when the user already committed to
+a condition and this period's lookup came back — state no mock CSV can produce,
+because a condition is something a person writes. The runner seeds it from the
+episode's own answers rather than from a second declaration: any answer carrying
+both `condition` and `condition_check` makes the fixture write that slot into
+the isolated root and rerun `prepare --condition-checks`. Episodes are minimal
+pairs, so the seed is unambiguous, and the state the engine is asked about is
+exactly the state the answers are about.
+
 ## What the run says it did not grade
 
 Each replay prints an `unmapped` note per answer: how many sentences passed the
@@ -200,6 +212,14 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
   the form the failure actually takes. Its episodes are also deliberate minimal
   pairs — an answer carrying two defects stays red when the gate under test is
   neutered, and grades nothing.
+- **`condition_check_integrity` cannot see whether reasoning is genuinely
+  two-sided.** What it can settle is where a one-sided push usually breaks: the
+  argument needs a fact the record does not have, so it states a figure the
+  lookup never returned (EP-008). An answer that argues one direction using only
+  real numbers passes it, and waits on the judge. Its blind half is an allow-set
+  of words for "not checked", never a required sentence — the wording will keep
+  changing, and a check only the current template satisfies is a behavior
+  oracle.
 - **Presentation is out of reach.** Whether the card actually reached the
   screen is a presentation-trace question (`tools/ux_receipt.py`,
   `card_presented`). #262's third complaint lives there, and no episode can

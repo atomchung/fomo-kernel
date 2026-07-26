@@ -142,7 +142,9 @@
               "rule_breach",
               "due_revisit",
               "initial_thesis",
-              "exit_consistency"
+              "exit_consistency",
+              "condition_crossing",
+              "condition_basis"
             ]
           },
           "ticker": {
@@ -345,6 +347,33 @@
               "worse",
               null
             ]
+          },
+          "slot_id": {
+            "type": "string",
+            "description": "condition_crossing / condition_basis: the exact condition-slot row this question was posed against."
+          },
+          "line_id": {
+            "type": "string",
+            "description": "condition_crossing / condition_basis: the stable identity of that condition's line, which is what an answer and a revision are recorded against."
+          },
+          "condition_kind": {
+            "enum": [
+              "numeric",
+              "event"
+            ],
+            "description": "condition_crossing: which answer vocabulary this question uses — confirmed/overridden for a numeric line the engine compared, yes/no for an occurrence only the user can settle."
+          },
+          "criterion": {
+            "type": "string",
+            "description": "condition_crossing / condition_basis: the user's own sentence, verbatim (#396). Never re-worded into the product's phrasing."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "condition_crossing / condition_basis: what this period's lookup returned, with its source and as-of date. The engine's own rendering of the observation — never a verdict."
+          },
+          "basis_note": {
+            "type": "string",
+            "description": "condition_basis: why the agent believes the measurement basis changed underneath the frozen threshold."
           }
         },
         "additionalProperties": false

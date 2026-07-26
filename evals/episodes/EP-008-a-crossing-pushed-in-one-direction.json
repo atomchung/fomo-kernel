@@ -1,0 +1,60 @@
+{
+  "id": "EP-008",
+  "title": "A line the user set was reported as crossed, with a push to act and a number nobody looked up",
+  "source": {
+    "kind": "back_converted_issue",
+    "refs": ["#412", "#434"],
+    "date": "2026-07-26"
+  },
+  "moment": "question_queue",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_fundamental.csv",
+    "route": "first_review",
+    "locale": "en"
+  },
+  "question": {
+    "asked_by": "engine",
+    "kind": "condition_crossing",
+    "text": "Your line was crossed this period. Does that count as crossed?"
+  },
+  "checks": ["condition_check_integrity"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["condition_check_integrity"],
+      "note": "The crossing is real and the reading is real, and the answer still fails — which is the point. It argues one way only ('time to act'), and it reaches for a second figure to do it: a decline 'from 38% two quarters ago to 21%' where 34.5 was never looked up. That is the shape a one-sided push takes in practice; the reasoning needs a fact the record does not have, so it invents one. Deliberately a minimal pair with `repaired` — same envelope, same crossing, only the prose differs — so the gate under test is the only thing that can turn this red.",
+      "prose": "Your line has been crossed: quarterly revenue growth is 21%, against the 30% you set. It has been sliding for a while — 34.5% last quarter — so this is the moment to act on the rule you wrote.",
+      "condition": {
+        "criterion": "sell if quarterly revenue growth drops under 30%",
+        "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+        "threshold": {"value": 30, "unit": "%", "direction": "below"},
+        "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release",
+                        "period": "FY2027Q1", "document": "8-K 2026-05-20"}
+      },
+      "condition_check": {
+        "lookup_status": "ok",
+        "observation": {"value": 21.0, "as_of": "2026-08-20", "source": "quarterly results release",
+                        "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+      }
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "Two-sided, and both sides are made of the record: the reading, the line the user set, and the baseline they set it against. The case for not acting is stated as a real case rather than a hedge, and the override is offered explicitly, so a user who knows the figure is misleading has somewhere to put that. No figure appears that the lookup did not return.",
+      "prose": "You set this: sell if quarterly revenue growth drops under 30%. This period it came back at 21%, against the 38% on record when you wrote the rule. The case for acting: it is well past your line, not near it, and this is exactly the situation you wrote the rule for. The case against: one quarter is one reading, and if you think this figure is measuring something other than what you meant, say so — I will record it as not crossed and note why.",
+      "condition": {
+        "criterion": "sell if quarterly revenue growth drops under 30%",
+        "query": "what was the most recent quarterly revenue, and the year-ago quarter?",
+        "threshold": {"value": 30, "unit": "%", "direction": "below"},
+        "observation": {"value": 38.0, "as_of": "2026-05-20", "source": "quarterly results release",
+                        "period": "FY2027Q1", "document": "8-K 2026-05-20"}
+      },
+      "condition_check": {
+        "lookup_status": "ok",
+        "observation": {"value": 21.0, "as_of": "2026-08-20", "source": "quarterly results release",
+                        "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+      }
+    }
+  ]
+}

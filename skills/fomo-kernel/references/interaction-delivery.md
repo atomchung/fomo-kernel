@@ -20,7 +20,9 @@ Immediately after `prepare`, resolve exactly one adapter from what this host can
 
 ## Author a question surface, or use the engine's
 
-Every queue row arrives with display-ready `question` and `options`. `add_thesis`, `headline_motive`, `initial_thesis`, and `exit_consistency` may also carry a `question_opportunity`, which invites you to write a grounded, specific stem instead of the generic one. `due_revisit`, `rule_breach`, and recent-exit `revisit` stay engine-rendered.
+Every queue row arrives with display-ready `question` and `options`. `add_thesis`, `headline_motive`, `initial_thesis`, `exit_consistency`, `condition_crossing`, and `condition_basis` may also carry a `question_opportunity`, which invites you to write a grounded, specific stem instead of the generic one. `due_revisit`, `rule_breach`, and recent-exit `revisit` stay engine-rendered.
+
+A `condition_crossing` is the one kind where the engine's own fallback is deliberately the flattest sentence it can write, because the question needs something a template cannot produce: **one sentence for acting on the line and one for not**. Ground both in `context.condition.criterion` and `context.condition.evidence` — the user's own words and what the lookup returned — and nothing else. The engine's comparison is already made; what the question buys is the chance for a user who knows the figure is misleading to say so, which only exists if the stem gives that side real weight.
 
 For an eligible opportunity you may author the private stem, surface labels and descriptions, allowed grounding references, `none_of_above` copy, and one optional clarification (`schemas/question-surface.schema.json`). Keep the candidate outside the repository and bind it before showing it:
 

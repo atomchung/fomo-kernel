@@ -387,6 +387,16 @@
         "additionalProperties": false
       }
     },
+    "condition_checks": {
+      "type": "array",
+      "description": "#412: one row per (condition, review period) this review resolved, including engine-synthesized not_checked rows for every due condition nobody submitted a result for. Projected to <root>/condition_checks.jsonl. Absent when the review resolved none, so a session committed before the check flow existed re-drafts to the identical canonical bundle.",
+      "items": {"$ref": "condition-check.schema.json"}
+    },
+    "condition_revisions": {
+      "type": "array",
+      "description": "#412: criteria the user re-stated because this review questioned their basis. New rows on the same line (carrying `revises`), projected to <root>/conditions.jsonl — never rules.jsonl, and never an edit to the row they replace.",
+      "items": {"$ref": "condition-slot.schema.json"}
+    },
     "rule_breach_decisions": {
       "type": "array",
       "items": {
