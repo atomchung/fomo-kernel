@@ -60,11 +60,19 @@ line count.
 
 - Before adding a surface that must stay synchronized, generate it from the
   single source at build time. `skills/fomo-kernel/tools/design_bundle.py` is
-  the precedent; #401 applies the same move to `card-template.html`. A hand
-  mirror guarded by an equality test is the fallback, not the default.
+  the precedent; #401 applies the same move to `card-template.html` and #402
+  knife 5 applies it to test expectations (`tests/copy_corpus.py`). A hand
+  mirror guarded by an equality test is the fallback, not the default —
+  including inside a test function, where a literal copied out of
+  `copy/*.json` is the same mirror wearing an assertion.
 - Work the #402 knives in order and re-run
   `skills/fomo-kernel/tools/change_surface.py` after each one; a knife that
-  does not move its number stops the line.
+  does not move its number stops the line. Check the number is one the tool
+  can see first: fan-out and coupling measure how many surfaces a change
+  crosses, so a knife that leaves a surface in place and only stops it being
+  hand-written is invisible to them. That is what the authored-churn reading
+  exists for, and adding a reading is the right response to a blind spot —
+  declaring the knife unmeasurable is not.
 - Transition rule while #390 (single canonical language, generated catalogs)
   is pending, adopted 2026-07-26: new copy keys land in `en` only; other
   locales take the documented fallback. Strike this line when #390 ships.

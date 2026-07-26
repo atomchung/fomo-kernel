@@ -587,169 +587,15 @@ def _markdown_block(markdown, language, block):
     return _markdown_section(markdown, blocks[block])
 
 
-def _due_revisit(revisit_id, checkpoint, ticker, compare, swaps=()):
-    return {"kind": "due_revisit", "revisit_id": revisit_id, "checkpoint": checkpoint,
-            "ticker": ticker, "compare": compare, "swaps": list(swaps)}
-
-
-def _exit_followup_bundle():
-    """Every branch of `_exit_followup_entries` on one bundle, with a frozen price date."""
-    return {
-        "engine_state": {"price_snapshot": {"as_of": "2026-07-20"}},
-        "review_plan": {
-            "question_queue": [
-                _due_revisit("r1", 30, "AAA", {}),
-                _due_revisit("r2", 60, "BBB", {"needs_prices": ["BBB", "CCC"]}),
-                _due_revisit("r3", 90, "DDD",
-                             {"swap_net_pp": 4.0, "orig_ret": -0.1, "swap_ret": 0.2},
-                             [{"ticker": "EEE"}]),
-                _due_revisit("r4", 30, "FFF", {"idle_cash": True, "orig_ret": 0.33}),
-            ],
-            "state_snapshot": {"exit_backlog": {
-                "summary": {"count": 4, "full": 3, "reduce": 1,
-                            "span": {"first": "2026-01-02", "last": "2026-05-06"},
-                            "top_tickers": [["GGG", 2]], "priced": 2,
-                            "avg_hindsight_pp": 5.5, "sold_before_rise": 1},
-                "items": [
-                    {"ticker": "HHH", "kind": "full", "exit_date": "2026-02-03",
-                     "compare": {"swap_net_pp": 1.0, "orig_ret": 0.1, "swap_ret": 0.2}},
-                    # Only two backlog rows render (`items[:2]`), so the
-                    # idle-proceeds row is exercised by the fallback test below.
-                    {"ticker": "JJJ", "kind": "full", "exit_date": "2026-04-05",
-                     "compare": {"needs_prices": ["JJJ"]}},
-                ]}}},
-        "revisit_resolutions": [
-            {"revisit_id": "r1", "checkpoint": 30, "status": "still_valid", "note": "NOTE"},
-            {"revisit_id": "r2", "checkpoint": 60, "status": "modified"},
-            {"revisit_id": "r3", "checkpoint": 90, "status": "falsified"},
-            {"revisit_id": "r4", "checkpoint": 30, "status": "still_valid"},
-        ],
-    }
-
-
-def test_exit_followup_lines_render_verbatim_in_both_locales():
-    """#368 batch 3 pin: `_exit_followup_entries`' sentences moved into
-    `copy.exit_followup`, and 14 of its 23 keys had no gate at all.
-
-    They render only from review history — a revisit checkpoint that matured,
-    or an exit backlog carried forward — so most of them are dark to the
-    persona sweep's byte-parity comparison, which is otherwise the migration's
-    main gate. The expected strings below are **hardcoded**, deliberately: a
-    version of this test that read them back from `load_copy()` would pass
-    with the catalog broken, since both sides would break together.
-    """
-    bundle = _exit_followup_bundle()
-    expected = {
-        "en": {
-            "pairs": [
-                'AAA, 30-day check: Still valid. Note: "NOTE".',
-                "BBB, 60-day check: Partly right. Current prices are missing for BBB, CCC "
-                "as of 2026-07-20, so no outcome comparison was made.",
-                "DDD, 90-day check: Wrong call. Using prices frozen on 2026-07-20, the "
-                "original moved -10.0%; EEE moved +20.0%; swap net +400.0 pp.",
-                "FFF, 30-day check: Still valid. Proceeds stayed idle while the original "
-                "moved +33.0% using prices frozen on 2026-07-20.",
-            ],
-            "lines": [
-                "Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from "
-                "2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered "
-                "exits, the average post-exit move was +550.0 pp; 1 later rose.",
-                "Backlog focus: HHH, full exit on 2026-02-03. The original moved +10.0% "
-                "using prices frozen on 2026-07-20; the replacement moved +20.0%; swap "
-                "net +100.0 pp.",
-                "Backlog focus: JJJ, full exit on 2026-04-05. No frozen-price comparison "
-                "for JJJ as of 2026-07-20.",
-            ],
-        },
-        "zh-TW": {
-            "pairs": [
-                "AAA，30 天複核：還成立。 註記：「NOTE」。",
-                "BBB，60 天複核：部分對，要調。 BBB, CCC 缺現價（截至 2026-07-20），本期不判結果。",
-                "DDD，90 天複核：看錯了。 以 2026-07-20 凍結現價計，原標的後續 -10.0%；EEE同期 "
-                "+20.0%；swap 淨差 +400.0 pp。",
-                "FFF，30 天複核：還成立。 賣後資金閒置，原標的同期 +33.0%（以 2026-07-20 凍結現價計）。",
-            ],
-            "lines": [
-                "歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；"
-                "最常出現：GGG ×2。 有現價可回看的 2 筆，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。",
-                "Backlog 優先回看：HHH，2026-02-03 清倉。 原標的後續 +10.0%（以 2026-07-20 凍結現價計）；"
-                "換入標的同期 +20.0%；swap 淨差 +100.0 pp。",
-                "Backlog 優先回看：JJJ，2026-04-05 清倉。 JJJ 缺凍結現價（截至 2026-07-20），不判結果。",
-            ],
-        },
-    }
-    for language, want in expected.items():
-        pairs, lines = card_renderer._exit_followup_entries(
-            bundle, card_renderer.load_copy(language))
-        assert [line for _ticker, line in pairs] == want["pairs"], language
-        assert lines == want["lines"], language
-
-
-def test_exit_followup_falls_back_without_a_price_date_or_a_ticker():
-    """The fallback strings are locale-owned too, including an asymmetry.
-
-    With no frozen price date the English swap lead contributes nothing and the
-    Chinese one contributes a single space, because the two templates join to
-    the clause that follows differently. That space is `frozen_lead_absent` in
-    the catalog, not an accident of formatting."""
-    bundle = {
-        "review_plan": {
-            "question_queue": [_due_revisit(
-                "r1", 30, None, {"swap_net_pp": 2.0, "orig_ret": 0.1, "swap_ret": 0.3})],
-            "state_snapshot": {"exit_backlog": {
-                "summary": {"count": 1, "full": 1, "reduce": 0, "span": {}, "top_tickers": []},
-                "items": [{"ticker": None, "kind": "full", "exit_date": "2026-02-03",
-                           "compare": {"orig_ret": 0.12}},
-                          {"ticker": "III", "kind": "reduce", "exit_date": "2026-03-04",
-                           "compare": {"idle_cash": True, "orig_ret": -0.05}}]}}},
-        "revisit_resolutions": [{"revisit_id": "r1", "checkpoint": 30, "status": "still_valid"}],
-    }
-    expected = {
-        "en": (["position, 30-day check: Still valid. the original moved +10.0%; "
-                "the replacement moved +30.0%; swap net +200.0 pp."],
-               ["Historical exit backlog: 1 unresolved exits (1 full, 0 reductions).",
-                "Backlog focus: position, full exit on 2026-02-03. The original moved +12.0%.",
-                "Backlog focus: III, reduction on 2026-03-04. Proceeds stayed idle while "
-                "the original moved -5.0%."]),
-        "zh-TW": (["這筆部位，30 天複核：還成立。 原標的後續 +10.0%；換入標的同期 +30.0%；"
-                   "swap 淨差 +200.0 pp。"],
-                  ["歷史出場 backlog 尚有 1 筆未複核（清倉 1、減倉 0）。",
-                   "Backlog 優先回看：這筆部位，2026-02-03 清倉。 原標的後續 +12.0%。",
-                   "Backlog 優先回看：III，2026-03-04 減倉。 賣後資金閒置，原標的同期 -5.0%。"]),
-    }
-    for language, (want_pairs, want_lines) in expected.items():
-        pairs, lines = card_renderer._exit_followup_entries(
-            bundle, card_renderer.load_copy(language))
-        assert [line for _ticker, line in pairs] == want_pairs, language
-        assert lines == want_lines, language
-
-
-def test_problem_ledger_lines_render_verbatim_in_both_locales():
-    """#368 batch 3 pin: `_problem_lines` moved into `copy.problems`, and all
-    four of its keys were ungated — the whole function reads `problem_stats`,
-    which only a review with history carries, so no first-review card renders
-    a single one of these sentences. Expected strings are hardcoded for the
-    same reason as the test above."""
-    bundle = {
-        "review_plan": {"state_snapshot": {"problem_stats": {
-            "top": ["oversize"],
-            "per_key": {"oversize": {"recent_count": 3, "prev_count": 1, "trend": "worse"}},
-            "rules_check": [{"rule_id": "r-kept", "text": "RULE_KEPT",
-                             "verdict": "held", "held_streak": 1}]}}},
-        "rule_breach_decisions": [{"rule_id": "r-broken", "rule_text": "RULE_BROKEN",
-                                   "decision": "exception", "note": "NOTE_TEXT"}],
-    }
-    expected = {
-        "en": ["Oversized position: 3 events in the recent window versus 1 before (worsening).",
-               'Rule "RULE_BROKEN": recorded as a justified exception. Note: "NOTE_TEXT".',
-               'Rule "RULE_KEPT" was kept in the latest observable period.'],
-        "zh-TW": ["單一部位過重：近期 3 次，前期 1 次（惡化）。",
-                  "規矩「RULE_BROKEN」：記為正當例外。 註記：「NOTE_TEXT」。",
-                  "規矩「RULE_KEPT」在最近一個可觀測週期守住了。"],
-    }
-    for language, want in expected.items():
-        assert card_renderer._problem_lines(
-            bundle, card_renderer.load_copy(language)) == want, language
+# The exit-follow-up and problem-ledger sentence pins moved to
+# `tests/copy_corpus.py` (#402 knife 5). They were hand-mirrored literal blocks
+# — a second copy of `copy/*.json` living inside a test function — and they
+# pinned a renderer helper's return value rather than the card. The corpus
+# renders the same fixtures through `render_private`/`render_html`/
+# `render_public` and compares against a generated golden, which immediately
+# showed that `_problem_lines` never reaches a card whose review scored no
+# dimension: `_risks_block` returns the missing-diagnosis note first. A pin on
+# the helper could not see that.
 
 
 def test_stress_line_rides_block1_exposure_for_any_hole_dimension():
@@ -1072,60 +918,13 @@ def test_account_gate_sentence_names_the_actual_blocker():
             f"{language}: every blocker needs its own wording, got {sorted(sentences)}"
 
 
-def test_account_gate_sentences_are_pinned_in_rendered_output():
-    """#363 mutation-probe: the sentences themselves, not just their shape.
+# `test_account_gate_sentences_are_pinned_in_rendered_output` moved to
+# `tests/copy_corpus.py` (#402 knife 5): twelve hand-mirrored sentences in a
+# literal dict, one per status per locale, and one more required for every
+# status the engine adds. The corpus renders all six statuses on all three
+# delivery surfaces and fails on any wording drift the golden did not record.
+# The distinctness invariant above stays here — it is logic, not a pin.
 
-    `test_account_gate_sentence_names_the_actual_blocker` above asserts each
-    status renders exactly one line and that the six lines are *distinct*. It
-    never reads their content, so corrupting any single status's wording keeps
-    it distinct from the other five and the suite stays green. Measured: with
-    that test in place, 10 of the 12 `account_gate` strings (five statuses x
-    two locales) were ungated — a corruption of any of them shipped silently,
-    which is not hypothetical, it happened while this change was being written.
-
-    Hardcoded literals, deliberately: a version reading expectations back from
-    `load_copy()` compares the catalog against itself and passes with the
-    catalog broken (the false green recorded in #373, and the shape the
-    neighbouring `..._degrades_instead_of_rendering_blank` still has for
-    `default`).
-
-    Register: `_GATE_STATUSES` + the `default` fallback, both locales."""
-    expected = {
-        "zh-TW": {
-            "default": "補齊現金錨點，就能看到含現金的帳戶級報酬。",
-            "no_cash_anchor": "補一個目前的現金餘額，就能看到含現金的帳戶級報酬。",
-            "mixed_trade_footprint": "交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史。",
-            "negative_cash_rollback": "補上還沒有錨點的那個幣別，就能看到含現金的帳戶級報酬。",
-            "cash_residual": "更新那一段的現金部位，就能看到含現金的帳戶級報酬。",
-            "chain_unavailable": "這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬。",
-        },
-        "en": {
-            "default": "Complete the cash anchor, and you'll see the account-level "
-                       "return with cash included.",
-            "no_cash_anchor": "Add one current cash balance, and you'll see the "
-                              "account-level return with cash included.",
-            "mixed_trade_footprint": "Only part of the trade history carries the broker's "
-                                     "cash amount, and the two bases cannot share one cash "
-                                     "history.",
-            "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see "
-                                      "the account-level return with cash included.",
-            "cash_residual": "Update the cash position for that stretch, and you'll see the "
-                             "account-level return with cash included.",
-            "chain_unavailable": "No day in this window produced a usable account value to "
-                                 "chain into a return.",
-        },
-    }
-    for status in _GATE_STATUSES + ("default",):
-        for language in ("zh-TW", "en"):
-            # "default" is not an engine status: it is what an unrecognized one
-            # falls back to, so reach it the way a legacy bundle does.
-            gate = ({"status": "a_status_added_later", "data": {}} if status == "default"
-                    else {"status": status, "data": {}})
-            card = {"acct_perf": {"hold_twr": 0.5, "acct_twr": None, "gate": gate}}
-            texts = [item["text"] for item in card_renderer._performance_items(card, language)
-                     if item.get("tag") == "account_gate"]
-            assert texts == [expected[language][status]], \
-                f"{language}/{status}: account_gate sentence altered — got {texts}"
 
 
 def test_account_gate_degrades_instead_of_rendering_blank():
@@ -1562,43 +1361,9 @@ def test_locale_copy_files_keep_key_parity():
         f"missing in en: {sorted(missing_in_en)}"
 
 
-def test_reconciliation_statement_copy_is_pinned_in_rendered_output():
-    """#368 Phase 2 batch 2 mutation-probe finding: corrupting
-    reconciliation.statement_with_metric survives both tests/run_all.py
-    (test_review_v2.py's reconciliation tests assert only a short prefix
-    substring -- "上次你承諾" / "Last time you committed" -- which a
-    corruption placed later in the sentence does not break) and
-    tests/persona_sweep.py --baseline (a prior commitment implies a
-    returning review; the sweep renders first-review cards only, where
-    _reconciliation_lines short-circuits to []). Pins the full, exact,
-    copy-resolved sentence on both rendered surfaces so a corruption
-    anywhere in it is caught here."""
-    rules = {
-        "zh-TW": "單筆部位上限定死 30%；超過就減，不新增。",
-        "en": "Cap any single position at 30%; trim if it goes over, and do not add.",
-    }
-    for language in ("zh-TW", "en"):
-        bundle = copy.deepcopy(_session(language)["bundle"])
-        bundle["review_plan"]["state_snapshot"]["prior_commitment"] = {
-            "rule": rules[language], "metric_key": "max_pos_pct", "metric_value": 0.51,
-        }
-        # This fixture's engine_state.metrics.max_pos_pct is already 0.42.
-        # The template is hardcoded here, not read from copy/*.json: the
-        # whole point of this pin is to catch a corruption of that file, so
-        # the expectation must not share a source with the value under test
-        # (see the module docstring note on this pattern, #368 batch 2).
-        statement_with_metric_template = {
-            "zh-TW": '上次你承諾：「{rule}」——追蹤的數字當時 {then}，這次 {now}。',
-            "en": 'Last time you committed: "{rule}" — the tracked number was {then} then, {now} now.',
-        }[language]
-        expected = statement_with_metric_template.format(
-            rule=rules[language], then="51%", now="42%")
-        markdown = card_renderer.render_private(bundle)
-        html_card = html.unescape(card_renderer.render_html(bundle))
-        assert expected in markdown, \
-            f"{language}: reconciliation sentence missing/altered on Markdown"
-        assert expected in html_card, \
-            f"{language}: reconciliation sentence missing/altered on HTML"
+# `test_reconciliation_statement_copy_is_pinned_in_rendered_output` moved to
+# `tests/copy_corpus.py` (#402 knife 5), which pins both the metric and the
+# plain form on all three surfaces from a bundle small enough to read.
 
 
 def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
@@ -1686,66 +1451,26 @@ def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
             "clean-structure snapshot sentence missing/altered on Markdown"
 
 
-def test_best_strength_no_signal_copy_is_pinned_in_rendered_output():
-    """#368 Phase 2 batch 2 mutation-probe finding: corrupting
-    best_strength.no_signal survives both tests/run_all.py and
-    tests/persona_sweep.py --baseline -- no mock persona has every scored
-    dimension triggered (the condition this fallback needs), and no
-    fixture test asserts its wording. _best_strength reaches this fallback
-    in English on the base fixture as-is (its one dims_raw entry is already
-    triggered=True); the zh-TW branch additionally needs engine_card.
-    strength cleared, since _best_strength prefers that engine-authored
-    string over the fallback whenever the card supplies one -- but only
-    when language != "en" (the function's own pre-existing asymmetric
-    guard, preserved as-is by this migration, not something this test
-    should paper over)."""
-    for language in ("zh-TW", "en"):
-        bundle = copy.deepcopy(_session(language)["bundle"])
-        bundle["engine_card"]["strength"] = None
-        assert bundle["narrative"].get("strength") is None, \
-            "fixture must not carry a narrative-authored strength override"
-        assert all(d.get("triggered") for d in bundle["engine_card"]["dims_raw"]), \
-            "fixture must have no safe (untriggered) dimension to exercise the fallback"
-        # Hardcoded, not read from copy/*.json -- see the reconciliation
-        # pin test above for why.
-        expected = {
-            "zh-TW": '這期沒有足夠強的正向訊號；先把注意力留給最大的洞。',
-            "en": 'No positive behavior was strong enough to claim; keep attention on the largest leak.',
-        }[language]
-        markdown = card_renderer.render_private(bundle)
-        html_card = html.unescape(card_renderer.render_html(bundle))
-        assert expected in markdown, \
-            f"{language}: best_strength fallback sentence missing/altered on Markdown"
-        assert expected in html_card, \
-            f"{language}: best_strength fallback sentence missing/altered on HTML"
+# `test_best_strength_no_signal_copy_is_pinned_in_rendered_output` moved to
+# `tests/copy_corpus.py` (#402 knife 5). The corpus pins all six strength
+# sentences, not only the fallback: `_best_strength` renders whichever
+# candidate ranks first, so the five per-dimension sentences need one scene
+# each and none of them had a pin before.
 
 
-def test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output():
-    """#363 mutation-probe: corrupting alpha_interval.tile_sub / below_unreliable
-    / below_negative is invisible to tests/persona_sweep.py --baseline (the
-    offline sweep never populates alpha_beta_breakdown -- no persona has live
-    prices) and to test_rich_layout_renders_template_blocks_from_shared_facts
-    (that fixture has no alpha_stat/ci95 at all, so it only ever exercises the
-    pre-#363 fallback sub, never the new tile_sub/standalone-note path). Pins
-    the exact, copy-resolved strings on a fixture that does carry ci95, across
-    all four (credible, interval-sign) combinations -- confirming the two
-    below-grid triggers are independent, not merged, as #363 requires."""
-    # Hardcoded, not read from copy/*.json -- see the reconciliation pin test
-    # above for why: the whole point is to catch a corruption of that file.
-    tile_sub_template = {
-        "zh-TW": "95% 區間 {low}%～{high}%",
-        "en": "95% interval {low}% to {high}%",
-    }
-    below_unreliable = {
-        "zh-TW": "* 年化 α 統計上還不可信。",
-        "en": "* The annualized α is not yet statistically credible.",
-    }
-    below_negative = {
-        "zh-TW": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。",
-        "en": ("The annualized α interval includes a negative value, meaning this "
-               "period's stock-picking edge is not yet statistically confirmed as "
-               "a durable skill."),
-    }
+def test_alpha_below_grid_notes_are_two_independent_triggers():
+    """#363: the not-yet-credible legend and the negative-interval caveat fire
+    on separate conditions, and the tile's `*` suffix tracks `credible` alone.
+
+    This test owns the *branching*; `tests/copy_corpus.py` owns the sentences.
+    Before #402 knife 5 it owned both, and the three templates below were a
+    hand-copied duplicate of `copy/*.json` — the only way to catch a catalog
+    corruption when no other check read those keys. The corpus pins their bytes
+    against a generated golden now, which is what makes reading the needles
+    back from `load_copy()` safe here: a broken catalog reddens the corpus, so
+    this test is free to ask only which branch fired."""
+    alpha_copy = {language: card_renderer.load_copy(language)["alpha_interval"]
+                  for language in ("zh-TW", "en")}
     # (credible, ci95, expect_unreliable, expect_negative, low_text, high_text)
     cases = [
         ("both_clean", True, [0.07, 0.54], False, False, "+7", "+54"),
@@ -1762,7 +1487,7 @@ def test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output():
             html_card = html.unescape(card_renderer.render_html(bundle))
             markdown = card_renderer.render_private(bundle)
 
-            expected_sub = tile_sub_template[language].format(low=low, high=high)
+            expected_sub = alpha_copy[language]["tile_sub"].format(low=low, high=high)
             assert expected_sub in html_card, \
                 f"{label}/{language}: alpha tile sub must carry the interval: {expected_sub!r}"
             # The tile value's own " *" suffix logic is unchanged by #363 (it
@@ -1773,8 +1498,8 @@ def test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output():
             assert f'<p class="val">{expected_value}</p>' in html_card, \
                 f"{label}/{language}: alpha tile value's \"*\" suffix must track `credible` alone"
 
-            note_unreliable = below_unreliable[language]
-            note_negative = below_negative[language]
+            note_unreliable = alpha_copy[language]["below_unreliable"]
+            note_negative = alpha_copy[language]["below_negative"]
             assert (note_unreliable in html_card) == expect_unreliable, \
                 f"{label}/{language}: below_unreliable trigger mismatch"
             assert (note_negative in html_card) == expect_negative, \
@@ -2314,9 +2039,6 @@ def main():
         test_sparkline_caption_names_peak_and_trough_without_the_window,
         test_rich_layout_renders_template_blocks_from_shared_facts,
         test_rich_layout_degrades_to_plain_sections_when_facts_missing,
-        test_exit_followup_lines_render_verbatim_in_both_locales,
-        test_exit_followup_falls_back_without_a_price_date_or_a_ticker,
-        test_problem_ledger_lines_render_verbatim_in_both_locales,
         test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs,
         test_card_template_matches_its_generator,
         test_layout_uses_the_token_scales_not_ad_hoc_pixels,
@@ -2341,9 +2063,7 @@ def main():
         test_coded_fields_render_localized_english_blocks,
         test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
-        test_reconciliation_statement_copy_is_pinned_in_rendered_output,
         test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output,
-        test_best_strength_no_signal_copy_is_pinned_in_rendered_output,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
@@ -2365,10 +2085,9 @@ def main():
         test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
         test_standing_rule_placeholder_carries_the_user_cap_override,
         test_account_gate_sentence_names_the_actual_blocker,
-        test_account_gate_sentences_are_pinned_in_rendered_output,
         test_account_gate_degrades_instead_of_rendering_blank,
         test_annualized_gap_note_names_the_actual_blocker,
-        test_alpha_tile_sub_and_standalone_note_copy_is_pinned_in_rendered_output,
+        test_alpha_below_grid_notes_are_two_independent_triggers,
     ]
     for test in tests:
         test()
