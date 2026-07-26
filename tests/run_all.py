@@ -45,6 +45,14 @@ SUITES = [
     # belong in the default gate: the golden is committed, and an intended
     # wording change regenerates it with `--update`.
     ("Copy corpus golden (#402 knife 5)", "tests/copy_corpus.py"),
+    ("Episode checker probes (#417)", "tests/test_episode_checkers.py"),
+    # #417: the mechanical half of the question-episode bank. It belongs in the
+    # default suite because it is offline, deterministic and free -- what
+    # eval-design keeps out of CI is the non-deterministic, billable judge half,
+    # which lives nowhere near this entry. A bank nobody replays rots, and the
+    # loop this operationalizes had accumulated zero records while it depended
+    # on whoever remembered (the #368 lesson, applied one layer up).
+    ("Question-episode bank, mechanical half (#417)", "evals/run_episodes.py"),
     # #368: the sweep used to be a prose rule in CLAUDE.md ("if the engine
     # changed, run the persona sweep") — i.e. enforced by whoever remembered.
     # It renders every persona x locale x decision variant in about the time

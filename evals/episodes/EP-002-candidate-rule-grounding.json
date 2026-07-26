@@ -1,0 +1,58 @@
+{
+  "id": "EP-002",
+  "title": "Candidate rules presented with one grounding paraphrased and one invented",
+  "source": {
+    "kind": "dogfood_miss",
+    "refs": ["#293"],
+    "date": "2026-07-21"
+  },
+  "moment": "commitment",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_panic_seller.csv",
+    "route": "first_review",
+    "locale": "zh-TW"
+  },
+  "question": {
+    "asked_by": "engine",
+    "kind": "commitment_choice",
+    "text": "這次要立哪一條規矩？"
+  },
+  "checks": ["grounding_fidelity", "number_provenance", "privacy_trace", "surface_hygiene", "locale_purity"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["grounding_fidelity"],
+      "note": "The 2026-07-21 dogfood presentation, replayed on the persona whose candidate set has the same shape as that session's: candidate_0 carries an engine grounding, candidate_1 carries none. Both halves of the miss are here — the grounded candidate's sentence was paraphrased, and the candidate without one received an invented sentence. Only the structure is carried over; every value below is this synthetic fixture's, and nothing from the original session's payload is reproduced.",
+      "presented_options": [
+        {
+          "maps_to": "candidate_0",
+          "label": "維持部位上限",
+          "description": "上次已承諾，但這期實際違反（BA 還在超上限時加碼），建議保持不改。"
+        },
+        {
+          "maps_to": "candidate_1",
+          "label": "改追出場那種行為",
+          "description": "改追 BA 看錯的那種行為。"
+        }
+      ]
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "Each candidate presented with the engine's own words: the grounding verbatim where one exists, and nothing standing in for it where none does.",
+      "presented_options": [
+        {
+          "maps_to": "candidate_0",
+          "label": "單筆部位上限定死 20%",
+          "description": "本期實況：最大單一部位 BA 佔 100%。單筆部位上限定死 20%；超過就減，不新增。"
+        },
+        {
+          "maps_to": "candidate_1",
+          "label": "出場前先寫下事實",
+          "description": "出場前先寫下交易論述已完成或失效的事實；只因害怕回吐，不賣。"
+        }
+      ]
+    }
+  ]
+}

@@ -40,7 +40,7 @@ python3 tests/run_all.py
 TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional beta-direction and market-context network smoke
 ```
 
-The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, the card copy corpus, documentation language, and agent workflow boundaries.
+The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, the card copy corpus, the question-episode bank's mechanical half ([evals/episodes/](evals/episodes/README.md)), documentation language, and agent workflow boundaries.
 
 After an intended wording change, regenerate the copy golden in the same commit and read its diff:
 
