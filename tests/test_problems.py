@@ -250,15 +250,13 @@ def test_muting_never_writes_a_rule_row_so_identity_cannot_drift():
     兩個 live head,同一次破戒產生兩個問題。改成用鏈根當身分後,靜音一列都不寫。
     """
     _, rules = _mk()
-    rows = [{"rule_id": "rule-a-0", "text": "虧損不加碼", "problem_key": "avgdown_breach",
-             "created": "2026-06-13"}]
-    _write_rules(rules, rows)
-    before = open(rules, encoding="utf-8").read()
-
+    _write_rules(rules, [{"rule_id": "rule-a-0", "text": "虧損不加碼",
+                          "problem_key": "avgdown_breach", "created": "2026-06-13"}])
     tracking, muted = pb.load_rules(rules, muted_ids=["rule-a-0"])
-    assert open(rules, encoding="utf-8").read() == before, "靜音不得動 rules.jsonl 一個位元組"
     assert tracking == [] and len(muted) == 1
     assert muted[0]["rule_id"] == "rule-a-0", "rule_id 不變,對位鍵才不會漂移"
+    # 「靜音不寫檔」的載重版本在 CLI 那層(test_review_v2 的 mute-rule 測試):
+    # 在這裡斷言 load_rules 沒寫檔只是斷言一個結構上就不會寫檔的函式。
 
 
 def test_a_muted_line_survives_a_later_revision_without_forking_the_chain():
@@ -317,6 +315,35 @@ def test_a_muted_rule_keeps_its_in_progress_breach_window():
     silent = snap["muted_rules"][0]
     assert silent["draft_breach"] and silent["draft_breach"]["week"] == "2026-07-11", \
         f"靜音期間的進行中破戒必須照樣被記錄:{silent}"
+
+
+def test_a_broken_line_is_counted_because_it_can_un_mute_a_chain():
+    """鏈中間掉一列 → 鏈斷成兩截,下半截的 line_id 指向沒有任何列擁有的 id,於是
+    不在 muted_ids 裡——靜音的規矩無聲回到輪替。壞行照舊不 crash,但要被數出來,
+    否則這個「靜默解除靜音」跟第一版被否決的方向是同一個。"""
+    _, rules = _mk()
+    with open(rules, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"rule_id": "a", "text": "原版", "problem_key": "oversize"}) + "\n")
+        f.write("{壞掉的一行\n")
+        f.write(json.dumps({"rule_id": "c", "text": "第三版", "problem_key": "oversize",
+                            "revises": "b"}) + "\n")
+    tracking, muted, skipped = pb.load_rules_report(rules, muted_ids=["a"])
+    assert skipped == 1, "壞行必須被數出來,不能只是靜靜跳過"
+    assert [r["rule_id"] for r in muted] == ["a"] and [r["rule_id"] for r in tracking] == ["c"], \
+        "這正是壞行造成的斷鏈:c 變成第二個 live head 且沒被靜音"
+    book, _ = _mk()
+    pb.append_book(book, [{"key": "oversize", "week": "2026-07-04"}], None)
+    snap = pb.snapshot(book, rules, today="2026-07-04", muted_ids=["a"])
+    assert snap["rules_skipped_lines"] == 1, "呼叫端要看得到『這份對位可能不完整』"
+
+
+def test_a_clean_rules_file_reports_no_skipped_lines_key():
+    _, rules = _mk()
+    _write_rules(rules, [{"rule_id": "a", "text": "原版", "problem_key": "oversize"}])
+    book, _ = _mk()
+    pb.append_book(book, [{"key": "oversize", "week": "2026-07-04"}], None)
+    assert "rules_skipped_lines" not in pb.snapshot(book, rules, today="2026-07-04"), \
+        "沒掉行就不該出現這個鍵——常態不能長得像異常"
 
 
 def test_a_hand_written_muted_status_is_still_honoured():

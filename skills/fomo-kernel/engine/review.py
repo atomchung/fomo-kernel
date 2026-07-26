@@ -2723,6 +2723,24 @@ def _build_initial_thesis_events(plan, answers, amap=None):
     return events
 
 
+def _refuse_revision_of_a_muted_line(plan, expected_revision):
+    """A rule silenced this session cannot also be replaced this session (#416)."""
+    root = plan.get("state_root")
+    if not root or not os.path.isdir(root):
+        return
+    muted_ids = _muted_rule_ids(root)
+    if not muted_ids:
+        return
+    _tracking, muted = problems.load_rules(os.path.join(root, "rules.jsonl"), muted_ids)
+    target = str(expected_revision.get("rule_id") or "")
+    for row in muted:
+        if target in {str(row.get("rule_id")), problems.rule_line_id(row)}:
+            raise ReviewError(
+                f"rule {problems.rule_line_id(row)!r} is muted, so it cannot be revised in the "
+                "same review — a replacement would inherit the silence and never be asked "
+                "about. Unmute it first, or answer the breach without a replacement")
+
+
 def _slot_commitment(plan, chosen, condition, expected_revision):
     """#412: a condition the engine cannot compute becomes a stored slot.
 
@@ -2782,6 +2800,14 @@ def _resolve_commitment(plan, answers):
         raise ReviewError("a revise_rule answer requires the one final commitment to revise that rule")
     if not expected_revision and revises_rule_id:
         raise ReviewError("revises_rule_id requires a revise_rule answer for that rule")
+    if expected_revision:
+        # #416: the frozen question was posed before this session could mute that
+        # rule. Without this, muting at step 8 and revising at step 9 both land:
+        # the replacement inherits the line's silence and a rule the user authored
+        # *this week* is born muted, absent from the rotation and from #292's
+        # breach disclosure, with nothing said. The two answers contradict each
+        # other, so the engine names the contradiction instead of picking one.
+        _refuse_revision_of_a_muted_line(plan, expected_revision)
     if selected == "skip":
         if expected_revision:
             raise ReviewError("a revise_rule answer requires a replacement commitment")
@@ -3265,8 +3291,17 @@ def cmd_mute_rule(args):
             f"rule (live: {sorted({problems.rule_line_id(r) for r in tracking + muted}) or 'none'})")
     line_id = problems.rule_line_id(rule)
     target_muted = not args.unmute
-    if (line_id in set(muted_ids)) == target_muted:
+    # Effective state, not the profile's copy of it: `load_rules` also honours a
+    # row-level `status: "muted"` (contract since #137), so asking the profile
+    # would tell a user their rule is tracked while the engine's own reader
+    # silences it — one boolean with two sources of truth.
+    silent_now = any(problems.rule_line_id(row) == line_id for row in muted)
+    if silent_now == target_muted:
         raise ReviewError(f"rule {line_id!r} is already {'muted' if target_muted else 'tracking'}")
+    if args.unmute and line_id not in set(muted_ids):
+        raise ReviewError(
+            f"rule {line_id!r} is silenced by a `status: \"muted\"` field in rules.jsonl, not by "
+            "a preference this command owns — remove that field from the row to bring it back")
     remaining = [rule_id for rule_id in muted_ids if rule_id != line_id]
     if target_muted:
         remaining.append(line_id)

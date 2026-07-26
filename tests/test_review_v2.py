@@ -3007,7 +3007,10 @@ def test_mute_rule_is_a_preference_not_a_rule_row():
         back = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
         assert back.returncode == 0, back.stdout + back.stderr
         profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
-        assert "muted_rules" not in profile, "unmuting clears the key rather than leaving it empty"
+        assert not profile.get("muted_rules"), "unmuting leaves nothing silenced"
+        tracking, silent = problems_engine.load_rules(
+            str(root / "rules.jsonl"), profile.get("muted_rules") or [])
+        assert len(tracking) == 1 and silent == []
 
 
 def test_mute_rule_leaves_the_rest_of_the_profile_alone():
@@ -3029,15 +3032,62 @@ def test_mute_rule_takes_a_rule_line_not_a_superseded_version():
             {"rule_id": "rule-def-0", "text": "wait a day before adding",
              "problem_key": "avgdown_breach", "created": "2026-06-20",
              "revises": "rule-abc-0"}])
-        # The chain root is the identity, so either id names the same live line.
-        by_head = _run("mute-rule", "--root", root, "--rule-id", "rule-def-0")
-        assert by_head.returncode == 0, by_head.stdout + by_head.stderr
-        assert json.loads(by_head.stdout)["rule_line_id"] == "rule-abc-0"
+        # The chain root is the identity, so the head id and the root id name the
+        # same live line and both resolve to one entry.
+        for rule_id in ("rule-def-0", "rule-abc-0"):
+            probe = _run("mute-rule", "--root", root, "--rule-id", rule_id)
+            if rule_id == "rule-def-0":
+                assert probe.returncode == 0, probe.stdout + probe.stderr
+                assert json.loads(probe.stdout)["rule_line_id"] == "rule-abc-0"
+            else:
+                assert probe.returncode != 0 and "already muted" in probe.stdout + probe.stderr, \
+                    "the root id names the same line, so it must not mute a second time"
         profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
         assert profile["muted_rules"] == ["rule-abc-0"], "one line, one entry, no duplicates"
         tracking, silent = problems_engine.load_rules(
             str(root / "rules.jsonl"), profile["muted_rules"])
         assert tracking == [] and len(silent) == 1, "a revision inherits the mute, chain intact"
+
+
+def test_the_profile_keeps_every_muted_line_in_a_stable_order():
+    """Two entries, so ordering is actually observed: an unpinned order makes the
+    file churn between runs and every diff of it unreadable."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp, rows=[
+            {"rule_id": "rule-zzz-0", "text": "cap at 20%", "problem_key": "oversize",
+             "created": "2026-06-13"},
+            {"rule_id": "rule-aaa-0", "text": "no adding into a loser",
+             "problem_key": "avgdown_breach", "created": "2026-06-13"}])
+        for rule_id in ("rule-zzz-0", "rule-aaa-0"):
+            assert _run("mute-rule", "--root", root, "--rule-id", rule_id).returncode == 0
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert profile["muted_rules"] == ["rule-aaa-0", "rule-zzz-0"]
+
+
+def test_a_rule_muted_this_session_cannot_also_be_revised_this_session():
+    """The breach question was frozen before the mute existed. Letting both land
+    means the replacement inherits the silence and a rule the user wrote *this
+    week* is born muted, absent from the rotation and from #292's disclosure,
+    with nothing said. The two answers contradict; the engine says so."""
+    plan = _commitment_plan()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp)
+        plan["state_root"] = str(root)
+        assert _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0").returncode == 0
+        # `oversize` is what session.PKEY maps max_pos_pct to, so the replacement
+        # is otherwise valid: without the guard this commitment lands silently,
+        # which is the whole point of the pair.
+        plan["question_queue"] = [{"id": "q1", "kind": "rule_breach", "rule_id": "rule-abc-0",
+                                   "problem_key": "oversize"}]
+        answers = {"commitment": {"choice": "custom", "rule": "cap any single position at 15%",
+                                  "metric_key": "max_pos_pct", "revises_rule_id": "rule-abc-0"},
+                   "answers": [{"question_id": "q1", "choice": "revise_rule", "note": "too tight"}]}
+        try:
+            review_engine._resolve_commitment(plan, answers)
+        except review_engine.ReviewError as exc:
+            assert "muted" in str(exc) and "revised in the same review" in str(exc), exc
+        else:
+            raise AssertionError("a muted line must not be revised in the same review")
 
 
 def test_mute_rule_fails_closed_on_both_halves_of_its_state_guard():
@@ -3055,6 +3105,27 @@ def test_mute_rule_fails_closed_on_both_halves_of_its_state_guard():
         assert _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0").returncode == 0
         again = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
         assert again.returncode != 0 and "already muted" in again.stdout + again.stderr
+
+
+def test_the_state_guard_reads_the_engine_not_its_own_copy_of_the_answer():
+    """`load_rules` also honours a row-level `status: "muted"` (contract since
+    #137). A guard that consults only the profile would tell the user a rule is
+    tracked while the engine's own reader silences it — one boolean, two sources
+    of truth. This fixture is the only one where the two answers differ."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp, rows=[
+            {"rule_id": "rule-abc-0", "text": "cap at 20%", "problem_key": "oversize",
+             "created": "2026-06-13", "status": "muted"}])
+        redundant = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0")
+        assert redundant.returncode != 0, \
+            "the engine already silences this rule; muting it again is not a fresh action"
+        assert "already muted" in redundant.stdout + redundant.stderr
+        assert not (root / "profile.json").exists(), "and it must not write a redundant entry"
+
+        back = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
+        assert back.returncode != 0, "this command does not own that mute, so it cannot lift it"
+        assert "rules.jsonl" in back.stdout + back.stderr, \
+            "the refusal has to name what is actually silencing the rule, or it is a dead end"
 
 
 def test_a_mute_survives_the_documented_projection_repair():
