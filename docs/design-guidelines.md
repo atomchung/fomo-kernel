@@ -93,13 +93,17 @@ parameter over a table of per-scenario cases.
    anything else? If it can, the shape is wrong — rework it to fit the slot
    contract instead of adding a special case for the container.
 3. **Use the scales.** No new spacing or type value unless the scale genuinely
-   lacks a step; adding a step is a decision, because both stylesheets must
-   carry it.
+   lacks a step; adding a step is a design decision, not a mechanical one — it
+   changes what every future element is allowed to reach for.
 4. **Derive, do not enumerate.** If behaviour differs across scenarios, find
    the data property that explains the difference and derive from it.
-5. **Synchronize the mirrored surfaces** — `card_renderer.py`'s
-   `_HTML_WIDGET_CSS` and `card-template.html` (enforced per selector), and the
-   Markdown path if the element carries a fact rather than a decoration.
+5. **Regenerate the derived surfaces** — `card-template.html`
+   (`tools/gen_card_template.py`) and the Claude Design bundle
+   (`tools/design_bundle.py`) both read `card_renderer.py`'s `_HTML_WIDGET_CSS`
+   directly, so a CSS change there only needs a rerun, not a hand-edit
+   elsewhere; template-only illustrative CSS still lives in
+   `card-template.src.html`. Update the Markdown path too if the element
+   carries a fact rather than a decoration.
 6. **Add the mechanical check** (§7) and mutation-test it: break the rule on
    purpose and confirm the test fails.
 7. **Measure, do not eyeball.** Render the real fixtures and measure geometry
@@ -121,11 +125,12 @@ parameter over a table of per-scenario cases.
   truth.** The Claude Design bundle (`tools/design_bundle.py`) derives its CSS
   from `_HTML_WIDGET_CSS` at build time (#368 Phase 1) instead of hand-copying
   it — rerun the tool after a runtime CSS change to refresh `ds-bundle/`.
-  `card-template.html`'s `.rc`-scoped rules are held equal to the runtime's,
-  declaration for declaration, by
-  `test_widget_fragment_css_stays_mirrored_with_card_template`, so a change to
-  one that is not mirrored in the other fails the suite instead of drifting
-  silently.
+  `card-template.html` makes the identical move (#401): `tools/gen_card_template.py`
+  generates its `.rc`-scoped rules from the same `_HTML_WIDGET_CSS`, so there is
+  no second copy left to drift — `test_card_template_matches_its_generator`
+  fails the suite only if the committed file and a fresh regeneration disagree,
+  which means someone forgot to rerun the generator, not that the two stylesheets
+  disagree on a design decision.
 
 ## 6. Module inventory
 
@@ -155,7 +160,7 @@ A module contract that is not checked will drift. Current coverage:
 | Column count equals cell count | `test_kpi_dashboard_uses_metric_boxes_not_flat_paragraphs` |
 | Spacing and type come from the scales | `test_layout_uses_the_token_scales_not_ad_hoc_pixels` |
 | Exactly one L1, and nothing after it | `test_next_step_is_the_cards_only_emphasis_ground` |
-| Runtime and template's `.rc`-scope agree, declaration for declaration, both directions | `test_widget_fragment_css_stays_mirrored_with_card_template` |
+| `card-template.html` matches a fresh regeneration from `card-template.src.html` and the runtime CSS | `test_card_template_matches_its_generator` |
 | One value, one home | attribution headline assertion in `test_rich_layout_renders_template_blocks_from_shared_facts` |
 
 Not yet mechanical, and therefore still able to drift: note scoping (§6's

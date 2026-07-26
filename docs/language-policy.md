@@ -10,7 +10,7 @@ Use English for:
 - all Markdown under `docs/`, except no exceptions are currently needed
 - `BACKLOG.md` and `evals/EVALS.md`
 - `skills/fomo-kernel/SKILL.md`, flows, references, rubrics, specifications, and mock documentation
-- English runtime assets such as `card-template.html`, `copy/en.json`, evaluation prompts, and lens JSON
+- English runtime assets such as `card-template.html` (generated) and `card-template.src.html` (its authored source), `copy/en.json`, evaluation prompts, and lens JSON
 - developer-facing test documentation
 
 Do not mix translated explanations into these files. One implementation contract makes cross-agent behavior easier to review and keeps code identifiers, schemas, and documentation aligned.

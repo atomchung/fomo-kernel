@@ -54,8 +54,20 @@ SURFACES = (
     ("engine", lambda p: p.startswith("skills/fomo-kernel/engine/") and p.endswith(".py")),
     ("copy", lambda p: p.startswith("skills/fomo-kernel/copy/")),
     ("schema", lambda p: p.startswith("skills/fomo-kernel/schemas/")),
+    # "template" covers every file involved in producing card-template.html
+    # and the Claude Design bundle, both now generated from the runtime's own
+    # CSS literals (#368 Phase 1, #401) rather than hand-mirrored. Including
+    # card-template.src.html and gen_card_template.py here (not just the
+    # generated card-template.html) matters for what this tool measures: #401
+    # was filed because the old hand-mirrored card-template.html always
+    # dragged a test edit along; the file a maintainer actually edits going
+    # forward is the .src.html source, and if that path fell through to a
+    # different surface, this tool would undercount template-touching commits
+    # and the coupling it reports would stop meaning what it claims to.
     ("template", lambda p: p.endswith("card-template.html")
+        or p.endswith("card-template.src.html")
         or p.endswith("tools/design_bundle.py")
+        or p.endswith("tools/gen_card_template.py")
         or p.startswith("ds-bundle/")),
     ("skill-runtime", lambda p: p.endswith("SKILL.md") or p == "AGENTS.md"
         or p.startswith("skills/fomo-kernel/flows/")
