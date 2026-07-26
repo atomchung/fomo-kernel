@@ -540,6 +540,12 @@ def main(argv=None):
             return 1
         if payload["skipped_lines"]:
             print(f"⚠️  problems.jsonl 有 {payload['skipped_lines']} 行壞事件被跳過", file=sys.stderr)
+        if payload.get("rules_skipped_lines"):
+            # 比上面那條更嚴重:壞行會切斷 revises 鏈,靜音的規矩可能因此無聲回到
+            # 輪替(#416)。所以講清楚後果,不只報數字。
+            print(f"⚠️  rules.jsonl 有 {payload['rules_skipped_lines']} 行讀不出來——"
+                  "規矩的改寫鏈可能因此斷開,靜音過的規矩會無聲回到提問輪替,"
+                  "這份對位請當成不完整", file=sys.stderr)
         _emit(payload)
         return 0
     return 0

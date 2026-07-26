@@ -3255,6 +3255,28 @@ def _muted_rule_ids(root):
     return [str(rule_id) for rule_id in ids if str(rule_id).strip()] if isinstance(ids, list) else []
 
 
+def _write_mutes(root, line_ids):
+    """Replace the profile's mute list, preserving every other preference."""
+    path = _profile_path(root)
+    profile = {}
+    if os.path.exists(path):
+        try:
+            loaded = session.read_json(path)
+            if isinstance(loaded, dict):
+                profile = loaded
+        except (OSError, ValueError):
+            profile = {}
+    if line_ids:
+        profile["muted_rules"] = sorted(set(line_ids))
+    else:
+        profile.pop("muted_rules", None)
+    ledger.atomic_write_text(path, session.pretty(profile))
+
+
+def _clear_mute(root, line_id, muted_ids):
+    _write_mutes(root, [rule_id for rule_id in muted_ids if rule_id != line_id])
+
+
 def cmd_mute_rule(args):
     """Silence a rule without retiring it, or bring it back (#416).
 
@@ -3286,6 +3308,15 @@ def cmd_mute_rule(args):
         lines[str(row.get("rule_id"))] = row          # the head id is what a payload shows
     rule = lines.get(str(args.rule_id))
     if rule is None:
+        if args.unmute and str(args.rule_id) in set(muted_ids):
+            # A silenced line whose rows are gone (a reset, a hand-edited file):
+            # the profile entry is inert but permanent, and refusing here would
+            # leave the user no way to clear it.
+            _clear_mute(root, str(args.rule_id), muted_ids)
+            _emit({"status": "tracking", "root": root, "rule_line_id": str(args.rule_id),
+                   "rule_id": None, "text": None,
+                   "note": "the rule itself is no longer in rules.jsonl; cleared the stale entry"})
+            return
         raise ReviewError(
             f"no live rule matching {args.rule_id!r} — a superseded id names a version, not a "
             f"rule (live: {sorted({problems.rule_line_id(r) for r in tracking + muted}) or 'none'})")
@@ -3305,20 +3336,7 @@ def cmd_mute_rule(args):
     remaining = [rule_id for rule_id in muted_ids if rule_id != line_id]
     if target_muted:
         remaining.append(line_id)
-    path = _profile_path(root)
-    profile = {}
-    if os.path.exists(path):
-        try:
-            loaded = session.read_json(path)
-            if isinstance(loaded, dict):
-                profile = loaded
-        except (OSError, ValueError):
-            profile = {}
-    if remaining:
-        profile["muted_rules"] = sorted(remaining)
-    else:
-        profile.pop("muted_rules", None)
-    ledger.atomic_write_text(path, session.pretty(profile))
+    _write_mutes(root, remaining)
     _emit({"status": "muted" if target_muted else "tracking", "root": root,
            "rule_line_id": line_id, "rule_id": rule.get("rule_id"), "text": rule.get("text")})
 

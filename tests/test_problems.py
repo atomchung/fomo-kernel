@@ -337,6 +337,23 @@ def test_a_broken_line_is_counted_because_it_can_un_mute_a_chain():
     assert snap["rules_skipped_lines"] == 1, "呼叫端要看得到『這份對位可能不完整』"
 
 
+def test_the_cli_says_what_a_broken_rules_file_costs():
+    """一個沒人讀的欄位就是 schema 債——而這張 PR 正是在清那種債。壞行的後果
+    (靜音可能失效)必須有人被告知,不能只是躺在 payload 裡。"""
+    book, rules = _mk()
+    pb.append_book(book, [{"key": "oversize", "week": "2026-07-04"}], None)
+    with open(rules, "w", encoding="utf-8") as f:
+        f.write("{壞掉的一行\n")
+        f.write(json.dumps({"rule_id": "a", "text": "原版", "problem_key": "oversize"}) + "\n")
+    out = subprocess.run([sys.executable, os.path.join(ENGINE, "problems.py"), "--book", book,
+                          "stats", "--rules", rules, "--today", "2026-07-04"],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert "rules.jsonl" in out.stderr and "靜音" in out.stderr, \
+        f"CLI 必須講出壞行的後果,實際 stderr:{out.stderr!r}"
+    assert json.loads(out.stdout)["rules_skipped_lines"] == 1
+
+
 def test_a_clean_rules_file_reports_no_skipped_lines_key():
     _, rules = _mk()
     _write_rules(rules, [{"rule_id": "a", "text": "原版", "problem_key": "oversize"}])

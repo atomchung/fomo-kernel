@@ -3049,6 +3049,21 @@ def test_mute_rule_takes_a_rule_line_not_a_superseded_version():
         assert tracking == [] and len(silent) == 1, "a revision inherits the mute, chain intact"
 
 
+def test_a_mute_for_a_rule_that_no_longer_exists_can_still_be_cleared():
+    """A reset or a hand-edited file can leave the rule gone and the preference
+    behind. Refusing to touch it would make that entry permanent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _rule_root(tmp)
+        assert _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0").returncode == 0
+        (root / "rules.jsonl").write_text("", encoding="utf-8")
+        cleared = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
+        assert cleared.returncode == 0, cleared.stdout + cleared.stderr
+        profile = json.loads((root / "profile.json").read_text(encoding="utf-8"))
+        assert not profile.get("muted_rules")
+        still_gone = _run("mute-rule", "--root", root, "--rule-id", "rule-abc-0", "--unmute")
+        assert still_gone.returncode != 0, "with nothing left to clear it is an error again"
+
+
 def test_the_profile_keeps_every_muted_line_in_a_stable_order():
     """Two entries, so ordering is actually observed: an unpinned order makes the
     file churn between runs and every diff of it unreadable."""
