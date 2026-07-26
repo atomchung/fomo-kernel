@@ -646,6 +646,15 @@ def check_condition_integrity(answer, facts):
     researched figure legitimately comes from outside the engine, which is the
     whole point of the tier. Its discipline is the source + as-of anchor, the
     same one #414's ``public_fact`` tag will require of a free-form answer.
+
+    Reconciled against #431's recut, which arrived in parallel with this check
+    and removed ``grounding_fidelity`` for being a behavior oracle wearing an
+    invariant's clothes: none of the three questions above compares an answer
+    against wording the product happens to ship. The first is the engine's own
+    gate. The second demands that the *user's* words survive, which is #396's
+    invariant and says nothing about the product's. The third bounds which
+    figures may appear, not how any of them is phrased. An answer that passes is
+    a witness that those hold — never a model answer to copy.
     """
     envelope = answer.get("condition")
     try:
