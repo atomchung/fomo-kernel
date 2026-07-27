@@ -4296,6 +4296,152 @@ def test_a_live_falsifier_past_the_lookup_cap_is_still_adjudicated():
             "and count in the summary's arithmetic like any other:\n" + private
 
 
+def _relink_scenario(tmp, root):
+    """An incomplete opening snapshot, then the transaction review that reveals
+    the holding's real cycle start.
+
+    Returns ``(provisional_cycle_id, card, state, history)``. The thesis is
+    relinked from the snapshot's provisional cycle id to the revealed one, and
+    the relink exists **only in the plan** until that review is finalized — which
+    is the whole point of the scenario below."""
+    opening, _path = _snapshot_prepare(tmp, root, payload={
+        "as_of": "2026-07-16", "is_complete": False,
+        "positions": [{"ticker": "PLTR", "shares": 10, "avg_cost": 100,
+                       "market": "US", "currency": "USD"}]}, language="en")
+    answers = _write_json(tmp, "relink-open-answers.json",
+                          _snapshot_answers(opening, commitment="skip"))
+    narrative = _write_json(tmp, "relink-open-narrative.json", _snapshot_narrative(opening))
+    done = _run("finalize", "--root", root, "--session-id", opening["session_id"],
+                "--answers", answers, "--narrative", narrative)
+    assert done.returncode == 0, done.stdout + done.stderr
+    prior = json.loads((root / "sessions" / opening["session_id"] / "bundle.json")
+                       .read_text(encoding="utf-8"))["thesis_updates"][0]
+
+    card, state = _artifacts(tmp)
+    card_data = json.loads(card.read_text(encoding="utf-8"))
+    card_data["thesis_questions"] = []
+    state_data = json.loads(state.read_text(encoding="utf-8"))
+    state_data.update({"date_start": "2026-07-01", "date_end": "2026-07-18", "n_held": 1})
+    state_data["holdings"] = {
+        "as_of": "2026-07-18", "derived_from": "trades_csv", "is_complete": False,
+        "positions": {"PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
+                               "market": "US", "currency": "USD",
+                               "cycle_start": "2026-07-01",
+                               "cycle_id": "PLTR#2026-07-01#1", "add_count": 0,
+                               "decision_cursor": None}}}
+    card.write_text(json.dumps(card_data, ensure_ascii=False), encoding="utf-8")
+    state.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+    history = pathlib.Path(tmp) / "relink-history.csv"
+    history.write_text("Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+                       "PLTR,BUY,10,100,2026-07-01,Trade,US,USD\n", encoding="utf-8")
+    return prior["cycle_id"], card, state, history
+
+
+def test_a_falsifier_live_only_through_a_relink_survives_the_cap_and_reaches_the_card():
+    """External review, round 3 BLOCK — the two-readers pattern at the *input*
+    layer (docs/development-guide.md section 7).
+
+    Liveness had one derivation, but its input was assembled twice: the plan
+    joined the thesis history with this session's cycle relinks, and the card
+    context re-read the history alone. A relink is not on disk until the review
+    that made it is finalized, so a condition whose cycle is live *only* via a
+    relink read as dead at finalize — and, if it was also past the lookup cap,
+    landed in neither `condition_slots_due` nor `condition_slots_context` and
+    fell off the card again. A single reader is necessary and not sufficient
+    when its ingredients are composed in two places.
+
+    Each half of this had a test; the combination had none, which is exactly why
+    it survived two rounds."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        provisional, card, state, history = _relink_scenario(tmp, root)
+
+        # A falsifier written against the provisional cycle, plus a full cap's
+        # worth of never-checked lines, so it sorts past the cap (its own check
+        # is older than "never").
+        guarded = {"slot_id": "slot-guard-0", "kind": "numeric",
+                   "criterion": "Renewals weaken", "thesis_cycle_id": provisional,
+                   "query": "what was the most recent reported net revenue retention rate?",
+                   "created": "2026-07-16", "tier": "researched",
+                   "threshold": {"value": 100, "unit": "%", "direction": "below"},
+                   "near_line": 10.0,
+                   "baseline": {"value": 118.0, "as_of": "2026-05-20", "source": "release"},
+                   "baseline_verdict": "not_met"}
+        filler = [{"slot_id": f"slot-fill-{i}", "kind": "numeric",
+                   "criterion": f"sell if metric {i} drops under 30%",
+                   "query": f"what is the current reading for item {i}?",
+                   "created": "2026-07-16", "tier": "researched",
+                   "threshold": {"value": 30, "unit": "%", "direction": "below"},
+                   "near_line": 3.0}
+                  for i in range(review_engine.CONDITION_LOOKUP_CAP)]
+        (root / "conditions.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in [guarded] + filler), encoding="utf-8")
+        (root / "condition_checks.jsonl").write_text(json.dumps(
+            {"check_id": "c-guard", "slot_id": "slot-guard-0", "session_id": "s0",
+             "date_end": "2026-07-17", "created": "2026-07-17", "lookup_status": "ok",
+             "observation": {"value": 118.0, "as_of": "2026-05-20", "source": "release"},
+             "information_state": "new_period", "engine_verdict": "not_met",
+             "final_verdict": "not_met", "verdict_source": "engine"}) + "\n", encoding="utf-8")
+
+        checks = _write_json(tmp, "relink-checks.json", {"condition_checks": [
+            {"slot_id": "slot-guard-0",
+             "check": {"lookup_status": "ok",
+                       "observation": {"value": 92.0, "as_of": "2026-07-18",
+                                       "source": "10-Q", "period": "FY2027Q2",
+                                       "document": "10-Q 2026-07-18"}}}]})
+        run = _run("prepare", history, "--root", root, "--language", "en",
+                   "--card-json", card, "--state-json", state,
+                   "--session-nonce", "relink-beyond-cap", "--condition-checks", checks)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        snapshot = plan["state_snapshot"]
+
+        assert len(snapshot["thesis_cycle_relinks"]) == 1, "fixture precondition: a relink happened"
+        assert "slot-guard-0" not in {row["slot_id"] for row in snapshot["condition_slots_due"]}, \
+            "fixture precondition: it is past the cap"
+        # The mirror case: live via a relink is live. It must not read as retired.
+        assert snapshot["condition_slots_retired"] == [], \
+            "a line still live through a relink must never announce its retirement"
+        assert snapshot["condition_slots_summary"]["retired_lines"] == 0
+        crossing = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+        assert crossing["ticker"] == "PLTR"
+
+        answers = {"session_id": plan["session_id"],
+                   "answers": [{"question_id": q["id"], "choice": "skip"}
+                               for q in plan["question_queue"]],
+                   "thesis_updates": [], "observations": [],
+                   "commitment": {"choice": "skip"},
+                   "condition_checks": json.loads(checks.read_text())["condition_checks"]}
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "Renewals weaken —" in private, \
+            "a relink-live beyond-cap reading must reach the card:\n" + private
+        assert "break your PLTR thesis" in private, \
+            "and arrive with the thesis it guards:\n" + private
+        assert "Open concerns coming back next review:" in private, \
+            "and count in the summary like any other:\n" + private
+
+
+def test_a_genuinely_exited_cycle_still_retires_when_a_relink_exists_for_another_ticker():
+    """The counterweight the relink fix must not break: composing the relinks in
+    cannot resurrect a line whose position is really gone. An alias only ever
+    inherits liveness from a cycle that has it, so a dead cycle stays dead."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        index = review_engine._thesis_cycle_index(
+            {"PLTR": {"cycle_id": "PLTR#2026-07-01#1"}},
+            [{"cycle_id": "NVDA#2026-01-05#1", "ticker": "NVDA"}],
+            [{"cycle_id": "PLTR#2026-07-01#1", "ticker": "PLTR",
+              "cycle_provenance": {"kind": "incomplete_snapshot_cycle_relink",
+                                   "from_cycle_id": "PLTR#2026-07-16#1"}}])
+        assert index["PLTR#2026-07-16#1"]["live"] is True, "the provisional id is live via the relink"
+        assert index["PLTR#2026-07-01#1"]["live"] is True
+        assert index["NVDA#2026-01-05#1"] == {"ticker": "NVDA", "live": False}, \
+            "a cycle with no live position stays dead however many relinks are in the batch"
+        del root
+
+
 def test_a_condition_that_guards_nothing_still_names_no_position():
     """The counterweight, and the reason #412's original prohibition stands. A
     portfolio-level commitment condition is attached to no position, so grounding

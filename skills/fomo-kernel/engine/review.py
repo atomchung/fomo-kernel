@@ -1298,9 +1298,20 @@ def _last_check_summary(check):
             "final_verdict": check.get("final_verdict")}
 
 
-def _thesis_cycle_index(positions, thesis_rows):
+def _thesis_cycle_index(positions, thesis_rows, cycle_relinks):
     """``{cycle_id: {"ticker": ..., "live": bool}}`` — every position cycle a
     thesis-linked condition could name, and the one place liveness is decided.
+
+    ``cycle_relinks`` is **required**, with no default, and this function is the
+    only place the two row sources are joined. A relink built this session is
+    not on disk until finalize writes it, so a caller reading only
+    ``_thesis_event_history(root)`` sees a provisional cycle as dead and retires
+    a condition the user is still holding. That is what happened: one derivation
+    with its input assembled in two places is the same defect as two derivations
+    (external review, round 3; docs/development-guide.md section 7). Making the
+    argument mandatory is the guard — a new call site cannot forget it quietly.
+    Plan-side consumers should use ``_plan_thesis_cycles`` rather than composing
+    the arguments themselves.
 
     A thesis falsifier guards a position (#416 C2). Once that position is fully
     exited the cycle leaves ``holdings.positions``, and with it the reason the
@@ -1324,26 +1335,45 @@ def _thesis_cycle_index(positions, thesis_rows):
     Every other reader takes what this stamps (``thesis_link`` on a live entry,
     ``condition_slots_retired`` on a closed one), so nothing downstream
     re-derives which thesis a slot belongs to or whether it still stands."""
+    # The one composition: persisted history plus this session's relinks, which
+    # are real but not yet on disk. Every caller passes the two ingredients and
+    # none of them concatenates.
+    rows = [row for row in list(thesis_rows or []) + list(cycle_relinks or [])
+            if isinstance(row, dict)]
     index = {row["cycle_id"]: {"ticker": ticker, "live": True}
              for ticker, row in (positions or {}).items()
              if isinstance(row, dict) and row.get("cycle_id")}
     # Aliases first, while the map holds only live cycles: a provisional id may
-    # only inherit liveness from a cycle that actually has it.
-    for row in thesis_rows or []:
-        if not isinstance(row, dict):
-            continue
+    # only inherit liveness from a cycle that actually has it. A genuinely
+    # exited cycle is in no live entry, so nothing here can resurrect it.
+    for row in rows:
         provenance = row.get("cycle_provenance")
         origin = provenance.get("from_cycle_id") if isinstance(provenance, dict) else None
         target = row.get("cycle_id")
         if origin and target in index and origin not in index:
             index[origin] = index[target]
-    for row in thesis_rows or []:
-        if not isinstance(row, dict):
-            continue
+    for row in rows:
         cycle_id, ticker = row.get("cycle_id"), row.get("ticker")
         if cycle_id and ticker and cycle_id not in index:
             index[cycle_id] = {"ticker": ticker, "live": False}
     return index
+
+
+def _plan_thesis_cycles(plan):
+    """The cycle index for a plan that already exists — the single way any
+    finalize-side consumer obtains one.
+
+    It reads both ingredients from where the plan itself carries them: the
+    persisted thesis history under ``state_root``, and this session's relinks
+    from ``state_snapshot.thesis_cycle_relinks``, which ``_build_plan`` stamped
+    and ``_draft_bundle`` is about to persist. Before this existed, the card
+    context re-read only the history, so a cycle that is live *only* via a
+    relink read as dead and its condition was dropped from the card join
+    (external review, round 3)."""
+    thesis_rows, _decisions = _thesis_event_history(plan.get("state_root"))
+    return _thesis_cycle_index(
+        _active_positions(plan.get("engine_state") or {}), thesis_rows,
+        ((plan.get("state_snapshot") or {}).get("thesis_cycle_relinks") or []))
 
 
 def _condition_lines(root, thesis_cycles=None, previous_date_end=None):
@@ -2608,7 +2638,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     # #416 C2: which position cycles a thesis-linked condition is still standing
     # on, derived once here and read everywhere else from what the plan stamps
     # (`thesis_link` on a live entry, `condition_slots_retired` on a closed one).
-    thesis_cycles = _thesis_cycle_index(positions, thesis_rows + cycle_relinks)
+    thesis_cycles = _thesis_cycle_index(positions, thesis_rows, cycle_relinks)
     condition_due, condition_summary, thesis_links, condition_retired = (
         ([], None, {}, []) if route == "snapshot_review"
         else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
@@ -3500,21 +3530,24 @@ def _condition_card_context(plan, built):
     absent from the card, which is the exact "dropped without being named"
     defect this whole tier exists to prevent.
 
-    It re-runs the *same* derivation the plan used (``_condition_lines`` with the
-    same cycle index), so the renderer still reads one engine-stamped answer and
-    never works liveness out for itself. A retired line is absent from that
-    derivation and therefore stays absent here: retired means retired, and the
-    retirement sentence is what speaks for it."""
+    It re-runs the *same* derivation the plan used — ``_condition_lines`` over a
+    cycle index from ``_plan_thesis_cycles``, which assembles the same two row
+    sources the plan did, this session's relinks included. Assembling that input
+    a second way here is what round 3 caught: the derivation was single and its
+    ingredients were not, so a cycle live only via a relink read as dead and its
+    condition fell out of the join exactly as before.
+
+    The renderer still reads one engine-stamped answer and never works liveness
+    out for itself. A retired line is absent from the derivation and therefore
+    stays absent here: retired means retired, and the retirement sentence is
+    what speaks for it."""
     root = plan.get("state_root")
     checked = {row.get("slot_id") for row in built if isinstance(row, dict)}
     if not checked or not root or not os.path.isdir(root):
         return []
     already = {entry.get("slot_id")
                for entry in ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])}
-    thesis_rows, _decisions = _thesis_event_history(root)
-    thesis_cycles = _thesis_cycle_index(
-        _active_positions(plan.get("engine_state") or {}), thesis_rows)
-    live, _retired, _unreadable = _condition_lines(root, thesis_cycles)
+    live, _retired, _unreadable = _condition_lines(root, _plan_thesis_cycles(plan))
     return [entry for entry in live
             if entry.get("slot_id") in checked and entry.get("slot_id") not in already]
 
