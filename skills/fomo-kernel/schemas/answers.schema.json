@@ -124,7 +124,18 @@
       },
       "additionalProperties": false
     },
-    "thesis_updates": {"type": "array", "items": {"type": "object"}},
+    "thesis_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "condition": {
+            "$ref": "https://fomo-kernel.local/schemas/condition-slot.schema.json#/properties/input",
+            "description": "#416 C2, optional: the falsifier this thesis row states, sent in the same exchange so it becomes a watched condition slot instead of free text nobody reads back. `criterion` must be this row's own `exit_trigger` verbatim — a paraphrase would watch something the user did not say. At most one per thesis row; the engine stamps `thesis_cycle_id` from the row's `cycle_id`, stores the slot in conditions.jsonl, and lifts this field out so no copy of the condition rides into theses.jsonl. It joins the same due rotation, cap, and question budget as every other condition, and stops being checked once the position is fully exited. It never becomes a rules.jsonl row, and no check verdict ever moves the thesis's own status."
+          }
+        }
+      }
+    },
     "observations": {"type": "array", "items": {"type": "string"}}
   },
   "$defs": {

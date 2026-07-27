@@ -79,6 +79,23 @@ parent is itself a line's root). ``slot_line_id`` and ``fold_slots`` mirror
 reconstruction — same precedent, a second store, tolerant of a fork on read
 rather than raising (the write-side guard against creating one is later work).
 
+**A thesis falsifier is a condition slot** (#416's ratified direction, the C2
+half of #412). When a user states a thesis, the fact they say would break it
+(``thesis_updates[].exit_trigger``) is a condition already — so it becomes one
+of these rows rather than a second reconciliation lifecycle inside
+``thesis.py``, which would be a new mirror to keep semantically in sync.
+``thesis_cycle_id`` records which position cycle's thesis the row guards. It is
+engine-assigned from that thesis row's own ``cycle_id`` and refused on the
+envelope: an agent able to name the cycle could attach a condition to a thesis
+the user never wrote. A revision of such a row **inherits the linkage** — the
+criterion was re-stated, not re-attached — and a conflicting explicit value
+fails closed rather than silently picking one.
+
+What the linkage does *not* do is adjudicate. A check verdict never moves a
+thesis's ``status``: the user's answer to the crossing question is the verdict
+of record, and an automatic flip would resurrect exactly the parallel lifecycle
+#416 ruled out.
+
 **The per-period check is a second store, not a second row shape in this one.**
 ``<root>/condition_checks.jsonl`` holds one append-only row per (slot, review
 period): ``build_check`` validates the agent's lookup envelope exactly as
@@ -283,7 +300,7 @@ def evaluate(threshold, observation, near_line):
     return "near_line" if near_line > 0 and abs(value - line) <= near_line else "not_met"
 
 
-def build_slot(raw, *, slot_id, created, session_id=None, revises=None):
+def build_slot(raw, *, slot_id, created, session_id=None, revises=None, thesis_cycle_id=None):
     """Validate one agent-supplied condition envelope into a durable slot row.
 
     ``kind`` is written on every row even though only one value is watchable
@@ -297,7 +314,13 @@ def build_slot(raw, *, slot_id, created, session_id=None, revises=None):
     a new row, not an edit to the old one — the old row is a fact about what
     was true when it was written — so the new row records which slot_id it
     replaces and inherits that line's identity (``slot_line_id``), the same
-    revises-chain shape ``problems.py`` already uses for rules."""
+    revises-chain shape ``problems.py`` already uses for rules.
+
+    ``thesis_cycle_id`` (engine-assigned, never accepted on the payload): the
+    position cycle whose thesis this condition falsifies (#416 C2). A revision
+    inherits it from its parent, because re-stating a criterion does not
+    re-attach it to a different thesis; supplying a value that contradicts the
+    parent's is a contradiction the engine names rather than resolves."""
     if not isinstance(raw, dict):
         raise ConditionError("commitment.condition must be an object")
     unknown = set(raw) - _FIELDS
@@ -325,6 +348,17 @@ def build_slot(raw, *, slot_id, created, session_id=None, revises=None):
             raise ConditionError("revises must be a slot row with a slot_id")
         slot["revises"] = revises["slot_id"]
         slot["line_id"] = slot_line_id(revises)
+    # #416 C2: which thesis this condition falsifies. Inherited across a
+    # revision — a re-stated criterion is the same line guarding the same
+    # thesis — so the linkage cannot be lost by the user rewording their rule.
+    inherited = (revises or {}).get("thesis_cycle_id") if isinstance(revises, dict) else None
+    if thesis_cycle_id and inherited and str(thesis_cycle_id) != str(inherited):
+        raise ConditionError(
+            "condition.thesis_cycle_id contradicts the row it revises: a re-stated criterion "
+            "keeps the thesis it was written to falsify, and moving it to another thesis would "
+            "silently retarget every check already on this line")
+    if thesis_cycle_id or inherited:
+        slot["thesis_cycle_id"] = _text(thesis_cycle_id or inherited, "thesis_cycle_id", MAX_TEXT)
     # Evidence is kept on every row that has it, watchable or not. It is what was
     # actually found at commit time, and dropping it would make the record thinner
     # than the conversation that produced it.

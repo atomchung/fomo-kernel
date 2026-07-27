@@ -38,7 +38,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["criterion"],
-          "description": "#412: the standing condition a condition_crossing or condition_basis question is about. No ticker and no dimension — a user-authored condition is not one of the engine's diagnostic axes, and grounding the stem in a position would invite it to argue about the position instead of the line.",
+          "description": "#412: the standing condition a condition_crossing or condition_basis question is about. No dimension inside this object — a user-authored condition is not one of the engine's diagnostic axes, and grounding the stem in the engine's reading of the position would invite it to argue about the position instead of the line. #416 C2: when the condition is a thesis falsifier it is attached to one position by construction, and the top-level `ticker` names the thesis it guards so the adjudication is never posed without saying whose claim it settles.",
           "properties": {
             "criterion": {"type": "string", "minLength": 1, "description": "The user's own sentence, verbatim (#396)."},
             "evidence": {"type": "string", "minLength": 1, "description": "What this period's lookup returned, with its source and as-of date. The engine's own rendering of the observation — never a verdict."},

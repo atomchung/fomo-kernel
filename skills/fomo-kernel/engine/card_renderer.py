@@ -1903,17 +1903,30 @@ CONDITION_CARD_LINES = 2
 
 
 def _condition_index(bundle):
-    """``slot_id -> the condition it belongs to``, from the plan's own due list.
+    """``slot_id -> the condition it belongs to``, from the two places the engine
+    stamps one.
 
-    The due list is where the engine already resolved every line identity, so
-    the card reads ``line_id`` rather than deriving it. That is the point of
-    the field: matching a check to a commitment through ``slot_id`` alone broke
-    silently after a second revision, because the new check names the newest
-    slot while the prior commitment still names the one before it."""
-    return {entry["slot_id"]: entry
-            for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
-                          .get("condition_slots_due") or [])
-            if isinstance(entry, dict) and entry.get("slot_id")}
+    The plan's due list is where the engine already resolved every line
+    identity, so the card reads ``line_id`` rather than deriving it. That is the
+    point of the field: matching a check to a commitment through ``slot_id``
+    alone broke silently after a second revision, because the new check names
+    the newest slot while the prior commitment still names the one before it.
+
+    But that list is **capped**, and a check for a line beyond the cap is legal
+    — so joining on it alone dropped those readings off the card entirely while
+    the summary still counted them as checked (external review, round 2).
+    ``condition_slots_context`` carries exactly those, stamped by the engine
+    from the same derivation. Two engine-stamped sources, one merge, and still
+    nothing worked out here: a retired line appears in neither, which is how the
+    renderer knows to leave it to the retirement sentence."""
+    snapshot = ((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+    index = {}
+    for source in (snapshot.get("condition_slots_due") or [],
+                   bundle.get("condition_slots_context") or []):
+        for entry in source:
+            if isinstance(entry, dict) and entry.get("slot_id"):
+                index[entry["slot_id"]] = entry
+    return index
 
 
 def _queued_crossings(bundle):
@@ -1938,6 +1951,25 @@ def _condition_reading(check, condition):
     return str(observation.get("summary") or "").strip() or None
 
 
+def thesis_guard_sentence(condition, copy):
+    """The thesis a condition guards, said wherever that condition speaks.
+
+    #416's ratified direction made a thesis falsifier a condition slot. The card
+    has no thesis block, so without this the adjudication would arrive detached
+    from the claim it settles — a reading about "the CEO leaving" with nothing
+    saying which position that was ever a reason to hold.
+
+    Read from ``thesis_link``, which ``review.py`` stamps on the plan's own due
+    entry. The renderer never works out which thesis a slot belongs to: one
+    place derives that fact, every other surface reads the stamped value."""
+    link = (condition or {}).get("thesis_link")
+    ticker = (link or {}).get("ticker") if isinstance(link, dict) else None
+    if not ticker:
+        return None
+    return _format_copy((copy.get("condition_check") or {}).get("thesis_guard"),
+                        ticker=ticker)
+
+
 def _condition_reading_line(check, condition, copy, notes):
     """One reading, plus every sentence that says where it stands.
 
@@ -1957,6 +1989,11 @@ def _condition_reading_line(check, condition, copy, notes):
                         value=reading, source=source, as_of=as_of)
     if not line:
         return None
+    guard = thesis_guard_sentence(condition, copy)
+    if guard:
+        # Before the status sentences: what this condition is for comes ahead of
+        # what is happening to it (#416 C2).
+        line = f"{line} {guard}"
     for note_key, values in notes:
         note = _format_copy(check_copy.get(note_key), **values)
         if note:
@@ -2084,6 +2121,9 @@ def _condition_reading_lines(bundle, checks, copy):
 
     Four groups, in the order a reader needs them:
 
+    0. **Retirements** — a thesis condition that stopped being checked this
+       period because its position was fully exited. Said once, in the review
+       where it happens.
     1. **Unresolved crossings** — a line the engine read as crossed (or an event
        the agent flagged) that the user has not answered on. Either it lost the
        one-question budget, or it was asked and got no answer; the two say so
@@ -2116,7 +2156,22 @@ def _condition_reading_lines(bundle, checks, copy):
     the lines would never see that condition at all.
     """
     check_copy = copy.get("condition_check") or {}
-    groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": []}
+    groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": [],
+              "retired": []}
+    # #416 C2: the thesis conditions that stopped being checked *this* period,
+    # because their position was fully exited. An event, so it is said once and
+    # the plan is empty of it on every later review — the engine decides which
+    # period that is (`_condition_lines`), never this. Without it a user who
+    # watched a falsifier last week sees it vanish, which reads as the system
+    # having quietly stopped rather than as a deliberate retirement.
+    for entry in (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                  .get("condition_slots_retired") or []):
+        if not isinstance(entry, dict) or not entry.get("ticker"):
+            continue
+        line = _format_copy(check_copy.get("thesis_retired"),
+                            criterion=entry.get("criterion") or "", ticker=entry["ticker"])
+        if line:
+            groups["retired"].append((line, False))
     for check, condition, status, crossing_state, basis_state in _condition_outcomes(
             bundle, checks):
         if status == "failed":
@@ -2126,7 +2181,8 @@ def _condition_reading_lines(bundle, checks, copy):
                                  criterion=criterion, reason=reason) if reason
                     else _format_copy(check_copy.get("blind"), criterion=criterion))
             if line:
-                groups["blind"].append((line, False))
+                guard = thesis_guard_sentence(condition, copy)
+                groups["blind"].append((f"{line} {guard}" if guard else line, False))
             continue
         notes = _condition_notes(check, condition, crossing_state, basis_state)
         if notes:
@@ -2151,8 +2207,8 @@ def _condition_reading_lines(bundle, checks, copy):
         looks_wrong = check_copy.get("fact_looks_wrong")
         if looks_wrong:
             lines.append(looks_wrong)
-    kept_blind = kept["blind"]
-    lines += kept_blind
+    lines += kept["blind"]
+    lines += kept["retired"]
     return lines, shown, describable
 
 

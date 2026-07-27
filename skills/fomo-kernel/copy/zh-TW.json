@@ -133,6 +133,8 @@
     "fact": "{criterion}——{value}（{source}，資料日 {as_of}）。",
     "fact_no_source": "{criterion}——{value}。",
     "fact_looks_wrong": "上面哪個數字看起來不對就說一聲，可以重新確認它的算法。",
+    "thesis_guard": "這是你說過會推翻 {ticker} 論點的那件事。",
+    "thesis_retired": "{criterion}——之後不再追蹤了：{ticker} 已經全數出清，這條要守的論點也結束了。",
     "note_deferred": "這個已經過線了，下次復盤會來問你。",
     "note_deferred_event": "這可能就是你在盯的那件事，下次復盤會來問你。",
     "note_unanswered": "這個已經過線了，而你還沒表態；下次復盤會再問一次。",

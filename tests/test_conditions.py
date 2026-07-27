@@ -445,6 +445,69 @@ def test_input_envelope_cannot_smuggle_revises_or_line_id():
     _rejects("unknown fields", line_id="line-x")
 
 
+# ─────────── the thesis a condition falsifies (#416 C2 / #412) ───────────
+
+
+def test_a_thesis_falsifier_slot_records_the_cycle_it_guards():
+    """#416's ratified direction: a thesis falsifier IS a condition slot, so it
+    carries which thesis it belongs to rather than a parallel lifecycle inside
+    thesis.py doing the same reconciliation a second time."""
+    raw = dict(GROWTH)
+    slot = conditions.build_slot(raw, slot_id="slot-test-t0", created="2026-07-26",
+                                 session_id="2026-07-26__test",
+                                 thesis_cycle_id="NVDA#2026-01-05#1")
+    assert slot["thesis_cycle_id"] == "NVDA#2026-01-05#1"
+    assert conditions.build_slot(dict(GROWTH), slot_id="slot-test-p0",
+                                 created="2026-07-26").get("thesis_cycle_id") is None, \
+        "a commitment condition guards the portfolio and names no thesis"
+
+
+def test_input_envelope_cannot_smuggle_the_thesis_it_is_attached_to():
+    """An agent that could name the cycle could attach a condition to a thesis
+    the user never wrote. Engine-assigned, exactly like revises/line_id."""
+    _rejects("unknown fields", thesis_cycle_id="NVDA#2026-01-05#1")
+
+
+def test_a_revision_inherits_the_thesis_it_was_written_to_falsify():
+    """Re-stating a criterion is not re-attaching it. Without inheritance the
+    user reworks the wording of their own falsifier and it silently stops being
+    a falsifier of anything — one of the two ways this linkage can be lost."""
+    parent = conditions.build_slot(dict(GROWTH), slot_id="slot-test-t0", created="2026-07-26",
+                                   session_id="2026-07-26__test",
+                                   thesis_cycle_id="NVDA#2026-01-05#1")
+    child = _child_slot(parent)
+    assert child.get("thesis_cycle_id") == "NVDA#2026-01-05#1", \
+        f"a revision lost the thesis it guards: {child.get('thesis_cycle_id')!r}"
+    assert child["line_id"] == parent["slot_id"], "and it is still the same line"
+
+
+def test_a_revision_that_names_a_different_thesis_fails_closed():
+    """The other way it can be lost: silently retargeting a line whose whole
+    check history was accumulated against one thesis."""
+    parent = conditions.build_slot(dict(GROWTH), slot_id="slot-test-t0", created="2026-07-26",
+                                   thesis_cycle_id="NVDA#2026-01-05#1")
+    try:
+        conditions.build_slot(dict(GROWTH, criterion="v2"), slot_id="slot-test-t1",
+                              created="2026-08-26", revises=parent,
+                              thesis_cycle_id="AMD#2026-02-02#1")
+    except conditions.ConditionError as exc:
+        assert "contradicts the row it revises" in str(exc), str(exc)
+    else:
+        raise AssertionError("a revision may not move a condition to another thesis")
+
+
+def test_a_thesis_linked_slot_matches_the_schemas_declared_shape():
+    schema = _schema("condition-slot.schema.json")
+    slot = conditions.build_slot(dict(GROWTH), slot_id="slot-test-t0", created="2026-07-26",
+                                 session_id="2026-07-26__test",
+                                 thesis_cycle_id="NVDA#2026-01-05#1")
+    assert set(slot) <= set(schema["properties"]), \
+        f"row has a field the schema does not declare: {set(slot) - set(schema['properties'])}"
+    assert "thesis_cycle_id" in schema["properties"]
+    assert "thesis_cycle_id" not in schema["properties"]["input"]["properties"], \
+        "the agent-facing envelope must not offer the field the engine assigns"
+
+
 def test_fold_slots_groups_a_chain_and_reports_no_fork():
     root = _slot()
     child = _child_slot(root, criterion="v2", slot_id="slot-test-1", created="2026-08-01")

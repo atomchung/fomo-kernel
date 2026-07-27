@@ -1298,37 +1298,168 @@ def _last_check_summary(check):
             "final_verdict": check.get("final_verdict")}
 
 
-def _condition_due(root):
-    """``(due, summary)`` — the bounded lookup request this review publishes.
+def _thesis_cycle_index(positions, thesis_rows, cycle_relinks):
+    """``{cycle_id: {"ticker": ..., "live": bool}}`` — every position cycle a
+    thesis-linked condition could name, and the one place liveness is decided.
 
-    One entry per *line* (a revised criterion is the same line, so the user is
-    never asked to look the same thing up twice), ordered oldest-last-checked
-    first so a bounded surface rotates instead of starving the tail, and capped
-    at ``CONDITION_LOOKUP_CAP``. The summary is what makes the cap honest: it
-    states the total, the number sent, and the number held back, so no reader —
-    agent or card — can mistake this list for the whole record."""
+    ``cycle_relinks`` is **required**, with no default, and this function is the
+    only place the two row sources are joined. A relink built this session is
+    not on disk until finalize writes it, so a caller reading only
+    ``_thesis_event_history(root)`` sees a provisional cycle as dead and retires
+    a condition the user is still holding. That is what happened: one derivation
+    with its input assembled in two places is the same defect as two derivations
+    (external review, round 3; docs/development-guide.md section 7). Making the
+    argument mandatory is the guard — a new call site cannot forget it quietly.
+    Plan-side consumers should use ``_plan_thesis_cycles`` rather than composing
+    the arguments themselves.
+
+    A thesis falsifier guards a position (#416 C2). Once that position is fully
+    exited the cycle leaves ``holdings.positions``, and with it the reason the
+    condition existed: there is nothing left to sell if it triggers. So liveness
+    is exactly "this cycle is still held", read from the same rows that already
+    own it — no second fold of the thesis event history to disagree with.
+
+    A closed cycle stays in the map, with ``live: False`` and the ticker its
+    thesis history recorded. That is not decoration: a condition that retires
+    has to be able to say *which* thesis it stopped guarding, and the position
+    it names is by then gone from ``positions``.
+
+    The one wrinkle is the provisional cycle id an incomplete opening snapshot
+    hands out. A later transaction review can relink that holding to its real
+    cycle (``thesis.build_incomplete_snapshot_cycle_relinks``), and a condition
+    written against the provisional id would then look closed while the user
+    still holds the position. Raw thesis rows carry the mapping permanently, so
+    the alias is read from them rather than from the folded state, which a later
+    plain thesis update overwrites.
+
+    Every other reader takes what this stamps (``thesis_link`` on a live entry,
+    ``condition_slots_retired`` on a closed one), so nothing downstream
+    re-derives which thesis a slot belongs to or whether it still stands."""
+    # The one composition: persisted history plus this session's relinks, which
+    # are real but not yet on disk. Every caller passes the two ingredients and
+    # none of them concatenates.
+    rows = [row for row in list(thesis_rows or []) + list(cycle_relinks or [])
+            if isinstance(row, dict)]
+    index = {row["cycle_id"]: {"ticker": ticker, "live": True}
+             for ticker, row in (positions or {}).items()
+             if isinstance(row, dict) and row.get("cycle_id")}
+    # Aliases first, while the map holds only live cycles: a provisional id may
+    # only inherit liveness from a cycle that actually has it. A genuinely
+    # exited cycle is in no live entry, so nothing here can resurrect it.
+    for row in rows:
+        provenance = row.get("cycle_provenance")
+        origin = provenance.get("from_cycle_id") if isinstance(provenance, dict) else None
+        target = row.get("cycle_id")
+        if origin and target in index and origin not in index:
+            index[origin] = index[target]
+    for row in rows:
+        cycle_id, ticker = row.get("cycle_id"), row.get("ticker")
+        if cycle_id and ticker and cycle_id not in index:
+            index[cycle_id] = {"ticker": ticker, "live": False}
+    return index
+
+
+def _plan_thesis_cycles(plan):
+    """The cycle index for a plan that already exists — the single way any
+    finalize-side consumer obtains one.
+
+    It reads both ingredients from where the plan itself carries them: the
+    persisted thesis history under ``state_root``, and this session's relinks
+    from ``state_snapshot.thesis_cycle_relinks``, which ``_build_plan`` stamped
+    and ``_draft_bundle`` is about to persist. Before this existed, the card
+    context re-read only the history, so a cycle that is live *only* via a
+    relink read as dead and its condition was dropped from the card join
+    (external review, round 3)."""
+    thesis_rows, _decisions = _thesis_event_history(plan.get("state_root"))
+    return _thesis_cycle_index(
+        _active_positions(plan.get("engine_state") or {}), thesis_rows,
+        ((plan.get("state_snapshot") or {}).get("thesis_cycle_relinks") or []))
+
+
+def _condition_lines(root, thesis_cycles=None, previous_date_end=None):
+    """``(live, retired, unreadable)`` — the whole standing-condition picture,
+    derived once so no later surface has to work any of it out again.
+
+    ``live`` is every line still standing, one entry per *line* (a revised
+    criterion is the same line), ordered oldest-last-checked first, each stamped
+    with ``line_id``, ``last_check``, and — when it guards a thesis —
+    ``thesis_link``. It is deliberately **not** capped here: the cap is about
+    how much lookup work one review asks for, and every other consumer (the
+    question layer, the card's join, the summary's total) needs the whole live
+    set. Scoping any of them to the capped slice makes a line the cap held back
+    indistinguishable from one that no longer exists.
+
+    ``retired`` is what left, because its thesis cycle closed (#416 C2): the
+    position is fully exited, so there is nothing left to sell if the condition
+    triggers. Each entry carries the ticker it guarded, the criterion, and
+    whether *this* review is the one where it left — ``announce``, true when the
+    line's last check belongs to the immediately preceding review, which is
+    exactly the period it was still being looked at. That makes the card's
+    retirement sentence an **event**, said once, rather than a state sentence
+    that would print for the rest of the user's history.
+
+    Nothing is deleted: the store is append-only and every row is a fact about
+    what the user meant when they wrote it."""
     slots, checks, unreadable = _condition_store(root)
     lines = conditions.latest_by_line(slots)
-    entries = []
+    entries, retired = [], []
     for line_id, slot in lines.items():
+        cycle_id = slot.get("thesis_cycle_id")
         last = conditions.last_check_for(checks, slots, slot)
+        link = None
+        if cycle_id:
+            cycle = (thesis_cycles or {}).get(cycle_id) or {}
+            if not cycle.get("live"):
+                retired.append({
+                    "cycle_id": cycle_id, "ticker": cycle.get("ticker"),
+                    "line_id": str(line_id), "criterion": slot.get("criterion"),
+                    "announce": bool(previous_date_end and last
+                                     and last.get("date_end") == previous_date_end)})
+                continue
+            link = {"cycle_id": cycle_id, "ticker": cycle.get("ticker")}
         # `line_id` is stamped on every entry, including a root row that has
         # none on disk. It is how the card resolves a check back to the
         # condition it belongs to without owning a second copy of the line
-        # semantics — one reader, here (external review, round 1).
-        entries.append((str(last.get("date_end") or "") if last else "", str(line_id),
-                        {**slot, "line_id": str(line_id),
-                         "last_check": _last_check_summary(last)}))
+        # semantics — one reader, here (external review, round 1). `thesis_link`
+        # is stamped for the same reason: the renderer and the question layer
+        # read which thesis this guards, they never work it out again.
+        entry = {**slot, "line_id": str(line_id), "last_check": _last_check_summary(last)}
+        if link:
+            entry["thesis_link"] = link
+        entries.append((str(last.get("date_end") or "") if last else "", str(line_id), entry))
     # A never-checked line sorts first on the empty string, which is exactly
     # "oldest": nothing has ever been looked up for it.
     entries.sort(key=lambda item: (item[0], item[1]))
-    due = [entry[2] for entry in entries[:CONDITION_LOOKUP_CAP]]
-    summary = {"lines_total": len(entries), "due_now": len(due),
-               "beyond_cap": max(0, len(entries) - len(due)),
-               "unmapped_lines": sum(1 for _d, _l, row in entries if row.get("tier") == "unmapped"),
+    return [entry[2] for entry in entries], retired, unreadable
+
+
+def _condition_due(root, thesis_cycles=None, previous_date_end=None):
+    """``(due, summary, thesis_links, retired_now)`` — what this review publishes.
+
+    The bounded lookup request is ``live[:CONDITION_LOOKUP_CAP]``, and the
+    summary is what makes that bound honest: it states the total, the number
+    sent, and the number held back, so no reader — agent or card — can mistake
+    the list for the whole record.
+
+    A retired line leaves ``lines_total`` and is counted in ``retired_lines``
+    instead. Inside the total, the card's own arithmetic would report it as a
+    concern "coming back next review" forever, which is the opposite of true.
+
+    ``thesis_links`` and ``retired_now`` both span the full picture rather than
+    the capped slice, for the reason ``_condition_lines`` states."""
+    live, retired, unreadable = _condition_lines(root, thesis_cycles, previous_date_end)
+    due = live[:CONDITION_LOOKUP_CAP]
+    summary = {"lines_total": len(live), "due_now": len(due),
+               "beyond_cap": max(0, len(live) - len(due)),
+               "unmapped_lines": sum(1 for row in live if row.get("tier") == "unmapped"),
+               "retired_lines": len(retired),
                "unreadable_slots": unreadable["slots"],
                "unreadable_checks": unreadable["checks"]}
-    return due, summary
+    thesis_links = {row["line_id"]: row["thesis_link"] for row in live if row.get("thesis_link")}
+    retired_now = [{"cycle_id": row["cycle_id"], "ticker": row["ticker"],
+                    "criterion": row["criterion"]}
+                   for row in retired if row["announce"]]
+    return due, summary, thesis_links, retired_now
 
 
 _CHECK_ENVELOPE_KEYS = frozenset({"slot_id", "check"})
@@ -1526,7 +1657,7 @@ def _condition_basis_options(language):
                               ("revise_threshold", "revise_metric", "keep", "skip"))
 
 
-def _condition_questions(built_checks, slots, session_id, language, rejected):
+def _condition_questions(built_checks, slots, session_id, language, rejected, thesis_links=None):
     """The at-most-one crossing question and every basis question this review earns.
 
     A crossing is emitted only from a lookup that succeeded — the engine's own
@@ -1536,23 +1667,36 @@ def _condition_questions(built_checks, slots, session_id, language, rejected):
     a frozen template can only ever write one of them.
 
     `rejected` collects the crossings that lost the budget, so the plan states
-    the deferral rather than the queue quietly shrinking."""
+    the deferral rather than the queue quietly shrinking.
+
+    `thesis_links` is what ``_condition_due`` stamped for the conditions that
+    guard a still-open thesis. It does two things here: it names the thesis on
+    the question, so the adjudication never arrives detached from what it is
+    about, and it is the liveness test for a thesis-linked line — a slot whose
+    cycle is closed raises nothing even if a check for it was submitted out of
+    band, because its position is gone and the answer could not change anything
+    (#416 C2)."""
     by_id = {row["slot_id"]: row for row in slots if isinstance(row, dict) and row.get("slot_id")}
+    thesis_links = thesis_links or {}
     crossings, basis = [], []
     for check in built_checks:
         slot = by_id.get(check.get("slot_id"))
         if slot is None or check.get("lookup_status") != "ok":
             continue
         line_id = conditions.slot_line_id(slot)
+        link = thesis_links.get(line_id)
+        if slot.get("thesis_cycle_id") and not link:
+            continue
         condition_kind = slot.get("kind") or "numeric"
         evidence = _condition_evidence(check, slot)
+        ticker = (link or {}).get("ticker")
         if check.get("basis_alert"):
             note = check["basis_alert"]["note"]
             row = {"id": _condition_question_id("condition_basis", session_id, line_id),
                    "kind": "condition_basis", "required": True,
                    "question": _condition_basis_stem(slot, note, language),
                    "options": _condition_basis_options(language),
-                   "slot_id": slot["slot_id"], "line_id": line_id,
+                   "slot_id": slot["slot_id"], "line_id": line_id, "ticker": ticker,
                    "condition_kind": condition_kind, "criterion": slot.get("criterion"),
                    "evidence": evidence, "basis_note": note,
                    "_priority": 1, "_importance": 0.5, "_tie": 4}
@@ -1563,9 +1707,9 @@ def _condition_questions(built_checks, slots, session_id, language, rejected):
             continue
         row = {"id": _condition_question_id("condition_crossing", session_id, line_id),
                "kind": "condition_crossing", "required": True,
-               "question": _condition_crossing_stem(slot, check, evidence, language),
+               "question": _condition_crossing_stem(slot, check, evidence, language, ticker),
                "options": _condition_crossing_options(condition_kind, language),
-               "slot_id": slot["slot_id"], "line_id": line_id,
+               "slot_id": slot["slot_id"], "line_id": line_id, "ticker": ticker,
                "condition_kind": condition_kind, "criterion": slot.get("criterion"),
                "evidence": evidence,
                # An alerted event outranks every numeric reading: the engine can
@@ -1585,17 +1729,25 @@ def _condition_questions(built_checks, slots, session_id, language, rejected):
     return crossings[:CONDITION_CROSSING_LIMIT] + basis
 
 
-def _condition_crossing_stem(slot, check, evidence, language):
+def _condition_crossing_stem(slot, check, evidence, language, ticker=None):
     """The engine's fallback stem. Deliberately the flattest possible sentence:
     it states the criterion, what came back, and asks. The two-sided version is
     the agent's to author against `question_opportunity` — this one exists so an
-    unauthored surface is still answerable, never so it reads well."""
+    unauthored surface is still answerable, never so it reads well.
+
+    A thesis-linked condition leads with the thesis it guards (#416 C2). The
+    fallback carries it too, and not only the authored surface: a host that
+    could not bind the private surface is exactly where an adjudication would
+    otherwise arrive with no idea what it is about."""
     criterion = slot.get("criterion") or ""
-    copy = card_renderer.load_copy(language).get("condition_crossing") or {}
+    all_copy = card_renderer.load_copy(language)
+    copy = all_copy.get("condition_crossing") or {}
     key = "event" if (slot.get("kind") or "numeric") == "event" else (
         "near_line" if check.get("engine_verdict") == "near_line" else "met")
     template = copy.get(key) or "{criterion} — {evidence}"
-    return card_renderer._format_copy(template, criterion=criterion, evidence=evidence)
+    stem = card_renderer._format_copy(template, criterion=criterion, evidence=evidence)
+    guard = card_renderer.thesis_guard_sentence({"thesis_link": {"ticker": ticker}}, all_copy)
+    return f"{guard} {stem}" if (guard and stem) else stem
 
 
 def _condition_basis_stem(slot, note, language):
@@ -2483,7 +2635,13 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     # results the agent already submitted (the second `prepare` pass). Snapshot
     # reviews are excluded for the same reason they queue no questions: a
     # position snapshot carries no review history to reconcile against.
-    condition_due, condition_summary = ([], None) if route == "snapshot_review" else _condition_due(root)
+    # #416 C2: which position cycles a thesis-linked condition is still standing
+    # on, derived once here and read everywhere else from what the plan stamps
+    # (`thesis_link` on a live entry, `condition_slots_retired` on a closed one).
+    thesis_cycles = _thesis_cycle_index(positions, thesis_rows, cycle_relinks)
+    condition_due, condition_summary, thesis_links, condition_retired = (
+        ([], None, {}, []) if route == "snapshot_review"
+        else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
     condition_checks, condition_questions, condition_deferred = [], [], []
     if route != "snapshot_review" and submitted_condition_checks:
         condition_slots, prior_checks, _unreadable = _condition_store(root)
@@ -2491,7 +2649,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
             condition_slots, prior_checks, submitted_condition_checks, session_id,
             state.get("date_end"))
         condition_questions = _condition_questions(
-            condition_checks, condition_slots, session_id, language, condition_deferred)
+            condition_checks, condition_slots, session_id, language, condition_deferred,
+            thesis_links)
     question_queue, question_selection = _question_queue(
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
@@ -2526,6 +2685,12 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            # verdict, never the prose (references/condition-slots.md).
                            "condition_slots_due": condition_due,
                            "condition_slots_summary": condition_summary,
+                           # #416 C2: the thesis conditions that stopped being
+                           # checked *this* period, because their position was
+                           # fully exited. An event, so the card says it once;
+                           # empty on every later review, which is what keeps
+                           # a retirement from becoming permanent noise.
+                           "condition_slots_retired": condition_retired,
                            # The results already submitted on this pass, validated
                            # into durable rows. Present only on the second prepare;
                            # a crossing question below was posed against these.
@@ -2866,6 +3031,68 @@ def _validate_thesis_completeness(plan, answers):
                 + ", ".join(non_candidate)
             )
     return updates
+
+
+def _split_thesis_conditions(updates):
+    """``(clean_updates, [(cycle_id, exit_trigger, envelope)])`` (#416 C2).
+
+    A thesis row may carry the falsifier it just stated as a condition envelope.
+    Attaching it to the row rather than to a parallel array is #412 Ruling 1's
+    same-exchange precedent: the pairing is structural, so there is no
+    cross-reference between two lists that can drift.
+
+    It is lifted **out** of the row before the row becomes a thesis event. A
+    condition lives in ``conditions.jsonl`` with its own identity and its own
+    check history; a second copy riding along inside ``theses.jsonl`` would be a
+    mirror nobody reconciles, which is precisely what #416 ruled against."""
+    clean, attached = [], []
+    for row in updates:
+        if not isinstance(row, dict) or "condition" not in row:
+            clean.append(row)
+            continue
+        envelope = row["condition"]
+        clean.append({key: value for key, value in row.items() if key != "condition"})
+        if envelope is None:
+            continue
+        attached.append((row.get("cycle_id"), row.get("exit_trigger"), envelope))
+    return clean, attached
+
+
+def _build_thesis_condition_slots(plan, attached):
+    """Every stated falsifier this review turns into a watched condition (#416 C2).
+
+    ``thesis_cycle_id`` comes from the thesis row's own ``cycle_id`` — never
+    from the envelope, which could otherwise attach a condition to a thesis the
+    user never wrote.
+
+    The criterion must be the ``exit_trigger`` verbatim, the same refusal
+    ``_slot_commitment`` makes about ``commitment.rule``. The record stores
+    ``criterion`` and the thesis stores ``exit_trigger``; one being a tidied
+    paraphrase of the other is exactly what #396 forbids, and here it would also
+    mean the condition being watched is not the one the thesis says breaks it."""
+    if not attached:
+        return []
+    session_id = str(plan.get("session_id") or "")
+    created = (plan.get("engine_state") or {}).get("date_end")
+    rows = []
+    for index, (cycle_id, exit_trigger, envelope) in enumerate(attached):
+        if not isinstance(envelope, dict):
+            raise ReviewError(f"thesis_updates condition for {cycle_id!r} must be an object")
+        criterion = str(envelope.get("criterion") or "").strip()
+        if criterion != str(exit_trigger or "").strip():
+            raise ReviewError(
+                f"thesis_updates condition for {cycle_id!r} must carry the thesis's own "
+                "exit_trigger as its criterion, verbatim: a watched condition that paraphrases "
+                "the falsifier is watching something the user did not say")
+        try:
+            rows.append(conditions.build_slot(
+                envelope,
+                slot_id="slot-" + (session_id.split("__")[-1] or "0") + f"-t{index}",
+                created=created, session_id=session_id or None,
+                thesis_cycle_id=cycle_id))
+        except conditions.ConditionError as exc:
+            raise ReviewError(f"thesis falsifier condition rejected ({cycle_id}): {exc}") from exc
+    return rows
 
 
 def _assign_thesis_ids(plan, updates):
@@ -3290,9 +3517,46 @@ def _condition_revisions(plan, answers, revise_lines, crossed_lines, slots, sess
     return rows
 
 
+def _condition_card_context(plan, built):
+    """The live condition behind every check row the plan's capped due list does
+    not already carry (external review, round 2 BLOCK).
+
+    The card joins a check to its condition through what the engine stamped —
+    criterion, unit, kind, ``line_id``, ``thesis_link``. That stamp lived only on
+    ``condition_slots_due``, which is capped, so a check submitted for a line
+    beyond the cap — always legal, and after #416 C2 able to raise a crossing
+    question — reached no card line at all while still counting toward the
+    summary's `checked`. A crossed falsifier could be asked about and then be
+    absent from the card, which is the exact "dropped without being named"
+    defect this whole tier exists to prevent.
+
+    It re-runs the *same* derivation the plan used — ``_condition_lines`` over a
+    cycle index from ``_plan_thesis_cycles``, which assembles the same two row
+    sources the plan did, this session's relinks included. Assembling that input
+    a second way here is what round 3 caught: the derivation was single and its
+    ingredients were not, so a cycle live only via a relink read as dead and its
+    condition fell out of the join exactly as before.
+
+    The renderer still reads one engine-stamped answer and never works liveness
+    out for itself. A retired line is absent from the derivation and therefore
+    stays absent here: retired means retired, and the retirement sentence is
+    what speaks for it."""
+    root = plan.get("state_root")
+    checked = {row.get("slot_id") for row in built if isinstance(row, dict)}
+    if not checked or not root or not os.path.isdir(root):
+        return []
+    already = {entry.get("slot_id")
+               for entry in ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])}
+    live, _retired, _unreadable = _condition_lines(root, _plan_thesis_cycles(plan))
+    return [entry for entry in live
+            if entry.get("slot_id") in checked and entry.get("slot_id") not in already]
+
+
 def _build_condition_records(plan, answers, amap):
-    """``(check_rows, revision_rows)`` — everything this review learned about the
-    user's standing conditions, ready for the append-only stores.
+    """``(check_rows, revision_rows, card_context)`` — everything this review
+    learned about the user's standing conditions, ready for the append-only
+    stores, plus the join surface the card needs for the checks the plan's
+    bounded due list does not carry.
 
     Order matters and is deliberate: the answers are resolved first so a check
     row is written *complete*, then the missing due slots are synthesized so the
@@ -3300,7 +3564,7 @@ def _build_condition_records(plan, answers, amap):
     they stood when the checks were taken."""
     root = plan.get("state_root")
     if not root or not os.path.isdir(root) or plan.get("route") == "snapshot_review":
-        return [], []
+        return [], [], []
     session_id = str(plan.get("session_id") or "")
     date_end = (plan.get("engine_state") or {}).get("date_end")
     slots, checks, _unreadable = _condition_store(root)
@@ -3312,7 +3576,7 @@ def _build_condition_records(plan, answers, amap):
     due = ((plan.get("state_snapshot") or {}).get("condition_slots_due") or [])
     built += _synthesized_not_checked(slots, checks, due, built, session_id, date_end)
     revisions = _condition_revisions(plan, answers, revise_lines, crossed_lines, slots, session_id)
-    return built, revisions
+    return built, revisions, _condition_card_context(plan, built)
 
 
 def _refuse_dropped_ingested_check(plan, built):
@@ -3515,7 +3779,13 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
         presentations=question_presentations if question_surfaces is not None else None,
     )
     amap = thesis.validate_required_answers(plan, answers, allow_commitment_missing=not require_commitment)
-    agent_updates = _assign_thesis_ids(plan, _validate_thesis_completeness(plan, answers))
+    # #416 C2: the falsifier a thesis row states can arrive as a condition
+    # envelope on that same row. It is lifted out before the row becomes a
+    # thesis event and built into a slot below — one exchange, two records, no
+    # copy of the condition inside the thesis store.
+    validated_updates, thesis_conditions = _split_thesis_conditions(
+        _validate_thesis_completeness(plan, answers))
+    agent_updates = _assign_thesis_ids(plan, validated_updates)
     cycle_relinks = list(
         ((plan.get("state_snapshot") or {}).get("thesis_cycle_relinks") or [])
     )
@@ -3527,7 +3797,9 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     headline_motive_events = _build_headline_motive_events(plan, answers, amap)
     exit_consistency_events = _build_exit_consistency_events(plan, answers, amap)
     initial_thesis_events = _build_initial_thesis_events(plan, answers, amap)
-    condition_checks, condition_revisions = _build_condition_records(plan, answers, amap)
+    condition_checks, condition_revisions, condition_context = _build_condition_records(
+        plan, answers, amap)
+    thesis_condition_slots = _build_thesis_condition_slots(plan, thesis_conditions)
     card_renderer.validate_narrative(narrative)
     # #82 gate: every required honesty key must be covered by an agent-authored
     # sentence, and no sentence may claim a key the plan does not require —
@@ -3585,6 +3857,16 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
         bundle["condition_checks"] = condition_checks
     if condition_revisions:
         bundle["condition_revisions"] = condition_revisions
+    # The conditions behind checks the plan's bounded due list does not carry.
+    # Not a store — nothing here is appended anywhere; it is the card's join
+    # surface for a beyond-cap reading, stamped by the engine so the renderer
+    # never re-derives it (external review, round 2).
+    if condition_context:
+        bundle["condition_slots_context"] = condition_context
+    # #416 C2: the falsifiers stated with this review's theses, now watched
+    # conditions. Absent-when-empty for the same retry reason as the two above.
+    if thesis_condition_slots:
+        bundle["thesis_conditions"] = thesis_condition_slots
     return bundle
 
 
