@@ -104,6 +104,24 @@ def test_append_dedup_rerun_safe():
     assert len(events) == 2 and len(marks) == 1 and skipped == 0
 
 
+def test_appended_problem_rows_never_get_a_recorded_at_field():
+    """#472 review fix: append_book writes through the same shared
+    ledger.append_events writer ledger.jsonl's recorded_at rides. problems.py
+    has no concept of "when this system learned the fact" distinct from the
+    event's own week, and append_book never passes recorded_at — a default
+    inside the shared writer would silently hand every problems.jsonl row an
+    unrequested, non-deterministic date. This is the mechanical gate against
+    that shared writer growing a wall-clock default again."""
+    book, _ = _mk()
+    evs = [_ev("avgdown_breach", "2026-06-20", "PLTR")]
+    pb.append_book(book, evs, {"week": "2026-06-27", "opportunities": {}})
+    events, marks, _ = pb.load_book(book)
+    assert events and marks
+    for row in events + marks:
+        assert "recorded_at" not in row, \
+            "problems.jsonl rows must never pick up the ledger's recorded_at field"
+
+
 def test_append_rejects_rows_load_book_cannot_read_back():
     # 缺 key/week 的事件 load_book 讀不回,dedupe set 也永遠不含它——
     # 若照寫,每次 replay 都再 append 一行不可讀的重複(無上限增長)。

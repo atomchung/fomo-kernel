@@ -128,6 +128,30 @@ def test_enqueue_dedup_and_due_schedule():
     assert item["shares_before"] == 10, "減倉比例要靠 shares_before,capture 問句用"
 
 
+def test_enqueued_revisit_row_never_gets_a_recorded_at_field():
+    """#472 review fix: enqueue_from_ledger's queue rows go through the same
+    shared ledger.append_events writer that can stamp ledger.jsonl's
+    recorded_at — but revisit.jsonl already has its own field for "when we
+    started tracking this row" (enqueued_at, asserted above), with its own
+    reader (_backfilled_cp) and its own legacy-absence handling. A default
+    inside append_events would hand every revisit row a second, redundant,
+    non-deterministic date — exactly the "one concept, two names" drift #472
+    exists to prevent, just relocated to this file (it shipped once; this
+    test is the gate against it shipping again). enqueue_from_ledger never
+    passes recorded_at, so no revisit row may ever carry the key."""
+    led, q = _mk_paths()
+    lg.append_events(led, [
+        _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
+    ])
+    rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 15))
+    revisits, _, _ = rv.load_queue(q)
+    item = list(revisits.values())[0]
+    assert "recorded_at" not in item, \
+        "revisit.jsonl rows must never pick up the ledger's recorded_at field " \
+        "— enqueued_at already owns this concept here"
+
+
 def test_enqueue_from_ledger_fails_closed_on_a_corrupt_ledger_row():
     """#462: enqueue_from_ledger reads the ledger through ledger.load_ledger.
     A corrupt row must raise instead of letting detect_exits silently run
