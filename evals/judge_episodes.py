@@ -6,15 +6,21 @@
 ``unmapped`` note for every sentence that carried no number, quoted no engine
 span, and disclosed no honesty key. Those sentences are where the product's
 reasoning actually lives, and until now nothing graded them. This harness does —
-non-deterministically and for money, which is why it is opt-in and never runs in
-``tests/run_all.py`` (``docs/eval-design.md``'s evidence hierarchy keeps billable
-runs out of the default suite).
+non-deterministically, which is why it is opt-in and never runs in
+``tests/run_all.py`` (``docs/eval-design.md``'s evidence hierarchy keeps
+non-deterministic runs out of the default suite).
+
+Two backends, chosen automatically: the Antigravity CLI (``agy``, no API key,
+and a different vendor from the one that authored the answers) or the Anthropic
+SDK (portable, and shape-guaranteed by forced tool use). See ``resolve_backend``.
 
 Usage:
-  python3 evals/judge_episodes.py --plan          # what would be judged, no API calls
+  python3 evals/judge_episodes.py --plan          # what would be judged, no model calls
   python3 evals/judge_episodes.py                 # judge the whole bank
   python3 evals/judge_episodes.py EP-008          # one episode
   TR_JUDGE_RUNS=5 python3 evals/judge_episodes.py # more votes per verdict
+  TR_JUDGE_BACKEND=anthropic python3 evals/judge_episodes.py   # pin the backend
+  TR_JUDGE_MODEL=gemini-3.6-flash-high python3 evals/judge_episodes.py
 
 What it does NOT do, stated plainly because a judge whose limits are unwritten
 gets over-trusted:
@@ -47,24 +53,53 @@ the same fake green as a checker that has decayed into a no-op:
 3. **Bank coverage: every axis must be observed both passing and failing.** An
    axis only ever seen passing has never been shown to fire.
 
-Plus a non-determinism guard the mechanical half does not need: each verdict is
-a majority over ``TR_JUDGE_RUNS`` samples, and a tie is ``ambiguous`` — never
-silently resolved toward the expected answer.
+Plus two guards the mechanical half does not need. Each verdict is a majority
+over ``TR_JUDGE_RUNS`` samples, and a tie is ``ambiguous`` — never silently
+resolved toward the expected answer. And on a backend with no shape guarantee, a
+reply the harness cannot read is an unusable sample rather than a verdict: it is
+dropped, reported, and leaves its axis short of votes. Silence from the judge
+must never read as agreement with the judge.
 """
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import pathlib
+import re
+import shutil
+import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import run_episodes as R  # noqa: E402  (offline, no network; see its module docstring)
 
-MODEL = os.environ.get("TR_JUDGE_MODEL", "claude-opus-5")
 EFFORT = os.environ.get("TR_JUDGE_EFFORT", "high")
 RUNS = int(os.environ.get("TR_JUDGE_RUNS", "3"))
+
+# ── which model answers, and how it is reached ───────────────────────────────
+#
+# Two backends, because the two things they are good at do not overlap.
+#
+# `anthropic` is the portable one: any maintainer with their own key can run
+# this, including in CI, on a checkout that knows nothing about this machine.
+# It also gives the strongest possible guarantee on the response *shape* —
+# forced tool use plus `strict: true`, so a malformed verdict is impossible
+# rather than merely unlikely.
+#
+# `agy` is the independent one, and on this repository that matters more than
+# it looks. The answers under test were authored by Claude, and a Claude judge
+# shares its priors about what good reasoning is; `agy models` reaches Gemini
+# and GPT-OSS tiers, so the judge can be a different vendor from the judged.
+# It needs no API key. What it cannot offer is a shape guarantee: `agy -p`
+# returns plain text, so `_parse_verdicts` has to fail closed instead.
+#
+# Default is `auto`: whichever is actually available, agy first. A maintainer
+# who has neither is told both routes rather than one.
+BACKEND = os.environ.get("TR_JUDGE_BACKEND", "auto")
+DEFAULT_MODELS = {"anthropic": "claude-opus-5", "agy": "gemini-3.1-pro-high"}
+MODEL = os.environ.get("TR_JUDGE_MODEL")  # resolved per backend in `resolve_backend`
 
 # ── the rubric ───────────────────────────────────────────────────────────────
 #
@@ -227,6 +262,89 @@ def _prompt(episode, answer, axes):
     return "\n".join(parts)
 
 
+def resolve_backend(name=BACKEND):
+    """``(backend, model)``, or raise with both routes named. Pure — probes PATH only."""
+    available = {"agy": shutil.which("agy") is not None,
+                 "anthropic": importlib.util.find_spec("anthropic") is not None}
+    if name == "auto":
+        # agy first: it needs no key, so on a machine that has both this is the
+        # route that runs without further setup.
+        name = next((candidate for candidate in ("agy", "anthropic") if available[candidate]), None)
+        if name is None:
+            raise SystemExit(
+                "the rubric judge needs a model. Either install the Antigravity CLI "
+                "(`agy`, no API key needed) or `pip install anthropic` and set a key. "
+                "The offline suite deliberately depends on neither — run "
+                "`python3 evals/run_episodes.py` for the mechanical half.")
+    if name not in DEFAULT_MODELS:
+        raise SystemExit(f"unknown TR_JUDGE_BACKEND {name!r}; choose "
+                         f"{' or '.join(sorted(DEFAULT_MODELS))}, or leave it unset for auto")
+    if not available[name]:
+        raise SystemExit(f"TR_JUDGE_BACKEND={name} was requested but it is not installed here")
+    return name, MODEL or DEFAULT_MODELS[name]
+
+
+# The one thing a JSON-mode API gives for free and a CLI cannot: a guaranteed
+# shape. Everything below is what replaces that guarantee.
+FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.M)
+
+
+def _parse_verdicts(raw, axes):
+    """Verdicts from free text, or ``None`` when the text does not carry them.
+
+    Returns None rather than raising, and never guesses: a response this cannot
+    read is an unusable *sample*, which `grade_answer` folds into the same
+    `ambiguous` state a split vote produces — a failure. Inferring a verdict
+    from prose is how a judge harness starts agreeing with itself.
+    """
+    text = FENCE.sub("", raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    verdicts = {}
+    for axis in axes:
+        entry = parsed.get(axis)
+        if not isinstance(entry, dict) or entry.get("verdict") not in {"pass", "fail"}:
+            return None      # a partial answer is not a sample; all-or-nothing
+        verdicts[axis] = {"verdict": entry["verdict"],
+                          "reason": str(entry.get("reason", ""))}
+    return verdicts
+
+
+def _agy_prompt(episode, answer, axes):
+    shape = {axis: {"verdict": "pass|fail", "reason": "one sentence"} for axis in axes}
+    return (SYSTEM + "\n\n" + _prompt(episode, answer, axes) +
+            "\n\nReturn ONLY a JSON object — no prose, no code fence — shaped exactly:\n"
+            + json.dumps(shape, indent=2))
+
+
+def judge_once_agy(model, episode, answer, axes):
+    """One sample through the Antigravity CLI. Returns verdicts or None.
+
+    Three constraints, all load-bearing (`agy` 1.1.7): headless `agy` does not
+    read stdin at all, so the prompt travels in the argument; the call goes
+    through an argument list and never a shell, because episode prose contains
+    backticks and `$` a shell would expand into something else entirely; and a
+    timeout is mandatory, since a hung CLI would otherwise stall the run with
+    no verdict and no error.
+    """
+    try:
+        finished = subprocess.run(
+            ["agy", "--model", model, "-p", _agy_prompt(episode, answer, axes)],
+            capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return None
+    if finished.returncode != 0:
+        return None
+    return _parse_verdicts(finished.stdout, axes)
+
+
 def judge_once(client, anthropic, episode, answer, axes):
     """One sample. Returns ``{axis: {"verdict", "reason"}}``."""
     try:
@@ -293,6 +411,15 @@ def grade_answer(episode, answer, axes, samples):
     expected_fail = set(answer.get("judge_fails") or [])
     tag = f"{episode['id']}/{answer['id']}"
     runs = len(samples)
+    # A backend with no shape guarantee returns None when its reply could not be
+    # read. Those samples are dropped, never guessed at, and their absence is
+    # reported: an axis left with no verdict votes `ambiguous` below, which is a
+    # failure. Silence from the judge must not read as agreement with it.
+    unusable = sum(1 for sample in samples if sample is None)
+    samples = [sample for sample in samples if sample is not None]
+    if unusable:
+        failures.append(f"{tag}: {unusable}/{runs} sample(s) came back unreadable — "
+                        f"a reply the harness cannot parse is not a verdict")
     for axis in axes:
         verdict, count = vote(samples, axis)
         want = "fail" if axis in expected_fail else "pass"
@@ -346,7 +473,7 @@ def coverage_report(observed):
     return failures
 
 
-def plan(episodes):
+def plan(episodes, backend=None, model=None):
     """What a real run would spend, printed before anyone spends it."""
     calls, rows = 0, []
     for episode in episodes:
@@ -363,7 +490,8 @@ def plan(episodes):
             rows.append(f"JUDGE {episode['id']}/{answer['id']:<22} [{declared_by}] {verdicts}")
     for row in rows:
         print(row)
-    print(f"\n{calls} model call(s) at {RUNS} run(s) per answer, model={MODEL}, effort={EFFORT}")
+    print(f"\n{calls} model call(s) at {RUNS} run(s) per answer, "
+          f"backend={backend or 'unresolved'}, model={model or 'unresolved'}")
     return calls
 
 
@@ -386,7 +514,15 @@ def main():
         return 1
 
     if args.plan:
-        plan(episodes)
+        # Resolve if we can, but never fail a dry run on a missing backend: the
+        # point of --plan is to see the shape and the cost before installing
+        # anything.
+        try:
+            backend, model = resolve_backend()
+        except SystemExit as reason:
+            backend, model = None, None
+            print(f"NOTE  no backend resolved yet — {reason}")
+        plan(episodes, backend, model)
         return 0
 
     # Before anything is spent: a run that would grade nothing is not a passing
@@ -397,13 +533,15 @@ def main():
         print(f"FAIL  {empty}")
         return 1
 
-    try:
+    backend, model = resolve_backend()
+    anthropic = client = None
+    if backend == "anthropic":
         import anthropic
-    except ImportError:
-        sys.exit("the rubric judge needs the `anthropic` package (pip install anthropic). "
-                 "The offline suite deliberately does not depend on it — run "
-                 "`python3 evals/run_episodes.py` for the mechanical half.")
-    client = anthropic.Anthropic()
+        client = anthropic.Anthropic()
+    sample_one = (
+        (lambda episode, answer, axes: judge_once_agy(model, episode, answer, axes))
+        if backend == "agy" else
+        (lambda episode, answer, axes: judge_once(client, anthropic, episode, answer, axes)))
 
     failures, notes = [], []
     observed = {}            # axis -> {"pass", "fail"} seen across the bank
@@ -419,8 +557,7 @@ def main():
         if declared_by != "owner":
             unratified.update(axes)
         for answer in episode["answers"]:
-            samples = [judge_once(client, anthropic, episode, answer, axes)
-                       for _ in range(RUNS)]
+            samples = [sample_one(episode, answer, axes) for _ in range(RUNS)]
             found, observed_here = grade_answer(episode, answer, axes, samples)
             failures.extend(found)
             for axis, outcomes in observed_here.items():
@@ -451,7 +588,7 @@ def main():
     for line in failures:
         print(f"FAIL  {line}")
     verdict = f"FAIL: {len(failures)} failure(s)" if failures else "PASS: judge reproduced every declared verdict"
-    print(f"\nrubric judge: {judged_episodes} judged episode(s) — {verdict}")
+    print(f"\nrubric judge ({backend}, {model}): {judged_episodes} judged episode(s) — {verdict}")
     return 1 if failures else 0
 
 

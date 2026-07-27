@@ -796,6 +796,63 @@ def test_a_run_that_would_judge_nothing_is_not_a_pass():
     assert J.nothing_to_judge(bank, set()) is None
 
 
+# The backend seam. `agy` needs no key and is a different vendor from the one
+# that authored the answers, which is the point; what it cannot give is the
+# shape guarantee forced tool use provides, so everything below is what replaces
+# that guarantee. None of it calls a model.
+
+def test_a_reply_the_harness_cannot_read_is_not_a_verdict():
+    axes = ["two_sided"]
+    good = '{"two_sided": {"verdict": "fail", "reason": "one direction only"}}'
+    assert J._parse_verdicts(good, axes)["two_sided"]["verdict"] == "fail"
+    # Real shapes a CLI returns: fenced, and wrapped in prose.
+    assert J._parse_verdicts("```json\n" + good + "\n```", axes) is not None
+    assert J._parse_verdicts("Sure! Here is my assessment:\n" + good, axes) is not None
+    for unreadable in ("", "no json here at all", "{not json}", '{"two_sided": "fail"}',
+                       '{"two_sided": {"verdict": "maybe", "reason": "x"}}',
+                       '["two_sided"]', '{"overrulable": {"verdict": "fail", "reason": "x"}}'):
+        assert J._parse_verdicts(unreadable, axes) is None, unreadable
+
+
+def test_a_partial_reply_is_discarded_whole():
+    """All-or-nothing: keeping the axes a reply did answer, while silently
+    dropping the one it skipped, is how a judge starts grading less than it
+    claims to."""
+    both = ["two_sided", "overrulable"]
+    partial = '{"two_sided": {"verdict": "fail", "reason": "x"}}'
+    assert J._parse_verdicts(partial, both) is None
+    assert J._parse_verdicts(partial, ["two_sided"]) is not None
+
+
+def test_unusable_samples_are_reported_and_never_counted_as_agreement():
+    episode = _judged(axes=["two_sided"], fails=["two_sided"])
+    miss = episode["answers"][0]
+    # Every sample unreadable: the axis gets no votes, so it votes ambiguous —
+    # a failure — and the unusable count is stated rather than swallowed.
+    failures, observed = J.grade_answer(episode, miss, ["two_sided"], [None, None, None])
+    assert any("unreadable" in message for message in failures), failures
+    assert any("split" in message for message in failures), failures
+    assert observed == {}, "an unreadable sample must not count toward coverage"
+    # One unusable among three still reports it, and the survivors still decide.
+    failures, observed = J.grade_answer(
+        episode, miss, ["two_sided"],
+        [None] + _samples({"two_sided": "fail"}, runs=2))
+    assert any("1/3 sample(s) came back unreadable" in m for m in failures), failures
+    assert observed == {"two_sided": {"fail"}}
+
+
+def test_backend_resolution_names_both_routes_and_refuses_an_unknown_one():
+    try:
+        J.resolve_backend("hunyuan")
+    except SystemExit as reason:
+        assert "unknown TR_JUDGE_BACKEND" in str(reason), reason
+    else:
+        raise AssertionError("an unknown backend was accepted")
+    backend, model = J.resolve_backend()
+    assert backend in J.DEFAULT_MODELS, backend
+    assert model, "a resolved backend must name the model it will use"
+
+
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():
     """Interlock 3: an axis only ever observed passing has never been seen fire."""
     everything = {axis: {"pass", "fail"} for axis in R.JUDGE_AXES}
