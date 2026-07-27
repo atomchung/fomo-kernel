@@ -388,6 +388,16 @@ def _all_clear_slots(count):
                  criterion=f"sell if metric {i} drops under 30%") for i in range(count)]
 
 
+def _dual_open_cap_check(index):
+    """One of several crossed conditions sharing one per-kind cap. Only the
+    last also carries an open basis concern, making it the one dual-open row
+    — the row an unconditional `CONDITION_CARD_LINES` cap would have cut."""
+    over = {"check_id": f"c{index}", "slot_id": f"corpus-slot-{index}"}
+    if index == 3:
+        over["basis_alert"] = {"note": "the segment was restated"}
+    return _crossed(**over)
+
+
 def _condition_then_now(kind="numeric", **check_over):
     prior = {"rule": _CHECK_CRITERION, "condition": dict(_CHECK_SLOT, kind=kind)}
     if kind == "event":
@@ -570,6 +580,20 @@ SCENES = (
                       checks=[_check_row(check_id=f"c{i}", slot_id=f"corpus-slot-{i}")
                               for i in range(5)],
                       summary={"lines_total": 5, "due_now": 5, "beyond_cap": 0,
+                               "unmapped_lines": 0, "unreadable_slots": 0,
+                               "unreadable_checks": 0})),
+    # #412 recorded followup (recorded in #438, closed here): a row open on
+    # both axes must never be trimmed off the card, even past
+    # CONDITION_CARD_LINES. Four crossed conditions share one per-kind cap of
+    # two; the last is also basis-doubted and sits past the cap boundary —
+    # the position an unconditional cap would have cut it from. It must
+    # render with both its notes, and the trim sentence must count only the
+    # plain row actually dropped (owner ruling, 2026-07-27: information
+    # completeness wins).
+    ("condition_check/dual_open_row_beyond_the_cap_is_never_trimmed", (),
+     _condition_check(slots=_all_clear_slots(4),
+                      checks=[_dual_open_cap_check(i) for i in range(4)],
+                      summary={"lines_total": 4, "due_now": 4, "beyond_cap": 0,
                                "unmapped_lines": 0, "unreadable_slots": 0,
                                "unreadable_checks": 0})),
     # Silence is a branch too: a review that checked everything says nothing,

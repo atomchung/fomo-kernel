@@ -4813,6 +4813,156 @@ language: en
 This review did not rank a leading behavior pattern from the available history.
 
 ==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+sell if metric 0 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。
+sell if metric 1 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。
+sell if metric 3 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。 它在量的東西可能變了（the segment was restated），這件事還沒處理；下次復盤會來問你。
+這期 4 條裡查了 4 條。 還沒結案、下次會再處理的事項：5 項。 這張卡列出 4 筆讀數裡的 3 筆，其餘都在你的紀錄裡。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+sell if metric 0 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。
+sell if metric 1 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。
+sell if metric 3 drops under 30%——21%（10-Q，資料日 2026-08-20）。 這個已經過線了，下次復盤會來問你。 它在量的東西可能變了（the segment was restated），這件事還沒處理；下次復盤會來問你。
+這期 4 條裡查了 4 條。 還沒結案、下次會再處理的事項：5 項。 這張卡列出 4 筆讀數裡的 3 筆，其餘都在你的紀錄裡。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+sell if metric 0 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review.
+sell if metric 1 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review.
+sell if metric 3 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review. What this measures may have changed (the segment was restated), and that is still unsettled; I will ask about it next review.
+Checked 4 of 4 conditions this period. Open concerns coming back next review: 5. This card shows 3 of 4 readings; the rest are in your record.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+sell if metric 0 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review.
+sell if metric 1 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review.
+sell if metric 3 drops under 30% — 21% (10-Q, as of 2026-08-20). That is past your line; I will ask you about it next review. What this measures may have changed (the segment was restated), and that is still unsettled; I will ask about it next review.
+Checked 4 of 4 conditions this period. Open concerns coming back next review: 5. This card shows 3 of 4 readings; the rest are in your record.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+condition_check/dual_open_row_beyond_the_cap_is_never_trimmed [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
 condition_check/silent_when_everything_was_checked [zh-TW] private.md
 ==========================================================================
 # Headline.
