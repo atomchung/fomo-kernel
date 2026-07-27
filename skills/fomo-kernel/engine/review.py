@@ -100,6 +100,14 @@ CONSIDER_DECISIONS = ("acted", "declined", "modified")
 # name that reads correctly next to consequence.py's own output; public_fact
 # and agent_judgment are the doc's own words.
 AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
+# #429's rule one layer up: a consultation nobody reconciles is the same dead-
+# store shape that issue names for a question nobody reads. The bound is the
+# same discipline CONDITION_LOOKUP_CAP states just above -- the Review Plan is
+# re-sent as agent context on every later turn, so a user who never resolves
+# old consultations must not grow it without limit. Oldest `created` first;
+# _consultation_reconciliation's summary discloses whatever the cap holds
+# back, the same "a bounded surface must say what it dropped" rule.
+CONSULTATION_RECONCILE_CAP = 8
 
 
 class ReviewError(ValueError):
@@ -2656,6 +2664,19 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     condition_due, condition_summary, thesis_links, condition_retired = (
         ([], None, {}, []) if route == "snapshot_review"
         else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
+    # #317/#429: reconcile any `consider` consultation still open against what
+    # the local ledger actually shows happened. `_ledger_trade_events` reads
+    # only real, dated trade events — never `_rows_from_ledger`'s synthesized
+    # anchor rows, which exist for FIFO/cost-basis pricing `consider` needs
+    # and fail closed on a position with no cost basis. A snapshot anchor
+    # legitimately carries no cost basis at all, and `prepare` must never fail
+    # over an unrelated position's pricing gap. Every route computes this —
+    # unlike the condition-slot lookup queue, it needs no review history or
+    # thesis cycle, only the ledger and date_end, both of which every route
+    # already has.
+    ledger_events, _skipped_ledger_lines = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    consultation_reconciliation = _consultation_reconciliation(
+        root, _ledger_trade_events(ledger_events), state.get("date_end"))
     condition_checks, condition_questions, condition_deferred = [], [], []
     if route != "snapshot_review" and submitted_condition_checks:
         condition_slots, prior_checks, _unreadable = _condition_store(root)
@@ -2746,6 +2767,11 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                       "question_selection": question_selection,
                       "horizon_ids": ["weeks", "quarters", "years"],
                       "required_honesty_keys": required_honesty_keys},
+        # #317/#429: a supply-side fact surface, not a card section or a
+        # question (issue #440 parks card layout; issue #453 puts the
+        # judgment of whether this earns a turn on the agent, not the
+        # engine). See schemas/review-plan.schema.json for the declared shape.
+        "consultation_reconciliation": consultation_reconciliation,
         "engine_card": card,
         "engine_state": state,
     }
@@ -4371,6 +4397,30 @@ def _ledger_trade_row(event):
             "currency": (event.get("currency") or "USD").upper()}
 
 
+def _ledger_trade_events(events):
+    """Only real, dated trade events from the ledger — deliberately *not*
+    ``_rows_from_ledger``'s reconstruction. That function also synthesizes one
+    priced "buy" row per position from the latest snapshot anchor for the
+    FIFO/cost-basis math ``consider`` needs, and fails closed when a position
+    carries no cost basis at all. A snapshot anchor legitimately declares
+    shares with no cost basis — a user re-syncing positions may not know it —
+    and a synthesized anchor row has no genuine execution date to begin with:
+    reading one as a matched trade would misrepresent a declared holding as
+    something the user did on a specific day. A caller that only needs to
+    know whether a real trade happened, never what the book would be worth,
+    uses this instead — it never raises, matching ``_ledger_trade_row``'s own
+    tolerance for a malformed event."""
+    rows = []
+    for event in events:
+        if event.get("type") != "trade":
+            continue
+        row = _ledger_trade_row(event)
+        if row is not None:
+            rows.append(row)
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
 def _rows_from_ledger(events):
     """trade_recap.load()'s row shape, reconstructed from ledger events the
     way ``ledger.derive_holdings`` trusts them: the latest complete snapshot
@@ -4534,6 +4584,86 @@ def _fold_consultations(rows):
         if isinstance(row, dict) and row.get("consultation_id"):
             latest[row["consultation_id"]] = row
     return latest
+
+
+def _consultation_reconciliation(root, rows, date_end):
+    """Reconcile every unsettled ``consider`` consultation against the
+    transaction record, for ``_build_plan`` (#317; #429's rule one layer up —
+    a stored answer nothing reads is a defect, and until this, nothing
+    outside ``consider`` itself ever read ``pre_trade_consultations.jsonl``).
+
+    For each folded consultation still at ``decision: "open"`` (a resolved
+    one never reaches here — ``_fold_consultations`` already picked the
+    latest row per id), search ``rows`` — trade_recap-shaped dicts carrying
+    ``ticker``/``side``/``qty``/``price``/``date`` as a real ``datetime.date``,
+    the same shape ``_ledger_trade_events``, ``_rows_from_ledger``, and
+    ``trade_recap.load`` all produce — for a trade of the identical ticker and
+    side, dated on or after the consultation's own ``created`` day and on or
+    before ``date_end``. The earliest such trade, when more than one
+    qualifies, is what gets reported. The caller decides which loader feeds
+    ``rows``; this function only ever searches what it is given, and a
+    synthesized position row has no business here — see
+    ``_ledger_trade_events`` for why ``_build_plan`` uses that one.
+
+    This states a fact, never a cause. A ``matched`` result means a
+    qualifying trade exists in the record inside that window — it is not,
+    and must never be read as, evidence the user traded *because of* this
+    consultation. The same boundary schemas/condition-check.schema.json draws
+    around ``user_response`` (an engine-computed verdict is never substituted
+    for the user's own word) applies here: this function only ever reads
+    ``decision``, never writes it — that field moves through
+    ``consider --resolve`` alone.
+
+    Returns ``{"items": [...], "summary": {...}}``. ``items`` is capped at
+    ``CONSULTATION_RECONCILE_CAP``, oldest ``created`` first — the bounded-
+    plan-surface shape ``_condition_due`` uses, and for the same reason
+    (the comment on ``CONDITION_LOOKUP_CAP``): the plan is re-sent as agent
+    context on every later turn, so a user who never resolves old
+    consultations must not grow it without limit. ``summary`` states the
+    total still open, how many are shown, and how many were held back, so a
+    capped list can never be mistaken for the complete record.
+    """
+    consultations = _fold_consultations(thesis.read_jsonl(_consultation_path(root)))
+    open_rows = [row for row in consultations.values() if row.get("decision") == "open"]
+    open_rows.sort(key=lambda row: (str(row.get("created") or ""), str(row.get("consultation_id") or "")))
+
+    try:
+        end = dt.date.fromisoformat(str(date_end)) if date_end else None
+    except ValueError:
+        end = None
+
+    items = []
+    for row in open_rows:
+        premise = row.get("premise") or {}
+        ticker = premise.get("ticker")
+        side = premise.get("side")
+        created = row.get("created")
+        try:
+            created_date = dt.date.fromisoformat(str(created))
+        except ValueError:
+            created_date = None
+        match = None
+        if created_date is not None and end is not None and ticker and side:
+            candidates = sorted(
+                (r for r in rows if r.get("ticker") == ticker and r.get("side") == side
+                 and isinstance(r.get("date"), dt.date) and created_date <= r["date"] <= end),
+                key=lambda r: r["date"])
+            if candidates:
+                nearest = candidates[0]
+                match = {"date": nearest["date"].isoformat(), "qty": nearest["qty"]}
+        items.append({
+            "consultation_id": row.get("consultation_id"),
+            "created": created,
+            "premise": premise,
+            "status": "matched" if match else "unmatched",
+            "matched_trade": match,
+        })
+
+    total = len(items)
+    shown = items[:CONSULTATION_RECONCILE_CAP]
+    return {"items": shown,
+            "summary": {"open_total": total, "shown": len(shown),
+                        "beyond_cap": max(0, total - len(shown))}}
 
 
 def _append_consultation_row(root, row):
