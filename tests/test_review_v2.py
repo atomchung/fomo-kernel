@@ -8560,6 +8560,58 @@ def test_set_cap_persists_override_and_engine_plumbing_reads_it():
         assert review_engine._position_cap_override(root) is None, "clear falls back to the universal default"
 
 
+def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
+    """#477: dim_size and ticker_diagnosis's too_heavy tag must judge the same
+    position against the same trigger. Before this fix, ticker_diagnosis
+    stayed hardcoded at the 25% universal default even after `set-cap` raised
+    the user's own ceiling, so a 27%-weighted position was a hole in
+    dim_size's verdict and in the too_heavy tag under the default -- but only
+    stopped being a hole in dim_size once the cap was raised; the instrument
+    tag never moved (#324's unification missed this fourth reader).
+
+    Drives the real `set-cap` CLI and the real `_position_cap_override`
+    reader (the exact #324 chain: profile.json -> review._position_cap_override
+    -> trade_recap.effective_oversize_trigger), not a hand-built override, so
+    this proves the user-visible contract rather than just the constant."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "root")
+        # AAA is 27% of the book and the single largest risk position. SPY is
+        # a broad-market ETF (allocation-exempt, #172/#334) so its value
+        # counts toward the portfolio total but never toward risk_weights or
+        # the too_heavy check -- AAA alone drives both readers' verdict.
+        held = {"AAA": (10.0, 2500.0), "SPY": (10.0, 7300.0)}
+        last_px = {"AAA": 270.0, "SPY": 730.0}
+
+        # Baseline: no override on disk yet -- universal 25% default applies,
+        # and 27% > 25% must trip both readers.
+        assert review_engine._position_cap_override(root) is None
+        base_size = tr.dim_size([], held, last_px, None)
+        assert abs(base_size["max_pct"] - 0.27) < 1e-9 and base_size["max_ticker"] == "AAA"
+        assert base_size["triggered"] is True, "27% must trip the 25% universal default"
+        base_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=None)
+        base_aaa = next(d for d in base_tdiag if d["ticker"] == "AAA")
+        assert any(t["code"] == "too_heavy" for t in base_aaa["tags"]), \
+            "27% position must carry too_heavy under the 25% universal default"
+
+        # Raise the cap to 30% through the real CLI.
+        run = _run("set-cap", "--root", root, "--pct", "0.30")
+        assert run.returncode == 0, run.stdout + run.stderr
+        override = review_engine._position_cap_override(root)
+        assert override == 0.30
+
+        # Both readers, fed the same override, must agree the 27% position is
+        # no longer a hole -- the user-visible contract, not just the
+        # constant they both used to read.
+        raised_size = tr.dim_size([], held, last_px, override)
+        assert raised_size["triggered"] is False, \
+            "sizing dimension must respect the raised 30% cap"
+        raised_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=override)
+        raised_aaa = next(d for d in raised_tdiag if d["ticker"] == "AAA")
+        assert not any(t["code"] == "too_heavy" for t in raised_aaa["tags"]), \
+            "instrument tag must also respect the raised 30% cap (#477) -- " \
+            "before this fix it stayed too_heavy at any cap"
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0
