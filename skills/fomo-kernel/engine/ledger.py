@@ -130,28 +130,37 @@ def load_ledger(path, *, strict=True):
 
 
 def append_events(path, events, *, recorded_at=None):
-    """append-only 寫入;每 event 補 schema version 與 recorded_at(#472)。回傳寫入筆數。
+    """append-only 寫入;每 event 補 schema version。回傳寫入筆數。
 
-    recorded_at:此系統得知這筆事實的日期(ISO 字串)——與 event 自帶的 date/as_of
-    (事情何時發生)是刻意分開的兩個日期,同 thesis.py/review.py `_build_exit_narratives`
-    既有的 recorded_at 語意(那裡從 review period 的 date_end 取值)。呼叫端已知 review
-    period 時應傳入該期的 date_end(如 review.py `_ingest_trades`);未提供時退回
-    dt.date.today(),同 trades_from_csv 的 `today or dt.date.today()` 慣例——只有真正
-    沒有 review context 的路徑(獨立 CLI `ledger.py append-trades`/`append-snapshot`)
-    才會落到這個預設值。setdefault 而非覆寫,同 v 戳記的既有寫法,呼叫端仍可自行指定。
+    recorded_at(#472,opt-in,無隱性退回值):此系統得知這筆事實的日期(ISO 字串)
+    ——與 event 自帶的 date/as_of(事情何時發生)是刻意分開的兩個日期,同
+    thesis.py/review.py `_build_exit_narratives` 既有的 recorded_at 語意(那裡從
+    review period 的 date_end 取值)。呼叫端已知這個日期時才傳入(如 review.py
+    `_ingest_trades` 傳 review period 的 date_end;ledger.py 自己的 CLI 在呼叫處
+    自行組 `dt.date.today().isoformat()` 傳入,因為那是唯一真正沒有 review
+    context、wall-clock 才是誠實答案的路徑)。
 
-    舊資料(#472 之前寫入)沒有這個欄位——讀回時 recorded_at 缺席必須代表「未知」,
-    絕不能是猜出來或回填的值(見 load_ledger/_scan_ledger:未知/缺席欄位本來就容忍,
-    只有壞行才拒收)。"""
+    這個函式是 problems.py/revisit.py 共用的寫入路徑,不是 ledger.jsonl 專屬——
+    這兩個 store 各自可能已有自己的「何時記錄」欄位(revisit.py 的
+    enqueued_at,有自己的讀者與 legacy 缺席語意)。這裡若對「沒傳 recorded_at」
+    退回 dt.date.today(),等於在它們身上蓋一個同義、卻是猜出來的第二個日期
+    欄位——同一個概念兩個名字,正是 #472 本文警告的漂移,只是搬到了另一個檔案
+    (曾經發生過一次,已改回 opt-in)。所以:不傳就不蓋欄位,setdefault 只在
+    recorded_at 非 None 時才呼叫;沒有 review context 的呼叫端讓事件維持缺席
+    =未知,好過蓋一個猜出來的日期。
+
+    舊資料(#472 之前寫入)也沒有這個欄位——讀回時 recorded_at 缺席必須代表
+    「未知」,絕不能是猜出來或回填的值(見 load_ledger/_scan_ledger:未知/缺席
+    欄位本來就容忍,只有壞行才拒收)。"""
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    recorded_at = recorded_at or dt.date.today().isoformat()
     with open(path, "a", encoding="utf-8") as f:
         for ev in events:
             ev = dict(ev)
             ev.setdefault("v", SCHEMA_V)
-            ev.setdefault("recorded_at", recorded_at)
+            if recorded_at is not None:
+                ev.setdefault("recorded_at", recorded_at)
             f.write(json.dumps(ev, ensure_ascii=False, sort_keys=True) + "\n")
     return len(events)
 
@@ -693,7 +702,11 @@ def main(argv=None):
         cash = a.cash or data.get("cash")
         if cash:
             ev["cash"] = json.loads(cash) if isinstance(cash, str) else cash
-        append_events(a.ledger, [ev])
+        # #472: the standalone CLI has no review period to borrow a date from,
+        # so wall-clock is the honest recorded_at here — pass it explicitly
+        # rather than lean on a default inside append_events (problems.py and
+        # revisit.py share that writer and must not inherit a wall-clock stamp).
+        append_events(a.ledger, [ev], recorded_at=dt.date.today().isoformat())
         out = derive_holdings(events + [ev])
         print(f"appended snapshot as_of={as_of} source={a.source} "
               f"positions={len(data['positions'])}", file=sys.stderr)
@@ -703,7 +716,9 @@ def main(argv=None):
     if a.cmd == "append-trades":
         new_trades, bad, future_dated = trades_from_csv(a.std_csv)
         fresh, dup = dedupe_against(events, new_trades)
-        append_events(a.ledger, fresh)
+        # #472: same rationale as append-snapshot above — this standalone CLI
+        # path has no review period, so wall-clock is passed explicitly.
+        append_events(a.ledger, fresh, recorded_at=dt.date.today().isoformat())
         if future_dated:                                  # #169:獨立示警,別跟 bad rows 混在一起
             print(f"⚠️  {future_dated} 筆交易的 TradeDate 晚於今天,疑似 Step 0 日期轉換錯誤"
                  f"(如 MM/DD 誤判成 DD/MM),已拒收不寫進帳——回頭核對原始對帳單的這幾筆日期",
