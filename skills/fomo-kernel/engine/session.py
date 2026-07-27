@@ -886,7 +886,11 @@ def _project_snapshot_anchor(root, bundle):
         event = dict(identity)
         event["reconciliation_id"] = reconciliation_id
         event["session_id"] = bundle["session_id"]
-        ledger.append_events(ledger_path, [event])
+        # #472 follow-up: stamp the review period's own date_end, the same
+        # proxy _ingest_trades and _build_exit_narratives already use. Safe
+        # for content-addressing -- reconciliation_id above is hashed from
+        # `identity`, computed before recorded_at ever touches `event`.
+        ledger.append_events(ledger_path, [event], recorded_at=state.get("date_end"))
         return dict(report, appended=1, status="projected")
 
     to_append = []
@@ -924,7 +928,11 @@ def _project_snapshot_anchor(root, bundle):
         report["projection_sequence"] = sequence
     if not to_append:
         return dict(report, appended=0, status="no-op")
-    ledger.append_events(ledger_path, to_append)
+    # Same stamp, same safety argument: snapshot_id/adjustment_id above are
+    # hashed from `payload`/`identity`, both built before recorded_at is ever
+    # added, and _snapshot_payload's field whitelist excludes it too, so the
+    # anchor_exists re-derivation above stays blind to it on every replay.
+    ledger.append_events(ledger_path, to_append, recorded_at=state.get("date_end"))
     return dict(report, appended=len(to_append), status="projected")
 
 
