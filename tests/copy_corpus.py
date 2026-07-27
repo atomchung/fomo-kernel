@@ -332,7 +332,7 @@ def _check_row(**over):
     return row
 
 
-def _condition_check(prior=None, checks=(), summary=None, slots=None, queue=()):
+def _condition_check(prior=None, checks=(), summary=None, slots=None, queue=(), retired=None):
     """One reconciliation-opener scene: the then/now pair, the per-condition
     readings, and the "what did this review not get to" sentence.
 
@@ -341,13 +341,17 @@ def _condition_check(prior=None, checks=(), summary=None, slots=None, queue=()):
     that omits it renders nothing, which is the visible-diff staleness contract
     this corpus relies on. `queue` carries the crossing questions this review
     actually posed: a crossing that was asked about is told by the exchange, and
-    one that was not has to say so itself."""
+    one that was not has to say so itself. `retired` is the thesis conditions
+    that stopped being checked *this* period — the engine decides which period
+    that is, so a scene either has the list or it does not."""
     def build(language):
         snapshot = {"condition_slots_due": list(slots if slots is not None else [_CHECK_SLOT])}
         if prior is not None:
             snapshot["prior_commitment"] = prior
         if summary is not None:
             snapshot["condition_slots_summary"] = summary
+        if retired is not None:
+            snapshot["condition_slots_retired"] = list(retired)
         return _bundle(language,
                        plan={"state_snapshot": snapshot, "question_queue": list(queue)},
                        condition_checks=[dict(row) for row in checks])
@@ -635,6 +639,22 @@ SCENES = (
      _condition_check(slots=[_THESIS_SLOT], checks=[_crossed()],
                       queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
                       summary=_ONE_LINE)),
+    # External review, round 2 MARK. Retirement said once, in the period it
+    # happens — and the counterweight immediately after it, which is the whole
+    # point of making it an event rather than a state: the line is gone from the
+    # due list in both scenes, and only the transition period speaks.
+    ("condition_check/thesis_retired_this_period", (),
+     _condition_check(slots=[], checks=[],
+                      retired=[{"cycle_id": "NVDA#2026-01-05#1", "ticker": "NVDA",
+                                "criterion": "sell if the CEO leaves"}],
+                      summary={"lines_total": 0, "due_now": 0, "beyond_cap": 0,
+                               "unmapped_lines": 0, "retired_lines": 1,
+                               "unreadable_slots": 0, "unreadable_checks": 0})),
+    ("condition_check/thesis_retired_stays_quiet_afterwards", (),
+     _condition_check(slots=[], checks=[], retired=[],
+                      summary={"lines_total": 0, "due_now": 0, "beyond_cap": 0,
+                               "unmapped_lines": 0, "retired_lines": 1,
+                               "unreadable_slots": 0, "unreadable_checks": 0})),
     *[(f"account_gate/{status}", ("account_gate",), _account_gate(status))
       for status in GATE_STATUSES + ("default",)],
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))

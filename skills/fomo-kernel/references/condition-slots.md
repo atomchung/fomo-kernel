@@ -94,6 +94,8 @@ Two things it never becomes. It is never a `rules.jsonl` row, so it never enters
 
 **When the position is fully exited, the condition stops being checked.** There is nothing left to sell if it triggers, so it leaves the rotation rather than occupying a lookup slot and asking about a position the user no longer holds. The row itself is never deleted, and `condition_slots_summary.retired_lines` counts what left.
 
+The card says so **once**, in the review where it happens: `condition_slots_retired` carries the conditions that stopped being checked this period, and it is empty on every later review. That is deliberate — a retirement is an event, and a sentence that repeated it forever would be noise, while saying nothing at all would read as the product having quietly stopped rather than deliberately closed. You do not write that sentence either.
+
 ## Every review after: check what is due
 
 `review_plan.state_snapshot.condition_slots_due` is this review's lookup request — the live row of each standing condition, plus what its last check found. It is **bounded at eight** and ordered oldest-last-checked first, so the list rotates instead of growing without limit; `condition_slots_summary` states the total, how many were sent, how many were held back, and how many retired with an exited position. Never present the due list as the user's whole record.
@@ -152,4 +154,4 @@ A skip records nothing, and the reading is still stored with the engine's own ve
 
 ### On the card
 
-One engine-authored line reconciles the prior commitment's condition then-and-now, plus any crossing still unanswered, any basis concern still open, this period's readings for conditions clear of their line, any lookup that failed, and — whenever anything is unsettled **or** the card is showing fewer readings than it took — one sentence saying so. A crossing and a basis concern are tracked separately, so one reading can report both and the closing count is of open **concerns**, not of conditions. A condition goes quiet only when it is genuinely settled on every axis. You do not write those lines; do not add your own.
+One engine-authored line reconciles the prior commitment's condition then-and-now, plus any crossing still unanswered, any basis concern still open, this period's readings for conditions clear of their line, any lookup that failed, any thesis condition that retired this period, and — whenever anything is unsettled **or** the card is showing fewer readings than it took — one sentence saying so. A crossing and a basis concern are tracked separately, so one reading can report both and the closing count is of open **concerns**, not of conditions. A condition goes quiet only when it is genuinely settled on every axis. You do not write those lines; do not add your own.

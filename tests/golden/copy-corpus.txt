@@ -5663,6 +5663,276 @@ language: en
 This review did not rank a leading behavior pattern from the available history.
 
 ==========================================================================
+condition_check/thesis_retired_this_period [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+sell if the CEO leaves——之後不再追蹤了：NVDA 已經全數出清，這條要守的論點也結束了。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+condition_check/thesis_retired_this_period [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+sell if the CEO leaves——之後不再追蹤了：NVDA 已經全數出清，這條要守的論點也結束了。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_check/thesis_retired_this_period [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+condition_check/thesis_retired_this_period [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+sell if the CEO leaves — no longer checked from here on: you are fully out of NVDA, so the thesis it was guarding is closed.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+condition_check/thesis_retired_this_period [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+sell if the CEO leaves — no longer checked from here on: you are fully out of NVDA, so the thesis it was guarding is closed.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+condition_check/thesis_retired_this_period [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+condition_check/thesis_retired_stays_quiet_afterwards [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
 account_gate/no_cash_anchor [zh-TW] private.md
 ==========================================================================
 # Headline.
@@ -9755,8 +10025,8 @@ This review did not rank a leading behavior pattern from the available history.
 ==========================================================================
 copy-key coverage
 ==========================================================================
-[zh-TW] reached 57 · unreached 0 · trivial 25
-[en] reached 78 · unreached 0 · trivial 4
+[zh-TW] reached 58 · unreached 0 · trivial 25
+[en] reached 79 · unreached 0 · trivial 4
 
 registers not claimed by any scene in this corpus (74):
   account_perf

@@ -4044,19 +4044,28 @@ def _seed_thesis_condition(tmp, root, condition=_FALSIFIER):
     return rows[0]
 
 
-def _state_without_pltr(tmp):
+def _state_without_pltr(tmp, date_end=None):
     """The same review inputs with the PLTR position fully exited.
 
     Liveness is "this cycle is still held", so this is what a closed thesis
-    cycle looks like from the engine's own state."""
+    cycle looks like from the engine's own state. The card's `thesis_questions`
+    go with it: they name a holding that no longer exists, and the shared
+    `_artifacts` fixture would otherwise keep asking about it."""
     card, state = _artifacts(tmp)
     payload = json.loads(state.read_text(encoding="utf-8"))
     payload["holdings"]["positions"] = {}
     payload["n_held"] = 0
     payload["metrics"]["n_holdings"] = 0
-    path = pathlib.Path(tmp) / "state-exited.json"
+    if date_end:
+        payload["date_end"] = date_end
+    suffix = date_end or "same"
+    path = pathlib.Path(tmp) / f"state-exited-{suffix}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return card, path
+    card_payload = json.loads(card.read_text(encoding="utf-8"))
+    card_payload["thesis_questions"] = []
+    card_path = pathlib.Path(tmp) / "card-exited.json"
+    card_path.write_text(json.dumps(card_payload, ensure_ascii=False), encoding="utf-8")
+    return card_path, path
 
 
 def test_a_stated_falsifier_becomes_a_watched_condition_attached_to_its_thesis():
@@ -4136,6 +4145,52 @@ def test_a_falsifier_whose_position_is_gone_stops_being_checked_and_says_so():
         # The row itself is untouched: the store is append-only and it is a fact
         # about what the user meant when they wrote it.
         assert len((root / "conditions.jsonl").read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_retirement_is_said_once_in_the_review_where_it_happens():
+    """External review, round 2 MARK. Retiring a condition silently reads as the
+    system having quietly stopped watching, not as a deliberate close — the user
+    saw this line last week and it simply vanishes.
+
+    So it is announced, and it is announced **once**: the engine says "retired
+    this period" only while the line's last check belongs to the immediately
+    preceding review, which is exactly the period it was still being looked at.
+    A state sentence would print for the rest of the user's history; an event
+    sentence is said and done."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        # Review 2: still held, so the line is due and gets its per-period row.
+        plan = _prepare(tmp, root, language="en")
+        assert _finalize_plan(tmp, root, plan, _thesis_answers(plan, None)).returncode == 0
+        assert [row["slot_id"] for row in _check_rows(root)] == [slot["slot_id"]], _check_rows(root)
+
+        def _exited_review(date_end):
+            card, state = _state_without_pltr(tmp, date_end)
+            run = _run("prepare", "--root", root, "--language", "en",
+                       "--card-json", card, "--state-json", state)
+            assert run.returncode == 0, run.stdout + run.stderr
+            exited = _pending_plan(root, run.stdout)
+            answers = _answers(exited, commitment="skip")
+            answers["thesis_updates"] = []      # the position is gone with its thesis
+            done = _finalize_plan(tmp, root, exited, answers)
+            assert done.returncode == 0, done.stdout + done.stderr
+            return exited, pathlib.Path(
+                json.loads(done.stdout)["private_card"]).read_text(encoding="utf-8")
+
+        # Review 3: the position is gone. The line retires, and the card says so.
+        exited, private = _exited_review("2026-07-21")
+        assert exited["state_snapshot"]["condition_slots_retired"] == [
+            {"cycle_id": _PLTR_CYCLE, "ticker": "PLTR", "criterion": "Renewals weaken"}]
+        assert "no longer checked from here on" in private, \
+            "a retiring condition must not simply vanish:\n" + private
+        assert "PLTR" in private and "Renewals weaken" in private, private
+
+        # Review 4: same state, one period later. It is old news and stays quiet.
+        again, private_again = _exited_review("2026-07-28")
+        assert again["state_snapshot"]["condition_slots_retired"] == [], \
+            "retirement is an event, not a state the card repeats forever"
+        assert "no longer checked from here on" not in private_again, private_again
 
 
 def test_a_falsifier_whose_position_is_gone_raises_no_question_even_if_checked():
@@ -4219,6 +4274,26 @@ def test_a_live_falsifier_past_the_lookup_cap_is_still_adjudicated():
             f"a live falsifier past the cap still earns its crossing: {plan['question_queue']}"
         assert crossings[0]["line_id"] == slot["slot_id"]
         assert crossings[0]["ticker"] == "PLTR", "and it still arrives with its thesis"
+        # External review, round 2 BLOCK: the question layer was only half of it.
+        # The card joins a check to its condition through what the engine
+        # stamped, and that stamp lived only on the capped due list — so this
+        # reading was asked about and then absent from the card, while the
+        # summary still counted it as checked. It must reach the card, carry its
+        # attribution, and count as an open concern like any other.
+        answers = _thesis_answers(plan, condition=None)
+        answers["condition_checks"] = [
+            {"slot_id": slot["slot_id"],
+             "check": {"lookup_status": "ok", "observation": dict(_FALSIFIER_CROSSED)}}]
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        private = pathlib.Path(json.loads(final.stdout)["private_card"]).read_text(encoding="utf-8")
+        assert "Renewals weaken —" in private, \
+            "a beyond-cap reading must reach the card at all:\n" + private
+        assert "break your PLTR thesis" in private, \
+            "and it must arrive with the thesis it guards:\n" + private
+        assert "past your line" in private, private
+        assert "Open concerns coming back next review:" in private, \
+            "and count in the summary's arithmetic like any other:\n" + private
 
 
 def test_a_condition_that_guards_nothing_still_names_no_position():
