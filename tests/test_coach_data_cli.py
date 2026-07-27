@@ -179,6 +179,36 @@ def test_headline_motive_projection_is_status_export_and_reset_managed():
         assert not os.path.exists(motive_path)
 
 
+def test_behavior_verdicts_projection_is_status_export_and_reset_managed():
+    """#446 cut 1: verdicts.jsonl is private user data (a said-vs-done
+    judgment about the user's own trading), so every data-control operation
+    must discover it from coach.DATA_FILES -- the exact gap #452 named for
+    condition_checks.jsonl, not repeated here."""
+    with tempfile.TemporaryDirectory() as tmp:
+        verdicts_path = os.path.join(tmp, "verdicts.jsonl")
+        with open(verdicts_path, "w", encoding="utf-8") as f:
+            f.write('{"rule":{"id":"horizon_contradiction","version":1},"outcome":"held_too_long"}\n')
+
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {entry["name"]: entry for entry in status["files"]}
+        assert status["present_count"] == 1
+        assert by_name["verdicts.jsonl"]["exists"]
+        assert by_name["verdicts.jsonl"]["lines"] == 1
+
+        out_zip = os.path.join(tmp, "backup.zip")
+        exported = _run("data-export", "--root", tmp, "--out", out_zip)
+        assert exported.returncode == 0, exported.stderr
+        payload = json.loads(exported.stdout)
+        assert payload["included"] == ["verdicts.jsonl"]
+        with zipfile.ZipFile(out_zip) as zf:
+            assert zf.namelist() == ["verdicts.jsonl"]
+
+        reset = _run("data-reset", "--root", tmp, "--confirm")
+        assert reset.returncode == 0, reset.stderr
+        assert json.loads(reset.stdout)["deleted"] == [verdicts_path]
+        assert not os.path.exists(verdicts_path)
+
+
 # ─────────────── D. --root 覆寫隔離(不誤觸真正的 ~/.trade-coach/)───────────────
 
 def test_root_override_reported_exactly_as_passed():

@@ -39,6 +39,7 @@ import session
 import snapshot_adapter
 import thesis
 import trade_recap
+import verdicts
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -2385,13 +2386,22 @@ def _problem_snapshot(root, state):
     return payload
 
 
-def _horizon_markers(state, thesis_states, active_cycle_ids, recent_exits):
+def _horizon_markers_all(state, thesis_states, active_cycle_ids, recent_exits):
     """Join stored theses with engine-owned position/exit dates and rank mirrors.
+    Every triggered marker, ranked but NOT truncated.
 
     Reductions remain active positions. Only a recent full exit receives an
     `exit_date`; otherwise horizon.scan would silently turn a reduction into a
     closed thesis. Ranking uses position cost or exit notional and is fixed here,
     never invented by the renderer.
+
+    `_horizon_markers` (below) is this function's HORIZON_MARKER_LIMIT-bounded
+    slice for the card's attention budget. #446 cut 1's verdict rows are built
+    from THIS untruncated list, never from that slice: the cap exists to keep
+    what the agent is asked about small, not to decide which periods get a
+    durable record, and writing from the truncated slice would repeat #444's
+    round 3-4 defect verbatim -- nothing downstream may be scoped to a display
+    cap's slice.
     """
     as_of = state.get("date_end")
     if not as_of:
@@ -2442,7 +2452,61 @@ def _horizon_markers(state, thesis_states, active_cycle_ids, recent_exits):
                                      str(marker.get("ticker") or "")))
     for marker in markers:
         marker.pop("_importance", None)
-    return markers[:HORIZON_MARKER_LIMIT]
+    return markers
+
+
+def _horizon_markers(state, thesis_states, active_cycle_ids, recent_exits):
+    """`_horizon_markers_all`'s display-bounded slice: at most
+    HORIZON_MARKER_LIMIT entries, for the card's attention budget and the
+    question queue. See that function for the join/ranking rules."""
+    return _horizon_markers_all(state, thesis_states, active_cycle_ids, recent_exits)[:HORIZON_MARKER_LIMIT]
+
+
+def _horizon_verdict_rows(plan, session_id):
+    """Behavior verdict rows this review's horizon judgments produce (#446 cut
+    1), built from `_horizon_markers_all`'s UNTRUNCATED result -- never the
+    display-capped `state_snapshot.horizon_markers` slice `_horizon_markers`
+    returns.
+
+    Every ingredient here is read from what `_build_plan` already stamped into
+    the plan (`engine_state`, `state_snapshot.thesis_states`,
+    `state_snapshot.recent_exits`) -- never re-derived from disk or assembled
+    a second, differently-sourced way (development-guide.md section 7).
+    `_active_positions` is a pure accessor of the stamped `engine_state`, so
+    `active_cycle_ids` here is exactly what `_build_plan` itself used to build
+    the display slice, not an independent reconstruction that could disagree
+    with it on an edge case.
+
+    Skipped entirely on `snapshot_review`, the same route `_horizon_markers`
+    itself is skipped for: a position snapshot carries no review history for a
+    said-vs-done judgment to compare against.
+    """
+    if plan.get("route") == "snapshot_review":
+        return []
+    state = plan.get("engine_state") or {}
+    date_end = state.get("date_end")
+    if not date_end:
+        return []
+    snapshot = plan.get("state_snapshot") or {}
+    thesis_states = snapshot.get("thesis_states") or []
+    by_cycle = {row.get("cycle_id"): row for row in thesis_states if row.get("cycle_id")}
+    cycle_ids = [row.get("cycle_id") for row in _active_positions(state).values()
+                if row.get("cycle_id")]
+    recent_exits = snapshot.get("recent_exits") or []
+    markers = _horizon_markers_all(state, thesis_states, cycle_ids, recent_exits)
+    exit_dates = {item.get("cycle_id"): item.get("exit_date") for item in recent_exits
+                 if item.get("kind") == "full"}
+    rows = []
+    for marker in markers:
+        cycle_id = marker.get("cycle_id")
+        prior = by_cycle.get(cycle_id) or {}
+        window_to = exit_dates.get(cycle_id) if marker.get("exited") else date_end
+        row = verdicts.build_horizon_verdict(
+            marker, row_id=prior.get("event_id"), session_id=session_id,
+            date_end=date_end, window_to=window_to)
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 def _missing_thesis_entry(ticker, position):
@@ -3907,6 +3971,12 @@ def _draft_bundle(plan, answers, narrative, require_commitment,
     # conditions. Absent-when-empty for the same retry reason as the two above.
     if thesis_condition_slots:
         bundle["thesis_conditions"] = thesis_condition_slots
+    # #446 cut 1: this review's horizon said-vs-done judgments, turned into
+    # durable rows instead of being recomputed and discarded every period.
+    # Absent-when-empty for the same retry reason as the keys above.
+    horizon_verdicts = _horizon_verdict_rows(plan, plan["session_id"])
+    if horizon_verdicts:
+        bundle["verdicts"] = horizon_verdicts
     return bundle
 
 

@@ -7392,7 +7392,7 @@ def test_all_json_schemas_parse():
              "question-surface.schema.json", "capture.schema.json",
              "price-feed.schema.json", "condition-slot.schema.json",
              "condition-check.schema.json", "trade-premise.schema.json",
-             "pre-trade-consultation.schema.json"}
+             "pre-trade-consultation.schema.json", "behavior-verdict.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
