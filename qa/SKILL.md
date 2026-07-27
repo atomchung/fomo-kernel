@@ -65,6 +65,8 @@ description: 開發者 dogfood fomo-kernel 時，用來準備一個乾淨、一�
 
 一眼看到：`origin/main` 最新 sha、dogfood worktree 落後幾個、**dogfood coach state**（隔離 root，不是真實 `~/.trade-coach`）是不是乾淨的 new-user。**落後就不要往下走**，先 Step 1 更新。把 `main@<sha>` 明確回報給用戶——這次 QA 測的就是這個版本。
 
+`status` 同時會多報一行**這個 skill 自己的新鮮度**——查的是實際執行 `qa_env.sh` 的那個 checkout（symlink 指到哪個 repo 就查哪個，不一定是 dogfood worktree），有沒有落後 `origin/main`；純報告、不 fetch、絕不因此擋住 `status`，落後時會印出可直接複製貼上的修復指令。
+
 ### Step 1 — 乾淨 worktree（釘最新 main）
 
 ```bash
