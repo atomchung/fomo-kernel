@@ -397,6 +397,10 @@ def cmd_save_card(args):
 # ─────────────── data-status / data-export / data-reset(#165)───────────────
 # 單一事實源:別的地方(README/SKILL.md)要講「本機存了什麼」,一律指來跑這裡,
 # 不要另外維護一份會 drift 的散文清單(同 #82 的判定進 code、文案別四處抄的教訓)。
+# #452:這份清單本身會漏(condition_checks.jsonl 曾經漏掉,且沒有任何機制擋下來)。
+# tests/test_coach_data_cli.py 的 test_data_files_registry_covers_every_engine_written_path
+# 從 engine/*.py 原始碼機械掃出每個「用 root 組出來的頂層路徑字面值」,斷言那個集合是這裡的
+# 子集——漏登記一個新的持久化檔案會讓那個測試紅,不必等 review 抓到。
 DATA_FILES = [
     ("last_state.json", "json", "上次引擎算出的薄狀態(對帳用;每次跑覆蓋,非 append-only)"),
     ("log.jsonl", "jsonl", "每次復盤的規矩承諾 + metric 快照"),
@@ -409,6 +413,7 @@ DATA_FILES = [
     ("profile.json", "json", "標準版偏好:自訂單一部位上限 max_position_pct(review.py set-cap,#324)+ 你靜音的規矩 muted_rules(review.py mute-rule,#416)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
     ("conditions.jsonl", "jsonl", "引擎算不出來、但你仍然承諾要盯的條件(#412;含你自己的原話與當時的基準值)"),
+    ("condition_checks.jsonl", "jsonl", "每條 conditions.jsonl 條件在每次復盤週期的查核紀錄(#412 第二刀;查了沒/觀察到什麼/你怎麼回答,連沒查的週期也算一列,不覆寫舊列)"),
     ("verdicts.jsonl", "jsonl", "引擎判定的「說到 vs 做到」落差記錄(#446;目前只有 horizon 矛盾，可重算驗證，不進規矩對帳)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),

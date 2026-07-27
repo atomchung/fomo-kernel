@@ -138,9 +138,16 @@ def _engine_version():
     global _ENGINE_VERSION
     if _ENGINE_VERSION is not None:
         return _ENGINE_VERSION
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Named repo_root, not root: this is the skill's own checkout (to read its
+    # build-provenance VERSION file / git SHA), never the user's coach data
+    # root. A bare `root` here would be indistinguishable, by name alone, from
+    # every other function's coach-root variable to a naive source scan —
+    # tests/test_coach_data_cli.py's DATA_FILES-registry completeness check
+    # (#452) walks exactly that convention, so the distinct name is load-bearing
+    # for that check's precision, not a style preference.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        with open(os.path.join(root, "VERSION"), encoding="utf-8") as handle:
+        with open(os.path.join(repo_root, "VERSION"), encoding="utf-8") as handle:
             tag = handle.read().strip()
         if tag:
             _ENGINE_VERSION = {"id": tag, "source": "file"}
@@ -149,12 +156,12 @@ def _engine_version():
         pass
     try:
         head = subprocess.run(
-            ["git", "-C", root, "rev-parse", "HEAD"],
+            ["git", "-C", repo_root, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=2,
         )
         if head.returncode == 0 and head.stdout.strip():
             status = subprocess.run(
-                ["git", "-C", root, "status", "--porcelain"],
+                ["git", "-C", repo_root, "status", "--porcelain"],
                 capture_output=True, text=True, timeout=2,
             )
             _ENGINE_VERSION = {

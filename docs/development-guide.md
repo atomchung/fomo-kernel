@@ -73,8 +73,13 @@ equality test; the mirrored-surfaces table in CLAUDE.md is the census.
   gated (`test_card_template_matches_its_generator`, and — since #442 —
   `tests/test_design_bundle.py`, which runs `design_bundle.py` itself for a
   clean exit and checks its derived output still reflects the current
-  runtime CSS); nothing detects a new hand mirror before one of its
-  instances earns a gate.
+  runtime CSS; and — since #452 —
+  `test_data_files_registry_covers_every_engine_written_path`, which parses
+  `engine/*.py` for the coach-root path literals the code actually
+  constructs and fails if one is missing from `coach.DATA_FILES` — the
+  hand-maintained persistence registry `condition_checks.jsonl` fell out of
+  silently before this check existed); nothing detects a new hand mirror
+  before one of its instances earns a gate.
 - A metric can be blind to your change: `change_surface.py` counts surfaces
   crossed, so a knife that only stops a surface being hand-written moves
   nothing. Add a reading (authored churn) rather than call the knife
