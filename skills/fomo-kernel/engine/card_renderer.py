@@ -1893,6 +1893,12 @@ def _condition_reconciliation_line(prior, checks, copy, index):
 # here is counted and stated by the summary line below — a card that quietly
 # shows two of five readings is the same defect as a cap that does not say what
 # it dropped, one level down (external review, round 1).
+#
+# The cap does not bind a row open on both axes at once (crossing
+# unanswered/deferred *and* basis open) — see `_condition_trim_group`. Owner
+# ruling, 2026-07-27: information completeness wins, so a dual-concern
+# condition may never be trimmed off the card even though the summary already
+# counted both of its concerns (#412 recorded followup, #438).
 CONDITION_CARD_LINES = 2
 
 
@@ -2051,6 +2057,28 @@ def _condition_outcomes(bundle, checks):
     return out
 
 
+def _condition_trim_group(rows):
+    """Keep every dual-open row plus the first ``CONDITION_CARD_LINES`` of the
+    rest, in the group's original order.
+
+    ``rows`` is ``[(line, dual_open), ...]``. A dual-open row (open on both
+    the crossing and the basis axis — see ``_condition_reading_lines``) is
+    never trimmed, by owner ruling (2026-07-27): information completeness
+    wins, so a condition carrying two live concerns must never disappear from
+    the card while the summary still counts both. A non-dual row's position
+    in the kept set is unaffected — the cap still keeps only the first
+    ``CONDITION_CARD_LINES`` of them, exactly as before this exemption
+    existed."""
+    kept = []
+    regular_kept = 0
+    for line, dual_open in rows:
+        if dual_open or regular_kept < CONDITION_CARD_LINES:
+            kept.append(line)
+            if not dual_open:
+                regular_kept += 1
+    return kept
+
+
 def _condition_reading_lines(bundle, checks, copy):
     """``(lines, shown, describable)`` — every per-condition line this card carries.
 
@@ -2079,6 +2107,13 @@ def _condition_reading_lines(bundle, checks, copy):
     A check the user settled on both axes renders nothing: the exchange told
     that story. ``not_checked`` rows are the summary's business — eight
     apologies would bury the one lookup that actually broke.
+
+    A row open on both axes at once is exempt from the per-kind cap below
+    (`_condition_trim_group`) and always renders, however many are due —
+    owner ruling, 2026-07-27, on the #438 recorded followup: trimming a
+    dual-concern condition off the card is an information-completeness loss
+    the disclosure sentence cannot repair, because a reader who reads only
+    the lines would never see that condition at all.
     """
     check_copy = copy.get("condition_check") or {}
     groups = {"unanswered": [], "deferred": [], "basis_open": [], "fact": [], "blind": []}
@@ -2091,7 +2126,7 @@ def _condition_reading_lines(bundle, checks, copy):
                                  criterion=criterion, reason=reason) if reason
                     else _format_copy(check_copy.get("blind"), criterion=criterion))
             if line:
-                groups["blind"].append(line)
+                groups["blind"].append((line, False))
             continue
         notes = _condition_notes(check, condition, crossing_state, basis_state)
         if notes:
@@ -2105,9 +2140,10 @@ def _condition_reading_lines(bundle, checks, copy):
             continue                      # settled on every axis; nothing to say
         line = _condition_reading_line(check, condition, copy, notes)
         if line:
-            groups[group].append(line)
+            dual_open = (crossing_state in CONDITION_OPEN_CROSSING and basis_state == "open")
+            groups[group].append((line, dual_open))
     describable = sum(len(rows) for rows in groups.values())
-    kept = {kind: rows[:CONDITION_CARD_LINES] for kind, rows in groups.items()}
+    kept = {kind: _condition_trim_group(rows) for kind, rows in groups.items()}
     shown = sum(len(rows) for rows in kept.values())
     lines = kept["unanswered"] + kept["deferred"] + kept["basis_open"]
     if kept["fact"]:
@@ -2131,7 +2167,9 @@ def _condition_summary_line(bundle, checks, copy, shown, describable):
     shown**: the per-kind line caps trimmed a reading that was taken. A card
     that quietly prints two of five readings is making the same claim of
     completeness the cap disclosure exists to prevent (external review,
-    round 1).
+    round 1). A row open on both axes is exempt from that cap
+    (`_condition_trim_group`) and is therefore always counted as *shown*,
+    never as trimmed — the #412 recorded followup this closes.
 
     The unsettled count comes from ``_condition_outcomes`` — the same
     classification the lines above render — so the card and its own summary

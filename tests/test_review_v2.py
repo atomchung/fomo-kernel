@@ -4022,6 +4022,87 @@ def test_a_card_that_trims_readings_says_it_trimmed_them():
         assert shown == 2, f"the per-kind cap still binds, showed {shown}"
 
 
+# #438's recorded followup, closed here: `CONDITION_CARD_LINES` used to trim a
+# dual-open row (crossing unanswered/deferred *and* basis open) exactly like
+# any other, so a condition with two live concerns could vanish from the card
+# entirely while the summary kept counting both. Built directly against
+# `card_renderer._reconciliation_lines` rather than through the CLI, like
+# `test_reconciliation_opens_the_card_with_prior_commitment` above — the
+# per-kind trim is the renderer's own concern, not `review.py`'s crossing
+# selection or one-question budget, so the fixture should not have to drive
+# either.
+def _cap_group_slot(index):
+    return {"slot_id": f"slot-cap-{index}", "line_id": f"slot-cap-{index}", "kind": "numeric",
+            "criterion": f"sell if metric {index} drops under 30%",
+            "threshold": {"value": 30, "unit": "%", "direction": "below"}, "near_line": 3.0}
+
+
+def _cap_group_check(index, basis_open=False):
+    """A check the engine reads as a crossing candidate that lost the
+    one-question budget (`deferred`, never queued), so every row built this
+    way lands in the same per-kind group and the cap alone decides what is
+    kept. ``basis_open`` makes the row dual-open."""
+    check = {"slot_id": f"slot-cap-{index}", "lookup_status": "ok",
+             "observation": {"value": 21.0, "as_of": "2026-08-20", "source": "10-Q"},
+             "engine_verdict": "met", "final_verdict": "met"}
+    if basis_open:
+        check["basis_alert"] = {"note": "the reporting segment was restated"}
+    return check
+
+
+def _cap_group_bundle(count, dual_index):
+    """``count`` deferred-crossing conditions sharing one per-kind cap. The
+    condition at ``dual_index`` (or none, if ``None``) also carries an open
+    basis concern, making it dual-open."""
+    slots = [_cap_group_slot(i) for i in range(count)]
+    checks = [_cap_group_check(i, basis_open=(i == dual_index)) for i in range(count)]
+    summary = {"lines_total": count, "due_now": count, "beyond_cap": 0,
+               "unmapped_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
+    return {"review_plan": {"state_snapshot": {
+                "condition_slots_due": slots, "condition_slots_summary": summary}},
+            "condition_checks": checks}
+
+
+def test_a_dual_open_row_beyond_the_cap_still_prints_both_notes_and_the_trim_count_excludes_it():
+    """Owner ruling, 2026-07-27 (#412 recorded followup from #438): information
+    completeness wins over the per-kind card cap. Four conditions land in the
+    same `deferred` group — three plain, one also carrying an open basis
+    concern (dual-open) and placed last, the position the old unconditional
+    `rows[:CONDITION_CARD_LINES]` cap would have cut. It must render anyway,
+    with both its notes, and the trim sentence must count only the plain row
+    the cap actually dropped — not the dual-open row it let through."""
+    bundle = _cap_group_bundle(4, dual_index=3)
+    text = "\n".join(card_renderer._reconciliation_lines(bundle, "en"))
+    assert "sell if metric 0 drops under 30% —" in text
+    assert "sell if metric 1 drops under 30% —" in text
+    assert "sell if metric 2 drops under 30% —" not in text, \
+        "the cap still trims a plain row once two are already shown:\n" + text
+    assert "sell if metric 3 drops under 30% —" in text, \
+        "the dual-open row must survive the cap:\n" + text
+    assert "past your line; I will ask you about it next review" in text
+    assert "the reporting segment was restated" in text, \
+        "the exempted row keeps both its notes on the one reading:\n" + text
+    assert "shows 3 of 4 readings" in text, \
+        "the trim count must not charge the dual-open row as withheld:\n" + text
+    assert "Open concerns coming back next review: 5." in text, \
+        "three single-concern rows plus one two-concern row is five:\n" + text
+
+
+def test_non_dual_rows_beyond_the_cap_are_still_trimmed_and_counted_as_before():
+    """Regression pin for the exemption above: with no basis concern anywhere,
+    the per-kind cap keeps behaving exactly as it did before this change —
+    first two shown, the rest counted as trimmed."""
+    bundle = _cap_group_bundle(4, dual_index=None)
+    text = "\n".join(card_renderer._reconciliation_lines(bundle, "en"))
+    assert "sell if metric 0 drops under 30% —" in text
+    assert "sell if metric 1 drops under 30% —" in text
+    assert "sell if metric 2 drops under 30% —" not in text
+    assert "sell if metric 3 drops under 30% —" not in text, \
+        "no row here is dual-open, so the cap trims it like any other:\n" + text
+    assert "shows 2 of 4 readings" in text, text
+    assert "Open concerns coming back next review: 4." in text, text
+
+
 def test_reconciliation_survives_a_second_revision_of_the_same_condition():
     """External review, MARK: the card matched checks to the prior commitment by
     slot_id. A check names the live head of its line, so after a second revision
