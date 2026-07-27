@@ -228,6 +228,23 @@ def main():
         ok(all(e["key"] in HL_KEYS for e in card2["honesty_ledger"]),
            "殘差揭露沿用 cash_reliability key、不越出 HL_KEYS(擴傘非新 key)", repr(list(hl2)))
 
+        # ── 1d. #462:壞行的 TR_LEDGER → 整支 engine 必須 fail closed,不能吐出半張
+        #        卡(哪怕只是 1c 那種殘差揭露)——壞行沒被讀到,殘差本身就會算錯而非
+        #        缺值。同一份殘差路徑,唯一差異是多了一行讀不出來的壞行。──
+        bad_led = pathlib.Path(tmp) / "corrupt_ledger.jsonl"
+        bad_led.write_text(
+            '{"type":"snapshot","as_of":"2000-01-01","source":"user_declared","positions":[],"cash":{"USD":0}}\n'
+            'not json at all\n',
+            encoding="utf-8")
+        r3, _ = run_engine_offline(tmp, state_name="corrupt_state.json", ledger=str(bad_led))
+        ok(r3.returncode != 0,
+           "壞行的 TR_LEDGER → engine 非 0 退出,不算出任何殘差/卡片(#462)", repr(r3.stdout[:200]))
+        ok(r3.stdout.strip() == "", "壞行拒收 → stdout 不吐半張卡的 JSON", repr(r3.stdout[:200]))
+        ok("❌" in r3.stderr and "unreadable row(s)" in r3.stderr,
+           "stderr 給乾淨訊息、指向 #462 的 gate,不是裸例外堆疊", r3.stderr[-300:])
+        ok("Traceback" not in r3.stderr,
+           "失敗訊息是 print 出來的一行,不是未接住的 raw traceback", r3.stderr[-300:])
+
         # ── pnl_curve 契約(#167)──強制離線 shim 下無價格,必須誠實降級成 note,不可假造點位
         pc = card["pnl_curve"]
         ok(isinstance(pc, dict), "pnl_curve 是 dict", repr(pc)[:120])

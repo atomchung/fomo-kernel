@@ -252,8 +252,13 @@ def _validate_initial_snapshot_root(root, anchor):
         return None
     if anchor.get("is_complete", True) is not True:
         raise ReviewError(session.INCOMPLETE_SNAPSHOT_RECONCILIATION)
-    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    # #462: a corrupt/unknown row anywhere in the ledger must block the
+    # reconciliation this function computes, not just the conflict-detection
+    # scan_initial_snapshot_conflicts already did above — that scan only
+    # answers "is there history to reconcile against," never "is the history
+    # this reconciliation reads complete."
     try:
+        events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
         reconciliation = ledger.snapshot_reconciliation(events, anchor)
     except ValueError as exc:
         raise ReviewError(str(exc)) from exc
@@ -899,7 +904,14 @@ def _ingest_trades(root, paths, card, state):
     # commit and anchor projection, so neither path can observe an empty root
     # and then write across the other's boundary.
     with session.projection_transaction(root):
-        existing, skipped_lines = ledger.load_ledger(ledger_path)
+        # #462: this existing-ledger read feeds derive_holdings a few lines
+        # down (the overlay the card and any reconciliation are built from),
+        # so a corrupt row here must block the import rather than let the
+        # overlay compute over a silently shortened history.
+        try:
+            existing, skipped_lines = ledger.load_ledger(ledger_path)
+        except ledger.LedgerIntegrityError as exc:
+            raise ReviewError(str(exc)) from exc
         virtual = list(existing)
         fresh_all = []
         skipped_dup = 0
@@ -1020,7 +1032,13 @@ def _prepare_exit_capture(root, state, persist):
     ledger_path = os.path.join(root, "ledger.jsonl")
     queue_path = os.path.join(root, "revisit.jsonl")
     as_of = _review_date(state)
-    new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
+    # #462: revisit.enqueue_from_ledger scans for exits with ledger.load_ledger
+    # underneath; a corrupt row must block enqueueing rather than let a real
+    # exit go undetected and silently never reach the 30/60/90 follow-up.
+    try:
+        new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
     revisits, resolutions, skipped = revisit.load_queue(queue_path)
     narratives = _exit_narrative_index(root)
     raw_prices = ((state.get("price_snapshot") or {}).get("prices") or {})
@@ -2738,7 +2756,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     # unlike the condition-slot lookup queue, it needs no review history or
     # thesis cycle, only the ledger and date_end, both of which every route
     # already has.
-    ledger_events, _skipped_ledger_lines = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    # #462: a corrupt row here must not let the trade-event extraction below
+    # silently run over a shortened ledger — a matched/unmatched consultation
+    # verdict computed from an incomplete read is a wrong verdict, not a
+    # missing one.
+    try:
+        ledger_events, _skipped_ledger_lines = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
     consultation_reconciliation = _consultation_reconciliation(
         root, _ledger_trade_events(ledger_events), state.get("date_end"))
     condition_checks, condition_questions, condition_deferred = [], [], []
@@ -4555,7 +4580,13 @@ def _consider_rows(args, root):
                 "consider cannot answer against an empty book")
         return rows, "transactions"
     ledger_path = os.path.join(root, "ledger.jsonl")
-    events, _skipped = ledger.load_ledger(ledger_path)
+    # #462: a corrupt row must not let the ledger-reconstruction fallback
+    # quietly answer a pre-trade question against a shortened book — a wrong
+    # rule-collision verdict here is worse than refusing to answer.
+    try:
+        events, _skipped = ledger.load_ledger(ledger_path)
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
     rows = _rows_from_ledger(events)
     if not rows:
         raise ReviewError(

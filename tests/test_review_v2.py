@@ -2311,6 +2311,68 @@ def test_trade_ingest_and_initial_snapshot_share_one_root_boundary_lock():
         )
 
 
+def test_ingest_trades_fails_closed_on_a_corrupt_existing_ledger():
+    """#462: _ingest_trades reads the existing ledger before deriving the
+    overlay holdings a card/reconciliation get built from (the `if
+    ledger.latest_anchor(existing) is not None:` branch a few lines below its
+    own load_ledger call). A corrupt row in that existing history must block
+    the import instead of letting the overlay compute over a silently
+    shortened read."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        card_path, state_path = _artifacts(tmp)
+        card = json.loads(card_path.read_text())
+        state = json.loads(state_path.read_text())
+        csv_path = pathlib.Path(tmp) / "new-trade.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,1,100,2026-07-17,Trade,US,USD\n",
+            encoding="utf-8",
+        )
+        (root / "ledger.jsonl").write_text(
+            json.dumps({"type": "trade", "date": "2026-07-01", "ticker": "NVDA",
+                        "action": "buy", "qty": 10, "price": 100.0}) + "\n"
+            + "not json at all\n",
+            encoding="utf-8")
+        try:
+            review_engine._ingest_trades(str(root), [str(csv_path)], card, state)
+            raise AssertionError("a corrupt existing ledger must not let ingest proceed")
+        except review_engine.ReviewError as exc:
+            assert "unreadable row(s)" in str(exc), str(exc)
+        # session_engine._read_jsonl is a separate, more lenient reader (it
+        # drops an unparseable line with no count at all) -- read the raw
+        # bytes instead so this assertion does not depend on that reader's
+        # own tolerance and stays a direct check of "nothing new was written".
+        raw = (root / "ledger.jsonl").read_text(encoding="utf-8")
+        assert "PLTR" not in raw, "a failed ingest must not have appended the new trade"
+        assert raw.count("\n") == 2, "a failed ingest must not have touched the existing file"
+
+
+def test_prepare_exit_capture_fails_closed_on_a_corrupt_ledger():
+    """#462: _prepare_exit_capture's enqueue_from_ledger call must surface as
+    a ReviewError at the review.py boundary, not a bare exception escaping
+    unwrapped past review.py's own error-handling convention."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        (root / "ledger.jsonl").write_text(
+            json.dumps({"type": "trade", "date": "2026-07-01", "ticker": "NVDA",
+                        "action": "buy", "qty": 10, "price": 100.0}) + "\n"
+            + json.dumps({"type": "trade", "date": "2026-07-10", "ticker": "NVDA",
+                          "action": "sell", "qty": 10, "price": 110.0}) + "\n"  # a real exit
+            + "not json at all\n",
+            encoding="utf-8")
+        state = {"date_end": "2026-07-17"}
+        try:
+            review_engine._prepare_exit_capture(str(root), state, True)
+            raise AssertionError("a corrupt ledger must not let exit capture proceed")
+        except review_engine.ReviewError as exc:
+            assert "unreadable row(s)" in str(exc), str(exc)
+        assert not os.path.exists(str(root / "revisit.jsonl")), \
+            "a failed exit capture must not have written a partial queue"
+
+
 def test_persistent_review_commit_cannot_appear_inside_snapshot_check_and_commit():
     """A non-snapshot canonical commit that wins the lock blocks onboarding."""
     with tempfile.TemporaryDirectory() as root:
@@ -5936,9 +5998,13 @@ def test_initial_snapshot_boundary_layers_share_one_verdict():
         assert verdicts(root) == (True, True), "a finalized demo is history for neither layer"
 
         # Unknown ledger event types count as existing history for BOTH layers
-        # (fail-closed): the prepare layer previously read through
-        # ledger.load_ledger, which silently dropped them, so only finalize
-        # rejected this root.
+        # (fail-closed) via scan_initial_snapshot_conflicts' own raw scan,
+        # independent of ledger.load_ledger: this root's only row is
+        # unreadable, so snapshot_reconciliation would find no complete
+        # anchor and refuse for that reason even before #462. See
+        # test_snapshot_reconciliation_fails_closed_on_a_corrupt_ledger_row
+        # below for the case that isolates #462's own gate: a corrupt row
+        # sitting *beside* an already-anchored, otherwise-valid history.
         (root / "ledger.jsonl").write_text(
             json.dumps({"type": "mystery_event", "as_of": "2026-07-01"}) + "\n",
             encoding="utf-8")
@@ -5957,6 +6023,58 @@ def test_initial_snapshot_boundary_layers_share_one_verdict():
             json.dumps(other), encoding="utf-8")
         assert verdicts(root) == (False, False), \
             "a different prior snapshot conflicts in both layers"
+
+
+def test_snapshot_reconciliation_fails_closed_on_a_corrupt_ledger_row():
+    """#462, isolating the gap the previous test's comment now points at:
+    scan_initial_snapshot_conflicts already fails closed when the *entire*
+    ledger is unreadable (previous test), but it only asks "does anything
+    here fail to match the declared anchor" -- it stops at the first
+    mismatching row, so it does not itself notice a *separate* corrupt row
+    sitting beside an already-anchored, otherwise-valid history. That
+    corrupt row only gets read once scan_initial_snapshot_conflicts has
+    already found a real conflict (the differing anchor below) and both
+    layers move on to ledger.load_ledger to compute the actual
+    reconciliation -- which is exactly where a pre-#462 silent drop would
+    have let snapshot_reconciliation compute a diff over a shortened trade
+    history instead of refusing."""
+    root_dir = tempfile.mkdtemp()
+    root = pathlib.Path(root_dir)
+    (root / "ledger.jsonl").write_text(
+        json.dumps({"type": "snapshot", "as_of": "2026-07-01", "source": "user_declared",
+                    "is_complete": True,
+                    "positions": [{"ticker": "NVDA", "shares": 100, "avg_cost": 100.0,
+                                   "market": "US", "currency": "USD"}]}) + "\n"
+        + json.dumps({"type": "mystery_event", "date": "2026-07-05"}) + "\n",
+        encoding="utf-8")
+    new_anchor = {
+        "type": "snapshot", "as_of": "2026-07-17", "source": "user_declared",
+        "is_complete": True,
+        "positions": [{"ticker": "NVDA", "shares": 120, "avg_cost": 100.0,
+                       "market": "US", "currency": "USD"}],
+    }
+
+    try:
+        review_engine._validate_initial_snapshot_root(str(root), new_anchor)
+        raise AssertionError("prepare-time check must fail closed on an unreadable ledger row")
+    except review_engine.ReviewError as exc:
+        assert "unreadable row(s)" in str(exc), str(exc)
+
+    bundle = _runtime_snapshot_bundle("2026-07-17__corrupt-row")
+    bundle["engine_state"]["snapshot_anchor"] = new_anchor
+    # Get past the "did prepare already freeze a reconciliation" gate below
+    # is_complete -- any dict clears it, since load_ledger raises before this
+    # placeholder is ever compared against a freshly recomputed one.
+    bundle["engine_state"]["snapshot_reconciliation"] = {
+        "schema_version": 1, "status": "adjusted", "as_of": "2026-07-17",
+        "against": {"as_of": "2026-07-01", "snapshot_id": None},
+        "diff": {"positions": [], "cash": []},
+    }
+    try:
+        session_engine._assert_initial_snapshot_boundary(str(root), bundle)
+        raise AssertionError("finalize-time check must fail closed on an unreadable ledger row")
+    except session_engine.SessionError as exc:
+        assert "unreadable row(s)" in str(exc), str(exc)
 
 
 def test_returning_private_card_shows_completed_history_snapshot_only_locally():
