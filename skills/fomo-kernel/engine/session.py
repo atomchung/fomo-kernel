@@ -727,19 +727,31 @@ def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
     Single implementation behind both boundary layers: the prepare-time UX
     fail-fast in review.py and the authoritative finalize check that runs under
     the root projection lock.  Any ledger row that is not the identical
-    snapshot fact counts as existing history — including unknown event types,
-    which the ledger loader would silently drop (strict fail-closed).  Only
-    canonical persistent bundles participate, and an exact replay of the same
-    declaration is not a conflict.  ``exclude_session_id`` removes the session
-    being committed so an idempotent finalize retry cannot conflict with
-    itself.
+    snapshot fact counts as existing history — including unknown event types
+    and unreadable rows (#470).  Both route through ``ledger.load_ledger``'s
+    own strict gate (#462) rather than a second, independent notion of a bad
+    row (development-guide.md §7): a row this scan cannot read is exactly as
+    disqualifying as one it can read and does not match, so a
+    ``LedgerIntegrityError`` here becomes a ``"ledger"`` conflict rather than
+    escaping this function — the caller already routes any conflict into the
+    reconciliation path, which reads the same file through the same gate and
+    raises with the detailed per-row message when the ledger really is
+    unreadable.  Only canonical persistent bundles participate, and an exact
+    replay of the same declaration is not a conflict.  ``exclude_session_id``
+    removes the session being committed so an idempotent finalize retry
+    cannot conflict with itself.
     """
     requested = canonical(_snapshot_payload(anchor))
     conflicts = []
-    for event in _read_jsonl(os.path.join(root, "ledger.jsonl")):
-        if event.get("type") != "snapshot" or canonical(_snapshot_payload(event)) != requested:
-            conflicts.append("ledger")
-            break
+    try:
+        ledger_events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    except ledger.LedgerIntegrityError:
+        conflicts.append("ledger")
+    else:
+        for event in ledger_events:
+            if event.get("type") != "snapshot" or canonical(_snapshot_payload(event)) != requested:
+                conflicts.append("ledger")
+                break
     for session_id, existing in iter_canonical_bundles(root):
         if exclude_session_id is not None and session_id == exclude_session_id:
             continue
@@ -785,10 +797,14 @@ def _assert_initial_snapshot_boundary(root, bundle):
     # review.py's prepare-time _validate_initial_snapshot_root — a corrupt
     # row must fail this layer exactly as it fails that one, or a bad ledger
     # row could let finalize adopt a reconciliation prepare never actually
-    # verified.
+    # verified. Narrowed to LedgerIntegrityError (matching the four #462
+    # call sites review.py added) rather than bare ValueError: that is the
+    # only exception load_ledger's strict gate raises on purpose, and a bare
+    # ValueError here would also catch and relabel anything else this line
+    # could someday raise as if it were a ledger-row integrity problem.
     try:
         events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
-    except ValueError as exc:
+    except ledger.LedgerIntegrityError as exc:
         raise SessionError(str(exc)) from exc
     current_anchor = ledger.latest_anchor(events)
     if (current_anchor is not None
