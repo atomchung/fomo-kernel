@@ -780,6 +780,22 @@ def test_a_split_verdict_is_ambiguous_and_never_resolved_toward_the_expectation(
     assert observed == {}, "an ambiguous verdict must not count toward coverage"
 
 
+def test_a_run_that_would_judge_nothing_is_not_a_pass():
+    """External review, 2026-07-27: `judge_episodes.py EP-001` selected an episode
+    declaring no axes, so no failure was reachable, coverage was skipped as
+    unevaluable, and the run printed PASS having made zero model calls. Every
+    mutation in the first dance assumed something was graded, so none of them
+    could see it."""
+    bank, _problems = R.load_bank()
+    unjudged = [e for e in bank if not (e.get("judge") or {}).get("axes")]
+    judged = [e for e in bank if (e.get("judge") or {}).get("axes")]
+    assert unjudged and judged, "the bank needs both kinds for this probe to mean anything"
+    assert J.nothing_to_judge(unjudged, {unjudged[0]["id"]}) is not None
+    assert J.nothing_to_judge([], set()) is not None
+    assert J.nothing_to_judge(judged, set()) is None
+    assert J.nothing_to_judge(bank, set()) is None
+
+
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():
     """Interlock 3: an axis only ever observed passing has never been seen fire."""
     everything = {axis: {"pass", "fail"} for axis in R.JUDGE_AXES}

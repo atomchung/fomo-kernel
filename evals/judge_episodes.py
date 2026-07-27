@@ -313,6 +313,25 @@ def grade_answer(episode, answer, axes, samples):
     return failures, observed
 
 
+def nothing_to_judge(episodes, selected):
+    """The reason this run would grade nothing, or ``None`` if it would grade something.
+
+    Every other interlock here asks whether a *verdict* was right. This one asks
+    whether any verdict happened at all, and it is the one a filtered run can
+    still trip: `judge_episodes.py EP-001` selects an episode that declares no
+    axes, so no failure is reachable, coverage is skipped as unevaluable, and the
+    run printed PASS having made zero model calls. That is the "green while
+    grading nothing" shape this repository rejects, and it survived the first
+    mutation dance because every mutation there assumed something was graded.
+    Found in external review, 2026-07-27.
+    """
+    if any(declared(episode)[0] for episode in episodes):
+        return None
+    where = f" (selected: {', '.join(sorted(selected))})" if selected else " in the bank"
+    return (f"nothing to judge — no episode{where} declares any judge axis, so this run "
+            f"would grade no answer and its result could not be read as a pass")
+
+
 def coverage_report(observed):
     """Interlock 3, at bank scope: every axis observed both passing and failing."""
     failures = []
@@ -369,6 +388,14 @@ def main():
     if args.plan:
         plan(episodes)
         return 0
+
+    # Before anything is spent: a run that would grade nothing is not a passing
+    # run. Checked here rather than at the end so it fails without an API key,
+    # and so a probe can reach it.
+    empty = nothing_to_judge(episodes, args.episode)
+    if empty:
+        print(f"FAIL  {empty}")
+        return 1
 
     try:
         import anthropic
