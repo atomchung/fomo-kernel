@@ -29,6 +29,11 @@ CYCLE_ID_RE = re.compile(r"^[^#\s]+#\d{4}-\d{2}-\d{2}#\d+$")
 CYCLE_ID_UNKNOWN_RE = re.compile(r"^[^#\s]+#unknown$")
 SELL_EARLY_TH = 0.10
 SECTOR_MAX_TH = 0.40       # #87/#95:跟 dim_diversify() severity 的 40% 起算點對齊,triggered/severity 不再各吹各的號
+# Named so a caller outside this module (consequence.py's rule_collision) can compare a
+# single metric's own reading against the exact line dim_diversify() itself triggers on,
+# instead of re-typing the literal and risking the two silently drifting apart.
+TOP3_MAX_TH = 0.60
+AI_MAX_TH = 0.60
 RF_ANNUAL = 0.043   # 無風險利率(年)：美國短期國庫券約 4.3%，Jensen's Alpha 用（tunable）
 RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股息零頭/1 股尾倉),不計入分散度/what-if/per-ticker 診斷/未分類計數(#172,owner 2026-07-12 拍板;相對佔比自適應帳戶規模,非絕對股數/金額)
 # ── 單一部位 sizing 閾值(#324:四處硬編對齊成單一事實源)────────────────────────
@@ -1161,7 +1166,7 @@ def dim_diversify(held, last_px):
     max_sec_pct = classified_sec.get(max_sec, 0)
     top3 = sum(sorted(risk_w.values(), reverse=True)[:3])
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
-    trig = (len(risk_w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > 0.60 or ai > 0.60
+    trig = (len(risk_w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > TOP3_MAX_TH or ai > AI_MAX_TH
     return dict(dim="分散", tier=2, triggered=trig, severity=sev, n=len(w),
                 n_risk=len(risk_w),
                 max_sector=max_sec, max_sector_pct=max_sec_pct, ai_pct=ai,

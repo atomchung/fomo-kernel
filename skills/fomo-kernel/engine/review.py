@@ -27,7 +27,9 @@ import tempfile
 
 import card_renderer
 import conditions
+import consequence
 import horizon
+import instruments
 import ledger
 import price_feed
 import problems
@@ -86,6 +88,26 @@ CONDITION_CROSSING_LIMIT = 1
 CONDITION_CROSSING_NUMERIC_CHOICES = {"confirmed", "overridden", "skip"}
 CONDITION_CROSSING_EVENT_CHOICES = {"yes", "no", "skip"}
 CONDITION_BASIS_CHOICES = {"revise_threshold", "revise_metric", "keep", "skip"}
+# `consider`'s own vocabulary (Layer 2, docs/decision-fomo-kernel-shape.md §3-4).
+# CONSIDER_DECISIONS is what --resolve may record; "open" (schemas/pre-trade-
+# consultation.schema.json's default) is a row's starting state, never something
+# a caller resolves *to*. Kept as one tuple so the argparse choices and the
+# schema enum cannot silently drift apart (tests/test_consider.py checks it).
+CONSIDER_DECISIONS = ("acted", "declined", "modified")
+# Layer 3 provenance vocabulary for an optional --agent-case claim
+# (docs/decision-fomo-kernel-shape.md §3: "mark each claim as your record says,
+# public fact, or my judgment"). engine_fact is that first category under a
+# name that reads correctly next to consequence.py's own output; public_fact
+# and agent_judgment are the doc's own words.
+AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
+# #429's rule one layer up: a consultation nobody reconciles is the same dead-
+# store shape that issue names for a question nobody reads. The bound is the
+# same discipline CONDITION_LOOKUP_CAP states just above -- the Review Plan is
+# re-sent as agent context on every later turn, so a user who never resolves
+# old consultations must not grow it without limit. Oldest `created` first;
+# _consultation_reconciliation's summary discloses whatever the cap holds
+# back, the same "a bounded surface must say what it dropped" rule.
+CONSULTATION_RECONCILE_CAP = 8
 
 
 class ReviewError(ValueError):
@@ -2642,6 +2664,19 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     condition_due, condition_summary, thesis_links, condition_retired = (
         ([], None, {}, []) if route == "snapshot_review"
         else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
+    # #317/#429: reconcile any `consider` consultation still open against what
+    # the local ledger actually shows happened. `_ledger_trade_events` reads
+    # only real, dated trade events — never `_rows_from_ledger`'s synthesized
+    # anchor rows, which exist for FIFO/cost-basis pricing `consider` needs
+    # and fail closed on a position with no cost basis. A snapshot anchor
+    # legitimately carries no cost basis at all, and `prepare` must never fail
+    # over an unrelated position's pricing gap. Every route computes this —
+    # unlike the condition-slot lookup queue, it needs no review history or
+    # thesis cycle, only the ledger and date_end, both of which every route
+    # already has.
+    ledger_events, _skipped_ledger_lines = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    consultation_reconciliation = _consultation_reconciliation(
+        root, _ledger_trade_events(ledger_events), state.get("date_end"))
     condition_checks, condition_questions, condition_deferred = [], [], []
     if route != "snapshot_review" and submitted_condition_checks:
         condition_slots, prior_checks, _unreadable = _condition_store(root)
@@ -2732,6 +2767,11 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                       "question_selection": question_selection,
                       "horizon_ids": ["weeks", "quarters", "years"],
                       "required_honesty_keys": required_honesty_keys},
+        # #317/#429: a supply-side fact surface, not a card section or a
+        # question (issue #440 parks card layout; issue #453 puts the
+        # judgment of whether this earns a turn on the agent, not the
+        # engine). See schemas/review-plan.schema.json for the declared shape.
+        "consultation_reconciliation": consultation_reconciliation,
         "engine_card": card,
         "engine_state": state,
     }
@@ -4284,6 +4324,553 @@ def cmd_mute_rule(args):
            "rule_line_id": line_id, "rule_id": rule.get("rule_id"), "text": rule.get("text")})
 
 
+def _consultation_path(root):
+    return os.path.join(root, "pre_trade_consultations.jsonl")
+
+
+def _anchor_position_row(position, anchor_date):
+    """One synthesized buy row for an anchored position, or None for a
+    structurally malformed entry — ledger.derive_holdings tolerates the same
+    shapes as a soft ``bad_snapshot_position`` integrity issue rather than
+    raising, and reconstruction here mirrors that leniency.
+
+    A missing ``avg_cost`` falls back to ``market_value / shares``, the same
+    alternative cost basis ``snapshot_adapter._valuation()`` itself accepts.
+    A position with neither fails closed by name: unlike ``derive_holdings``
+    (which only needs share counts), this module must put a price on every
+    row it hands to trade_recap's FIFO functions, and inventing one would
+    silently mis-state a real held position's weight — worse than refusing.
+    """
+    if not isinstance(position, dict):
+        return None
+    ticker = position.get("ticker")
+    if not isinstance(ticker, str) or not ticker.strip():
+        return None
+    try:
+        shares = float(position.get("shares"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(shares) or shares <= 1e-9:
+        return None
+    price = position.get("avg_cost")
+    if price is None:
+        market_value = position.get("market_value")
+        if market_value is not None:
+            try:
+                price = float(market_value) / shares
+            except (TypeError, ValueError, ZeroDivisionError):
+                price = None
+    if price is None:
+        raise ReviewError(
+            f"the ledger's snapshot anchor carries no avg_cost or market_value for {ticker}; "
+            "consider cannot price this position without a cost basis")
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        raise ReviewError(f"the ledger's snapshot anchor has a non-numeric cost basis for {ticker}")
+    if not math.isfinite(price) or price <= 0:
+        raise ReviewError(f"the ledger's snapshot anchor has a non-positive cost basis for {ticker}")
+    return {"ticker": ticker.strip(), "side": "buy", "qty": shares, "price": price,
+            "date": anchor_date, "market": (position.get("market") or "US"),
+            "currency": (position.get("currency") or "USD").upper()}
+
+
+def _ledger_trade_row(event):
+    """One trade_recap row from a ledger ``trade`` event
+    (``{type:"trade", date, ticker, action, qty, price, market, currency}``),
+    or None for a structurally malformed event. Mirrors ``ledger._norm_trade``'s
+    own tolerance rather than calling it directly, because that helper drops
+    market/currency, which this module's rows need."""
+    try:
+        date = dt.date.fromisoformat(str(event.get("date")))
+        ticker = event["ticker"]
+        side = str(event.get("action", "")).strip().lower()
+        qty = float(event["qty"])
+        price = float(event["price"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (not isinstance(ticker, str) or not ticker.strip() or side not in ("buy", "sell")
+            or not math.isfinite(qty) or qty <= 0 or not math.isfinite(price) or price <= 0):
+        return None
+    return {"ticker": ticker.strip(), "side": side, "qty": qty, "price": price, "date": date,
+            "market": (event.get("market") or "US"),
+            "currency": (event.get("currency") or "USD").upper()}
+
+
+def _ledger_trade_events(events):
+    """Only real, dated trade events from the ledger — deliberately *not*
+    ``_rows_from_ledger``'s reconstruction. That function also synthesizes one
+    priced "buy" row per position from the latest snapshot anchor for the
+    FIFO/cost-basis math ``consider`` needs, and fails closed when a position
+    carries no cost basis at all. A snapshot anchor legitimately declares
+    shares with no cost basis — a user re-syncing positions may not know it —
+    and a synthesized anchor row has no genuine execution date to begin with:
+    reading one as a matched trade would misrepresent a declared holding as
+    something the user did on a specific day. A caller that only needs to
+    know whether a real trade happened, never what the book would be worth,
+    uses this instead — it never raises, matching ``_ledger_trade_row``'s own
+    tolerance for a malformed event."""
+    rows = []
+    for event in events:
+        if event.get("type") != "trade":
+            continue
+        row = _ledger_trade_row(event)
+        if row is not None:
+            rows.append(row)
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
+def _rows_from_ledger(events):
+    """trade_recap.load()'s row shape, reconstructed from ledger events the
+    way ``ledger.derive_holdings`` trusts them: the latest complete snapshot
+    anchor (``ledger.latest_anchor``), synthesized as one buy per position
+    dated at the anchor's ``as_of``, then every trade strictly after that
+    date layered on top — an anchor is ``as_of``'s close-of-day state, so a
+    same-day trade is already reflected in its declared numbers, the same
+    cutoff ``derive_holdings`` applies. No anchor at all falls back to every
+    trade event, matching ``derive_holdings``' own backward-compatible
+    pure-replay path."""
+    anchor = ledger.latest_anchor(events)
+    anchor_date = None
+    rows = []
+    if anchor is not None:
+        anchor_date = dt.date.fromisoformat(str(anchor.get("as_of")))
+        # A ticker declared twice in one anchor is malformed input, not two
+        # positions; keep only the last declaration, the same overwrite
+        # ledger.derive_holdings' own `pos[t] = {...}` assignment produces,
+        # so a hand-edited or corrupted ledger cannot double-count a position
+        # here while derive_holdings reads it as one.
+        by_ticker = {}
+        for position in anchor.get("positions") or []:
+            if isinstance(position, dict) and isinstance(position.get("ticker"), str):
+                by_ticker[position["ticker"]] = position
+            else:
+                by_ticker[id(position)] = position   # malformed entry: let _anchor_position_row reject it
+        for position in by_ticker.values():
+            row = _anchor_position_row(position, anchor_date)
+            if row is not None:
+                rows.append(row)
+    for event in events:
+        if event.get("type") != "trade":
+            continue
+        row = _ledger_trade_row(event)
+        if row is None:
+            continue           # malformed event — ledger.derive_holdings tolerates the same rows
+        if anchor_date is not None and row["date"] <= anchor_date:
+            continue
+        rows.append(row)
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
+def _consider_rows(args, root):
+    """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
+    a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
+    #456 names this the ledger basis, distinct from a review's own CSV/FIFO
+    path — the two can disagree about a position's weight, and the record
+    says which one it used rather than implying a currency it does not have).
+    Fails closed when neither source yields a usable row: an empty book
+    cannot answer a pre-trade question, and inventing one would be worse than
+    refusing."""
+    if args.paths:
+        paths = [os.path.abspath(os.path.expanduser(p)) for p in args.paths]
+        for path in paths:
+            if not os.path.isfile(path):
+                raise ReviewError(f"CSV path does not exist: {path}")
+        rows = trade_recap.load(paths)
+        if not rows:
+            raise ReviewError(
+                "none of the supplied CSV paths contained a usable BUY/SELL trade row; "
+                "consider cannot answer against an empty book")
+        return rows, "transactions"
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    events, _skipped = ledger.load_ledger(ledger_path)
+    rows = _rows_from_ledger(events)
+    if not rows:
+        raise ReviewError(
+            f"no usable trade or snapshot history in {ledger_path}; run a review first, or pass "
+            "CSV paths directly, before asking consider about a hypothetical trade")
+    return rows, "ledger"
+
+
+def _load_json_arg(value, label):
+    """Accept ``value`` as either a path to a JSON file or an inline JSON
+    object — both are equally natural for an agent to produce. A value that
+    names a readable file is read from disk; anything else is parsed as
+    inline JSON directly."""
+    if not isinstance(value, str) or not value.strip():
+        raise ReviewError(f"{label} must not be empty")
+    candidate = os.path.abspath(os.path.expanduser(value))
+    if os.path.isfile(candidate):
+        try:
+            with open(candidate, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, ValueError) as exc:
+            raise ReviewError(f"cannot read {label} file {candidate}: {exc}") from exc
+    else:
+        try:
+            payload = json.loads(value)
+        except ValueError as exc:
+            raise ReviewError(
+                f"{label} is neither a readable file path nor valid inline JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReviewError(f"{label} must decode to a JSON object")
+    return payload
+
+
+def _validate_agent_case(payload):
+    """Fail-closed structural check for ``--agent-case``, hand-rolled to
+    mirror ``schemas/pre-trade-consultation.schema.json#/properties/agent_case``
+    — the same "no jsonschema dependency" posture consequence.py,
+    conditions.py, and price_feed.py already keep for their own envelopes.
+    Both ``for`` and ``against`` are required once ``agent_case`` is sent at
+    all: owner ruling 2026-07-27, the agent lists the case for and against
+    and does not take a position, so a one-sided submission is refused
+    rather than accepted."""
+    if not isinstance(payload, dict):
+        raise ReviewError("--agent-case must be a JSON object")
+    unknown = set(payload) - {"for", "against"}
+    if unknown:
+        raise ReviewError("--agent-case has unknown fields: " + ", ".join(sorted(unknown)))
+    for side in ("for", "against"):
+        if side not in payload:
+            raise ReviewError(f"--agent-case must carry both 'for' and 'against' (missing {side!r})")
+        claims = payload[side]
+        if not isinstance(claims, list):
+            raise ReviewError(f"--agent-case.{side} must be a list")
+        for index, claim in enumerate(claims):
+            if not isinstance(claim, dict) or set(claim) != {"claim", "provenance"}:
+                raise ReviewError(
+                    f"--agent-case.{side}[{index}] must be an object with exactly "
+                    "'claim' and 'provenance'")
+            if not isinstance(claim["claim"], str) or not claim["claim"].strip():
+                raise ReviewError(f"--agent-case.{side}[{index}].claim must be a non-empty string")
+            if claim["provenance"] not in AGENT_CASE_PROVENANCE:
+                raise ReviewError(
+                    f"--agent-case.{side}[{index}].provenance must be one of "
+                    + ", ".join(AGENT_CASE_PROVENANCE))
+
+
+def _json_safe_premise(normalized):
+    """consequence.validate_premise()'s normalized premise carries a real
+    ``datetime.date`` for ``date``; every other field is already JSON-safe.
+    Converted once, here, so the hash seed, the stored row, and the emitted
+    JSON all see the identical string form rather than three independent
+    ``str()`` calls that could drift apart."""
+    premise = dict(normalized)
+    premise["date"] = premise["date"].isoformat()
+    return premise
+
+
+def _consultation_id(premise, basis, created, consequence_frozen, rule_collisions):
+    """Engine-assigned, content-addressed identity — the same convention
+    session.py uses for ``snapshot_id``/``adjustment_id``/``reconciliation_id``.
+
+    Seeded on the frozen premise/basis/created *and* the computed
+    consequence/rule_collisions — not on premise/basis/created alone.
+    ``--cash``, ``--prices``, ``--driver-map``, ``--instrument-map``, and the
+    position cap override can each change the computed answer without
+    changing the premise text itself; naming each of those in the seed would
+    still leave the next such input open the same way (external review: a
+    same-day, same-premise call with a different ``--cash`` anchor produced
+    the *same* id for two materially different frozen answers, and
+    ``_fold_consultations``' latest-wins semantics silently treated the
+    second as superseding the first — a ``--resolve`` naming that id then
+    targets whichever one happened to be folded last). Seeding on the frozen
+    result instead closes the whole class at once: any input that changes
+    the answer necessarily changes what gets hashed, without this function
+    having to enumerate that input by name.
+
+    Two byte-identical inputs still produce a byte-identical seed and
+    therefore the same id — ``_append_consultation_row`` relies on this for
+    its no-op-repeat idempotency — and ``created`` stays in the seed so an
+    unchanged premise asked again on a different day mints a fresh
+    consultation rather than silently reusing yesterday's answer."""
+    seed = session.canonical({"premise": premise, "basis": basis, "created": created,
+                              "consequence": consequence_frozen, "rule_collisions": rule_collisions})
+    return "consult-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def _fold_consultations(rows):
+    """Latest row per ``consultation_id``. File order decides ties — the same
+    supersede-by-append convention ``conditions.fold_slots`` documents: a
+    resolution is a new row carrying the same id, never a rewrite of the old
+    one, and the last one written is the current fact."""
+    latest = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("consultation_id"):
+            latest[row["consultation_id"]] = row
+    return latest
+
+
+def _consultation_reconciliation(root, rows, date_end):
+    """Reconcile every unsettled ``consider`` consultation against the
+    transaction record, for ``_build_plan`` (#317; #429's rule one layer up —
+    a stored answer nothing reads is a defect, and until this, nothing
+    outside ``consider`` itself ever read ``pre_trade_consultations.jsonl``).
+
+    For each folded consultation still at ``decision: "open"`` (a resolved
+    one never reaches here — ``_fold_consultations`` already picked the
+    latest row per id), search ``rows`` — trade_recap-shaped dicts carrying
+    ``ticker``/``side``/``qty``/``price``/``date`` as a real ``datetime.date``,
+    the same shape ``_ledger_trade_events``, ``_rows_from_ledger``, and
+    ``trade_recap.load`` all produce — for a trade of the identical ticker and
+    side, dated on or after the consultation's own ``created`` day and on or
+    before ``date_end``. The earliest such trade, when more than one
+    qualifies, is what gets reported. The caller decides which loader feeds
+    ``rows``; this function only ever searches what it is given, and a
+    synthesized position row has no business here — see
+    ``_ledger_trade_events`` for why ``_build_plan`` uses that one.
+
+    This states a fact, never a cause. A ``matched`` result means a
+    qualifying trade exists in the record inside that window — it is not,
+    and must never be read as, evidence the user traded *because of* this
+    consultation. The same boundary schemas/condition-check.schema.json draws
+    around ``user_response`` (an engine-computed verdict is never substituted
+    for the user's own word) applies here: this function only ever reads
+    ``decision``, never writes it — that field moves through
+    ``consider --resolve`` alone.
+
+    Returns ``{"items": [...], "summary": {...}}``. ``items`` is capped at
+    ``CONSULTATION_RECONCILE_CAP``, oldest ``created`` first — the bounded-
+    plan-surface shape ``_condition_due`` uses, and for the same reason
+    (the comment on ``CONDITION_LOOKUP_CAP``): the plan is re-sent as agent
+    context on every later turn, so a user who never resolves old
+    consultations must not grow it without limit. ``summary`` states the
+    total still open, how many are shown, and how many were held back, so a
+    capped list can never be mistaken for the complete record.
+    """
+    consultations = _fold_consultations(thesis.read_jsonl(_consultation_path(root)))
+    open_rows = [row for row in consultations.values() if row.get("decision") == "open"]
+    open_rows.sort(key=lambda row: (str(row.get("created") or ""), str(row.get("consultation_id") or "")))
+
+    try:
+        end = dt.date.fromisoformat(str(date_end)) if date_end else None
+    except ValueError:
+        end = None
+
+    items = []
+    for row in open_rows:
+        premise = row.get("premise") or {}
+        ticker = premise.get("ticker")
+        side = premise.get("side")
+        created = row.get("created")
+        try:
+            created_date = dt.date.fromisoformat(str(created))
+        except ValueError:
+            created_date = None
+        match = None
+        if created_date is not None and end is not None and ticker and side:
+            candidates = sorted(
+                (r for r in rows if r.get("ticker") == ticker and r.get("side") == side
+                 and isinstance(r.get("date"), dt.date) and created_date <= r["date"] <= end),
+                key=lambda r: r["date"])
+            if candidates:
+                nearest = candidates[0]
+                match = {"date": nearest["date"].isoformat(), "qty": nearest["qty"]}
+        items.append({
+            "consultation_id": row.get("consultation_id"),
+            "created": created,
+            "premise": premise,
+            "status": "matched" if match else "unmatched",
+            "matched_trade": match,
+        })
+
+    total = len(items)
+    shown = items[:CONSULTATION_RECONCILE_CAP]
+    return {"items": shown,
+            "summary": {"open_total": total, "shown": len(shown),
+                        "beyond_cap": max(0, total - len(shown))}}
+
+
+def _append_consultation_row(root, row):
+    """Append-only writer for ``pre_trade_consultations.jsonl``.
+
+    Neither of this repo's existing append helpers fits. ``session.
+    _append_session_rows``' idempotency key is a session_id, and a
+    consultation has none — ``consider`` is explicitly session-less (see
+    ``cmd_consider``'s docstring). ``ledger.append_events`` stamps every row
+    with ``ledger.SCHEMA_V``, which names *ledger.jsonl's* own shape;
+    borrowing it would tie an unrelated file's rows to a version number that
+    can change for reasons that have nothing to do with this schema
+    (docs/development-guide.md section 7's "two readers, one fact", one layer
+    down — a stamp instead of a derivation, but the same silent-drift shape).
+
+    So this hand-rolls the one property both of those helpers guarantee and
+    this file still needs: build the complete line up front and issue exactly
+    one ``write()`` call, so a concurrent reader never observes a torn line —
+    the same trailing-newline guard ``_append_session_rows`` uses against a
+    prior crash leaving the file without one. Idempotency is content-based
+    rather than session-keyed: if the current latest row for this
+    ``consultation_id`` is already byte-identical to ``row``, appending is
+    skipped — a retried ``consider`` or ``--resolve`` call is a no-op, not a
+    duplicate line.
+    """
+    path = _consultation_path(root)
+    existing = thesis.read_jsonl(path)
+    current = _fold_consultations(existing).get(row.get("consultation_id"))
+    if current is not None and session.canonical(current) == session.canonical(row):
+        return {"path": path, "appended": 0, "status": "no-op"}
+    os.makedirs(root, exist_ok=True)
+    prefix = ""
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                prefix = "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(prefix + json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return {"path": path, "appended": 1, "status": "appended"}
+
+
+def _cmd_consider_resolve(root, consultation_id, decision, language):
+    """``--resolve``: append a new row recording what the user did, never
+    rewrite the old one (this repo decides supersession by chain, never by
+    mutating history — ``conditions.fold_slots``, conditions.py:401)."""
+    path = _consultation_path(root)
+    current = _fold_consultations(thesis.read_jsonl(path)).get(consultation_id)
+    if current is None:
+        raise ReviewError(
+            f"no consultation matching {consultation_id!r} in {path} — --resolve only applies "
+            "to a consultation_id `consider` itself returned")
+    updated = dict(current)
+    updated["decision"] = decision
+    updated["decided_on"] = dt.date.today().isoformat()
+    report = _append_consultation_row(root, updated)
+    _emit({"status": "resolved", "root": root, "language": language,
+           "consultation_id": consultation_id, "decision": decision,
+           "consultation": updated, "append": report})
+
+
+def cmd_consider(args):
+    """Layer 2 entry point (docs/decision-fomo-kernel-shape.md §3-4): the
+    deterministic consequence of one hypothetical trade against the book the
+    product already stores, asked away from any review — "I'm thinking of
+    buying NVDA, what does that do to my book?". Two independent modes on one
+    subcommand, matching the CLI whitelist's single ``consider`` entry
+    (AGENTS.md, SKILL.md, references/agent-boundaries.md):
+
+      --premise <path-or-inline-JSON>    compute and record a new consultation
+      --resolve <consultation_id> --decision {acted,declined,modified}
+                                          record what the user did with one
+
+    Read-only with respect to review state: unlike every other mutating
+    command in this file, ``consider`` never writes rules.jsonl, never calls
+    problems.check_rules, and never creates or touches a session. The one
+    thing it persists is its own append-only
+    ``<root>/pre_trade_consultations.jsonl``
+    (schemas/pre-trade-consultation.schema.json), registered in coach.py's
+    DATA_FILES so data-export and data-reset see it like every other stored
+    file (#452 is exactly the bug that shipped when a file skipped that step).
+
+    Every stored field is a frozen value, never a pointer into mutable state
+    (the frozen-subject design ratified in issue #446's specification
+    comment) — a later ``--resolve``, or next review, must see what the
+    engine actually said *at the time*, not what it would say recomputed
+    against a ledger that has since grown. ``basis`` freezes which book
+    answered (issue #456): the CSV/FIFO path a review uses, or a
+    reconstruction from the local ledger when no CSV is handed over — the two
+    can disagree about a position's weight, and how many days stale the
+    record was when asked.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    language = card_renderer.resolve_language(args.language)
+
+    if args.resolve:
+        conflicting = [name for name, value in (
+            ("--premise", args.premise), ("CSV paths", args.paths),
+            ("--prices", args.prices), ("--driver-map", args.driver_map),
+            ("--instrument-map", args.instrument_map), ("--cash", args.cash),
+            ("--agent-case", args.agent_case),
+        ) if value]
+        if conflicting:
+            raise ReviewError("--resolve takes no premise; remove " + ", ".join(conflicting))
+        if not args.decision:
+            raise ReviewError("--resolve requires --decision {acted,declined,modified}")
+        _cmd_consider_resolve(root, args.resolve, args.decision, language)
+        return
+    if args.decision:
+        raise ReviewError("--decision only applies together with --resolve")
+    if not args.premise:
+        raise ReviewError("consider requires --premise, or --resolve together with --decision")
+
+    premise_payload = _load_json_arg(args.premise, "--premise")
+    rows, basis_source = _consider_rows(args, root)
+
+    if args.driver_map:
+        trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
+    if args.instrument_map:
+        instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
+
+    last_px, fx = None, None
+    if args.prices:
+        try:
+            feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
+        except price_feed.PriceFeedError as exc:
+            raise ReviewError(f"price feed rejected: {exc}") from exc
+        last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
+        fx = price_feed.fx_rates(feed)
+
+    cash_anchor = None
+    if args.cash:
+        try:
+            cash_anchor = json.loads(args.cash)
+        except ValueError as exc:
+            raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
+
+    agent_case = None
+    if args.agent_case:
+        agent_case = _load_json(os.path.abspath(os.path.expanduser(args.agent_case)), "--agent-case")
+        _validate_agent_case(agent_case)
+
+    max_pos_override = _position_cap_override(root)
+
+    try:
+        result = consequence.consequence(rows, premise_payload, last_px=last_px,
+                                         max_pos_override=max_pos_override,
+                                         cash_anchor=cash_anchor, fx=fx)
+    except consequence.ConsequenceError as exc:
+        raise ReviewError(str(exc)) from exc
+
+    muted_ids = _muted_rule_ids(root)
+    rules_report = problems.load_rules_report(os.path.join(root, "rules.jsonl"), muted_ids)
+    collisions = consequence.rule_collision(rows, premise_payload, rules_report,
+                                            last_px=last_px, max_pos_override=max_pos_override,
+                                            cash_anchor=cash_anchor, fx=fx)
+
+    premise_stored = _json_safe_premise(result["premise"])
+    created = dt.date.today().isoformat()
+    as_of = rows[-1]["date"]
+    basis = {"source": basis_source, "as_of": as_of.isoformat(),
+             "stale_days": (dt.date.today() - as_of).days}
+    # Built once and reused for both the id seed and the stored field below —
+    # a second, separately-assembled copy is exactly the "two readers, one
+    # fact" shape this fix exists to close (docs/development-guide.md
+    # section 7): the id must hash what the row actually carries, not a
+    # parallel reconstruction of it that could drift.
+    consequence_stored = {"before": result["before"], "after": result["after"],
+                          "delta": result["delta"], "disclosures": result["disclosures"]}
+
+    row = {
+        "consultation_id": _consultation_id(premise_stored, basis, created,
+                                            consequence_stored, collisions),
+        "created": created,
+        "premise": premise_stored,
+        "basis": basis,
+        "consequence": consequence_stored,
+        "rule_collisions": collisions,
+        "decision": "open",
+        "decided_on": None,
+    }
+    if agent_case is not None:
+        row["agent_case"] = agent_case
+
+    report = _append_consultation_row(root, row)
+    _emit({"status": "considered", "root": root, "language": language,
+           "consultation": row, "append": report})
+
+
 def cmd_doctor(args):
     """Report optional runtime dependencies and what each unlocks (#322).
 
@@ -4395,6 +4982,35 @@ def build_parser():
     mute.add_argument("--unmute", action="store_true",
                       help="bring a muted rule back into the card's rotation")
     mute.set_defaults(func=cmd_mute_rule)
+    consider = sub.add_parser(
+        "consider",
+        help="deterministic consequence of one hypothetical trade against the current book "
+             "(Layer 2, docs/decision-fomo-kernel-shape.md §3-4)")
+    consider.add_argument("paths", nargs="*",
+                          help="normalized trade CSV files; omit to reconstruct the book from "
+                               "<root>/ledger.jsonl instead")
+    consider.add_argument("--root")
+    consider.add_argument("--premise",
+                          help="the hypothetical trade: a path to a JSON file, or an inline JSON "
+                               "object (schemas/trade-premise.schema.json)")
+    consider.add_argument("--resolve", metavar="CONSULTATION_ID",
+                          help="record what the user did with a prior consultation; takes no "
+                               "premise")
+    consider.add_argument("--decision", choices=CONSIDER_DECISIONS,
+                          help="required together with --resolve")
+    consider.add_argument("--prices",
+                          help="agent-supplied price envelope (references/price-feed.md)")
+    consider.add_argument("--driver-map")
+    consider.add_argument("--instrument-map")
+    consider.add_argument("--cash", help="TR_CASH-shaped JSON string: a single "
+                                        "{as_of,amount,currency} anchor, or a list of them")
+    consider.add_argument("--agent-case",
+                          help="optional path to a JSON file: the structured case for and "
+                               "against, {for: [...], against: [...]} "
+                               "(references/trade-consequence.md)")
+    consider.add_argument("--language", default="en",
+                          help="any language tag; unsupported tags fall back to en")
+    consider.set_defaults(func=cmd_consider)
     doctor = sub.add_parser(
         "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
     doctor.set_defaults(func=cmd_doctor)

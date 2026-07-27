@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/pre-trade-consultation.schema.json",
+  "title": "Fomo Kernel Pre-Trade Consultation",
+  "description": "One row per `review.py consider` call (docs/decision-fomo-kernel-shape.md Layer 2): a user mid-decision asks what a hypothetical trade does to their book, away from any review session. The readable contract; skills/fomo-kernel/engine/review.py's cmd_consider holds the enforcement, because the offline suite carries no jsonschema dependency. Stored in <root>/pre_trade_consultations.jsonl, append-only. Every field is a frozen value computed at the time of the ask, never a pointer into mutable state -- the ledger keeps growing after this row is written, and a later reconciliation must see what the engine actually said then, not what it would say now (the frozen-subject design ratified in issue #446's specification comment). A resolution (`--resolve`) appends a new row carrying the same consultation_id rather than rewriting this one; the fold picks whichever row for that id appears last in the file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["consultation_id", "created", "premise", "basis", "consequence", "rule_collisions", "decision", "decided_on"],
+  "properties": {
+    "consultation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Engine-assigned, content-addressed identity (consult-<hash of premise+basis+created>), the same convention session.py uses for snapshot_id/adjustment_id/reconciliation_id. Asking the identical premise again the same day against an unchanged book converges on the same id rather than minting a new one."
+    },
+    "created": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The date this consultation was asked (today, at CLI invocation time) -- distinct from premise.date, which is when the hypothetical trade itself would happen."
+    },
+    "premise": {
+      "$ref": "trade-premise.schema.json",
+      "description": "The normalized hypothetical trade consequence.validate_premise() returned: ticker, side, qty, price, date, currency. notional, when the caller supplied it, is already consumed into qty by validation time and never appears here."
+    },
+    "basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "as_of", "stale_days"],
+      "description": "What book this consultation was computed against (issue #456). A pre-trade question cannot demand a fresh CSV the way a review can, so the record must say its own footing rather than imply a currency it does not have.",
+      "properties": {
+        "source": {
+          "enum": ["ledger", "transactions"],
+          "description": "ledger: reconstructed from <root>/ledger.jsonl (the snapshot anchor plus trades after it). transactions: the caller supplied CSV paths directly, read through trade_recap.load()."
+        },
+        "as_of": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "The date of the record's own latest row -- the last trade or snapshot anchor the reconstructed book actually reflects."
+        },
+        "stale_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "created minus as_of, in days. Disclosed, never gated on -- issue #456 leaves the question of an interruption-worthy threshold explicitly unresolved; a large value means the answer is confidently computed on a record that may no longer match the real book, not that the answer was refused."
+        }
+      }
+    },
+    "consequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "delta", "disclosures"],
+      "description": "The frozen return of engine/consequence.py's consequence(). before/after/delta are not restated field-by-field here -- that shape belongs to consequence.py alone, the same posture session-bundle.schema.json takes toward engine_state/engine_card.",
+      "properties": {
+        "before": {
+          "type": "object",
+          "description": "portfolio_state() over the book alone. See consequence.py for the field contract."
+        },
+        "after": {
+          "type": "object",
+          "description": "portfolio_state() over the book plus the hypothetical trade. See consequence.py for the field contract."
+        },
+        "delta": {
+          "type": "object",
+          "description": "Signed after-minus-before changes for the readings that moved; a field absent here did not move. See consequence.py's _delta()."
+        },
+        "disclosures": {
+          "type": "array",
+          "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (CLAUDE.md, \"Honesty decisions belong in code\").",
+          "items": {
+            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx"]
+          }
+        }
+      }
+    },
+    "rule_collisions": {
+      "type": "array",
+      "description": "One row per currently-tracked rule, mirroring engine/consequence.py's rule_collision(). A muted rule is excluded, matching the rotation it opted out of.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "text", "metric_key", "problem_key", "state", "worsens"],
+        "properties": {
+          "rule_id": {"type": ["string", "null"]},
+          "text": {"type": ["string", "null"], "description": "The rule's own text, verbatim, as stored on rules.jsonl."},
+          "metric_key": {"type": ["string", "null"]},
+          "problem_key": {
+            "type": ["string", "null"],
+            "description": "null means this rule's metric_key has no mechanical mapping at all -- state is unmapped, never a silent pass."
+          },
+          "state": {
+            "enum": ["would_breach", "already_over", "clear", "unjudged", "unmapped"],
+            "description": "Mirrors consequence.COLLISION_STATES. would_breach: this trade is what freshly crosses the line. already_over: the book was already over the line and stays there, with or without this trade being the cause -- never read as this trade breaking the rule. unjudged: a metric this module cannot evaluate from one hypothetical trade (exit_severity, hold_severity). unmapped: problem_key is null."
+          },
+          "worsens": {
+            "type": ["boolean", "null"],
+            "description": "Set only when state is already_over: whether this trade moves the relevant reading in the bad direction. null everywhere else -- a boolean that means nothing outside one state is worse than an absent one."
+          }
+        }
+      }
+    },
+    "decision": {
+      "enum": ["open", "acted", "declined", "modified"],
+      "default": "open",
+      "description": "What the user did with this consultation. open until a --resolve call records one of the other three; never rewritten in place -- --resolve appends a new row with the same consultation_id."
+    },
+    "decided_on": {
+      "type": ["string", "null"],
+      "description": "The date --resolve recorded a decision (ISO date), or null while decision is open."
+    },
+    "agent_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for", "against"],
+      "description": "Optional structured case for and against the trade, supplied by the caller through --agent-case. Never required, and never free prose -- owner ruling 2026-07-27: the agent lists the case for and against and does not take a position, so a submission missing either side is refused rather than accepted one-sided.",
+      "properties": {
+        "for": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "against": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+      }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "provenance"],
+      "properties": {
+        "claim": {"type": "string", "minLength": 1, "description": "One sentence, the caller's own words."},
+        "provenance": {
+          "enum": ["engine_fact", "public_fact", "agent_judgment"],
+          "description": "docs/decision-fomo-kernel-shape.md Layer 3: mark each claim as your record says (engine_fact), public fact, or my judgment (agent_judgment) -- per-sentence provenance rather than a blanket disclaimer."
+        }
+      }
+    }
+  }
+}
