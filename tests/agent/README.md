@@ -16,7 +16,8 @@ Implementation authority is [docs/eval-design.md](../../docs/eval-design.md). Th
 - `../test_checkers_offline.py`: mutation probes that prove known-good artifacts pass and intentionally broken artifacts fail.
 - `../test_interaction_trajectory.py`: deterministic native-control, text-fallback, card-delivery, and weekly-memory presentation-trace probes.
 - `judge_narrative.py`: optional narrative-quality rubric.
-- `run_judge_eval.py`: mutation probes for the judge fixtures.
+- `run_judge_eval.py`: mutation probes for the judge fixtures. Each run appends one line to `judge/narrative-runs.jsonl` inside the protected state directory (`--state-root` conventions: `TRADE_COACH_HOME`, else `~/.trade-coach`), never into this repository. A single run only says whether the judge passed today; the record is what makes gradual blunting visible — a bad card drifting from 1 to 4 still reads as a pass on any one run. `--history` is the reader, and flags a fixture whose verdict changed since the previous recorded run.
+- `../test_judge_harness_offline.py`: the two files above have interlocks that are pure logic — the manifest gate, the refusal branch, and the request and schema shape. This probes them offline, so they are re-verified without an API key and run inside `tests/run_all.py`.
 - `fixtures/`: known-good and intentionally broken card examples.
 - `personas.md`: scripted users and differential pairs.
 - `cases/*.yaml`: input, persona, run mode, and assertion declarations.
@@ -31,6 +32,7 @@ python3 tests/agent/run_case.sh --check my_card.md ~/.trade-coach
 
 export ANTHROPIC_API_KEY=...
 python3 tests/agent/run_judge_eval.py
+python3 tests/agent/run_judge_eval.py --history   # recorded runs, no API call
 tests/agent/run_case.sh --headless tests/agent/cases/washer.yaml
 ```
 
