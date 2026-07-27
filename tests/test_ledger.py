@@ -61,21 +61,25 @@ def _tmpfile(text, suffix):
     return p
 
 
-def _snapshot_bundle(session_id, ticker, *, is_complete=True):
+def _snapshot_bundle(session_id, ticker, *, is_complete=True, as_of="2026-07-18",
+                      date_end=None, reconciliation=None):
     anchor = _snap(
-        "2026-07-18",
+        as_of,
         [{"ticker": ticker, "shares": 1, "avg_cost": 10,
           "market": "US", "currency": "USD"}],
         is_complete=is_complete,
     )
+    engine_state = {"date_end": date_end if date_end is not None else as_of,
+                    "snapshot_anchor": anchor, "metrics": {}, "problem_events": []}
+    if reconciliation is not None:
+        engine_state["snapshot_reconciliation"] = reconciliation
     return {
         "schema_version": 2,
         "session_id": session_id,
         "route": "snapshot_review",
         "language": "en",
         "review_plan": {},
-        "engine_state": {"date_end": "2026-07-18", "snapshot_anchor": anchor,
-                         "metrics": {}, "problem_events": []},
+        "engine_state": engine_state,
         "engine_card": {},
         "answers": {},
         "narrative": {},
@@ -927,6 +931,114 @@ def test_legacy_same_day_last_state_keeps_projection_order_behavior():
     last_state = session_engine.read_json(os.path.join(root, "last_state.json"))
     assert last_state["legacy_marker"] == second["session_id"], \
         "same-day states without snapshot sequences retain the historical last-write rule"
+
+
+# ─────────── B5. #472 follow-up: snapshot projection stamps recorded_at ───────────
+
+def test_snapshot_projection_stamps_review_periods_date_end_as_recorded_at():
+    """#472 shipped opt-in recorded_at on ledger.append_events, but its PR body
+    (and docs/prd-ledger.md) named one documented gap: _project_snapshot_anchor
+    (session.py) writes snapshot/reconciliation/adjustment events through two
+    append_events calls that passed nothing, so a positions-snapshot review
+    landed with no recorded_at at all while an _ingest_trades-written trade row
+    already got the review period's date_end. This closes that gap: the new
+    anchor event must carry engine_state.date_end verbatim -- injected from the
+    bundle the same way _ingest_trades and _build_exit_narratives already do,
+    never sampled from the wall clock.
+
+    Mutation target: drop the `recorded_at=` kwarg from either append_events
+    call inside _project_snapshot_anchor and this test must fail."""
+    root = tempfile.mkdtemp()
+    bundle = _snapshot_bundle("2026-07-18__recorded-at", "NVDA")
+    result, projection, projection_error = _finalize_snapshot(root, bundle)
+    assert result["status"] == "committed" and projection_error is None
+    rows = session_engine._read_jsonl(os.path.join(root, "ledger.jsonl"))
+    assert len(rows) == 1 and rows[0]["type"] == "snapshot"
+    assert rows[0]["recorded_at"] == "2026-07-18", \
+        "the snapshot anchor must be stamped with the review period's own " \
+        "date_end, not today's wall-clock date"
+
+
+def test_snapshot_reconciliation_and_adjustment_events_also_stamp_recorded_at():
+    """Both call sites inside _project_snapshot_anchor need the stamp, not just
+    the plain new-anchor path: the single-event `reconciled` branch and the
+    up-to-two-event `adjusted` branch (adjustment + newly-adopted anchor
+    appended together). Each of the three ever-appended event shapes must
+    carry the *committing session's own* date_end -- proven here by giving the
+    second and third sessions a different date_end than the first, so a stale
+    or copied value from an earlier session would fail this."""
+    root = tempfile.mkdtemp()
+    first = _snapshot_bundle("2026-07-18__base", "NVDA", as_of="2026-07-18")
+    r1 = _finalize_snapshot(root, first)
+    assert r1[2] is None, r1[2]
+
+    reconciled = _snapshot_bundle(
+        "2026-07-20__reconciled", "NVDA", as_of="2026-07-20", date_end="2026-07-20",
+        reconciliation={"status": "reconciled", "as_of": "2026-07-20",
+                        "against": {"as_of": "2026-07-18"}})
+    r2 = _finalize_snapshot(root, reconciled)
+    assert r2[2] is None, r2[2]
+    rows_after_reconcile = session_engine._read_jsonl(os.path.join(root, "ledger.jsonl"))
+    reconciliation_rows = [r for r in rows_after_reconcile if r["type"] == "reconciliation"]
+    assert len(reconciliation_rows) == 1
+    assert reconciliation_rows[0]["recorded_at"] == "2026-07-20", \
+        "the reconciliation mark must carry the reconciling session's own date_end"
+
+    adjusted = _snapshot_bundle(
+        "2026-07-25__adjusted", "PLTR", as_of="2026-07-25", date_end="2026-07-25",
+        reconciliation={"status": "adjusted", "as_of": "2026-07-25",
+                        "against": {"as_of": "2026-07-18"},
+                        "diff": {"positions": [], "cash": []}})
+    r3 = _finalize_snapshot(root, adjusted)
+    assert r3[2] is None, r3[2]
+    rows_final = session_engine._read_jsonl(os.path.join(root, "ledger.jsonl"))
+    adjustment_rows = [r for r in rows_final if r["type"] == "adjustment"]
+    new_anchor_rows = [r for r in rows_final if r["type"] == "snapshot" and r.get("as_of") == "2026-07-25"]
+    assert len(adjustment_rows) == 1 and len(new_anchor_rows) == 1
+    assert adjustment_rows[0]["recorded_at"] == "2026-07-25"
+    assert new_anchor_rows[0]["recorded_at"] == "2026-07-25", \
+        "the adjustment and its newly-adopted anchor are appended together " \
+        "in one append_events call and must both carry this session's date_end"
+
+
+def test_snapshot_projection_replay_does_not_duplicate_a_pre_fix_legacy_row():
+    """Highest-risk check for this change: recorded_at must never enter the
+    content-addressed identity a snapshot event is deduplicated by, or a row
+    written before this fix (no recorded_at at all) would stop matching its
+    own replay and repair-projections would append a duplicate -- or worse,
+    silently backfill a guessed date onto history. Confirmed safe by reading
+    the source: snapshot_id/reconciliation_id/adjustment_id all hash an
+    "identity" dict built (and hashed) before recorded_at is ever added to the
+    event, and _snapshot_payload's field whitelist (type/as_of/source/
+    positions/cash/is_complete) excludes it too, so the anchor_exists fallback
+    comparison used on replay is blind to it as well. This test forces exactly
+    that fallback path by stripping the row's snapshot_id along with
+    recorded_at, simulating the oldest possible on-disk shape."""
+    root = tempfile.mkdtemp()
+    bundle = _snapshot_bundle("2026-07-18__legacy-replay", "NVDA")
+    _finalize_snapshot(root, bundle)
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    rows = session_engine._read_jsonl(ledger_path)
+    assert len(rows) == 1 and rows[0]["recorded_at"] == "2026-07-18"
+
+    # Simulate a row genuinely written before this fix: no recorded_at, and --
+    # to force the payload-comparison fallback rather than the snapshot_id
+    # shortcut -- no snapshot_id either.
+    legacy_row = dict(rows[0])
+    del legacy_row["recorded_at"]
+    del legacy_row["snapshot_id"]
+    with open(ledger_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(legacy_row) + "\n")
+
+    repaired = session_engine.repair_projections(root)
+    assert repaired["errors"] == []
+    repaired_rows = session_engine._read_jsonl(ledger_path)
+    assert len(repaired_rows) == 1, \
+        "a legacy row missing recorded_at (and snapshot_id) must still be " \
+        "recognized as the same accounting fact on replay -- never duplicated"
+    assert repaired_rows[0].get("recorded_at") is None, \
+        "replay must not retroactively backfill a guessed recorded_at onto " \
+        "a row that predates the field; absence must stay absence"
 
 
 # ─────────────────────────── runner ───────────────────────────
