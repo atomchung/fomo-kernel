@@ -970,6 +970,12 @@ def test_the_bank_is_read_from_declared_ids_not_filenames():
         spec = importlib.util.spec_from_file_location("ux_receipt_isolated", copy)
         isolated = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(isolated)
+        # A file this loop cannot read must never stop the gate from running.
+        # The first fix caught `json.JSONDecodeError`, which a non-UTF-8 file
+        # does not raise — `read_text` raises `UnicodeDecodeError` instead, and
+        # the tool crashed rather than failing the claim closed (review round 2).
+        (fake / "evals" / "episodes" / "EP-125-bad-encoding.json").write_bytes(
+            b"\xff\xfe\x00")
         assert isolated._episode_bank() == {"EP-124"}
         try:
             isolated._findings(["episode:EP-123"], False)

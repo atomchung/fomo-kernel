@@ -309,7 +309,13 @@ def _episode_bank() -> "set[str] | None":
     for path in sorted(bank.glob("EP-*.json")):
         try:
             declared = json.loads(path.read_text(encoding="utf-8")).get("id")
-        except (json.JSONDecodeError, OSError, AttributeError):
+        except (OSError, ValueError, AttributeError):
+            # ValueError rather than json.JSONDecodeError: `read_text` raises
+            # UnicodeDecodeError on a non-UTF-8 file, which is a ValueError but
+            # not a JSONDecodeError, so the narrower list let it escape and
+            # crashed the tool instead of failing the claim closed (external
+            # review round 2). A file this loop cannot read backs no claim; it
+            # must never be able to stop the gate from running.
             continue
         if isinstance(declared, str) and declared:
             ids.add(declared)
