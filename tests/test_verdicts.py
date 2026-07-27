@@ -21,11 +21,21 @@ What this file settles:
   E. Wiring: a finalized review appends verdict rows for a long-held position;
      a retry is idempotent; a third consecutive period appends a second row on
      the same (never-revised) subject; nothing reaches rules.jsonl or the
-     mechanical rule reconciliation.
+     mechanical rule reconciliation. A distinct --session-nonce reviewing
+     identical state and date must not duplicate a verdict (BLOCK 2).
   F. The firewall is physical: verdicts.py never imports problems.
   G. Replay survives supersession -- the two required tests: a verdict
      replays identically after the profile label it references is superseded,
      and after the thesis row its subject points at is superseded.
+  H. Frozen replay corpus (external review, #446 BLOCK 1): literal
+     (subject_value, observed_value, observed_closed) -> outcome rows at
+     every version-1 threshold boundary, independent of RULE_PARAMS -- what a
+     digest edit alone cannot silence.
+  I. verdict_identity() / dedupe_against_other_sessions() (external review,
+     #446 BLOCK 2): a verdict's own (subject, rule, period) identity, checked
+     across sessions before a row ever reaches _append_session_rows' own
+     session-scoped idempotency, and the deliberate fail-closed choice for a
+     same-identity outcome conflict.
 
 The weekly-cadence wiring tests in section E reuse test_review_v2's CLI
 harness (subprocess review.py prepare/finalize), where that machinery already
@@ -74,14 +84,32 @@ def _build(marker=None, **overrides):
 
 # ─────────────────────── A. rule-version discipline ───────────────────────
 
-def test_rule_params_digest_matches_its_pinned_hash():
+def test_rule_param_digest_matches_its_pinned_hash_per_rule_version():
     """The mechanical block: editing a threshold inside an existing
-    RULE_PARAMS version without regenerating and updating the pinned literal
-    turns this red. See verdicts.py's module docstring, 'Rule-version
-    discipline'. RULE_PARAM_DIGEST is a frozen literal, not a live
-    recomputation -- a live one would always agree with itself and make this
-    assertion vacuous."""
-    assert verdicts._params_digest(verdicts.RULE_PARAMS) == verdicts.RULE_PARAM_DIGEST
+    RULE_PARAMS version without regenerating and updating that version's
+    pinned literal turns this red. See verdicts.py's module docstring,
+    'Rule-version discipline'. RULE_PARAM_DIGEST holds one frozen literal per
+    (rule_id, version) -- never one combined hash over the whole table
+    (external review, #446 BLOCK 1), so this asserts each entry separately:
+    a failure names the exact rule and version whose parameters moved,
+    rather than just 'something in RULE_PARAMS changed'. Each literal is
+    frozen, not a live recomputation -- a live one would always agree with
+    itself and make this assertion vacuous."""
+    for (rule_id, version), pinned in verdicts.RULE_PARAM_DIGEST.items():
+        live = verdicts.RULE_PARAMS[rule_id][version]
+        assert verdicts._params_digest(live) == pinned, (rule_id, version)
+
+
+def test_rule_param_digest_entries_match_rule_params_exactly():
+    """The inverse direction: every (rule_id, version) RULE_PARAMS carries
+    needs exactly one pinned digest entry -- a new version landing with no
+    matching digest would otherwise ship undigested, and a stale digest entry
+    for a version RULE_PARAMS no longer carries would never be checked
+    against anything."""
+    live_keys = {(rule_id, version) for rule_id, versions in verdicts.RULE_PARAMS.items()
+                for version in versions}
+    assert live_keys == set(verdicts.RULE_PARAM_DIGEST), \
+        "RULE_PARAM_DIGEST must name exactly the (rule_id, version) pairs RULE_PARAMS carries"
 
 
 def test_current_horizon_rule_version_matches_horizon_pys_live_thresholds():
@@ -390,6 +418,58 @@ def test_a_repeated_finalize_appends_one_verdict_row_and_a_changed_one_fails_clo
         assert len(_verdict_rows(root)) == 1, "an identical retry must not append a second row"
 
 
+def _week_nonce(tmp, root, date_end, tag, nonce):
+    """Like _week, but forces a genuinely distinct session over IDENTICAL
+    state and date via --session-nonce (references/data-contract.md) -- the
+    exact case BLOCK 2's fix targets. Reimplements _prepare_dated's few lines
+    locally because that helper takes no nonce argument and adding one is out
+    of this fix's scope (tests/test_review_v2.py is not touched)."""
+    card_path, state_path = v2._artifacts(tmp)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["date_end"] = date_end
+    dated = pathlib.Path(tmp) / f"state_{tag}.json"
+    dated.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    csv_path = v2._trade_csv(tmp)
+    run = v2._run("prepare", csv_path, "--root", root, "--language", "en",
+                 "--card-json", card_path, "--state-json", dated,
+                 "--session-nonce", nonce)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = v2._pending_plan(root, run.stdout)
+    answers = v2._answers(plan, commitment="skip")
+    if not plan["missing_thesis_positions"]:
+        answers["thesis_updates"] = []
+    result = v2._finalize(tmp, root, plan, answers, tag)
+    assert result["projection_error"] is None, result
+    return plan, result
+
+
+def test_a_distinct_session_nonce_over_identical_state_and_date_does_not_duplicate_a_verdict():
+    """BLOCK 2 (external review, #446): --session-nonce exists deliberately
+    so a user can review identical state as a genuinely distinct session
+    (references/data-contract.md) -- two prepare/finalize cycles over the
+    SAME date_end and SAME underlying state, differing only by nonce, are two
+    real sessions with two different session_ids. Before this fix,
+    _append_session_rows' idempotency (keyed on session_id alone) could not
+    see that the second session's row was the same fact as the first's, and
+    appended a duplicate. Both sessions independently compute the identical
+    PLTR/quarters/held_too_long judgment at week 2 (222 days) -- only ONE
+    verdict row must survive, carrying whichever session finalized first."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        _week(tmp, root, "2026-07-14", "w1")
+        plan_a, _ = _week_nonce(tmp, root, "2026-08-11", "w2-alpha", "alpha")
+        plan_b, _ = _week_nonce(tmp, root, "2026-08-11", "w2-beta", "beta")
+        assert plan_a["session_id"] != plan_b["session_id"], \
+            "the fixture must actually exercise two distinct sessions"
+
+        rows = _verdict_rows(root)
+        assert len(rows) == 1, \
+            f"a distinct --session-nonce must not duplicate a verdict for the same triple: {rows}"
+        assert rows[0]["date_end"] == "2026-08-11"
+        assert rows[0]["outcome"] == "held_too_long"
+        assert rows[0]["session_id"] == plan_a["session_id"], \
+            "the first session to finalize keeps the row; the second's identical row is deduped"
+
+
 # ─────────────────────── F. the firewall is physical ───────────────────────
 
 def test_verdicts_module_never_imports_problems():
@@ -487,6 +567,173 @@ def test_a_verdict_replays_identically_after_the_thesis_row_its_subject_points_a
     assert replayed == verdict["outcome"] == "exit_too_fast", \
         "replay must use the verdict's own frozen subject.value ('years'), never the row's " \
         "current ('weeks') fold -- which would silently return None instead"
+
+
+# ──────── H. frozen replay corpus (external review, #446 BLOCK 1) ────────
+
+# Literal (subject_value, observed_value, observed_closed) -> expected_outcome
+# rows for horizon_contradiction rule version 1, covering the decision
+# boundary of every threshold (exactly at the threshold, one day either side)
+# plus the two horizon/exited combinations that have no threshold at all.
+# These expected outcomes are HAND-COMPUTED against version 1's published
+# thresholds (EXIT_FAST = {"years": 90, "quarters": 21}, HELD_LONG =
+# {"weeks": 60, "quarters": 180}) and pinned as literals -- deliberately
+# NEVER derived from verdicts.RULE_PARAMS or horizon.py's live constants, and
+# never regenerated by running replay() and recording what it returns. That
+# independence is the whole point: RULE_PARAM_DIGEST can be kept "in
+# agreement" by updating it in the same edit that moves a threshold, which
+# makes a red digest test green again while silently rewriting what version 1
+# means for every already-stored verdict. This corpus cannot be silenced that
+# way -- moving a threshold changes what replay() returns for these exact
+# inputs, and the only way to turn this test green again is to publish a new
+# rule version and leave version 1's numbers untouched, which is the
+# behaviour the replay contract exists to force. See verdicts.py's module
+# docstring, "Rule-version discipline", for the full argument.
+HORIZON_CONTRADICTION_V1_CORPUS = [
+    # -- exit_fast["years"] = 90: exited, holding_days < 90 -> exit_too_fast
+    ("years", 89, True, "exit_too_fast"),
+    ("years", 90, True, None),
+    ("years", 91, True, None),
+    # -- exit_fast["quarters"] = 21
+    ("quarters", 20, True, "exit_too_fast"),
+    ("quarters", 21, True, None),
+    ("quarters", 22, True, None),
+    # -- "weeks" has no exit_fast entry: a quick exit is never a verdict
+    ("weeks", 0, True, None),
+    # -- held_long["weeks"] = 60: not exited, holding_days > 60 -> held_too_long
+    ("weeks", 59, False, None),
+    ("weeks", 60, False, None),
+    ("weeks", 61, False, "held_too_long"),
+    # -- held_long["quarters"] = 180
+    ("quarters", 179, False, None),
+    ("quarters", 180, False, None),
+    ("quarters", 181, False, "held_too_long"),
+    # -- "years" has no held_long entry: a long hold is never a verdict
+    ("years", 100000, False, None),
+]
+
+
+def test_horizon_contradiction_v1_frozen_corpus_pins_every_threshold_boundary():
+    """The mechanism the digest test alone cannot provide (external review,
+    #446 BLOCK 1): a parameter change to a PUBLISHED version, even paired
+    with an updated RULE_PARAM_DIGEST entry in the same commit -- the
+    natural, obvious way to make a red digest test green again -- turns this
+    corpus red where the digest test goes green. Matching mutation: change
+    RULE_PARAMS["horizon_contradiction"][1]["exit_fast"]["years"] from 90 to
+    80 and update that entry's RULE_PARAM_DIGEST to match --
+    test_rule_param_digest_matches_its_pinned_hash_per_rule_version passes
+    again, but replay("horizon_contradiction", 1, "years", 89, True) now
+    returns None where this corpus pins "exit_too_fast" (89 is no longer
+    below the moved threshold of 80). Only this test catches that."""
+    for subject_value, observed_value, observed_closed, expected in HORIZON_CONTRADICTION_V1_CORPUS:
+        got = verdicts.replay("horizon_contradiction", 1, subject_value, observed_value, observed_closed)
+        assert got == expected, (subject_value, observed_value, observed_closed, got, expected)
+
+
+# ──────── I. verdict-identity dedup (external review, #446 BLOCK 2) ────────
+
+def _row(**overrides):
+    """A minimal, schema-shaped verdict row for identity/dedup tests."""
+    base = {
+        "rule": {"id": "horizon_contradiction", "version": 1},
+        "subject": {"store": "theses", "row_id": "thesis-update-abc",
+                   "field": "horizon", "value": "quarters"},
+        "observed": {"metric": "holding_days", "value": 222,
+                    "window": {"from": "2026-01-01", "to": "2026-08-11"}, "closed": False},
+        "outcome": "held_too_long",
+        "verdict_source": "engine",
+        "date_end": "2026-08-11",
+        "session_id": "2026-08-11__alpha",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_verdict_identity_ignores_session_id_observed_and_verdict_source():
+    """Identity is (rule.id, rule.version, subject.store, subject.row_id,
+    subject.field, date_end) only -- two rows differing solely in
+    session_id, observed, or verdict_source are the SAME identity, because
+    session_id is exactly the field two distinct --session-nonce sessions
+    reviewing identical state legitimately differ on, and the rest do not
+    name what the verdict is ABOUT."""
+    a = _row(session_id="2026-08-11__alpha")
+    b = _row(session_id="2026-08-11__beta", verdict_source="user",
+            observed={"metric": "holding_days", "value": 999,
+                     "window": {"from": "x", "to": "y"}, "closed": True})
+    assert verdicts.verdict_identity(a) == verdicts.verdict_identity(b)
+
+
+def test_verdict_identity_distinguishes_rule_subject_and_period():
+    base = _row()
+    variants = [
+        _row(rule={"id": "horizon_contradiction", "version": 2}),
+        _row(subject={"store": "theses", "row_id": "thesis-update-DIFFERENT",
+                     "field": "horizon", "value": "quarters"}),
+        _row(subject={"store": "theses", "row_id": "thesis-update-abc",
+                     "field": "OTHER_FIELD", "value": "quarters"}),
+        _row(date_end="2026-09-08"),
+    ]
+    identities = {verdicts.verdict_identity(base)} | {verdicts.verdict_identity(v) for v in variants}
+    assert len(identities) == 1 + len(variants), "each variant must be its own distinct identity"
+
+
+def test_dedupe_drops_a_same_identity_row_from_a_different_session():
+    """The direct fix for BLOCK 2: session beta's row is dropped because
+    session alpha already recorded the identical (subject, rule, period)
+    triple -- the scenario a distinct --session-nonce produces over
+    identical state and date."""
+    existing = [_row(session_id="2026-08-11__alpha")]
+    new = [_row(session_id="2026-08-11__beta")]
+    kept = verdicts.dedupe_against_other_sessions(existing, new, "2026-08-11__beta")
+    assert kept == []
+
+
+def test_dedupe_leaves_same_session_rows_alone():
+    """A retry of THIS session must not be filtered here -- that is
+    _append_session_rows's own idempotent-retry contract to enforce. If this
+    function silently dropped it instead, a genuinely changed retry under the
+    same session_id would never reach the helper that is supposed to fail it
+    closed."""
+    existing = [_row(session_id="2026-08-11__alpha")]
+    new = [_row(session_id="2026-08-11__alpha")]
+    kept = verdicts.dedupe_against_other_sessions(existing, new, "2026-08-11__alpha")
+    assert kept == new, "same-session rows must pass through untouched"
+
+
+def test_dedupe_keeps_rows_with_a_genuinely_different_identity():
+    existing = [_row(session_id="2026-08-11__alpha")]
+    new = [_row(session_id="2026-09-08__gamma", date_end="2026-09-08",
+               observed={"metric": "holding_days", "value": 250,
+                        "window": {"from": "2026-01-01", "to": "2026-09-08"}, "closed": False})]
+    kept = verdicts.dedupe_against_other_sessions(existing, new, "2026-09-08__gamma")
+    assert kept == new, "a different period is a different triple, never deduped against an earlier one"
+
+
+def test_dedupe_fails_closed_on_a_conflicting_outcome_for_the_same_identity():
+    """Deliberate choice, not an incidental default: silently keeping the
+    first row or appending both were both defensible, but a same-identity
+    outcome disagreement means the engine computed two different
+    said-vs-done answers from what should be pure date/state arithmetic --
+    an upstream inconsistency a silent pick would hide. Fail closed instead,
+    mirroring this codebase's existing convention for every other durable
+    store's same-identity conflict."""
+    existing = [_row(session_id="2026-08-11__alpha", outcome="held_too_long")]
+    new = [_row(session_id="2026-08-11__beta", outcome="exit_too_fast")]
+    try:
+        verdicts.dedupe_against_other_sessions(existing, new, "2026-08-11__beta")
+        assert False, "a conflicting outcome under the same identity must raise, not silently resolve"
+    except verdicts.VerdictError as exc:
+        assert "held_too_long" in str(exc) and "exit_too_fast" in str(exc)
+
+
+def test_dedupe_collapses_a_same_identity_pair_within_one_new_batch_too():
+    """Two rows in the SAME new_rows batch sharing an identity (should not
+    happen from a single session's own _horizon_verdict_rows, which builds at
+    most one row per triggering marker, but the function must not misbehave
+    if it ever did) collapse the same way a cross-session duplicate does."""
+    same = _row(session_id="2026-08-11__alpha")
+    kept = verdicts.dedupe_against_other_sessions([], [same, dict(same)], "2026-08-11__alpha")
+    assert len(kept) == 1
 
 
 def _tests():

@@ -39,29 +39,68 @@ parameter change with no version bump. ``RULE_PARAMS`` holds every rule's
 versioned parameter block, frozen by hand -- never read live from
 ``horizon.py`` -- so a later edit to ``horizon.py``'s own thresholds cannot
 silently rewrite what an existing version means. ``RULE_PARAM_DIGEST`` pins
-its hash as a literal (not recomputed at import time, which would make the
-check vacuous); ``tests/test_verdicts.py`` asserts the two agree, so editing a
-threshold inside an existing version without adding a new one and updating the
-digest turns the suite red. A companion test cross-checks ``RULE_PARAMS``'s
-live version against ``horizon.EXIT_FAST`` / ``horizon.HELD_LONG`` so the two
-modules cannot drift apart unnoticed in the other direction either -- someone
-editing ``horizon.py`` directly, without ever touching this file.
+one hash per ``(rule_id, version)`` as a literal (not recomputed at import
+time, which would make the check vacuous, and not one combined hash over the
+whole table, so a failing assertion names the exact version that moved
+instead of just "something changed"); ``tests/test_verdicts.py`` asserts
+every entry agrees with its own pinned hash, and that the entry set matches
+``RULE_PARAMS`` exactly in both directions, so editing a threshold inside an
+existing version without adding a new one and updating its digest turns the
+suite red. A companion test cross-checks ``RULE_PARAMS``'s live version
+against ``horizon.EXIT_FAST`` / ``horizon.HELD_LONG`` so the two modules
+cannot drift apart unnoticed in the other direction either -- someone editing
+``horizon.py`` directly, without ever touching this file.
+
+The digest is necessary but not sufficient, and is deliberately the WEAKER of
+two guards (external review, #446 BLOCK 1): it only proves ``RULE_PARAMS``
+and this literal agree *today*. Changing a published version's threshold and
+updating its digest entry in the same edit -- the natural, obvious way to
+make a red digest test green again -- passes the digest test while silently
+rewriting what every already-stored verdict under that version replays to.
+What a digest edit cannot silence is ``tests/test_verdicts.py``'s frozen
+replay corpus: literal ``(subject_value, observed_value, observed_closed) ->
+outcome`` rows at and one either side of every version-1 threshold, asserted
+directly against ``replay()`` and never derived from ``RULE_PARAMS`` or
+``horizon.py``. Moving a threshold turns the corpus red regardless of what
+the digest says; the only way to make it green again is to publish a new
+version and leave the old one's numbers alone, which is the behaviour this
+module exists to force. A reader who trusts the digest alone and has not
+read this paragraph will "fix" the wrong thing first: update the digest,
+watch it go green, ship the regression.
 
 **No ``input`` sub-object**, for the reason ``condition-check.schema.json``
 already gives about ``user_response``: every field here is engine-assigned. An
 agent that could write its own verdict could record an adjudication nobody
 made, undetectably after the fact.
 
-**Dedup**: one row per (subject.row_id, rule.id, date_end) within a session,
-and across an idempotent retry of that same session -- enforced by
-``session._append_session_rows``, the same mechanism ``conditions.jsonl`` and
-every other durable store in this codebase already relies on. It does not
-additionally dedupe two genuinely different sessions that happen to target the
-same calendar week; no sibling store (``conditions.jsonl``,
-``condition_checks.jsonl``, ``theses.jsonl``) does either. A position that
-stays over its horizon line re-triggers every period it is reviewed; that
-recurrence is not noise, it is the material the profile layer (#446 cut 2)
-consumes.
+**Dedup**: one row per (subject.row_id, rule.id, rule.version, date_end) --
+globally, not just within one session (external review, #446 BLOCK 2:
+the original cut 1 shape got this wrong). ``session._append_session_rows``
+still does the write, and still owns the *same-session* idempotent-retry /
+fail-closed-on-conflict contract every other durable store in this codebase
+already relies on -- but its dedup key is ``session_id`` alone, and
+``--session-nonce`` exists precisely so a user can review identical state as
+a genuinely distinct session (``references/data-contract.md``). That is
+correct nonce behaviour, not a bug to route around, so a verdict's OWN
+identity has to be checked before a row ever reaches that helper:
+``verdict_identity()`` names the (subject, rule, period) tuple, and
+``dedupe_against_other_sessions()`` drops a new row whose identity already
+exists under a *different* session_id. Same-session rows are left alone, so
+``_append_session_rows``'s own retry contract for the current session is
+untouched -- this only closes the gap that helper cannot see. Two rows
+sharing an identity but disagreeing on ``outcome`` fail closed
+(``VerdictError``): every ingredient behind a verdict's outcome
+(holding_days, exited) is pure date/state arithmetic with no session-specific
+input, so two honest sessions judging the same subject and period can never
+legitimately disagree -- a mismatch means something upstream is already
+inconsistent, and silently keeping one side would hide that rather than
+surface it.
+
+A position that stays over its horizon line still re-triggers every period
+it is reviewed: recurrence across DIFFERENT ``date_end`` values is not
+noise, it is the material the profile layer (#446 cut 2) consumes. Only the
+same (subject, rule, period) triple collapses; a later period is always a
+new triple, never deduped against an earlier one.
 """
 import datetime as dt
 import hashlib
@@ -101,10 +140,18 @@ def _params_digest(params):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-# Pinned literal -- recompute with _params_digest(RULE_PARAMS) and update this
-# by hand, in the same commit as the version bump that motivated the change.
-# See the module docstring's "Rule-version discipline" section.
-RULE_PARAM_DIGEST = "337f9bb569410fc69efc3a81f4ca2cd55692e8e5e7a21a607b7671a161bfb64b"
+# Pinned literals, one per (rule_id, version) -- never one combined hash over
+# the whole RULE_PARAMS tree (external review, #446 BLOCK 1: a single hash
+# only tells a reader "something in RULE_PARAMS changed"; per-entry digests
+# make a failing assertion name the exact rule and version that moved).
+# Recompute one entry with _params_digest(RULE_PARAMS[rule_id][version]) and
+# update only that entry, by hand, in the same commit as the version bump
+# that motivated the change. See the module docstring's "Rule-version
+# discipline" section -- including why this digest is the WEAKER of the two
+# guards there, and must never be trusted alone.
+RULE_PARAM_DIGEST = {
+    ("horizon_contradiction", 1): "1a5b8b4d503eda4a94724dfe35d360d34441085b3dd735be22684beaa7df07e9",
+}
 
 
 class VerdictError(ValueError):
@@ -202,3 +249,65 @@ def build_horizon_verdict(marker, *, row_id, session_id, date_end, window_to):
         "date_end": date_end,
         "session_id": session_id,
     }
+
+
+def verdict_identity(row):
+    """The (subject, rule, period) tuple that names which fact a verdict row
+    is a judgment about -- deliberately excluding session_id. Two rows
+    sharing this tuple are the SAME verdict even when built by two different
+    sessions: ``--session-nonce`` legitimately produces a distinct session_id
+    for identical underlying state (``references/data-contract.md``), and
+    every ingredient behind a verdict's outcome is pure date/state
+    arithmetic, so two honest sessions judging the same subject and period
+    always compute the same row. See the module docstring's "Dedup"
+    section."""
+    rule = row.get("rule") or {}
+    subject = row.get("subject") or {}
+    return (rule.get("id"), rule.get("version"), subject.get("store"),
+            subject.get("row_id"), subject.get("field"), row.get("date_end"))
+
+
+def dedupe_against_other_sessions(existing_rows, new_rows, session_id):
+    """Filter ``new_rows`` (this session's freshly built verdicts) against
+    ``existing_rows`` (every verdicts.jsonl row already on disk, from any
+    session) on ``verdict_identity``, dropping a new row whose identity
+    already exists under a DIFFERENT session_id.
+
+    This runs BEFORE ``session._append_session_rows`` ever sees the rows.
+    That helper's own dedup is keyed on session_id alone, which is exactly
+    wrong for a verdict's identity (external review, #446 BLOCK 2): a
+    distinct ``--session-nonce`` reviewing identical state and date builds a
+    verdict identical in everything but session_id, and the session-scoped
+    helper has no way to recognize the two as the same fact. Existing rows
+    from THIS session are deliberately left untouched here -- they are
+    ``_append_session_rows``'s own idempotent-retry / fail-closed-on-conflict
+    contract to enforce, and this function must not duplicate or shadow it.
+
+    A new row whose identity already exists with a DIFFERENT outcome raises
+    ``VerdictError`` instead of silently keeping the first or appending both.
+    Deliberate choice, not an incidental default: an outcome disagreement
+    under one identity means the engine computed two different answers to
+    the same said-vs-done question, which cannot happen from honest inputs
+    (holding_days and exited are pure functions of state and date_end, never
+    of session_id) -- so it signals an inconsistency upstream that a silent
+    pick would hide rather than surface, matching this codebase's existing
+    fail-closed-on-conflict convention for every other durable store.
+    """
+    known = {}
+    for row in existing_rows:
+        if row.get("session_id") != session_id:
+            known.setdefault(verdict_identity(row), row)
+    kept = []
+    for row in new_rows:
+        identity = verdict_identity(row)
+        prior = known.get(identity)
+        if prior is not None:
+            if prior.get("outcome") != row.get("outcome"):
+                raise VerdictError(
+                    f"conflicting verdict outcome for {identity}: "
+                    f"{prior.get('outcome')!r} (session {prior.get('session_id')!r}) "
+                    f"vs {row.get('outcome')!r} (session {row.get('session_id')!r})")
+            continue
+        known[identity] = row
+        kept.append(row)
+    return kept

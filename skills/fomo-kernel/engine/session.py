@@ -26,6 +26,7 @@ except ImportError:
 
 import ledger
 import problems
+import verdicts
 
 
 class SessionError(ValueError):
@@ -1026,8 +1027,22 @@ def _project_legacy_locked(root, bundle, private_md):
     # as conditions.jsonl above — a verdict must never enter
     # `problems.check_rules`' mechanical reconciliation. Same idempotent-append
     # discipline: a documented-safe finalize retry rewrites nothing.
-    reports.append(_append_session_rows(os.path.join(root, "verdicts.jsonl"), session_id,
-                                        [dict(row) for row in bundle.get("verdicts") or []]))
+    #
+    # `_append_session_rows`'s own dedup is keyed on session_id alone, which
+    # is exactly wrong for a verdict's identity (external review, #446 BLOCK
+    # 2): `--session-nonce` exists deliberately so a user can review
+    # identical state as a genuinely distinct session (references/
+    # data-contract.md), so two distinct nonces reviewing the same state and
+    # date would otherwise each pass that helper's same-session check and
+    # both land a row for the same (subject, rule, period) triple. Filter on
+    # the verdict's own identity FIRST, against every other session's rows —
+    # this session's own rows are left for `_append_session_rows` to handle,
+    # so its same-session idempotent-retry / fail-closed-on-conflict contract
+    # is untouched. See verdicts.py's "Dedup" docstring section.
+    verdicts_path = os.path.join(root, "verdicts.jsonl")
+    new_verdict_rows = verdicts.dedupe_against_other_sessions(
+        _read_jsonl(verdicts_path), [dict(row) for row in bundle.get("verdicts") or []], session_id)
+    reports.append(_append_session_rows(verdicts_path, session_id, new_verdict_rows))
 
     rule_rows = []
     if commitment and commitment.get("rule") and not commitment.get("condition"):
