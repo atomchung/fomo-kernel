@@ -6077,6 +6077,76 @@ def test_snapshot_reconciliation_fails_closed_on_a_corrupt_ledger_row():
         assert "unreadable row(s)" in str(exc), str(exc)
 
 
+def test_scan_initial_snapshot_conflicts_fails_closed_on_unreadable_ledger_rows():
+    """#470: scan_initial_snapshot_conflicts previously read the ledger through
+    session._read_jsonl, which drops any line that fails json.loads with no
+    count and no signal at all -- strictly weaker than even pre-#462
+    load_ledger. A ledger whose *only* row is not valid JSON at all (as
+    opposed to valid-JSON-but-unknown-type, which this scan already caught --
+    see the "mystery_event" case in test_initial_snapshot_boundary_layers_
+    share_one_verdict above) made _read_jsonl return [], so the scan's own
+    loop never ran and found nothing to flag: both boundary layers silently
+    treated real, unreadable ledger history as if the root had none at all,
+    admitting the declaration as initial onboarding instead of routing it
+    into reconciliation the way any other non-identical row already does."""
+    bundle = _runtime_snapshot_bundle("2026-07-18__snapshot-470")
+    anchor = bundle["engine_state"]["snapshot_anchor"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        (root / "ledger.jsonl").write_text("not json at all\n", encoding="utf-8")
+
+        assert session_engine.scan_initial_snapshot_conflicts(str(root), anchor) == ["ledger"], \
+            "an unreadable row must register as a ledger conflict, same as a mismatching one"
+
+        try:
+            review_engine._validate_initial_snapshot_root(str(root), anchor)
+            raise AssertionError("prepare-time check must fail closed on an unreadable ledger row")
+        except review_engine.ReviewError as exc:
+            assert "unreadable row(s)" in str(exc), str(exc)
+
+        try:
+            session_engine._assert_initial_snapshot_boundary(str(root), bundle)
+            raise AssertionError("finalize-time check must fail closed on an unreadable ledger row")
+        except session_engine.SessionError as exc:
+            # This bundle carries no frozen snapshot_reconciliation, so this
+            # layer stops at the "must reconcile" gate before it would reach
+            # its own ledger.load_ledger call -- the same shape as the
+            # pre-existing "mystery_event" case above. What is being proven
+            # here is that it stops at all, instead of returning normally and
+            # silently admitting the declaration.
+            assert str(exc) == session_engine.INITIAL_SNAPSHOT_CONFLICT, str(exc)
+
+
+def test_scan_initial_snapshot_conflicts_does_not_relabel_a_non_integrity_valueerror():
+    """Reviewing #469/#470: every #462 call site (the four in review.py, plus
+    scan_initial_snapshot_conflicts and _assert_initial_snapshot_boundary's
+    own ledger.load_ledger call, both in session.py) must catch narrowly --
+    ledger.LedgerIntegrityError, not bare ValueError -- because
+    LedgerIntegrityError subclasses ValueError but not everything
+    ledger.load_ledger can raise is a row-integrity problem safe to relabel
+    as a "ledger" conflict. A ledger.jsonl with invalid UTF-8 bytes makes
+    load_ledger raise UnicodeDecodeError while reading the file itself (a
+    ValueError subclass, but not a LedgerIntegrityError); a wide except would
+    swallow that as if it were an ordinary bad row instead of letting it
+    surface as what it actually is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        (root / "ledger.jsonl").write_bytes(b"\xff\xfe not valid utf-8 at all\n")
+        anchor = {
+            "type": "snapshot", "as_of": "2026-07-17", "source": "user_declared",
+            "is_complete": True,
+            "positions": [{"ticker": "NVDA", "shares": 100, "avg_cost": 100.0,
+                           "market": "US", "currency": "USD"}],
+        }
+        try:
+            session_engine.scan_initial_snapshot_conflicts(str(root), anchor)
+            raise AssertionError(
+                "an undecodable ledger file must not be silently swallowed as a plain conflict")
+        except UnicodeDecodeError:
+            pass  # correct: only ledger.LedgerIntegrityError becomes a "ledger" conflict
+
+
 def test_returning_private_card_shows_completed_history_snapshot_only_locally():
     import card_renderer
     progress = {"completed_reviews_before_start": 3, "returning": True}
