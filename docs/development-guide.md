@@ -189,3 +189,52 @@ Loosening any of these is a product regression, not a style change:
   On inspection, most hits describe engine behavior the agent relies on to do
   *less* work; deleting them creates work. Read and classify before
   concluding.
+
+## 7. Two readers, one fact — divergent derivation
+
+**Signature.** Two pieces of code derive the same fact from the same data —
+what counts as a number, which line a row belongs to, whether a row is still
+open — instead of one computing it and the rest reading the answer. They
+agree on the common case and split the first time an edge case reaches only
+one path, and the disagreement ships silently: a gate that stops catching
+what it exists for, a match that stops connecting, or two surfaces telling
+different stories about the same row.
+
+**Receipts.** Third recurrence in one cut (#412); each closed the same way —
+collapse to one reader, never a second derivation.
+
+1. **What counts as a number** — `condition_integrity`'s own regex saw the
+   `3` in `Q3`, while the criterion's allow-set was read with the engine's
+   `numbers_in`, which does not; the mismatch red an honest answer that
+   quoted the criterion verbatim. Both sides now call `conditions.numbers_in`
+   (#433).
+2. **Which line a row belongs to** — reconciliation compared `check.slot_id`
+   against `{prior.slot_id, prior.line_id}` instead of routing both sides
+   through one identity function; a check's `slot_id` names its line's live
+   head, so a second revision matched neither and the then/now comparison
+   went silent with the most history behind it. `conditions.slot_line_id` is
+   now the only reader — `review.py` stamps `line_id` on every due entry and
+   on `prior_commitment.condition`, and the renderer only compares stamped
+   values (#437/#438, external review round 1).
+3. **Whether a row is still open** — the card's summary count and its
+   per-condition lines decided independently, until round 2 unified them
+   onto one classifier, `_condition_outcomes`. Round 3 found the same
+   disease one layer inside it: its own per-check helper, `_condition_outcome`,
+   folded two independent facts (a crossing axis, a basis axis) into one
+   value through an if/elif chain, so whichever matched first silently
+   dropped the other from both surfaces at once. Fixed by returning both
+   axes from `_condition_outcome` and rendering each independently (#438,
+   external review rounds 2–3).
+
+**Rules.**
+
+- Before adding a second place that computes X, ask who else derives X and
+  from what — import an existing answer rather than restate its logic.
+- Collapse to one reader: share the function (`numbers_in`), derive the
+  value once and stamp it so every other site compares only stamped values
+  (`line_id`), or classify once and render every surface from that
+  classification (`_condition_outcomes`). Register the pair in CLAUDE.md's
+  mirrored-surfaces table when the fix lands.
+- A unified reader is not done until it is checked for silently merging
+  independent facts into one value — the same shape, one layer down (#438
+  round 3).
