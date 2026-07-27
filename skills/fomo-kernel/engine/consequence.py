@@ -43,8 +43,8 @@ mapped, not built     "unjudged"    exit_severity/hold_severity describe
                                     across history; one hypothetical trade
                                     cannot settle either
 mapped and buildable  real verdict  would_breach / already_over / clear,
-                                    computed from the same trade_recap
-                                    fields build_problem_events itself reads
+                                    judged against trade_recap's own named
+                                    lines for the metric_key the rule names
 ===================  ============  ===================================
 
 A real verdict answers two independent questions, and the second bug this
@@ -68,6 +68,24 @@ max_pct for the sizing rule; this metric_key's own reading for the
 concentration trio) moved in the bad direction — and is `None` everywhere
 `already_over` does not apply, because a boolean that means nothing outside
 one state is worse than an absent one.
+
+The concentration trio (ai_pct / max_sector_pct / top3_pct) shipped a third
+bug of the same shape, caught by external review after this file's own
+mutation suite passed clean: causality was judged on dim_diversify's shared
+`triggered` flag, which is correct for build_problem_events' aggregate
+"did a concentration problem occur" reconciliation but wrong for a rule,
+because a rule names exactly one metric_key and the user committed to that
+one line, not to the flag. Reading the shared flag hid a fresh cross of
+ai_pct's own line behind top3 already being over its own unrelated one
+(already_over instead of would_breach), and separately reported a fresh
+cross of max_sector_pct's own 40% line as clear outright, because the shared
+flag's max_sector arm carries dim_diversify's `>= 8` holdings guard — a false
+negative, worse than the first bug because it says there is no collision
+when there is one. The fix judges each metric_key against its own reading
+and its own line (`_concentration_line`, sourced from trade_recap's named
+constants so the two cannot drift), never the shared flag. See
+`_concentration_line`'s docstring for why the holdings guard does not carry
+forward into a rule collision.
 
 ``rule_collision`` is read-only: it never writes rules.jsonl and never calls
 problems.check_rules. A hypothetical's collision state must never enter
@@ -463,27 +481,62 @@ def _max_pos_pct_collision(ticker, before, after, max_pos_override):
     return "clear", None
 
 
+def _concentration_line(metric_key):
+    """The exact threshold dim_diversify() itself compares this metric_key's
+    own reading against — read live from trade_recap's named constants
+    (never a copied literal), so this module and dim_diversify cannot
+    silently drift apart on what the line is.
+
+    max_sector_pct deliberately does NOT carry forward dim_diversify's own
+    ``len(risk_w) >= 8`` holdings guard on that clause. That guard exists so
+    a small book is not flagged as concentrated by the *engine's own
+    unprompted diagnosis* — three stocks in three sectors are always >=33%
+    in their biggest sector, and that is not a problem worth surfacing on
+    its own. A rule collision answers a different question: the user
+    committed to a specific number for this specific metric_key, and a
+    six-holding book crossing that number is still crossing it. The guard is
+    about whether the engine should raise this unprompted; it says nothing
+    about whether a promise was kept, so it does not apply here.
+    """
+    if metric_key == "ai_pct":
+        return trade_recap.AI_MAX_TH
+    if metric_key == "max_sector_pct":
+        return trade_recap.SECTOR_MAX_TH
+    return trade_recap.TOP3_MAX_TH  # top3_pct
+
+
 def _concentration_collision(metric_key, before, after):
     """(state, worsens) for ai_pct / max_sector_pct / top3_pct.
 
-    All three reconcile to the same problem_key ("concentration") off the
-    same dim_diversify triggered flag — build_problem_events does not
-    distinguish which of the three tripped it, so causality here is the same
-    book-level before/after triggered comparison, not a per-metric threshold
-    this module would otherwise have to invent and keep in sync with
-    dim_diversify's own combined condition.
+    Judged against this metric_key's OWN reading and OWN line
+    (_concentration_line) — never dim_diversify's shared `triggered` flag.
+    The three metric_keys reconcile to the same problem_key
+    ("concentration") for realized-history reconciliation, where
+    build_problem_events legitimately does not care which of the three
+    tripped it (docs/development-guide.md section 7's shared-signal
+    reasoning, correctly applied there). But a rule names exactly one
+    metric_key, and the user committed to that one line, not to "some
+    concentration reading or other". Reading the shared flag as causality
+    for a single-metric rule shipped two real bugs (external review,
+    counterexamples reproduced in tests/test_consequence.py): a fresh cross
+    of this rule's own metric read as already_over because a DIFFERENT
+    reading (top3) happened to already be over its own, unrelated line; and
+    a fresh cross of max_sector_pct's own 40% line read as clear outright,
+    because the shared flag's max_sector arm is additionally gated on
+    dim_diversify's `>= 8` holdings guard (see _concentration_line) — a
+    false negative, the worst shape this vocabulary can produce.
 
-    `worsens` (already_over only) reads this specific metric_key's own
-    reading (via _CONCENTRATION_READING_FIELD) rather than the shared
-    triggered flag, which stays true across the comparison and so carries no
-    directional information on its own.
+    `worsens` (already_over only) reads the same metric_key's own field —
+    already guaranteed consistent with `state`, since both now come from the
+    same before/after/line comparison rather than two different signals.
     """
-    before_over = before["concentration_triggered"]
-    after_over = after["concentration_triggered"]
+    field = _CONCENTRATION_READING_FIELD[metric_key]
+    line = _concentration_line(metric_key)
+    before_over = before[field] > line
+    after_over = after[field] > line
     if (not before_over) and after_over:
         return "would_breach", None
     if after_over:
-        field = _CONCENTRATION_READING_FIELD[metric_key]
         return "already_over", _worsened(before[field], after[field])
     return "clear", None
 

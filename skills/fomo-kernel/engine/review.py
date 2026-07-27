@@ -4563,14 +4563,32 @@ def _json_safe_premise(normalized):
     return premise
 
 
-def _consultation_id(premise, basis, created):
+def _consultation_id(premise, basis, created, consequence_frozen, rule_collisions):
     """Engine-assigned, content-addressed identity — the same convention
     session.py uses for ``snapshot_id``/``adjustment_id``/``reconciliation_id``.
-    Seeded on exactly what determines the answer (the normalized premise, the
-    book's own footing, and the day asked), so asking the identical premise
-    again the same day against an unchanged book converges on the same id
-    instead of minting a new one for a no-op repeat."""
-    seed = session.canonical({"premise": premise, "basis": basis, "created": created})
+
+    Seeded on the frozen premise/basis/created *and* the computed
+    consequence/rule_collisions — not on premise/basis/created alone.
+    ``--cash``, ``--prices``, ``--driver-map``, ``--instrument-map``, and the
+    position cap override can each change the computed answer without
+    changing the premise text itself; naming each of those in the seed would
+    still leave the next such input open the same way (external review: a
+    same-day, same-premise call with a different ``--cash`` anchor produced
+    the *same* id for two materially different frozen answers, and
+    ``_fold_consultations``' latest-wins semantics silently treated the
+    second as superseding the first — a ``--resolve`` naming that id then
+    targets whichever one happened to be folded last). Seeding on the frozen
+    result instead closes the whole class at once: any input that changes
+    the answer necessarily changes what gets hashed, without this function
+    having to enumerate that input by name.
+
+    Two byte-identical inputs still produce a byte-identical seed and
+    therefore the same id — ``_append_consultation_row`` relies on this for
+    its no-op-repeat idempotency — and ``created`` stays in the seed so an
+    unchanged premise asked again on a different day mints a fresh
+    consultation rather than silently reusing yesterday's answer."""
+    seed = session.canonical({"premise": premise, "basis": basis, "created": created,
+                              "consequence": consequence_frozen, "rule_collisions": rule_collisions})
     return "consult-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
@@ -4826,14 +4844,21 @@ def cmd_consider(args):
     as_of = rows[-1]["date"]
     basis = {"source": basis_source, "as_of": as_of.isoformat(),
              "stale_days": (dt.date.today() - as_of).days}
+    # Built once and reused for both the id seed and the stored field below —
+    # a second, separately-assembled copy is exactly the "two readers, one
+    # fact" shape this fix exists to close (docs/development-guide.md
+    # section 7): the id must hash what the row actually carries, not a
+    # parallel reconstruction of it that could drift.
+    consequence_stored = {"before": result["before"], "after": result["after"],
+                          "delta": result["delta"], "disclosures": result["disclosures"]}
 
     row = {
-        "consultation_id": _consultation_id(premise_stored, basis, created),
+        "consultation_id": _consultation_id(premise_stored, basis, created,
+                                            consequence_stored, collisions),
         "created": created,
         "premise": premise_stored,
         "basis": basis,
-        "consequence": {"before": result["before"], "after": result["after"],
-                        "delta": result["delta"], "disclosures": result["disclosures"]},
+        "consequence": consequence_stored,
         "rule_collisions": collisions,
         "decision": "open",
         "decided_on": None,

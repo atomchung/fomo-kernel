@@ -9,7 +9,10 @@ record (<root>/pre_trade_consultations.jsonl,
 schemas/pre-trade-consultation.schema.json). This file settles the parts
 consequence.py's own suite cannot: data-source resolution (CSV vs a
 ledger-reconstructed book), the frozen consultation row, --resolve's
-append-only fold, and the CLI's own fail-closed and validation surfaces.
+append-only fold, the CLI's own fail-closed and validation surfaces, and
+(section K) that _consultation_id changes whenever anything that changes the
+frozen consequence changes -- not only when the arguments the id used to name
+by hand happened to differ (external review BLOCK finding).
 
 All fixtures are built under a temp root; nothing here reads or writes a real
 coach root. Every subprocess call passes --root explicitly.
@@ -863,6 +866,64 @@ def test_prepare_reconciliation_is_empty_and_harmless_with_no_consultations_file
             "items": [], "summary": {"open_total": 0, "shown": 0, "beyond_cap": 0}}
         assert not os.path.exists(_consultation_path(root)), \
             "prepare must never create a consultations file that did not exist"
+
+
+# ───────────────── K. consultation_id — content-addressed identity ─────────────────
+# External review BLOCK finding: the id must change whenever anything that
+# changed the frozen consequence changed, not only when premise/basis/created
+# do. review._consultation_id seeds on the frozen consequence and
+# rule_collisions themselves (not an enumerated list of inputs), which closes
+# the whole class at once -- --cash is the reviewer's own reproduction, but
+# the same mechanism covers --prices, --driver-map, --instrument-map, and the
+# position cap override without naming any of them individually.
+
+def test_identical_inputs_produce_the_identical_consultation_id():
+    """Two consider calls with byte-identical arguments, the same day, must
+    converge on the same id -- and _append_consultation_row's content-based
+    idempotency then makes the second call a no-op, not a second row."""
+    with tempfile.TemporaryDirectory() as tmp:
+        args = ["consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+               "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+               "--cash", '{"as_of": "2026-07-26", "amount": 1000, "currency": "USD"}']
+        first = _ok(_run(*args))
+        second = _ok(_run(*args))
+        assert first["consultation"]["consultation_id"] == second["consultation"]["consultation_id"]
+        rows = _read_consultations(tmp)
+        assert len(rows) == 1, f"a byte-identical repeat must not append a second row: {rows}"
+
+
+def test_a_different_cash_anchor_the_same_day_produces_a_different_consultation_id():
+    """External review BLOCK, reproduced verbatim: the same ledger, the same
+    premise, the same day, but --cash amount 0 on the first call and 1000 on
+    the second. Before the fix the id was seeded on premise/basis/created
+    alone -- none of which differ here -- so both calls produced the SAME
+    consultation_id despite freezing materially different consequences, and
+    _fold_consultations' latest-wins semantics silently treated the second as
+    superseding the first: a later --resolve naming that id would land on
+    whichever row happened to be folded last, not necessarily the one the
+    user meant. The anchor's as_of (2026-07-26) postdates every row in
+    sample_momentum.csv, so no other cash flow is counted after it and the
+    frozen cash balance equals the anchor amount exactly -- a clean,
+    unambiguous discriminator between the two calls."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'
+        first = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                         "--premise", premise,
+                         "--cash", '{"as_of": "2026-07-26", "amount": 0, "currency": "USD"}'))
+        second = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                          "--premise", premise,
+                          "--cash", '{"as_of": "2026-07-26", "amount": 1000, "currency": "USD"}'))
+
+        assert first["consultation"]["consequence"]["after"]["cash"]["balance"] == 0.0
+        assert second["consultation"]["consequence"]["after"]["cash"]["balance"] == 1000.0
+        id_1 = first["consultation"]["consultation_id"]
+        id_2 = second["consultation"]["consultation_id"]
+        assert id_1 != id_2, \
+            "two materially different frozen consequences must not collide on one consultation_id"
+
+        rows = _read_consultations(tmp)
+        assert len(rows) == 2, f"both consultations must be preserved, not folded into one: {rows}"
+        assert {row["consultation_id"] for row in rows} == {id_1, id_2}
 
 
 # ─────────────────────────────── runner ───────────────────────────────

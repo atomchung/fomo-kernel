@@ -28,11 +28,23 @@ What this file settles:
      the book's max_ticker — earns would_breach. worsens carries the
      already_over case's second axis (did the relevant reading move in the
      bad direction) and is None everywhere else.
+  G. rule_collision's concentration causality is judged per metric_key
+     against that metric's own line, never dim_diversify's shared triggered
+     flag: a fresh cross of one metric is not hidden behind a sibling metric
+     already being over a different line (external review MAJOR 1), and a
+     fresh cross of max_sector_pct's own 40% line is not reported clear just
+     because dim_diversify's shared flag additionally gates on >= 8 holdings
+     (external review MAJOR 2 — a false negative). The lines this module
+     compares against are read live from trade_recap's own named constants,
+     never a copied literal, so the two cannot drift apart.
 
-All fixtures are read from skills/fomo-kernel/mock/*.csv; every asserted
-number below was measured by running the code against those fixtures, not
-guessed (see PR description / session notes for the probe transcript).
+All fixtures are read from skills/fomo-kernel/mock/*.csv, except section G's
+two tests, which reproduce the external reviewer's counterexample books
+verbatim (exact tickers and dollar amounts) rather than paraphrasing them.
+Every asserted number below was measured by running the code, not guessed
+(see PR description / session notes for the probe transcript).
 """
+import datetime as dt
 import json
 import os
 import sys
@@ -54,6 +66,17 @@ def _schema(name):
 
 def _rows(name):
     return tr.load([os.path.join(MOCK, name)])
+
+
+def _dollar_book(holdings, date="2024-01-01"):
+    """One buy row per (ticker, dollar_amount) pair, qty=1.0 so price IS the
+    dollar amount — the exact shape the external reviewer's counterexamples
+    were stated in ("NVDA $50, MSTR $30, ..."), reproduced verbatim rather
+    than translated into an existing CSV fixture that might not isolate the
+    same condition."""
+    d = dt.date.fromisoformat(date)
+    return [dict(ticker=ticker, side="buy", qty=1.0, price=float(amount), date=d,
+                market="US", currency="USD") for ticker, amount in holdings]
 
 
 def _rule(metric_key, rule_id=None, **overrides):
@@ -356,29 +379,58 @@ def test_mixed_currency_with_a_covering_fx_map_has_no_disclosure_key():
 
 def test_evaluable_metrics_return_would_breach_only_when_the_after_state_crosses_the_line():
     """sample_fundamental.csv, cost basis: max_pct starts at 0.17665... (JNJ),
-    well under the 25% oversize trigger, and concentration is untriggered
-    (top3 0.5206, under 60%). A small buy (notional 100) must stay clear on
-    both; a large buy (notional 5000, comfortably over the 2706.67 breakeven
-    that puts AAPL's weight over 25%) must flip both to would_breach."""
+    well under the 25% oversize trigger, and top3 starts at 0.5206, under its
+    0.60 line. A small buy (notional 100) must stay clear on both; a large
+    buy (notional 5000, comfortably over the 2706.67 breakeven that puts
+    AAPL's weight over 25%) pushes top3 to 0.6001461988304093 — just over its
+    own line — and must flip both to would_breach.
+
+    top3_pct, not ai_pct, is the concentration metric exercised here: every
+    ticker in this fixture is unmapped/non-AI (no driver_map sidecar is
+    loaded), so ai_pct is 0.0 regardless of trade size and a rule tracking it
+    must never move — see the companion test below, which is the positive
+    proof that this is no longer a bug."""
     rows = _rows("sample_fundamental.csv")
     before = cq.portfolio_state(rows)
     assert before["oversize_triggered"] is False
     assert before["concentration_triggered"] is False
-    rules_report = ([_rule("max_pos_pct"), _rule("ai_pct")], [], 0)
+    rules_report = ([_rule("max_pos_pct"), _rule("top3_pct")], [], 0)
 
     small = {"ticker": "AAPL", "side": "buy", "price": 180.0, "notional": 100.0}
     small_out = cq.rule_collision(rows, small, rules_report)
     assert {row["metric_key"]: row["state"] for row in small_out} == {
-        "max_pos_pct": "clear", "ai_pct": "clear"}
+        "max_pos_pct": "clear", "top3_pct": "clear"}
 
     large = {"ticker": "AAPL", "side": "buy", "price": 180.0, "notional": 5000.0}
     large_out = cq.rule_collision(rows, large, rules_report)
     assert {row["metric_key"]: row["state"] for row in large_out} == {
-        "max_pos_pct": "would_breach", "ai_pct": "would_breach"}
+        "max_pos_pct": "would_breach", "top3_pct": "would_breach"}
     # cross-check against the same fields consequence() itself reports
     large_result = cq.consequence(rows, large)
     assert large_result["after"]["oversize_triggered"] is True
-    assert large_result["after"]["concentration_triggered"] is True
+    assert _close(large_result["after"]["top3"], 0.6001461988304093)
+    assert large_result["after"]["top3"] > tr.TOP3_MAX_TH
+
+
+def test_a_rule_on_one_concentration_metric_is_not_moved_by_a_sibling_crossing_its_own_line():
+    """The precise regression this fixes: the same large AAPL buy above
+    crosses top3's own 0.60 line, but AAPL contributes nothing to ai_pct (no
+    driver_map sidecar is loaded, so every ticker here is unmapped/non-AI).
+    Before the fix, ai_pct's state was read off dim_diversify's shared
+    triggered flag, which top3 alone had already flipped True -- so a rule
+    tracking ai_pct specifically would have read already_over/would_breach
+    for a trade that never touched its own reading at all. It must read
+    clear, unconditionally, in both directions."""
+    rows = _rows("sample_fundamental.csv")
+    rules_report = ([_rule("ai_pct")], [], 0)
+    large = {"ticker": "AAPL", "side": "buy", "price": 180.0, "notional": 5000.0}
+    result = cq.consequence(rows, large)
+    assert result["before"]["ai_pct"] == 0.0 and result["after"]["ai_pct"] == 0.0
+    assert result["after"]["concentration_triggered"] is True, \
+        "the shared flag IS triggered here (via top3) -- the point is that ai_pct must not borrow it"
+    out = cq.rule_collision(rows, large, rules_report)
+    assert out[0]["state"] == "clear", \
+        f"ai_pct must not react to top3 crossing its own, different line: {out[0]}"
 
 
 def test_avgdown_would_breach_for_a_qualifying_average_down_that_breaches_weight():
@@ -539,17 +591,20 @@ def test_a_buy_that_digs_an_already_over_book_deeper_is_already_over_worsens_tru
 
 
 def test_concentration_trio_worsens_reads_its_own_metric_not_the_shared_flag():
-    """sample_ai_holder.csv is already concentration_triggered before this
-    trade (top3 0.7848 > 0.60) and stays triggered after buying 200 more TSM
-    — both metric_keys land on already_over off the same shared flag, but
-    their own readings move oppositely: max_sector_pct actually rises
-    (0.5076 -> 0.6608, worsens True) while ai_pct sits at its 1.0 ceiling on
-    both sides (unchanged, worsens False). If worsens read the shared
-    triggered flag instead of each metric's own field, both would say the
-    same thing; they must not."""
+    """sample_ai_holder.csv: max_sector_pct (0.5076 > 0.40) and ai_pct
+    (1.0 > 0.60) are each independently already over their OWN line before
+    this trade, and each independently stays over after buying 200 more TSM
+    — a conclusion no longer read off dim_diversify's shared flag at all
+    (see _concentration_collision), but their own readings move oppositely:
+    max_sector_pct actually rises (0.5076 -> 0.6608, worsens True) while
+    ai_pct sits at its 1.0 ceiling on both sides (unchanged, worsens False).
+    If worsens read a shared signal instead of each metric's own field, both
+    would say the same thing; they must not."""
     rows = _rows("sample_ai_holder.csv")
     before = cq.portfolio_state(rows)
-    assert before["concentration_triggered"] is True
+    assert before["max_sector_pct"] > tr.SECTOR_MAX_TH
+    assert before["ai_pct"] > tr.AI_MAX_TH
+    assert before["concentration_triggered"] is True  # true here too, but not what state/worsens now read
     rules_report = ([_rule("max_sector_pct"), _rule("ai_pct")], [], 0)
     premise = {"ticker": "TSM", "side": "buy", "price": 180.0, "qty": 200.0}
 
@@ -559,6 +614,115 @@ def test_concentration_trio_worsens_reads_its_own_metric_not_the_shared_flag():
     assert by_key["max_sector_pct"]["worsens"] is True
     assert by_key["ai_pct"]["state"] == "already_over"
     assert by_key["ai_pct"]["worsens"] is False
+
+
+# ───────────────── G. concentration causality — external review MAJOR 1 & 2 ─────────────────
+
+def test_major_1_a_fresh_cross_of_this_rules_own_metric_is_not_hidden_by_a_sibling():
+    """External review MAJOR 1, book and premise verbatim: NVDA $50, MSTR $30,
+    HOOD $10, CAVA $10 ($100 total). NVDA is the only AI-thematic driver
+    entry among these four, so ai_pct = NVDA's own weight = 0.5, under its
+    0.60 line. top3 is 0.9 (NVDA+MSTR+HOOD), already over ITS 0.60 line
+    before any trade -- so the shared concentration_triggered flag is True
+    before this trade even happens, for a reason that has nothing to do with
+    ai_pct. Buying $30 more NVDA raises ai_pct to 80/130 = 0.6153846... ,
+    crossing 0.60 for the first time. A rule tracking ai_pct specifically
+    must read would_breach, not already_over -- already_over would mean this
+    trade did not cause the AI-exposure line to be crossed, and it did."""
+    rows = _dollar_book([("NVDA", 50.0), ("MSTR", 30.0), ("HOOD", 10.0), ("CAVA", 10.0)])
+    before = cq.portfolio_state(rows)
+    assert tr.driver("NVDA")[1] == 1 and tr.driver("MSTR")[1] == 0 and \
+        tr.driver("HOOD")[1] == 0 and tr.driver("CAVA")[1] == 0, \
+        "the fixture's premise (only NVDA is AI-thematic) must hold for this test to mean anything"
+    assert _close(before["ai_pct"], 0.5)
+    assert before["ai_pct"] < tr.AI_MAX_TH
+    assert _close(before["top3"], 0.9) and before["top3"] > tr.TOP3_MAX_TH
+    assert before["concentration_triggered"] is True, \
+        "the shared flag is already triggered before this trade, via top3 -- not via ai_pct"
+
+    premise = {"ticker": "NVDA", "side": "buy", "price": 50.0, "notional": 30.0}
+    result = cq.consequence(rows, premise)
+    assert _close(result["after"]["ai_pct"], 80.0 / 130.0)
+    assert _close(result["after"]["ai_pct"], 0.6153846153846154)
+    assert result["after"]["ai_pct"] > tr.AI_MAX_TH
+
+    out = cq.rule_collision(rows, premise, ([_rule("ai_pct")], [], 0))
+    assert out[0]["state"] == "would_breach", \
+        f"ai_pct crossed its own line for the first time; must not read already_over: {out[0]}"
+
+
+def test_major_2_a_fresh_cross_of_max_sector_pct_is_not_reported_clear():
+    """External review MAJOR 2, book and premise verbatim: six equal $100
+    holdings (HOOD, SOFI, MSTR, CAVA, MP, ONDS; $600 total), all mapped to
+    distinct sectors except HOOD/SOFI, which share "金融科技" (fintech) at
+    $200/$600 = 0.3333, under the 0.40 line. Buying $100 of GRAB (also
+    "金融科技") raises that sector to $300/$700 = 0.42857142857142855, over
+    the line -- but with 7 risk holdings (still under dim_diversify's own
+    >= 8 holdings guard on its shared flag) and top3/ai nowhere near 0.60,
+    the shared concentration_triggered flag stays False throughout. Before
+    the fix this returned "clear": the user committed to keeping a sector
+    under 40%, this trade takes it over 40%, and the tool said there was no
+    collision -- a false negative, the worst shape this vocabulary can
+    produce."""
+    rows = _dollar_book([("HOOD", 100.0), ("SOFI", 100.0), ("MSTR", 100.0),
+                         ("CAVA", 100.0), ("MP", 100.0), ("ONDS", 100.0)])
+    before = cq.portfolio_state(rows)
+    assert before["n_holdings"] == 6
+    assert before["max_sector"] == "金融科技" and _close(before["max_sector_pct"], 1.0 / 3.0)
+    assert before["max_sector_pct"] < tr.SECTOR_MAX_TH
+    assert before["concentration_triggered"] is False
+
+    premise = {"ticker": "GRAB", "side": "buy", "price": 100.0, "notional": 100.0}
+    result = cq.consequence(rows, premise)
+    assert tr.driver("GRAB")[0] == "金融科技", "GRAB must land in the same sector as HOOD/SOFI"
+    assert _close(result["after"]["max_sector_pct"], 300.0 / 700.0)
+    assert _close(result["after"]["max_sector_pct"], 0.42857142857142855)
+    assert result["after"]["max_sector_pct"] > tr.SECTOR_MAX_TH
+    assert result["after"]["concentration_triggered"] is False, \
+        "the shared flag stays False here (7 risk holdings, under the >=8 guard) -- that is the bug"
+
+    out = cq.rule_collision(rows, premise, ([_rule("max_sector_pct")], [], 0))
+    assert out[0]["state"] == "would_breach", \
+        f"max_sector_pct crossed its own 40% line; must not read clear: {out[0]}"
+
+
+def test_concentration_lines_are_read_live_from_trade_recaps_named_constants():
+    """Anti-drift pin (per the fix direction): _concentration_line must
+    return trade_recap's own named constants, not an independently chosen or
+    copied literal that could match today and silently diverge the next time
+    someone tunes dim_diversify's thresholds."""
+    assert cq._concentration_line("ai_pct") == tr.AI_MAX_TH
+    assert cq._concentration_line("max_sector_pct") == tr.SECTOR_MAX_TH
+    assert cq._concentration_line("top3_pct") == tr.TOP3_MAX_TH
+
+
+def test_the_ai_pct_boundary_agrees_with_dim_diversifys_own_strict_comparison():
+    """Not just equal constants: the same boundary. Four AI-thematic
+    semiconductor names (NVDA/AMD/MU/AVGO, $15 each = 60%) plus two unrelated
+    non-AI names ($20 each) keep top3 (0.55) and max_sector_pct (0.6, but on
+    only 6 risk holdings, under dim_diversify's own >= 8 guard) both out of
+    the way, isolating the ai clause: at exactly ai_pct == AI_MAX_TH,
+    dim_diversify's own strict `>` does not trigger, and a $1 nudge that
+    pushes ai_pct to 0.6039603960396039 does. _concentration_collision must
+    agree at the same point, not a value that merely looks the same today."""
+    rows_at = _dollar_book([("NVDA", 15.0), ("AMD", 15.0), ("MU", 15.0), ("AVGO", 15.0),
+                            ("MSTR", 20.0), ("HOOD", 20.0)])
+    rows_over = _dollar_book([("NVDA", 15.0), ("AMD", 15.0), ("MU", 15.0), ("AVGO", 16.0),
+                              ("MSTR", 20.0), ("HOOD", 20.0)])
+    at = cq.portfolio_state(rows_at)
+    over = cq.portfolio_state(rows_over)
+
+    assert _close(at["ai_pct"], tr.AI_MAX_TH) and _close(at["top3"], 0.55)
+    assert at["concentration_triggered"] is False, \
+        "exactly at the line is not over it, on dim_diversify's own strict >"
+    assert _close(over["ai_pct"], 0.6039603960396039) and over["ai_pct"] > tr.AI_MAX_TH
+    assert over["concentration_triggered"] is True
+
+    # rule_collision must draw would_breach exactly where dim_diversify's own
+    # trig flips, not one increment before or after it.
+    state, worsens = cq._concentration_collision("ai_pct", at, over)
+    assert state == "would_breach"
+    assert worsens is None
 
 
 def _tests():
