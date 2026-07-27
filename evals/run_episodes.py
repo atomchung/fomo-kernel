@@ -73,6 +73,7 @@ Usage:
   python3 evals/run_episodes.py --list
 """
 import argparse
+import ast
 import importlib.util
 import json
 import os
@@ -195,6 +196,125 @@ QUESTION_CONSUMERS = {
 # disposition. A ratchet, not an exemption: a kind that becomes wired must leave
 # this list, and a newly unwired kind cannot join it without an issue.
 KNOWN_UNWIRED = {"initial_thesis": "#429", "exit_consistency": "#429"}
+
+# ── The field-level question-consumer gate (#451) ───────────────────────────
+#
+# QUESTION_CONSUMERS proves a sink's *name* reaches a surface. #451 found that
+# this is satisfied by a single field: `add_thesis` passed with
+# `_decision_entries` reading `decision` and `ticker` while `note` -- the
+# user's own words on why they added -- and `evidence_delta` -- claim/source/
+# observed_at/falsifier, mandatory input when the user classifies an add as
+# `new_evidence` -- had no reader at all. This section deepens the "card"
+# claim to field-level: it derives, from source, which fields an event
+# actually CAN carry (the builder's own dict-literal + subscript-assignment
+# keys -- the same idiom `tests/test_coach_data_cli.py` parses for #452's
+# registry check, rather than hand-listing field names a second time), and
+# which of those fields the card's own consuming loop actually reads, and
+# fails when a field is in the first set and not the second, unless declared
+# in KNOWN_UNWIRED_FIELDS with a reason.
+#
+# Scope, stated rather than silently assumed (development-guide section 2:
+# "an honestly-scoped narrower check ... is a better outcome than a broad
+# check nobody trusts"):
+#
+#   - Covers the "card" claim only. The "state:<key>" claim keeps today's
+#     key-existence granularity: proving a specific *field* of an event
+#     reaches a specific *field* of state_snapshot needs tracing through a
+#     second transformation (thesis.reconstruct_states and friends) that does
+#     not share the source shape below, and that transformation's inputs and
+#     outputs live in different files per kind. Not attempted here.
+#   - Covers `add_thesis`, `headline_motive`, `revisit`, `due_revisit`, and
+#     `rule_breach` -- every kind whose sink is built by a single function
+#     following the `event = {...literal...}` + zero or more
+#     `event["key"] = ...` idiom (confirmed by reading all four builders) and
+#     consumed by a single `for event in bundle.get(sink) or []:` loop in
+#     card_renderer.py (confirmed the same way).
+#   - Does NOT cover `condition_crossing` / `condition_basis`. Their sink,
+#     `condition_checks`, is read by more than a dozen functions across
+#     card_renderer.py (`_condition_now`, `_condition_outcome`,
+#     `_condition_reading_line`, `_condition_summary_line`, ... -- the
+#     "Per-period condition check flow" row of CLAUDE.md's mirrored-surfaces
+#     table names this cluster explicitly), not one contained loop. A
+#     trustworthy field scan there needs a real call-graph across that
+#     cluster, not a single-function AST walk, and this cut does not attempt
+#     one rather than ship an imprecise version of it. These two kinds stay
+#     at today's name-level precision -- KNOWN_UNWIRED_FIELDS carries no
+#     `condition_checks` entries, and none should be added by mechanically
+#     extending this section's pattern to it.
+#   - `initial_thesis` / `exit_consistency` are excluded because they are
+#     already fully unwired at the *kind* level (KNOWN_UNWIRED above) --
+#     field-level detail on top of "nothing reads this sink" adds no fact a
+#     reader does not already have.
+#
+# `question_field_consumers()` below fails loudly (rather than passing
+# vacuously) if either half of its source pattern stops matching: a builder
+# function that disappears or is found but yields zero fields, or a
+# `bundle.get(sink)` loop that disappears from card_renderer.py -- the same
+# "abstention is not a pass" interlock `run_check` already applies to answer
+# checks.
+QUESTION_FIELD_SOURCES = {
+    # sink -> (path under skills/fomo-kernel/, function that builds the
+    # event, the local variable name the function builds it into)
+    "thesis_decisions": ("engine/thesis.py", "build_decision_events", "event"),
+    "headline_motive_events": ("engine/review.py", "_build_headline_motive_events", "event"),
+    "revisit_resolutions": ("engine/review.py", "_build_revisit_resolutions", "event"),
+    "rule_breach_decisions": ("engine/review.py", "_build_rule_breach_decisions", "event"),
+}
+
+# Declared per (sink, field): a field the builder constructs that the card's
+# consuming loop does not read, with why. A ratchet exactly like
+# KNOWN_UNWIRED above, one level down: a field leaving this dict without a
+# matching new read in the loop fails the check ("now read but still
+# declared"), and a field the builder no longer constructs fails it too
+# ("stale declaration") -- so this list can only ever describe the present,
+# never accumulate dead entries silently. Every field here was found by the
+# scan added for #451, filed as #480 for disposition; the reasons are the
+# grounds for *why a reader has not been demanded yet*, not a claim that the
+# field should never get one.
+KNOWN_UNWIRED_FIELDS = {
+    "thesis_decisions": {
+        "note": "#480 the #451 finding itself -- the user's own words on why they added",
+        "evidence_delta": "#480 mandatory on new_evidence (claim/source/observed_at/falsifier); no reader anywhere in engine/",
+        "cycle_id": "#480 engine join key to the thesis cycle, consumed by thesis.reconstruct_states, not the card",
+        "session_id": "#480 engine bookkeeping (which review session wrote this)",
+        "event": "#480 literal event-type discriminator, constant per kind",
+        "schema_version": "#480 versioning metadata",
+        "review_date": "#480 per-event timestamp; the card's as-of date comes from engine_state, not per-decision",
+        "decision_cursor": "#480 internal decision-sequence marker (thesis continuity plumbing)",
+        "decision_id": "#480 legacy content-addressed id, superseded by event_id",
+        "thesis_id": "#480 engine join key to the thesis row",
+        "revises": "#480 audit-trail link to the event this supersedes",
+        "evidence_id": "#480 content-addressed id for evidence_delta; the content itself is evidence_delta, flagged separately above",
+        "provenance": "#480 audit metadata (capture/confirm timing); not new content beyond evidence_delta",
+        "event_id": "#480 content-addressed identity hash",
+    },
+    "headline_motive_events": {
+        "event": "#480 literal event-type discriminator",
+        "event_id": "#480 content-addressed identity hash",
+        "question_id": "#480 engine join key to the asked question",
+        "review_date": "#480 per-event timestamp; the card's as-of date comes from engine_state, not per-decision",
+        "schema_version": "#480 versioning metadata",
+        "session_id": "#480 engine bookkeeping",
+    },
+    "revisit_resolutions": {
+        "date": "#480 per-event timestamp; the card's as-of date comes from engine_state, not per-decision",
+        "session_id": "#480 engine bookkeeping",
+        "type": "#480 literal event-type discriminator",
+    },
+    "rule_breach_decisions": {
+        "event": "#480 literal event-type discriminator",
+        "event_id": "#480 content-addressed identity hash",
+        "schema_version": "#480 versioning metadata",
+        "session_id": "#480 engine bookkeeping",
+        "review_date": "#480 per-event timestamp; the card's as-of date comes from engine_state, not per-decision",
+        "problem_key": "#480 engine join key to the problem-tracking row this breach came from",
+        "breach_week": "#480 which week the breach occurred; not reflected back to the user anywhere",
+        "evidence": "#480 the specific breach occurrences backing the question; unread, the closest analogue here to evidence_delta",
+        "recent_count": "#480 decision-time snapshot; the card's trend line reads live problem_stats instead",
+        "recent_amount": "#480 decision-time snapshot; the card's trend line reads live problem_stats instead",
+        "trend": "#480 decision-time snapshot; the card's trend line reads live problem_stats instead",
+    },
+}
 
 # Not answer surfaces: these are what the agent would send the engine, graded by
 # `condition_integrity` / `condition_check_integrity` against the engine's own
@@ -1058,6 +1178,187 @@ def question_consumers(plan):
     return failures, notes
 
 
+# ── Field-level scan (#451): parse the one idiom, not the field names ───────
+#
+# Both halves below read source with `ast`, the same "parse the idiom instead
+# of hand-listing what it produces" move `tests/test_coach_data_cli.py` made
+# for #452's registry check. Neither half executes the modules it reads —
+# `thesis.py` and `review.py` are read as text and parsed, never imported —
+# so this carries no new runtime dependency between the eval harness and the
+# engine's import graph.
+
+def _dict_literal_string_keys(node):
+    """String keys of an ``ast.Dict`` literal; a non-string or computed key
+    (none of the builders below use one) is silently not a field name."""
+    if not isinstance(node, ast.Dict):
+        return set()
+    return {key.value for key in node.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+
+
+def _subscript_string_key(node):
+    """The literal string key of an ``ast.Subscript`` slice. Python 3.9+ only
+    (the slice is the key expression directly, no ``ast.Index`` wrapper) —
+    consistent with this repo's existing AST scanners, which make the same
+    assumption."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _event_fields_built(tree, func_name, var_name):
+    """``(found, fields)``: every literal string key assigned into
+    ``var_name`` anywhere inside module-level function ``func_name`` — the
+    initial ``var_name = {...}`` dict literal, plus every later
+    ``var_name["key"] = ...`` subscript assignment, conditional branches
+    included. The union across branches is deliberate: a field a builder sets
+    on only one path is still a field the persisted event may carry, so it
+    still needs a reader or a declared reason it does not have one yet.
+
+    ``found`` is False when no function of that name exists in the module, so
+    a rename fails this check loudly instead of silently scanning nothing —
+    the same "abstention is not a pass" interlock the answer checks already
+    apply (``run_check``'s ``looked_at_something``)."""
+    func_node = next((node for node in ast.walk(tree)
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and node.name == func_name), None)
+    if func_node is None:
+        return False, set()
+    fields = set()
+    for node in ast.walk(func_node):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and target.id == var_name:
+            fields |= _dict_literal_string_keys(node.value)
+        elif (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+              and target.value.id == var_name):
+            key = _subscript_string_key(target.slice)
+            if key:
+                fields.add(key)
+    return True, fields
+
+
+def _event_fields_read(tree, sink, bundle_param="bundle"):
+    """``(found, fields)``: every literal string field read directly off the
+    loop variable of a ``for x in <bundle_param>.get("<sink>") or []:`` loop,
+    anywhere in the module. Deliberately shallow — a field read off a second
+    variable derived from the loop variable (e.g. ``context = event.get(
+    "context") or {}``) counts ``context`` as read without following it
+    further, because the question this check answers is "does this top-level
+    field of the persisted event have a reader", not "is every nested field
+    of a reader field also read".
+
+    ``found`` is False when no such loop exists anywhere in the file, so a
+    renderer refactor that changes this shape fails loudly — with a message
+    naming the shape assumption that broke — instead of silently reporting
+    every field of that sink as unconsumed."""
+    loops = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.For) and isinstance(node.target, ast.Name)):
+            continue
+        it = node.iter
+        if isinstance(it, ast.BoolOp) and isinstance(it.op, ast.Or) and it.values:
+            it = it.values[0]  # unwrap the `bundle.get(sink) or []` idiom
+        if (isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute)
+                and it.func.attr == "get" and isinstance(it.func.value, ast.Name)
+                and it.func.value.id == bundle_param and it.args
+                and isinstance(it.args[0], ast.Constant) and it.args[0].value == sink):
+            loops.append(node)
+    if not loops:
+        return False, set()
+    fields = set()
+    for loop in loops:
+        loop_var = loop.target.id
+        for node in ast.walk(loop):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get" and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == loop_var and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                fields.add(node.args[0].value)
+            elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+                  and node.value.id == loop_var):
+                key = _subscript_string_key(node.slice)
+                if key:
+                    fields.add(key)
+    return True, fields
+
+
+def question_field_consumers():
+    """#451: deepen the "card" claim from "the sink's name appears somewhere
+    in card_renderer.py" to "this specific field of the sink is read by the
+    loop that consumes it". See the section comment above QUESTION_FIELD_
+    SOURCES for exactly which sinks this covers and why the rest are not
+    attempted. ``(failures, notes)``, same shape as ``question_consumers``.
+
+    Pure source analysis — no prepared plan or bundle needed, unlike
+    ``question_consumers``'s state-snapshot half, so this runs unconditionally
+    wherever it is called."""
+    failures, notes = [], []
+    renderer_path = SKILL_DIR / "engine" / "card_renderer.py"
+    renderer_tree = ast.parse(renderer_path.read_text(encoding="utf-8"), filename=str(renderer_path))
+
+    # Every sink some kind in QUESTION_CONSUMERS claims reaches "card",
+    # deduplicated — revisit/due_revisit share one sink (revisit_resolutions)
+    # and must not be scanned, or reported on, twice.
+    card_sinks = sorted({sink for sink, reaches in QUESTION_CONSUMERS.values() if "card" in reaches})
+
+    for sink in card_sinks:
+        if sink not in QUESTION_FIELD_SOURCES:
+            notes.append(f"field consumers: {sink!r} reaches the card but is outside this gate's "
+                        "declared scope (see the section comment above QUESTION_FIELD_SOURCES) "
+                        "— still checked only at the sink-name level")
+            continue
+        rel_path, func_name, var_name = QUESTION_FIELD_SOURCES[sink]
+        builder_path = SKILL_DIR / rel_path
+        builder_tree = (renderer_tree if builder_path == renderer_path
+                        else ast.parse(builder_path.read_text(encoding="utf-8"), filename=str(builder_path)))
+        found_builder, exists = _event_fields_built(builder_tree, func_name, var_name)
+        if not found_builder:
+            failures.append(f"field consumers: {sink!r} declares its fields are built by "
+                            f"{func_name!r} in {rel_path}, which no longer exists — update "
+                            "QUESTION_FIELD_SOURCES")
+            continue
+        if not exists:
+            failures.append(f"field consumers: {func_name!r} in {rel_path} builds no literal "
+                            f"field for {sink!r} — the dict-literal/subscript-assignment pattern "
+                            "this scan relies on no longer matches; fix the scan, this is not "
+                            "evidence the event carries zero fields")
+            continue
+        found_loop, consumed = _event_fields_read(renderer_tree, sink)
+        if not found_loop:
+            failures.append(f"field consumers: no `for x in bundle.get({sink!r}) or []:` loop "
+                            "found in card_renderer.py — the shape this scan relies on no longer "
+                            "matches; the check needs updating, not silencing")
+            continue
+        declared = KNOWN_UNWIRED_FIELDS.get(sink, {})
+        for field in sorted(exists - consumed):
+            if field in declared:
+                notes.append(f"unwired field: {sink}.{field} — {declared[field]}")
+                continue
+            failures.append(f"field consumers: {sink}.{field} is constructed but not read by "
+                            f"the card's loop over {sink!r} — wire it, or add it to "
+                            "KNOWN_UNWIRED_FIELDS with an issue")
+        for field in sorted(set(declared) & consumed):
+            failures.append(f"field consumers: {sink}.{field} is now read but still sits in "
+                            "KNOWN_UNWIRED_FIELDS — remove the stale declaration")
+        for field in sorted(set(declared) - exists):
+            failures.append(f"field consumers: {sink}.{field} is declared in "
+                            "KNOWN_UNWIRED_FIELDS but the builder no longer constructs it — "
+                            "remove the stale declaration")
+    # A whole sink orphaned — no kind claims it reaches the card anymore, so
+    # nothing above ever visited its declarations — is the same staleness one
+    # level up. Checked separately because the loop above only ever looks at
+    # `card_sinks`, and an entry that fell out of that set would otherwise
+    # never be read again by this function.
+    for sink in sorted(set(KNOWN_UNWIRED_FIELDS) - set(card_sinks)):
+        failures.append(f"field consumers: {sink!r} has KNOWN_UNWIRED_FIELDS declarations but no "
+                        "kind in QUESTION_CONSUMERS claims it reaches the card anymore — remove "
+                        "the stale sink-level declaration")
+    return failures, notes
+
+
 def coverage_report(observed_total, declared):
     """Interlock 3: a check nobody exercises both ways is not evidence.
 
@@ -1139,6 +1440,12 @@ def main():
             consumer_failures, consumer_notes = question_consumers(reference_plan)
             failures.extend(consumer_failures)
             notes.extend(consumer_notes)
+        # Pure source analysis (#451) — no prepared plan needed, but grouped
+        # with the gate above so a filtered run's "not evaluated" messaging
+        # stays honest about which gates a partial run skips.
+        field_failures, field_notes = question_field_consumers()
+        failures.extend(field_failures)
+        notes.extend(field_notes)
     for line in unmapped + notes:
         print(f"NOTE  {line}")
     for line in failures:

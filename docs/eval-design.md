@@ -209,6 +209,7 @@ Every important guard should fail under an intentional mutation at least once. H
 - retry one session with conflicting content
 - place non-English text in implementation Markdown
 - let a question kind ship with no consumer for its answer
+- let an event field a builder constructs ship with no reader and no declared reason (#451)
 - pin an answer's wording as the pass condition (see below)
 
 A checker that stays green under its matching mutation is not evidence.
