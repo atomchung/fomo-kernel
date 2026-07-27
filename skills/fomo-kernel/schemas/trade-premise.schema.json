@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/trade-premise.schema.json",
+  "title": "Fomo Kernel Trade Premise",
+  "description": "One hypothetical trade the model or user supplies mid-decision ('I'm thinking of buying NVDA — what does that do to my book?'). This is Layer 2 (docs/decision-fomo-kernel-shape.md §3): deterministic arithmetic over a premise, never a recommendation. The readable contract; skills/fomo-kernel/engine/consequence.py's validate_premise holds the enforcement, because the offline suite carries no jsonschema dependency. The envelope's field rules are stated once, here — consequence.py does not restate them, only enforces them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticker", "side", "price"],
+  "properties": {
+    "ticker": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9^][A-Za-z0-9.\\-^=]{0,19}$",
+      "description": "The complete engine symbol, in the same form the ledger's own rows use (for example NVDA, 2330.TW). Matching the ledger's convention is what lets before/after states compare the same instrument rather than two strings that merely look alike."
+    },
+    "side": {
+      "enum": ["buy", "sell"],
+      "description": "Which direction the hypothetical trade goes. A sell is checked against what is currently held (a sell of an unheld ticker, or more shares than are held, is refused rather than silently clamped or read as a short) because this layer computes consequences of a real position change, not a speculative short thesis."
+    },
+    "price": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "The hypothetical execution price, in the instrument's own trading currency. Required even when notional is given, because notional is converted to a share count by dividing through this price — the engine's downstream arithmetic is share-based, matching how the ledger itself is recorded."
+    },
+    "qty": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Hypothetical share count. Mutually exclusive with notional (oneOf below) — the caller states the trade the one way they actually have it in mind, and the engine derives the other, rather than both being supplied and silently disagreeing."
+    },
+    "notional": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Hypothetical trade size in cash terms (this instrument's currency). Converted to qty via notional / price. Mutually exclusive with qty."
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "When the hypothetical trade would happen. Optional — defaults to the day after the ledger's last row, so an unstated premise reads as 'if I did this next' rather than silently backdating into history. A date earlier than the last ledger row is refused: this layer computes a forward consequence, not a rewrite of what already happened."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "Trading currency of the price. Optional — defaults to the ticker's own currency in the ledger when it is already held, or USD for a new position, so an omitted currency cannot silently mis-aggregate a mixed-currency book."
+    }
+  },
+  "oneOf": [
+    {"required": ["qty"], "not": {"required": ["notional"]}},
+    {"required": ["notional"], "not": {"required": ["qty"]}}
+  ]
+}

@@ -411,6 +411,7 @@ DATA_FILES = [
     ("conditions.jsonl", "jsonl", "引擎算不出來、但你仍然承諾要盯的條件(#412;含你自己的原話與當時的基準值)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
+    ("pre_trade_consultations.jsonl", "jsonl", "買進/賣出前的假設性諮詢記錄(review.py consider):凍結當時算出的 before/after/rule collision,--resolve 才追加你後續的決定,不覆寫舊列"),
     ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),
     ("cards", "dir", "每次復盤的完整復盤卡(含絕對金額/ticker/佔比)"),
     ("sessions", "tree", "v2 canonical session bundles(private/public cards + manifest)"),

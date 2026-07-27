@@ -42,12 +42,12 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 ## Non-negotiable boundaries
 
 1. Numbers, rankings, cycle IDs, metrics, weights, and ETF exemptions come from code. The agent may transcribe broker-declared position facts, but must not calculate, invent, or alter derived values.
-2. Do not provide buy or sell recommendations. Review behavior, motives, thesis evolution, and the next process rule.
+2. A trade the user is deciding on gets `consider`'s computed consequence, and the case for and against is built from that output — never from prose. Mark every claim you add as your own judgment, name what nobody checked, and leave the decision to the user. Price targets and market forecasts stay out, and a review card's prescription still never names what to buy or sell.
 3. Required motive questions cannot be skipped. A `new_evidence` decision requires both a claim and a source.
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
 5. Keep trade data and engine state local and out of cloud memory. The review card itself is private to the user, not public: local files, terminal output, and private-by-default in-client rendering (for example, a claude.ai Artifact) are permitted, but never publish, post, or send it to a third party. Never mix private-card content into a public card.
 6. An incomplete snapshot may produce a bounded review, but it is not an accounting anchor. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings remain canonical, and claims about an unreconciled current broker view must fail closed.
-7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, `render`, `repair-projections`, `set-cap`, `mute-rule`, or `doctor`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
+7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, `consider`, `render`, `repair-projections`, `set-cap`, `mute-rule`, or `doctor`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 
 ## Why this bridge stays thin
 
