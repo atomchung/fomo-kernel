@@ -8,7 +8,11 @@ coach.py data-status / data-export / data-reset(#165)測試 — 全離線、確�
   B. data-export:zip 內容與 present 清單一致,空 root 拒收。
   C. data-reset:--dry-run 不動檔案、--confirm 才真的刪、兩者互斥、裸執行(無旗標)拒收。
   D. --root 覆寫生效,絕不誤觸真正的 ~/.trade-coach/(隔離驗證的機械版本)。
+  E. Registry completeness (#452): every coach-root path the engine's own
+     source constructs is registered in coach.DATA_FILES -- generated from
+     the source, not a second hand-authored list of expected files.
 """
+import ast
 import json
 import os
 import subprocess
@@ -19,6 +23,8 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.join(os.path.dirname(HERE), "skills", "fomo-kernel", "engine")
 COACH = os.path.join(ENGINE, "coach.py")
+sys.path.insert(0, ENGINE)
+import coach  # noqa: E402 -- only for DATA_FILES; every CLI behavior test below still shells out
 
 
 def _run(*args):
@@ -233,6 +239,153 @@ def test_no_root_flag_defaults_to_trade_coach_home():
                            capture_output=True, text=True, env=env)
         out = json.loads(r.stdout)
         assert out["root"] == os.path.join(fake_home, ".trade-coach")
+
+
+def test_condition_checks_projection_is_status_export_and_reset_managed():
+    """#452: condition_checks.jsonl is private user data (the per-period record
+    of whether each of the user's own falsifier conditions was checked, what
+    was observed, and how they answered -- conditions.py, #412's second half),
+    so every data-control operation must discover it from coach.DATA_FILES --
+    the exact gap this issue was filed for (mirrors the verdicts.jsonl and
+    headline_motives.jsonl tests above, #446/#294)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        checks_path = os.path.join(tmp, "condition_checks.jsonl")
+        with open(checks_path, "w", encoding="utf-8") as f:
+            f.write('{"slot_id":"slot-0","check_id":"chk-0","lookup_status":"ok"}\n')
+
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {entry["name"]: entry for entry in status["files"]}
+        assert status["present_count"] == 1
+        assert by_name["condition_checks.jsonl"]["exists"]
+        assert by_name["condition_checks.jsonl"]["lines"] == 1
+
+        out_zip = os.path.join(tmp, "backup.zip")
+        exported = _run("data-export", "--root", tmp, "--out", out_zip)
+        assert exported.returncode == 0, exported.stderr
+        payload = json.loads(exported.stdout)
+        assert payload["included"] == ["condition_checks.jsonl"]
+        with zipfile.ZipFile(out_zip) as zf:
+            assert zf.namelist() == ["condition_checks.jsonl"]
+
+        reset = _run("data-reset", "--root", tmp, "--confirm")
+        assert reset.returncode == 0, reset.stderr
+        assert json.loads(reset.stdout)["deleted"] == [checks_path]
+        assert not os.path.exists(checks_path)
+
+
+# ─── E. registry completeness: the next omission fails the suite (#452) ────
+#
+# DATA_FILES stays hand-authored -- each entry's description is user-facing
+# prose deciding what someone exports or deletes, and no script should write
+# that sentence. What must stop being hand-maintained is knowing whether the
+# list is *complete*. The check below generates its expectation from the
+# engine's own source (docs/development-guide.md section 1's "prefer
+# generating a synchronized surface over hand-mirroring it",
+# tools/design_bundle.py precedent) instead of hand-listing "files I expect to
+# exist" a second time, which is the same mirror the missing entry itself was.
+#
+# It parses every non-test module directly under skills/fomo-kernel/engine/
+# for the one idiom every coach-root writer in this codebase already uses:
+# `os.path.join(<coach-root-like>, "<literal>", ...)`. "Coach-root-like" is a
+# bare `root` reference, or a call whose (possibly dotted) name contains
+# "root" -- session.default_root(), coach._coach_root(args), and
+# fetch_cache.py's own _root(root) indirection all match that convention
+# already; nothing here needed to change for them to be seen. review.py's
+# _engine_version() was the one place in engine/ binding a *different* thing
+# (the skill's own checkout, to read its VERSION file/git SHA -- never the
+# user's coach data root) to a variable literally named `root`; it is renamed
+# to repo_root in this same change specifically so this scan needs no
+# hand-written exclusion list -- fixing the ambiguity at its source rather
+# than teaching the checker to special-case it.
+#
+# Scope, named rather than silently assumed: this sees skills/fomo-kernel/
+# engine/*.py only. Two already-registered entries are written from outside
+# that scope and this check cannot see either: profile.md (written directly
+# by the agent per SKILL.md, never by engine code) and ux/ (written by
+# skills/fomo-kernel/tools/ux_receipt.py's pathlib `root / "ux" / ...`, a
+# different shape than os.path.join). Both stay correct because a dedicated
+# test exercises each -- profile.md via _seed()'s tests above,
+# test_reset_and_status_cover_ux_trace_dir for ux/ -- not because this check
+# reaches them. What this check adds is the direction #452 actually broke on:
+# a literal constructed inside engine/ with no test written for it at all.
+
+def _dotted_call_name(node):
+    """`os.path.join` -> "os.path.join"; anything not a plain dotted chain
+    (a subscript, a comprehension, ...) -> None."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_call_name(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _module_string_constants(tree):
+    """`NAME = "literal"` assignments anywhere in the module -- resolves
+    fetch_cache.py's `_DIR = "cache"` indirection so
+    `os.path.join(_root(root), _DIR, ...)` still yields "cache" instead of
+    being silently skipped for not being a literal in the call itself."""
+    consts = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            consts[node.targets[0].id] = node.value.value
+    return consts
+
+
+def _looks_like_coach_root(node):
+    """A bare `root` name, or a call whose (possibly dotted) name contains
+    "root" -- see the section comment above for which real call sites that
+    covers and why review.py has no remaining exception."""
+    if isinstance(node, ast.Name) and node.id == "root":
+        return True
+    if isinstance(node, ast.Call):
+        return "root" in (_dotted_call_name(node.func) or "")
+    return False
+
+
+def _coach_root_literals(source_path):
+    """Every literal top-level name this module builds via
+    `os.path.join(<coach-root-like>, "<literal>", ...)`, anywhere in the file
+    -- assignment, return, dict value, or kwarg; ast.walk does not care which."""
+    with open(source_path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=source_path)
+    consts = _module_string_constants(tree)
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _dotted_call_name(node.func) == "os.path.join"):
+            continue
+        if len(node.args) < 2 or not _looks_like_coach_root(node.args[0]):
+            continue
+        literal = node.args[1]
+        if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
+            found.add(literal.value)
+        elif isinstance(literal, ast.Name) and literal.id in consts:
+            found.add(consts[literal.id])
+    return found
+
+
+def test_data_files_registry_covers_every_engine_written_path():
+    """#452: nothing may construct a coach-root top-level path in
+    skills/fomo-kernel/engine/ that coach.DATA_FILES does not know about --
+    the mechanical version of the sweep this issue asked for, so the next
+    stream cannot repeat condition_checks.jsonl's silence. See the section
+    comment above for exactly what this does and does not see."""
+    engine_files = sorted(f for f in os.listdir(ENGINE)
+                          if f.endswith(".py") and not f.startswith("test_"))
+    assert engine_files, "engine directory scan found nothing -- ENGINE path is wrong"
+    constructed = set()
+    for fname in engine_files:
+        constructed |= _coach_root_literals(os.path.join(ENGINE, fname))
+    registered = {name for name, _kind, _desc in coach.DATA_FILES}
+    missing = sorted(constructed - registered)
+    assert not missing, (
+        f"{missing} are built as coach-root paths somewhere in "
+        f"skills/fomo-kernel/engine/ but are not in coach.DATA_FILES -- "
+        f"data-status/export/reset cannot see them (#452)."
+    )
 
 
 # ─────────────────────────── runner ───────────────────────────
