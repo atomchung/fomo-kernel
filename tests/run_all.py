@@ -36,6 +36,7 @@ SUITES = [
     ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
     ("Validated private question surfaces", "tests/test_question_surfaces.py"),
     ("Card HTML and delivery contract", "tests/test_card_html.py"),
+    ("Design-bundle generator gate (#442)", "tests/test_design_bundle.py"),
     ("Cross-client interaction trajectory", "tests/test_interaction_trajectory.py"),
     ("Automated QA preflight boundary", "tests/test_qa_preflight.py"),
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
