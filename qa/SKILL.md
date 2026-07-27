@@ -11,7 +11,7 @@ description: 開發者 dogfood fomo-kernel 時，用來準備一個乾淨、一�
 
 **跨 client 契約源（2026-07-21 起）**：`kol_collector/fomo-kernel` repo 的 `docs/qa-runbook.md`（PR #275）定義「什麼才算一次合規 QA run」——**七**道 gate（版本閘／隔離 root／receipt 全程／verdict+verify／archive manifest／隱私 lint／**findings disposition**），缺任一該場就不算 QA、結論不可引用。第七道是 2026-07-27 補的（#417）：前六道全過、卻沒留下任何可重播資產的場，正是這條迴圈一年來的實際樣子。這份 fomo-kernel 自己的 `docs/qa-runbook.md` + repo-root `AGENTS.md` **必須維持獨立於本 skill、獨立於任何個人 registry**——fomo-kernel 是給陌生人在任何機器 clone 的公開產品，不能預期對方有這份 skill；兩者不一致時以 runbook 為準。
 
-**本 skill 是什麼**：把 runbook 的六道 gate 自動化成一套可重複執行的流程 + `qa_env.sh` 工具，供 ting 自己維護 fomo-kernel 時用（2026-07-21 起透過 `ai-harness` 的 discovery registry，在 Claude / Codex / Antigravity 三邊用同一個名字 `fomo-qa` 呼叫同一份 canonical 內容，見 `ai-harness/inventory/fomo-qa.json`）。**這不是給其他人用的**——一般外部用戶沒有這個 skill，也不需要，他們只會走上面那份公開的 `docs/qa-runbook.md`。
+**本 skill 是什麼**：把 runbook 的七道 gate 自動化成一套可重複執行的流程 + `qa_env.sh` 工具，供 ting 自己維護 fomo-kernel 時用（2026-07-21 起透過 `ai-harness` 的 discovery registry，在 Claude / Codex / Antigravity 三邊用同一個名字 `fomo-qa` 呼叫同一份 canonical 內容，見 `ai-harness/inventory/fomo-qa.json`）。**這不是給其他人用的**——一般外部用戶沒有這個 skill，也不需要，他們只會走上面那份公開的 `docs/qa-runbook.md`。
 
 > 為什麼存在：2026-07-19 盤點發現 18 個 worktree 裡 17 個落後 main（最多落後 28 個 commit），dogfood 一直被跑在各自釘死 base 的開發 worktree 上——測到的是過去某個切片，事後還無從得知是哪一片。「跑得起來」不等於「測到最新版」。這個 skill 用機制擋掉它（對應 issue #250）。
 
@@ -50,7 +50,7 @@ description: 開發者 dogfood fomo-kernel 時，用來準備一個乾淨、一�
 `qa_env.sh` 就在本 skill 目錄下。下面每個 `qa_env.sh` 指令的路徑以 Claude 端為例（`~/.claude/skills/fomo-qa/qa_env.sh`）；在 Codex 上換成 `~/.agents/skills/fomo-qa/qa_env.sh`，在 Antigravity 上換成 `~/.gemini/config/skills/fomo-qa/qa_env.sh`——三個都是 symlink，指向同一份 canonical `qa_env.sh`，內容完全一樣，純 bash、跟呼叫它的 client 無關。
 
 **跨 client 執行落差（登記進 discovery registry 只保證找得到，不保證每一步都跑得對，見 `ai-harness` task 紀錄）**：
-- `qa_env.sh`、`tools/ux_receipt.py`、`docs/qa-runbook.md` 六道 gate、Step 0–5 的流程骨架——三個 client 都能原樣執行，無需改寫。
+- `qa_env.sh`、`tools/ux_receipt.py`、`docs/qa-runbook.md` 七道 gate、Step 0–6 的流程骨架——三個 client 都能原樣執行，無需改寫。
 - Step 4 走查裡「問題呈現」若用 Claude 的原生選項工具（例如 `AskUserQuestion`），這是 Claude 專屬能力；Codex/Antigravity 沒有等價工具，要退化成固定格式的純文字選項呈現，並在 `ux_receipt.py` 記 `plain_text` 模式（不是 `native_options`）。
 - Step 4「試 widget 一次」的規矩鐵則裡提到的渲染管道測試（例如 Claude 端可能用到的某個 Artifact 類發布工具）是 Claude 專屬 MCP 工具；Codex/Antigravity 要用它們自己有的等價渲染能力測，或者根本沒有就直接記 `widget_attempt_failed` 降級成 markdown，不要照抄 Claude 端提到的工具名字。
 - `qa_env.sh` 對「目前工作目錄／worktree」的假設，尚未在 Codex/Antigravity 自己的工作目錄模型下實測過——第一次在那邊跑建議先用 `status`（唯讀）確認行為符合預期，再往下走。
@@ -134,6 +134,11 @@ python3 engine/review.py finalize --session-id <ID> --answers /tmp/answers.json 
 python3 tools/ux_receipt.py start --session-id <ID> --client claude --route first_review \
   --question-mode native_options --question-mode plain_text \
   --card-mode widget --card-mode markdown_inline
+# weekly_review 專屬、且 verify 會擋：先把「上次的承諾」端出來給用戶看，再記這筆。
+# 必須恰好一筆 prior_commitment 或 prior_skip，而且要在第一個問題／第一張卡之前——
+# 這條就是記憶延續性本身（上次講好的規矩，這次有沒有被拿出來對帳）。
+# plan 另外回了 exit_reason / due_revisit 的話，各自再記一筆（同樣用 --memory-kind）。
+python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_commitment
 # 每問一題、每出一次卡，都在用戶真的看到「之後」記一筆
 python3 tools/ux_receipt.py event --event question_presented --question-id <qid> --mode plain_text
 python3 tools/ux_receipt.py event --event card_presented --stage preview --mode widget
@@ -164,7 +169,7 @@ QA 心態，走的時候盯這些（發現就記，別在這改）：
 - 「答完 → 出卡」機器等了多久？久不久？（呼應 #236 5–10 分鐘等待；可留意 preview 被 reject 重寫幾次）——用鐵則 3 的 receipt ts 差直接量，別再靠體感
 - 卡片文案有沒有數字幻覺、誠實揭露對不對、規矩有沒有連到實際持倉？
 - 台股 / 混市場 / 現金 / 日期格式這些邊界有沒有出錯？
-- **呈現候選規矩選擇時，agent 自己有沒有偷懶改寫/瞎編 `grounding`？**（2026-07-21 教訓，見 #293）`flows/*.md` 明講候選規矩的 `grounding` 要逐字引用、沒有 `grounding` 的候選不准編一句上去；這步完全沒有機械檢查，agent 求快時很容易犯——呈現前自己對照一次 `card_plan.candidate_rules` 的原始欄位。
+- **呈現候選規矩選擇時，agent 自己有沒有偷懶改寫/瞎編 `grounding`？**（2026-07-21 教訓，見 #293）`flows/*.md` 明講候選規矩的 `grounding` 要逐字引用、沒有 `grounding` 的候選不准編一句上去。**機械檢查只守其中一半**：`verify` 會擋「引擎給了 `grounding`、但呈現文字沒有逐字包含它」（#293），而且是拿你自己交的 `--grounding-check-file` 去比對；「候選本來就沒有 `grounding`、agent 自己編一句上去」**擋不到**——沒有引擎原文可比對，`ux_receipt.py` 的 `_grounding_fidelity()` 自己註明這半是 accepted limitation。所以人工對照仍是必要的，而且要對準這一半：呈現前自己看一次 `card_plan.candidate_rules`，確認每個候選的 `grounding` 是引擎給的、不是你補的。
 
 ### Step 5 — 收尾
 

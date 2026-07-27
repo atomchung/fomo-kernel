@@ -310,7 +310,13 @@ cmd_archive_receipt() {
     vroot="$(dirname "$(dirname "$src")")"
     local verify_args=(--session-id "$vsid" --state-root "$vroot")
     if [ "$human" != "agent_simulated" ]; then
-      verify_args+=(--require-owner-verdict)
+      # Runbook gate 4 names *both* flags for a human-graded run, because only
+      # timing_integrity.status=credible is eligible to become fresh owner_live
+      # UX ground truth. Archiving used to pass just --require-owner-verdict:
+      # verify still computed the timing warning and still printed it, but the
+      # archive succeeded anyway, so the public contract's bar was one flag
+      # higher than anything actually enforced it.
+      verify_args+=(--require-owner-verdict --require-timing-integrity)
     fi
     # Runbook gate 7 (#417). Every level of human involvement carries it: the
     # thing being gated is whether the run's misses became replayable, and an
