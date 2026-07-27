@@ -30,6 +30,7 @@ SUITES = [
     ("Market context", "tests/test_market_context.py"),
     ("Problem ledger", "tests/test_problems.py"),
     ("Narrative digit-ban", "tests/test_digit_ban.py"),
+    ("Position-sizing literal gate (#477)", "tests/test_sizing_literal_gate.py"),
     ("Persona end-to-end", "tests/test_sample_styles.py"),
     ("State-loop end-to-end", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
     ("Card and state checker probes", "tests/test_checkers_offline.py"),

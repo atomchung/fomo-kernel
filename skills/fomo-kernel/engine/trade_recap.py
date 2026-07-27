@@ -42,6 +42,11 @@ RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股�
 # 亦從該線起算;規矩「建議壓到」的目標 POSITION_CAP 可比觸發線更嚴(那是教練建議,不是觸發門檻)。
 # 通用基準,不依用戶歷史分佈個人化——那會把壞習慣正常化(owner 2026-07-22);個人化只來自用戶
 # 明確覆寫(profile.json → state.max_position_pct),覆寫時觸發線與規矩目標一起改用其值。
+# #477:上面對齊的其實只有三處(dim_size 的診斷/severity + prescribe 的處方);ticker_diagnosis
+# 的 too_heavy 標籤當時漏掉,獨立留著硬編 0.25,直到跟 dim_size 同一張卡吵架才被抓到——四處
+# 只對齊了三處。現已併入 effective_oversize_trigger 同一事實源;
+# tests/test_sizing_literal_gate.py 機械把關「engine/ 裡不准再有第五處硬編這兩個常數的值」,
+# 不再靠人眼複查這段註解有沒有被下一個人讀到。
 OVERSIZE_TRIGGER = 0.25    # 超過即把 sizing 標成洞 + 開 cut_oversize 處方(診斷=處方同一條線)
 OVERSIZE_SEV_SPAN = 0.25   # severity 從觸發線線性升到 1.0 的跨度(觸發線 + span = 滿格;預設 25%→50%)
 POSITION_CAP = 0.20        # cut_oversize 規矩建議壓到的上限(教練目標);renderer 端有 stdlib 副本,test_card_html 鎖同步
@@ -1496,10 +1501,11 @@ def prescribe(ab, dims, overview, max_pos_override=None):
                        rule=f"單筆部位上限定死 {effective_position_cap(max_pos_override):.0%},超過就減"))
     return rx
 
-def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
+def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_n=7):
     """標的層診斷(對事不對人):每檔金額影響(已實現+未實現)+ 行為標籤,按 |金額| 排序只取 top。
     加碼用主從分類器(classify_adds)分疑似定投/凹單/待確認,不再用純結果判(避 outcome bias);
-    出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。"""
+    出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。max_pos_override:too_heavy
+    的觸發線比照 dim_size/prescribe,讀用戶在 profile.json 設的單一部位上限(#477,對齊 #324)。"""
     last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
                                    cur_ret=None, mval=0.0, px=None, avg_cost=None))
@@ -1519,6 +1525,10 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
             a["mval"] = sh * px
             a["px"] = px                                    # #347:現價,供 cur_ret 旁的原始數字揭露
             a["avg_cost"] = cost / sh if sh else None        # #347:均成本(每股),同上
+    # #477:too_heavy 的觸發線併入 #324 的單一事實源——這裡曾是獨立硬編的 0.25,跟 dim_size
+    # 同一張卡各吹各的號;現在跟 dim_size/prescribe 讀同一條 effective_oversize_trigger,
+    # 用戶覆寫上限時三處一起動,不再只有 sizing 維度聽用戶的。
+    trigger = effective_oversize_trigger(max_pos_override)
     out = []
     for t, a in agg.items():
         impact = a["realized"] + a["unreal"]
@@ -1549,7 +1559,7 @@ def ticker_diagnosis(rts, adds_class, held, last_px, top_n=7):
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
             tags.append({"code": "sold_winner_early",
                          "params": {"win_early": a["win_early"], "win_n": a["win_n"]}})
-        if wpct > 0.25 and not instrument_policy.is_diversified_allocation(t):
+        if wpct > trigger and not instrument_policy.is_diversified_allocation(t):
             tags.append({"code": "too_heavy", "params": {"wpct": wpct}})
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
             tags.append({"code": "disciplined_hold", "params": {"cur": cur, **px_cost}})
@@ -2343,7 +2353,8 @@ def main():
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
     # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
     # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
-    tdiag = ticker_diagnosis(rts_u, adds_class, held_dx, lastpx_u)   # #172 殘倉不列 per-ticker 診斷
+    tdiag = ticker_diagnosis(rts_u, adds_class, held_dx, lastpx_u,   # #172 殘倉不列 per-ticker 診斷
+                             max_pos_override=max_pos_override)      # #477:too_heavy 觸發線比照 dim_size/prescribe,吃同一份用戶覆寫
 
     # 資料完整性(賣超 / 未分類 driver)— 影響數據可信度,JSON 與人話卡共用同一份
     orphans = orphan_sells(rows)
