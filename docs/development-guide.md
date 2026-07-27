@@ -115,6 +115,26 @@ not the delivery surface.**
   pins magnitudes as literal strings but measures no viewport, so CSS
   overflowing at 360px still passes.
 
+**A sixth shape, with a different root.** The five above share *the verification
+surface was not the delivery surface*. A suite can also observe exactly the
+right surface and still pin the wrong answer. `consider`'s rule collision
+shipped with 35 passing tests and three precise mutations while telling a user
+selling down an oversized position that the trade broke their own rule — the
+engine read the resulting state of the book instead of the effect of the trade,
+so an action that cut the top weight from 59.75% to 49.74% returned the same
+verdict as one that made it worse. Every test asserted "given this book and this
+premise, return this state," and every test was right about what the code did.
+None asked what the returned state would mean to the person reading it.
+Receipt: `2d563b9`.
+
+- For any value an agent or renderer turns into advice, enumerate its states and
+  ask of each: **what would the user do if they believed this, and would they end
+  up better or worse off?** A state that inverts under a legitimate scenario —
+  one value covering both "you are making this worse" and "you are fixing it" —
+  is a design defect, not a wording problem, and no amount of mutation testing
+  on the existing assertions will surface it. It was found by running the
+  command on a real fixture and reading the answer as its reader.
+
 ## 3. Static-rule-ification — the upstream generator of complexity
 
 **Signature.** A runtime judgment hard-coded as an enum, table, or priority
