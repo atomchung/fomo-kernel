@@ -54,7 +54,14 @@ evals/run_episodes.py         the bank's mechanical half; deterministic and
                               holds the question-consumer gate: every question
                               kind must have a verifiable consumer for its
                               answer, or be a tracked defect (#429)
-tests/test_episode_checkers.py mutation probes for the bank's six checks
+evals/judge_episodes.py       the bank's rubric judge; non-deterministic and
+                              billable, so it is opt-in and never runs in the
+                              default suite. Grades the stance an answer takes
+                              on declared axes, never its wording (#417)
+tests/test_episode_checkers.py mutation probes for the bank's checks, and for
+                              every judge interlock — the verdict arithmetic is
+                              a pure function so those stay re-verifiable
+                              without an API key
 ```
 
 The complete deterministic suite runs through `python3 tests/run_all.py`. Headless agent generation and LLM judging are opt-in because they are non-deterministic and may cost money.
@@ -183,6 +190,8 @@ Use an LLM judge only for prose qualities that deterministic checks cannot settl
 - no tacked-on philosophical lecture
 
 Calibrate the judge against human ratings. If agreement is poor, improve the rubric rather than treating the score as truth.
+
+The question-episode bank has its own judge, `evals/judge_episodes.py`, on the same terms and with one addition: calibration is a *state the run prints*, not a discipline the reader is trusted to remember. Every episode's judge block records who declared its expected verdicts, and while any is agent-declared the run reports itself uncalibrated rather than printing a number that reads like accuracy. Its axes grade the stance an answer takes — was the reasoning two-sided, can the user overrule it, does the lookup lead — and never the wording, because the bank shipped a behavior oracle once already and the recut rule applies double to a judge. See [evals/episodes/README.md](../evals/episodes/README.md).
 
 ## Mutation testing
 

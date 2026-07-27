@@ -140,6 +140,15 @@ CHECK_NAMES = ("number_provenance", "honesty_coverage", "privacy_trace",
                "condition_check_integrity")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
 
+# The rubric judge's axes (#417 second half). The names live here rather than in
+# `evals/judge_episodes.py` for one reason: a typo'd axis has to fail in the free
+# offline suite, and this loader cannot import that module without taking on its
+# `anthropic` dependency. The judge reads this tuple and holds the rubric text;
+# it refuses to run if either side has grown an axis the other never heard of.
+# Nothing in this file grades an axis — a judge verdict is not deterministic and
+# does not belong in the default suite (`docs/eval-design.md`'s hierarchy).
+JUDGE_AXES = ("two_sided", "overrulable", "criterion_neutrality")
+
 # ── The question-consumer gate (#429) ────────────────────────────────────────
 #
 # The bank's other half, and the more expensive failure of the two. A check on an
@@ -213,7 +222,7 @@ def validate_episode(raw, rel):
     if problems:
         return problems
     unknown = set(raw) - {"id", "title", "source", "moment", "fixture", "question",
-                          "blocked_on",
+                          "blocked_on", "judge",
                           "checks", "must_disclose", "answers"}
     require(not unknown, f"unknown top-level field(s): {sorted(unknown)}")
     for field in ("id", "title", "moment"):
@@ -267,6 +276,33 @@ def validate_episode(raw, rel):
         problems.append(f"{rel}: honesty_coverage is declared but must_disclose is empty — the "
                         "check would have no key to look for, and an abstention is not a pass")
 
+    # The rubric judge's declarations. Validated here, graded nowhere in this
+    # file: the offline suite must reject a typo for free, and it must not be
+    # able to report a non-deterministic verdict as a deterministic result.
+    judge = raw.get("judge")
+    judge_axes = []
+    if judge is not None:
+        if not isinstance(judge, dict):
+            problems.append(f"{rel}: judge must be an object")
+        else:
+            unknown = set(judge) - {"axes", "declared_by"}
+            require(not unknown, f"judge has unknown field(s): {sorted(unknown)}")
+            axes = judge.get("axes")
+            if not (isinstance(axes, list) and axes):
+                problems.append(f"{rel}: judge.axes must name at least one axis — an "
+                                "empty judge block is the absence of one")
+            else:
+                bad = [name for name in axes if name not in JUDGE_AXES]
+                require(not bad, f"unknown judge axis/axes: {bad}")
+                if len(set(axes)) != len(axes):
+                    problems.append(f"{rel}: judge.axes repeats an axis")
+                judge_axes = [name for name in axes if name in JUDGE_AXES]
+            # Who declared these expectations decides what a green judge run may
+            # be called. An agent-declared block is a hypothesis the judge agrees
+            # with; only an owner-ratified one is calibration.
+            require(judge.get("declared_by") in {"agent", "owner"},
+                    "judge.declared_by must be agent or owner")
+
     # One answer is enough: the recorded miss is the asset. A repaired answer is
     # a witness that the invariants can be satisfied, not a required target —
     # pinning "what good looks like" is what this bank got wrong the first time.
@@ -280,7 +316,7 @@ def validate_episode(raw, rel):
         if not isinstance(answer, dict):
             problems.append(f"{tag} must be an object")
             continue
-        unknown = set(answer) - {"id", "expect", "fails", "note",
+        unknown = set(answer) - {"id", "expect", "fails", "note", "judge_fails",
                                  *ANSWER_PART_KEYS, *ANSWER_PAYLOAD_KEYS}
         if unknown:
             problems.append(f"{tag} unknown field(s): {sorted(unknown)}")
@@ -313,6 +349,28 @@ def validate_episode(raw, rel):
                 problems.append(f"{tag} every presented option needs maps_to")
         if not isinstance(answer.get("discloses", {}), dict):
             problems.append(f"{tag} discloses must be an object of key -> sentence")
+        judge_fails = answer.get("judge_fails")
+        if judge_fails is not None:
+            if not judge_axes:
+                problems.append(f"{tag} names judge_fails on an episode that declares no "
+                                "judge axes — there is no axis to fail yet")
+            elif not (isinstance(judge_fails, list) and judge_fails):
+                problems.append(f"{tag} judge_fails must name at least one axis, or be "
+                                "absent (absent means: expected to pass every declared axis)")
+            else:
+                outside = [name for name in judge_fails if name not in judge_axes]
+                if outside:
+                    problems.append(f"{tag} judge_fails names axis/axes the episode does "
+                                    f"not declare: {outside}")
+    # The judge's first interlock, enforced offline so it cannot be discovered
+    # only by someone who paid for a run: an axis no answer is expected to fail
+    # cannot show that the judge still looks at it.
+    for axis in judge_axes:
+        if not any(isinstance(answer, dict) and axis in (answer.get("judge_fails") or [])
+                   for answer in answers):
+            problems.append(f"{rel}: judge axis {axis!r} is declared but no answer is "
+                            "expected to fail it — the episode cannot prove the judge "
+                            "still discriminates on that axis")
     if not failing and checks:
         problems.append(f"{rel}: no answer expects failure — an episode whose every answer "
                         "passes cannot prove its checks still look at anything")

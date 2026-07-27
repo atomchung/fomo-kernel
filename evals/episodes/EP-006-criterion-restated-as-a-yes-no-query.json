@@ -18,11 +18,16 @@
     "text": "Which rule are you committing to this time?"
   },
   "checks": ["condition_integrity"],
+  "judge": {
+    "axes": ["criterion_neutrality"],
+    "declared_by": "agent"
+  },
   "answers": [
     {
       "id": "recorded_miss",
       "expect": "fail",
       "fails": ["condition_integrity"],
+      "judge_fails": ["criterion_neutrality"],
       "note": "The failure #412 was opened on, in the shape it takes once conditions are storable at all. The lookup restates the criterion as a yes/no question, so retrieval is steered toward confirmation: a search for 'did growth fall below 30%' returns the nearest matching real event and attaches it to the timeframe the question supplied, producing a real source, a real figure and a wrong date. That is indistinguishable from a correct answer at the point of use, which is why the gate is mechanical rather than a style note. Deliberately a minimal pair with `repaired` — same prose, one field different — because an answer carrying two defects stays red when the gate under test is neutered, and grades nothing (the 2026-07-26 mutation run caught exactly that here). number_provenance is likewise not declared: a researched figure legitimately comes from outside the engine, and its discipline is the source + as-of anchor (#414's public_fact shape), not engine provenance.",
       "prose": "Recorded, in your words: sell if quarterly revenue growth drops under 30%. The latest reported quarter is 38% against the year-ago quarter — is that the comparison you meant?",
       "condition": {
@@ -36,7 +41,7 @@
       "id": "paraphrased_criterion",
       "expect": "fail",
       "fails": ["condition_integrity"],
-      "note": "The neutral query is now correct and the basis is shown back, but the user's own sentence was tidied into the product's phrasing. The record and the screen have quietly diverged, which is exactly what #396 forbids — and a condition the user cannot recognize as theirs is one they cannot hold themselves to.",
+      "note": "The neutral query is now correct and the basis is shown back, but the user's own sentence was tidied into the product's phrasing. The record and the screen have quietly diverged, which is exactly what #396 forbids — and a condition the user cannot recognize as theirs is one they cannot hold themselves to. This answer is also the demonstration that the two halves are independent: mechanically red on condition_integrity, and expected to pass criterion_neutrality, because the defect the judge grades is not the defect the check catches. An episode where every red answer is red on both would not distinguish the halves at all.",
       "prose": "Recorded: revenue growth below the 30% line. Latest reported quarter came in at 38% against the year-ago quarter. Is that the comparison you meant?",
       "condition": {
         "criterion": "sell if quarterly revenue growth drops under 30%",
