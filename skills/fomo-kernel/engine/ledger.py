@@ -29,6 +29,13 @@ CLI(SKILL 消費;JSON 走 stdout、人話訊息走 stderr,對齊 TR_JSON 模式)
   python3 ledger.py append-snapshot POS.json [--as-of D] [--source S] [--cash JSON] [--ledger P]
   python3 ledger.py append-trades   STD.csv  [--ledger P]             # 自動去重(重疊期重複匯入安全)
   python3 ledger.py reconcile       POS.json [--ledger P]             # 宣告 vs 推導 diff(唯讀)
+  python3 ledger.py doctor          [--ledger P]                      # 唯讀診斷壞行,絕不推導(#462)
+
+#462:load_ledger() 預設 strict=True——訂單相依的帳本(snapshot 錨點 + 依序疊加的 trades)
+缺一行不是缺一筆,是後面每一個推導出的股數/均價都可能錯一個數字且無法從結果本身看出來。
+壞行只在 strict=False(唯一消費者是 `doctor` 子指令/讀 legacy 資料的遷移工具)才回報而不拋出;
+derive_holdings/latest_anchor 等推導函式因此永遠只吃得到「乾淨或已被拒收」的 events,
+不需要各自重複檢查——見 docs/development-guide.md §7(單一 gate,而非多處各自防)。
 """
 import argparse
 import csv
@@ -49,29 +56,77 @@ CASH_TOL = 0.005           # cash / avg-cost absolute tolerance (broker cent rou
 EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation")
 
 
+class LedgerIntegrityError(ValueError):
+    """Raised by load_ledger(path) (default strict=True) when the ledger has
+    one or more unreadable rows (#462).
+
+    ``ledger.jsonl`` is order-dependent and append-only: a dropped row is not
+    a missing fact, it is a wrong downstream number (a different share count
+    or average cost) with nothing in the output to signal it happened. So the
+    default is to refuse rather than to compute over a gap. ``issues`` carries
+    the same per-row detail the ``doctor`` CLI command reports, so a caller
+    that wants to show *what* is wrong can read it off the exception instead
+    of re-scanning the file.
+    """
+
+    def __init__(self, message, issues):
+        super().__init__(message)
+        self.issues = issues
+
+
 # ─────────────────────────── 讀寫 ───────────────────────────
 
-def load_ledger(path):
-    """讀 ledger.jsonl → (events, skipped)。逐行容錯:壞 JSON / 未知 type 只跳過該行並計數
-    (#50 精神:讀入/跳過要可見,不靜默)。"""
-    events, skipped = [], 0
+def _scan_ledger(path):
+    """單一事實源:逐行掃描 ledger.jsonl → (events, issues)。
+
+    issues 元素 = {"line": 行號(1-based), "reason": "invalid_json"|"unknown_type"}。
+    load_ledger() 的 strict gate 與 `doctor` 子指令的診斷報告都只讀這個函式的結果,
+    兩邊不會對「什麼算壞行」各自表述、彼此漂移(development-guide.md §7)。"""
+    events, issues = [], []
     if not os.path.exists(path):
-        return events, skipped
+        return events, issues
     with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
             try:
                 ev = json.loads(line)
             except ValueError:
-                skipped += 1
+                issues.append({"line": lineno, "reason": "invalid_json"})
                 continue
             if not isinstance(ev, dict) or ev.get("type") not in EVENT_TYPES:
-                skipped += 1
+                issues.append({"line": lineno, "reason": "unknown_type"})
                 continue
             events.append(ev)
-    return events, skipped
+    return events, issues
+
+
+def load_ledger(path, *, strict=True):
+    """讀 ledger.jsonl → (events, skipped)。
+
+    strict=True(預設):只要 _scan_ledger 回報任何壞行,整批 raise
+    LedgerIntegrityError——holdings/reconcile/consider 等每一個推導路徑用的都是
+    這個預設值,壞行因此永遠無法無聲流進任何算出來的數字(#462;#50 精神的延伸:
+    讀入/跳過要可見,不靜默——不夠,訂單相依的帳本必須連「靜默算錯」都不許發生)。
+
+    strict=False:診斷/遷移專用(`ledger.py doctor`、未來的 legacy 資料檢視工具),
+    只回報壞行數、絕不拋出——呼叫端自己決定怎麼呈現,但不准把回傳的 events 拿去
+    derive_holdings/latest_anchor:那正是這個旗標存在的唯一理由是「看見問題」,
+    不是「繞過問題」。
+    """
+    events, issues = _scan_ledger(path)
+    if strict and issues:
+        detail = "; ".join(f"line {row['line']} ({row['reason']})" for row in issues[:5])
+        more = f"; +{len(issues) - 5} more" if len(issues) > 5 else ""
+        raise LedgerIntegrityError(
+            f"{path} has {len(issues)} unreadable row(s) ({detail}{more}). "
+            "Refusing to derive holdings or any other number from an incomplete "
+            "ledger (#462) — run `python3 ledger.py doctor --ledger "
+            f"{path}` to inspect without deriving anything.",
+            issues,
+        )
+    return events, len(issues)
 
 
 def append_events(path, events):
@@ -590,10 +645,24 @@ def main(argv=None):
     p_rec = sub.add_parser("reconcile", help="宣告 vs 推導 diff(唯讀)")
     p_rec.add_argument("positions_json")
 
+    sub.add_parser("doctor", help="唯讀診斷壞行,絕不推導(#462;修好/刪掉壞行後再跑其他子指令)")
+
     a = ap.parse_args(argv)
-    events, skipped = load_ledger(a.ledger)
-    if skipped:
-        print(f"⚠️  ledger 有 {skipped} 行壞事件被跳過({a.ledger})", file=sys.stderr)
+
+    if a.cmd == "doctor":
+        # #462 的診斷/遷移出口:strict=False 的唯一合法消費者。刻意不呼叫
+        # derive_holdings——這條指令的存在理由就是「看見問題」,拿它的 events
+        # 去推導會把出口重新變成繞過口。
+        events, issues = _scan_ledger(a.ledger)
+        _emit({"ledger": a.ledger, "clean": not issues,
+               "readable_lines": len(events), "skipped": len(issues), "issues": issues})
+        return 0
+
+    try:
+        events, skipped = load_ledger(a.ledger)
+    except LedgerIntegrityError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        return 1
 
     if a.cmd == "holdings":
         out = derive_holdings(events)

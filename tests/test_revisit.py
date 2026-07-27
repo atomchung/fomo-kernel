@@ -128,6 +128,28 @@ def test_enqueue_dedup_and_due_schedule():
     assert item["shares_before"] == 10, "減倉比例要靠 shares_before,capture 問句用"
 
 
+def test_enqueue_from_ledger_fails_closed_on_a_corrupt_ledger_row():
+    """#462: enqueue_from_ledger reads the ledger through ledger.load_ledger.
+    A corrupt row must raise instead of letting detect_exits silently run
+    over a shortened event list -- a real exit sitting after the dropped
+    line would otherwise never reach the queue, never get asked "why did you
+    sell" at all, with nothing in the output to say a row went missing."""
+    led, q = _mk_paths()
+    lg.append_events(led, [
+        _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 120.5),   # a real exit
+    ])
+    with open(led, "a", encoding="utf-8") as f:
+        f.write("not json at all\n")
+    try:
+        rv.enqueue_from_ledger(led, q, today=dt.date(2026, 6, 15))
+        raise AssertionError("a corrupt ledger row must not let enqueue proceed silently")
+    except lg.LedgerIntegrityError as exc:
+        assert "unreadable row(s)" in str(exc)
+    revisits, _, _ = rv.load_queue(q)
+    assert revisits == {}, "a failed enqueue must not have written a partial queue"
+
+
 def test_revisit_id_includes_cycle_id():
     """#143:revisit_id 必須含 cycle_id 段,否則「同 ticker 同日同股數的不同輪次」撞成同一 id,
     第二筆被去重誤殺 → 出場追蹤永久漏一筆(直接傷 #32 的賣飛對帳)。"""

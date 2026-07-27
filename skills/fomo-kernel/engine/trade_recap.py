@@ -2407,8 +2407,15 @@ def main():
     # data_integrity(永遠記,觸發式);殘差大到污染每天淨值 → account_perf 內部 gate 掉帳戶柱。
     # 隱私:TR_LEDGER 預設本機真帳本,測試/試駕須釘到空/dev/null——「不落盤 ≠ 不讀盤」:不釘會
     # 把真餘額洩進示範卡、或在 owner 機讀到真 ledger 汙染契約測試(見 SKILL Step 0 / 契約測試)。
-    from ledger import load_ledger, DEFAULT_LEDGER
-    _levents, _ = load_ledger(os.environ.get("TR_LEDGER") or DEFAULT_LEDGER)
+    # #462:壞行的帳本不能餵出殘差數字——殘差本身就是誠實層,建立在被靜默截斷的
+    # cash snapshot 列表上等於偽造它要偵測的東西。與上面 PriceFeedError 同一套
+    # fail-closed 慣例:catch、印清楚訊息、退出,不留半張卡。
+    from ledger import load_ledger, DEFAULT_LEDGER, LedgerIntegrityError
+    try:
+        _levents, _ = load_ledger(os.environ.get("TR_LEDGER") or DEFAULT_LEDGER)
+    except LedgerIntegrityError as e:
+        print(f"❌ 本機帳本(ledger.jsonl)有壞行:{e}", file=sys.stderr)
+        sys.exit(1)
     _cash_snaps = [{"as_of": e["as_of"], "cash": e["cash"]}
                    for e in _levents if e.get("type") == "snapshot" and e.get("cash")]
     cash_residuals = cash_reconcile_residuals(_cash_snaps, cash_flows,

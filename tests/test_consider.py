@@ -428,6 +428,27 @@ def test_empty_ledger_file_fails_closed():
         _fails(run, "no usable trade or snapshot history")
 
 
+def test_corrupt_ledger_fails_closed_rather_than_reconstructing_a_partial_book():
+    """#462: _consider_rows' ledger-reconstruction fallback must refuse a
+    ledger with an unreadable row rather than silently answering the
+    rule-collision question against a shortened book. Unlike the absent/empty
+    cases above, this ledger has a real, usable snapshot anchor -- the old
+    (pre-#462) load_ledger would have happily dropped the bad line and let
+    consider answer with a wrong position, not a missing one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": "NVDA", "shares": 100, "avg_cost": 100.0,
+                 "market": "US", "currency": "USD"}]),
+        ])
+        with open(os.path.join(tmp, "ledger.jsonl"), "a", encoding="utf-8") as f:
+            f.write("not json at all\n")
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
+        _fails(run, "unreadable row(s)")
+        assert not os.path.exists(_consultation_path(tmp)), "a failed call must not write a row"
+
+
 def test_csv_with_no_trade_rows_fails_closed():
     with tempfile.TemporaryDirectory() as tmp:
         csv_path = os.path.join(tmp, "empty.csv")
@@ -866,6 +887,27 @@ def test_prepare_reconciliation_is_empty_and_harmless_with_no_consultations_file
             "items": [], "summary": {"open_total": 0, "shown": 0, "beyond_cap": 0}}
         assert not os.path.exists(_consultation_path(root)), \
             "prepare must never create a consultations file that did not exist"
+
+
+def test_prepare_fails_closed_on_a_corrupt_ledger_before_consultation_reconciliation():
+    """#462: _build_plan's own ledger.load_ledger call (distinct from
+    _ingest_trades' and _prepare_exit_capture's -- both bypassed here via
+    --test-drive and omitting a CSV path, isolating this one) feeds
+    consultation_reconciliation. A corrupt row must block prepare rather than
+    let a matched/unmatched verdict be computed from a silently shortened
+    ledger -- this is the "every route computes this" read the review.py
+    comment above ledger.load_ledger describes, exercised on the route with
+    the fewest other ledger reads in its way."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        card_path, state_path = _minimal_prepare_artifacts(tmp, "2026-07-20")
+        _write_ledger(os.path.join(root, "ledger.jsonl"), [
+            _trade_event("2026-07-05", "NVDA", "buy", 20, 135.0),
+        ])
+        with open(os.path.join(root, "ledger.jsonl"), "a", encoding="utf-8") as f:
+            f.write("not json at all\n")
+        run = _run("prepare", "--test-drive", "--root", root,
+                   "--card-json", card_path, "--state-json", state_path)
+        _fails(run, "unreadable row(s)")
 
 
 # ───────────────── K. consultation_id — content-addressed identity ─────────────────

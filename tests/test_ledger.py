@@ -505,15 +505,78 @@ def test_trades_from_csv_today_defaults_to_real_today():
     assert len(evs) == 1 and future_dated == 0, "2020 年的交易對任何現實中的『今天』都不是未來"
 
 
-def test_load_ledger_skips_bad_lines():
-    p = _tmpfile(
+def _corrupt_ledger_text():
+    return (
         json.dumps(_snap("2026-07-01", [{"ticker": "A", "shares": 1}])) + "\n"
         + "not json at all\n"
         + json.dumps({"type": "alien", "x": 1}) + "\n"
+        + json.dumps(_tr("2026-07-02", "A", "buy", 1, 10.0)) + "\n"
+    )
+
+
+def test_load_ledger_fails_closed_on_bad_lines_by_default():
+    """#462: load_ledger's default (strict=True) must refuse to hand back any
+    events at all when the file has unreadable rows — an order-dependent
+    ledger that silently dropped a line does not produce a *missing* number,
+    it produces a *wrong* one, so the only safe default is to raise before
+    any caller can derive holdings from the gap."""
+    p = _tmpfile(_corrupt_ledger_text(), ".jsonl")
+    try:
+        lg.load_ledger(p)
+        raise AssertionError("a ledger with 2 unreadable rows must raise by default")
+    except lg.LedgerIntegrityError as exc:
+        assert "2 unreadable row(s)" in str(exc)
+        assert "doctor" in str(exc), "the message must point at the diagnostic escape hatch"
+        assert exc.issues == [
+            {"line": 2, "reason": "invalid_json"},
+            {"line": 3, "reason": "unknown_type"},
+        ], "issues must carry exact 1-based line numbers and reasons, not just a count"
+
+
+def test_load_ledger_strict_false_is_the_diagnostic_escape_hatch():
+    """The only sanctioned way to see events out of a corrupt ledger without
+    raising: strict=False, unchanged from load_ledger's pre-#462 return shape
+    (events, skipped) so a future migration/inspection tool can still use it —
+    this is the exact contract `ledger.py doctor` relies on."""
+    p = _tmpfile(_corrupt_ledger_text(), ".jsonl")
+    events, skipped = lg.load_ledger(p, strict=False)
+    assert len(events) == 2 and skipped == 2, \
+        "strict=False must still surface the readable events and the count, never raise"
+
+
+def test_scan_ledger_is_the_single_source_for_gate_and_diagnostics():
+    """development-guide.md §7: the strict gate and the diagnostic report must
+    not each parse the file with their own rules and risk disagreeing about
+    what counts as a bad row. Both load_ledger's raise and load_ledger's
+    strict=False escape hatch are thin wrappers over the same _scan_ledger."""
+    p = _tmpfile(_corrupt_ledger_text(), ".jsonl")
+    scanned_events, scanned_issues = lg._scan_ledger(p)
+    _events, skipped = lg.load_ledger(p, strict=False)
+    assert skipped == len(scanned_issues) == 2
+    assert len(scanned_events) == 2
+    try:
+        lg.load_ledger(p)
+        raise AssertionError("expected LedgerIntegrityError")
+    except lg.LedgerIntegrityError as exc:
+        assert exc.issues == scanned_issues, \
+            "the raised issues must be exactly _scan_ledger's own issues, not a re-derivation"
+
+
+def test_load_ledger_clean_file_is_unaffected_by_strict_default():
+    p = _tmpfile(
+        json.dumps(_snap("2026-07-01", [{"ticker": "A", "shares": 1}])) + "\n"
         + json.dumps(_tr("2026-07-02", "A", "buy", 1, 10.0)) + "\n",
         ".jsonl")
     events, skipped = lg.load_ledger(p)
-    assert len(events) == 2 and skipped == 2
+    assert len(events) == 2 and skipped == 0
+
+
+def test_load_ledger_missing_file_is_not_corruption():
+    """An absent ledger is a brand-new install, not a corrupt one — it must
+    keep returning empty rather than raising, or onboarding could never run
+    its first prepare."""
+    events, skipped = lg.load_ledger("/tmp/does-not-exist-fomo-kernel-462.jsonl")
+    assert events == [] and skipped == 0
 
 
 # ─────────────── D. 寫入 + CLI 介面(SKILL 消費的形狀)───────────────
@@ -588,6 +651,96 @@ def test_cli_append_trades_rejects_future_dated():
         "stderr 要提示未來日期筆數,不需要逐筆印出可能敏感的細節"
     events, _ = lg.load_ledger(led)
     assert all(e.get("ticker") != "PLTR" for e in events), "PLTR 不該被寫進 ledger.jsonl(拒收非只是不算數)"
+
+
+# ─────────────── D2. #462:strict fail-closed CLI surface + doctor ───────────────
+
+def _write_corrupt_ledger(path):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_corrupt_ledger_text())
+
+
+def test_cli_holdings_fails_closed_on_corrupt_ledger_instead_of_a_wrong_number():
+    """The CLI path SKILL.md/review.py would actually invoke: a corrupt ledger
+    must produce a clean non-zero failure, never a holdings JSON payload —
+    the exact P0 scenario #462 names (derive_holdings returning a wrong
+    number without raising)."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    _write_corrupt_ledger(led)
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "holdings"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0, "a corrupt ledger must not exit 0"
+    assert r.stdout.strip() == "", "no holdings JSON may reach stdout on a corrupt read"
+    assert "❌" in r.stderr and "unreadable row(s)" in r.stderr and "doctor" in r.stderr
+    assert "Traceback" not in r.stderr, "the failure must be a clean message, not a raw traceback"
+
+
+def test_cli_append_snapshot_fails_closed_on_pre_existing_corruption():
+    """Appending new, valid data on top of a corrupt ledger must not succeed
+    quietly — append-snapshot's own success payload includes a holdings
+    number computed over the combined (existing + new) events, so it is
+    exactly as exposed to the #462 gap as `holdings` itself."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    _write_corrupt_ledger(led)
+    pos = os.path.join(d, "pos.json")
+    with open(pos, "w", encoding="utf-8") as f:
+        json.dump([{"ticker": "NVDA", "shares": 10}], f)
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "append-snapshot", pos],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "unreadable row(s)" in r.stderr
+
+
+def test_cli_doctor_reports_without_deriving_anything():
+    """The explicit migration/diagnostic path #467 requires: doctor must
+    still work on a ledger every other subcommand now refuses, and its
+    output must be purely diagnostic (no holdings key at all) so it can
+    never become a second, accidental way to compute over corrupt data."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    _write_corrupt_ledger(led)
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "doctor"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, "doctor itself must succeed even when what it finds is bad news"
+    out = json.loads(r.stdout)
+    assert out["clean"] is False
+    assert out["skipped"] == 2 and out["readable_lines"] == 2
+    assert out["issues"] == [
+        {"line": 2, "reason": "invalid_json"},
+        {"line": 3, "reason": "unknown_type"},
+    ]
+    assert "holdings" not in out, "doctor must never derive — it only reports"
+
+
+def test_cli_doctor_clean_ledger():
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    lg.append_events(led, [_snap("2026-07-01", [{"ticker": "A", "shares": 1}])])
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "doctor"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out == {"ledger": led, "clean": True, "readable_lines": 1,
+                   "skipped": 0, "issues": []}
+
+
+def test_cli_doctor_on_a_ledger_that_does_not_exist_yet():
+    """A brand-new install has no ledger.jsonl at all; doctor must report
+    that as clean (nothing to fix), not fail."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    r = subprocess.run([sys.executable, os.path.join(ENGINE, "ledger.py"),
+                        "--ledger", led, "doctor"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["clean"] is True and out["readable_lines"] == 0 and out["skipped"] == 0
 
 
 # ─────────────── E. snapshot session projection ordering ───────────────

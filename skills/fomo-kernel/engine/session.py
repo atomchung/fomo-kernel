@@ -781,7 +781,15 @@ def _assert_initial_snapshot_boundary(root, bundle):
         raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
     if anchor.get("is_complete", True) is not True:
         raise SessionError(INCOMPLETE_SNAPSHOT_RECONCILIATION)
-    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    # #462: this is the authoritative, under-the-projection-lock mirror of
+    # review.py's prepare-time _validate_initial_snapshot_root — a corrupt
+    # row must fail this layer exactly as it fails that one, or a bad ledger
+    # row could let finalize adopt a reconciliation prepare never actually
+    # verified.
+    try:
+        events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    except ValueError as exc:
+        raise SessionError(str(exc)) from exc
     current_anchor = ledger.latest_anchor(events)
     if (current_anchor is not None
             and canonical(_snapshot_payload(current_anchor))
