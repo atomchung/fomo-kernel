@@ -915,6 +915,71 @@ def test_findings_event_refuses_silence_and_refuses_contradiction():
             raise AssertionError(f"accepted {finding!r} / no_findings={none_declared}")
 
 
+# The four below are external-review findings (2026-07-27). Each was a path the
+# write-side gate covered and the read-side gate did not, or a claim the docs
+# made that the tool never held anyone to.
+
+def test_verify_rejects_a_conversion_claim_the_bank_cannot_back():
+    """The write path resolved `episode:EP-NNN` against the bank; `verify` only
+    re-checked the regex, so a hand-authored or post-edited receipt claiming a
+    conversion that never happened verified clean — at the gate archiving uses."""
+    rows = good_markdown_rows()
+    rows.append(row("findings_recorded", findings=["episode:EP-994"]))
+    assert_has(ux_receipt.verify_rows(rows, require_findings=True),
+               "conversion claim with nothing behind it")
+    rows[-1]["findings"] = ["episode:EP-008"]
+    assert ux_receipt.verify_rows(rows, require_findings=True) == []
+
+
+def test_findings_recorded_rejects_content_fields():
+    """This event is the one a maintainer is most tempted to paste miss text
+    into, and it sits inside the state directory's trust boundary."""
+    rows = good_markdown_rows()
+    rows.append(row("findings_recorded", findings=[],
+                    private_text="the user's actual position and amount"))
+    assert_has(ux_receipt.verify_rows(rows, require_findings=True),
+               "findings_recorded contains unsupported fields: private_text")
+
+
+def test_findings_must_precede_the_owner_verdict():
+    """Both documents said so; the first cut enforced no ordering at all."""
+    rows = good_markdown_rows()
+    rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
+    rows.append(row("findings_recorded", findings=[]))
+    assert_has(ux_receipt.verify_rows(rows, require_owner_verdict=True, require_findings=True),
+               "must precede the owner verdict")
+    rows[-2], rows[-1] = rows[-1], rows[-2]
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True,
+                                  require_findings=True) == []
+
+
+def test_the_bank_is_read_from_declared_ids_not_filenames():
+    """A file named `EP-123-anything.json` holding invalid JSON counted as a
+    converted episode, because the id was split out of the filename — a fact the
+    file already states, hand-mirrored."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = pathlib.Path(tmp) / "repo"
+        (fake / "skills" / "fomo-kernel" / "tools").mkdir(parents=True)
+        (fake / "evals" / "episodes").mkdir(parents=True)
+        (fake / "evals" / "episodes" / "EP-123-not-replayable.json").write_text(
+            "{ not json", encoding="utf-8")
+        (fake / "evals" / "episodes" / "EP-124-real.json").write_text(
+            json.dumps({"id": "EP-124"}), encoding="utf-8")
+        copy = fake / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
+        copy.write_text(TOOL.read_text(encoding="utf-8"), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("ux_receipt_isolated", copy)
+        isolated = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(isolated)
+        assert isolated._episode_bank() == {"EP-124"}
+        try:
+            isolated._findings(["episode:EP-123"], False)
+        except isolated.ReceiptError as error:
+            assert "nothing behind it" in str(error), error
+        else:
+            raise AssertionError("an unparseable episode file backed a conversion claim")
+        assert isolated._findings(["episode:EP-124"], False) == {"findings": ["episode:EP-124"]}
+
+
 def test_dynamic_surface_manual_verdict_requires_specificity_and_answer_fit():
     rows = good_markdown_rows()
     before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="plain_text",

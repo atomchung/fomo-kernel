@@ -294,12 +294,65 @@ def _episode_bank() -> "set[str] | None":
     Returns None rather than an empty set for a vendored skill directory with no
     `evals/` beside it: "the bank is not here" and "the bank is empty" are
     different facts, and only the second is a reason to reject an id.
+
+    Reads each episode's declared `id`, not its filename. The first cut derived
+    the id by splitting the filename, so a file named `EP-123-anything.json`
+    containing invalid JSON counted as a converted episode — hand-mirroring a
+    fact the file already states, and admitting a claim with nothing behind it
+    (external review, 2026-07-27). A file that does not parse, or declares no
+    id, contributes nothing rather than contributing its name.
     """
     bank = pathlib.Path(__file__).resolve().parents[3] / "evals" / "episodes"
     if not bank.is_dir():
         return None
-    return {path.name.split("-")[0] + "-" + path.name.split("-")[1]
-            for path in bank.glob("EP-*.json")}
+    ids = set()
+    for path in sorted(bank.glob("EP-*.json")):
+        try:
+            declared = json.loads(path.read_text(encoding="utf-8")).get("id")
+        except (json.JSONDecodeError, OSError, AttributeError):
+            continue
+        if isinstance(declared, str) and declared:
+            ids.add(declared)
+    return ids
+
+
+def _check_findings_row(row: dict, index: int) -> list:
+    """Validate one persisted `findings_recorded` row. Shared by write and verify.
+
+    `_findings` gates what this tool writes; this gates what `verify` will accept
+    from a file on disk. Both matter, and they must not disagree: the first cut
+    resolved `episode:EP-NNN` against the bank only on the write path, so a
+    hand-authored or post-edited receipt claiming a conversion that never
+    happened verified clean — at exactly the gate archiving depends on (external
+    review, 2026-07-27).
+    """
+    errors = []
+    # Same discipline as `question_presented` and `answers_received`: this event
+    # is the one a maintainer is most tempted to paste miss text into, and it
+    # sits inside the state directory's trust boundary. Anything beyond the
+    # dispositions is content this trace is not allowed to carry.
+    extra = sorted(set(row) - {"version", "event", "session_id", "ts", "findings"})
+    if extra:
+        errors.append(f"row {index} findings_recorded contains unsupported fields: "
+                      f"{', '.join(extra)}")
+    recorded = row.get("findings")
+    if recorded is None:
+        return errors + ["findings_recorded must carry a findings list, empty for none observed"]
+    if not isinstance(recorded, list):
+        return errors + ["findings_recorded findings must be a list of dispositions"]
+    known = _episode_bank()
+    for finding in recorded:
+        for pattern in FINDING_DISPOSITIONS:
+            match = pattern.match(str(finding))
+            if match:
+                break
+        else:
+            errors.append(f"unrecognized finding disposition {finding!r}")
+            continue
+        if str(finding).startswith("episode:") and known is not None and match.group(1) not in known:
+            errors.append(f"{match.group(1)} is recorded as converted but is not in "
+                          f"evals/episodes/ — a conversion claim with nothing behind it")
+    return errors
 
 
 def _findings(findings: list, none_declared: bool) -> dict:
@@ -317,25 +370,16 @@ def _findings(findings: list, none_declared: bool) -> dict:
         raise ReceiptError(
             "findings_recorded requires --finding (repeatable) or an explicit "
             "--no-findings; an omitted disposition is not a declaration of none")
-    recorded = []
-    known = _episode_bank()
-    for finding in findings:
-        for pattern in FINDING_DISPOSITIONS:
-            match = pattern.match(finding)
-            if match:
-                break
-        else:
-            raise ReceiptError(
-                f"unrecognized finding disposition {finding!r} — use "
-                "'episode:EP-NNN' for a miss converted into a replayable episode, "
-                "or 'not-episodable:#NN:<why it cannot be replayed>'")
-        if finding.startswith("episode:") and known is not None and match.group(1) not in known:
-            raise ReceiptError(
-                f"{match.group(1)} is not in evals/episodes/ — convert the miss "
-                "before recording it as converted, or the disposition is a claim "
-                "with nothing behind it")
-        recorded.append(finding)
-    return {"findings": recorded}
+    # One reader for what a disposition is: the same function `verify` applies to
+    # a row read back from disk, so the write path and the gate cannot disagree.
+    problems = _check_findings_row({"findings": list(findings)}, 0)
+    if problems:
+        raise ReceiptError(
+            "; ".join(problems)
+            + " — use 'episode:EP-NNN' for a miss converted into a replayable "
+              "episode (convert it first), or 'not-episodable:#NN:<why it cannot "
+              "be replayed>'")
+    return {"findings": list(findings)}
 
 
 def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
@@ -690,16 +734,7 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     if len(findings) > 1:
         errors.append("findings_recorded may appear at most once")
     for index in findings:
-        row = rows[index]
-        recorded = row.get("findings")
-        if recorded is None:
-            errors.append("findings_recorded must carry a findings list, empty for none observed")
-        elif not isinstance(recorded, list):
-            errors.append("findings_recorded findings must be a list of dispositions")
-        else:
-            for finding in recorded:
-                if not any(pattern.match(str(finding)) for pattern in FINDING_DISPOSITIONS):
-                    errors.append(f"unrecognized finding disposition {finding!r}")
+        errors.extend(_check_findings_row(rows[index], index + 1))
     if require_findings and len(findings) != 1:
         errors.append(
             "a QA run must record exactly one findings_recorded event — every miss "
@@ -723,6 +758,15 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 errors.append("owner question specificity and answer fit verdicts must both be pass or fail")
         if final_card and verdicts[0] <= final_card[0]:
             errors.append("owner_verdict must follow the final card presentation")
+        # Both documents say findings are recorded before the verdict, and the
+        # first cut enforced no ordering at all — the docs described a discipline
+        # the tool did not hold anyone to (external review, 2026-07-27). The
+        # ordering is the same anti-backfill rule the card sequence already has:
+        # the verdict is the last act, so a disposition recorded after it was
+        # reconstructed rather than observed.
+        if findings and findings[0] > verdicts[0]:
+            errors.append("findings_recorded must precede the owner verdict — a "
+                          "disposition recorded after the run was judged is a backfill")
     if require_owner_verdict:
         if len(verdicts) != 1:
             errors.append("manual verification requires exactly one owner_verdict")
