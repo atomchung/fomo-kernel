@@ -936,7 +936,10 @@ def _ingest_trades(root, paths, card, state):
                 card, state, ledger.derive_holdings(virtual)
             )
         if fresh_all:
-            ledger.append_events(ledger_path, fresh_all)
+            # #472: recorded_at = this review period's own date_end, the same
+            # proxy _build_exit_narratives already uses for "when the system
+            # learned this" — deterministic within a review, unlike wall-clock.
+            ledger.append_events(ledger_path, fresh_all, recorded_at=state.get("date_end"))
         result = {
             "path": ledger_path,
             "appended": len(fresh_all),

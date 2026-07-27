@@ -30,6 +30,8 @@ The repeated-snapshot reconciler emits two additional event shapes, both engine-
 {"type":"adjustment","date":"2026-07-15","reason":"snapshot_reconciliation","declared_snapshot_id":"snapshot-...","against":{"as_of":"2026-07-06","snapshot_id":"snapshot-..."},"diff":{"positions":[{"ticker":"NVDA","kind":"shares","derived":40.0,"declared":35.0}],"cash":[]},"adjustment_id":"adjust-...","session_id":"..."}
 ```
 
+`ledger.append_events` (the single write path for all four event types) stamps a `recorded_at` date alongside the schema version `v` (#472): *when this system learned the fact*, as distinct from the event's own `date`/`as_of` (*when the thing happened*). A trade imported weeks late still carries its true trade date, but `recorded_at` marks the later day it actually entered the ledger — the field a future rule backtest needs to replay history without look-ahead bias, since without it a late import reads, to the replay, as if it had been known on its trade date. A caller that already knows the review period (`review.py`'s `_ingest_trades`) injects that period's own `date_end`, the same proxy `recorded_at` already uses elsewhere in this codebase (`review.py`'s `_build_exit_narratives`, for the analogous thesis-event distinction); the standalone CLI paths with no review context (`ledger.py append-trades`/`append-snapshot`) fall back to the day the command ran. Rows written before this field existed have none: absence means *unknown*, never a guessed or back-filled value. Nothing reads this field yet — it is write-only until a consumer needs it.
+
 ## Holding derivation
 
 1. Use the accepted complete initial snapshot as the anchor.

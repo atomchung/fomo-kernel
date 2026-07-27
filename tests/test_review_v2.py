@@ -2268,12 +2268,12 @@ def test_trade_ingest_and_initial_snapshot_share_one_root_boundary_lock():
         boundary_entered = threading.Event()
         release_append = threading.Event()
 
-        def gated_append(path, events):
+        def gated_append(path, events, **kwargs):
             if os.path.abspath(path) == os.path.abspath(ledger_path):
                 append_entered.set()
                 if not release_append.wait(5):
                     raise RuntimeError("timed out waiting to release trade append")
-            return real_append(path, events)
+            return real_append(path, events, **kwargs)
 
         def observed_boundary(*args, **kwargs):
             boundary_entered.set()
@@ -5396,6 +5396,32 @@ def test_ingestion_tolerates_cash_flow_rows_in_the_same_csv():
         assert run3.returncode == 0, run3.stdout + run3.stderr
         ingest3 = json.loads(run3.stdout)["review_plan"]["input"]["ledger_ingest"]
         assert ingest3["skipped_non_trade"] == 4 and ingest3["appended"] > 0, ingest3
+
+
+def test_ingest_trades_stamps_recorded_at_from_review_period_not_wall_clock():
+    """#472: a ledger row must carry *when the system learned this*, separate
+    from the trade's own `date`. `_ingest_trades` has `state` in hand, so it
+    must inject `state["date_end"]` (here `_artifacts`' fixed 2026-07-14)
+    rather than let `append_events` fall back to `dt.date.today()` — a
+    wall-clock stamp would make every stored ledger row vary by run day,
+    exactly the flakiness #472's determinism constraint forbids."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        csv_path = pathlib.Path(tmp) / "trades.csv"
+        csv_path.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "BIG,BUY,10,100,2026-01-05,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        run = _run("prepare", csv_path, "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["date"] == "2026-01-05", "the trade's own date must stay untouched"
+        assert rows[0]["recorded_at"] == "2026-07-14", (
+            "recorded_at must come from the review period's date_end "
+            "(state['date_end']), not the trade's own historical date and not wall-clock today"
+        )
 
 
 def test_prepare_unknown_language_falls_back_to_en_and_stays_idempotent():

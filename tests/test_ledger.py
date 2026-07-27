@@ -608,6 +608,65 @@ def test_append_roundtrip_and_cli():
     assert json.loads(r2.stdout)["clean"] is True
 
 
+def test_append_events_stamps_recorded_at_alongside_schema_version():
+    """#472: recorded_at answers *when did this system learn about the fact*,
+    distinct from the event's own date/as_of (*when the thing happened*) —
+    the same distinction `recorded_at` already carries elsewhere in this
+    codebase (review.py's `_build_exit_narratives` stamps it from the review
+    period's date_end). `append_events` is the single write path every
+    ledger event passes through, so it stamps recorded_at the same way it
+    already stamps v: via setdefault, alongside it, never overwriting a
+    caller-supplied value."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    lg.append_events(led, [_tr("2020-01-01", "NVDA", "buy", 10, 100.0)])
+    events, skipped = lg.load_ledger(led)
+    assert skipped == 0
+    assert events[0]["recorded_at"] == dt.date.today().isoformat(), \
+        "no explicit recorded_at supplied → falls back to today, same convention as " \
+        "trades_from_csv's `today or dt.date.today()`"
+    assert events[0]["date"] == "2020-01-01", "the trade's own date must stay untouched"
+
+
+def test_append_events_recorded_at_is_injected_not_sampled():
+    """The determinism half of #472's acceptance bar: a caller that already
+    knows the date (a review period's date_end) must be able to pin
+    recorded_at so re-running the suite on a different day produces an
+    identical stored fixture — the date is injected, not sampled. 2020-01-01
+    stands in for "a fixed date the real wall clock will never independently
+    produce," so this assertion cannot pass by accident the way a bare
+    dt.date.today() call would."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    lg.append_events(led, [_tr("2026-07-01", "NVDA", "buy", 10, 100.0),
+                           _tr("2026-07-02", "NVDA", "sell", 5, 110.0)],
+                     recorded_at="2020-01-01")
+    events, _ = lg.load_ledger(led)
+    assert [e["recorded_at"] for e in events] == ["2020-01-01", "2020-01-01"], \
+        "an injected recorded_at must land verbatim on every event in the batch, " \
+        "never resampled from the wall clock"
+
+
+def test_legacy_ledger_row_without_recorded_at_loads_as_unknown():
+    """#472: a row written before this field existed has no recorded_at on
+    disk. Absent must stay readable and must mean *unknown* — never a
+    guessed or back-filled value, because a wrong recorded-at date would
+    silently corrupt exactly the look-ahead-bias check this field exists to
+    make possible (#462: load_ledger already tolerates unknown/absent
+    fields; only unreadable rows and unknown event types fail closed)."""
+    d = tempfile.mkdtemp()
+    led = os.path.join(d, "ledger.jsonl")
+    legacy_row = _snap("2026-07-01", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3}])
+    with open(led, "w", encoding="utf-8") as f:
+        f.write(json.dumps(legacy_row) + "\n")   # pre-#472 shape: no recorded_at, no v
+    lg.append_events(led, [_tr("2026-07-05", "NVDA", "buy", 1, 160.0)], recorded_at="2026-07-05")
+    events, skipped = lg.load_ledger(led)
+    assert skipped == 0 and len(events) == 2
+    assert events[0].get("recorded_at") is None, \
+        "a legacy row's absent recorded_at must load as unknown, not a guessed value"
+    assert events[1]["recorded_at"] == "2026-07-05", "a freshly appended row still carries it"
+
+
 def test_cli_append_snapshot_source_reconciled():
     d = tempfile.mkdtemp()
     led = os.path.join(d, "ledger.jsonl")
