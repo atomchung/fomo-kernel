@@ -26,13 +26,14 @@ from a comment or a docstring, and this file's own history is full of both):
      either is that exact name or it is not, so there is no ambiguity to
      exempt around.
 
-  B. VALUE guard — no comparison (<, >, <=, >=, ==, !=) anywhere under
-     skills/fomo-kernel/engine/ may use a numeral literal equal to
-     OVERSIZE_TRIGGER's or POSITION_CAP's *current* value, read live off
-     trade_recap/card_renderer rather than re-hardcoded a third time in this
-     file (that would be the same bug one layer up). This is the check that
-     would have caught #477 itself — the bug was a re-typed literal, not a
-     name reference, so the name guard alone would have missed it.
+  B. VALUE guard — no comparison (<, >, <=, >=, ==, !=) and no function
+     default parameter value anywhere under skills/fomo-kernel/engine/ may
+     use a numeral literal equal to OVERSIZE_TRIGGER's or POSITION_CAP's
+     *current* value, read live off trade_recap/card_renderer rather than
+     re-hardcoded a third time in this file (that would be the same bug one
+     layer up). This is the check that would have caught #477 itself — the
+     bug was a re-typed literal, not a name reference, so the name guard
+     alone would have missed it.
 
      0.25 and 0.20 are common round numbers, and this repository already
      spends both on unrelated thresholds that have nothing to do with
@@ -51,6 +52,32 @@ from a comment or a docstring, and this file's own history is full of both):
      VALUE_GUARD_EXEMPT before adding to it, and prefer fixing the ambiguity
      at its source (a named constant, like AVGDOWN_BREACH_W already is)
      over adding a fourth entry.
+
+     Scope, named rather than silently assumed (docs/development-guide.md's
+     own discipline — the same one #471's DATA_FILES registry scanner
+     applies to profile.md/ux/, the two paths it names as outside its own
+     reach rather than leaving a reader to assume total coverage): this
+     guard sees exactly two syntactic forms — a literal directly compared
+     with an operator (visit_Compare), and a literal sitting as a plain or
+     keyword-only function/async-function default value (_scan_defaults).
+     It does NOT see a lambda's own defaults; a numeral inside a
+     dict/list/set/tuple literal (e.g. ``{"trigger": 0.25}``); a class or
+     dataclass field default; a numeral built by string formatting; or any
+     value assembled at runtime (an env var, a config file, arithmetic)
+     rather than written as a literal in this file. Those stay exactly as
+     invisible to this gate as the #477 bug itself would have been had it
+     shipped as one of them instead of a bare comparison — a future reader
+     who finds 0.25/0.20 in one of those forms should not assume the gate
+     already checked it.
+
+     ``what_if(held, last_px, threshold=0.25)`` (trade_recap.py) is the
+     concrete, currently-live literal this guard's default-parameter half
+     does reach, and it is deliberately exempted rather than missed: it
+     decides whether a concentration is large enough to be worth a
+     hypothetical drawdown scenario, not whether a position is too heavy to
+     hold, so a user raising their own position cap to 30% does not imply a
+     25% concentration stopped being worth stress-testing (owner-confirmed
+     on #477's PR review). See VALUE_GUARD_EXEMPT.
 """
 import ast
 import os
@@ -101,6 +128,17 @@ VALUE_GUARD_EXEMPT = {
     # position's weight.
     ("card_renderer.py", "_public_band", 0.25):
         "public-disclosure banding cutoff, unrelated to position sizing",
+    # what_if's own stress-test candidate threshold: a default parameter
+    # value, not a comparison, and the concrete live example the value
+    # guard's default-parameter half exists to catch. Decides whether a
+    # concentration is large enough to be worth a hypothetical drawdown
+    # scenario -- a different question from "is this position too heavy to
+    # hold" -- so a user raising their own position cap to 30% does not
+    # imply a 25% concentration stopped being worth stress-testing
+    # (owner-confirmed on #477's PR review, not this file's own judgment
+    # call).
+    ("trade_recap.py", "what_if", 0.25):
+        "stress-test candidate threshold (worth simulating a drawdown for), not a position-sizing cap",
 }
 
 ENGINE_FILES = sorted(f for f in os.listdir(ENGINE)
@@ -109,18 +147,21 @@ ENGINE_FILES = sorted(f for f in os.listdir(ENGINE)
 
 class _Collector(ast.NodeVisitor):
     """Walks one module, tracking the innermost enclosing function so every
-    hit — a Load of a guarded name, or a Compare against a guarded value —
-    is attributed to the function that actually contains it (never a
-    lexical parent: entering/leaving FunctionDef pushes/pops the stack),
-    which is what lets exemptions be scoped this tightly."""
+    hit — a Load of a guarded name, or a bare numeral used as a comparison
+    operand or a default parameter value — is attributed to the function
+    that actually contains it (never a lexical parent: entering/leaving
+    FunctionDef pushes/pops the stack), which is what lets exemptions be
+    scoped this tightly. See the module docstring's part B for exactly
+    which syntactic forms this does and does not reach."""
 
     def __init__(self):
         self.func_stack = ["<module>"]
         self.name_hits = []   # (function, lineno, name)
-        self.value_hits = []  # (function, lineno, value)
+        self.value_hits = []  # (function, lineno, value, kind)
 
     def _enter_function(self, node):
         self.func_stack.append(node.name)
+        self._scan_defaults(node)
         self.generic_visit(node)
         self.func_stack.pop()
 
@@ -129,6 +170,24 @@ class _Collector(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node):
         self._enter_function(node)
+
+    def _scan_defaults(self, node):
+        """A default parameter value -- `def f(x=0.25)` -- is attributed to
+        the function being defined (self.func_stack[-1], pushed just above
+        this call), the same as a comparison inside its body: that is the
+        function a future caller or reader would look at. Covers both
+        plain-or-keyword defaults (node.args.defaults) and keyword-only
+        defaults (node.args.kw_defaults, which pads with None for params
+        that have none). Does NOT cover a lambda's own defaults -- there is
+        no visit_Lambda -- see the module docstring for why that and a few
+        other forms are named as out of scope rather than silently missed."""
+        defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
+        for default in defaults:
+            if (isinstance(default, ast.Constant)
+                    and isinstance(default.value, (int, float))
+                    and not isinstance(default.value, bool)):
+                self.value_hits.append(
+                    (self.func_stack[-1], default.lineno, default.value, "default parameter"))
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load) and node.id in GUARDED_NAMES:
@@ -147,7 +206,7 @@ class _Collector(ast.NodeVisitor):
             if (isinstance(operand, ast.Constant)
                     and isinstance(operand.value, (int, float))
                     and not isinstance(operand.value, bool)):
-                self.value_hits.append((self.func_stack[-1], node.lineno, operand.value))
+                self.value_hits.append((self.func_stack[-1], node.lineno, operand.value, "comparison"))
         self.generic_visit(node)
 
 
@@ -180,44 +239,44 @@ def test_oversize_trigger_and_position_cap_are_read_only_through_effective_wrapp
     )
 
 
-def test_no_bare_comparison_against_the_sizing_literals():
+def test_no_bare_comparison_or_default_against_the_sizing_literals():
     guarded_values = _guarded_values()
     violations = []
     for fname in ENGINE_FILES:
         collector = _collect(os.path.join(ENGINE, fname))
-        for func, lineno, value in collector.value_hits:
+        for func, lineno, value, kind in collector.value_hits:
             if value not in guarded_values:
                 continue
             if (fname, func, value) in VALUE_GUARD_EXEMPT:
                 continue
-            violations.append(f"{fname}:{lineno} in {func}() compares against bare {value!r}")
+            violations.append(f"{fname}:{lineno} in {func}() uses bare {value!r} as a {kind}")
     assert not violations, (
-        "a bare literal matching OVERSIZE_TRIGGER's/POSITION_CAP's value was compared "
-        "directly instead of going through effective_oversize_trigger()/"
-        "effective_position_cap() -- this is the #477 bug pattern (a user's set-cap "
-        "override would not reach this comparison). If this is a genuinely unrelated "
-        "threshold that coincides in value, audit it like the existing "
-        "VALUE_GUARD_EXEMPT entries and add it there with a reason:\n  "
+        "a bare literal matching OVERSIZE_TRIGGER's/POSITION_CAP's value was used "
+        "directly -- as a comparison operand or a function default -- instead of going "
+        "through effective_oversize_trigger()/effective_position_cap() -- this is the "
+        "#477 bug pattern (a user's set-cap override would not reach this value). If "
+        "this is a genuinely unrelated threshold that coincides in value, audit it like "
+        "the existing VALUE_GUARD_EXEMPT entries and add it there with a reason:\n  "
         + "\n  ".join(violations)
     )
 
 
 def test_exemption_registry_still_matches_something_real():
     """An exemption nobody's code trips is dead weight that quietly widens
-    what the gate accepts. If a future edit removes the exempted
-    comparison (e.g. dim_avgdown starts using AVGDOWN_BREACH_W instead of a
-    bare 0.25), this catches the entry going stale instead of leaving it to
-    rot as an unnoticed loophole for the *next* bare literal in that same
-    function."""
+    what the gate accepts. If a future edit removes the exempted use (e.g.
+    dim_avgdown starts using AVGDOWN_BREACH_W instead of a bare 0.25, or
+    what_if's threshold stops defaulting to 0.25), this catches the entry
+    going stale instead of leaving it to rot as an unnoticed loophole for
+    the *next* bare literal in that same function."""
     guarded_values = _guarded_values()
     seen = set()
     for fname in ENGINE_FILES:
         collector = _collect(os.path.join(ENGINE, fname))
-        for func, _lineno, value in collector.value_hits:
+        for func, _lineno, value, _kind in collector.value_hits:
             if value in guarded_values:
                 seen.add((fname, func, value))
     stale = set(VALUE_GUARD_EXEMPT) - seen
-    assert not stale, f"exemption(s) no longer matched by any real comparison: {stale}"
+    assert not stale, f"exemption(s) no longer matched by any real comparison or default: {stale}"
 
 
 def test_engine_scan_finds_the_known_files():
