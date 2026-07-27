@@ -134,11 +134,6 @@ python3 engine/review.py finalize --session-id <ID> --answers /tmp/answers.json 
 python3 tools/ux_receipt.py start --session-id <ID> --client claude --route first_review \
   --question-mode native_options --question-mode plain_text \
   --card-mode widget --card-mode markdown_inline
-# weekly_review 專屬、且 verify 會擋：先把「上次的承諾」端出來給用戶看，再記這筆。
-# 必須恰好一筆 prior_commitment 或 prior_skip，而且要在第一個問題／第一張卡之前——
-# 這條就是記憶延續性本身（上次講好的規矩，這次有沒有被拿出來對帳）。
-# plan 另外回了 exit_reason / due_revisit 的話，各自再記一筆（同樣用 --memory-kind）。
-python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_commitment
 # 每問一題、每出一次卡，都在用戶真的看到「之後」記一筆
 python3 tools/ux_receipt.py event --event question_presented --question-id <qid> --mode plain_text
 python3 tools/ux_receipt.py event --event card_presented --stage preview --mode widget
@@ -147,6 +142,16 @@ python3 tools/ux_receipt.py event --event answers_received
 # 「選一條規矩/自訂/skip」呈現給用戶時記一筆
 python3 tools/ux_receipt.py event --event rule_choice_presented --mode plain_text
 ```
+
+**只有 `weekly_review` 這條路線再多記一筆——而且 `verify` 會擋**（上面那段是 `first_review` 的範例，不要把這筆抄進去）。`prepare` 選到 `weekly_review` 時，先把「上次講好的規矩」端出來給用戶看，**在第一個問題、第一張卡之前**，然後記：
+
+```bash
+python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_commitment
+# 上次是 skip 掉沒定規矩 → 改用 --memory-kind prior_skip。兩者恰好一筆，多一筆少一筆都會 fail。
+# plan 另外回了 exit_reason / due_revisit，各自再記一筆（同樣 --memory-kind，不算 opener）。
+```
+
+**這條就是記憶延續性本身**——上次講好的規矩，這次有沒有被拿出來對帳。`ux_receipt.py` 對 `route == "weekly_review"` 硬檢查兩件事：opener 恰好一筆、且位置在第一個 `question_presented` / `card_presented` 之前。順序錯了照樣 fail，因為「事後補記」證明不了用戶當時真的看到了。
 
 **三條走查鐵則（2026-07-20 owner_live 稽核修正，違反其一＝該場 QA 作廢）**：
 1. **能力宣告如實＋widget 每 session 必試一次，但要挑對的工具**：0720 唯一走查偏差＝低報 `card_modes`、零 widget 嘗試，#249 富 HTML 卡生成了但 owner 全程只看到扁平 md（card=fail 主因）。圖形介面必宣告 `widget`，先試 widget、失敗記 `widget_attempt_failed` 再降級 markdown——別讓「artifact 綠≠交付」重演。
@@ -177,7 +182,8 @@ QA 心態，走的時候盯這些（發現就記，別在這改）：
 
    ```bash
    python3 tools/ux_receipt.py event --event owner_verdict --controls pass --card pass --memory not_applicable --question-specificity pass --answer-fit pass
-   python3 tools/ux_receipt.py verify --require-owner-verdict   # 必須綠
+   # archive 會用同一組 flag 再驗一次,先在這裡碰到失敗比較好修
+   python3 tools/ux_receipt.py verify --require-owner-verdict --require-timing-integrity   # 必須綠
    # 封存：模型與 effort 必須從當前 host 的設定逐字抄錄；不可猜測或填 unknown/default
    ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
      --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>'

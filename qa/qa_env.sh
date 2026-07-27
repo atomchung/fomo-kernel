@@ -331,6 +331,10 @@ cmd_archive_receipt() {
     if ! python3 "$receipt_tool" verify "${verify_args[@]}" >/dev/null; then
       echo "REFUSING to archive: receipt fails ux_receipt.py verify (human=$human)." >&2
       echo "Fix the trace (or archive as agent_simulated if no owner verdict exists) — a non-verifying run is not a QA run." >&2
+      echo "If it is timing integrity: the trace's timestamps are not credible (missing, same-burst," >&2
+      echo "  or out of order), so this run cannot become fresh owner_live UX ground truth — that is" >&2
+      echo "  runbook gate 4, and it is newly enforced here. Backfilled receipts hit this. Either" >&2
+      echo "  re-run recording each event when it actually happened, or archive as agent_simulated." >&2
       echo "If it is gate 7: record where this run's misses went before archiving —" >&2
       echo "  ux_receipt.py event --event findings_recorded --finding episode:EP-NNN" >&2
       echo "  (or --no-findings, which is a declaration, not an omission). See Step 6." >&2
