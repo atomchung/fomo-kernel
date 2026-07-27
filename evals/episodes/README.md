@@ -40,18 +40,74 @@ structurally_valid_and_schema_fields_match` fails if the two drift apart.
 `docs/eval-design.md` ranks evidence: deterministic assertion, differential
 fixture, LLM judge, human review — strongest cheap layer first.
 
-- **Mechanical half (this runner).** Deterministic, offline, free. Runs in the
-  default suite. Answers only questions code can settle: does this number exist,
-  is this grounding verbatim, is this limitation disclosed, does this token trace
-  to the fixture.
-- **Rubric judge (not built).** Whether the answer was *good*: did it answer the
-  question asked, was the reasoning genuinely two-sided, could the user overrule
-  it on evidence. Non-deterministic and billable, so it stays opt-in and out of
-  default CI, and it must be calibrated against owner ratings before its score
-  means anything.
+- **Mechanical half** (`../run_episodes.py`). Deterministic, offline, free. Runs
+  in the default suite. Answers only questions code can settle: does this number
+  exist, is this limitation disclosed, does this token trace to the fixture.
+- **Rubric judge** (`../judge_episodes.py`). Whether the answer took an honest
+  *stance*: was the reasoning genuinely two-sided, could the user overrule it on
+  evidence, does the lookup lead the user toward a verdict. Non-deterministic and
+  billable, so it is opt-in and never runs in `tests/run_all.py`.
 
 The split is not a staging convenience — it is the evidence hierarchy. Do not
 ask a judge whether a number reconciles.
+
+## The rubric judge
+
+```bash
+python3 evals/judge_episodes.py --plan   # what would be judged + the call count
+python3 evals/judge_episodes.py          # needs ANTHROPIC_API_KEY; costs money
+```
+
+An episode opts in by declaring a `judge` block; an answer declares the axes it
+must fail. Both are graded nowhere in `run_episodes.py` — but both are *validated*
+there, because a typo'd axis has to fail in the free offline suite rather than
+only for whoever pays for a run. The axis names live in `run_episodes.JUDGE_AXES`
+next to that loader; the rubric text lives in the judge, which refuses to run if
+either side has grown an axis the other never heard of.
+
+| Axis | What it settles | Whose blind spot |
+|---|---|---|
+| `two_sided` | where the answer points toward acting, the case against is made, and made from the record | `condition_check_integrity` — an answer that argues one way using only real numbers passes it |
+| `overrulable` | a user who thinks the reading is wrong has somewhere to put that, and it is recorded | the same: nothing mechanical can see whether disagreement has a home |
+| `criterion_neutrality` | the lookup asks what the quantity is, not whether the user's line was crossed | `condition_integrity` — it catches the numeric leak, not the leading shape |
+
+Three rules hold this apart from a behavior oracle, which is what the bank
+shipped the first time (#431):
+
+1. **The rubric grades stance, never wording**, and the judge is told so in its
+   system prompt. An answer that satisfies an axis in phrasing nobody has written
+   yet must still pass.
+2. **The judge never sees the paired answer, the episode title, or the
+   maintainer note.** Each answer is judged alone. The title names the defect
+   outright ("pushed in one direction"); the note is written for whoever reads
+   the bank. Showing either turns the judge into a similarity scorer against
+   today's repair — the exact target the bank may not pin.
+3. **An axis is declared only where the pair genuinely differs on it.** EP-006's
+   `paraphrased_criterion` is the demonstration: mechanically red, and expected
+   to *pass* `criterion_neutrality`, because the defect the judge grades is not
+   the defect the check catches. An episode whose every red answer is red on
+   both halves would not distinguish them at all.
+
+The three interlocks carry over unchanged, and a fourth arrives with the
+non-determinism: every verdict is a majority over `TR_JUDGE_RUNS` samples
+(default 3), and a tie is `ambiguous` — a failure, never resolved toward the
+declared verdict. Resolving it is how a judge harness becomes a rubber stamp.
+All four, plus every structural gate, are proven by mutation in
+`tests/test_episode_checkers.py`: the verdict arithmetic is a pure function
+precisely so the interlocks are re-verifiable without an API key.
+
+**Calibration is a state, not a score.** Each judge block records `declared_by`.
+While any is `agent`, the run prints `calibration: uncalibrated` and reports
+agreement with a declaration rather than accuracy — because the declaration is a
+maintainer's hypothesis, and the README's own standard is that behavior belongs
+in front of a judge *calibrated against owner ratings*. Ratifying is reading an
+episode's judge block and setting `declared_by: owner`.
+
+Known thin spot, stated rather than padded around: `two_sided` and `overrulable`
+are exercised on one episode (EP-008) and fail on the same answer, so a judge
+that conflates them is not distinguished — only interlock 2 would catch it, and
+only if it conflated them asymmetrically. A second episode where the two come
+apart is the next thing this bank needs.
 
 ## The fixture is replayed, not frozen
 
@@ -208,15 +264,15 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
   cut of this bank pretended otherwise with a byte rule; see below.
 - **`condition_integrity` gets the numeric leak, not neutrality.** A query that
   restates the criterion while dropping the number ("did growth fall below the
-  threshold?") passes it. That is the judge's half; the mechanical half catches
-  the form the failure actually takes. Its episodes are also deliberate minimal
+  threshold?") passes it. That is the judge's `criterion_neutrality`; the
+  mechanical half catches the form the failure actually takes. Its episodes are also deliberate minimal
   pairs — an answer carrying two defects stays red when the gate under test is
   neutered, and grades nothing.
 - **`condition_check_integrity` cannot see whether reasoning is genuinely
   two-sided.** What it can settle is where a one-sided push usually breaks: the
   argument needs a fact the record does not have, so it states a figure the
   lookup never returned (EP-008). An answer that argues one direction using only
-  real numbers passes it, and waits on the judge. Its blind half is an allow-set
+  real numbers passes it, and waits on the judge's `two_sided` and `overrulable`. Its blind half is an allow-set
   of words for "not checked", never a required sentence — the wording will keep
   changing, and a check only the current template satisfies is a behavior
   oracle.
@@ -231,8 +287,6 @@ Stated plainly, because a check whose limits are unwritten gets over-trusted:
 
 Convert on the spot, while the miss is still in front of you — a miss that only
 becomes an issue is a miss nobody replays. Step 6 of
-[qa-runbook.md](../../docs/qa-runbook.md) is where a QA run is told to do this;
-this section is the how. Step 6 of
 [qa-runbook.md](../../docs/qa-runbook.md) is where a QA run is told to do this;
 this section is the how.
 
@@ -251,9 +305,14 @@ this section is the how.
    read the findings rather than guessing.
 4. **Run it.** `python3 evals/run_episodes.py EP-NNN`, then
    `python3 tests/run_all.py`.
-5. **A new check needs its mutation probe** in
+5. **Declare a judge axis only where the answers genuinely differ on it.** Most
+   episodes should carry no `judge` block at all — a declared axis the pair does
+   not exercise is the same defect as a check with nothing to inspect, and the
+   loader refuses it. Set `declared_by: agent`; the owner ratifies it later.
+6. **A new check or axis needs its mutation probe** in
    `tests/test_episode_checkers.py`, clean half and mutated half. A checker that
-   stays green under its own mutation is not evidence.
+   stays green under its own mutation is not evidence — and neither is a probe
+   that asserts the state a gate produces instead of driving the gate.
 
 ## Growth slots, deliberately empty
 

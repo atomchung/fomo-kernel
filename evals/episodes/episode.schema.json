@@ -132,6 +132,37 @@
       },
       "description": "The mechanical validators that bear on this episode. Every one is an invariant — none compares an answer against the wording the product ships today. A declared check with nothing to inspect fails the episode. An empty list is the honest `unmapped` state and requires blocked_on."
     },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "axes",
+        "declared_by"
+      ],
+      "description": "Opt-in declarations for the rubric judge (evals/judge_episodes.py) — the half the mechanical checks cannot settle. Absent on an episode whose answers do not differ on any axis; declaring an axis the pair does not exercise is the same defect as a check with nothing to inspect. Never graded by run_episodes.py: a judge verdict is non-deterministic and billable, and does not belong in the default suite.",
+      "properties": {
+        "axes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "two_sided",
+              "overrulable",
+              "criterion_neutrality"
+            ]
+          },
+          "description": "The rubric axes this episode's answers genuinely differ on. Each one must have at least one answer expected to fail it, or the episode cannot show the judge still discriminates on it."
+        },
+        "declared_by": {
+          "enum": [
+            "agent",
+            "owner"
+          ],
+          "description": "Who declared these expected verdicts. `agent` is a hypothesis the judge is measured against; only `owner` is calibration, and the judge run reports itself uncalibrated until every judged axis is owner-ratified."
+        }
+      }
+    },
     "must_disclose": {
       "type": "array",
       "uniqueItems": true,
@@ -174,7 +205,16 @@
           },
           "note": {
             "type": "string",
-            "description": "Provenance or de-identification notes for a reader."
+            "description": "Provenance or de-identification notes for a reader. Never shown to the rubric judge — it is written for a maintainer reading the bank, and usually names the defect outright."
+          },
+          "judge_fails": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            },
+            "description": "Rubric axes this answer must fail, drawn from the episode's own judge.axes. Absent means the answer is expected to pass every declared axis. Independent of `expect`/`fails`, which are the mechanical half: an answer can be mechanically clean and still fail an axis, and that is the whole reason the judge exists."
           },
           "prose": {
             "type": "string",

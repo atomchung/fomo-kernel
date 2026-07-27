@@ -24,6 +24,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "evals"))
 import run_episodes as R  # noqa: E402
+import judge_episodes as J  # noqa: E402  (imports `anthropic` lazily, inside main)
 
 EPISODE_DIR = ROOT / "evals" / "episodes"
 
@@ -667,6 +668,175 @@ def test_episode_declaring_honesty_coverage_without_a_key_is_rejected():
     assert any("must_disclose is empty" in message for message in problems), problems
 
 
+# ── the rubric judge's declarations and interlocks (#417 second half) ────────
+#
+# The judge itself is billable and non-deterministic, so it never runs here.
+# What runs here is everything that decides whether a judge run may be called
+# green — the structural gates on the declarations, and the verdict arithmetic,
+# both pure functions. An interlock only reachable by someone holding an API key
+# is an interlock nobody re-verifies, which is the same fake green in a costlier
+# wrapper. `evals/judge_episodes.py` imports `anthropic` inside `main()` for
+# exactly this reason: these probes import the module and the offline suite
+# stays dependency-free.
+
+def _judged(axes=("two_sided",), fails=("two_sided",), declared_by="agent"):
+    return _episode(
+        judge={"axes": list(axes), "declared_by": declared_by},
+        answers=[{"id": "miss", "expect": "fail", "fails": ["number_provenance"],
+                  "prose": "63%", "judge_fails": list(fails)},
+                 {"id": "ok", "expect": "pass", "prose": "20%"}])
+
+
+def _samples(verdicts, runs=3):
+    """`runs` identical samples, so the majority is unambiguous by construction."""
+    return [{axis: {"verdict": verdict, "reason": "probe"}
+             for axis, verdict in verdicts.items()} for _ in range(runs)]
+
+
+def test_valid_judge_block_has_no_structural_problems():
+    assert R.validate_episode(_judged(), "probe.json") == []
+
+
+def test_unknown_judge_axis_is_rejected():
+    problems = R.validate_episode(_judged(axes=["two_side"], fails=["two_side"]), "probe.json")
+    assert any("unknown judge axis" in message for message in problems), problems
+
+
+def test_judge_axis_no_answer_is_expected_to_fail_is_rejected():
+    """Interlock 1, offline half: an axis nothing exercises cannot show the judge
+    still discriminates on it — the judge's version of a check that abstains."""
+    episode = _judged(axes=["two_sided", "overrulable"], fails=["two_sided"])
+    problems = R.validate_episode(episode, "probe.json")
+    assert any("'overrulable' is declared but no answer" in message
+               for message in problems), problems
+
+
+def test_judge_fails_naming_an_undeclared_axis_is_rejected():
+    episode = _judged(axes=["two_sided"], fails=["two_sided", "overrulable"])
+    problems = R.validate_episode(episode, "probe.json")
+    assert any("does not declare" in message for message in problems), problems
+
+
+def test_judge_fails_without_a_judge_block_is_rejected():
+    answers = [{"id": "miss", "expect": "fail", "fails": ["number_provenance"],
+                "prose": "63%", "judge_fails": ["two_sided"]},
+               {"id": "ok", "expect": "pass", "prose": "20%"}]
+    problems = R.validate_episode(_episode(answers=answers), "probe.json")
+    assert any("declares no judge axes" in message for message in problems), problems
+
+
+def test_judge_block_without_declared_by_is_rejected():
+    """Who declared the expectations decides whether a green run is calibration
+    or merely agreement, so it cannot be omitted and inferred later."""
+    episode = _judged()
+    del episode["judge"]["declared_by"]
+    problems = R.validate_episode(episode, "probe.json")
+    assert any("declared_by" in message for message in problems), problems
+
+
+def test_judge_verdicts_that_match_the_declaration_are_green():
+    episode = _judged(axes=["two_sided"], fails=["two_sided"])
+    miss, ok = episode["answers"]
+    failures, observed = J.grade_answer(episode, miss, ["two_sided"],
+                                        _samples({"two_sided": "fail"}))
+    assert failures == [], failures
+    assert observed == {"two_sided": {"fail"}}
+    failures, observed = J.grade_answer(episode, ok, ["two_sided"],
+                                        _samples({"two_sided": "pass"}))
+    assert failures == [], failures
+    assert observed == {"two_sided": {"pass"}}
+
+
+def test_a_judge_that_always_passes_turns_the_recorded_miss_red():
+    """The mutation for the whole harness. A judge that has stopped
+    discriminating marks the recorded miss `pass`; the recorded miss is the
+    permanent mutation that catches it."""
+    episode = _judged(axes=["two_sided"], fails=["two_sided"])
+    failures, _ = J.grade_answer(episode, episode["answers"][0], ["two_sided"],
+                                 _samples({"two_sided": "pass"}))
+    assert any("expected to fail this axis and passed" in message
+               for message in failures), failures
+
+
+def test_failing_the_wrong_axis_is_a_failure():
+    """Interlock 2: an answer that trips an axis it was not written to trip has
+    stopped grading what it was written to grade."""
+    episode = _judged(axes=["two_sided", "overrulable"], fails=["two_sided", "overrulable"])
+    ok = episode["answers"][1]
+    failures, _ = J.grade_answer(episode, ok, ["two_sided", "overrulable"],
+                                 _samples({"two_sided": "pass", "overrulable": "fail"}))
+    assert len(failures) == 1, failures
+    assert "overrulable was not written to fail this axis" in failures[0], failures
+
+
+def test_a_split_verdict_is_ambiguous_and_never_resolved_toward_the_expectation():
+    """Non-determinism guard: a tie is the finding. Resolving it toward the
+    declared verdict is how a judge harness becomes a rubber stamp."""
+    episode = _judged(axes=["two_sided"], fails=["two_sided"])
+    split = [{"two_sided": {"verdict": "fail", "reason": "a"}},
+             {"two_sided": {"verdict": "pass", "reason": "b"}}]
+    failures, observed = J.grade_answer(episode, episode["answers"][0], ["two_sided"], split)
+    assert any("split" in message for message in failures), failures
+    assert observed == {}, "an ambiguous verdict must not count toward coverage"
+
+
+def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():
+    """Interlock 3: an axis only ever observed passing has never been seen fire."""
+    everything = {axis: {"pass", "fail"} for axis in R.JUDGE_AXES}
+    assert J.coverage_report(everything) == []
+    only_passing = dict(everything, two_sided={"pass"})
+    assert any("only ever observed pass" in message
+               for message in J.coverage_report(only_passing)), only_passing
+    undeclared = {axis: outcomes for axis, outcomes in everything.items()
+                  if axis != "two_sided"}
+    assert any("no episode declares it" in message
+               for message in J.coverage_report(undeclared)), undeclared
+
+
+def test_judge_rubric_and_axis_names_cannot_drift():
+    """The names live in the runner (the offline loader must reject a typo for
+    free); the rubric lives in the judge. Either growing alone must fail the run.
+
+    This drives the gate against a mutated state rather than asserting the state
+    directly: `assert set(RUBRIC) == set(JUDGE_AXES)` stays green even when
+    `_check_rubric_parity` has decayed into a no-op, which is the shape of fake
+    green the 2026-07-24 probe audit named (structure asserted, gate unobserved).
+    """
+    J._check_rubric_parity()
+    for axis, entry in J.RUBRIC.items():
+        assert entry["holds"] and entry["breaks"] and entry["one_line"], axis
+    original = dict(J.RUBRIC)
+    try:
+        J.RUBRIC = {axis: entry for axis, entry in original.items()
+                    if axis != R.JUDGE_AXES[0]}
+        try:
+            J._check_rubric_parity()
+            raise AssertionError("an axis with no rubric did not fail the parity gate")
+        except SystemExit as exit_code:
+            assert "missing rubric" in str(exit_code), exit_code
+        J.RUBRIC = dict(original, invented_axis={"one_line": "x", "holds": "x", "breaks": "x"})
+        try:
+            J._check_rubric_parity()
+            raise AssertionError("a rubric for an undeclared axis did not fail the parity gate")
+        except SystemExit as exit_code:
+            assert "undeclared axis" in str(exit_code), exit_code
+    finally:
+        J.RUBRIC = original
+
+
+def test_the_judge_is_never_shown_the_paired_answer_or_the_maintainer_note():
+    """Showing either would make the judge a similarity scorer against today's
+    repair, which is exactly the target the bank is forbidden to pin (#431)."""
+    episode, _problems = R.load_bank({"EP-008"})[0][0], None
+    miss = next(a for a in episode["answers"] if a["id"] == "recorded_miss")
+    other = next(a for a in episode["answers"] if a["id"] != "recorded_miss")
+    shown = J.material(episode, miss)
+    assert miss["prose"] in shown
+    assert other["prose"] not in shown
+    assert miss["note"] not in shown
+    assert episode["title"] not in shown
+
+
 def test_committed_bank_is_structurally_valid_and_schema_fields_match():
     """The shipped bank must load, and the schema doc must not drift from the
     enforcement: every field the loader accepts is a documented property."""
@@ -687,6 +857,12 @@ def test_committed_bank_is_structurally_valid_and_schema_fields_match():
     enum = set(schema["properties"]["checks"]["items"]["enum"])
     assert enum == set(R.CHECK_NAMES), (
         f"schema check enum and runner CHECK_NAMES diverged: {enum ^ set(R.CHECK_NAMES)}")
+    axes = set(schema["properties"]["judge"]["properties"]["axes"]["items"]["enum"])
+    assert axes == set(R.JUDGE_AXES), (
+        f"schema judge axes and runner JUDGE_AXES diverged: {axes ^ set(R.JUDGE_AXES)}")
+    judge_properties = set(
+        schema["properties"]["answers"]["items"]["properties"]["judge_fails"])
+    assert "items" in judge_properties, "judge_fails must document its item shape"
 
 
 def main():
