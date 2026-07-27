@@ -842,15 +842,39 @@ def test_unusable_samples_are_reported_and_never_counted_as_agreement():
 
 
 def test_backend_resolution_names_both_routes_and_refuses_an_unknown_one():
+    """Availability is injected, never probed, so this decides the same thing on
+    every machine. The first cut called `resolve_backend()` bare and passed only
+    where a backend happened to be installed — asserting the environment rather
+    than the logic, which is the fake-green shape this file already caught once.
+    CI, which has neither backend, went red while the author's machine stayed
+    green."""
+    both = {"agy": True, "anthropic": True}
+    only_sdk = {"agy": False, "anthropic": True}
+    neither = {"agy": False, "anthropic": False}
+
+    # auto prefers agy: on a machine with both, it is the one needing no key.
+    assert J.resolve_backend("auto", both) == ("agy", J.DEFAULT_MODELS["agy"])
+    assert J.resolve_backend("auto", only_sdk) == ("anthropic", J.DEFAULT_MODELS["anthropic"])
+    # An explicit choice is honoured even when the other is also present.
+    assert J.resolve_backend("anthropic", both)[0] == "anthropic"
+
+    for name, available, expected in (
+            ("auto", neither, "needs a model"),          # names both routes, not one
+            ("hunyuan", both, "unknown TR_JUDGE_BACKEND"),
+            ("agy", only_sdk, "not installed here"),     # asked for by name, absent
+    ):
+        try:
+            J.resolve_backend(name, available)
+        except SystemExit as reason:
+            assert expected in str(reason), (name, reason)
+        else:
+            raise AssertionError(f"resolve_backend({name!r}, {available}) should have failed")
+    # The no-backend message must name both routes, so a maintainer is not sent
+    # down the one that happens to be mentioned first.
     try:
-        J.resolve_backend("hunyuan")
+        J.resolve_backend("auto", neither)
     except SystemExit as reason:
-        assert "unknown TR_JUDGE_BACKEND" in str(reason), reason
-    else:
-        raise AssertionError("an unknown backend was accepted")
-    backend, model = J.resolve_backend()
-    assert backend in J.DEFAULT_MODELS, backend
-    assert model, "a resolved backend must name the model it will use"
+        assert "agy" in str(reason) and "anthropic" in str(reason), reason
 
 
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():

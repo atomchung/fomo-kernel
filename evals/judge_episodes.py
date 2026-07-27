@@ -262,10 +262,25 @@ def _prompt(episode, answer, axes):
     return "\n".join(parts)
 
 
-def resolve_backend(name=BACKEND):
-    """``(backend, model)``, or raise with both routes named. Pure — probes PATH only."""
-    available = {"agy": shutil.which("agy") is not None,
-                 "anthropic": importlib.util.find_spec("anthropic") is not None}
+def installed_backends():
+    """What this machine can actually reach. The only impure part of resolution."""
+    return {"agy": shutil.which("agy") is not None,
+            "anthropic": importlib.util.find_spec("anthropic") is not None}
+
+
+def resolve_backend(name=BACKEND, available=None):
+    """``(backend, model)``, or raise with both routes named.
+
+    ``available`` is injected so the resolution *logic* can be tested on a
+    machine that has neither backend — which is every CI runner, since the
+    offline suite depends on neither by design. A probe that called this bare
+    would be asserting what happens to be installed rather than what the code
+    decides, which is the same shape as the fake green this workstream already
+    caught once (a probe reading the state a gate produces instead of driving
+    the gate). Found by CI, which had neither backend and went red while the
+    author's machine stayed green.
+    """
+    available = installed_backends() if available is None else available
     if name == "auto":
         # agy first: it needs no key, so on a machine that has both this is the
         # route that runs without further setup.
