@@ -72,6 +72,13 @@ issues it produces must say so.
 6. **Privacy gate** — if the session touched real trade data, every piece of
    text destined for a public surface passed `tools/privacy_lint.py` first
    (see below).
+7. **Findings disposition** — the run recorded a `findings_recorded` event
+   saying where every miss went: converted into a replayable episode, or tied
+   to the issue that owns it with the reason it cannot be replayed. A run that
+   observed nothing declares that explicitly. This is gate 7 because the first
+   six can all pass on a run that found real problems and left no replayable
+   asset behind — which is exactly what #417 measured (eighteen receipts, one
+   archived manifest, zero episodes) and what step 6 below is the how of.
 
 Each rule doubles as early detection, and each is honest about where it is
 machine-enforced versus procedural:
@@ -84,6 +91,7 @@ machine-enforced versus procedural:
 | 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence | running both flags on human-graded runs; auditing or re-running suspect timing |
 | 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
+| 7. Findings | `verify --require-findings` fails without exactly one `findings_recorded`; the event itself rejects an unrecognized disposition and an `episode:EP-NNN` id that is not in `evals/episodes/` — a conversion claim with nothing behind it | judging honestly what counts as a miss, and converting it while the wording is still in front of you |
 | 3b. Grounding fidelity | `verify` fails when a `rule_choice_presented` event is missing its grounding-fidelity evidence, or reports a non-verbatim match, with no legacy exemption (#293) | authoring `--grounding-check-file` honestly (candidates + exact presented text) before recording the event |
 
 A drifted run therefore surfaces *before* its results are trusted or posted,
@@ -200,8 +208,11 @@ Non-negotiables while walking (each has burned a real QA run before):
 python3 tools/ux_receipt.py event --event owner_verdict --controls ... --card ... --memory ... \
   [--question-specificity ... --answer-fit ...]
 python3 tools/ux_receipt.py verify --session-id <ID> \
-  --require-owner-verdict --require-timing-integrity
+  --require-owner-verdict --require-timing-integrity --require-findings
 ```
+
+`--require-findings` is gate 7, and it is why step 6 below happens *before* you
+archive rather than whenever someone remembers.
 
 The JSON result includes `timing_integrity`. Timestamp reversal or a complete
 owner-verdict trace spanning less than three seconds is `suspect`; ordinary
@@ -276,6 +287,22 @@ A miss the mechanical checks cannot express is still worth an episode when a
 later judge could grade it, and worth saying out loud when it cannot: whether
 the card ever reached the screen is a receipt question (step 3), not an answer
 question.
+
+Then record where each one went, which is gate 7 and the last thing before you
+archive:
+
+```bash
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+  --finding episode:EP-0NN \
+  --finding 'not-episodable:#NN:why this one cannot be replayed'
+# or, for a run that genuinely found nothing:
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
+```
+
+The event resolves each `episode:EP-NNN` against `evals/episodes/` in this
+checkout, so "converted" cannot be claimed for a conversion that did not happen.
+`--no-findings` is a real and common outcome; what fails closed is leaving it to
+be inferred from an absent event.
 
 ## Per-client notes
 

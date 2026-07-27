@@ -101,3 +101,19 @@ python3 tools/ux_receipt.py verify --session-id <id> \
 ```
 
 These owner judgments are product gates, not schema-derived claims: a timing warning limits how the receipt may be used but does not erase the owner's stated verdict.
+
+## Where the misses went
+
+A run's last act is archiving, and for a long time nothing at that moment asked what it had found. #417 measured the result: eighteen receipts, one archived manifest, and zero replayable assets. `findings_recorded` is the moment that asks, and `verify --require-findings` is what makes it unskippable.
+
+Record it once, before the owner verdict. Each `--finding` is one miss and its disposition, and there are exactly two honest ones: `episode:EP-NNN` for a miss converted into a replayable episode ([evals/episodes/README.md](../../../evals/episodes/README.md)), or `not-episodable:#NN:<why it cannot be replayed>` for one that only an issue can hold — whether the card reached the screen, for instance, is a receipt question, not an answer question. A converted id is resolved against the bank in this checkout, so recording a conversion that did not happen fails rather than reads as done.
+
+A run that observed nothing declares `--no-findings`. That is a real and common outcome; what the gate forbids is inferring it from an absent event.
+
+```bash
+python3 tools/ux_receipt.py event --session-id <id> --event findings_recorded \
+  --finding episode:EP-009 \
+  --finding 'not-episodable:#230:the card never reached the screen — a presentation trace question'
+python3 tools/ux_receipt.py verify --session-id <id> \
+  --require-owner-verdict --require-timing-integrity --require-findings
+```

@@ -102,9 +102,21 @@ EVENT_KINDS = (
     "memory_presented",
     "widget_attempt_failed",
     "cash_anchor_checked",
+    "findings_recorded",
     "owner_verdict",
 )
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+# Where a miss went. #417 gave converted misses a home; what it did not give
+# them was a moment that asks. A QA run's last act is archiving, and nothing at
+# that moment asked "what did you find, and where did it go?" — so the loop was
+# left to whoever remembered, which is the failure eval-design.md had already
+# recorded once. These are the only two honest answers, plus declaring none.
+FINDING_DISPOSITIONS = (
+    # converted on the spot into a replayable episode; the id is resolved below
+    re.compile(r"^episode:(EP-\d{3})$"),
+    # recorded but not replayable, tied to the issue that owns it and saying why
+    re.compile(r"^not-episodable:(#\d+):(.{10,})$", re.S),
+)
 TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 MIN_OWNER_TRACE_SPAN_SECONDS = 3
@@ -276,6 +288,56 @@ def _grounding_fidelity(path: str | None) -> dict:
     return {"grounding_expected": True, "grounding_hash": digest, "grounding_verbatim": verbatim}
 
 
+def _episode_bank() -> "set[str] | None":
+    """Episode ids in this checkout, or None when the bank is not reachable.
+
+    Returns None rather than an empty set for a vendored skill directory with no
+    `evals/` beside it: "the bank is not here" and "the bank is empty" are
+    different facts, and only the second is a reason to reject an id.
+    """
+    bank = pathlib.Path(__file__).resolve().parents[3] / "evals" / "episodes"
+    if not bank.is_dir():
+        return None
+    return {path.name.split("-")[0] + "-" + path.name.split("-")[1]
+            for path in bank.glob("EP-*.json")}
+
+
+def _findings(findings: list, none_declared: bool) -> dict:
+    """Every miss this run produced, and where it went.
+
+    Fails closed in both directions: an omitted disposition is not silence, and
+    "we found nothing" has to be said rather than left to be inferred from an
+    absent event. A run that observed nothing is a real and common outcome; a
+    run that observed something and never said where it went is the one this
+    exists to make impossible.
+    """
+    if none_declared and findings:
+        raise ReceiptError("--no-findings and --finding are mutually exclusive")
+    if not none_declared and not findings:
+        raise ReceiptError(
+            "findings_recorded requires --finding (repeatable) or an explicit "
+            "--no-findings; an omitted disposition is not a declaration of none")
+    recorded = []
+    known = _episode_bank()
+    for finding in findings:
+        for pattern in FINDING_DISPOSITIONS:
+            match = pattern.match(finding)
+            if match:
+                break
+        else:
+            raise ReceiptError(
+                f"unrecognized finding disposition {finding!r} — use "
+                "'episode:EP-NNN' for a miss converted into a replayable episode, "
+                "or 'not-episodable:#NN:<why it cannot be replayed>'")
+        if finding.startswith("episode:") and known is not None and match.group(1) not in known:
+            raise ReceiptError(
+                f"{match.group(1)} is not in evals/episodes/ — convert the miss "
+                "before recording it as converted, or the disposition is a claim "
+                "with nothing behind it")
+        recorded.append(finding)
+    return {"findings": recorded}
+
+
 def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
     row = {"version": VERSION, "event": args.event, "session_id": declaration["session_id"]}
     if args.event in ("question_presented", "rule_choice_presented"):
@@ -320,6 +382,8 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.cash_outcome not in CASH_OUTCOMES:
             raise ReceiptError(f"cash_anchor_checked requires --cash-outcome in {CASH_OUTCOMES}")
         row["cash_outcome"] = args.cash_outcome
+    if args.event == "findings_recorded":
+        row.update(_findings(args.finding, args.no_findings))
     if args.event == "owner_verdict":
         verdicts = {"controls": args.controls, "card": args.card, "memory": args.memory}
         if any(value is None for value in verdicts.values()):
@@ -440,7 +504,8 @@ def _adapter_capability_errors(
     return errors
 
 
-def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[str]:
+def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
+                require_findings: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
     Scope is deliberately narrow: prove that each engine-rendered card actually
@@ -619,6 +684,28 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
         elif openers[0] >= first_surface:
             errors.append("weekly opening memory was presented after the first question or card")
 
+    # Gate 7 (#417): a run that produced misses and never said where they went
+    # is the loop that produced eighteen receipts and zero replayable assets.
+    findings = _positions(rows, "findings_recorded")
+    if len(findings) > 1:
+        errors.append("findings_recorded may appear at most once")
+    for index in findings:
+        row = rows[index]
+        recorded = row.get("findings")
+        if recorded is None:
+            errors.append("findings_recorded must carry a findings list, empty for none observed")
+        elif not isinstance(recorded, list):
+            errors.append("findings_recorded findings must be a list of dispositions")
+        else:
+            for finding in recorded:
+                if not any(pattern.match(str(finding)) for pattern in FINDING_DISPOSITIONS):
+                    errors.append(f"unrecognized finding disposition {finding!r}")
+    if require_findings and len(findings) != 1:
+        errors.append(
+            "a QA run must record exactly one findings_recorded event — every miss "
+            "disposed of as a converted episode or an issue it cannot be replayed "
+            "from, and 'none observed' declared rather than omitted")
+
     verdicts = _positions(rows, "owner_verdict")
     if len(verdicts) > 1:
         errors.append("owner_verdict may appear at most once")
@@ -658,7 +745,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
 
 def verify_receipt(args: argparse.Namespace) -> None:
     rows = _read_rows(_receipt_path(args.session_id, args.state_root))
-    errors = verify_rows(rows, require_owner_verdict=args.require_owner_verdict)
+    errors = verify_rows(rows, require_owner_verdict=args.require_owner_verdict,
+                         require_findings=args.require_findings)
     if errors:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)
@@ -724,11 +812,19 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--memory", choices=("pass", "fail", "not_applicable"))
     event.add_argument("--question-specificity", choices=("pass", "fail"))
     event.add_argument("--answer-fit", choices=("pass", "fail"))
+    event.add_argument("--finding", action="append", default=[],
+                       metavar="episode:EP-NNN | not-episodable:#NN:<why>",
+                       help="where one miss from this run went; repeatable")
+    event.add_argument("--no-findings", action="store_true",
+                       help="declare that this run observed no miss (not the same "
+                            "as omitting the event)")
     event.set_defaults(handler=record_event)
 
     verify = subparsers.add_parser("verify", help="confirm each card actually reached the user")
     add_common(verify)
     verify.add_argument("--require-owner-verdict", action="store_true")
+    verify.add_argument("--require-findings", action="store_true",
+                        help="gate 7: fail unless the run disposed of its misses")
     verify.add_argument(
         "--require-timing-integrity",
         action="store_true",
