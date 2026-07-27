@@ -1142,6 +1142,11 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
         # limit lives in prose because it is a claim about how to use evidence,
         # not a property the tool can assert about itself.
         "owner_live_eligible=false",
+        # #442: the sentence this whole lock exists for was itself unlocked.
+        # PR #399 review caught it deleted; 358357b restored it; but no
+        # fragment here pinned it, so a second deletion would fail nothing --
+        # the exact gap docs/development-guide.md §0 names.
+        "Each question needs its own visible turn",
     ):
         assert fragment in text, fragment
 

@@ -49,10 +49,11 @@ behavior, prove it is not a load-bearing invariant — the slimming removed the
 only protection for required-question visibility because it read like style
 (PR #399 review). Run `python3 tests/run_all.py` first and treat a broken lock
 as a question to answer, not an obstacle to rephrase around. Do not read the
-locks as coverage: they are seven fixed strings in
-`test_runtime_contract_contains_fixed_fallback_and_no_file_only_success`, and
-the sentence that motivated this rule is not among them. The suite says when
-you hit a lock, never that you missed one.
+locks as coverage: they are eight fixed strings in
+`test_runtime_contract_contains_fixed_fallback_and_no_file_only_success` — the
+sentence that motivated this rule was itself added to the set (#442), but
+nothing locks the next sentence someone judges load-bearing by eye. The suite
+says when you hit a lock, never that you missed one.
 
 ## 1. Mirror tax — the largest measured cost
 
@@ -68,9 +69,12 @@ equality test; the mirrored-surfaces table in CLAUDE.md is the census.
   applies it to `card-template.html`, #402 knife 5 to test expectations
   (`tests/copy_corpus.py`). A hand mirror guarded by an equality test is the
   fallback, not the default — including inside a test, where a literal copied
-  out of `copy/*.json` is the same mirror wearing an assertion. Only instances
-  are gated (`test_card_template_matches_its_generator`); nothing detects a
-  new hand mirror, and `design_bundle.py` runs in no suite.
+  out of `copy/*.json` is the same mirror wearing an assertion. Instances are
+  gated (`test_card_template_matches_its_generator`, and — since #442 —
+  `tests/test_design_bundle.py`, which runs `design_bundle.py` itself for a
+  clean exit and checks its derived output still reflects the current
+  runtime CSS); nothing detects a new hand mirror before one of its
+  instances earns a gate.
 - A metric can be blind to your change: `change_surface.py` counts surfaces
   crossed, so a knife that only stops a surface being hand-written moves
   nothing. Add a reading (authored churn) rather than call the knife
