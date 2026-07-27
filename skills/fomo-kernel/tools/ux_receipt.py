@@ -102,9 +102,21 @@ EVENT_KINDS = (
     "memory_presented",
     "widget_attempt_failed",
     "cash_anchor_checked",
+    "findings_recorded",
     "owner_verdict",
 )
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+# Where a miss went. #417 gave converted misses a home; what it did not give
+# them was a moment that asks. A QA run's last act is archiving, and nothing at
+# that moment asked "what did you find, and where did it go?" — so the loop was
+# left to whoever remembered, which is the failure eval-design.md had already
+# recorded once. These are the only two honest answers, plus declaring none.
+FINDING_DISPOSITIONS = (
+    # converted on the spot into a replayable episode; the id is resolved below
+    re.compile(r"^episode:(EP-\d{3})$"),
+    # recorded but not replayable, tied to the issue that owns it and saying why
+    re.compile(r"^not-episodable:(#\d+):(.{10,})$", re.S),
+)
 TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 MIN_OWNER_TRACE_SPAN_SECONDS = 3
@@ -276,6 +288,106 @@ def _grounding_fidelity(path: str | None) -> dict:
     return {"grounding_expected": True, "grounding_hash": digest, "grounding_verbatim": verbatim}
 
 
+def _episode_bank() -> "set[str] | None":
+    """Episode ids in this checkout, or None when the bank is not reachable.
+
+    Returns None rather than an empty set for a vendored skill directory with no
+    `evals/` beside it: "the bank is not here" and "the bank is empty" are
+    different facts, and only the second is a reason to reject an id.
+
+    Reads each episode's declared `id`, not its filename. The first cut derived
+    the id by splitting the filename, so a file named `EP-123-anything.json`
+    containing invalid JSON counted as a converted episode — hand-mirroring a
+    fact the file already states, and admitting a claim with nothing behind it
+    (external review, 2026-07-27). A file that does not parse, or declares no
+    id, contributes nothing rather than contributing its name.
+    """
+    bank = pathlib.Path(__file__).resolve().parents[3] / "evals" / "episodes"
+    if not bank.is_dir():
+        return None
+    ids = set()
+    for path in sorted(bank.glob("EP-*.json")):
+        try:
+            declared = json.loads(path.read_text(encoding="utf-8")).get("id")
+        except (OSError, ValueError, AttributeError):
+            # ValueError rather than json.JSONDecodeError: `read_text` raises
+            # UnicodeDecodeError on a non-UTF-8 file, which is a ValueError but
+            # not a JSONDecodeError, so the narrower list let it escape and
+            # crashed the tool instead of failing the claim closed (external
+            # review round 2). A file this loop cannot read backs no claim; it
+            # must never be able to stop the gate from running.
+            continue
+        if isinstance(declared, str) and declared:
+            ids.add(declared)
+    return ids
+
+
+def _check_findings_row(row: dict, index: int) -> list:
+    """Validate one persisted `findings_recorded` row. Shared by write and verify.
+
+    `_findings` gates what this tool writes; this gates what `verify` will accept
+    from a file on disk. Both matter, and they must not disagree: the first cut
+    resolved `episode:EP-NNN` against the bank only on the write path, so a
+    hand-authored or post-edited receipt claiming a conversion that never
+    happened verified clean — at exactly the gate archiving depends on (external
+    review, 2026-07-27).
+    """
+    errors = []
+    # Same discipline as `question_presented` and `answers_received`: this event
+    # is the one a maintainer is most tempted to paste miss text into, and it
+    # sits inside the state directory's trust boundary. Anything beyond the
+    # dispositions is content this trace is not allowed to carry.
+    extra = sorted(set(row) - {"version", "event", "session_id", "ts", "findings"})
+    if extra:
+        errors.append(f"row {index} findings_recorded contains unsupported fields: "
+                      f"{', '.join(extra)}")
+    recorded = row.get("findings")
+    if recorded is None:
+        return errors + ["findings_recorded must carry a findings list, empty for none observed"]
+    if not isinstance(recorded, list):
+        return errors + ["findings_recorded findings must be a list of dispositions"]
+    known = _episode_bank()
+    for finding in recorded:
+        for pattern in FINDING_DISPOSITIONS:
+            match = pattern.match(str(finding))
+            if match:
+                break
+        else:
+            errors.append(f"unrecognized finding disposition {finding!r}")
+            continue
+        if str(finding).startswith("episode:") and known is not None and match.group(1) not in known:
+            errors.append(f"{match.group(1)} is recorded as converted but is not in "
+                          f"evals/episodes/ — a conversion claim with nothing behind it")
+    return errors
+
+
+def _findings(findings: list, none_declared: bool) -> dict:
+    """Every miss this run produced, and where it went.
+
+    Fails closed in both directions: an omitted disposition is not silence, and
+    "we found nothing" has to be said rather than left to be inferred from an
+    absent event. A run that observed nothing is a real and common outcome; a
+    run that observed something and never said where it went is the one this
+    exists to make impossible.
+    """
+    if none_declared and findings:
+        raise ReceiptError("--no-findings and --finding are mutually exclusive")
+    if not none_declared and not findings:
+        raise ReceiptError(
+            "findings_recorded requires --finding (repeatable) or an explicit "
+            "--no-findings; an omitted disposition is not a declaration of none")
+    # One reader for what a disposition is: the same function `verify` applies to
+    # a row read back from disk, so the write path and the gate cannot disagree.
+    problems = _check_findings_row({"findings": list(findings)}, 0)
+    if problems:
+        raise ReceiptError(
+            "; ".join(problems)
+            + " — use 'episode:EP-NNN' for a miss converted into a replayable "
+              "episode (convert it first), or 'not-episodable:#NN:<why it cannot "
+              "be replayed>'")
+    return {"findings": list(findings)}
+
+
 def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
     row = {"version": VERSION, "event": args.event, "session_id": declaration["session_id"]}
     if args.event in ("question_presented", "rule_choice_presented"):
@@ -320,6 +432,8 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.cash_outcome not in CASH_OUTCOMES:
             raise ReceiptError(f"cash_anchor_checked requires --cash-outcome in {CASH_OUTCOMES}")
         row["cash_outcome"] = args.cash_outcome
+    if args.event == "findings_recorded":
+        row.update(_findings(args.finding, args.no_findings))
     if args.event == "owner_verdict":
         verdicts = {"controls": args.controls, "card": args.card, "memory": args.memory}
         if any(value is None for value in verdicts.values()):
@@ -440,7 +554,8 @@ def _adapter_capability_errors(
     return errors
 
 
-def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[str]:
+def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
+                require_findings: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
     Scope is deliberately narrow: prove that each engine-rendered card actually
@@ -619,6 +734,19 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
         elif openers[0] >= first_surface:
             errors.append("weekly opening memory was presented after the first question or card")
 
+    # Gate 7 (#417): a run that produced misses and never said where they went
+    # is the loop that produced eighteen receipts and zero replayable assets.
+    findings = _positions(rows, "findings_recorded")
+    if len(findings) > 1:
+        errors.append("findings_recorded may appear at most once")
+    for index in findings:
+        errors.extend(_check_findings_row(rows[index], index + 1))
+    if require_findings and len(findings) != 1:
+        errors.append(
+            "a QA run must record exactly one findings_recorded event — every miss "
+            "disposed of as a converted episode or an issue it cannot be replayed "
+            "from, and 'none observed' declared rather than omitted")
+
     verdicts = _positions(rows, "owner_verdict")
     if len(verdicts) > 1:
         errors.append("owner_verdict may appear at most once")
@@ -636,6 +764,15 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
                 errors.append("owner question specificity and answer fit verdicts must both be pass or fail")
         if final_card and verdicts[0] <= final_card[0]:
             errors.append("owner_verdict must follow the final card presentation")
+        # Both documents say findings are recorded before the verdict, and the
+        # first cut enforced no ordering at all — the docs described a discipline
+        # the tool did not hold anyone to (external review, 2026-07-27). The
+        # ordering is the same anti-backfill rule the card sequence already has:
+        # the verdict is the last act, so a disposition recorded after it was
+        # reconstructed rather than observed.
+        if findings and findings[0] > verdicts[0]:
+            errors.append("findings_recorded must precede the owner verdict — a "
+                          "disposition recorded after the run was judged is a backfill")
     if require_owner_verdict:
         if len(verdicts) != 1:
             errors.append("manual verification requires exactly one owner_verdict")
@@ -658,7 +795,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False) -> list[s
 
 def verify_receipt(args: argparse.Namespace) -> None:
     rows = _read_rows(_receipt_path(args.session_id, args.state_root))
-    errors = verify_rows(rows, require_owner_verdict=args.require_owner_verdict)
+    errors = verify_rows(rows, require_owner_verdict=args.require_owner_verdict,
+                         require_findings=args.require_findings)
     if errors:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)
@@ -724,11 +862,19 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--memory", choices=("pass", "fail", "not_applicable"))
     event.add_argument("--question-specificity", choices=("pass", "fail"))
     event.add_argument("--answer-fit", choices=("pass", "fail"))
+    event.add_argument("--finding", action="append", default=[],
+                       metavar="episode:EP-NNN | not-episodable:#NN:<why>",
+                       help="where one miss from this run went; repeatable")
+    event.add_argument("--no-findings", action="store_true",
+                       help="declare that this run observed no miss (not the same "
+                            "as omitting the event)")
     event.set_defaults(handler=record_event)
 
     verify = subparsers.add_parser("verify", help="confirm each card actually reached the user")
     add_common(verify)
     verify.add_argument("--require-owner-verdict", action="store_true")
+    verify.add_argument("--require-findings", action="store_true",
+                        help="gate 7: fail unless the run disposed of its misses")
     verify.add_argument(
         "--require-timing-integrity",
         action="store_true",
