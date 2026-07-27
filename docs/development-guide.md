@@ -164,8 +164,13 @@ read by no mechanical consumer, and repeatedly invited misreading.
 - Every stored field needs a mechanical consumer, or it goes; a
   written-never-read field is schema debt (the `verify` lesson). Partly gated:
   `QUESTION_CONSUMERS` in `evals/run_episodes.py` reads the kind list live
-  from the schema enum, so an undeclared kind fails — but it covers question
-  kinds only, and `verify` itself would still slip through.
+  from the schema enum, so an undeclared kind fails, and — since #451 —
+  `question_field_consumers()` in the same file fails on a field four of
+  those sinks construct that the card never reads (the gap that let
+  `thesis_decisions.note`/`.evidence_delta` pass as wired). Both stop at
+  question kinds; `condition_checks` (read by a dozen-plus functions, not one
+  loop — see the section comment above `QUESTION_FIELD_SOURCES`) and `verify`
+  itself still slip through.
 - The second recurrence of a symptom is a design issue, not a second patch
   (#357: the cash-anchor gap recurred three times as one-off patches before it
   was named a design problem).
