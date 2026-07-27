@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/behavior-verdict.schema.json",
+  "title": "Fomo Kernel Behavior Verdict",
+  "description": "One engine-judged mismatch between what the user said (a closed-vocabulary self-report) and what they did (an engine-owned behavioral metric), frozen so it stays true forever -- including after the thesis row `subject` points at is revised, or the profile label `profile_label_id` names is superseded (#446 cut 1). The readable contract; skills/fomo-kernel/engine/verdicts.py (replay) holds the enforcement, because the offline suite carries no jsonschema dependency. Stored append-only at <root>/verdicts.jsonl, its own file for the same firewall reason conditions.py:66-72 gives conditions.jsonl: a verdict must never enter problems.check_rules' mechanical reconciliation. Unlike condition-slot.schema.json and condition-check.schema.json, this document has no `input` sub-object: every field is engine-assigned, because an agent that could write its own verdict could record an adjudication nobody made.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rule", "subject", "observed", "outcome", "verdict_source", "date_end", "session_id"],
+  "properties": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "description": "The rule that judged, and the exact parameter version it judged under. Without this a threshold change makes every prior verdict unrecomputable -- verdicts.RULE_PARAMS is the versioned parameter block this pins to, and verdicts.RULE_PARAM_DIGEST fails the suite the moment a version's parameters change without a new version being added.",
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "description": "e.g. \"horizon_contradiction\"."},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store", "row_id", "field", "value"],
+      "description": "The *said* half, frozen as both value and row. Value alone cannot be audited; row alone cannot be replayed once a later fold changes what that row resolves to.",
+      "properties": {
+        "store": {"type": "string", "minLength": 1, "description": "The logical store the row lives in, e.g. \"theses\" (theses.jsonl)."},
+        "row_id": {"type": "string", "minLength": 1, "description": "The specific row's own identity -- a thesis row's event_id, never its stable cross-revision thesis_id. A revision writes a new event_id, so an already-written verdict is never silently repointed at a later restatement."},
+        "field": {"type": "string", "minLength": 1, "description": "The field on that row being judged, e.g. \"horizon\"."},
+        "value": {"description": "The frozen value of that field at judgment time. Replay compares against this literal value, never against a fresh read of the row it names."}
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "value", "window", "closed"],
+      "description": "The *done* half, frozen. Behavior is recomputed from the current fold every period, so it drifts unless pinned here.",
+      "properties": {
+        "metric": {"type": "string", "minLength": 1, "description": "e.g. \"holding_days\"."},
+        "value": {"type": "number", "description": "e.g. the holding-day count at judgment time."},
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "description": "The span the observation was measured over.",
+          "properties": {
+            "from": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+            "to": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+          }
+        },
+        "closed": {"type": "boolean", "description": "Whether the subject was closed (exited) as of this observation -- horizon_contradiction's own exited axis, frozen the same way as everything else here."}
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the rule returned, e.g. \"exit_too_fast\" or \"held_too_long\". replay() checks its own recomputation against this."
+    },
+    "verdict_source": {
+      "enum": ["engine", "user"],
+      "description": "Who judged. \"agent\" is deliberately absent from this vocabulary until #414 lands: a free-text said-half may be quoted into a question, never adjudicated by the agent alone (references/condition-slots.md gives the same split for condition checks)."
+    },
+    "date_end": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The review period this verdict belongs to. One row per (subject, rule, period), the same convention condition-check.schema.json uses."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The session that recorded this verdict. Required so session._append_session_rows can dedupe an idempotent retry of the same finalize -- the same mechanism every other durable store in this codebase already relies on."
+    },
+    "profile_label_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Back-reference only, load-bearing for nothing (#446 cut 2, not yet built). Points at an immutable profile-label id, never a line id. Removing this field must not change any replay() result -- replay's signature does not accept it."
+    }
+  }
+}

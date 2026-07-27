@@ -409,6 +409,7 @@ DATA_FILES = [
     ("profile.json", "json", "標準版偏好:自訂單一部位上限 max_position_pct(review.py set-cap,#324)+ 你靜音的規矩 muted_rules(review.py mute-rule,#416)"),
     ("rules.jsonl", "jsonl", "累積的規矩庫"),
     ("conditions.jsonl", "jsonl", "引擎算不出來、但你仍然承諾要盯的條件(#412;含你自己的原話與當時的基準值)"),
+    ("verdicts.jsonl", "jsonl", "引擎判定的「說到 vs 做到」落差記錄(#446;目前只有 horizon 矛盾，可重算驗證，不進規矩對帳)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
     ("pre_trade_consultations.jsonl", "jsonl", "買進/賣出前的假設性諮詢記錄(review.py consider):凍結當時算出的 before/after/rule collision,--resolve 才追加你後續的決定,不覆寫舊列"),

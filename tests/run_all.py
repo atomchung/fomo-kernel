@@ -24,6 +24,7 @@ SUITES = [
     ("Condition slots (#412)", "tests/test_conditions.py"),
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
     ("Pre-trade consultation CLI (Layer 2 entry point)", "tests/test_consider.py"),
+    ("Behavior verdicts (#446)", "tests/test_verdicts.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),
     ("Market context", "tests/test_market_context.py"),

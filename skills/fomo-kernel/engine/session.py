@@ -1020,6 +1020,15 @@ def _project_legacy_locked(root, bundle, private_md):
     reports.append(_append_session_rows(os.path.join(root, "condition_checks.jsonl"), session_id,
                                         [dict(row) for row in bundle.get("condition_checks") or []]))
 
+    # #446 cut 1: a said-vs-done judgment the engine already computes every
+    # period (today only horizon_contradiction), turned into an append-only
+    # row instead of being recomputed and discarded. Own store, same firewall
+    # as conditions.jsonl above — a verdict must never enter
+    # `problems.check_rules`' mechanical reconciliation. Same idempotent-append
+    # discipline: a documented-safe finalize retry rewrites nothing.
+    reports.append(_append_session_rows(os.path.join(root, "verdicts.jsonl"), session_id,
+                                        [dict(row) for row in bundle.get("verdicts") or []]))
+
     rule_rows = []
     if commitment and commitment.get("rule") and not commitment.get("condition"):
         suffix = session_id.split("__")[-1]
