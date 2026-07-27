@@ -137,6 +137,72 @@ fi
 _origin_main_sha() { git -C "$REPO" rev-parse --short origin/main; }
 _origin_main_line() { git -C "$REPO" log -1 --format='%h %s' origin/main; }
 
+# Resolve the physical directory containing THIS running script. Normal
+# install is a directory symlink (~/.claude/skills/fomo-qa -> <repo>/qa; the
+# script FILE itself usually isn't a symlink, only its parent directory is),
+# and macOS `readlink` has no `-f` to resolve that in one call. Walk any
+# symlink on the file itself first (rare), then let `cd -P` resolve a
+# symlinked directory anywhere in what's left of the path (the normal case).
+_self_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  local target
+  while [ -L "$src" ]; do
+    target="$(readlink "$src")"
+    case "$target" in
+      /*) src="$target" ;;
+      *)  src="$(cd -P "$(dirname "$src")" && pwd)/$target" ;;
+    esac
+  done
+  (cd -P "$(dirname "$src")" && pwd)
+}
+
+# Report whether the checkout THIS script actually runs from — not $REPO and
+# not the dogfood worktree; the installed skill can be symlinked from a
+# separate checkout that nothing keeps pinned to origin/main — is stale.
+# Report-only, like the rest of `status`: never fetches (this reads whatever
+# origin/main ref that checkout already has locally) and never aborts the
+# script. Every exit from this function is an `echo` followed by `return 0`,
+# so a surprise here can only ever produce an honest "cannot determine" line.
+_report_skill_freshness() {
+  local self_dir self_repo head behind
+  self_dir="$(_self_script_dir 2>/dev/null || true)"
+  if [ -z "$self_dir" ]; then
+    echo "skill HEAD:    cannot determine (could not resolve this script's real path)"
+    return 0
+  fi
+  self_repo="$(git -C "$self_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$self_repo" ]; then
+    echo "skill HEAD:    cannot determine ($self_dir is not inside a git repository)"
+    return 0
+  fi
+  if [ ! -f "$self_repo/skills/fomo-kernel/engine/review.py" ]; then
+    echo "skill HEAD:    cannot determine ($self_repo does not look like a fomo-kernel checkout)"
+    return 0
+  fi
+  if ! git -C "$self_repo" remote get-url origin >/dev/null 2>&1; then
+    echo "skill HEAD:    cannot determine ($self_repo has no 'origin' remote)"
+    return 0
+  fi
+  if ! git -C "$self_repo" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    echo "skill HEAD:    cannot determine (no local origin/main ref in $self_repo; never fetched)"
+    return 0
+  fi
+  head="$(git -C "$self_repo" rev-parse --short HEAD 2>/dev/null || true)"
+  behind="$(git -C "$self_repo" rev-list --count HEAD..origin/main 2>/dev/null || true)"
+  if [ -z "$head" ] || [ -z "$behind" ]; then
+    echo "skill HEAD:    cannot determine ($self_repo git query failed)"
+    return 0
+  fi
+  echo "skill HEAD:    $head  (behind origin/main by $behind)"
+  if [ "$behind" = "0" ]; then
+    echo "               -> UP TO DATE. This qa skill checkout matches origin/main."
+  else
+    echo "               -> STALE by $behind commit(s). Fix (safe under detached HEAD):"
+    echo "               git -C $self_repo pull --ff-only origin main"
+  fi
+  return 0
+}
+
 cmd_status() {
   echo "== fomo-kernel QA environment =="
   echo "repo:          $REPO"
@@ -161,6 +227,9 @@ cmd_status() {
     echo "dogfood HEAD:  (worktree not created yet)"
     echo "               -> Run './qa_env.sh up' to create it."
   fi
+  echo ""
+  echo "-- this qa skill's own freshness (checkout running this script; no fetch) --"
+  _report_skill_freshness
   echo ""
   echo "-- dogfood coach state (isolated root, NOT the real ~/.trade-coach) --"
   local coach="$REPO/skills/fomo-kernel/engine/coach.py"
