@@ -133,6 +133,7 @@
     "fact": "{criterion} — {value} ({source}, as of {as_of}).",
     "fact_no_source": "{criterion} — {value}.",
     "fact_looks_wrong": "If a figure there looks wrong, say so — the basis can be re-checked.",
+    "thesis_guard": "This is what you said would break your {ticker} thesis.",
     "note_deferred": "That is past your line; I will ask you about it next review.",
     "note_deferred_event": "That may be the thing you were watching for; I will ask you about it next review.",
     "note_unanswered": "That is past your line and you have not said either way; I will ask again next review.",

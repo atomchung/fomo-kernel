@@ -67,6 +67,10 @@
       "type": "string",
       "description": "The stable identity of this slot's line — the slot_id of the line's first row. A revision changes slot_id but keeps line_id, so re-stating a criterion does not read as a brand new condition. Root rows written before this field existed have no line_id on disk; identity falls back to slot_id (conditions.slot_line_id mirrors problems.rule_line_id). Engine-assigned; never accepted on `input`."
     },
+    "thesis_cycle_id": {
+      "type": "string",
+      "description": "#416 C2: the position cycle whose thesis this condition falsifies, present when the slot was created from a thesis_updates row's exit_trigger. Engine-assigned from that row's own cycle_id and never accepted on `input` — an agent able to name the cycle could attach a condition to a thesis the user never wrote. A revision inherits it from the row it revises. Once that cycle is no longer a held position the row stops being due and stops raising questions; it is never rewritten or deleted."
+    },
     "input": {
       "type": "object",
       "additionalProperties": false,

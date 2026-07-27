@@ -2903,7 +2903,9 @@ def test_a_stored_condition_is_read_back_into_the_next_review():
         assert due[0]["last_check"] is None, "nothing has been checked for it yet"
         assert snapshot["condition_slots_summary"] == {
             "lines_total": 1, "due_now": 1, "beyond_cap": 0, "unmapped_lines": 0,
-            "unreadable_slots": 0, "unreadable_checks": 0}
+            "retired_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
+        assert "thesis_link" not in due[0], \
+            "a commitment condition guards the portfolio, not one position's thesis (#416 C2)"
 
 
 def test_a_condition_that_could_not_be_looked_up_is_stored_as_unmapped():
@@ -3069,7 +3071,7 @@ def test_the_plan_sends_a_bounded_lookup_request_and_says_what_it_held_back():
         assert len(due) == review_engine.CONDITION_LOOKUP_CAP == 8, len(due)
         assert snapshot["condition_slots_summary"] == {
             "lines_total": 11, "due_now": 8, "beyond_cap": 3, "unmapped_lines": 0,
-            "unreadable_slots": 0, "unreadable_checks": 0}
+            "retired_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
         assert {row["slot_id"] for row in due} <= {row["slot_id"] for row in seeded}
         assert all(row["last_check"] is None for row in due), "none has ever been checked"
 
@@ -3997,6 +3999,282 @@ def test_two_names_for_one_condition_cannot_both_be_submitted():
         assert failed.returncode != 0, failed.stdout
         assert "are the same line" in failed.stdout + failed.stderr
         assert not _check_rows(root)
+
+
+# ───────── a thesis falsifier is a watched condition (#416 C2 / #412) ─────────
+#
+# The regrow half of #416's ratified direction. Before this, the fact a user
+# said would break their thesis was stored as free text and nothing ever looked
+# at it again. Now it is a condition slot: the same due rotation, the same one
+# crossing question, the same card lines — attached to the thesis it guards, and
+# retiring with it. What it deliberately is NOT is a second reconciliation
+# lifecycle: no check verdict ever moves a thesis's own status.
+
+# The falsifier the standing `_answers` thesis row already states, as a
+# condition envelope. `criterion` is that row's `exit_trigger`, verbatim.
+_FALSIFIER = {
+    "criterion": "Renewals weaken",
+    "query": "what was the most recent reported net revenue retention rate?",
+    "threshold": {"value": 100, "unit": "%", "direction": "below"},
+    "observation": {"value": 118.0, "as_of": "2026-05-20", "source": "Q1 FY2027 press release",
+                    "period": "FY2027Q1", "document": "8-K 2026-05-20"},
+}
+_FALSIFIER_CROSSED = {"value": 92.0, "as_of": "2026-08-20", "source": "10-Q",
+                      "period": "FY2027Q2", "document": "10-Q 2026-08-20"}
+_PLTR_CYCLE = "PLTR#2026-01-01#1"
+
+
+def _thesis_answers(plan, condition=_FALSIFIER, commitment="skip"):
+    answers = _answers(plan, commitment=commitment)
+    if condition is not None:
+        answers["thesis_updates"][0]["condition"] = dict(condition)
+    return answers
+
+
+def _seed_thesis_condition(tmp, root, condition=_FALSIFIER):
+    """One review that states a thesis and its falsifier in the same exchange."""
+    plan = _prepare(tmp, root, language="en")
+    final = _finalize_plan(tmp, root, plan, _thesis_answers(plan, condition))
+    assert final.returncode == 0, final.stdout + final.stderr
+    store = root / "conditions.jsonl"
+    assert store.exists(), "a falsifier stated with the thesis must reach the condition store"
+    rows = [json.loads(line) for line
+            in store.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def _state_without_pltr(tmp):
+    """The same review inputs with the PLTR position fully exited.
+
+    Liveness is "this cycle is still held", so this is what a closed thesis
+    cycle looks like from the engine's own state."""
+    card, state = _artifacts(tmp)
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    payload["holdings"]["positions"] = {}
+    payload["n_held"] = 0
+    payload["metrics"]["n_holdings"] = 0
+    path = pathlib.Path(tmp) / "state-exited.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return card, path
+
+
+def test_a_stated_falsifier_becomes_a_watched_condition_attached_to_its_thesis():
+    """#416's ruling: a thesis falsifier is precisely a condition slot attached
+    to a cycle. Before this it was free text nobody read back — the user named
+    the one fact that would change their mind and the product forgot it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        assert slot["thesis_cycle_id"] == _PLTR_CYCLE
+        assert slot["criterion"] == "Renewals weaken", "the user's own falsifier, verbatim"
+        assert slot["tier"] == "researched" and slot["baseline_verdict"] == "not_met"
+        # The firewall #412 established is untouched: still never a rule.
+        rules = root / "rules.jsonl"
+        assert not (rules.exists() and rules.read_text(encoding="utf-8").strip()), \
+            "a falsifier must never become a rules.jsonl row"
+        # And no copy of the condition rides into the thesis store, where nothing
+        # would ever reconcile it.
+        thesis_rows = [json.loads(line) for line
+                       in (root / "theses.jsonl").read_text(encoding="utf-8").splitlines()
+                       if line.strip()]
+        assert thesis_rows and all("condition" not in row for row in thesis_rows), thesis_rows
+        assert thesis_rows[0]["exit_trigger"] == "Renewals weaken", "the thesis still states it"
+
+
+def test_a_falsifier_that_paraphrases_the_thesis_fails_closed():
+    """The record stores `criterion` and the thesis stores `exit_trigger`. One
+    being a tidied version of the other means the condition being watched is not
+    the one the thesis says breaks it — the same refusal `commitment.rule`
+    already earns (#396)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan = _prepare(tmp, root, language="en")
+        answers = _thesis_answers(plan, dict(_FALSIFIER, criterion="renewal growth slows down"))
+        failed = _finalize_plan(tmp, root, plan, answers)
+        assert failed.returncode != 0, failed.stdout
+        assert "exit_trigger as its criterion, verbatim" in failed.stdout + failed.stderr
+        assert not (root / "conditions.jsonl").exists(), "nothing is committed on a rejected envelope"
+
+
+def test_a_thesis_falsifier_joins_the_same_rotation_and_names_the_thesis_it_guards():
+    """No separate budget: it is due like every other condition. What is extra is
+    the attribution the engine stamps, so no later reader has to work out which
+    thesis a slot belongs to."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_thesis_condition(tmp, root)
+        snapshot = _prepare(tmp, root, language="en")["state_snapshot"]
+        due = snapshot["condition_slots_due"]
+        assert [row["criterion"] for row in due] == ["Renewals weaken"]
+        assert due[0]["thesis_link"] == {"cycle_id": _PLTR_CYCLE, "ticker": "PLTR"}
+        assert snapshot["condition_slots_summary"] == {
+            "lines_total": 1, "due_now": 1, "beyond_cap": 0, "unmapped_lines": 0,
+            "retired_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
+
+
+def test_a_falsifier_whose_position_is_gone_stops_being_checked_and_says_so():
+    """A condition guarding a thesis on a position the user fully exited has
+    nothing left to protect — there is nothing to sell if it triggers. It must
+    stop occupying the lookup cap and stop raising questions.
+
+    It leaves `lines_total` with it, and is counted in `retired_lines` instead.
+    Left inside the total, the card's own arithmetic would report it as a
+    concern "coming back next review" forever, which is the opposite of true."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_thesis_condition(tmp, root)
+        card, state = _state_without_pltr(tmp)
+        run = _run("prepare", "--root", root, "--language", "en",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        snapshot = _pending_plan(root, run.stdout)["state_snapshot"]
+        assert snapshot["condition_slots_due"] == [], \
+            "a closed thesis cycle must not occupy a lookup slot"
+        assert snapshot["condition_slots_summary"]["lines_total"] == 0
+        assert snapshot["condition_slots_summary"]["retired_lines"] == 1
+        # The row itself is untouched: the store is append-only and it is a fact
+        # about what the user meant when they wrote it.
+        assert len((root / "conditions.jsonl").read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_a_falsifier_whose_position_is_gone_raises_no_question_even_if_checked():
+    """The other half of retirement, and the one a due-list test cannot see. A
+    slot held back by the cap is still a legal thing to submit a check for, so
+    "not in the due list" is not by itself "cannot be asked about". A closed
+    thesis cycle has to be refused at the question layer too, or the user is
+    asked to adjudicate a line on a position they no longer hold."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        card, state = _state_without_pltr(tmp)
+        path = _write_json(tmp, "condition-checks.json", {"condition_checks": [
+            {"slot_id": slot["slot_id"],
+             "check": {"lookup_status": "ok", "observation": dict(_FALSIFIER_CROSSED)}}]})
+        run = _run("prepare", "--root", root, "--language", "en",
+                   "--card-json", card, "--state-json", state, "--condition-checks", path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        assert not [q for q in plan["question_queue"]
+                    if q["kind"] in ("condition_crossing", "condition_basis")], \
+            "a condition guarding an exited position must not be adjudicated"
+
+
+def test_a_crossed_falsifier_asks_about_it_beside_the_thesis_it_belongs_to():
+    """The adjudication always arrives with its thesis. The card has no thesis
+    block, so the ticker rides the question the user is actually asked — in the
+    engine's own fallback stem *and* in the grounded surface an agent authors
+    from, because the host that could not bind the second one is exactly where
+    an unattributed adjudication would land."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        plan = _prepare_with_checks(tmp, root, [
+            {"slot_id": slot["slot_id"],
+             "check": {"lookup_status": "ok", "observation": dict(_FALSIFIER_CROSSED)}}])
+        question = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+        assert question["ticker"] == "PLTR"
+        assert "PLTR" in question["question"], question["question"]
+        assert question["question_opportunity"]["context"].get("ticker") == "PLTR", \
+            question["question_opportunity"]["context"]
+        assert question["question_opportunity"]["context"]["condition"]["criterion"] \
+            == "Renewals weaken", "the user's own words are still the anchor"
+
+
+def test_a_live_falsifier_past_the_lookup_cap_is_still_adjudicated():
+    """The counterweight to retirement, and the edge that separates the two
+    facts. "Guards a thesis" and "that thesis is still live" are different
+    things, and only the second silences a question. Attribution scoped to the
+    capped due list would have collapsed them: a falsifier the cap held back
+    this week — still a legal thing to submit a check for — would have been
+    indistinguishable from one whose position was sold, and its crossing
+    dropped for the one reason this whole tier exists to prevent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        # Push it past the cap: give it a recent check (the rotation puts
+        # never-checked lines first) and add a full cap's worth of lines that
+        # have never been looked at.
+        _seed_conditions(tmp, root, [f"sell if metric {i} drops under 30%"
+                                     for i in range(review_engine.CONDITION_LOOKUP_CAP)])
+        (root / "conditions.jsonl").write_text(
+            json.dumps(slot) + "\n" + (root / "conditions.jsonl").read_text(encoding="utf-8"),
+            encoding="utf-8")
+        (root / "condition_checks.jsonl").write_text(json.dumps(
+            {"check_id": "c-old", "slot_id": slot["slot_id"], "session_id": "s0",
+             "date_end": "2026-07-05", "created": "2026-07-05", "lookup_status": "ok",
+             "observation": {"value": 118.0, "as_of": "2026-05-20", "source": "release"},
+             "information_state": "new_period", "engine_verdict": "not_met",
+             "final_verdict": "not_met", "verdict_source": "engine"}) + "\n", encoding="utf-8")
+        plan = _prepare(tmp, root, language="en")
+        due_ids = {row["slot_id"] for row in plan["state_snapshot"]["condition_slots_due"]}
+        assert slot["slot_id"] not in due_ids, "fixture precondition: it is past the cap"
+        assert plan["state_snapshot"]["condition_slots_summary"]["retired_lines"] == 0, \
+            "held back by the cap is not retired"
+        plan = _prepare_with_checks(tmp, root, [
+            {"slot_id": slot["slot_id"],
+             "check": {"lookup_status": "ok", "observation": dict(_FALSIFIER_CROSSED)}}])
+        crossings = [q for q in plan["question_queue"] if q["kind"] == "condition_crossing"]
+        assert len(crossings) == 1, \
+            f"a live falsifier past the cap still earns its crossing: {plan['question_queue']}"
+        assert crossings[0]["line_id"] == slot["slot_id"]
+        assert crossings[0]["ticker"] == "PLTR", "and it still arrives with its thesis"
+
+
+def test_a_condition_that_guards_nothing_still_names_no_position():
+    """The counterweight, and the reason #412's original prohibition stands. A
+    portfolio-level commitment condition is attached to no position, so grounding
+    its stem in one would invite the question to argue about the position instead
+    of the line."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        _seed_condition(tmp, root)
+        slot_id = json.loads((root / "conditions.jsonl").read_text(
+            encoding="utf-8").splitlines()[0])["slot_id"]
+        plan = _prepare_with_checks(tmp, root, [
+            {"slot_id": slot_id, "check": {"lookup_status": "ok", "observation": dict(_CROSSED)}}])
+        question = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+        assert question["ticker"] is None
+        assert "ticker" not in question["question_opportunity"]["context"]
+
+
+def test_a_falsifier_that_crossed_never_moves_the_thesis_status_by_itself():
+    """#416 forbids a second reconciliation lifecycle, and an automatic status
+    flip would be exactly that: the engine deciding a thesis is falsified from a
+    lookup it performed. The user's answer is the verdict of record for the
+    *check*; what happens to the thesis stays theirs to say."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        slot = _seed_thesis_condition(tmp, root)
+        envelope = [{"slot_id": slot["slot_id"],
+                     "check": {"lookup_status": "ok", "observation": dict(_FALSIFIER_CROSSED)}}]
+        plan = _prepare_with_checks(tmp, root, envelope)
+        question = next(q for q in plan["question_queue"] if q["kind"] == "condition_crossing")
+        answers = _thesis_answers(plan, condition=None)
+        for row in answers["answers"]:
+            if row["question_id"] == question["id"]:
+                row["choice"] = "confirmed"
+        answers["condition_checks"] = envelope
+        final = _finalize_plan(tmp, root, plan, answers)
+        assert final.returncode == 0, final.stdout + final.stderr
+        # The check says the line was crossed and the user agreed.
+        check = next(r for r in _check_rows(root) if r["slot_id"] == slot["slot_id"])
+        assert (check["engine_verdict"], check["final_verdict"]) == ("met", "met")
+        assert check["verdict_source"] == "user"
+        # The thesis status stayed where the user's own thesis events put it.
+        # (`modified` here is the second review re-stating the thesis, which is
+        # the ordinary agent-authored path and has nothing to do with the check.)
+        thesis_rows = [json.loads(line) for line
+                       in (root / "theses.jsonl").read_text(encoding="utf-8").splitlines()
+                       if line.strip()]
+        pltr = [row for row in thesis_rows if row.get("cycle_id") == _PLTR_CYCLE]
+        assert pltr and not any(row.get("status") == "falsified" for row in pltr), pltr
+        assert not any(row.get("final_outcome") for row in pltr), pltr
+        for name in ("theses.jsonl", "thesis_decisions.jsonl", "exit_narratives.jsonl"):
+            path = root / name
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
+            assert "falsified" not in text, \
+                f"a condition verdict must never write a thesis outcome into {name}"
 
 
 def test_a_card_that_trims_readings_says_it_trimmed_them():

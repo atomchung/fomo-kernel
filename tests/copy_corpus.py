@@ -382,6 +382,18 @@ def _event_alerted():
 _ONE_LINE = {"lines_total": 1, "due_now": 1, "beyond_cap": 0,
              "unmapped_lines": 0, "unreadable_slots": 0, "unreadable_checks": 0}
 
+# #416 C2. A condition that came from a thesis's stated falsifier, carrying the
+# `thesis_link` `review.py` stamps on the due entry. No persona reaches it for
+# the same reason no persona reaches any of the above, one step further out: it
+# needs a standing condition AND the thesis it was written to falsify. The card
+# has no thesis block, so the attribution rides the lines the condition already
+# speaks on — otherwise the adjudication arrives with no idea whose claim it
+# settles. Every other scene here is its counterweight: a condition with no
+# thesis behind it says nothing extra.
+_THESIS_SLOT = dict(_CHECK_SLOT, criterion="sell if the CEO leaves",
+                    thesis_cycle_id="NVDA#2026-01-05#1",
+                    thesis_link={"cycle_id": "NVDA#2026-01-05#1", "ticker": "NVDA"})
+
 
 def _all_clear_slots(count):
     return [dict(_CHECK_SLOT, slot_id=f"corpus-slot-{i}", line_id=f"corpus-slot-{i}",
@@ -604,6 +616,25 @@ SCENES = (
                                "unmapped_lines": 0, "unreadable_slots": 0,
                                "unreadable_checks": 0})),
     ("condition_check/silent_when_nothing_was_checked", (), _condition_check()),
+    # #416 C2: the thesis a condition guards, on each line the condition can
+    # reach. Three scenes because three separate code paths build those lines —
+    # the ordinary reading, the failed-lookup line (built on its own path, which
+    # is exactly how a renderer change loses one surface and keeps the other),
+    # and an unresolved crossing, where the attribution has to come *before* the
+    # status note: what this is for, then what is happening to it.
+    ("condition_check/thesis_guard_on_a_reading", (),
+     _condition_check(slots=[_THESIS_SLOT], checks=[_check_row()], summary=_ONE_LINE)),
+    ("condition_check/thesis_guard_on_a_blind_lookup", (),
+     _condition_check(slots=[_THESIS_SLOT],
+                      checks=[_check_row(lookup_status="failed", observation=None,
+                                         information_state=None, engine_verdict=None,
+                                         final_verdict="unknown",
+                                         reason="the filing has not been published")],
+                      summary=_ONE_LINE)),
+    ("condition_check/thesis_guard_on_an_open_crossing", (),
+     _condition_check(slots=[_THESIS_SLOT], checks=[_crossed()],
+                      queue=[{"kind": "condition_crossing", "line_id": "corpus-slot"}],
+                      summary=_ONE_LINE)),
     *[(f"account_gate/{status}", ("account_gate",), _account_gate(status))
       for status in GATE_STATUSES + ("default",)],
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))

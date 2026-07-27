@@ -153,16 +153,26 @@ def build_opportunity(question, language, *, prior_thesis=None, headline_dimensi
         intent = "classify_initial_thesis"
         requirements = _INITIAL_THESIS_REQUIREMENTS
     elif kind in ("condition_crossing", "condition_basis"):
-        # #412: the condition's own facts, and nothing else. No ticker and no
-        # dimension — a user-authored condition is not one of the engine's five
-        # diagnostic axes, and grounding a crossing stem in a position would
-        # invite the stem to argue about the position instead of the line.
+        # #412: the condition's own facts. No dimension — a user-authored
+        # condition is not one of the engine's five diagnostic axes, and
+        # grounding a crossing stem in the engine's own reading of the position
+        # would invite the stem to argue about the position instead of the line.
         condition = {"criterion": str(question.get("criterion") or "")}
         if question.get("evidence"):
             condition["evidence"] = str(question["evidence"])
         if question.get("basis_note"):
             condition["basis_note"] = str(question["basis_note"])
         context["condition"] = condition
+        # #416 C2 narrows that prohibition rather than breaking it. It was
+        # written for a portfolio-level commitment condition, which is attached
+        # to no position at all. A *thesis falsifier* is attached to one by
+        # construction — it is the fact the user said would break that thesis —
+        # so the ticker is not an outside frame being imported, it is what the
+        # condition is about, and a stem that cannot name it asks the user to
+        # adjudicate a claim without saying whose. Engine-stamped from the due
+        # entry's `thesis_link`; a condition guarding nothing carries none.
+        if question.get("ticker"):
+            context["ticker"] = str(question["ticker"])
         if kind == "condition_basis":
             intent = "resolve_condition_basis"
             requirements = _CONDITION_BASIS_REQUIREMENTS

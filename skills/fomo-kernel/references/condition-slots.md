@@ -62,9 +62,43 @@ The card carries one engine-authored line when there is something to say — a l
 
 A rejected envelope returns a `ReviewError` naming the field. Fix the envelope and rerun; nothing is committed until finalize succeeds.
 
+## A thesis falsifier is a condition
+
+When a user states a thesis, `exit_trigger` is the fact they say would break it — a condition already, in their own words. Send it as one, on that same thesis row, in the same exchange:
+
+```json
+{"thesis_updates": [
+  {"cycle_id": "PLTR#2026-01-01#1", "ticker": "PLTR", "maturity": "draft",
+   "why": "Enterprise adoption is still underpriced",
+   "exit_trigger": "Renewals weaken",
+   "condition": {
+     "criterion": "Renewals weaken",
+     "query": "what was the most recent reported net revenue retention rate?",
+     "threshold": {"value": 100, "unit": "%", "direction": "below"},
+     "observation": {"value": 118.0, "as_of": "2026-05-20",
+                     "source": "Q1 FY2027 press release",
+                     "period": "FY2027Q1", "document": "8-K 2026-05-20"}}}
+]}
+```
+
+- **At most one per thesis row**, and only when the thesis names a falsifier worth watching. Otherwise the one fact the user named as able to change their mind sits in the record as text nobody ever reads back.
+- **`criterion` is the row's own `exit_trigger`, verbatim.** A tidied paraphrase means the thing being watched is not the thing the thesis says breaks it, and the engine refuses it by name.
+- **Look the quantity up in the same exchange**, exactly as above — the value shown back is what exposes a wrong basis before the user walks away believing a tripwire is set.
+- **`kind: "event"`** for an occurrence with no line ("the CEO leaves", "the contract is not renewed"). The user adjudicates it; you bring the evidence.
+- **An unmappable falsifier is still stored.** A thesis broken by something with no measurable line ("the story stops being interesting") lands as `unmapped` / `no_threshold` and says so plainly. That is the floor, never a reason to drop it or to invent a threshold for it.
+- The engine assigns everything else, including which thesis the condition guards. Do not send `thesis_cycle_id`.
+
+From then on it is an ordinary condition: same due rotation, same cap, same one crossing question per review, same card lines — with one difference, that wherever it speaks it names the thesis it guards, because the card has no thesis block and an adjudication with no claim attached is a question about nothing.
+
+Two things it never becomes. It is never a `rules.jsonl` row, so it never enters the graduation statistics. And **a check verdict never moves the thesis's own status**: the user's answer settles the check, and whether the thesis is falsified is a separate thing only they can say.
+
+**When the position is fully exited, the condition stops being checked.** There is nothing left to sell if it triggers, so it leaves the rotation rather than occupying a lookup slot and asking about a position the user no longer holds. The row itself is never deleted, and `condition_slots_summary.retired_lines` counts what left.
+
 ## Every review after: check what is due
 
-`review_plan.state_snapshot.condition_slots_due` is this review's lookup request — the live row of each standing condition, plus what its last check found. It is **bounded at eight** and ordered oldest-last-checked first, so the list rotates instead of growing without limit; `condition_slots_summary` states the total, how many were sent, and how many were held back. Never present the due list as the user's whole record.
+`review_plan.state_snapshot.condition_slots_due` is this review's lookup request — the live row of each standing condition, plus what its last check found. It is **bounded at eight** and ordered oldest-last-checked first, so the list rotates instead of growing without limit; `condition_slots_summary` states the total, how many were sent, how many were held back, and how many retired with an exited position. Never present the due list as the user's whole record.
+
+An entry carrying `thesis_link` is a thesis falsifier, and `thesis_link.ticker` is the thesis it guards. The engine resolves that; never work it out yourself from a cycle id.
 
 For each due condition: run its **frozen `query`** — not a fresh question of your own, and never a yes/no restatement — and submit what came back. Then rerun prepare:
 

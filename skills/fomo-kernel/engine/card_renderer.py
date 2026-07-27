@@ -1938,6 +1938,25 @@ def _condition_reading(check, condition):
     return str(observation.get("summary") or "").strip() or None
 
 
+def thesis_guard_sentence(condition, copy):
+    """The thesis a condition guards, said wherever that condition speaks.
+
+    #416's ratified direction made a thesis falsifier a condition slot. The card
+    has no thesis block, so without this the adjudication would arrive detached
+    from the claim it settles — a reading about "the CEO leaving" with nothing
+    saying which position that was ever a reason to hold.
+
+    Read from ``thesis_link``, which ``review.py`` stamps on the plan's own due
+    entry. The renderer never works out which thesis a slot belongs to: one
+    place derives that fact, every other surface reads the stamped value."""
+    link = (condition or {}).get("thesis_link")
+    ticker = (link or {}).get("ticker") if isinstance(link, dict) else None
+    if not ticker:
+        return None
+    return _format_copy((copy.get("condition_check") or {}).get("thesis_guard"),
+                        ticker=ticker)
+
+
 def _condition_reading_line(check, condition, copy, notes):
     """One reading, plus every sentence that says where it stands.
 
@@ -1957,6 +1976,11 @@ def _condition_reading_line(check, condition, copy, notes):
                         value=reading, source=source, as_of=as_of)
     if not line:
         return None
+    guard = thesis_guard_sentence(condition, copy)
+    if guard:
+        # Before the status sentences: what this condition is for comes ahead of
+        # what is happening to it (#416 C2).
+        line = f"{line} {guard}"
     for note_key, values in notes:
         note = _format_copy(check_copy.get(note_key), **values)
         if note:
@@ -2126,7 +2150,8 @@ def _condition_reading_lines(bundle, checks, copy):
                                  criterion=criterion, reason=reason) if reason
                     else _format_copy(check_copy.get("blind"), criterion=criterion))
             if line:
-                groups["blind"].append((line, False))
+                guard = thesis_guard_sentence(condition, copy)
+                groups["blind"].append((f"{line} {guard}" if guard else line, False))
             continue
         notes = _condition_notes(check, condition, crossing_state, basis_state)
         if notes:

@@ -28,7 +28,7 @@ The queue is the engine's ranking, so do not change route, kind, priority, requi
 
 **9. A `rule_breach` question always offers `keep_tracking` and `exception`,** plus `revise_rule` only when an engine metric can track a replacement for that same problem key. `exception` and `revise_rule` require a short note. If the user chooses `revise_rule`, use the one final commitment as the replacement and set `commitment.revises_rule_id` to the question's `rule_id`. Prepare asks only the first unqualified breach or a later worsening.
 
-**10. Treat every `missing_thesis_positions` item** as a new cycle or a historical gap and fill it with the inference-first contract from the first-review flow.
+**10. Treat every `missing_thesis_positions` item** as a new cycle or a historical gap and fill it with the inference-first contract from the first-review flow. That contract includes the falsifier: when a thesis you write or re-state names a checkable `exit_trigger`, send it as a condition slot on the same thesis row (`condition`, `references/condition-slots.md`) so step 0b looks it up every review from now on. Criterion verbatim, quantity looked up in that same exchange, one per thesis row at most. A falsifier with no measurable line is still sent and stored as unmapped rather than dropped or fitted with an invented threshold.
 
 **11. Classify each losing-position add** as `planned_tranche`, `new_evidence`, `valuation_change`, `price_only`, or `skip`. A `new_evidence` choice must carry an evidence delta so the next review can examine it as a thesis event.
 

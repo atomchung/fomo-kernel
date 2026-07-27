@@ -1003,6 +1003,12 @@ def _project_legacy_locked(root, bundle, private_md):
     # about what they meant when they wrote it, and every check already recorded
     # points at it. Same file, same firewall: still never rules.jsonl.
     slot_rows += [dict(row) for row in bundle.get("condition_revisions") or []]
+    # #416 C2: a thesis falsifier is a condition slot, carrying the cycle whose
+    # thesis it guards. Same file and the same firewall — a falsifier never
+    # becomes a rules.jsonl row and never enters the graduation statistics; what
+    # the linkage buys is that later reviews look it up and the adjudication
+    # arrives beside the thesis it belongs to.
+    slot_rows += [dict(row) for row in bundle.get("thesis_conditions") or []]
     reports.append(_append_session_rows(os.path.join(root, "conditions.jsonl"), session_id, slot_rows))
 
     # #412: one row per (condition, review period), including the periods where

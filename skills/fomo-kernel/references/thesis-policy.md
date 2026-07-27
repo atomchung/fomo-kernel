@@ -23,11 +23,13 @@ Evidence provenance follows `captured -> confirmed -> evaluated`:
 
 - `captured` means a legacy or imported event contains a claim and source, but the newer confirmation contract was not present.
 - `confirmed` means the user confirmed that this claim and source were part of the decision. It does not mean the external claim is objectively true.
-- `evaluated` is reserved for a state a later reconciliation could reach by comparing an observation with the claim or falsifier. P0 provenance capture must not promote evidence to this state automatically. That reconciliation lifecycle is being rebuilt on condition slots ([condition-slots.md](condition-slots.md)) instead of on the thesis event: a thesis falsifier can be stored as a condition slot today, but the per-period check and adjudication that would read it back are not built yet.
+- `evaluated` is reserved for a state a later reconciliation could reach by comparing an observation with the claim or falsifier. P0 provenance capture must not promote evidence to this state automatically. That reconciliation lives on condition slots ([condition-slots.md](condition-slots.md)) rather than on the thesis event, and it is built: a thesis's `exit_trigger` becomes a condition slot attached to its cycle, every later review looks it up on the same rotation as any other condition, and a crossing raises one two-sided question. What that never does is move the thesis. The user's answer is the verdict of record for the *check*; `status` changes only from a thesis event the user gave, and no lookup promotes evidence on its own.
 
 The engine assigns a stable `evidence_id`, preserves the stated source, and keeps `observed_at` null when the user did not provide it. Review time is capture provenance, not a fabricated observation date.
 
 The agent authors thesis content and user-answer payloads, not identities or cursors. `exit_trigger` is a fact that would falsify the thesis; `stop` is a price or sizing action. Keep them distinct.
+
+Send the `exit_trigger` as a condition slot on the same thesis row whenever it names something checkable — `thesis_updates[].condition`, the envelope and the same-exchange lookup documented in [condition-slots.md](condition-slots.md#a-thesis-falsifier-is-a-condition). Otherwise the one fact the user named as able to change their mind is stored as text nobody reads back.
 
 New thesis updates use locale-neutral horizon ids: `weeks`, `quarters`, or `years`. Legacy localized aliases remain readable so old sessions and identical retries do not break. A missing or unknown horizon stays null and produces no timeline marker.
 
