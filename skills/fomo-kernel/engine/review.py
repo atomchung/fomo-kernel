@@ -1127,9 +1127,11 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
                 raise ReviewError(BASIS_CHANGED_MESSAGE)
             # Reparse the just-frozen verifier copy, never the mutable path after
             # digest comparison. Append reuses the resulting overlay below.
+            # skipped_future is always zero here: _parse_frozen_candidates raises
+            # on a future-dated row, and identical bytes cannot have grown one
+            # anyway. It stays in the result only to match the legacy lane's
+            # reported shape.
             verified_batches, skipped_non_trade, skipped_future = _parse_frozen_candidates(verify_paths)
-        if skipped_future:
-            raise ReviewError(BASIS_CHANGED_MESSAGE)
         live_events, live_receipt, _payload = _read_live_ledger(root)
         if live_receipt != inputs["ledger_receipt"]:
             raise ReviewError(BASIS_CHANGED_MESSAGE)
