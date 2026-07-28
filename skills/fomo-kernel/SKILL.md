@@ -37,6 +37,12 @@ For transaction history, normalize broker data locally into `Symbol / Action(BUY
 
 The engine prices the portfolio itself, so a normal review passes no prices. If the host blocks that, `prepare` still completes in a degraded mode and reports the gap in `review_plan.input.price_feed`.
 
+Updating the recorded book is a different job from reviewing it, and it has its own entry point. When the user hands over a newer holdings view and is not asking for a review — "here's my portfolio now", "I sold some things" — and the coach root already holds a book, read `flows/book-refresh.md` and use `refresh` instead of `prepare`. The first declaration on an empty root is still onboarding and still goes through `prepare --route snapshot_review`.
+
+```bash
+python3 engine/review.py refresh --snapshot-json /tmp/fomo-kernel-positions.json
+```
+
 `prepare` returns a Review Plan, not a card. Read only the flow it selects in `review_plan.flow_path`:
 
 - `flows/first-review.md`
