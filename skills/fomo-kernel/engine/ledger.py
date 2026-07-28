@@ -64,6 +64,17 @@ EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation", "position_ab
 # 引擎自寫 user_response 是同一條:勝率/盈虧比/出場紀律永遠不准從捏造的數字算出來。
 # 它跟 adjustment 一樣不進 derive_holdings 推導——持倉的實際變更由同批寫入的新錨點承擔,
 # 這個事件是「出場管線讀得到的訊號」+ 稽核留痕,避免雙重套用。
+# 一個 snapshot 持倉列允許的欄位,單一宣告。三個讀者共用同一份:snapshot_adapter
+# 驗證 agent 供給的信封、portfolio_basis 兩處判斷「這個事件動不動得了帳本」與契約
+# 驗證。曾經是三份手抄白名單——#485 Slice C 加 carried 時只改到其中一份,結果
+# refresh 寫出來的錨點讓 portfolio_basis 整本判成不可信,consider 直接拒答,而
+# 全套件是綠的。維護端防線要 agent-free:共用程式碼 > 測試鎖 > 文件。
+# carried 是來源註記(這一列是從既有紀錄帶過來的,不是這次供給的畫面上讀到的),
+# 不影響帳本內容,所以它進得了白名單、但不進 _normalized_anchor 的身分計算。
+SNAPSHOT_POSITION_KEYS = frozenset({
+    "ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried",
+})
+
 ABSENCE_IDENTITY_KEYS = ("type", "date", "ticker", "cycle_id")
 ABSENCE_KEYS = frozenset(ABSENCE_IDENTITY_KEYS) | {"absence_id", "session_id", "v", "recorded_at"}
 # 任何帶「成交長什麼樣」語意的欄位名;出現在 ABSENCE_KEYS 或 builder 產出即為契約破口。
@@ -493,6 +504,30 @@ def _cash_amount(value, label):
     return value
 
 
+def holdings_as_of(events, as_of):
+    """Derived holdings as a declaration dated ``as_of`` sees them.
+
+    A snapshot is an end-of-day view, so a trade dated after ``as_of`` is not
+    part of it. Every consumer of ``snapshot_reconciliation``'s diff must read
+    the book through this same window: the diff's ``derived`` values are stated
+    on this basis, and a caller that separately calls ``derive_holdings`` gets
+    the book as of *today* instead. Mixing the two silently attaches today's
+    share count, cycle id and cost basis to a difference computed for an
+    earlier day — which is only visible when the ledger holds a trade newer
+    than the snapshot, exactly the case a user creates by importing a fresh CSV
+    alongside an older screenshot.
+    """
+    day = as_of if isinstance(as_of, dt.date) else dt.date.fromisoformat(str(as_of))
+    aligned = []
+    for ev in events:
+        if ev.get("type") == "trade":
+            norm = _norm_trade(ev)
+            if norm is not None and norm[0] > day:
+                continue
+        aligned.append(ev)
+    return derive_holdings(aligned)["holdings"]
+
+
 def snapshot_reconciliation(events, declared):
     """Fact-only reconciliation between the ledger and a newer complete declaration.
 
@@ -539,14 +574,7 @@ def snapshot_reconciliation(events, declared):
             "same-day declaration can reconcile")
     declared_map = _declared_positions_map(declared)
 
-    aligned = []
-    for ev in events:
-        if ev.get("type") == "trade":
-            norm = _norm_trade(ev)
-            if norm is not None and norm[0] > declared_as_of:
-                continue
-        aligned.append(ev)
-    derived = derive_holdings(aligned)["holdings"]
+    derived = holdings_as_of(events, declared_as_of)
 
     positions = []
     for ticker in sorted(set(derived) | set(declared_map)):

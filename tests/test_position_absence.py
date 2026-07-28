@@ -216,6 +216,31 @@ def test_two_absences_in_one_batch_see_the_same_prior_book():
         "the second absence must not read a book the first one already emptied")
 
 
+def test_a_trade_after_the_absence_date_does_not_inflate_the_exit():
+    """A snapshot is an end-of-day view, so the exit reports what was held on
+    the absence date — not what the ticker holds today after being re-entered.
+
+    Invisible unless the ledger carries a trade newer than the absence, which is
+    exactly what a user creates by importing a fresh CSV alongside an older
+    screenshot.
+    """
+    # Row order matters and is the whole point: the trade was imported BEFORE
+    # the refresh ran, so it sits inside the absence's file-order prefix, while
+    # its own date falls after the day the position left. Putting it after the
+    # absence instead would make this pass for free -- the prefix would already
+    # exclude it -- and prove nothing.
+    events = [
+        _snap("2026-06-30", [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                              "market": "US", "currency": "USD"}]),
+        _tr("2026-07-20", "ACME", "buy", 50, 20.0),
+        lg.build_position_absence(date="2026-07-15", ticker="ACME",
+                                  cycle_id="ACME#2026-06-30#1"),
+    ]
+    row = rv.absence_exits(events)[0]
+    assert row["shares_sold"] == 100.0, "the later re-entry is not part of this exit"
+    assert row["cost_basis"] == 1200.0
+
+
 def test_absence_after_trades_uses_the_book_at_that_moment():
     events = [
         _snap("2026-06-30", [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,

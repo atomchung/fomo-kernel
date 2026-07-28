@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 
+import book_refresh
 import card_renderer
 import conditions
 import consequence
@@ -5392,6 +5393,70 @@ def cmd_consider(args):
            "consultation": row, "append": report})
 
 
+def cmd_refresh(args):
+    """Update the recorded book from a newer holdings view (#485 Slice C).
+
+    An independent lane, not a review (owner ruling, 2026-07-28): it produces no
+    card, consumes no review question budget, creates no session, and touches no
+    thesis, rule or problem state. Review and ``consider`` simply read the book
+    it maintains. The engine logic lives in ``book_refresh.py``; this function
+    is the CLI facade and the transaction boundary.
+
+    Two calls:
+
+      refresh --snapshot-json P            what differs, and what needs confirming
+      refresh --snapshot-json P --answers A adopt it
+
+    The first writes nothing. The second recomputes the first from scratch while
+    holding the root projection lock and refuses if the recorded book moved in
+    between (``refresh_id`` is content-addressed over exactly what the user was
+    shown), which is the same fail-closed shape ``SNAPSHOT_RECONCILIATION_STALE``
+    gives the review lane. Onboarding is unchanged and stays where it is: a root
+    with no recorded book is routed to ``prepare --snapshot-json``.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    snapshot, anchor = snapshot_adapter.normalize_book(args.snapshot_json)
+
+    def _frozen(events):
+        return book_refresh.plan_refresh(events, snapshot, anchor)
+
+    if not args.answers:
+        events, _skipped = ledger.load_ledger(ledger_path)
+        _emit(_frozen(events))
+        return
+
+    submitted = _load_json_arg(args.answers, "--answers")
+    if not isinstance(submitted, dict):
+        raise ReviewError("--answers must be an object with refresh_id and answers")
+    with session.projection_transaction(root) as locked_root:
+        ledger_path = os.path.join(locked_root, "ledger.jsonl")
+        events, _skipped = ledger.load_ledger(ledger_path)
+        receipt = _frozen(events)
+        if submitted.get("refresh_id") != receipt["refresh_id"]:
+            raise ReviewError(book_refresh.REFRESH_STALE)
+        adoption = book_refresh.build_adoption(
+            receipt, events, snapshot, anchor, submitted.get("answers") or [])
+        if adoption["status"] == "resupply":
+            _emit({"status": "resupply_requested", "refresh_id": adoption["refresh_id"],
+                   "tickers": adoption["tickers"],
+                   "next_action": "supply a corrected holdings view and run refresh again; "
+                                  "nothing was written"})
+            return
+        report = session.append_book_adoption(
+            ledger_path,
+            anchor=adoption["anchor"], reconciliation=adoption["reconciliation"],
+            actor_id=adoption["refresh_id"],
+            sequence=session.next_projection_sequence(locked_root),
+            recorded_at=adoption["anchor"]["as_of"],
+            absences=adoption["absences"])
+    _emit({"status": "adopted", "refresh_id": adoption["refresh_id"],
+           "as_of": adoption["anchor"]["as_of"],
+           "reconciliation": adoption["reconciliation"]["status"],
+           "carried_forward": adoption["carried"], "recorded_absent": adoption["sold"],
+           "ledger": report})
+
+
 def cmd_doctor(args):
     """Report optional runtime dependencies and what each unlocks (#322).
 
@@ -5532,6 +5597,19 @@ def build_parser():
     consider.add_argument("--language", default="en",
                           help="any language tag; unsupported tags fall back to en")
     consider.set_defaults(func=cmd_consider)
+    refresh = sub.add_parser(
+        "refresh",
+        help="update the recorded book from a newer holdings view; independent of "
+             "review and consider (#485 Slice C)")
+    refresh.add_argument("--root")
+    refresh.add_argument("--snapshot-json", required=True,
+                         help="normalized positions snapshot (references/data-contract.md)")
+    refresh.add_argument("--answers",
+                         help="a path to a JSON file, or an inline JSON object: "
+                              "{refresh_id, answers: [{ticker, classification}]} "
+                              "(schemas/book-refresh.schema.json). Omit for the "
+                              "read-only difference and its pending confirmations.")
+    refresh.set_defaults(func=cmd_refresh)
     doctor = sub.add_parser(
         "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
     doctor.set_defaults(func=cmd_doctor)
@@ -5543,7 +5621,8 @@ def main():
     try:
         args.func(args)
     except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError,
-            question_surface.QuestionSurfaceError) as exc:
+            question_surface.QuestionSurfaceError, book_refresh.RefreshError,
+            snapshot_adapter.SnapshotError) as exc:
         _emit({"status": "error", "error": str(exc)})
         return 2
     return 0

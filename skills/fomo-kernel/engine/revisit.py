@@ -150,9 +150,14 @@ def absence_exits(events):
             seen += 1
     cache, out = {}, []
     for row in rows:
-        key = deriving_before[row["index"]]
+        # The prefix bounds the rows by FILE order; the date window bounds them
+        # by WHEN THEY HAPPENED. Both are needed: a trade imported before the
+        # refresh ran but dated after the snapshot sits inside the prefix, and
+        # counting it would report an exit larger than the position ever was on
+        # the day it left. Cache on both, so one batch still costs one read.
+        key = (deriving_before[row["index"]], row["date"])
         if key not in cache:
-            cache[key] = lg.derive_holdings(events[:row["index"]])["holdings"]
+            cache[key] = lg.holdings_as_of(events[:row["index"]], row["date"])
         prior = cache[key].get(row["ticker"]) or {}
         try:
             shares = round(float(prior.get("shares")), 4)

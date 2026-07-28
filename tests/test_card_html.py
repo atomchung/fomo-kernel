@@ -1633,13 +1633,24 @@ def test_delivery_contract_exists_and_is_routed():
     assert "references/card-delivery.md" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "references/card-delivery.md" in (SKILL / "card-spec.md").read_text(encoding="utf-8")
     assert FLOW_FILES, "at least one flow file must exist to route card delivery"
-    # light-capture.md is the one deliberate exception (#237 #4): a light-tier
-    # session never reaches preview/finalize, so it never renders a card and has
-    # nothing to route through the delivery contract.
-    card_routing_flows = tuple(name for name in FLOW_FILES if name != "light-capture.md")
-    for name in card_routing_flows:
+    # A flow that renders no card has nothing to route through the delivery
+    # contract -- light-capture (#237 #4) and book-refresh (#485 Slice C) are
+    # both such flows. The exemption is read off each flow's own declaration
+    # rather than kept as a filename list here: a list in the test is a
+    # maintenance duty nobody sees until it is already wrong, and it would let a
+    # future card-rendering flow be exempted by a one-word edit in this file
+    # instead of by a visible claim in the artifact itself.
+    NO_CARD_CLAIM = "There is no card"
+    exempt = []
+    for name in FLOW_FILES:
         flow = (SKILL / "flows" / name).read_text(encoding="utf-8")
+        if NO_CARD_CLAIM in flow:
+            exempt.append(name)
+            assert "references/card-delivery.md" not in flow, (
+                f"flows/{name} claims it renders no card and also routes card delivery")
+            continue
         assert "references/card-delivery.md" in flow, f"flows/{name} must route card delivery"
+    assert len(exempt) < len(FLOW_FILES), "every flow cannot be card-free"
 
 
 # ── Next-step coherence (#301 #302 #303 #317) ────────────────────────────────

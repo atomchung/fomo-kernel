@@ -12,7 +12,7 @@ The product's value is continuity: this review reconciles against the last one, 
 ## Non-negotiable rules
 
 1. **Numbers come from engine artifacts only.** Never calculate, fill in, or adjust a numeric fact, ranking, weight, or identity. Determinism is what makes week-to-week reconciliation trustworthy: this week's 12% and next week's 12% have to be the same 12%.
-2. **Invoke the engine only through the `engine/review.py` CLI** (`prepare`, `resume`, `preview`, `finalize`, `capture`, `consider`, `render`, `repair-projections`, `set-cap`, `mute-rule`, `doctor`). Do not call another `engine/*` script or import engine modules directly — those paths bypass lifecycle validation, required-question gates, and canonical session state.
+2. **Invoke the engine only through the `engine/review.py` CLI** (`prepare`, `resume`, `preview`, `finalize`, `capture`, `consider`, `refresh`, `render`, `repair-projections`, `set-cap`, `mute-rule`, `doctor`). Do not call another `engine/*` script or import engine modules directly — those paths bypass lifecycle validation, required-question gates, and canonical session state.
 3. **A considered trade earns a computed case, never a prose one.** In a review, discuss behavior, motives, thesis evolution, and process rules; the card's prescription still never names what to buy or sell. For a trade the user is deciding on, `consider` returns what it does to their own book and which of their own rules it would break — build the case for and against from that output, mark every claim you added as your own judgment, and name what nobody checked: record staleness, liquidity, valuation, tax, and whether the position suits this person are all outside what the engine measures. The decision stays theirs, and a price target or market forecast is still not something this product states.
 4. **Never invent, interpolate, or recall a market price.** When a host blocks the engine's own retrieval, `review_plan.input.price_feed.request` names what is unpriced; look those closes up from a recognized market-data source, transcribe them into the envelope in `references/price-feed.md`, and rerun `prepare --prices`. A price you cannot find stays missing — a missing price is never a delisting verdict or a zero return.
 5. **Trade data stays local.** The source CSV, session bundles, and the ledger never enter cloud memory. The review card is private to the user: show `card-private.*` by default per `references/card-delivery.md`. Local files, terminal output, and private-by-default in-client rendering are all fine; publishing, posting, or sending it to a third party is not. `card-public.md` is the one share-safe artifact, and only if the user asks.
@@ -36,6 +36,12 @@ python3 engine/review.py prepare --route snapshot_review \
 For transaction history, normalize broker data locally into `Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate / RecordType(Trade)`; add `Market / Currency` for non-US instruments. Carry `Amount` through whenever the source has it — it is the broker's own cash-account change for that row, already net of fees, and it makes account-level return exact instead of estimated. Do not ask the user to normalize the file themselves. Symbol and cash-anchor rules live in `references/data-contract.md`.
 
 The engine prices the portfolio itself, so a normal review passes no prices. If the host blocks that, `prepare` still completes in a degraded mode and reports the gap in `review_plan.input.price_feed`.
+
+Updating the recorded book is a different job from reviewing it, and it has its own entry point. When the user hands over a newer holdings view and is not asking for a review — "here's my portfolio now", "I sold some things" — and the coach root already holds a book, read `flows/book-refresh.md` and use `refresh` instead of `prepare`. The first declaration on an empty root is still onboarding and still goes through `prepare --route snapshot_review`.
+
+```bash
+python3 engine/review.py refresh --snapshot-json /tmp/fomo-kernel-positions.json
+```
 
 `prepare` returns a Review Plan, not a card. Read only the flow it selects in `review_plan.flow_path`:
 
