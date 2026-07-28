@@ -38,8 +38,7 @@ When the two disagree, the runbook wins.
 > in their command examples, which #520 repaired and now gates mechanically via
 > `tests/test_skill_commands.py`. That gate covers the executable surface only: the
 > prose halves (gate wording, gate count, the per-client degradation notes) are still
-> hand-synchronized, and collapsing the duplicated half into a reference is tracked
-> separately.
+> hand-synchronized. Collapsing the duplicated half is tracked in #527.
 
 ## Install
 

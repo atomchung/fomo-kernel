@@ -61,6 +61,35 @@ QA_TRACE_TAG = re.compile(r"^#\s*qa-trace:\s*(\S+)\s*$")
 # prose, not copy-paste commands, and are excluded rather than "fixed".
 ELISION = "..."
 
+# Routes `ux_receipt.py` accepts for which `SKILL.md` documents no walkthrough,
+# each with the reason it is absent. Every other supported route must have a
+# `# qa-trace:` fence.
+#
+# This map is deliberately hand-written and deliberately tiny, because it is
+# the one place a newly supported route has to be looked at. The rest of this
+# file stops a documented command from drifting; nothing stopped the skill from
+# having no walkthrough at all for a route the tool grew — the operator would
+# then improvise one, which is the same failure one level up, and a receipt
+# improvised at 11pm is exactly what gate 3 exists to refuse.
+#
+# The test below fails in both directions: an undocumented, unexempted route,
+# and an exemption for a route that is documented or no longer exists. An
+# exemption that stops being true is as bad as a missing one.
+UNDOCUMENTED_ROUTES = {
+    "test_drive": (
+        "the demo route: persist:false, no owner_live acceptance journey rides "
+        "it, and docs/qa-runbook.md already states it is not evidence for "
+        "first-review or weekly-memory behavior. Permanent, not a backlog item."
+    ),
+    "snapshot_review": (
+        "#526: the route exists in the tool and #486's M0-U02 journey starts on "
+        "it, but no verified walkthrough has been written. Writing an unverified "
+        "one here would ship exactly the defect #520 repaired, so it is named "
+        "rather than guessed at. See also #523, which blocks the refresh half of "
+        "the same journey at the tool layer."
+    ),
+}
+
 
 def load_receipt_tool():
     """Import the real CLI module so its parser is the only flag authority."""
@@ -350,6 +379,32 @@ class SkillCommandTest(unittest.TestCase):
             "executable ux_receipt.py command but no leading '# qa-trace: <route>' "
             "marker, so nothing replays them. Tag the fence with the route its "
             "commands belong to.")
+
+    def test_every_receipt_route_is_documented_or_explicitly_exempt(self):
+        """A route the tool supports but the skill never walks is a silent hole.
+
+        Checks 1-4 all assume a documented command exists to check. This one
+        asks the question they cannot: did the tool grow a route the skill
+        forgot? Read from `ux_receipt.ROUTES` rather than restated, so adding a
+        route there is what forces the decision.
+        """
+        supported = set(self.tool.ROUTES)
+        documented = set(self.routes())
+        exempt = set(UNDOCUMENTED_ROUTES)
+
+        self.assertEqual(
+            sorted(supported - documented - exempt), [],
+            f"{SKILL_DOC} documents no walkthrough for these ux_receipt routes, and "
+            "UNDOCUMENTED_ROUTES gives no reason for their absence. Either add a "
+            "'# qa-trace: <route>' fence, or record why the route has none.")
+        self.assertEqual(
+            sorted(exempt - supported), [],
+            "UNDOCUMENTED_ROUTES excuses a route ux_receipt.ROUTES no longer has; "
+            "drop the stale entry rather than leaving a reason nothing needs.")
+        self.assertEqual(
+            sorted(exempt & documented), [],
+            "UNDOCUMENTED_ROUTES claims a route is undocumented, but SKILL.md now "
+            "walks it. Remove the exemption so the reason cannot outlive its truth.")
 
     def routes(self):
         """Executable commands grouped by their fence's route tag, in doc order."""
