@@ -493,6 +493,30 @@ def _cash_amount(value, label):
     return value
 
 
+def holdings_as_of(events, as_of):
+    """Derived holdings as a declaration dated ``as_of`` sees them.
+
+    A snapshot is an end-of-day view, so a trade dated after ``as_of`` is not
+    part of it. Every consumer of ``snapshot_reconciliation``'s diff must read
+    the book through this same window: the diff's ``derived`` values are stated
+    on this basis, and a caller that separately calls ``derive_holdings`` gets
+    the book as of *today* instead. Mixing the two silently attaches today's
+    share count, cycle id and cost basis to a difference computed for an
+    earlier day — which is only visible when the ledger holds a trade newer
+    than the snapshot, exactly the case a user creates by importing a fresh CSV
+    alongside an older screenshot.
+    """
+    day = as_of if isinstance(as_of, dt.date) else dt.date.fromisoformat(str(as_of))
+    aligned = []
+    for ev in events:
+        if ev.get("type") == "trade":
+            norm = _norm_trade(ev)
+            if norm is not None and norm[0] > day:
+                continue
+        aligned.append(ev)
+    return derive_holdings(aligned)["holdings"]
+
+
 def snapshot_reconciliation(events, declared):
     """Fact-only reconciliation between the ledger and a newer complete declaration.
 
@@ -539,14 +563,7 @@ def snapshot_reconciliation(events, declared):
             "same-day declaration can reconcile")
     declared_map = _declared_positions_map(declared)
 
-    aligned = []
-    for ev in events:
-        if ev.get("type") == "trade":
-            norm = _norm_trade(ev)
-            if norm is not None and norm[0] > declared_as_of:
-                continue
-        aligned.append(ev)
-    derived = derive_holdings(aligned)["holdings"]
+    derived = holdings_as_of(events, declared_as_of)
 
     positions = []
     for ticker in sorted(set(derived) | set(declared_map)):

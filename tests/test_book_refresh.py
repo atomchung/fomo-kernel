@@ -152,6 +152,27 @@ def test_a_sale_the_ledger_already_explains_is_never_asked_about():
         assert receipt["summary"]["only_derived"] == []
 
 
+def test_the_receipt_reads_the_book_through_the_declaration_s_own_window():
+    """A snapshot is an end-of-day view. Every fact attached to its diff must be
+    stated on the same day the diff was, or the user is shown a difference
+    computed for July 15 with a share count from today.
+
+    Only reachable when the ledger holds a trade newer than the snapshot --
+    which is what a user creates by importing a fresh CSV alongside an older
+    screenshot.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        later = {"type": "trade", "date": "2026-07-20", "ticker": "ACME", "action": "buy",
+                 "qty": 50, "price": 20.0, "market": "US", "currency": "USD"}
+        root = _root(tmp, (SEED, later))
+        receipt = _cli(root, _snapshot(tmp, KEPT, as_of="2026-07-15"))
+        row = receipt["pending_confirmations"][0]
+        diff_row = [d for d in receipt["diff"]["positions"] if d["ticker"] == "ACME"][0]
+        assert row["derived_shares"] == diff_row["derived"] == 100.0, (
+            "the confirmation and the diff row it came from must state the same "
+            "number; 150 here would be today's book, not the declaration's")
+
+
 def test_a_root_with_no_recorded_book_is_routed_to_onboarding():
     with tempfile.TemporaryDirectory() as tmp:
         out = _cli(_root(tmp, ()), _snapshot(tmp, KEPT))

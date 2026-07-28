@@ -218,7 +218,11 @@ def plan_refresh(events, snapshot, anchor):
     if reconciliation is None:                     # defensive: latest_anchor said otherwise
         raise RefreshError(NO_ANCHOR)
 
-    derived = lg.derive_holdings(events)["holdings"]
+    # Read the book through the declaration's own end-of-day window, the same
+    # one snapshot_reconciliation stated its diff on. Calling derive_holdings
+    # here instead would attach today's shares, cycle id and cost basis to a
+    # difference computed for the snapshot date.
+    derived = lg.holdings_as_of(events, reconciliation["as_of"])
     declared = _declared_map(anchor)
     units = _unit_values(derived, declared, snapshot.get("fx"))
     partition = _recorded_book_partition(derived, units)
@@ -343,7 +347,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
         return {"status": "resupply", "refresh_id": receipt.get("refresh_id"),
                 "tickers": resupply}
 
-    derived = lg.derive_holdings(events)["holdings"]
+    derived = lg.holdings_as_of(events, snapshot["as_of"])
     by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
     carried, sold = [], []
     for ticker, classification in sorted(classifications.items()):
