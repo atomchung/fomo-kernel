@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/portfolio-basis.schema.json",
+  "title": "Fomo Kernel PortfolioBasis v1",
+  "description": "Read-only current-book basis. A null query result denotes corrupt or unknown ledger input and is intentionally not a usable-basis instance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "source", "as_of", "stale_days", "completeness", "cost_basis", "valuation_basis", "reconciliation_ref", "state_version", "current_book", "integrity"],
+  "properties": {
+    "contract_version": {"const": "portfolio-basis-v1"},
+    "source": {"enum": ["snapshot_anchor", "transaction_replay", "empty"]},
+    "as_of": {"type": "string", "format": "date"},
+    "stale_days": {"type": "integer", "minimum": 0},
+    "completeness": {"enum": ["declared_complete", "declared_partial", "unverified"]},
+    "cost_basis": {"enum": ["average_cost", "partial_average_cost", "unavailable"]},
+    "valuation_basis": {"enum": ["unpriced", "priced"]},
+    "reconciliation_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/reconciliationRef"}]},
+    "state_version": {"type": "string", "pattern": "^pb-v1:[0-9a-f]{64}$"},
+    "current_book": {"$ref": "#/$defs/currentBook"},
+    "integrity": {"type": "array", "items": {"$ref": "#/$defs/integrity"}}
+  },
+  "$defs": {
+    "reconciliationRef": {"type": "object", "additionalProperties": false, "required": ["anchor_as_of", "anchor_source", "projection_sequence"], "properties": {"anchor_as_of": {"type": "string", "format": "date"}, "anchor_source": {"type": "string", "minLength": 1}, "projection_sequence": {"type": ["integer", "null"], "minimum": 1}}},
+    "anchorPosition": {"type": "object", "additionalProperties": false, "required": ["ticker", "shares", "avg_cost", "market_value", "market", "currency"], "properties": {"ticker": {"type": "string", "minLength": 1}, "shares": {"type": "number", "exclusiveMinimum": 0}, "avg_cost": {"type": ["number", "null"], "exclusiveMinimum": 0}, "market_value": {"type": ["number", "null"], "exclusiveMinimum": 0}, "market": {"type": "string", "minLength": 1}, "currency": {"type": "string", "minLength": 1}}},
+    "anchor": {"type": "object", "additionalProperties": false, "required": ["as_of", "source", "projection_sequence", "is_complete", "positions", "cash"], "properties": {"as_of": {"type": "string", "format": "date"}, "source": {"type": "string", "minLength": 1}, "projection_sequence": {"type": ["integer", "null"], "minimum": 1}, "is_complete": {"type": "boolean"}, "positions": {"type": "array", "items": {"$ref": "#/$defs/anchorPosition"}}, "cash": {"type": ["object", "null"], "additionalProperties": {"type": "number"}}}},
+    "holding": {"type": "object", "additionalProperties": false, "required": ["shares", "avg_cost", "cost_total", "currency", "market", "origin", "since", "cycle_id", "add_count", "decision_cursor"], "properties": {"shares": {"type": "number", "exclusiveMinimum": 0}, "avg_cost": {"type": ["number", "null"]}, "cost_total": {"type": ["number", "null"]}, "currency": {"type": "string", "minLength": 1}, "market": {"type": "string", "minLength": 1}, "origin": {"type": "string", "minLength": 1}, "since": {"type": "string", "format": "date"}, "cycle_id": {"type": "string", "minLength": 1}, "add_count": {"type": "integer", "minimum": 0}, "decision_cursor": {"type": ["string", "null"]}}},
+    "postAnchorEvent": {"type": "object", "additionalProperties": false, "required": ["date", "ticker", "action", "qty", "price", "market", "currency"], "properties": {"date": {"type": "string", "format": "date"}, "ticker": {"type": "string", "minLength": 1}, "action": {"enum": ["buy", "sell"]}, "qty": {"type": "number", "exclusiveMinimum": 0}, "price": {"type": "number", "exclusiveMinimum": 0}, "market": {"type": "string", "minLength": 1}, "currency": {"type": "string", "minLength": 1}}},
+    "valuationManifest": {"type": "object", "additionalProperties": false, "required": ["as_of", "prices"], "properties": {"as_of": {"type": "string", "format": "date"}, "prices": {"type": "object", "additionalProperties": {"type": "number"}}}},
+    "currentBook": {"type": "object", "additionalProperties": false, "required": ["anchor", "holdings", "post_anchor_events", "version_evidence", "valuation_manifest"], "properties": {"anchor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/anchor"}]}, "holdings": {"type": "object", "additionalProperties": {"$ref": "#/$defs/holding"}}, "post_anchor_events": {"type": "array", "items": {"$ref": "#/$defs/postAnchorEvent"}}, "version_evidence": {"type": "array", "items": {"$ref": "#/$defs/postAnchorEvent"}}, "valuation_manifest": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/valuationManifest"}]} }},
+    "integrity": {"type": "object", "additionalProperties": false, "required": ["issue", "ticker", "date", "qty"], "properties": {"issue": {"const": "oversell"}, "ticker": {"type": "string", "minLength": 1}, "date": {"type": "string", "format": "date"}, "qty": {"type": "number", "exclusiveMinimum": 0}}}
+  }
+}
