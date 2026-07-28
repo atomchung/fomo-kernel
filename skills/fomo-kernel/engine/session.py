@@ -650,6 +650,17 @@ def _max_projection_sequence(root):
     return highest
 
 
+def next_projection_sequence(root):
+    """Reserve the next root-wide projection sequence, under the caller's lock.
+
+    The book-refresh lane has no canonical bundle to carry a reservation, so it
+    reads the same durable sources ``_snapshot_bundle_for_commit`` reads and
+    takes the next number. Same-day refreshes depend on this: without a higher
+    sequence ``ledger.latest_anchor`` would keep the earlier declaration.
+    """
+    return _max_projection_sequence(root) + 1
+
+
 def _snapshot_bundle_for_commit(root, bundle):
     """Attach or reuse a sequence while the caller holds the projection lock."""
     if bundle.get("route") != "snapshot_review":
@@ -869,9 +880,44 @@ def _project_snapshot_anchor(root, bundle):
     sequence = _positive_projection_sequence(state.get("projection_sequence"))
     if "projection_sequence" in state and sequence is None:
         raise SessionError("snapshot projection_sequence must be a positive integer")
+    return append_book_adoption(
+        ledger_path, anchor=anchor, reconciliation=reconciliation,
+        actor_id=bundle["session_id"], sequence=sequence,
+        recorded_at=state.get("date_end"))
+
+
+def append_book_adoption(ledger_path, *, anchor, reconciliation, actor_id,
+                         sequence=None, recorded_at=None, absences=()):
+    """Append one adopted book state to the ledger idempotently.
+
+    The single writer for "this is the book now", shared by the review lane's
+    positions-snapshot finalize (``_project_snapshot_anchor`` above) and the
+    independent book-refresh lane (#485 Slice C).  Two lanes adopting a book
+    through two hand-mirrored writers would eventually disagree about
+    content-addressing, replay, or ordering, and the disagreement would be
+    invisible until a user's ledger held a duplicate anchor.
+
+    Status ``reconciled`` appends only a content-addressed reconciliation mark
+    and never a new anchor: nothing about the book changed.  Status
+    ``adjusted`` appends one content-addressed adjustment event carrying the
+    narrow diff, then any ``absences`` (confirmed disappearances recorded
+    without a fill), then the newly declared anchor whose
+    ``projection_sequence`` lets ``ledger.latest_anchor`` adopt it.  The order
+    matters and is not cosmetic: ``revisit.absence_exits`` reads the book as it
+    stood *before* each absence row, so an absence appended after its anchor
+    would see the position already gone.
+
+    ``actor_id`` is written as ``session_id`` — a review session for the review
+    lane, the refresh id for the refresh lane.  Every write replays as a no-op.
+    """
+    payload = _snapshot_payload(anchor)
+    snapshot_id = "snapshot-" + hashlib.sha256(canonical(payload).encode("utf-8")).hexdigest()[:16]
+    status = (reconciliation or {}).get("status")
     existing = _read_jsonl(ledger_path)
 
     if status == "reconciled":
+        if absences:
+            raise SessionError("a clean reconciliation cannot carry position absences")
         identity = {"type": "reconciliation", "status": "reconciled",
                     "date": reconciliation.get("as_of"),
                     "declared_snapshot_id": snapshot_id,
@@ -885,12 +931,12 @@ def _project_snapshot_anchor(root, bundle):
             return dict(report, appended=0, status="no-op")
         event = dict(identity)
         event["reconciliation_id"] = reconciliation_id
-        event["session_id"] = bundle["session_id"]
+        event["session_id"] = actor_id
         # #472 follow-up: stamp the review period's own date_end, the same
         # proxy _ingest_trades and _build_exit_narratives already use. Safe
         # for content-addressing -- reconciliation_id above is hashed from
         # `identity`, computed before recorded_at ever touches `event`.
-        ledger.append_events(ledger_path, [event], recorded_at=state.get("date_end"))
+        ledger.append_events(ledger_path, [event], recorded_at=recorded_at)
         return dict(report, appended=1, status="projected")
 
     to_append = []
@@ -909,8 +955,17 @@ def _project_snapshot_anchor(root, bundle):
                    and row.get("adjustment_id") == adjustment_id for row in existing):
             event = dict(identity)
             event["adjustment_id"] = adjustment_id
-            event["session_id"] = bundle["session_id"]
+            event["session_id"] = actor_id
             to_append.append(event)
+
+    recorded_absences = {row.get("absence_id") for row in existing
+                         if row.get("type") == "position_absence"}
+    for absence in absences or ():
+        if absence.get("absence_id") in recorded_absences:
+            continue
+        to_append.append(dict(absence))
+    if absences:
+        report["absence_ids"] = [row.get("absence_id") for row in absences]
 
     anchor_exists = any(
         row.get("type") == "snapshot"
@@ -920,7 +975,7 @@ def _project_snapshot_anchor(root, bundle):
     if not anchor_exists:
         event = dict(payload)
         event["snapshot_id"] = snapshot_id
-        event["session_id"] = bundle["session_id"]
+        event["session_id"] = actor_id
         if sequence is not None:
             event["projection_sequence"] = sequence
         to_append.append(event)
@@ -932,7 +987,7 @@ def _project_snapshot_anchor(root, bundle):
     # hashed from `payload`/`identity`, both built before recorded_at is ever
     # added, and _snapshot_payload's field whitelist excludes it too, so the
     # anchor_exists re-derivation above stays blind to it on every replay.
-    ledger.append_events(ledger_path, to_append, recorded_at=state.get("date_end"))
+    ledger.append_events(ledger_path, to_append, recorded_at=recorded_at)
     return dict(report, appended=len(to_append), status="projected")
 
 

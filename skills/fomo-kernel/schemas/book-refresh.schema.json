@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/book-refresh.schema.json",
+  "title": "Fomo Kernel Book Refresh",
+  "description": "The independent book-refresh lane (#485 Slice C, owner ruling 2026-07-28): updating the recorded book from a newer holdings view is its own conversation, decoupled from post-trade review and from pre-trade consultation. `receipt` is what `review.py refresh --snapshot-json ...` emits and writes nothing; `input` is the agent-facing answers envelope `--answers` accepts. The readable contract; skills/fomo-kernel/engine/book_refresh.py holds the enforcement, because the offline suite carries no jsonschema dependency. Nothing here is stored under the coach root: the durable record of a refresh is the ledger rows it appends ([adjustment?, position_absence*, snapshot]), which ride the already-registered ledger.jsonl.",
+  "type": "object",
+  "$defs": {
+    "classification": {
+      "type": "string",
+      "enum": ["sold", "not_captured", "confirmed", "resupply"],
+      "description": "What the user says about one raised confirmation. Locked to book_refresh.REFRESH_CLASSIFICATIONS by a drift test (review.CONSIDER_DECISIONS' precedent). `sold`: the position left the book -- it is removed and a fill-free position_absence is recorded, never a manufactured trade. `not_captured`: the supplied view simply missed it -- the position is carried forward with carried:true. `confirmed`: a large change is real, adopt it. `resupply`: the supplied view is wrong -- the whole refresh aborts and nothing is written. Which values are legal depends on the raised item's kind: a disappearance accepts sold/not_captured/resupply, a large_change accepts confirmed/resupply. A disappearance is never `confirmed`, because saying the position is gone is exactly what `sold` means."
+    },
+    "pending_confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ticker", "options"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["disappearance", "large_change"],
+          "description": "`disappearance`: the record holds a position the supplied view does not, and the ledger does not already explain it. The engine cannot tell a sale from a capture gap and the two answers lead to different states, so it always asks (owner: 每次都問). `large_change`: shares moved by at least book_refresh.REFRESH_MAJOR_DELTA of the whole book on a position holding at least REFRESH_CORE_WEIGHT of it."
+        },
+        "ticker": {"type": "string", "minLength": 1},
+        "cycle_id": {
+          "type": ["string", "null"],
+          "description": "disappearance only: the recorded cycle that would close. Engine-derived from the ledger, never supplied."
+        },
+        "derived_shares": {"type": ["number", "null"], "description": "What the record holds."},
+        "declared_shares": {"type": ["number", "null"], "description": "large_change only: what the supplied view states."},
+        "weight": {"type": ["number", "null"], "description": "large_change only: the position's share of the recorded book, on the receipt's own bounded valuation basis."},
+        "delta_weight": {"type": ["number", "null"], "description": "large_change only: |change in value| as a share of the whole recorded book."},
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/classification"},
+          "description": "Exactly the classifications this item accepts. The agent may present them in any wording; it may not offer one that is absent here."
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "refresh_id", "as_of", "status", "diff", "pending_confirmations", "summary"],
+      "description": "Phase 1 output. Read-only: preparing a refresh writes nothing at all.",
+      "properties": {
+        "schema_version": {"type": "integer", "minimum": 1},
+        "refresh_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Content-addressed over exactly what the user was shown -- the declared book, the frozen diff, and the raised confirmations. Phase 2 recomputes phase 1 from scratch under the root projection lock and refuses when the recomputed id differs, so answers can never be applied to a book that moved in between. Same fail-closed shape as session.SNAPSHOT_RECONCILIATION_STALE."
+        },
+        "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "against": {
+          "type": ["object", "null"],
+          "description": "The anchor this refresh compares against: its as_of and snapshot_id."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending_confirmation", "ready"],
+          "description": "`ready` means the difference can be adopted with no question. It does not mean there is no difference -- an appearance, a small change, or a cash difference is adopted and disclosed without ceremony, because an additive change removes nothing."
+        },
+        "diff": {
+          "type": "object",
+          "description": "ledger.snapshot_reconciliation's narrow fact diff, frozen verbatim. It states values, never causes: a missing trade, a transfer, a split, a fee and an input error are indistinguishable at this layer. Show it without explaining it."
+        },
+        "pending_confirmations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/pending_confirmation"},
+          "description": "Every item the engine will refuse to adopt without an answer. One packed question covers them all -- a review's question budget is 3-5 and eight disappearances must not consume it."
+        },
+        "summary": {
+          "type": "object",
+          "description": "Per-category ticker lists plus valuation_coverage, which names what the bounded valuation basis could not value. A threshold evaluated over a partial denominator must say the denominator is partial."
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refresh_id", "answers"],
+      "description": "The agent-facing answers envelope `--answers` accepts. Declared once here and referenced wherever a caller submits refresh answers.",
+      "properties": {
+        "refresh_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The receipt this answers. A refresh_id that no longer recomputes is refused rather than reinterpreted."
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ticker", "classification"],
+            "properties": {
+              "ticker": {"type": "string", "minLength": 1},
+              "classification": {"$ref": "#/$defs/classification"},
+              "note": {
+                "type": ["string", "null"],
+                "description": "Optional free text the user gave. Never parsed, never adjudicated."
+              }
+            }
+          },
+          "description": "Exactly one answer per raised confirmation. An answer for anything the receipt did not raise is refused by name (condition-check.schema.json's user_response pattern: the engine declares what may be answered), and any raised item left unanswered fails the whole refresh closed. Adopting an unanswered destructive change 'by default' is the silent data loss this lane exists to prevent."
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {"$ref": "#/$defs/receipt"},
+    {"$ref": "#/$defs/input"}
+  ]
+}

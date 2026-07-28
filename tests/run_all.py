@@ -29,6 +29,7 @@ SUITES = [
     ("PortfolioBasis current-book contract (#484)", "tests/test_portfolio_basis.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),
     ("Confirmed disappearance without a fill (#485 Slice C)", "tests/test_position_absence.py"),
+    ("Independent book-refresh lane (#485 Slice C)", "tests/test_book_refresh.py"),
     ("Market context", "tests/test_market_context.py"),
     ("Problem ledger", "tests/test_problems.py"),
     ("Narrative digit-ban", "tests/test_digit_ban.py"),

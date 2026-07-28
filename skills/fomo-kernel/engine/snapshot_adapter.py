@@ -237,12 +237,16 @@ def _normalize_fx(raw):
     return dict(sorted(out.items()))
 
 
-def _load(path, today):
-    try:
-        with open(path, encoding="utf-8") as handle:
-            raw = json.load(handle)
-    except (OSError, ValueError) as exc:
-        raise SnapshotError(f"cannot read normalized snapshot: {exc}") from exc
+def normalize_envelope(raw, today):
+    """Validate one supplied position envelope into normalized facts.
+
+    Split out of ``_load`` so the book-refresh lane (``book_refresh.py``) runs
+    the *same* validator rather than re-implementing it or reaching into a
+    private: the two lanes accept one envelope shape and must agree about it
+    exactly. ``prepare`` below stays the review lane's entry point and does far
+    more on top (valuation, policy lookups, dimensions), none of which a
+    data-maintenance conversation needs.
+    """
     if not isinstance(raw, dict):
         raise SnapshotError("normalized snapshot must be a JSON object")
     extra = set(raw) - ENVELOPE_KEYS
@@ -272,6 +276,31 @@ def _load(path, today):
         "merged_rows": merged_rows,
         "input_rows": len(positions_raw),
     }
+
+
+def _load(path, today):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise SnapshotError(f"cannot read normalized snapshot: {exc}") from exc
+    return normalize_envelope(raw, today)
+
+
+def normalize_book(source, today=None):
+    """Return ``(snapshot, anchor)`` for one supplied book, with no valuation.
+
+    ``source`` is a path to the normalized snapshot JSON or an already-parsed
+    envelope. The anchor is the exact ledger event this book would project to,
+    so the refresh lane compares and adopts the same object the review lane
+    does — one construction, not two that must be kept in step.
+    """
+    day = _today(today)
+    if isinstance(source, dict):
+        snapshot = normalize_envelope(source, day)
+    else:
+        snapshot = _load(os.path.abspath(os.path.expanduser(source)), day)
+    return snapshot, _anchor(snapshot)
 
 
 @contextlib.contextmanager
