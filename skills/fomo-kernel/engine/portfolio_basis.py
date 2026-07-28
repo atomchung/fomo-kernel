@@ -22,6 +22,7 @@ import ledger
 
 CONTRACT_VERSION = "portfolio-basis-v1"
 VALUATION_FRAME_VERSION = "valuation-frame-v1"
+VALUATION_FRAME_ID_PREFIX = "vf-v1:"
 STATE_VERSION_PREFIX = "pb-v1:"
 _COMPLETENESS = {"declared_complete", "declared_partial", "unverified"}
 _SOURCES = {"snapshot_anchor", "transaction_replay", "empty"}
@@ -84,11 +85,14 @@ class SizingProjection:
     coverage: dict[str, Any]
     applicable: bool
     reason: Optional[str]
+    aggregate_currency: Optional[str] = None
+    frame: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"denominator": self.denominator, "values": self.values,
                 "coverage": self.coverage, "applicable": self.applicable,
-                "reason": self.reason}
+                "reason": self.reason, "aggregate_currency": self.aggregate_currency,
+                "frame": self.frame}
 
 
 @dataclass(frozen=True)
@@ -205,6 +209,13 @@ def _digest(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(_canonical(payload), ensure_ascii=False,
                          sort_keys=True, separators=(",", ":"), allow_nan=False)
     return STATE_VERSION_PREFIX + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _valuation_frame_identity(frame: Mapping[str, Any]) -> str:
+    """Stable identity for the exact frozen valuation frame used by sizing."""
+    encoded = json.dumps(_canonical(frame), ensure_ascii=False,
+                         sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return VALUATION_FRAME_ID_PREFIX + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _partial_snapshot_present(events: Sequence[Mapping[str, Any]]) -> bool:
@@ -600,6 +611,24 @@ def _projection_entry(value, source, reason, currency):
             "applicable": False, "reason": reason}
 
 
+def _frame_bound_entry(*, holding: Mapping[str, Any], price: Mapping[str, Any],
+                       fx: Mapping[str, Any], frame_identity: str,
+                       basis_state_version: str) -> Optional[dict[str, Any]]:
+    native_value = float(holding["shares"]) * float(price["price"])
+    converted_value = native_value * float(fx["rate"])
+    if not math.isfinite(native_value) or not math.isfinite(converted_value) or converted_value <= 0:
+        return None
+    return {
+        "value": converted_value, "weight": None, "source": "price",
+        "currency": holding["currency"], "applicable": False, "reason": None,
+        "frame_proof": {
+            "native_currency": holding["currency"], "native_price": float(price["price"]),
+            "fx_rate": float(fx["rate"]), "converted_value": converted_value,
+            "frame_identity": frame_identity, "basis_state_version": basis_state_version,
+        },
+    }
+
+
 def _validated_basis(basis):
     """Return only a typed, self-validating basis; malformed input fails closed."""
     if not isinstance(basis, PortfolioBasis):
@@ -624,11 +653,49 @@ def sizing_projection(basis):
         return None
     holdings = basis.current_book["holdings"]
     currencies = sorted({holding["currency"] for holding in holdings.values()})
-    # A price/cost fallback is denominated in the holding's native currency.
-    # Until a later domain contract supplies a canonical FX valuation frame,
-    # summing a USD and TWD value would be a fabricated portfolio number.
-    # Keep identities only in coverage and expose no ununit aggregate values.
+    # Native prices and costs cannot be summed across currencies.  The sole
+    # exception is a complete, typed valuation frame that binds every native
+    # price and FX rate to this exact current-book state.
     if len(currencies) > 1:
+        manifest = basis.current_book.get("valuation_manifest")
+        if (isinstance(manifest, Mapping)
+                and manifest.get("contract_version") == VALUATION_FRAME_VERSION
+                and manifest.get("usable") is True):
+            frame_identity = _valuation_frame_identity(manifest)
+            aggregate = manifest["aggregate_currency"]
+            values = {}
+            for ticker in sorted(holdings):
+                holding = holdings[ticker]
+                price = manifest["prices"].get(ticker)
+                fx = manifest["fx_to_aggregate"].get(holding["currency"])
+                if not isinstance(price, Mapping) or not isinstance(fx, Mapping):
+                    return None
+                entry = _frame_bound_entry(holding=holding, price=price, fx=fx,
+                                           frame_identity=frame_identity,
+                                           basis_state_version=basis.state_version)
+                if entry is None:
+                    return None
+                values[ticker] = entry
+            try:
+                denominator = math.fsum(entry["value"] for entry in values.values())
+            except OverflowError:
+                return None
+            if not math.isfinite(denominator) or denominator <= 0:
+                return None
+            for entry in values.values():
+                entry.update(weight=entry["value"] / denominator, applicable=True, reason=None)
+            coverage = {"scope": "full_current_book", "total_holdings": len(holdings),
+                        "valued_holdings": len(holdings), "priced": sorted(holdings),
+                        "cost_fallback": [], "unavailable": [], "currencies": currencies}
+            projection = SizingProjection(
+                denominator=denominator, values=values, coverage=coverage,
+                applicable=True, reason=None,
+                aggregate_currency=aggregate,
+                frame={"identity": frame_identity, "aggregate_currency": aggregate,
+                       "as_of": manifest["as_of"], "basis_state_version": basis.state_version},
+            )
+            validate_sizing_projection(projection.to_dict(), basis=basis)
+            return projection
         values = {ticker: _projection_entry(None, "unavailable", "mixed_native_currencies",
                                              holdings[ticker]["currency"])
                   for ticker in sorted(holdings)}
@@ -637,7 +704,7 @@ def sizing_projection(basis):
                     "unavailable": sorted(holdings), "currencies": currencies}
         projection = SizingProjection(denominator=None, values=values, coverage=coverage,
                                       applicable=False, reason="mixed_native_currencies")
-        validate_sizing_projection(projection.to_dict())
+        validate_sizing_projection(projection.to_dict(), basis=basis)
         return projection
     manifest = basis.current_book.get("valuation_manifest")
     prices = (manifest or {}).get("prices") or {}
@@ -687,13 +754,13 @@ def sizing_projection(basis):
                 "currencies": currencies}
     projection = SizingProjection(denominator=denominator, values=values, coverage=coverage,
                                   applicable=applicable, reason=reason)
-    validate_sizing_projection(projection.to_dict())
+    validate_sizing_projection(projection.to_dict(), basis=basis)
     return projection
 
 
-def validate_sizing_projection(value):
+def validate_sizing_projection(value, *, basis=None):
     """Validate the dependency-free projection contract."""
-    _exact_keys(value, {"denominator", "values", "coverage", "applicable", "reason"}, "sizing_projection")
+    _exact_keys(value, {"denominator", "values", "coverage", "applicable", "reason", "aggregate_currency", "frame"}, "sizing_projection")
     denominator, coverage = value["denominator"], value["coverage"]
     if not isinstance(value["applicable"], bool) or value["reason"] not in _PROJECTION_REASONS:
         raise PortfolioBasisError("sizing_projection applicability is invalid")
@@ -726,16 +793,39 @@ def validate_sizing_projection(value):
             or (coverage["scope"] == "bounded_valued_subset" and not sets[2])):
         raise PortfolioBasisError("sizing_projection coverage disagrees")
     mixed = len(currencies) > 1
-    if mixed != (coverage["scope"] == "unavailable_mixed_currency"):
+    frame = value["frame"]
+    frame_bound = frame is not None
+    if frame_bound:
+        _exact_keys(frame, {"identity", "aggregate_currency", "as_of", "basis_state_version"}, "sizing_projection.frame")
+        if (not isinstance(frame["identity"], str) or not frame["identity"].startswith(VALUATION_FRAME_ID_PREFIX)
+                or not _currency(frame["aggregate_currency"]) or not isinstance(frame["basis_state_version"], str)
+                or not frame["basis_state_version"].startswith(STATE_VERSION_PREFIX)):
+            raise PortfolioBasisError("sizing_projection frame identity is invalid")
+        _date(frame["as_of"], "sizing_projection.frame.as_of")
+        if value["aggregate_currency"] != frame["aggregate_currency"]:
+            raise PortfolioBasisError("sizing_projection aggregate currency disagrees with frame")
+    elif value["aggregate_currency"] is not None:
+        raise PortfolioBasisError("sizing_projection aggregate currency requires a frame")
+    if mixed:
+        if value["applicable"]:
+            if (not frame_bound or coverage["scope"] != "full_current_book" or sets[1] or sets[2]
+                    or value["reason"] is not None):
+                raise PortfolioBasisError("sizing_projection mixed currency frame is invalid")
+            if _validated_basis(basis) is None:
+                raise PortfolioBasisError("sizing_projection mixed currency requires its basis")
+        elif (frame_bound or coverage["scope"] != "unavailable_mixed_currency"
+              or value["reason"] != "mixed_native_currencies" or denominator is not None or sets[0] or sets[1]):
+            raise PortfolioBasisError("sizing_projection mixed currency must be unavailable")
+    elif frame_bound or coverage["scope"] == "unavailable_mixed_currency":
         raise PortfolioBasisError("sizing_projection currency scope disagrees")
-    if mixed and (value["applicable"] or value["reason"] != "mixed_native_currencies"
-                  or denominator is not None or sets[0] or sets[1]):
-        raise PortfolioBasisError("sizing_projection mixed currency must be unavailable")
     weight_sum = 0.0
     for ticker, entry in value["values"].items():
         if not isinstance(ticker, str) or not ticker:
             raise PortfolioBasisError("sizing_projection ticker is invalid")
-        _exact_keys(entry, {"value", "weight", "source", "currency", "applicable", "reason"}, "sizing_projection value")
+        keys = {"value", "weight", "source", "currency", "applicable", "reason"}
+        if frame_bound:
+            keys.add("frame_proof")
+        _exact_keys(entry, keys, "sizing_projection value")
         if (entry["source"] not in _VALUE_SOURCES or not _currency(entry["currency"])
                 or not isinstance(entry["applicable"], bool)):
             raise PortfolioBasisError("sizing_projection value source is invalid")
@@ -762,11 +852,60 @@ def validate_sizing_projection(value):
             raise PortfolioBasisError("sizing_projection price source disagrees with coverage")
         if entry["source"] == "cost_fallback" and ticker not in sets[1]:
             raise PortfolioBasisError("sizing_projection cost source disagrees with coverage")
+        if frame_bound:
+            proof = entry["frame_proof"]
+            _exact_keys(proof, {"native_currency", "native_price", "fx_rate", "converted_value",
+                                "frame_identity", "basis_state_version"}, "sizing_projection frame proof")
+            if (proof["native_currency"] != entry["currency"] or not _finite_number(proof["native_price"])
+                    or proof["native_price"] <= 0 or not _finite_number(proof["fx_rate"])
+                    or proof["fx_rate"] <= 0 or not _finite_number(proof["converted_value"])
+                    or proof["converted_value"] <= 0 or proof["frame_identity"] != frame["identity"]
+                    or proof["basis_state_version"] != frame["basis_state_version"]
+                    or not math.isclose(entry["value"], proof["converted_value"], rel_tol=_PROJECTION_REL_TOL,
+                                        abs_tol=_PROJECTION_ABS_TOL)):
+                raise PortfolioBasisError("sizing_projection frame proof disagrees")
     if currencies != sorted({entry["currency"] for entry in value["values"].values()}):
         raise PortfolioBasisError("sizing_projection coverage currencies disagree")
     if value["applicable"] and not math.isclose(weight_sum, 1.0, rel_tol=_PROJECTION_REL_TOL,
                                                   abs_tol=_PROJECTION_ABS_TOL):
         raise PortfolioBasisError("sizing_projection weights do not sum to one")
+    if frame_bound:
+        _validate_frame_bound_projection(value, basis)
+
+
+def _validate_frame_bound_projection(value: Mapping[str, Any], basis: PortfolioBasis) -> None:
+    """Recompute a mixed-currency projection from its exact frozen basis/frame."""
+    frame = value["frame"]
+    if basis.state_version != frame["basis_state_version"]:
+        raise PortfolioBasisError("sizing_projection frame state_version disagrees")
+    manifest = basis.current_book["valuation_manifest"]
+    holdings = basis.current_book["holdings"]
+    if (not isinstance(manifest, Mapping) or manifest.get("contract_version") != VALUATION_FRAME_VERSION
+            or manifest.get("usable") is not True or manifest["aggregate_currency"] != frame["aggregate_currency"]
+            or manifest["as_of"] != frame["as_of"] or _valuation_frame_identity(manifest) != frame["identity"]):
+        raise PortfolioBasisError("sizing_projection frame does not match basis")
+    if set(value["values"]) != set(holdings):
+        raise PortfolioBasisError("sizing_projection frame holdings disagree")
+    recomputed = []
+    for ticker, holding in holdings.items():
+        entry = value["values"].get(ticker)
+        price = manifest["prices"].get(ticker)
+        fx = manifest["fx_to_aggregate"].get(holding["currency"])
+        if not isinstance(entry, Mapping) or not isinstance(price, Mapping) or not isinstance(fx, Mapping):
+            raise PortfolioBasisError("sizing_projection frame proof is incomplete")
+        expected = _frame_bound_entry(holding=holding, price=price, fx=fx,
+                                      frame_identity=frame["identity"], basis_state_version=basis.state_version)
+        if expected is None:
+            raise PortfolioBasisError("sizing_projection frame value is invalid")
+        if entry["frame_proof"] != expected["frame_proof"] or not math.isclose(entry["value"], expected["value"],
+                                                                                  rel_tol=_PROJECTION_REL_TOL,
+                                                                                  abs_tol=_PROJECTION_ABS_TOL):
+            raise PortfolioBasisError("sizing_projection frame value disagrees")
+        recomputed.append(expected["value"])
+    denominator = math.fsum(recomputed)
+    if not math.isclose(value["denominator"], denominator, rel_tol=_PROJECTION_REL_TOL,
+                        abs_tol=_PROJECTION_ABS_TOL):
+        raise PortfolioBasisError("sizing_projection frame denominator disagrees")
 
 
 def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifest: Optional[Mapping[str, Any]] = None,
