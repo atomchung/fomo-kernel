@@ -612,11 +612,22 @@ def virtualize(existing, batches):
     """
     if not isinstance(existing, list) or not isinstance(batches, (list, tuple)):
         raise ValueError("virtualize requires event list and candidate batches")
-    virtual = list(existing)
-    fresh_all, skipped_dup = [], 0
+    # This helper is also used before a strict ledger read is persisted.  Do
+    # not let a caller's arbitrary object reach occurrence dedupe (which would
+    # otherwise expose an AttributeError or become part of a virtual book).
+    if any(not isinstance(event, dict) or event.get("type") not in EVENT_TYPES
+           for event in existing):
+        raise ValueError("virtualize existing events must be known event objects")
     for batch in batches:
         if not isinstance(batch, list):
             raise ValueError("virtualize candidate batches must be lists")
+        for event in batch:
+            if (not isinstance(event, dict) or event.get("type") != "trade"
+                    or _norm_trade(event) is None):
+                raise ValueError("virtualize candidates must be valid trade events")
+    virtual = list(existing)
+    fresh_all, skipped_dup = [], 0
+    for batch in batches:
         fresh, dup = dedupe_against(virtual, batch)
         virtual.extend(fresh)
         fresh_all.extend(fresh)

@@ -1054,6 +1054,30 @@ def test_virtualize_reuses_sequential_dedupe_without_writing():
     assert result["events"] == existing + [independent_same_fill, later]
 
 
+def test_virtualize_rejects_adversarial_outer_existing_and_candidates_before_dedupe():
+    good = _tr("2026-07-01", "NVDA", "buy", 1, 100)
+    cases = [
+        ([], {}),
+        ([{}], []),
+        ([1], []),
+        ([{"type": "unknown"}], []),
+        ([], [[{}]]),
+        ([], [[1]]),
+        ([], [[{"type": "snapshot"}]]),
+        ([], [[{"type": "trade", "ticker": "NVDA"}]]),
+    ]
+    for existing, batches in cases:
+        try:
+            lg.virtualize(existing, batches)
+        except ValueError as exc:
+            assert str(exc).startswith("virtualize")
+        except AttributeError as exc:
+            raise AssertionError(f"raw AttributeError leaked for {existing!r}/{batches!r}") from exc
+        else:
+            raise AssertionError(f"invalid virtualize input accepted: {existing!r}/{batches!r}")
+    assert lg.virtualize([], [[good]])["events"] == [good]
+
+
 # ─────────────────────────── runner ───────────────────────────
 
 def _main():
