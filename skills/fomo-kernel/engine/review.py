@@ -424,6 +424,11 @@ def _validate_initial_snapshot_root(root, anchor):
     anchor, and history without a complete anchor (replay-only trades, unknown
     ledger event types, or an unrepaired ledger projection) are rejected.
 
+    Whether a returned verdict may be *reviewed* is a separate question, and a
+    different function answers it: see ``_refuse_if_the_book_must_catch_up``
+    (#530).  Deliberately not folded in here — the reconciliation status is not
+    the criterion, and this function's job is to state what the ledger says.
+
     This is the prepare-time UX layer only; the authoritative check reruns
     under the root projection lock at finalize
     (``session._assert_initial_snapshot_boundary``) and fails closed when the
@@ -450,6 +455,47 @@ def _validate_initial_snapshot_root(root, anchor):
     if reconciliation is None:
         raise ReviewError(session.INITIAL_SNAPSHOT_CONFLICT)
     return reconciliation
+
+
+def _refuse_if_the_book_must_catch_up(root, snapshot_path):
+    """Route a declaration the book-update lane would have to ask about (#530).
+
+    Owner ruling 2026-07-28: updating the recorded book is a mandatory node, not
+    an alternative to reviewing it.  New facts arriving means the book is
+    brought up to date first, and only a completed book is discussed.
+
+    *Which* differences make that true is deliberately not decided here.  This
+    asks ``book_refresh``, the lane that owns the question, and refuses exactly
+    when it would raise one — a vanished position, or a large move on a large
+    holding.  Two reasons that is the criterion rather than "the declaration
+    does not reconcile clean".  It is the only set that can lose information: a
+    position in the record and absent from the view leaves the book with no exit
+    record, no closed cycle and no revisit, while every other difference merely
+    replaces one number with another and the next reconciliation still sees the
+    truth.  And ``avg_cost`` differs for legitimate reasons on almost every real
+    book — ``derive_holdings`` keeps a moving average while brokers may use FIFO
+    or amortize fees, past a half-cent tolerance — so refusing on the status
+    would block users over an arithmetic convention while doing nothing about
+    the case that actually costs them their exits.
+
+    Asking the other lane also means one definition, not two: whatever refresh
+    starts or stops asking about moves this refusal with it, and the two can
+    never disagree about the same declaration.  ``plan_refresh`` writes nothing
+    at all (that is what its phase 1 is for), so this is a pure read, and it
+    runs on the same ``normalize_book`` output the user's next ``refresh`` call
+    will produce from the same file.
+    """
+    try:
+        events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+        snapshot, anchor = snapshot_adapter.normalize_book(snapshot_path)
+        plan = book_refresh.plan_refresh(events, snapshot, anchor)
+    except (ValueError, snapshot_adapter.SnapshotError) as exc:
+        # Fail closed. Everything here already passed its own validator on the
+        # way in, so a refusal at this point is not a user input error to
+        # explain away — it is the engine losing confidence in the comparison.
+        raise ReviewError(str(exc)) from exc
+    if plan.get("pending_confirmations"):
+        raise ReviewError(book_refresh.NEEDS_BOOK_UPDATE)
 
 
 def _apply_snapshot_reconciliation(card, state, reconciliation):
@@ -3283,6 +3329,10 @@ def cmd_prepare(args):
             raise ReviewError(f"snapshot adapter rejected input: {exc}") from exc
         reconciliation = _validate_initial_snapshot_root(root, state.get("snapshot_anchor"))
         if reconciliation is not None:
+            # #530, and deliberately before save_pending, before any ledger
+            # write, and before the user is shown a card built on a book that
+            # has not caught up yet.
+            _refuse_if_the_book_must_catch_up(root, paths[0])
             card, state = _apply_snapshot_reconciliation(card, state, reconciliation)
         prepared = {"card": card, "state": state}
         if isinstance(adapter_meta, str):

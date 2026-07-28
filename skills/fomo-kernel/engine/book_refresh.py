@@ -81,6 +81,17 @@ NO_ANCHOR = (
     "this coach root has no recorded book yet; run "
     "`review.py prepare --snapshot-json ...` to open one, then refresh it here"
 )
+# The mirror of NO_ANCHOR, and the review lane raises it (#530). Updating the
+# recorded book is a mandatory node, not an alternative to reviewing it, so a
+# holdings view carrying something only the user can settle is recorded before
+# it is discussed. "Something only the user can settle" is not a second rule
+# written over there: it is exactly a non-empty `pending_confirmations` from
+# `plan_refresh` below, so the set can never drift from what this lane asks.
+NEEDS_BOOK_UPDATE = (
+    "this holdings view has changes only you can settle before the recorded "
+    "book can catch up; run `review.py refresh --snapshot-json ...` first, "
+    "then review it"
+)
 REFRESH_STALE = (
     "the recorded book changed after this refresh was prepared; run refresh "
     "again without --answers to see the current difference"

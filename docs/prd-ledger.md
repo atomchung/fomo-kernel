@@ -61,13 +61,15 @@ The target behavior when the user supplies another position snapshot is:
 
 Do not infer the cause of a mismatch. It may represent a missing trade, transfer, split, fee, or data error.
 
-Implementation contract (`ledger.snapshot_reconciliation`, entered only through `review.py prepare --snapshot-json`):
+Since #530, recording new facts and discussing them are two commands. `prepare --route snapshot_review` puts every second declaration to the book-update lane (`book_refresh.plan_refresh`, a pure read) and refuses exactly the declarations that lane would raise a confirmation for — a vanished position, or a large move on a large holding — naming `review.py refresh` as the next step. Only that lane asks whether a position missing from the new view was sold or merely missed by the capture, and only an answer to that question can record the exit. Every other difference, `avg_cost` drift included, is reviewed and adopted on the review lane as before: nothing there needs a human answer, and the next reconciliation still sees the truth. The reconciliation *status* is deliberately not the criterion — `derive_holdings` keeps a moving-average cost while brokers may use FIFO or amortize fees, so two correct systems disagree past the half-cent tolerance on almost every real book.
+
+Implementation contract (`ledger.snapshot_reconciliation`, entered through `review.py prepare --snapshot-json` and `review.py refresh --snapshot-json`):
 
 - The comparison is time-aligned: derived holdings are computed as of the declared end-of-day `as_of`, so ledger trades dated after it are not part of the comparison and still apply on top of an adopted anchor.
 - The narrow diff lists per-ticker shares (`SHARES_TOL`), market, currency, and avg_cost differences, tickers present on only one side, and per-currency cash differences (`CASH_TOL`). Every value stays in its original currency; avg_cost is compared only when both sides state a number, and an omitted declared cash object is treated as no claim.
 - Prepare freezes the diff and verdict into the Review Plan; finalize recomputes it under the root projection lock and fails closed if the ledger changed in between, so an unpreviewed adjustment can never be written.
 - The clean path appends only the content-addressed reconciliation mark: the anchor, its cycle identities, and the root-wide `projection_sequence` counter stay untouched.
-- Fail-closed edges: an incomplete second declaration is rejected, a declaration older than the current anchor is rejected, and history without a complete anchor (replay-only trades or an unrepaired ledger projection) keeps the original initial-onboarding rejection.
+- Fail-closed edges: an incomplete second declaration is rejected, a declaration older than the current anchor is rejected, history without a complete anchor (replay-only trades or an unrepaired ledger projection) keeps the original initial-onboarding rejection, and a declaration the book-update lane would have to ask about is refused on the review lane before any append (#530).
 
 ## Separate consumers
 
@@ -91,7 +93,7 @@ The agent may map broker labels, normalize dates, and complete provider ticker s
 
 The opening portfolio check may claim only engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. It initializes an inferred thesis for every uncovered open cycle and labels the holding history as left-truncated. Averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, and historical motives remain unavailable until later transaction history supports them.
 
-A complete initial snapshot may establish the accounting anchor. An incomplete snapshot still yields the bounded opening check but is not projected as an anchor. Later transaction files may unlock supported historical dimensions while ledger-derived current holdings remain canonical. A second or subsequent complete snapshot enters through the same command and is routed to the reconciliation contract above; only that comparison may certify that the ledger matches a fresh broker view or adopt the newer declaration.
+A complete initial snapshot may establish the accounting anchor. An incomplete snapshot still yields the bounded opening check but is not projected as an anchor. Later transaction files may unlock supported historical dimensions while ledger-derived current holdings remain canonical. A second or subsequent complete snapshot enters through the same command and is routed to the reconciliation contract above; only that comparison may certify that the ledger matches a fresh broker view or adopt the newer declaration, and a declaration carrying something only the user can settle is sent to `refresh` first (#530).
 
 ## Multi-market and currency policy
 

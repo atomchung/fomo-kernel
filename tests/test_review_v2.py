@@ -21,6 +21,7 @@ REVIEW = ENGINE_DIR / "review.py"
 SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
+import book_refresh as book_refresh_engine  # noqa: E402
 import card_renderer  # noqa: E402
 import instruments  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
@@ -1007,24 +1008,21 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
                             _path, "--root", root, "--language", "en")
         assert same_prepare.returncode == 0
         assert json.loads(same_prepare.stdout)["status"] == "already_committed"
-        # A different second declaration no longer fails closed at prepare: it
-        # enters the reconciliation path (#220) with the narrow diff frozen in
-        # the Review Plan — and prepare still writes nothing to the ledger.
+        # A different second declaration is routed to the book-update lane
+        # (#530): it carries facts the record does not have, and this lane
+        # never asks what happened to them. Nothing is written and no pending
+        # session opens, so it cannot reach a preview or a card.
         changed_payload = {**payload, "positions": [
             {**payload["positions"][0], "shares": 3}, payload["positions"][1]]}
         changed = _snapshot_json(tmp, payload=changed_payload, name="changed-snapshot.json")
         second = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
                       changed, "--root", root, "--language", "en")
-        assert second.returncode == 0, second.stdout + second.stderr
-        second_plan = json.loads(second.stdout)["review_plan"]
-        reconciliation = second_plan["engine_state"]["snapshot_reconciliation"]
-        assert reconciliation["status"] == "adjusted"
-        assert reconciliation["diff"]["positions"] == [
-            {"ticker": "SPY", "kind": "shares", "derived": 2.0, "declared": 3.0}]
-        assert "snapshot_reconciliation" in \
-            second_plan["card_plan"]["required_honesty_keys"]
+        assert second.returncode == 2, second.stdout + second.stderr
+        assert "refresh --snapshot-json" in json.loads(second.stdout)["error"], second.stdout
         assert [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()] == rows, \
-            "prepare freezes the reconciliation diff without any ledger write"
+            "a refused declaration writes nothing to the ledger"
+        assert not [entry for entry in (root / ".pending").glob("*")
+                    if entry.is_dir()], "a refused declaration opens no pending session"
 
         (root / "ledger.jsonl").unlink()
         repaired = _run("repair-projections", "--root", root)
@@ -1050,9 +1048,29 @@ def _ledger_rows(root):
             for line in (pathlib.Path(root) / "ledger.jsonl").read_text().splitlines()]
 
 
-def test_second_snapshot_adjusted_writes_adjustment_and_adopts_new_anchor():
-    """The #220 adjusted path: narrow frozen diff -> adjustment event preserving
-    history -> newer declaration adopted by latest_anchor -> idempotent replay."""
+def _refresh(root, snapshot_path, answers=None):
+    """Drive the book-update lane's CLI, the way flows/book-refresh.md does."""
+    argv = ["refresh", "--root", root, "--snapshot-json", snapshot_path]
+    if answers is not None:
+        argv += ["--answers", json.dumps(answers)]
+    run = _run(*argv)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(run.stdout)
+
+
+def test_a_differing_second_declaration_is_recorded_first_then_reviewed():
+    """#530: updating the book is a mandatory node, not a fork the agent picks.
+
+    The review lane used to accept a differing declaration and adopt it at
+    finalize, which is how a position that vanished from the new view could
+    leave the book with nobody ever asked whether it was sold -- the review lane
+    passes no ``absences`` because it asks no question that could produce one.
+    So the order is now mechanical: prepare refuses and names ``refresh``,
+    ``refresh`` records (asking about what changed), and only then does the same
+    declaration reconcile clean and get its review.
+
+    The adjustment/anchor/ordering half of the old #220 assertions still runs
+    here; it has simply moved behind the lane that owns it."""
     initial = {
         "as_of": "2026-07-10",
         "positions": [
@@ -1084,27 +1102,36 @@ def test_second_snapshot_adjusted_writes_adjustment_and_adopts_new_anchor():
             ],
             "cash": {"USD": 800},
         }
-        plan2, _second = _snapshot_prepare(tmp, root, payload=second_payload, name="second.json")
-        frozen = plan2["engine_state"]["snapshot_reconciliation"]
-        assert frozen["status"] == "adjusted"
-        assert frozen["against"]["as_of"] == "2026-07-10"
+        second_path = _snapshot_json(tmp, payload=second_payload, name="second.json")
+        before = _ledger_rows(root)
+        refused = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                       second_path, "--root", root, "--language", "en")
+        assert refused.returncode == 2, refused.stdout + refused.stderr
+        assert json.loads(refused.stdout)["error"] == book_refresh_engine.NEEDS_BOOK_UPDATE
+        assert _ledger_rows(root) == before, "the refusal happens before any append"
+        assert not [entry for entry in (root / ".pending").glob("*") if entry.is_dir()], \
+            "a refused declaration cannot reach preview, so it cannot reach a card"
+
+        # The book-update lane: the same facts, recorded rather than discussed.
+        # PLTR moved 25 -> 30 on a position worth 40% of the recorded book, so
+        # this lane spends its one question on it; the cash change is adopted
+        # without ceremony.
+        receipt = _refresh(str(root), str(second_path))
+        assert receipt["status"] == "pending_confirmation"
+        assert [(row["kind"], row["ticker"]) for row in receipt["pending_confirmations"]] == \
+            [("large_change", "PLTR")]
         # Facts only, in the declared as-of window: the 2026-07-12 buy counts
         # (derived 25), the 2026-07-16 buy does not (SPY stays clean).
-        assert frozen["diff"]["positions"] == [
+        assert receipt["diff"]["positions"] == [
             {"ticker": "PLTR", "kind": "shares", "derived": 25.0, "declared": 30.0}]
-        assert frozen["diff"]["cash"] == [
+        assert receipt["diff"]["cash"] == [
             {"currency": "USD", "derived": 1000.0, "declared": 800.0}]
-        assert plan2["input"]["ledger_ingest"]["reconciliation"] == "adjusted"
-        summary = plan2["engine_card"]["data_integrity"]["snapshot_reconciliation"]
-        assert summary["positions_changed"] == ["PLTR"] and summary["cash_currencies"] == ["USD"]
-        honesty = {row["key"]: row for row in plan2["engine_card"]["honesty_ledger"]}
-        assert honesty["snapshot_reconciliation"]["status"] == "adjusted"
+        assert receipt["against"]["as_of"] == "2026-07-10"
 
-        second = _finalize_snapshot_session(tmp, root, plan2, "second")
-        assert second.returncode == 0, second.stdout + second.stderr
-        snapshot_report = json.loads(second.stdout)["projection"]["rows"][0]
-        assert snapshot_report["reconciliation"] == "adjusted"
-        assert snapshot_report["appended"] == 2 and snapshot_report["projection_sequence"] == 2
+        adopted = _refresh(str(root), str(second_path),
+                           {"refresh_id": receipt["refresh_id"],
+                            "answers": [{"ticker": "PLTR", "classification": "confirmed"}]})
+        assert adopted["status"] == "adopted" and adopted["reconciliation"] == "adjusted"
 
         rows = _ledger_rows(root)
         assert [row["type"] for row in rows] == \
@@ -1113,7 +1140,7 @@ def test_second_snapshot_adjusted_writes_adjustment_and_adopts_new_anchor():
         adjustment = rows[3]
         assert adjustment["adjustment_id"].startswith("adjust-")
         assert adjustment["reason"] == "snapshot_reconciliation"
-        assert adjustment["diff"] == frozen["diff"]
+        assert adjustment["diff"] == receipt["diff"]
         assert adjustment["against"]["as_of"] == "2026-07-10"
         assert rows[4]["snapshot_id"].startswith("snapshot-")
         assert rows[4]["projection_sequence"] == 2
@@ -1125,11 +1152,26 @@ def test_second_snapshot_adjusted_writes_adjustment_and_adopts_new_anchor():
         assert derived["SPY"]["shares"] == 3, "post-adoption trades still apply on top"
         assert derived["PLTR"]["cycle_id"] == "PLTR#2026-07-15#1"
 
+        # ...and only now is there a review. The same declaration that was
+        # refused above reconciles clean against the book it just updated, so it
+        # produces its card with no extra ceremony and marks the ledger without
+        # a second anchor.
+        plan2, _again = _snapshot_prepare(tmp, root, payload=second_payload, name="second.json")
+        frozen = plan2["engine_state"]["snapshot_reconciliation"]
+        assert frozen["status"] == "reconciled"
+        assert frozen["diff"] == {"positions": [], "cash": []}
+        assert plan2["input"]["ledger_ingest"]["reconciliation"] == "reconciled"
+        review = _finalize_snapshot_session(tmp, root, plan2, "second")
+        assert review.returncode == 0, review.stdout + review.stderr
+        assert [row["type"] for row in _ledger_rows(root)] == \
+            ["snapshot", "trade", "trade", "adjustment", "snapshot", "reconciliation"]
+
         retry = _finalize_snapshot_session(tmp, root, plan2, "second-retry")
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
-        assert _ledger_rows(root) == rows, \
-            "an identical finalize replay appends neither a second adjustment nor a second anchor"
+        assert [row["type"] for row in _ledger_rows(root)] == \
+            ["snapshot", "trade", "trade", "adjustment", "snapshot", "reconciliation"], \
+            "an identical finalize replay appends neither a second mark nor a second anchor"
 
 
 def test_second_snapshot_reconciled_marks_ledger_without_new_anchor():
@@ -1187,29 +1229,74 @@ def test_second_snapshot_reconciled_marks_ledger_without_new_anchor():
         assert rebuilt[1]["reconciliation_id"] == mark["reconciliation_id"]
 
 
-def test_second_snapshot_same_day_adoption_uses_projection_sequence():
+def test_a_vanished_position_is_refused_but_an_avg_cost_difference_is_reviewed():
+    """#530's criterion, in both directions, against one recorded book.
+
+    The refusal is not "the declaration does not reconcile clean" -- it is
+    "the book-update lane would have to ask a human about this", which
+    `prepare` decides by asking that lane rather than writing a second rule
+    about which differences matter.
+
+    Refusing on the status instead would be strict in the wrong place. A
+    vanished position is the only difference that destroys information when
+    adopted quietly: no exit record, no closed cycle, no revisit, and win rate
+    and exit discipline undercount permanently. An `avg_cost` difference costs
+    nothing and happens constantly for legitimate reasons -- `derive_holdings`
+    keeps a moving average while a broker may use FIFO or amortize fees, and
+    the tolerance is half a cent -- so refusing on it would block a real user
+    over an arithmetic convention while the case that loses their exits went
+    through."""
     initial = {
-        "as_of": "2026-07-16",
-        "positions": [{"ticker": "SPY", "shares": 2, "market": "US", "currency": "USD"}],
-    }
-    corrected = {
-        "as_of": "2026-07-16",
-        "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
+        "as_of": "2026-07-10",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market": "US", "currency": "USD"},
+            {"ticker": "PLTR", "shares": 20, "avg_cost": 30, "market": "US", "currency": "USD"},
+        ],
     }
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
         assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
-        plan2, _second = _snapshot_prepare(tmp, root, payload=corrected, name="same-day.json")
-        assert plan2["engine_state"]["snapshot_reconciliation"]["status"] == "adjusted"
-        assert _finalize_snapshot_session(tmp, root, plan2, "second").returncode == 0
-        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
-        anchors = [row for row in events if row.get("type") == "snapshot"]
-        assert [row["projection_sequence"] for row in anchors] == [1, 2]
-        adopted = ledger_engine.latest_anchor(events)
-        assert adopted["projection_sequence"] == 2
-        assert adopted["positions"][0]["shares"] == 3, \
-            "the same-day tie-break adopts the newer declaration by sequence"
+        baseline = _ledger_rows(root)
+
+        vanished = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-15",
+            "positions": [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                           "market": "US", "currency": "USD"}],
+        }, name="vanished.json")
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                   vanished, "--root", root, "--language", "en")
+        assert run.returncode == 2, run.stdout + run.stderr
+        assert json.loads(run.stdout)["error"] == book_refresh_engine.NEEDS_BOOK_UPDATE
+        assert _ledger_rows(root) == baseline, "a refused declaration writes nothing"
+
+        # The other direction, and the regression guard for over-strictness:
+        # the book is a hair off on cost basis and nothing else. Nobody has to
+        # answer anything, so this reviews normally -- and still reconciles
+        # `adjusted`, which is exactly why the status is not the criterion.
+        drifted = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-15",
+            "positions": [
+                {"ticker": "SPY", "shares": 2, "avg_cost": 600.05,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "PLTR", "shares": 20, "avg_cost": 30,
+                 "market": "US", "currency": "USD"},
+            ],
+        }, name="drifted.json")
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
+                   drifted, "--root", root, "--language", "en")
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan2 = _pending_plan(root, run.stdout)
+        frozen = plan2["engine_state"]["snapshot_reconciliation"]
+        assert frozen["status"] == "adjusted"
+        assert frozen["diff"]["positions"] == [
+            {"ticker": "SPY", "kind": "avg_cost", "derived": 600.0, "declared": 600.05}]
+        assert _finalize_snapshot_session(tmp, root, plan2, "drifted").returncode == 0
+        rows = _ledger_rows(root)
+        assert [row["type"] for row in rows] == ["snapshot", "adjustment", "snapshot"], \
+            "a difference nobody had to answer for is adopted by the review lane itself"
+        assert not [row for row in rows if row["type"] == "position_absence"], \
+            "and it produces no absence, because none was ever confirmed"
 
 
 def test_second_snapshot_fail_closed_edges():
@@ -1245,14 +1332,17 @@ def test_second_snapshot_fail_closed_edges():
         assert "older than the current ledger anchor" in run.stdout
         assert _ledger_rows(root) == baseline, "rejected declarations write nothing"
 
-        # Drift between prepare and finalize: the frozen diff no longer matches
-        # the ledger, so finalize refuses to write an unpreviewed adjustment.
-        drifting = {
+        # Drift between prepare and finalize. Since #530 only a clean
+        # reconciliation gets this far, so the drift runs the other way: a
+        # declaration that agreed with the record at prepare no longer agrees
+        # with it at finalize, and finalize refuses to mark a ledger the user
+        # never previewed.
+        agreeing = {
             "as_of": "2026-07-15",
-            "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
+            "positions": [{"ticker": "SPY", "shares": 2, "market": "US", "currency": "USD"}],
         }
-        plan2, _second = _snapshot_prepare(tmp, root, payload=drifting, name="drift.json")
-        assert plan2["engine_state"]["snapshot_reconciliation"]["status"] == "adjusted"
+        plan2, _second = _snapshot_prepare(tmp, root, payload=agreeing, name="drift.json")
+        assert plan2["engine_state"]["snapshot_reconciliation"]["status"] == "reconciled"
         ledger_engine.append_events(str(root / "ledger.jsonl"), [
             {"type": "trade", "date": "2026-07-12", "ticker": "SPY", "action": "buy",
              "qty": 1, "price": 610, "market": "US", "currency": "USD"}])
@@ -1261,15 +1351,16 @@ def test_second_snapshot_fail_closed_edges():
         assert "run prepare again" in stale.stdout
         rows = _ledger_rows(root)
         assert [row["type"] for row in rows] == ["snapshot", "trade"], \
-            "a stale finalize must not write an adjustment or a new anchor"
+            "a stale finalize must not write a mark, an adjustment, or a new anchor"
 
-        # Re-preparing recomputes honestly: the interleaved buy explains the
-        # whole difference, so the same declaration is now simply reconciled.
+        # Re-preparing recomputes honestly: the interleaved buy makes the same
+        # declaration disagree with the record, so the honest answer is now that
+        # the book has to be brought up to date before there is anything to
+        # review.
         rerun = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
                      _second, "--root", root, "--language", "en")
-        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
-        replanned = json.loads(rerun.stdout)["review_plan"]
-        assert replanned["engine_state"]["snapshot_reconciliation"]["status"] == "reconciled"
+        assert rerun.returncode == 2, rerun.stdout + rerun.stderr
+        assert json.loads(rerun.stdout)["error"] == book_refresh_engine.NEEDS_BOOK_UPDATE
 
 
 def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
