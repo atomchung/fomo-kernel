@@ -185,7 +185,7 @@ def test_sizing_projection_is_canonical_for_full_priced_mixed_and_cost_books():
     full = pb.sizing_projection(full_basis)
     assert full and full.applicable and full.reason is None
     assert full.denominator == 60 and full.coverage["scope"] == "full_current_book"
-    assert full.values["A"] == {"value": 30.0, "weight": 0.5, "source": "price", "applicable": True, "reason": None}
+    assert full.values["A"] == {"value": 30.0, "weight": 0.5, "source": "price", "currency": "USD", "applicable": True, "reason": None}
     assert full.values["B"]["weight"] == 0.5
 
     mixed_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
@@ -193,7 +193,7 @@ def test_sizing_projection_is_canonical_for_full_priced_mixed_and_cost_books():
     mixed = pb.sizing_projection(mixed_basis)
     assert mixed and mixed.applicable and mixed.denominator == 50
     assert mixed.coverage == {"scope": "full_current_book", "total_holdings": 2, "valued_holdings": 2,
-                              "priced": ["A"], "cost_fallback": ["B"], "unavailable": []}
+                              "priced": ["A"], "cost_fallback": ["B"], "unavailable": [], "currencies": ["USD"]}
     assert mixed.values["A"]["weight"] == 0.6 and mixed.values["B"]["weight"] == 0.4
 
     cost = pb.sizing_projection(pb.query_current_book(events, reference_as_of="2026-07-02"))
@@ -211,7 +211,7 @@ def test_sizing_projection_marks_unavailable_and_empty_books_inapplicable():
     assert projection and projection.applicable and projection.denominator == 12
     assert projection.coverage["scope"] == "bounded_valued_subset"
     assert projection.coverage["unavailable"] == ["B"]
-    assert projection.values["B"] == {"value": None, "weight": None, "source": "unavailable",
+    assert projection.values["B"] == {"value": None, "weight": None, "source": "unavailable", "currency": "USD",
                                         "applicable": False, "reason": "value_unavailable"}
 
     empty = pb.sizing_projection(pb.query_current_book([], reference_as_of="2026-07-02"))
@@ -245,6 +245,7 @@ def test_sizing_projection_validator_rejects_weight_and_coverage_lies():
     bad_source = copy.deepcopy(projection.to_dict()); bad_source["coverage"]["cost_fallback"] = ["A"]; bad_source["coverage"]["priced"] = ["B"]; mutations.append(bad_source)
     bad_scope = copy.deepcopy(projection.to_dict()); bad_scope["coverage"]["scope"] = "bounded_valued_subset"; mutations.append(bad_scope)
     duplicate = copy.deepcopy(projection.to_dict()); duplicate["coverage"]["priced"] = ["A", "B", "A"]; mutations.append(duplicate)
+    bad_currencies = copy.deepcopy(projection.to_dict()); bad_currencies["coverage"]["currencies"] = "USD"; mutations.append(bad_currencies)
     for mutation in mutations:
         try:
             pb.validate_sizing_projection(mutation)
@@ -261,6 +262,46 @@ def test_sizing_projection_fails_closed_on_finite_multiplication_overflow():
     )
     assert basis
     assert pb.sizing_projection(basis) is None
+
+
+def test_sizing_projection_refuses_mixed_native_currency_without_fx_frame():
+    basis = pb.query_current_book(
+        [_trade("2026-07-01", "USD", "buy", 2, 10, currency="USD"),
+         _trade("2026-07-01", "TWD", "buy", 3, 100, currency="TWD")],
+        reference_as_of="2026-07-02",
+        valuation_manifest={"as_of": "2026-07-02", "prices": {"USD": 15, "TWD": 110}},
+    )
+    projection = pb.sizing_projection(basis)
+    assert projection and not projection.applicable
+    assert projection.reason == "mixed_native_currencies" and projection.denominator is None
+    assert projection.coverage == {"scope": "unavailable_mixed_currency", "total_holdings": 2,
+                                   "valued_holdings": 0, "priced": [], "cost_fallback": [],
+                                   "unavailable": ["TWD", "USD"], "currencies": ["TWD", "USD"]}
+    assert all(row["value"] is None and row["weight"] is None
+               and row["reason"] == "mixed_native_currencies" for row in projection.values.values())
+
+    forged = copy.deepcopy(projection.to_dict())
+    forged["applicable"] = True; forged["reason"] = None; forged["denominator"] = 330
+    forged["coverage"]["scope"] = "full_current_book"; forged["coverage"]["priced"] = ["TWD", "USD"]
+    forged["coverage"]["currencies"] = ["USD"]
+    forged["coverage"]["unavailable"] = []; forged["coverage"]["valued_holdings"] = 2
+    for ticker, row in forged["values"].items():
+        row.update(value=30 if ticker == "USD" else 300, weight=1 / 11 if ticker == "USD" else 10 / 11,
+                   source="price", applicable=True, reason=None)
+    try:
+        pb.validate_sizing_projection(forged)
+        raise AssertionError("forged mixed-currency applicable projection must be rejected")
+    except pb.PortfolioBasisError:
+        pass
+
+
+def test_sizing_projection_fails_closed_when_currency_identity_is_missing_or_invalid():
+    missing = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency="")])
+    invalid = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency=3)])
+    nope_trade = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency="NOPE")])
+    nope_snapshot = pb.query_current_book([_snap("2026-07-01", [{"ticker": "A", "shares": 1, "currency": "NOPE"}])])
+    assert missing is None and invalid is None and nope_trade is None and nope_snapshot is None
+    assert all(pb.sizing_projection(item) is None for item in (missing, invalid, nope_trade, nope_snapshot))
 
 
 def _main():

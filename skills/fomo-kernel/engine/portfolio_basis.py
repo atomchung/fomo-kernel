@@ -13,6 +13,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
@@ -27,9 +28,10 @@ _COST_BASES = {"average_cost", "partial_average_cost", "unavailable"}
 _VALUATION_BASES = {"unpriced", "priced"}
 _VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
 _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
-                       "non_positive_denominator"}
+                       "non_positive_denominator", "mixed_native_currencies"}
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
+_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 class PortfolioBasisError(ValueError):
@@ -126,6 +128,10 @@ def _finite_number(value: Any) -> bool:
             and math.isfinite(float(value)))
 
 
+def _currency(value: Any) -> bool:
+    return isinstance(value, str) and _CURRENCY_RE.fullmatch(value) is not None
+
+
 def _valid_snapshot(event: Mapping[str, Any]) -> bool:
     """Preflight *all* snapshots, including ones ledger would not select.
 
@@ -151,9 +157,10 @@ def _valid_snapshot(event: Mapping[str, Any]) -> bool:
             return False
         if position.get("market_value") is not None and (not _finite_number(position["market_value"]) or position["market_value"] <= 0):
             return False
-        for field in ("market", "currency"):
-            if field in position and (not isinstance(position[field], str) or not position[field]):
-                return False
+        if "market" in position and (not isinstance(position["market"], str) or not position["market"]):
+            return False
+        if "currency" in position and not _currency(position["currency"]):
+            return False
     if "source" in event and (not isinstance(event["source"], str) or not event["source"]):
         return False
     if "is_complete" in event and not isinstance(event["is_complete"], bool):
@@ -163,7 +170,7 @@ def _valid_snapshot(event: Mapping[str, Any]) -> bool:
         if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0:
             return False
     if event.get("cash") is not None:
-        if not isinstance(event["cash"], Mapping) or not all(isinstance(currency, str) and currency and _finite_number(amount)
+        if not isinstance(event["cash"], Mapping) or not all(_currency(currency) and _finite_number(amount)
                                                               for currency, amount in event["cash"].items()):
             return False
     return True
@@ -176,8 +183,8 @@ def _valid_trade(event: Mapping[str, Any]) -> bool:
     _, ticker, _, qty, price = normalized
     if not (isinstance(ticker, str) and bool(ticker) and math.isfinite(qty) and math.isfinite(price)):
         return False
-    return all(field not in event or (isinstance(event[field], str) and event[field])
-               for field in ("market", "currency"))
+    return ("market" not in event or (isinstance(event["market"], str) and event["market"])) and (
+        "currency" not in event or _currency(event["currency"]))
 
 
 def _semantically_known_events(events: Sequence[Mapping[str, Any]]) -> bool:
@@ -325,10 +332,10 @@ def _validate_current_book(current_book: Mapping[str, Any]) -> None:
                 raise PortfolioBasisError("current_book.anchor position avg_cost is invalid")
             if position["market_value"] is not None and (not _finite_number(position["market_value"]) or position["market_value"] <= 0):
                 raise PortfolioBasisError("current_book.anchor position market_value is invalid")
-            if not all(isinstance(position[key], str) and position[key] for key in ("market", "currency")):
+            if not isinstance(position["market"], str) or not position["market"] or not _currency(position["currency"]):
                 raise PortfolioBasisError("current_book.anchor position market/currency is invalid")
         if anchor["cash"] is not None:
-            if not isinstance(anchor["cash"], Mapping) or not all(isinstance(currency, str) and currency and _finite_number(amount)
+            if not isinstance(anchor["cash"], Mapping) or not all(_currency(currency) and _finite_number(amount)
                                                                    for currency, amount in anchor["cash"].items()):
                 raise PortfolioBasisError("current_book.anchor cash is invalid")
     holdings = current_book["holdings"]
@@ -345,7 +352,8 @@ def _validate_current_book(current_book: Mapping[str, Any]) -> None:
             raise PortfolioBasisError("current_book.holdings avg_cost is invalid")
         if holding["cost_total"] is not None and not _finite_number(holding["cost_total"]):
             raise PortfolioBasisError("current_book.holdings cost_total is invalid")
-        if not all(isinstance(holding[key], str) and holding[key] for key in ("currency", "market", "origin", "since", "cycle_id")):
+        if (not _currency(holding["currency"])
+                or not all(isinstance(holding[key], str) and holding[key] for key in ("market", "origin", "since", "cycle_id"))):
             raise PortfolioBasisError("current_book.holdings identity is invalid")
         _date(holding["since"], "current_book.holdings.since")
         if isinstance(holding["add_count"], bool) or not isinstance(holding["add_count"], int) or holding["add_count"] < 0:
@@ -413,8 +421,8 @@ def validate_portfolio_basis(value: Mapping[str, Any]) -> None:
         raise PortfolioBasisError("state_version does not match the declared current-book state")
 
 
-def _projection_entry(value, source, reason):
-    return {"value": value, "weight": None, "source": source,
+def _projection_entry(value, source, reason, currency):
+    return {"value": value, "weight": None, "source": source, "currency": currency,
             "applicable": False, "reason": reason}
 
 
@@ -441,6 +449,22 @@ def sizing_projection(basis):
     if basis is None:
         return None
     holdings = basis.current_book["holdings"]
+    currencies = sorted({holding["currency"] for holding in holdings.values()})
+    # A price/cost fallback is denominated in the holding's native currency.
+    # Until a later domain contract supplies a canonical FX valuation frame,
+    # summing a USD and TWD value would be a fabricated portfolio number.
+    # Keep identities only in coverage and expose no ununit aggregate values.
+    if len(currencies) > 1:
+        values = {ticker: _projection_entry(None, "unavailable", "mixed_native_currencies",
+                                             holdings[ticker]["currency"])
+                  for ticker in sorted(holdings)}
+        coverage = {"scope": "unavailable_mixed_currency", "total_holdings": len(holdings),
+                    "valued_holdings": 0, "priced": [], "cost_fallback": [],
+                    "unavailable": sorted(holdings), "currencies": currencies}
+        projection = SizingProjection(denominator=None, values=values, coverage=coverage,
+                                      applicable=False, reason="mixed_native_currencies")
+        validate_sizing_projection(projection.to_dict())
+        return projection
     manifest = basis.current_book.get("valuation_manifest")
     prices = (manifest or {}).get("prices") or {}
     values, priced, cost_fallback, unavailable = {}, [], [], []
@@ -451,13 +475,13 @@ def sizing_projection(basis):
             value = float(shares) * float(price)
             if not math.isfinite(value):
                 return None
-            values[ticker] = _projection_entry(value, "price", None)
+            values[ticker] = _projection_entry(value, "price", None, holding["currency"])
             priced.append(ticker)
         elif _finite_number(cost_total) and cost_total > 0:
-            values[ticker] = _projection_entry(float(cost_total), "cost_fallback", None)
+            values[ticker] = _projection_entry(float(cost_total), "cost_fallback", None, holding["currency"])
             cost_fallback.append(ticker)
         else:
-            values[ticker] = _projection_entry(None, "unavailable", "value_unavailable")
+            values[ticker] = _projection_entry(None, "unavailable", "value_unavailable", holding["currency"])
             unavailable.append(ticker)
     valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
     try:
@@ -485,7 +509,8 @@ def sizing_projection(basis):
                 entry["reason"] = "denominator_unavailable"
     coverage = {"scope": "full_current_book" if not unavailable else "bounded_valued_subset",
                 "total_holdings": len(holdings), "valued_holdings": len(valued),
-                "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable}
+                "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable,
+                "currencies": currencies}
     projection = SizingProjection(denominator=denominator, values=values, coverage=coverage,
                                   applicable=applicable, reason=reason)
     validate_sizing_projection(projection.to_dict())
@@ -502,9 +527,9 @@ def validate_sizing_projection(value):
         raise PortfolioBasisError("sizing_projection denominator is invalid")
     if value["applicable"] != (value["reason"] is None) or value["applicable"] != (denominator is not None):
         raise PortfolioBasisError("sizing_projection applicability disagrees")
-    _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable"},
+    _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable", "currencies"},
                 "sizing_projection.coverage")
-    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset"}:
+    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}:
         raise PortfolioBasisError("sizing_projection coverage scope is invalid")
     if any(isinstance(coverage[k], bool) or not isinstance(coverage[k], int) or coverage[k] < 0
            for k in ("total_holdings", "valued_holdings")):
@@ -513,20 +538,36 @@ def validate_sizing_projection(value):
     if not all(isinstance(coverage[k], list) and all(isinstance(t, str) and t for t in coverage[k]) for k in groups):
         raise PortfolioBasisError("sizing_projection coverage tickers are invalid")
     sets = [set(coverage[k]) for k in groups]
+    currencies = coverage["currencies"]
+    if not isinstance(currencies, list):
+        raise PortfolioBasisError("sizing_projection coverage currencies are invalid")
+    if ((not currencies and coverage["total_holdings"] != 0)
+            or any(not _currency(currency) for currency in currencies)
+            or len(currencies) != len(set(currencies))):
+        raise PortfolioBasisError("sizing_projection coverage currencies are invalid")
     if (any(len(coverage[k]) != len(tickers) for k, tickers in zip(groups, sets))
             or coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
             or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))
-            or coverage["scope"] != ("full_current_book" if not sets[2] else "bounded_valued_subset")):
+            or (coverage["scope"] == "full_current_book" and bool(sets[2]))
+            or (coverage["scope"] == "bounded_valued_subset" and not sets[2])):
         raise PortfolioBasisError("sizing_projection coverage disagrees")
+    mixed = len(currencies) > 1
+    if mixed != (coverage["scope"] == "unavailable_mixed_currency"):
+        raise PortfolioBasisError("sizing_projection currency scope disagrees")
+    if mixed and (value["applicable"] or value["reason"] != "mixed_native_currencies"
+                  or denominator is not None or sets[0] or sets[1]):
+        raise PortfolioBasisError("sizing_projection mixed currency must be unavailable")
     weight_sum = 0.0
     for ticker, entry in value["values"].items():
         if not isinstance(ticker, str) or not ticker:
             raise PortfolioBasisError("sizing_projection ticker is invalid")
-        _exact_keys(entry, {"value", "weight", "source", "applicable", "reason"}, "sizing_projection value")
-        if entry["source"] not in _VALUE_SOURCES or not isinstance(entry["applicable"], bool):
+        _exact_keys(entry, {"value", "weight", "source", "currency", "applicable", "reason"}, "sizing_projection value")
+        if (entry["source"] not in _VALUE_SOURCES or not _currency(entry["currency"])
+                or not isinstance(entry["applicable"], bool)):
             raise PortfolioBasisError("sizing_projection value source is invalid")
         if entry["source"] == "unavailable":
-            if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != "value_unavailable":
+            expected_reason = "mixed_native_currencies" if mixed else "value_unavailable"
+            if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != expected_reason:
                 raise PortfolioBasisError("sizing_projection unavailable value is invalid")
             if ticker not in sets[2]:
                 raise PortfolioBasisError("sizing_projection unavailable source disagrees with coverage")
@@ -547,6 +588,8 @@ def validate_sizing_projection(value):
             raise PortfolioBasisError("sizing_projection price source disagrees with coverage")
         if entry["source"] == "cost_fallback" and ticker not in sets[1]:
             raise PortfolioBasisError("sizing_projection cost source disagrees with coverage")
+    if currencies != sorted({entry["currency"] for entry in value["values"].values()}):
+        raise PortfolioBasisError("sizing_projection coverage currencies disagree")
     if value["applicable"] and not math.isclose(weight_sum, 1.0, rel_tol=_PROJECTION_REL_TOL,
                                                   abs_tol=_PROJECTION_ABS_TOL):
         raise PortfolioBasisError("sizing_projection weights do not sum to one")
