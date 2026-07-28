@@ -317,7 +317,7 @@ def _global_values(snapshot, native_values):
     currencies = sorted({row["currency"] for row in snapshot["positions"]})
     mixed = len(currencies) > 1
     fx_gaps = sorted(currency for currency in currencies if currency not in snapshot["fx"]) if mixed else []
-    if not native_values or not snapshot["is_complete"] or fx_gaps:
+    if not native_values or fx_gaps:
         return {}, currencies, fx_gaps
     currency_by_ticker = {row["ticker"]: row["currency"] for row in snapshot["positions"]}
     if not mixed:
@@ -538,12 +538,7 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
     if fx_gaps:
         data_integrity["fx_gaps"] = fx_gaps
     if not weights_available:
-        if not snapshot["is_complete"]:
-            reason = "incomplete_snapshot"
-        elif basis is None:
-            reason = "incomplete_valuation"
-        else:
-            reason = "fx_gap"
+        reason = "incomplete_valuation" if basis is None else "fx_gap"
         data_integrity["weights_unavailable_reason"] = reason
 
     size = next((row for row in dimensions if row.get("dim") == "部位 sizing"), {})
