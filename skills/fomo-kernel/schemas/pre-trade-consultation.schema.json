@@ -70,14 +70,15 @@
         "valuation_coverage": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable"],
+          "required": ["scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable", "currencies"],
           "properties": {
-            "scope": {"enum": ["full_current_book", "bounded_valued_subset"]},
+            "scope": {"enum": ["full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"]},
             "total_holdings": {"type": "integer", "minimum": 0},
             "valued_holdings": {"type": "integer", "minimum": 0},
             "priced": {"type": "array", "items": {"type": "string"}},
             "cost_fallback": {"type": "array", "items": {"type": "string"}},
-            "unavailable": {"type": "array", "items": {"type": "string"}}
+            "unavailable": {"type": "array", "items": {"type": "string"}},
+            "currencies": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{3}$"}}
           },
           "description": "Canonical sizing projection coverage for a ledger-backed current-book consultation. This makes mixed price/cost fallback visible; absent on the separate CSV compatibility lane."
         }

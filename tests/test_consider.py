@@ -127,6 +127,12 @@ def _check_consultation_shape(row):
     assert set(basis_schema["required"]) <= set(row["basis"])
     assert row["basis"]["source"] in basis_schema["properties"]["source"]["enum"]
     assert isinstance(row["basis"]["stale_days"], int) and row["basis"]["stale_days"] >= 0
+    if "valuation_coverage" in row["basis"]:
+        coverage_schema = basis_schema["properties"]["valuation_coverage"]
+        coverage = row["basis"]["valuation_coverage"]
+        assert set(coverage) == set(coverage_schema["properties"])
+        assert coverage["scope"] in coverage_schema["properties"]["scope"]["enum"]
+        assert coverage["currencies"] == sorted(coverage["currencies"])
 
     consequence_schema = CONSULTATION_SCHEMA["properties"]["consequence"]
     assert set(consequence_schema["required"]) <= set(row["consequence"])
@@ -332,6 +338,7 @@ def test_ledger_path_consumes_and_discloses_the_canonical_portfolio_basis():
         assert row["basis"]["state_version"].startswith("pb-v1:")
         assert row["basis"]["valuation_coverage"]["scope"] == "full_current_book"
         assert row["basis"]["valuation_coverage"]["cost_fallback"] == ["NVDA"]
+        assert row["basis"]["valuation_coverage"]["currencies"] == ["USD"]
         _check_consultation_shape(row)
 
 
@@ -425,6 +432,22 @@ def test_consider_refuses_partial_or_unverified_current_book_claims():
                        "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}')
             _fails(run, "not a complete declared current book")
             assert not os.path.exists(_consultation_path(tmp))
+
+
+def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
+    """#497: native USD/TWD values have no canonical aggregate without an
+    FX frame.  The #496 projection must therefore stop consider before it can
+    persist or expose sizing, concentration, or rule-collision output."""
+    events = [_snapshot_event("2026-01-01", [
+        {"ticker": "USD", "shares": 2, "avg_cost": 10.0, "market": "US", "currency": "USD"},
+        {"ticker": "TWD", "shares": 3, "avg_cost": 100.0, "market": "TW", "currency": "TWD"},
+    ])]
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "USD", "side": "buy", "price": 15.0, "qty": 1}')
+        _fails(run, "no full current-book sizing projection")
+        assert not os.path.exists(_consultation_path(tmp))
 
 
 def test_same_day_ledger_mutation_changes_the_frozen_basis_version():
