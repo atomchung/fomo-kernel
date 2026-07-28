@@ -31,6 +31,11 @@ _VALUATION_BASES = {"unpriced", "priced"}
 _VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
 _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
                        "non_positive_denominator", "mixed_native_currencies"}
+# trade_recap.current_book_projection consumes value_partition below (#477:
+# one classification, physically shared); its wrapper's output vocabulary is
+# additionally locked to these constants by a test in test_engine_units.py,
+# so keep them the single spelling.
+_COVERAGE_SCOPES = {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -606,6 +611,65 @@ def validate_portfolio_basis(value: Mapping[str, Any]) -> None:
         raise PortfolioBasisError("state_version does not match the declared current-book state")
 
 
+def value_partition(rows):
+    """Single-currency value/weight partition — the ONE classification.
+
+    ``rows`` is an iterable of ``(ticker, price, shares, cost_total)``; order
+    is preserved (callers choose their own iteration order and tie-breaks).
+    Classification per row: a finite positive ``price`` values the row at
+    ``shares * price`` (source ``price``); otherwise a finite positive
+    ``cost_total`` values it at cost (source ``cost_fallback``); otherwise the
+    row is ``unavailable`` and never enters the denominator.
+
+    This function is consumed by BOTH ``sizing_projection``'s replay lane and
+    ``trade_recap.current_book_projection`` (#477, owner ruling): the v1 card
+    pipeline cannot build a ``PortfolioBasis`` (no ledger at that layer), but
+    the classification arithmetic must be physically shared, not mirrored —
+    the two surfaces describe one book, and a documentation-level
+    synchronization duty is invisible to half the maintaining agents.
+
+    Returns ``{values, priced, cost_fallback, unavailable, denominator,
+    reason, overflow}``. Entries are currency-free; callers wrap or extend
+    them for their own contract (``sizing_projection`` re-adds ``currency``
+    and its stricter overflow fail-closed policy on top).
+    """
+    values, priced, cost_fallback, unavailable = {}, [], [], []
+    for ticker, price, shares, cost_total in rows:
+        if _finite_number(price) and price > 0:
+            values[ticker] = {"value": float(shares) * float(price), "weight": None,
+                              "source": "price", "applicable": False, "reason": None}
+            priced.append(ticker)
+        elif _finite_number(cost_total) and cost_total > 0:
+            values[ticker] = {"value": float(cost_total), "weight": None,
+                              "source": "cost_fallback", "applicable": False, "reason": None}
+            cost_fallback.append(ticker)
+        else:
+            values[ticker] = {"value": None, "weight": None, "source": "unavailable",
+                              "applicable": False, "reason": "value_unavailable"}
+            unavailable.append(ticker)
+    valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
+    overflow = False
+    try:
+        denominator = math.fsum(valued) if valued else None
+    except OverflowError:
+        denominator, overflow = None, True
+    if not values:
+        reason = "empty_current_book"
+    elif denominator is None:
+        reason = "no_valued_holdings"
+    elif not math.isfinite(denominator) or denominator <= 0:
+        reason = "non_positive_denominator"
+    else:
+        reason = None
+    if reason is None:
+        for entry in values.values():
+            if entry["value"] is not None:
+                entry.update(weight=entry["value"] / denominator, applicable=True, reason=None)
+    return {"values": values, "priced": priced, "cost_fallback": cost_fallback,
+            "unavailable": unavailable, "denominator": denominator,
+            "reason": reason, "overflow": overflow}
+
+
 def _projection_entry(value, source, reason, currency):
     return {"value": value, "weight": None, "source": source, "currency": currency,
             "applicable": False, "reason": reason}
@@ -714,48 +778,31 @@ def sizing_projection(basis):
         return projection
     manifest = basis.current_book.get("valuation_manifest")
     prices = (manifest or {}).get("prices") or {}
-    values, priced, cost_fallback, unavailable = {}, [], [], []
-    for ticker in sorted(holdings):
-        holding = holdings[ticker]
-        shares, price, cost_total = holding["shares"], prices.get(ticker), holding["cost_total"]
-        if _finite_number(price) and price > 0:
-            value = float(shares) * float(price)
-            if not math.isfinite(value):
-                return None
-            values[ticker] = _projection_entry(value, "price", None, holding["currency"])
-            priced.append(ticker)
-        elif _finite_number(cost_total) and cost_total > 0:
-            values[ticker] = _projection_entry(float(cost_total), "cost_fallback", None, holding["currency"])
-            cost_fallback.append(ticker)
-        else:
-            values[ticker] = _projection_entry(None, "unavailable", "value_unavailable", holding["currency"])
-            unavailable.append(ticker)
-    valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
-    try:
-        denominator = math.fsum(valued) if valued else None
-    except OverflowError:
+    # #477: the classification/denominator/weight arithmetic is value_partition,
+    # shared verbatim with trade_recap.current_book_projection. This lane keeps
+    # only its own stricter fail-closed policy on top: any overflow — a priced
+    # value or the denominator leaving the finite range — yields no projection
+    # at all rather than an inapplicable one (pre-#477 behavior, unchanged).
+    part = value_partition((ticker, prices.get(ticker), holdings[ticker]["shares"],
+                            holdings[ticker]["cost_total"]) for ticker in sorted(holdings))
+    for entry in part["values"].values():
+        if entry["value"] is not None and not math.isfinite(entry["value"]):
+            return None
+    if part["overflow"] or (part["denominator"] is not None
+                            and not math.isfinite(part["denominator"])):
         return None
-    if denominator is not None and not math.isfinite(denominator):
-        return None
-    if not holdings:
-        reason = "empty_current_book"
-    elif denominator is None:
-        reason = "no_valued_holdings"
-    elif not math.isfinite(denominator) or denominator <= 0:
-        reason = "non_positive_denominator"
-    else:
-        reason = None
+    values = {ticker: dict(entry, currency=holdings[ticker]["currency"])
+              for ticker, entry in part["values"].items()}
+    priced, cost_fallback, unavailable = part["priced"], part["cost_fallback"], part["unavailable"]
+    denominator, reason = part["denominator"], part["reason"]
     applicable = reason is None
-    if applicable:
-        for entry in values.values():
-            if entry["value"] is not None:
-                entry.update(weight=entry["value"] / denominator, applicable=True, reason=None)
-    elif denominator is not None:
+    if not applicable and denominator is not None:
         for entry in values.values():
             if entry["value"] is not None:
                 entry["reason"] = "denominator_unavailable"
     coverage = {"scope": "full_current_book" if not unavailable else "bounded_valued_subset",
-                "total_holdings": len(holdings), "valued_holdings": len(valued),
+                "total_holdings": len(holdings),
+                "valued_holdings": len(priced) + len(cost_fallback),
                 "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable,
                 "currencies": currencies}
     projection = SizingProjection(denominator=denominator, values=values, coverage=coverage,
@@ -776,7 +823,7 @@ def validate_sizing_projection(value, *, basis=None):
         raise PortfolioBasisError("sizing_projection applicability disagrees")
     _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable", "currencies"},
                 "sizing_projection.coverage")
-    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}:
+    if coverage["scope"] not in _COVERAGE_SCOPES:
         raise PortfolioBasisError("sizing_projection coverage scope is invalid")
     if any(isinstance(coverage[k], bool) or not isinstance(coverage[k], int) or coverage[k] < 0
            for k in ("total_holdings", "valued_holdings")):

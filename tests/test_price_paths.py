@@ -137,7 +137,8 @@ def test_last_px_covers_held_only_tickers():
 
     # 下游③:ticker_diagnosis 對 held-only 倉位給得出現價相關診斷
     #(impact=未實現 +300;too_heavy wpct / disciplined_hold cur 都得靠 last_px 才算得出)
-    td = tr.ticker_diagnosis(rts, {}, held, last_px)
+    td = tr.ticker_diagnosis(rts, {}, held, last_px,
+                             sizing_weights=tr.dim_size([], held, last_px)["weights"])
     bbb = next((d for d in td if d["ticker"] == "BBB"), None)
     assert bbb is not None and abs(bbb["impact"] - 300.0) < 1e-9, \
         f"BBB 的 impact 應為未實現 +300,實得 {bbb}"
@@ -546,19 +547,22 @@ def test_thesis_q_generated_for_suspect_positions():
     """thesis_q(SKILL Step 2 對話素材)的兩個生成分支:現虧問『還信嗎』、現賺問『合理化?』。"""
     td = tr.ticker_diagnosis(
         [], {"TTT": dict(cls="疑似凹單", n_adds=5, loss_ratio=1.0)},
-        {"TTT": (10.0, 2000.0)}, {"TTT": 100.0})              # cur = −50%
+        {"TTT": (10.0, 2000.0)}, {"TTT": 100.0},              # cur = −50%
+        sizing_weights=tr.dim_size([], {"TTT": (10.0, 2000.0)}, {"TTT": 100.0})["weights"])
     q = next((d["thesis_q"] for d in td if d["ticker"] == "TTT"), None)
     assert q and "還相信當初買它的理由" in q, f"現虧的疑似凹單應問『還信嗎』:{q}"
 
     td2 = tr.ticker_diagnosis(
         [], {"UUU": dict(cls="待確認", n_adds=4, loss_ratio=0.6)},
-        {"UUU": (10.0, 500.0)}, {"UUU": 100.0})               # cur = +100%
+        {"UUU": (10.0, 500.0)}, {"UUU": 100.0},               # cur = +100%
+        sizing_weights=tr.dim_size([], {"UUU": (10.0, 500.0)}, {"UUU": 100.0})["weights"])
     q2 = next((d["thesis_q"] for d in td2 if d["ticker"] == "UUU"), None)
     assert q2 and "合理化" in q2, f"現賺的待確認應問『定投還是合理化』:{q2}"
 
     td3 = tr.ticker_diagnosis(
         [], {"VVV": dict(cls="疑似定投", n_adds=6, loss_ratio=0.2)},
-        {"VVV": (10.0, 1000.0)}, {"VVV": 150.0})
+        {"VVV": (10.0, 1000.0)}, {"VVV": 150.0},
+        sizing_weights=tr.dim_size([], {"VVV": (10.0, 1000.0)}, {"VVV": 150.0})["weights"])
     assert all(d["thesis_q"] is None for d in td3), "疑似定投不問 thesis(別審問)"
 
 

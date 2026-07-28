@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
 import horizon as hz  # noqa: E402  # #148 item5:horizon 時間軸矛盾(純狀態側,閾值下沉)
 import perf as pf  # noqa: E402  # #171 B 路線:XIRR solver(純函式;#164 已部署 XIRR 未來共用)
+import portfolio_basis as pb  # noqa: E402  # #477 J3:current_book_projection 詞彙 drift 鎖
 from test_support import preserve_driver_state  # noqa: E402
 
 _SKIP = "__skip__"        # 與 test_sample_styles 一致的 skip 哨兵(本檔暫無 network 測試)
@@ -737,6 +738,189 @@ def test_build_state_echoes_position_cap_override():
                           max_pos_override=5)["max_position_pct"] is None, "壞值 fail-closed → None"
 
 
+# ─────── J3. current_book_projection():dim_size × ticker_diagnosis 分母合一(#477) ───────
+#
+# #324/#481 已把診斷/處方的觸發「線」對齊到同一個 effective_oversize_trigger;這裡收的是
+# #477 剩下那一半——分母。dim_size 舊算式對缺價的檔用成本近似(從不掉檔),ticker_diagnosis
+# 舊算式只加總有現價的檔(缺價檔 mval 恆為 0,wpct 恆為 0,too_heavy 永遠抓不到它),同一本
+# 帳兩個權重。current_book_projection() 現在是兩邊唯一的分母/權重來源。
+
+def test_current_book_projection_full_single_currency_book_shares_one_weight():
+    """完整單一幣別帳本(有檔缺現價、走成本近似)——dim_size 的權重與 ticker_diagnosis
+    too_heavy 的 wpct 必須是同一個數字,不是分別加總出來、恰好接近的兩個數字。"""
+    # BIG/SMALL 有現價;NOPX 目前持有但缺現價,只能走成本近似——這正是舊 bug 的分歧點:
+    # dim_size 把 NOPX 的成本 3800 算進分母,ticker_diagnosis 舊碼完全不算(mval 恆 0)。
+    held = {"BIG": (10.0, 4000.0), "SMALL": (10.0, 500.0), "NOPX": (10.0, 3800.0)}
+    last_px = {"BIG": 600.0, "SMALL": 100.0}   # NOPX 缺現價
+    d_size = tr.dim_size([], held, last_px)
+    assert d_size["applicable"] is True
+    total = 6000.0 + 1000.0 + 3800.0
+    assert _approx(d_size["weights"]["BIG"], 6000.0 / total)
+    assert _approx(d_size["weights"]["NOPX"], 3800.0 / total), \
+        "NOPX 的成本必須進分母,舊碼的 ticker_diagnosis 端完全看不到這筆"
+    assert d_size["sizing_coverage"] == {
+        "scope": "full_current_book", "total_holdings": 3, "valued_holdings": 3,
+        "priced": ["BIG", "SMALL"], "cost_fallback": ["NOPX"], "unavailable": [],
+    }
+    # NOPX 沒現價 → unrealized 恆 0,只有「已實現」的過去交易能讓它擠進 ticker_diagnosis
+    # 的輸出名單(impact 門檻);用一筆真實 round-trip 給它非零 impact。
+    rts = [_RT("NOPX", 100.0, 150.0, qty=5)]   # realized = 5*(150-100) = 250
+    tdiag = tr.ticker_diagnosis(rts, {}, held, last_px, sizing_weights=d_size["weights"])
+    nopx = next(d for d in tdiag if d["ticker"] == "NOPX")
+    too_heavy = [t for t in nopx["tags"] if t["code"] == "too_heavy"]
+    assert too_heavy, f"NOPX 佔 {3800.0/total:.0%} > 25% 觸發線,應標 too_heavy,實得 {nopx['tags']}"
+    assert too_heavy[0]["params"]["wpct"] == d_size["weights"]["NOPX"], \
+        "too_heavy 的 wpct 必須跟 dim_size 的 weight 是同一個數字(同一個 float),不是兩次加總"
+
+
+def test_current_book_projection_frame_bound_mixed_currency_book_shares_one_weight():
+    """完整、換算後(usd_view)的混幣帳本——同一份 #477 分母合一在跨幣別視圖下也成立。
+    2330.TW 缺現價(只能用成本近似,換算後才能跟 AAPL 比大小);換算前台股名目金額
+    會假性壓垮權重(#51),換算後兩讀者仍必須讀同一個數字。"""
+    held = {"2330.TW": (1000.0, 900_000.0), "AAPL": (20.0, 4_000.0)}
+    cur_map = {"2330.TW": "TWD", "AAPL": "USD"}
+    fx = {"USD": 1.0, "TWD": 1.0 / 30.0}
+    last_px = {"AAPL": 300.0}                  # 2330.TW 缺現價,只有 AAPL 有
+    rts = [_RT("2330.TW", 900.0, 1000.0, qty=10)]   # 原幣 TWD 的已實現round-trip
+    rts_u, held_u, lastpx_u = tr.usd_view(rts, held, last_px, cur_map, fx)
+
+    d_size = tr.dim_size([], held_u, lastpx_u)
+    assert d_size["applicable"] is True
+    total = 30_000.0 + 6_000.0                 # 900k/30 (成本近似) + 20*300
+    assert _approx(d_size["weights"]["2330.TW"], 30_000.0 / total)
+    assert d_size["sizing_coverage"]["cost_fallback"] == ["2330.TW"]
+
+    tdiag = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u, sizing_weights=d_size["weights"])
+    row = next(d for d in tdiag if d["ticker"] == "2330.TW")
+    too_heavy = [t for t in row["tags"] if t["code"] == "too_heavy"]
+    assert too_heavy, f"2330.TW 佔 {30_000.0/total:.0%} > 25%,應標 too_heavy,實得 {row['tags']}"
+    assert too_heavy[0]["params"]["wpct"] == d_size["weights"]["2330.TW"], \
+        "混幣換算後,too_heavy 的 wpct 仍必須是 dim_size 的同一個 weight"
+
+
+def test_current_book_projection_bounded_valued_subset_names_unavailable_ticker():
+    """真正的估值缺口(既無現價也無正成本基礎)——這是缺輸入事實的誠實揭露(bounded_
+    valued_subset),不是 #485 已廢除的帳戶完整性本體論。GONE 不進分母、不進權重,
+    但不能讓 BIG 的權重跟著跑掉,也不能讓 too_heavy 誤判 GONE。"""
+    held = {"BIG": (10.0, 6000.0), "GONE": (5.0, 0.0)}   # GONE:cost_total=0,非正,視同無成本
+    last_px = {"BIG": 600.0}
+    projection = tr.current_book_projection(held, last_px)
+    assert projection["applicable"] is True
+    assert projection["coverage"]["scope"] == "bounded_valued_subset"
+    assert projection["coverage"]["unavailable"] == ["GONE"]
+    assert projection["values"]["GONE"]["weight"] is None
+    assert projection["values"]["GONE"]["applicable"] is False
+    assert projection["values"]["GONE"]["reason"] == "value_unavailable"
+    assert _approx(projection["values"]["BIG"]["weight"], 1.0), \
+        "唯一能估值的 BIG 應獨佔 100%,GONE 完全不進分母"
+
+    d_size = tr.dim_size([], held, last_px)
+    assert d_size["applicable"] is True and "GONE" not in d_size["weights"]
+    assert d_size["sizing_coverage"]["unavailable"] == ["GONE"]
+
+    rts = [_RT("GONE", 10.0, 12.0, qty=5)]     # 給 GONE 非零 impact,讓它擠進診斷名單
+    tdiag = tr.ticker_diagnosis(rts, {}, held, last_px, sizing_weights=d_size["weights"])
+    gone = next(d for d in tdiag if d["ticker"] == "GONE")
+    assert not any(t["code"] == "too_heavy" for t in gone["tags"]), \
+        "current_book_projection 判不出價值的檔,絕不能標 too_heavy(無 wpct 可判)"
+
+
+def test_current_book_projection_zero_denominator_keeps_both_surfaces_inapplicable():
+    """零/無分母(空倉,或滿倉都估不出值)——兩個讀者都必須維持不適用,不能翻成讚美、
+    洞、處方、問題事件或規矩破線(#477 不變式 4)。"""
+    empty = tr.current_book_projection({}, {})
+    assert empty["applicable"] is False and empty["reason"] == "empty_current_book"
+
+    held = {"A": (5.0, 0.0), "B": (3.0, -1.0)}   # 兩檔都無現價、成本也非正 → 全無可估值
+    none_valued = tr.current_book_projection(held, {})
+    assert none_valued["applicable"] is False and none_valued["reason"] == "no_valued_holdings"
+    assert none_valued["coverage"]["unavailable"] == ["A", "B"]
+
+    d_size = tr.dim_size([], held, {})
+    assert d_size["applicable"] is False and d_size["triggered"] is False
+    assert d_size["weights"] == {} and d_size["max_pct"] is None
+    # 不適用的維度不該被排進頭號洞、也不該被 prescribe 開處方(既有防線,這裡只鎖回歸)。
+    assert not tr._rank_holes([d_size])
+    assert not [r for r in tr.prescribe(None, [d_size], {}) if r.get("code") == "cut_oversize"]
+
+    rts = [_RT("A", 10.0, 20.0, qty=5)]
+    tdiag = tr.ticker_diagnosis(rts, {}, held, {}, sizing_weights=d_size["weights"])
+    a = next(d for d in tdiag if d["ticker"] == "A")
+    assert not any(t["code"] == "too_heavy" for t in a["tags"]), \
+        "整體投影不適用時,too_heavy 不准對任何一檔開火"
+
+
+def test_ticker_diagnosis_requires_sizing_weights():
+    """sizing_weights 必填——先前版本留了「省略就對自己的 held 重算」的 fallback,
+    外部審查(Codex, 2026-07-28)給出重現:main() 餵診斷的是殘倉過濾後的 held_dx,
+    對子集重算的分母 ≠ dim_size 全帳分母(全帳 A=90%/B=10%,對 {A} 重算得 100%),
+    正是 #477 要消滅的第二分母路徑。省略必須炸,不准靜默重算。"""
+    held = {"BIG": (10.0, 4000.0), "NOPX": (10.0, 3800.0)}
+    last_px = {"BIG": 600.0}
+    rts = [_RT("NOPX", 100.0, 150.0, qty=5)]
+    try:
+        tr.ticker_diagnosis(rts, {}, held, last_px)   # sizing_weights 省略
+    except ValueError as exc:
+        assert "sizing_weights" in str(exc)
+    else:
+        raise AssertionError("省略 sizing_weights 必須 raise,不准退回自算的第二分母")
+
+
+def test_negative_cost_ticker_is_excluded_not_a_whole_book_veto():
+    """壞資料(負成本)檔改為排除+具名揭露,其餘檔正常判斷——外部審查(Codex,
+    2026-07-28)以 MAJOR 提出這是行為變化:舊碼把 -500 加進分母,總和 ≤0 → 整本帳
+    inapplicable(一筆壞資料讓所有判斷閉嘴)。新行為即 #485 owner 裁決「不可用的
+    部分排除並揭露,不整份拒答」在本層的形狀,刻意保留並在此釘住。"""
+    held = {"A": (1.0, 100.0), "B": (1.0, -500.0)}
+    last_px = {"A": 200.0}
+    projection = tr.current_book_projection(held, last_px)
+    assert projection["applicable"] is True, \
+        "舊碼:200+(-500)=-300 → 整本 inapplicable;新碼:B 排除,A 正常判斷"
+    assert projection["coverage"]["unavailable"] == ["B"], "壞成本檔必須被具名揭露"
+    assert _approx(projection["values"]["A"]["weight"], 1.0)
+    d_size = tr.dim_size([], held, last_px)
+    assert d_size["applicable"] is True and d_size["sizing_coverage"]["unavailable"] == ["B"]
+    rts = [_RT("A", 10.0, 20.0, qty=5)]
+    tdiag = tr.ticker_diagnosis(rts, {}, held, last_px, sizing_weights=d_size["weights"])
+    a = next(d for d in tdiag if d["ticker"] == "A")
+    assert any(t["code"] == "too_heavy" for t in a["tags"]), \
+        "A 獨佔可估值帳面 100% > 25%,too_heavy 應正常開火,不被 B 的壞資料拖進沉默"
+
+
+def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
+    """分類算術已物理共用(portfolio_basis.value_partition,owner 裁決 2026-07-28:
+    「讀原始分類,不要創建一份」),不再有可漂移的鏡像。本測試降級為殼層鎖:
+    current_book_projection 的組裝殼(coverage/scope/reason 轉寫)仍是 trade_recap
+    自己的程式碼,這裡鎖住殼的輸出詞彙 == portfolio_basis 的模組常數,防殼層
+    改寫時偏離契約詞彙。取樣走遍每條輸出路徑(priced/cost_fallback/unavailable/
+    空倉/全不可估值)。"""
+    samples = [
+        tr.current_book_projection({"P": (1.0, 10.0), "C": (1.0, 10.0), "U": (1.0, 0.0)},
+                                   {"P": 5.0}),
+        tr.current_book_projection({"P": (1.0, 10.0)}, {"P": 5.0}),
+        tr.current_book_projection({}, {}),
+        tr.current_book_projection({"U": (1.0, 0.0)}, {}),
+    ]
+    sources = {e["source"] for s in samples for e in s["values"].values()}
+    assert sources == pb._VALUE_SOURCES, \
+        f"value source 詞彙偏離 portfolio_basis._VALUE_SOURCES: {sources}"
+    scopes = {s["coverage"]["scope"] for s in samples}
+    assert scopes <= pb._COVERAGE_SCOPES and len(scopes) == 2, \
+        f"coverage scope 詞彙偏離 portfolio_basis._COVERAGE_SCOPES: {scopes}"
+    proj_reasons = {s["reason"] for s in samples}
+    assert proj_reasons <= pb._PROJECTION_REASONS, \
+        f"projection reason 詞彙偏離 portfolio_basis._PROJECTION_REASONS: {proj_reasons}"
+    # 兩個枚舉本函式構造不出(混幣在 usd_view 上游已收斂;非正分母要 shares*px 相消),
+    # 但 non_positive_denominator 在程式碼裡是活分支——留給未來輸入,不斷言可達性。
+    entry_reasons = {e["reason"] for s in samples for e in s["values"].values()} - {None}
+    assert entry_reasons == {"value_unavailable"}, \
+        f"per-ticker reason 應與 portfolio_basis._projection_entry 同拼字: {entry_reasons}"
+    # coverage 鍵形狀 = portfolio_basis 的 _exact_keys 集合減 currencies(本函式無幣別
+    # 概念,docstring 已記錄這個刻意差異)。
+    assert set(samples[0]["coverage"]) == {"scope", "total_holdings", "valued_holdings",
+                                           "priced", "cost_fallback", "unavailable"}
+
+
 # ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
 
 def _card_from(dims, rx):
@@ -929,9 +1113,10 @@ def test_ticker_diagnosis_ranks_on_aggregate_currency():
     cur_map = {"2330.TW": "TWD", "NVDA": "USD"}
     fx = {"USD": 1.0, "TWD": 1.0 / 30.0}
     rts_u, held_u, lastpx_u = tr.usd_view(rts, {}, {}, cur_map, fx)
-    out = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u)
+    out = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u,
+                              sizing_weights=tr.dim_size([], held_u, lastpx_u)["weights"])
     assert out[0]["ticker"] == "NVDA", f"USD 視圖下 NVDA(+5k)應排第一,得 {out[0]['ticker']}"
-    raw = tr.ticker_diagnosis(rts, {}, {}, {})               # 對照:原幣名目讓 2330 假性第一
+    raw = tr.ticker_diagnosis(rts, {}, {}, {}, sizing_weights={})   # 對照:原幣名目讓 2330 假性第一
     assert raw[0]["ticker"] == "2330.TW"
 
 

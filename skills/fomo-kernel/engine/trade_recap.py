@@ -48,6 +48,9 @@ RESIDUAL_POS_TH = 0.001    # 殘倉閾值:市值佔全持倉 <0.1% = 噪音(股�
 # 只對齊了三處。現已併入 effective_oversize_trigger 同一事實源;
 # tests/test_sizing_literal_gate.py 機械把關「engine/ 裡不准再有第五處硬編這兩個常數的值」,
 # 不再靠人眼複查這段註解有沒有被下一個人讀到。
+# #477 第二段:觸發線對齊後,分母仍各吹各的號——dim_size 含成本近似(從不掉檔),
+# ticker_diagnosis 只認有現價的檔(缺價的檔佔比算成 0,too_heavy 永遠不會抓到它)。
+# 兩者現在都讀 current_book_projection() 這唯一算式(該函式文件字串有完整前因)。
 OVERSIZE_TRIGGER = 0.25    # 超過即把 sizing 標成洞 + 開 cut_oversize 處方(診斷=處方同一條線)
 OVERSIZE_SEV_SPAN = 0.25   # severity 從觸發線線性升到 1.0 的跨度(觸發線 + span = 滿格;預設 25%→50%)
 POSITION_CAP = 0.20        # cut_oversize 規矩建議壓到的上限(教練目標);renderer 端有 stdlib 副本,test_card_html 鎖同步
@@ -1116,25 +1119,70 @@ def dim_exit(rts, fwds, n_fwd=N_FWD):
                 n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc, n_fwd=n_fwd,
                 n_winners=n_winners, low_conf=low_conf)
 
-def dim_size(rows, held, last_px, max_pos_override=None):
-    # 用市值（有 yf）或成本算當前權重（rows 參數保留簽名相容;entry-size 序列已移除:
-    # 從未進輸出,且混幣下 cum 會跨幣別亂加 —— 兩輪 review 均判 dead code,2026-07-06 刪）
-    vals = {}
-    for t, (sh, cost) in held.items():
-        px = (last_px or {}).get(t)
-        vals[t] = sh * px if px else cost
-    tot = sum(vals.values())
+def current_book_projection(held, last_px):
+    """Canonical current-book value/weight partition, shared by ``dim_size``
+    and ``ticker_diagnosis`` (#477).
+
+    Both are card-facing readers of "how much of the book is this ticker".
+    #324 unified their trigger *threshold* (``effective_oversize_trigger``),
+    but each still summed its own denominator independently: ``dim_size``
+    priced-or-cost-total over every held ticker, ``ticker_diagnosis``
+    priced-only -- silently zeroing (never flagging ``too_heavy`` for) any
+    ticker it had no live price for, and printing ``{wpct_pct} of the
+    portfolio`` for a subset that was not actually the whole portfolio. One
+    book could show two different weights for the same ticker.
+
+    The classification arithmetic itself is ``portfolio_basis.value_partition``
+    -- physically the same function ``sizing_projection``'s replay lane runs,
+    per the owner ruling on #477: one classification, one place; a mirrored
+    copy plus a documentation synchronization duty is invisible to half the
+    maintaining agents and drifts. This wrapper only supplies the v1 frame:
+    ``held``/``last_px`` arrive already collapsed to one common currency
+    (``usd_view()`` runs upstream of every call site), so there is no ledger,
+    FX, or ``PortfolioBasis`` object at this layer -- and no arithmetic here.
+
+    Returns ``{denominator, values, coverage, applicable, reason}``.
+    ``values[ticker]`` is ``{value, weight, source, applicable, reason}``;
+    ``weight`` and ``applicable=True`` are set only when the whole projection
+    is applicable AND this specific ticker was valued -- a ticker with
+    neither a usable live price nor a positive cost basis is ``unavailable``
+    and carries no weight at all (excluded and named, never a silent zero).
+    """
+    px = last_px or {}
+    part = portfolio_basis.value_partition(
+        (ticker, px.get(ticker), shares, cost_total)
+        for ticker, (shares, cost_total) in held.items())
     # Current-book dimensions have no honest denominator when every position
     # has been closed (or the supplied values cannot form a positive book).
     # ``0%`` is a measurement in a real book, not a synonym for "there is no
-    # book to measure".  Keep the dimension-shaped payload for compatibility,
-    # but make its applicability explicit so every downstream consumer can
-    # centrally exclude it.
-    if not held or not math.isfinite(tot) or tot <= 0:
+    # book to measure".
+    coverage = {"scope": "full_current_book" if not part["unavailable"] else "bounded_valued_subset",
+                "total_holdings": len(held),
+                "valued_holdings": len(part["priced"]) + len(part["cost_fallback"]),
+                "priced": sorted(part["priced"]),
+                "cost_fallback": sorted(part["cost_fallback"]),
+                "unavailable": sorted(part["unavailable"])}
+    return {"denominator": part["denominator"], "values": part["values"],
+            "coverage": coverage, "applicable": part["reason"] is None,
+            "reason": part["reason"]}
+
+
+def dim_size(rows, held, last_px, max_pos_override=None):
+    # rows 參數保留簽名相容(entry-size 序列已移除:從未進輸出,且混幣下 cum 會跨幣別
+    # 亂加 —— 兩輪 review 均判 dead code,2026-07-06 刪)。
+    # #477:權重/分母改讀 current_book_projection() 這唯一算式,不再就地算
+    # vals[t]=sh*px if px else cost——那份邏輯後來被 ticker_diagnosis 獨立重算成
+    # 「只認有價格的檔」,同一張卡兩個權重(參見該函式 #477 註解)。
+    projection = current_book_projection(held, last_px)
+    # Keep the dimension-shaped payload for compatibility, but make
+    # applicability explicit so every downstream consumer can centrally
+    # exclude it (see current_book_projection's own docstring for why).
+    if not projection["applicable"]:
         return dict(dim="部位 sizing", tier=1, applicable=False,
                     triggered=False, severity=0, max_ticker=None, max_pct=None,
-                    avg_pct=None, weights={}, risk_weights={}, allocation_etfs={})
-    weights = {t: v / tot for t, v in vals.items()}
+                    avg_pct=None, weights={}, risk_weights={}, allocation_etfs={},
+                    sizing_coverage=projection["coverage"])
+    weights = {t: e["weight"] for t, e in projection["values"].items() if e["applicable"]}
     # 配置型 ETF 是一籃子資產,不拿「單一公司部位上限」誤殺。產業/主題/槓桿 ETF
     # 仍是集中風險;未知 ticker 保守視為 equity,不會因猜測而取得豁免。
     risk_weights = {t: w for t, w in weights.items()
@@ -1151,7 +1199,8 @@ def dim_size(rows, held, last_px, max_pos_override=None):
                 avg_pct=statistics.mean(others) if others else 0.0, weights=weights,
                 risk_weights=risk_weights,
                 allocation_etfs={t: w for t, w in weights.items()
-                                 if instrument_policy.is_diversified_allocation(t)})
+                                 if instrument_policy.is_diversified_allocation(t)},
+                sizing_coverage=projection["coverage"])
 
 def meaningful_tickers(held, last_px, floor=RESIDUAL_POS_TH):
     """回傳「非殘倉」的 ticker set:市值佔全持倉 ≥ floor(預設 0.1%)。市值缺價用成本近似。
@@ -1520,12 +1569,26 @@ def prescribe(ab, dims, overview, max_pos_override=None):
                        rule=f"單筆部位上限定死 {effective_position_cap(max_pos_override):.0%},超過就減"))
     return rx
 
-def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_n=7):
+def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_n=7,
+                     sizing_weights=None):
     """標的層診斷(對事不對人):每檔金額影響(已實現+未實現)+ 行為標籤,按 |金額| 排序只取 top。
     加碼用主從分類器(classify_adds)分疑似定投/凹單/待確認,不再用純結果判(避 outcome bias);
     出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。max_pos_override:too_heavy
-    的觸發線比照 dim_size/prescribe,讀用戶在 profile.json 設的單一部位上限(#477,對齊 #324)。"""
+    的觸發線比照 dim_size/prescribe,讀用戶在 profile.json 設的單一部位上限(#477,對齊 #324)。
+
+    sizing_weights:too_heavy 的佔比比照 dim_size 讀同一份 current_book_projection()
+    輸出(#477 第二段——診斷=處方的觸發線已對齊,但兩邊曾各自加總分母:dim_size 含成本
+    近似,ticker_diagnosis 只認有價格的檔,同一張卡兩個權重)。必填:呼叫端餵 dim_size(
+    rows, held_u, last_px, ...)["weights"],讓兩個讀者永遠讀同一個數字。不提供 fallback
+    ——留一條「省略就自己重算」的路,等於留一條可以吃到不同 held(如殘倉過濾後子集)的
+    第二分母路徑,外部審查已給出重現(全帳 A=90%/B=10%,對過濾後 {A} 重算得 A=100%),
+    正是 #477 要消滅的病。"""
     last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
+    if sizing_weights is None:
+        raise ValueError(
+            "ticker_diagnosis requires sizing_weights (feed dim_size(...)['weights']); "
+            "recomputing here could use a different held subset and revive the "
+            "second denominator #477 removed")
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
                                    cur_ret=None, mval=0.0, px=None, avg_cost=None))
     for r in rts:
@@ -1534,7 +1597,6 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
         if r.get("ret", 0) > 0 and r.get("fwd") is not None:
             a["win_n"] += 1
             if r["fwd"] > SELL_EARLY_TH: a["win_early"] += 1
-    tot_mval = sum(sh * last_px[t] for t, (sh, c) in held.items() if t in last_px) or 1.0
     for t, (sh, cost) in held.items():
         px = last_px.get(t)
         if px:
@@ -1552,7 +1614,9 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
     for t, a in agg.items():
         impact = a["realized"] + a["unreal"]
         if abs(impact) < 1: continue
-        cur, wpct, tags = a["cur_ret"], a["mval"] / tot_mval, []
+        # wpct=None(這檔不在 sizing_weights——投影不適用,或這檔沒有可估值的來源)
+        # 是「無法判定」,不是「佔比 0%」;too_heavy 下面因此明確跳過而非誤判未過重。
+        cur, wpct, tags = a["cur_ret"], sizing_weights.get(t), []
         ac = adds_class.get(t) or {}
         cls, n_adds = ac.get("cls"), ac.get("n_adds", 0)
         # #279 i18n phase 1: tags are stable codes + raw params; localized
@@ -1578,7 +1642,7 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
         if a["win_n"] >= 2 and a["win_early"] / a["win_n"] > 0.5:
             tags.append({"code": "sold_winner_early",
                          "params": {"win_early": a["win_early"], "win_n": a["win_n"]}})
-        if wpct > trigger and not instrument_policy.is_diversified_allocation(t):
+        if wpct is not None and wpct > trigger and not instrument_policy.is_diversified_allocation(t):
             tags.append({"code": "too_heavy", "params": {"wpct": wpct}})
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
             tags.append({"code": "disciplined_hold", "params": {"cur": cur, **px_cost}})
@@ -2117,6 +2181,12 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
         L.append({"key": "unrealized_coverage", "status": "partial",
                   "data": {"priced_n": cov.get("priced_n"), "held_n": cov.get("held_n"),
                            "unpriced": list(cov["unpriced"])}})
+    # #477:sizing/too_heavy 的分母有檔既無現價也無正成本基礎——這是缺輸入事實的誠實揭露
+    # (current_book_projection 的 bounded_valued_subset),不是 #485 廢除的帳戶完整性本體論;
+    # 排在 unrealized_coverage 之後同屬「這批數字漏了哪些檔」的敘事,不疊床架屋開新段落。
+    if di.get("sizing_unavailable"):
+        L.append({"key": "sizing_coverage", "status": "bounded",
+                  "data": {"tickers": list(di["sizing_unavailable"])}})
     # 賣超:賣量 > 已知買量,該檔盈虧已被忽略(對帳單沒涵蓋最早建倉)
     if di.get("orphan_sells"):
         L.append({"key": "orphan_sells", "status": "present",
@@ -2393,7 +2463,8 @@ def main():
     # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
     # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
     tdiag = ticker_diagnosis(rts_u, adds_class, held_dx, lastpx_u,   # #172 殘倉不列 per-ticker 診斷
-                             max_pos_override=max_pos_override)      # #477:too_heavy 觸發線比照 dim_size/prescribe,吃同一份用戶覆寫
+                             max_pos_override=max_pos_override,      # #477:too_heavy 觸發線比照 dim_size/prescribe,吃同一份用戶覆寫
+                             sizing_weights=d_size.get("weights"))   # #477:佔比也比照 dim_size 同一份 current_book_projection,不再各吹各的號
 
     # 資料完整性(賣超 / 未分類 driver)— 影響數據可信度,JSON 與人話卡共用同一份
     orphans = orphan_sells(rows)
@@ -2410,6 +2481,13 @@ def main():
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
     if price_plausibility:
         data_integrity["price_plausibility"] = price_plausibility   # #330:供給價與最近成交價落差過大,只揭露不擋跑
+    # #477:sizing 投影仍適用、但有檔既無現價也無正成本基礎(bounded_valued_subset)——
+    # 這是「輸入缺這筆事實」的誠實揭露,不是 #485 已廢除的「帳戶宣告是否完整」那套本體論
+    # (見 current_book_projection 文件字串);投影整體不適用(空倉/全無可估值)則 dim_size
+    # 本身已 applicable=False,沉默即誠實,不再疊加一條揭露。
+    sizing_coverage = d_size.get("sizing_coverage") or {}
+    if d_size.get("applicable") and sizing_coverage.get("unavailable"):
+        data_integrity["sizing_unavailable"] = list(sizing_coverage["unavailable"])
     # #92:有 driver 標籤但 SECTOR_BENCH 查無板塊 ETF 對照 → 該檔超額被全歸「選股」、賽道效應漏記。
     # 原本只在 α 面板(需 SPY + ≥60 交易日對齊 + coverage<0.995 那行 if)才揭露 → 併入永遠顯示的
     # data_integrity,與「未分類 driver」同語意(板塊歸因不可靠)的第二個揭露缺口,不再只靠自律。
