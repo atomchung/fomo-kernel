@@ -360,11 +360,11 @@ def judge_once_agy(model, episode, answer, axes):
     return _parse_verdicts(finished.stdout, axes)
 
 
-def judge_once(client, anthropic, episode, answer, axes):
+def judge_once(model, client, anthropic, episode, answer, axes):
     """One sample. Returns ``{axis: {"verdict", "reason"}}``."""
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=16000,
             system=SYSTEM,
             output_config={"effort": EFFORT},
@@ -556,7 +556,7 @@ def main():
     sample_one = (
         (lambda episode, answer, axes: judge_once_agy(model, episode, answer, axes))
         if backend == "agy" else
-        (lambda episode, answer, axes: judge_once(client, anthropic, episode, answer, axes)))
+        (lambda episode, answer, axes: judge_once(model, client, anthropic, episode, answer, axes)))
 
     failures, notes = [], []
     observed = {}            # axis -> {"pass", "fail"} seen across the bank

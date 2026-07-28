@@ -20,6 +20,7 @@ prepare-derived path on every run.
 import json
 import pathlib
 import sys
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "evals"))
@@ -875,6 +876,38 @@ def test_backend_resolution_names_both_routes_and_refuses_an_unknown_one():
         J.resolve_backend("auto", neither)
     except SystemExit as reason:
         assert "agy" in str(reason) and "anthropic" in str(reason), reason
+
+
+def test_anthropic_judge_uses_the_resolved_model_for_default_and_override():
+    """The main sampler must pass resolve_backend's model, not global MODEL."""
+    sent = []
+
+    class Messages:
+        def create(self, **kwargs):
+            sent.append(kwargs)
+            return types.SimpleNamespace(
+                stop_reason="tool_use", stop_details=None,
+                content=[types.SimpleNamespace(
+                    type="tool_use", input={"two_sided": {"verdict": "pass", "reason": "x"}})])
+
+    client = types.SimpleNamespace(messages=Messages())
+    anthropic = types.SimpleNamespace(APIError=RuntimeError)
+    episode = _judged(axes=("two_sided",), fails=())
+    answer = episode["answers"][0]
+    original_model = J.MODEL
+    try:
+        J.MODEL = None
+        backend, model = J.resolve_backend("auto", {"agy": False, "anthropic": True})
+        assert backend == "anthropic" and model == J.DEFAULT_MODELS["anthropic"]
+        J.judge_once(model, client, anthropic, episode, answer, ("two_sided",))
+        assert sent[-1]["model"] == model
+
+        J.MODEL = "claude-opus-5-explicit"
+        _backend, override = J.resolve_backend("anthropic", {"agy": False, "anthropic": True})
+        J.judge_once(override, client, anthropic, episode, answer, ("two_sided",))
+        assert sent[-1]["model"] == "claude-opus-5-explicit"
+    finally:
+        J.MODEL = original_model
 
 
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():
