@@ -513,7 +513,8 @@ def validate_sizing_projection(value):
     if not all(isinstance(coverage[k], list) and all(isinstance(t, str) and t for t in coverage[k]) for k in groups):
         raise PortfolioBasisError("sizing_projection coverage tickers are invalid")
     sets = [set(coverage[k]) for k in groups]
-    if (coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
+    if (any(len(coverage[k]) != len(tickers) for k, tickers in zip(groups, sets))
+            or coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
             or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))
             or coverage["scope"] != ("full_current_book" if not sets[2] else "bounded_valued_subset")):
         raise PortfolioBasisError("sizing_projection coverage disagrees")

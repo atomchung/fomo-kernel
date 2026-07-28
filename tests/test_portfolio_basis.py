@@ -244,6 +244,7 @@ def test_sizing_projection_validator_rejects_weight_and_coverage_lies():
     bad_sum = copy.deepcopy(projection.to_dict()); bad_sum["values"]["A"]["weight"] = 0.4; mutations.append(bad_sum)
     bad_source = copy.deepcopy(projection.to_dict()); bad_source["coverage"]["cost_fallback"] = ["A"]; bad_source["coverage"]["priced"] = ["B"]; mutations.append(bad_source)
     bad_scope = copy.deepcopy(projection.to_dict()); bad_scope["coverage"]["scope"] = "bounded_valued_subset"; mutations.append(bad_scope)
+    duplicate = copy.deepcopy(projection.to_dict()); duplicate["coverage"]["priced"] = ["A", "B", "A"]; mutations.append(duplicate)
     for mutation in mutations:
         try:
             pb.validate_sizing_projection(mutation)
