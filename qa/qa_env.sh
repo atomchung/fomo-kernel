@@ -37,8 +37,12 @@
 #   ./qa_env.sh reset       # reset the dogfood coach root to fresh new-user (backup first)
 #   ./qa_env.sh down        # remove the dogfood worktree (coach state left alone)
 #   ./qa_env.sh archive-receipt <receipt.jsonl> <data-source> <human> \
-#       --agent-model <exact-host-label> --effort <exact-host-setting>
-#                           # archive only with explicit agent provenance; never infer it
+#       --agent-model <exact-host-label> --effort <exact-host-setting> \
+#       --campaign <id> --case-id <id> --state-mode fresh|continued [--parent-run-id <run_id>]
+#                           # archive only with explicit agent + campaign provenance; never infer it.
+#                           # All value rules (placeholder detection, charset, state-lineage
+#                           # existence checks, ...) live in receipts.py build — this script only
+#                           # collects flags and forwards them.
 #   ./qa_env.sh slice-csv <src.csv> <until YYYY-MM-DD> <dst.csv>
 #                           # cut a trade CSV at a TradeDate cutoff, for staged
 #                           # same-day replay of multiple review cycles (see
@@ -305,7 +309,7 @@ cmd_down() {
 
 cmd_archive_receipt() {
   if [ "$#" -lt 3 ]; then
-    echo "usage: $0 archive-receipt <path> <data-source> <human> --agent-model <exact-host-label> --effort <exact-host-setting>" >&2
+    echo "usage: $0 archive-receipt <path> <data-source> <human> --agent-model <exact-host-label> --effort <exact-host-setting> --campaign <id> --case-id <id> --state-mode fresh|continued [--parent-run-id <run_id>]" >&2
     exit 2
   fi
   local src="$1"
@@ -314,6 +318,10 @@ cmd_archive_receipt() {
   shift 3
   local agent_model=""
   local agent_effort=""
+  local campaign=""
+  local case_id=""
+  local state_mode=""
+  local parent_run_id=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --agent-model)
@@ -330,26 +338,45 @@ cmd_archive_receipt() {
         fi
         agent_effort="$2"
         shift 2 ;;
+      --campaign)
+        if [ "$#" -lt 2 ]; then
+          echo "ERROR: --campaign requires a value." >&2
+          exit 2
+        fi
+        campaign="$2"
+        shift 2 ;;
+      --case-id)
+        if [ "$#" -lt 2 ]; then
+          echo "ERROR: --case-id requires a value." >&2
+          exit 2
+        fi
+        case_id="$2"
+        shift 2 ;;
+      --state-mode)
+        if [ "$#" -lt 2 ]; then
+          echo "ERROR: --state-mode requires 'fresh' or 'continued'." >&2
+          exit 2
+        fi
+        state_mode="$2"
+        shift 2 ;;
+      --parent-run-id)
+        if [ "$#" -lt 2 ]; then
+          echo "ERROR: --parent-run-id requires a value." >&2
+          exit 2
+        fi
+        parent_run_id="$2"
+        shift 2 ;;
       *)
         echo "ERROR: unknown archive-receipt argument '$1'." >&2
         exit 2 ;;
     esac
   done
-  _require_declared_agent_value() {
-    local field="$1" value="$2" normalized
-    normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
-    case "$normalized" in
-      ""|unknown|unspecified|default|n/a|na|not_available|'?')
-        echo "ERROR: $field must be an exact host-declared value, not '$value'." >&2
-        exit 1 ;;
-    esac
-    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || [ "${#value}" -gt 200 ]; then
-      echo "ERROR: $field must be a single line no longer than 200 characters." >&2
-      exit 1
-    fi
-  }
-  _require_declared_agent_value "agent model" "$agent_model"
-  _require_declared_agent_value "agent effort" "$agent_effort"
+  # NOTE: agent-model/effort/campaign/case-id/state-mode/parent-run-id value
+  # rules (placeholder detection, charset, state-lineage existence checks) are
+  # NOT re-implemented here. They live in exactly one place, receipts.py build
+  # (via _declared_value / _campaign_value / _resolve_state_lineage), which is
+  # invoked below. This function only collects flags, shape-checks that a flag
+  # taking a value actually got one, and forwards whatever it collected.
   if [ ! -f "$src" ]; then
     echo "ERROR: receipt not found: $src (pass the ux_receipt jsonl path)." >&2
     exit 1
@@ -412,7 +439,7 @@ cmd_archive_receipt() {
   else
     echo "WARNING: receipt is not under <state-root>/ux/, verify gate skipped (archiving anyway)." >&2
   fi
-  local sha stamp base run_id dest manifest
+  local sha stamp base run_id dest manifest tmp_manifest
   sha="$(git -C "$DOGFOOD_WT" rev-parse --short HEAD)"
   stamp="$(date +%Y%m%d-%H%M%S)"
   base="$(basename "$src" .jsonl)"
@@ -420,11 +447,51 @@ cmd_archive_receipt() {
   mkdir -p "$RECEIPT_DIR"
   dest="$RECEIPT_DIR/${run_id}.jsonl"
   manifest="$RECEIPT_DIR/${run_id}.manifest.json"
+
+  # Fail-closed ordering: build the manifest to a TEMP file OUTSIDE the
+  # receipt dir first. receipts.py build is where every campaign/state-lineage
+  # rule actually lives and fails closed; only once it exits 0 do we touch
+  # RECEIPT_DIR at all. A rejected run (bad --state-mode, unknown parent,
+  # placeholder campaign, ...) must leave NO *.jsonl and NO *.manifest.json
+  # behind — `set -e` aborts this script at the failing `python3` call, before
+  # the `cp`/`mv` below ever run, and the trap cleans up the temp file either way.
+  # The trap command is built with the path already substituted in (double
+  # quotes = expand now, at trap-SET time) rather than deferring `$tmp_manifest`
+  # to trap-FIRE time: on the success path the trap only runs after this
+  # function has already returned, when its `local` has gone out of scope, and
+  # under `set -u` a deferred reference to it there is itself a fatal "unbound
+  # variable" — turning a successful archive into a false failure exit code.
+  tmp_manifest="$(mktemp)"
+  trap "rm -f '$tmp_manifest'" EXIT
+
+  local build_args=(
+    build
+    --receipt "$src"
+    --archived-path "$dest"
+    --receipt-dir "$RECEIPT_DIR"
+    --sha "$sha"
+    --data-source "$data_source"
+    --human "$human"
+    --agent-model "$agent_model"
+    --effort "$agent_effort"
+    --run-id "$run_id"
+    --stamp "$stamp"
+    --campaign "$campaign"
+    --case-id "$case_id"
+    --state-mode "$state_mode"
+  )
+  if [ -n "$parent_run_id" ]; then
+    build_args+=(--parent-run-id "$parent_run_id")
+  fi
+  python3 "$SKILL_DIR/receipts.py" "${build_args[@]}" > "$tmp_manifest"
+
+  # Only now that receipts.py validated everything: copy the receipt and move
+  # the manifest into the archive dir.
   cp "$src" "$dest"
-  python3 "$SKILL_DIR/receipts.py" build "$dest" "$sha" "$data_source" "$human" "$agent_model" "$agent_effort" "$run_id" "$stamp" > "$manifest"
+  mv "$tmp_manifest" "$manifest"
   echo "Archived receipt  -> $dest"
   echo "Wrote manifest    -> $manifest"
-  echo "(main@$sha | data=$data_source | human=$human | agent=$agent_model | effort=$agent_effort)"
+  echo "(main@$sha | data=$data_source | human=$human | agent=$agent_model | effort=$agent_effort | campaign=$campaign | case=$case_id | state=$state_mode)"
 }
 
 cmd_report() {
@@ -451,6 +518,6 @@ case "${1:-status}" in
   report)          cmd_report ;;
   slice-csv)       cmd_slice_csv "${2:-}" "${3:-}" "${4:-}" ;;
   *)
-    echo "usage: $0 {status|up|path|coach-root|reset|down|archive-receipt <path> <data-source> <human> --agent-model <label> --effort <setting>|report|slice-csv <src.csv> <until> <dst.csv>}" >&2
+    echo "usage: $0 {status|up|path|coach-root|reset|down|archive-receipt <path> <data-source> <human> --agent-model <label> --effort <setting> --campaign <id> --case-id <id> --state-mode fresh|continued [--parent-run-id <id>]|report|slice-csv <src.csv> <until> <dst.csv>}" >&2
     exit 2 ;;
 esac

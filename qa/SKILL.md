@@ -128,29 +128,99 @@ python3 engine/review.py preview --session-id <ID> --answers /tmp/answers.json -
 python3 engine/review.py finalize --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
 ```
 
-**UX receipt 貫穿走查（強制——這是 QA 接進 eval 的載體）**：走查不是「引擎跑完」就算，每一步用戶可見的動作都要進 receipt（產品的 `tools/ux_receipt.py`）。這份 content-free receipt（只有 session id、能力、pass/fail，無 trade 內容）就是餵給 eval 第 4 證據層的機讀標註：
+**UX receipt 貫穿走查（強制——這是 QA 接進 eval 的載體）**：走查不是「引擎跑完」就算，每一步用戶可見的動作都要進 receipt（產品的 `tools/ux_receipt.py`）。這份 content-free receipt（只有 session id、能力、pass/fail，無 trade 內容）就是餵給 eval 第 4 證據層的機讀標註。
+
+下面是一條**完整、可直接照抄的 `first_review` trace**。順序不是建議而是契約：`verify` 對「哪些事件必須出現、恰好幾筆、誰在誰之前」是硬檢查，順序錯了整場作廢且無法回頭修（append-only）。每一行都在**用戶真的看到那個東西之後**立刻記，不要留到收尾一次補。
 
 ```bash
-# prepare 後立刻宣告當前 client 真正能做什麼——如實宣告、別低報：
-# 互動式 Claude 介面通常是 native_options+plain_text ＋ widget+markdown_inline
+# qa-trace: first_review
+# 0) prepare 之後立刻宣告 host 能力。--adapter 必須跟宣告的能力組合對得上
+#    （plain_text / native_options / validated_widget 三選一）；plain_text 與
+#    markdown_inline 這兩個通用 fallback 由 start 自動補上，不用也不該再手動傳。
 python3 tools/ux_receipt.py start --session-id <ID> --client claude --route first_review \
-  --question-mode native_options --question-mode plain_text \
-  --card-mode widget --card-mode markdown_inline
-# 每問一題、每出一次卡，都在用戶真的看到「之後」記一筆
-python3 tools/ux_receipt.py event --event question_presented --question-id <qid> --mode plain_text
-python3 tools/ux_receipt.py event --event card_presented --stage preview --mode widget
-# 用戶答完最後一題必答「立刻」先記這筆、再去跑 preview——這是 #236「答完→出卡」量測起點
-python3 tools/ux_receipt.py event --event answers_received
-# 「選一條規矩/自訂/skip」呈現給用戶時記一筆
-python3 tools/ux_receipt.py event --event rule_choice_presented --mode plain_text
+  --adapter validated_widget --question-mode native_options --card-mode widget
+
+# 1) 現金錨點（#357）：first_review / weekly_review 恰好一筆，且必須在第一個問題、
+#    第一張卡之前。這是 prepare 階段就發生的事，補記在後面會被判定順序錯誤。
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
+  --cash-outcome found_in_source
+
+# 2) 每問一題記一筆。題目原文永遠不進 trace：走 validated dynamic surface 的題型
+#    改記「來源 + 呈現文字的 sha256」，兩者必須同時出現（取代已移除的 --question-id）。
+python3 tools/ux_receipt.py event --session-id <ID> --event question_presented \
+  --mode native_options --surface-source validated_dynamic --surface-digest <64-hex-digest>
+
+# 3) 用戶答完最後一題必答「立刻」記這筆，再去跑 preview——#236「答完→出卡」量測起點
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
+
+# 4) 卡片一律「先 artifact、後 presented」，兩筆都要 --stage
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage preview --artifact-path <preview-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage preview --mode widget
+
+# 5) 「選一條規矩/自訂/skip」呈現給用戶時記一筆。--grounding-check-file 是必填（#293）
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
+  --mode native_options --grounding-check-file <grounding-check.json>
+
+# 6) finalize 之後的 final 卡，同樣先 artifact 再 presented
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage final --artifact-path <final-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage final --mode widget
 ```
 
-**只有 `weekly_review` 這條路線再多記一筆——而且 `verify` 會擋**（上面那段是 `first_review` 的範例，不要把這筆抄進去）。`prepare` 選到 `weekly_review` 時，先把「上次講好的規矩」端出來給用戶看，**在第一個問題、第一張卡之前**，然後記：
+> 開頭那行 `# qa-trace: <route>` 不是裝飾。`qa/tests/test_skill_commands.py` 靠它把本檔的指令**真的重播**成一條 trace 再送進 `verify`——所以本檔的範例只要跟 CLI 或事件順序脫節就會紅，不必等下一場 QA 走到一半才發現。新增含 `ux_receipt.py` 指令的區塊時記得帶這行標記，漏了會被測試擋下。
+
+`--grounding-check-file` 指到一個**臨時、永不入 trace** 的 JSON（跟 `--question-surfaces` 同性質，放 `/tmp`，別放進 repo）。工具自己做逐字包含比對，只把布林結果與 hash 寫進 receipt，原文不落地：
+
+```json
+{
+  "candidates": [
+    {"id": "candidate_0", "grounding": "引擎給的那句 candidate_rules[].grounding 原文"},
+    {"id": "candidate_1"}
+  ],
+  "presented_text": "你實際貼給用戶看的那整段文字"
+}
+```
+
+沒有 `grounding` 的候選就整個省略該欄（像 `candidate_1`）——**不要自己編一句填進去**，那正是 #293 擋不到、只能靠人工守的那一半。
+
+**`weekly_review` 這條路線多一筆 opener，而且 `verify` 會擋**（上面那條是 `first_review`，不要把 opener 抄進去）。`prepare` 選到 `weekly_review` 時，先把「上次講好的規矩」端出來給用戶看，**在第一個問題、第一張卡之前**。完整 trace 只有 start 與這一筆跟上面不同，其餘（現金錨點、提問、答畢、preview/final 兩組卡、規矩選擇）逐字照抄：
 
 ```bash
-python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_commitment
-# 上次是 skip 掉沒定規矩 → 改用 --memory-kind prior_skip。兩者恰好一筆，多一筆少一筆都會 fail。
-# plan 另外回了 exit_reason / due_revisit，各自再記一筆（同樣 --memory-kind，不算 opener）。
+# qa-trace: weekly_review
+python3 tools/ux_receipt.py start --session-id <ID> --client claude --route weekly_review \
+  --adapter validated_widget --question-mode native_options --card-mode widget
+# opener：恰好一筆，多一筆少一筆都會 fail。上次是 skip 掉沒定規矩 → 改 --memory-kind prior_skip
+python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented \
+  --memory-kind prior_commitment
+# plan 另外回了 exit_reason / due_revisit，各自再記一筆（同樣 --memory-kind，不算 opener）：
+#   python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented --memory-kind due_revisit
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
+  --cash-outcome asked_user
+python3 tools/ux_receipt.py event --session-id <ID> --event question_presented --mode native_options
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage preview --artifact-path <preview-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage preview --mode widget
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
+  --mode native_options --grounding-check-file <grounding-check.json>
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage final --artifact-path <final-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage final --mode widget
+```
+
+收尾跟 Step 5 同形，但 **`--memory` 必須給 `pass`/`fail`**：weekly 場不接受 `not_applicable`，`verify --require-owner-verdict` 會擋——這條路線的存在理由就是記憶承接，不准用「不適用」帶過。這一段之所以在這裡寫全而不是叫你回頭抄 Step 5，是因為抄不到的正是這個差別，而它會等到 archive 那一刻才咬人：
+
+```bash
+# qa-trace: weekly_review
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+  --finding episode:EP-0NN
+python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
+  --controls pass --card pass --memory pass
+python3 tools/ux_receipt.py verify --session-id <ID> \
+  --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 **這條就是記憶延續性本身**——上次講好的規矩，這次有沒有被拿出來對帳。`ux_receipt.py` 對 `route == "weekly_review"` 硬檢查兩件事：opener 恰好一筆、且位置在第一個 `question_presented` / `card_presented` 之前。順序錯了照樣 fail，因為「事後補記」證明不了用戶當時真的看到了。
@@ -168,7 +238,10 @@ python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_c
 
 **已知 `ux_receipt.py` CLI 坑（2026-07-21，連續兩場走查各踩一個，記下避免重犯）**：
 - `artifact_generated` 一定要在對應 stage 的 `card_presented` **之前**、且是動作發生的當下就記——事後補記（即使內容正確）一樣會被 `verify` 判定「card was marked presented before its artifact existed」，append-only trace 沒有回頭修的辦法，該場只能作廢重來。別把記 receipt 這件事拖到走查後段一次補。
-- `start --question-mode`/`--card-mode` 只需要宣告這個 client **額外**有的能力（`native_options`/`widget`）——`plain_text`/`markdown_inline` 這兩個通用 fallback，[PR #298](https://github.com/atomchung/fomo-kernel/pull/298) 之後 `start` 會自動幫你補上，不用再手動重複宣告（PR 未 merge 前，仍要照舊手動兩個都傳，否則 `verify` 會在收尾才報「capabilities must declare plain_text/markdown_inline」）。
+- `start --question-mode`/`--card-mode` 只宣告這個 client **額外**有的能力（`native_options`/`widget`）——`plain_text`/`markdown_inline` 這兩個通用 fallback 由 `start` 自動補上（[PR #298](https://github.com/atomchung/fomo-kernel/pull/298) 已 merge），再手動傳一次反而會跟 `--adapter plain_text` 的「只准宣告通用 fallback」硬檢查對撞。
+- `--adapter` 不傳的預設值是 `plain_text`，而 `plain_text` adapter **只准**宣告通用 fallback。所以「宣告了 `native_options`/`widget` 卻沒傳 `--adapter`」會在第一道 `start` 就直接失敗——圖形介面請傳 `--adapter validated_widget`，只有原生選項沒有 widget 傳 `--adapter native_options`。
+- **枚舉表達不了「卡片能出 widget、但問題只能純文字」這個組合**（[#337](https://github.com/atomchung/fomo-kernel/issues/337)）：`--adapter` 把問題能力與卡片能力綁成同一個三級枚舉，`validated_widget` 硬性要求同時具備 `native_options`。碰到這種 host（能內嵌 HTML、但沒有原生互動控件），誠實的做法是宣告 `--adapter plain_text`、不宣告 `widget`，然後把「卡片交付能力被低報」當成這場的一個 finding 記下來；**不要為了配合枚舉去謊報 `native_options`**——那會讓 receipt 宣稱一個用戶根本沒得到的互動能力，正是 #230 要擋的東西。
+- `findings_recorded` 必須在 `owner_verdict` **之前**：verdict 是全場最後一個事件，之後才記的處置會被判定成事後補記。這也是為什麼 Step 6 的 episode 要在走查當場轉、不是收尾才補。
 - `response_mode`/`response_provenance` 只對 `headline_motive`/`add_thesis` 這類支援私有 surface 的題型有效；`due_revisit`/`rule_breach` 等engine-rendered 題型的 answer 物件裡完全不要帶這兩個欄位，帶了會報「own-words mapping is not enabled for this kind」。
 
 QA 心態，走的時候盯這些（發現就記，別在這改）：
@@ -180,29 +253,57 @@ QA 心態，走的時候盯這些（發現就記，別在這改）：
 
 ### Step 5 — 收尾
 
-1. **owner 判決 + 封存 receipt（QA 的核心產出，別跳過）**：final 卡出來後，你給一個 verdict——選項能不能點（controls）、卡片有沒有可讀地出現（card）、weekly 記憶有沒有承接（memory）、問題夠不夠具體（question-specificity）、答案映射對不對（answer-fit）。這正是 eval 一直缺的 Human-review 標註：
+1. **owner 判決 + 封存 receipt（QA 的核心產出，別跳過）**：final 卡出來後，你給一個 verdict——選項能不能點（controls）、卡片有沒有可讀地出現（card）、weekly 記憶有沒有承接（memory）、問題夠不夠具體（question-specificity）、答案映射對不對（answer-fit）。這正是 eval 一直缺的 Human-review 標註。
+
+   **順序是硬的**：`findings_recorded`（gate 7）在前、`owner_verdict` 在後。verdict 是全場最後一個事件，之後才記的處置＝事後補記，`verify` 會擋。這一筆的內容怎麼來的看 Step 6——episode 要在走查**當場**轉好。
 
    ```bash
-   python3 tools/ux_receipt.py event --event owner_verdict --controls pass --card pass --memory not_applicable --question-specificity pass --answer-fit pass
-   # archive 會用同一組 flag 再驗一次,先在這裡碰到失敗比較好修
-   python3 tools/ux_receipt.py verify --require-owner-verdict --require-timing-integrity   # 必須綠
-   # 封存：模型與 effort 必須從當前 host 的設定逐字抄錄；不可猜測或填 unknown/default
-   ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
-     --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>'
+   # qa-trace: first_review
+   python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+     --finding episode:EP-0NN \
+     --finding 'not-episodable:#NN:為什麼這個沒辦法重播'
+   # 這場真的沒發現問題（省略不等於沒有，必須明講）：
+   #   python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
+
+   python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
+     --controls pass --card pass --memory not_applicable \
+     --question-specificity pass --answer-fit pass
+
+   # archive 會用同一組 flag 再驗一次，先在這裡碰到失敗比較好修（必須綠）
+   python3 tools/ux_receipt.py verify --session-id <ID> \
+     --require-owner-verdict --require-timing-integrity --require-findings
    ```
 
-   封存會產出一份 **run manifest**（`<run_id>.manifest.json`），記全這次 dogfood 的來歷：`engine_version`（`main-<sha>`）、`agent.client`、`agent.model`、`agent.effort`、`data_source`、`human_involvement`、`owner_verdict`。模型與 effort 都是 archive 時明確提供的 host label；腳本不從 client 名稱、commit、聊天上下文或後續推論補值。缺任一、或填 `unknown`／`default`，archive 會 fail closed。這讓 report 能把不同模型和 effort 分開比較，而不把它們平均成同一個通過率。
+   ```bash
+   # 封存：模型與 effort 必須從當前 host 的設定逐字抄錄；不可猜測或填 unknown/default
+   ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
+     --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>' \
+     --campaign 'issue:#486' --case-id M0-U01 --state-mode fresh
+   ```
+
+   封存會產出一份 **run manifest**（`<run_id>.manifest.json`），記全這次 dogfood 的來歷：`engine_version`（`main-<sha>`）、`agent.client`、`agent.model`、`agent.effort`、`data_source`、`human_involvement`、`owner_verdict`、`receipt_sha256`，外加**這一場到底測了哪個驗收案例**：`campaign` / `case_id` / `state_mode` / `parent_run_id`。模型與 effort 都是 archive 時明確提供的 host label；腳本不從 client 名稱、commit、聊天上下文或後續推論補值。缺任一、或填 `unknown`／`default`，archive 會 fail closed。這讓 report 能把不同模型和 effort 分開比較，而不把它們平均成同一個通過率。
+
+   **case 與 state lineage（#520）**：一份能 verify 的 receipt 只證明「這一場的呈現是真的」，證明不了「這一場測的是哪個 case、從什麼狀態開始」。少了它，兩份各自合格的 manifest 也無法證明 #486 的矩陣真的走完，還是同一個好走的 case 重跑了五次。所以 archive 現在強制三件事：
+
+   | 參數 | 值 | 規矩 |
+   |---|---|---|
+   | `--campaign` | M0 一律 `issue:#486` | 由該 acceptance issue 擁有 |
+   | `--case-id` | 如 `M0-U01`、`M0-U02` | 穩定識別碼定義在 #486，不要臨場自創 |
+   | `--state-mode` | `fresh` \| `continued` | 這場是從乾淨 root 起跑，還是接續上一場已封存的 run |
+   | `--parent-run-id` | 上一場的 `run_id` | **只有** `continued` 要帶；`fresh` 帶了會被拒 |
+
+   `--parent-run-id` 必須指到 receipt 目錄裡**真的存在**的那份 manifest，否則 archive fail closed——指向不存在的東西的 lineage 是宣稱，不是證據。反過來說它也只是證據鏈，不是「每個 byte 的狀態都對」的證明（那屬於 #492，等有實際運作證據再說）。舊 manifest 不回填、不追認，`report` 會把它們標成 `legacy-unattributed`。
 
 2. **回報測了哪個版本**：`main@<sha>` + 資料源 + 模擬的用戶狀態 + 「答完→出卡」秒數（receipt ts 差）。
 3. **發現的問題**：逐條記下。真的是 bug / 缺口就 `gh issue list` 查重後開 issue（別在 dogfood worktree 順手改）。**這場若用了真實交易資料，issue／留言草稿必先過護欄 5 的 `privacy_lint.py`，exit 0 才貼**。重大結論照 `EVALS.md` 的「Regression record」慣例補一列（receipt 是機讀帳，`EVALS.md` 是人讀帳）。
 
-   **但開 issue 不是終點——先做完 Step 6 再回來封存**。issue 只記錄「出過事」，不會讓那次失敗可重播，下次沒人知道它是修好了還是只是沒人再踩到。
+   **但開 issue 不是終點——Step 6 要在記 `owner_verdict` 之前就做完**。issue 只記錄「出過事」，不會讓那次失敗可重播，下次沒人知道它是修好了還是只是沒人再踩到。
 4. **清理**（可選）：（先確認 Step 6 做完了）
    - 想留著 state 供下次「第二週」測 → 不動。
    - 想回到全新 → 再跑一次 `~/.claude/skills/fomo-qa/qa_env.sh reset`（清 dogfood 隔離 root）。
    - 不再需要 worktree → `~/.claude/skills/fomo-qa/qa_env.sh down`（只移 worktree，不碰 state）。
 
-### Step 6 — 把每個 miss 轉成可重播的 episode（gate 7，封存前的最後一步）
+### Step 6 — 把每個 miss 轉成可重播的 episode（gate 7，記 verdict 之前的最後一步）
 
 **這一步 2026-07-27 才補進本 skill，補的是一個實際發生過的洞**：repo 的 `docs/qa-runbook.md` 在 2026-07-26 就加了 step 6，但本 skill 停在 Step 5，收尾寫的還是「開 issue + 補 EVALS.md 一列」——正是 #417 要取代的舊行為。整個 skill 目錄裡「episode」出現 0 次。規矩寫在 repo 三份文件裡、一份都沒進到你真正會按的按鈕，所以一次都沒被執行過。**別再讓它退回成「記得就做」——現在 `archive-receipt` 會擋。**
 
@@ -216,16 +317,7 @@ python3 evals/run_episodes.py EP-NNN        # 讀它到底踩了哪些 check，�
 python3 tests/run_all.py
 ```
 
-然後在 receipt 上記一筆「每個 miss 去哪了」——這是 runbook 的第七道 gate，`verify --require-findings` 會擋：
-
-```bash
-# 在 skills/fomo-kernel/ 下
-python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
-  --finding episode:EP-0NN \
-  --finding 'not-episodable:#NN:為什麼這個沒辦法重播'
-# 這場真的沒發現問題：
-python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
-```
+然後在 receipt 上記一筆「每個 miss 去哪了」——這是 runbook 的第七道 gate，`verify --require-findings` 會擋。**那一筆 `findings_recorded` 的指令寫在 Step 5 收尾裡，位置就在 `owner_verdict` 正上方**，因為它必須早於 verdict：verdict 是全場最後一個事件，之後才記的處置＝事後補記，`verify` 直接判失敗。這裡只負責讓你有東西可以記。
 
 三件事別搞錯：
 - **`episode:EP-NNN` 會被拿去 `evals/episodes/` 對帳**——沒真的轉成 episode 就寫「已轉」會直接失敗，不是靠自律。
