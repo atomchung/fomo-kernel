@@ -36,6 +36,9 @@ _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
 # additionally locked to these constants by a test in test_engine_units.py,
 # so keep them the single spelling.
 _COVERAGE_SCOPES = {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}
+# What _normalized_anchor emits per position: the book-affecting facts only.
+# Its producer and this validator read the same tuple so they cannot drift.
+_NORMALIZED_POSITION_KEYS = ("ticker", "shares", "avg_cost", "market_value", "market", "currency")
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -252,11 +255,13 @@ def _valid_snapshot(event: Mapping[str, Any]) -> bool:
     positions = event.get("positions")
     if not isinstance(positions, list):
         return False
-    position_keys = {"ticker", "shares", "avg_cost", "market_value", "market", "currency"}
+    position_keys = ledger.SNAPSHOT_POSITION_KEYS
     for position in positions:
         if not isinstance(position, Mapping) or not isinstance(position.get("ticker"), str) or not position["ticker"]:
             return False
         if set(position) - position_keys or not _finite_number(position.get("shares")) or position["shares"] <= 0:
+            return False
+        if "carried" in position and not isinstance(position["carried"], bool):
             return False
         if position.get("avg_cost") is not None and (not _finite_number(position["avg_cost"]) or position["avg_cost"] <= 0):
             return False
@@ -509,9 +514,15 @@ def _validate_current_book(current_book: Mapping[str, Any]) -> None:
             raise PortfolioBasisError("current_book.anchor projection_sequence is invalid")
         if not isinstance(anchor["positions"], list):
             raise PortfolioBasisError("current_book.anchor positions must be a list")
-        position_keys = {"ticker", "shares", "avg_cost", "market_value", "market", "currency"}
+        # Deliberately NOT ledger.SNAPSHOT_POSITION_KEYS. That set is what a
+        # supplied or stored position may *carry*; this validates what
+        # _normalized_anchor *emits*, which is only the book-affecting facts —
+        # provenance like `carried` is dropped there on purpose, so that two
+        # declarations of the same book share one state_version regardless of
+        # how each row was obtained. Requiring the supplier-side set here would
+        # reject every normalized anchor ever built.
         for position in anchor["positions"]:
-            _exact_keys(position, position_keys, "current_book.anchor position")
+            _exact_keys(position, set(_NORMALIZED_POSITION_KEYS), "current_book.anchor position")
             if not isinstance(position["ticker"], str) or not position["ticker"] or not _finite_number(position["shares"]) or position["shares"] <= 0:
                 raise PortfolioBasisError("current_book.anchor position identity is invalid")
             if position["avg_cost"] is not None and (not _finite_number(position["avg_cost"]) or position["avg_cost"] <= 0):

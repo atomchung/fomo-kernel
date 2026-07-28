@@ -44,7 +44,7 @@ class SnapshotError(ValueError):
 
 
 ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx", "is_complete"}
-POSITION_KEYS = {"ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried"}
+POSITION_KEYS = set(ledger.SNAPSHOT_POSITION_KEYS)   # single declaration: ledger.py
 SUPPORTED_MARKETS = {"US", "TW"}
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^_-]{0,31}$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")

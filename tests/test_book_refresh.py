@@ -325,6 +325,70 @@ def test_not_captured_carries_the_position_forward_with_its_provenance():
         assert carried[0]["avg_cost"] == 12.0, "copied from the record, never invented"
 
 
+def test_a_carried_position_keeps_the_canonical_current_book_usable():
+    """The cross-lane oracle this slice shipped without.
+
+    `carried` is a new field on an anchor position, and `portfolio_basis` --
+    a different lane entirely, which the refresh flow never calls -- validates
+    anchor positions against a strict key whitelist. Adding the field there
+    made `query_current_book` return None for any book the refresh lane had
+    carried a position into, which took `consider` down with it: the refresh
+    lane's headline feature silently broke the book it had just written.
+
+    The whole offline suite was green while that was true, because every
+    refresh test read the ledger through `derive_holdings` and no test crossed
+    from one lane into the other. That is the surface-listing rule in
+    docs/development-guide.md, missed: a new field on a shared artifact reaches
+    every reader of that artifact, not only the writer's own.
+    """
+    import portfolio_basis
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        supplied = [{"ticker": "WIDGET", "shares": 48, "avg_cost": 30.0,
+                     "market": "US", "currency": "USD"},
+                    {"ticker": "BIGCO", "shares": 200, "avg_cost": 40.0,
+                     "market": "US", "currency": "USD"}]
+        snapshot = _snapshot(tmp, supplied)
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "ACME", "classification": "not_captured"}]})
+        assert out["carried_forward"] == ["ACME"]
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        basis = portfolio_basis.query_current_book(events, reference_as_of="2026-07-20")
+        assert basis is not None, (
+            "a carried position must not make the canonical current book unreadable")
+        assert basis.current_book["holdings"]["ACME"]["shares"] == 100.0
+        projection = portfolio_basis.sizing_projection(basis)
+        assert projection is not None and projection.applicable
+
+
+def test_one_declaration_owns_which_fields_a_supplied_position_may_carry():
+    """The fix for the above is a single declaration, not a third mirror.
+
+    `carried` had to be accepted by three separate hand-written whitelists.
+    Adding it to one and missing two is what shipped. The supplier-side ones
+    now read `ledger.SNAPSHOT_POSITION_KEYS`, so the next field added to a
+    position cannot be accepted by one lane and rejected by another.
+
+    The basis lane's *other* whitelist is deliberately not unified with it: it
+    validates what `_normalized_anchor` emits, which drops provenance on
+    purpose so two declarations of the same book share one state_version. Two
+    different facts, two sets, and the difference is stated where each lives.
+    """
+    import portfolio_basis
+    assert snapshot_adapter.POSITION_KEYS == set(lg.SNAPSHOT_POSITION_KEYS)
+    assert "carried" in lg.SNAPSHOT_POSITION_KEYS
+    assert "carried" not in portfolio_basis._NORMALIZED_POSITION_KEYS, (
+        "provenance must stay out of the book's own identity")
+    anchor = {"type": "snapshot", "as_of": "2026-07-15", "source": "user_declared",
+              "is_complete": True,
+              "positions": [{"ticker": "ACME", "shares": 10, "avg_cost": 1.0,
+                             "market": "US", "currency": "USD", "carried": "yes"}]}
+    basis = portfolio_basis.query_current_book([anchor], reference_as_of="2026-07-20")
+    assert basis is None or "ACME" not in (basis.current_book.get("holdings") or {}), (
+        "a non-boolean carried flag must not be adopted as a book fact")
+
+
 def test_carrying_everything_back_leaves_the_book_untouched():
     """When the only difference was the capture gap, the adopted book equals the
     recorded one — so the refresh records a clean reconciliation and writes no

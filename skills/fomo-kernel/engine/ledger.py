@@ -64,6 +64,17 @@ EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation", "position_ab
 # 引擎自寫 user_response 是同一條:勝率/盈虧比/出場紀律永遠不准從捏造的數字算出來。
 # 它跟 adjustment 一樣不進 derive_holdings 推導——持倉的實際變更由同批寫入的新錨點承擔,
 # 這個事件是「出場管線讀得到的訊號」+ 稽核留痕,避免雙重套用。
+# 一個 snapshot 持倉列允許的欄位,單一宣告。三個讀者共用同一份:snapshot_adapter
+# 驗證 agent 供給的信封、portfolio_basis 兩處判斷「這個事件動不動得了帳本」與契約
+# 驗證。曾經是三份手抄白名單——#485 Slice C 加 carried 時只改到其中一份,結果
+# refresh 寫出來的錨點讓 portfolio_basis 整本判成不可信,consider 直接拒答,而
+# 全套件是綠的。維護端防線要 agent-free:共用程式碼 > 測試鎖 > 文件。
+# carried 是來源註記(這一列是從既有紀錄帶過來的,不是這次供給的畫面上讀到的),
+# 不影響帳本內容,所以它進得了白名單、但不進 _normalized_anchor 的身分計算。
+SNAPSHOT_POSITION_KEYS = frozenset({
+    "ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried",
+})
+
 ABSENCE_IDENTITY_KEYS = ("type", "date", "ticker", "cycle_id")
 ABSENCE_KEYS = frozenset(ABSENCE_IDENTITY_KEYS) | {"absence_id", "session_id", "v", "recorded_at"}
 # 任何帶「成交長什麼樣」語意的欄位名;出現在 ABSENCE_KEYS 或 builder 產出即為契約破口。
