@@ -35,6 +35,7 @@ COACH_PY = ENGINE_DIR / "coach.py"
 
 sys.path.insert(0, str(ENGINE_DIR))
 import ledger as ledger_engine  # noqa: E402
+import portfolio_basis as portfolio_basis_engine  # noqa: E402
 import review as review_engine  # noqa: E402
 import session as session_engine  # noqa: E402
 import trade_recap as tr_engine  # noqa: E402
@@ -126,6 +127,12 @@ def _check_consultation_shape(row):
     assert set(basis_schema["required"]) <= set(row["basis"])
     assert row["basis"]["source"] in basis_schema["properties"]["source"]["enum"]
     assert isinstance(row["basis"]["stale_days"], int) and row["basis"]["stale_days"] >= 0
+    if "valuation_coverage" in row["basis"]:
+        coverage_schema = basis_schema["properties"]["valuation_coverage"]
+        coverage = row["basis"]["valuation_coverage"]
+        assert set(coverage) == set(coverage_schema["properties"])
+        assert coverage["scope"] in coverage_schema["properties"]["scope"]["enum"]
+        assert coverage["currencies"] == sorted(coverage["currencies"])
 
     consequence_schema = CONSULTATION_SCHEMA["properties"]["consequence"]
     assert set(consequence_schema["required"]) <= set(row["consequence"])
@@ -177,7 +184,10 @@ def _open_consultation(consultation_id, created, ticker, side, qty=10, price=100
         "created": created,
         "premise": {"ticker": ticker, "side": side, "qty": qty, "price": price,
                     "date": date or created, "currency": "USD"},
-        "basis": {"source": "ledger", "as_of": created, "stale_days": 0},
+        "basis": {"source": "snapshot_anchor", "as_of": created, "stale_days": 0,
+                  "completeness": "declared_complete", "cost_basis": "average_cost",
+                  "valuation_basis": "unpriced", "reconciliation_ref": None,
+                  "state_version": "pb-v1:" + "0" * 64},
         "consequence": {"before": {}, "after": {}, "delta": {}, "disclosures": []},
         "rule_collisions": [],
         "decision": "open",
@@ -308,7 +318,7 @@ def test_csv_path_produces_a_consultation_with_transactions_basis():
         assert _read_consultations(tmp) == [row]
 
 
-def test_ledger_path_produces_a_consultation_with_ledger_basis():
+def test_ledger_path_consumes_and_discloses_the_canonical_portfolio_basis():
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [
@@ -319,8 +329,16 @@ def test_ledger_path_produces_a_consultation_with_ledger_basis():
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 150.0, "qty": 10}')
         payload = _ok(run)
         row = payload["consultation"]
-        assert row["basis"]["source"] == "ledger"
+        assert row["basis"]["source"] == "snapshot_anchor"
         assert row["basis"]["as_of"] == "2026-02-01"   # the ledger's own latest row, not today
+        assert row["basis"]["completeness"] == "declared_complete"
+        assert row["basis"]["cost_basis"] == "average_cost"
+        assert row["basis"]["valuation_basis"] == "unpriced"
+        assert row["basis"]["reconciliation_ref"]["anchor_as_of"] == "2026-01-01"
+        assert row["basis"]["state_version"].startswith("pb-v1:")
+        assert row["basis"]["valuation_coverage"]["scope"] == "full_current_book"
+        assert row["basis"]["valuation_coverage"]["cost_fallback"] == ["NVDA"]
+        assert row["basis"]["valuation_coverage"]["currencies"] == ["USD"]
         _check_consultation_shape(row)
 
 
@@ -370,6 +388,79 @@ def test_ledger_reconstruction_matches_derive_holdings_for_the_same_events():
     for ticker, (shares, cost) in fifo_held.items():
         assert abs(shares - derived[ticker]["shares"]) < 1e-6, ticker
         assert abs(cost - derived[ticker]["cost_total"]) < 1e-2, ticker
+
+
+def test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_sell():
+    """The ledger's canonical average-cost book and consider's before state
+    must agree even where the old FIFO reconstruction did not: add a second
+    lot, then sell only part of the combined position."""
+    events = [
+        _snapshot_event("2026-01-01", [
+            {"ticker": "NVDA", "shares": 100, "avg_cost": 100.0, "market": "US", "currency": "USD"},
+            {"ticker": "AMD", "shares": 100, "avg_cost": 50.0, "market": "US", "currency": "USD"},
+        ]),
+        _trade_event("2026-01-10", "NVDA", "buy", 100, 200.0),
+        _trade_event("2026-01-11", "NVDA", "sell", 50, 150.0),
+    ]
+    basis = portfolio_basis_engine.query_current_book(events, reference_as_of="2026-01-11")
+    assert basis and basis.completeness == "declared_complete"
+    expected = basis.current_book["holdings"]["NVDA"]
+    projection = portfolio_basis_engine.sizing_projection(basis)
+    assert projection and projection.applicable
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 160.0, "qty": 1}'))["consultation"]
+        held = row["consequence"]["before"]["held"]["NVDA"]
+        assert held["shares"] == expected["shares"] == 150.0
+        assert abs(held["cost"] - expected["cost_total"]) < 1e-6
+        assert row["basis"]["state_version"] == basis.state_version
+        assert row["consequence"]["before"]["weights"]["NVDA"] == projection.values["NVDA"]["weight"]
+        assert row["basis"]["valuation_coverage"] == projection.coverage
+
+
+def test_consider_refuses_partial_or_unverified_current_book_claims():
+    cases = [
+        [{**_snapshot_event("2026-01-01", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100.0}]),
+          "is_complete": False}],
+        [_trade_event("2026-01-01", "NVDA", "buy", 10, 100.0)],
+    ]
+    for events in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
+            run = _run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}')
+            _fails(run, "not a complete declared current book")
+            assert not os.path.exists(_consultation_path(tmp))
+
+
+def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
+    """#497: native USD/TWD values have no canonical aggregate without an
+    FX frame.  The #496 projection must therefore stop consider before it can
+    persist or expose sizing, concentration, or rule-collision output."""
+    events = [_snapshot_event("2026-01-01", [
+        {"ticker": "USD", "shares": 2, "avg_cost": 10.0, "market": "US", "currency": "USD"},
+        {"ticker": "TWD", "shares": 3, "avg_cost": 100.0, "market": "TW", "currency": "TWD"},
+    ])]
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "USD", "side": "buy", "price": 15.0, "qty": 1}')
+        _fails(run, "no full current-book sizing projection")
+        assert not os.path.exists(_consultation_path(tmp))
+
+
+def test_same_day_ledger_mutation_changes_the_frozen_basis_version():
+    anchor = _snapshot_event("2026-01-01", [
+        {"ticker": "NVDA", "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}])
+    with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
+        _write_ledger(os.path.join(one, "ledger.jsonl"), [anchor])
+        _write_ledger(os.path.join(two, "ledger.jsonl"), [anchor, _trade_event("2026-01-01", "NVDA", "buy", 1, 110)])
+        premise = '{"ticker": "NVDA", "side": "buy", "price": 120.0, "qty": 1}'
+        first = _ok(_run("consider", "--root", one, "--premise", premise))["consultation"]
+        second = _ok(_run("consider", "--root", two, "--premise", premise))["consultation"]
+        assert first["consequence"]["before"]["held"] == second["consequence"]["before"]["held"]
+        assert first["basis"]["state_version"] != second["basis"]["state_version"]
 
 
 def test_duplicate_ticker_in_one_anchor_matches_derive_holdings_last_wins():
@@ -466,7 +557,7 @@ def test_missing_csv_path_fails_closed_with_a_clear_message():
         _fails(run, "does not exist")
 
 
-def test_anchor_position_with_no_cost_basis_fails_closed():
+def test_anchor_position_with_no_cost_basis_fails_closed_as_incomplete_current_book():
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [
@@ -474,10 +565,10 @@ def test_anchor_position_with_no_cost_basis_fails_closed():
         ])
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        _fails(run, "no avg_cost or market_value")
+        _fails(run, "incomplete cost basis")
 
 
-def test_anchor_position_falls_back_to_market_value_when_avg_cost_is_missing():
+def test_anchor_market_value_does_not_become_an_undisclosed_cost_fallback():
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [
@@ -486,10 +577,7 @@ def test_anchor_position_falls_back_to_market_value_when_avg_cost_is_missing():
         ])
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        payload = _ok(run)
-        held = payload["consultation"]["consequence"]["before"]["held"]["NVDA"]
-        assert held["shares"] == 10.0
-        assert abs(held["cost"] - 1500.0) < 1e-6   # 150/share implied by market_value / shares
+        _fails(run, "incomplete cost basis")
 
 
 # ────────────────────────── D. premise validation ──────────────────────────
