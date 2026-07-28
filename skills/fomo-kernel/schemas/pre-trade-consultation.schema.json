@@ -102,11 +102,29 @@
           "type": "object",
           "description": "Signed after-minus-before changes for the readings that moved; a field absent here did not move. See consequence.py's _delta()."
         },
+        "excluded_holdings": {
+          "type": "array",
+          "description": "Held positions that could not be valued, and are therefore outside the denominator every number above is measured against (#515). Empty when the whole book was usable. The identities live here rather than inside `disclosures`, which is machine-readable keys and never carries data: `partial_book` says THAT something was excluded, this says WHAT. Any consumer stating a derived number must name these alongside it -- a partial denominator that does not say it is partial is worse than the refusal it replaced.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ticker", "reason"],
+            "properties": {
+              "ticker": {"type": "string", "minLength": 1},
+              "reason": {
+                "type": "string",
+                "enum": ["unusable_shares", "unavailable_cost"],
+                "description": "Which fact was missing. Engine-assigned; never a user or agent claim."
+              }
+            }
+          }
+        },
         "disclosures": {
           "type": "array",
           "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (CLAUDE.md, \"Honesty decisions belong in code\").",
           "items": {
-            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx"]
+            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
+                     "partial_book"]
           }
         }
       }

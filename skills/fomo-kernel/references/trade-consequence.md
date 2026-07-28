@@ -46,6 +46,11 @@ The response carries `before` and `after` — the book's own state without and w
 | `cash_unreliable` | The cash balance has no anchor and is a running sum from cash flows alone. |
 | `unmapped_driver` | The premise's ticker has no sector/AI classification, so it cannot be accounted for in concentration. |
 | `mixed_currency_no_fx` | The book holds more than one currency and at least one lacks an FX rate, so aggregate figures are incomplete. |
+| `partial_book` | At least one held position could not be valued at all and is outside the denominator every percentage here is measured against. `excluded_holdings` names which, and why. |
+
+`partial_book` obliges the answer, not just the payload. When it is present, state the denominator in the same breath as the number — *"this would become 23% of the priced part of your book; ACME has no cost on record and is excluded"* — and name the excluded holdings wherever a derived percentage appears. A partial denominator presented as a whole one is worse than the refusal this replaced, because the user cannot tell it happened. The engine will not answer at all when *nothing* can be valued: that is an empty denominator, not a bounded one.
+
+The same applies to a rule collision. Each row carries `partial_book: true` when the book it was judged against was bounded, and that qualifier belongs in what you say: the user wrote their cap against their whole book, an excluded position reads as weight zero, and a cap that a hidden position is breaching comes back `clear`. Report the state and say which book it was measured on.
 
 Pass `--prices` (an envelope in the shape [price-feed.md](price-feed.md) describes) to price the book on current market value instead of cost, and `--cash` (a `{as_of, amount, currency}` object, or a list of them for a multi-currency book) to anchor the cash balance. `--driver-map` and `--instrument-map` carry the same local classification files a review accepts.
 

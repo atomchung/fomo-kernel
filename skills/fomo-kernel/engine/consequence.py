@@ -94,6 +94,7 @@ same firewall conditions.py already draws between a researched verdict and
 the mechanically verified kind (docs/development-guide.md section 5).
 """
 import datetime as dt
+import math
 import re
 from collections.abc import Mapping
 
@@ -109,7 +110,8 @@ SIDES = ("buy", "sell")
 
 # Machine-readable, never prose (see module docstring). A caller renders
 # wording from these keys; this module never constructs a sentence.
-DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx")
+DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
+               "partial_book")
 
 # rule_collision's own vocabulary — deliberately distinct from
 # conditions.VERDICTS and problems.check_rules' broke/held/skipped. Those
@@ -224,17 +226,34 @@ def rows_from_portfolio_basis(basis):
     by the established consequence arithmetic; their quantities and costs are
     copied from the frozen basis, never re-derived.
 
-    A damaged (claim-affecting integrity warning), empty, or cost-incomplete
-    basis cannot safely make a current-book verdict.  Whatever facts the user
-    supplied are the complete account (#485): how the book was declared --
-    a snapshot anchor versus replayed trade history, partial versus
-    unverified -- never gates this adapter; only a genuinely missing fact
-    does.
+    Returns ``(rows, excluded)``.
+
+    A damaged (claim-affecting integrity warning) or empty basis cannot make a
+    current-book verdict at all.  A basis where *some* holding cannot be valued
+    is a different thing, and the owner ruled on it (#515, 2026-07-28): compute
+    over the part that can be used and name what was left out.  A user holding
+    six positions where one has no cost gets an answer about the priced part of
+    their book, not a refusal -- a refusal gives them nothing and is
+    indistinguishable from a broken product.
+
+    So a holding that cannot become a usable row is EXCLUDED and recorded here,
+    never silently dropped and never fatal.  Every caller must carry
+    ``excluded`` to wherever the derived numbers are stated: a partial
+    denominator that does not say it is partial is worse than the refusal it
+    replaced (#515's first invariant).  The only remaining refusal on this path
+    is "nothing was usable", which is an empty denominator rather than a
+    bounded one.
+
+    ``basis["cost_basis"]`` is deliberately not read.  It is a whole-book
+    summary of a per-holding fact (``partial_average_cost`` means *some*
+    holding lacks a cost), and gating on it refused six positions because of
+    one -- the exact defect this leaf removes.  How the book was declared --
+    snapshot anchor versus replayed trade history, partial versus unverified --
+    never gates this adapter either (#485); only a genuinely missing fact does,
+    and now only for the holding actually missing it.
     """
     if not isinstance(basis, Mapping):
         raise ConsequenceError("canonical PortfolioBasis is not an object")
-    if basis.get("cost_basis") != "average_cost":
-        raise ConsequenceError("canonical PortfolioBasis has incomplete cost basis")
     if basis.get("integrity"):
         raise ConsequenceError("canonical PortfolioBasis has claim-affecting integrity warnings")
     current_book = basis.get("current_book")
@@ -246,25 +265,36 @@ def rows_from_portfolio_basis(basis):
     except (KeyError, TypeError, ValueError) as exc:
         raise ConsequenceError("canonical PortfolioBasis has invalid as_of") from exc
 
-    rows = []
+    rows, excluded = [], []
     for ticker in sorted(holdings):
         holding = holdings[ticker]
         if not isinstance(ticker, str) or not isinstance(holding, Mapping):
             raise ConsequenceError("canonical PortfolioBasis has invalid holding")
         try:
             qty = float(holding["shares"])
+        except (KeyError, TypeError, ValueError):
+            qty = None
+        if qty is None or not math.isfinite(qty) or qty <= 0:
+            excluded.append({"ticker": ticker, "reason": "unusable_shares"})
+            continue
+        try:
             # PortfolioBasis rounds avg_cost for display but preserves the
             # canonical cost_total.  Derive the synthetic row price from the
             # latter so a rounded display average cannot alter the held cost.
             price = float(holding["cost_total"]) / qty
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ConsequenceError("canonical PortfolioBasis has unavailable holding cost") from exc
-        if qty <= 0 or price <= 0:
-            raise ConsequenceError("canonical PortfolioBasis has non-positive holding facts")
+        except (KeyError, TypeError, ValueError):
+            price = None
+        if price is None or not math.isfinite(price) or price <= 0:
+            excluded.append({"ticker": ticker, "reason": "unavailable_cost"})
+            continue
         rows.append({"ticker": ticker, "side": "buy", "qty": qty, "price": price,
                      "date": as_of, "market": holding.get("market", "US"),
                      "currency": holding.get("currency", "USD")})
-    return rows
+    if not rows:
+        raise ConsequenceError(
+            "canonical PortfolioBasis has no holding that can be valued: "
+            + ", ".join(row["ticker"] for row in excluded))
+    return rows, excluded
 
 
 # ─────────────────────────────── validation ───────────────────────────────
@@ -461,7 +491,7 @@ def _delta(before, after, ticker):
 
 
 def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=None, fx=None,
-                before_override=None):
+                before_override=None, excluded_holdings=()):
     """{"premise", "before", "after", "delta", "disclosures"} for one
     hypothetical trade. `after` is portfolio_state over `rows` plus the
     premise appended as one more row; `before` is portfolio_state over `rows`
@@ -473,7 +503,18 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     cost-basis rather than priced (`cost_basis`); cash is not reliable
     (`cash_unreliable`); the premise's ticker has no driver mapping, so
     sector/AI exposure cannot account for it (`unmapped_driver`); or the
-    ledger mixes currencies without full fx coverage (`mixed_currency_no_fx`).
+    ledger mixes currencies without full fx coverage (`mixed_currency_no_fx`);
+    or a held position could not be valued at all and was left out of the
+    denominator these numbers are measured against (`partial_book`, #515).
+
+    `excluded_holdings` is what `rows_from_portfolio_basis` left out, passed
+    through by the caller rather than re-derived here — `rows` alone cannot
+    tell "this book has five positions" from "this book has six and one could
+    not be valued", and that difference is the whole point. It is returned on
+    the result so the ticker identities travel with every number computed from
+    the partial denominator; the disclosure key says *that* something was
+    excluded, this says *what* (#515's first invariant: the excluded holding is
+    named wherever the derived number appears).
     """
     normalized = validate_premise(premise, rows)
     premise_row = _premise_row(normalized)
@@ -494,9 +535,13 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
         disclosures.append("unmapped_driver")
     if after["fx_gaps"]:
         disclosures.append("mixed_currency_no_fx")
+    excluded = [dict(row) for row in excluded_holdings or ()]
+    if excluded:
+        disclosures.append("partial_book")
 
     return {"premise": normalized, "before": before, "after": after,
-            "delta": _delta(before, after, normalized["ticker"]), "disclosures": disclosures}
+            "delta": _delta(before, after, normalized["ticker"]),
+            "disclosures": disclosures, "excluded_holdings": excluded}
 
 
 # ─────────────────────────────── rule collision ───────────────────────────────
@@ -622,7 +667,7 @@ def _avgdown_collision(ticker, before_events, after_events):
 
 
 def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=None,
-                   cash_anchor=None, fx=None, before_override=None):
+                   cash_anchor=None, fx=None, before_override=None, excluded_holdings=()):
     """For each currently-tracked rule, whether this hypothetical trade would
     collide with it right now. See the module docstring for the full
     unmapped/unjudged/real-verdict discipline.
@@ -644,10 +689,21 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
     — see the module docstring for why the book's pre-existing condition and
     this trade's own effect are carried as two fields rather than folded into
     one.
+
+    When `excluded_holdings` is non-empty the book these states were judged
+    against is a bounded subset, and every row additionally carries
+    `partial_book: True` (stamped only when true, so an ordinary collision
+    keeps the exact shape every existing reader already handles). This is
+    #515's second invariant, and it is not decoration: the user wrote their
+    rule against their whole book, and an excluded position reads as weight
+    zero here — a cap that a hidden position is breaching comes back `clear`.
+    A verdict computed on a different denominator than the promise was made
+    against must say so rather than pass as the same claim.
     """
     tracking = rules_report[0]
     result = consequence(rows, premise, last_px=last_px, max_pos_override=max_pos_override,
-                         cash_anchor=cash_anchor, fx=fx, before_override=before_override)
+                         cash_anchor=cash_anchor, fx=fx, before_override=before_override,
+                         excluded_holdings=excluded_holdings)
     normalized = result["premise"]
     before = result["before"]
     after = result["after"]
@@ -678,7 +734,10 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
             state = _avgdown_collision(ticker, avg_down_before, avg_down_after)
         else:
             state, worsens = _concentration_collision(metric_key, before, after)
-        out.append({"rule_id": rule.get("rule_id"), "text": rule.get("text"),
-                    "metric_key": metric_key, "problem_key": problem_key,
-                    "state": state, "worsens": worsens})
+        row = {"rule_id": rule.get("rule_id"), "text": rule.get("text"),
+               "metric_key": metric_key, "problem_key": problem_key,
+               "state": state, "worsens": worsens}
+        if result["excluded_holdings"]:
+            row["partial_book"] = True
+        out.append(row)
     return out
