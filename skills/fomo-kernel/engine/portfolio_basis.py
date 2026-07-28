@@ -25,6 +25,11 @@ _COMPLETENESS = {"declared_complete", "declared_partial", "unverified"}
 _SOURCES = {"snapshot_anchor", "transaction_replay", "empty"}
 _COST_BASES = {"average_cost", "partial_average_cost", "unavailable"}
 _VALUATION_BASES = {"unpriced", "priced"}
+_VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
+_PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
+                       "non_positive_denominator"}
+_PROJECTION_REL_TOL = 1e-12
+_PROJECTION_ABS_TOL = 1e-12
 
 
 class PortfolioBasisError(ValueError):
@@ -60,6 +65,27 @@ class PortfolioBasis:
             "current_book": self.current_book,
             "integrity": list(self.integrity),
         }
+
+
+@dataclass(frozen=True)
+class SizingProjection:
+    """Renderer-free, canonical values and weights for one PortfolioBasis.
+
+    This is deliberately separate from ``PortfolioBasis``: the basis remains
+    the immutable fact envelope, while the projection is its one read-only
+    valuation interpretation.  Consumers must not rebuild its denominator.
+    """
+
+    denominator: Optional[float]
+    values: dict[str, dict[str, Any]]
+    coverage: dict[str, Any]
+    applicable: bool
+    reason: Optional[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"denominator": self.denominator, "values": self.values,
+                "coverage": self.coverage, "applicable": self.applicable,
+                "reason": self.reason}
 
 
 def _date(value: Any, field: str) -> dt.date:
@@ -385,6 +411,145 @@ def validate_portfolio_basis(value: Mapping[str, Any]) -> None:
             raise PortfolioBasisError("integrity.qty is invalid")
     if value["state_version"] != _digest(_version_payload(value)):
         raise PortfolioBasisError("state_version does not match the declared current-book state")
+
+
+def _projection_entry(value, source, reason):
+    return {"value": value, "weight": None, "source": source,
+            "applicable": False, "reason": reason}
+
+
+def _validated_basis(basis):
+    """Return only a typed, self-validating basis; malformed input fails closed."""
+    if not isinstance(basis, PortfolioBasis):
+        return None
+    try:
+        validate_portfolio_basis(basis.to_dict())
+    except (PortfolioBasisError, TypeError, ValueError):
+        return None
+    return basis
+
+
+def sizing_projection(basis):
+    """Return canonical current-book values/weights, or None for an invalid basis.
+
+    Price values come only from the basis valuation manifest. A holding with no
+    usable price may use only its canonical positive cost total; otherwise it
+    stays unavailable, never a zero. Consumers reuse this denominator rather
+    than rebuilding one beside their own presentation.
+    """
+    basis = _validated_basis(basis)
+    if basis is None:
+        return None
+    holdings = basis.current_book["holdings"]
+    manifest = basis.current_book.get("valuation_manifest")
+    prices = (manifest or {}).get("prices") or {}
+    values, priced, cost_fallback, unavailable = {}, [], [], []
+    for ticker in sorted(holdings):
+        holding = holdings[ticker]
+        shares, price, cost_total = holding["shares"], prices.get(ticker), holding["cost_total"]
+        if _finite_number(price) and price > 0:
+            value = float(shares) * float(price)
+            if not math.isfinite(value):
+                return None
+            values[ticker] = _projection_entry(value, "price", None)
+            priced.append(ticker)
+        elif _finite_number(cost_total) and cost_total > 0:
+            values[ticker] = _projection_entry(float(cost_total), "cost_fallback", None)
+            cost_fallback.append(ticker)
+        else:
+            values[ticker] = _projection_entry(None, "unavailable", "value_unavailable")
+            unavailable.append(ticker)
+    valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
+    try:
+        denominator = math.fsum(valued) if valued else None
+    except OverflowError:
+        return None
+    if denominator is not None and not math.isfinite(denominator):
+        return None
+    if not holdings:
+        reason = "empty_current_book"
+    elif denominator is None:
+        reason = "no_valued_holdings"
+    elif not math.isfinite(denominator) or denominator <= 0:
+        reason = "non_positive_denominator"
+    else:
+        reason = None
+    applicable = reason is None
+    if applicable:
+        for entry in values.values():
+            if entry["value"] is not None:
+                entry.update(weight=entry["value"] / denominator, applicable=True, reason=None)
+    elif denominator is not None:
+        for entry in values.values():
+            if entry["value"] is not None:
+                entry["reason"] = "denominator_unavailable"
+    coverage = {"scope": "full_current_book" if not unavailable else "bounded_valued_subset",
+                "total_holdings": len(holdings), "valued_holdings": len(valued),
+                "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable}
+    projection = SizingProjection(denominator=denominator, values=values, coverage=coverage,
+                                  applicable=applicable, reason=reason)
+    validate_sizing_projection(projection.to_dict())
+    return projection
+
+
+def validate_sizing_projection(value):
+    """Validate the dependency-free projection contract."""
+    _exact_keys(value, {"denominator", "values", "coverage", "applicable", "reason"}, "sizing_projection")
+    denominator, coverage = value["denominator"], value["coverage"]
+    if not isinstance(value["applicable"], bool) or value["reason"] not in _PROJECTION_REASONS:
+        raise PortfolioBasisError("sizing_projection applicability is invalid")
+    if denominator is not None and (not _finite_number(denominator) or denominator <= 0):
+        raise PortfolioBasisError("sizing_projection denominator is invalid")
+    if value["applicable"] != (value["reason"] is None) or value["applicable"] != (denominator is not None):
+        raise PortfolioBasisError("sizing_projection applicability disagrees")
+    _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable"},
+                "sizing_projection.coverage")
+    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset"}:
+        raise PortfolioBasisError("sizing_projection coverage scope is invalid")
+    if any(isinstance(coverage[k], bool) or not isinstance(coverage[k], int) or coverage[k] < 0
+           for k in ("total_holdings", "valued_holdings")):
+        raise PortfolioBasisError("sizing_projection coverage counts are invalid")
+    groups = ("priced", "cost_fallback", "unavailable")
+    if not all(isinstance(coverage[k], list) and all(isinstance(t, str) and t for t in coverage[k]) for k in groups):
+        raise PortfolioBasisError("sizing_projection coverage tickers are invalid")
+    sets = [set(coverage[k]) for k in groups]
+    if (any(len(coverage[k]) != len(tickers) for k, tickers in zip(groups, sets))
+            or coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
+            or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))
+            or coverage["scope"] != ("full_current_book" if not sets[2] else "bounded_valued_subset")):
+        raise PortfolioBasisError("sizing_projection coverage disagrees")
+    weight_sum = 0.0
+    for ticker, entry in value["values"].items():
+        if not isinstance(ticker, str) or not ticker:
+            raise PortfolioBasisError("sizing_projection ticker is invalid")
+        _exact_keys(entry, {"value", "weight", "source", "applicable", "reason"}, "sizing_projection value")
+        if entry["source"] not in _VALUE_SOURCES or not isinstance(entry["applicable"], bool):
+            raise PortfolioBasisError("sizing_projection value source is invalid")
+        if entry["source"] == "unavailable":
+            if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != "value_unavailable":
+                raise PortfolioBasisError("sizing_projection unavailable value is invalid")
+            if ticker not in sets[2]:
+                raise PortfolioBasisError("sizing_projection unavailable source disagrees with coverage")
+        elif not _finite_number(entry["value"]) or entry["value"] <= 0:
+            raise PortfolioBasisError("sizing_projection value is invalid")
+        elif value["applicable"]:
+            if (not _finite_number(entry["weight"]) or entry["weight"] <= 0
+                    or not entry["applicable"] or entry["reason"] is not None):
+                raise PortfolioBasisError("sizing_projection applicable weight is invalid")
+            expected = entry["value"] / denominator
+            if not math.isclose(entry["weight"], expected, rel_tol=_PROJECTION_REL_TOL,
+                                abs_tol=_PROJECTION_ABS_TOL):
+                raise PortfolioBasisError("sizing_projection weight disagrees with denominator")
+            weight_sum += entry["weight"]
+        elif entry["weight"] is not None or entry["applicable"] or entry["reason"] != "denominator_unavailable":
+            raise PortfolioBasisError("sizing_projection unavailable denominator value is invalid")
+        if entry["source"] == "price" and ticker not in sets[0]:
+            raise PortfolioBasisError("sizing_projection price source disagrees with coverage")
+        if entry["source"] == "cost_fallback" and ticker not in sets[1]:
+            raise PortfolioBasisError("sizing_projection cost source disagrees with coverage")
+    if value["applicable"] and not math.isclose(weight_sum, 1.0, rel_tol=_PROJECTION_REL_TOL,
+                                                  abs_tol=_PROJECTION_ABS_TOL):
+        raise PortfolioBasisError("sizing_projection weights do not sum to one")
 
 
 def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifest: Optional[Mapping[str, Any]] = None,

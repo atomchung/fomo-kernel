@@ -177,6 +177,92 @@ def test_schema_and_typed_contract_reject_adversarial_mutations_and_bad_hash():
             pass
 
 
+def test_sizing_projection_is_canonical_for_full_priced_mixed_and_cost_books():
+    events = [_trade("2026-07-01", "A", "buy", 2, 10),
+              _trade("2026-07-01", "B", "buy", 1, 20)]
+    full_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                       valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15, "B": 30}})
+    full = pb.sizing_projection(full_basis)
+    assert full and full.applicable and full.reason is None
+    assert full.denominator == 60 and full.coverage["scope"] == "full_current_book"
+    assert full.values["A"] == {"value": 30.0, "weight": 0.5, "source": "price", "applicable": True, "reason": None}
+    assert full.values["B"]["weight"] == 0.5
+
+    mixed_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                        valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15}})
+    mixed = pb.sizing_projection(mixed_basis)
+    assert mixed and mixed.applicable and mixed.denominator == 50
+    assert mixed.coverage == {"scope": "full_current_book", "total_holdings": 2, "valued_holdings": 2,
+                              "priced": ["A"], "cost_fallback": ["B"], "unavailable": []}
+    assert mixed.values["A"]["weight"] == 0.6 and mixed.values["B"]["weight"] == 0.4
+
+    cost = pb.sizing_projection(pb.query_current_book(events, reference_as_of="2026-07-02"))
+    assert cost and cost.applicable and cost.denominator == 40
+    assert cost.coverage["scope"] == "full_current_book"
+    assert {row["source"] for row in cost.values.values()} == {"cost_fallback"}
+
+
+def test_sizing_projection_marks_unavailable_and_empty_books_inapplicable():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10},
+                                    {"ticker": "B", "shares": 1}])]
+    basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                  valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 12}})
+    projection = pb.sizing_projection(basis)
+    assert projection and projection.applicable and projection.denominator == 12
+    assert projection.coverage["scope"] == "bounded_valued_subset"
+    assert projection.coverage["unavailable"] == ["B"]
+    assert projection.values["B"] == {"value": None, "weight": None, "source": "unavailable",
+                                        "applicable": False, "reason": "value_unavailable"}
+
+    empty = pb.sizing_projection(pb.query_current_book([], reference_as_of="2026-07-02"))
+    assert empty and not empty.applicable and empty.reason == "empty_current_book"
+    assert empty.denominator is None and empty.values == {}
+
+    no_value = pb.sizing_projection(pb.query_current_book([_snap("2026-07-01", [{"ticker": "A", "shares": 1}])],
+                                                           reference_as_of="2026-07-02"))
+    assert no_value and not no_value.applicable and no_value.reason == "no_valued_holdings"
+    assert no_value.values["A"]["weight"] is None
+
+
+def test_sizing_projection_fails_closed_on_invalid_or_tampered_basis():
+    assert pb.sizing_projection(None) is None
+    basis = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10)])
+    assert basis
+    basis.current_book["holdings"]["A"]["shares"] = 2
+    assert pb.sizing_projection(basis) is None
+
+
+def test_sizing_projection_validator_rejects_weight_and_coverage_lies():
+    basis = pb.query_current_book([_trade("2026-07-01", "A", "buy", 2, 10),
+                                   _trade("2026-07-01", "B", "buy", 1, 20)],
+                                  reference_as_of="2026-07-02",
+                                  valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15, "B": 30}})
+    projection = pb.sizing_projection(basis)
+    assert projection
+    mutations = []
+    bad_weight = copy.deepcopy(projection.to_dict()); bad_weight["values"]["A"]["weight"] = 0.75; mutations.append(bad_weight)
+    bad_sum = copy.deepcopy(projection.to_dict()); bad_sum["values"]["A"]["weight"] = 0.4; mutations.append(bad_sum)
+    bad_source = copy.deepcopy(projection.to_dict()); bad_source["coverage"]["cost_fallback"] = ["A"]; bad_source["coverage"]["priced"] = ["B"]; mutations.append(bad_source)
+    bad_scope = copy.deepcopy(projection.to_dict()); bad_scope["coverage"]["scope"] = "bounded_valued_subset"; mutations.append(bad_scope)
+    duplicate = copy.deepcopy(projection.to_dict()); duplicate["coverage"]["priced"] = ["A", "B", "A"]; mutations.append(duplicate)
+    for mutation in mutations:
+        try:
+            pb.validate_sizing_projection(mutation)
+            raise AssertionError("projection mutation must be rejected")
+        except pb.PortfolioBasisError:
+            pass
+
+
+def test_sizing_projection_fails_closed_on_finite_multiplication_overflow():
+    basis = pb.query_current_book(
+        [_snap("2026-07-01", [{"ticker": "A", "shares": 1e308, "avg_cost": 1}])],
+        reference_as_of="2026-07-02",
+        valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 2.0}},
+    )
+    assert basis
+    assert pb.sizing_projection(basis) is None
+
+
 def _main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
     failed = 0
