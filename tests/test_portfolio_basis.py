@@ -33,6 +33,32 @@ def test_transaction_replay_is_unverified_and_stable():
     assert one.current_book["holdings"]["NVDA"]["shares"] == 10.0
 
 
+def test_valuation_frame_is_typed_and_changes_basis_version():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 2, "avg_cost": 10,
+                                      "currency": "USD"}])]
+    frame = {
+        "as_of": "2026-07-02", "aggregate_currency": "USD",
+        "prices": {"A": {"price": 15, "currency": "USD", "provenance": "engine_fetch"}},
+        "fx_to_aggregate": {"USD": {"rate": 1, "provenance": "identity", "as_of": "2026-07-02"}},
+        "coverage": {"missing_price": [], "missing_fx": []},
+    }
+    basis = pb.query_current_book(events, reference_as_of="2026-07-02", valuation_manifest=frame)
+    legacy = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                   valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15}})
+    assert basis and legacy and basis.state_version != legacy.state_version
+    assert basis.current_book["valuation_manifest"]["aggregate_currency"] == "USD"
+
+
+def test_valuation_frame_rejects_missing_fx_and_malformed_native_price():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10, "currency": "TWD"}])]
+    missing_fx = {"as_of": "2026-07-02", "aggregate_currency": "USD",
+                  "prices": {"A": {"price": 15, "currency": "TWD", "provenance": "engine_fetch"}},
+                  "fx_to_aggregate": {"USD": {"rate": 1, "provenance": "identity", "as_of": "2026-07-02"}},
+                  "coverage": {"missing_price": [], "missing_fx": ["TWD"]}}
+    basis = pb.query_current_book(events, valuation_manifest=missing_fx)
+    assert basis and basis.current_book["valuation_manifest"]["coverage"]["missing_fx"] == ["TWD"]
+
+
 def test_anchor_and_post_anchor_semantics_and_same_day_version():
     anchor = _snap("2026-07-05", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100}],
                    cash={"USD": 1000}, source="broker", projection_sequence=2)

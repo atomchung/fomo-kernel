@@ -90,6 +90,22 @@ class SizingProjection:
                 "reason": self.reason}
 
 
+@dataclass(frozen=True)
+class ValuationFrame:
+    """Private, frozen native prices and explicit common-currency rates."""
+
+    as_of: str
+    aggregate_currency: str
+    prices: dict[str, dict[str, Any]]
+    fx_to_aggregate: dict[str, dict[str, Any]]
+    coverage: dict[str, list[str]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"as_of": self.as_of, "aggregate_currency": self.aggregate_currency,
+                "prices": self.prices, "fx_to_aggregate": self.fx_to_aggregate,
+                "coverage": self.coverage}
+
+
 def _date(value: Any, field: str) -> dt.date:
     try:
         return dt.date.fromisoformat(str(value))
@@ -287,6 +303,8 @@ def _valuation_manifest(manifest: Optional[Mapping[str, Any]]) -> tuple[str, Opt
         return "unpriced", None, None
     if not isinstance(manifest, Mapping):
         raise PortfolioBasisError("valuation_manifest must be an object")
+    if set(manifest) == {"as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage"}:
+        return _valuation_frame(manifest)
     if set(manifest) != {"as_of", "prices"} or not isinstance(manifest.get("prices"), Mapping):
         raise PortfolioBasisError("valuation_manifest requires exactly as_of and prices")
     manifest_date = _date(manifest["as_of"], "valuation_manifest.as_of")
@@ -296,6 +314,38 @@ def _valuation_manifest(manifest: Optional[Mapping[str, Any]]) -> tuple[str, Opt
     normalized = _canonical(dict(manifest))
     normalized["as_of"] = manifest_date.isoformat()
     return "priced", normalized, manifest_date
+
+
+def _valuation_frame(value: Mapping[str, Any]) -> tuple[str, dict[str, Any], dt.date]:
+    as_of = _date(value["as_of"], "valuation_frame.as_of")
+    aggregate, prices, fx, coverage = (value.get("aggregate_currency"), value.get("prices"),
+                                        value.get("fx_to_aggregate"), value.get("coverage"))
+    if not _currency(aggregate) or not isinstance(prices, Mapping) or not isinstance(fx, Mapping):
+        raise PortfolioBasisError("valuation_frame has invalid identity")
+    if not isinstance(coverage, Mapping) or set(coverage) != {"missing_price", "missing_fx"}:
+        raise PortfolioBasisError("valuation_frame coverage is invalid")
+    if not all(isinstance(coverage[k], list) and all(isinstance(x, str) and x for x in coverage[k]) for k in coverage):
+        raise PortfolioBasisError("valuation_frame coverage is invalid")
+    normalized_prices, normalized_fx = {}, {}
+    for ticker, row in prices.items():
+        if (not isinstance(ticker, str) or not ticker or not isinstance(row, Mapping)
+                or set(row) != {"price", "currency", "provenance"} or not _finite_number(row["price"])
+                or row["price"] <= 0 or not _currency(row["currency"])
+                or not isinstance(row["provenance"], str) or not row["provenance"]):
+            raise PortfolioBasisError("valuation_frame native price is invalid")
+        normalized_prices[ticker] = {"price": float(row["price"]), "currency": row["currency"], "provenance": row["provenance"]}
+    for currency, row in fx.items():
+        if (not _currency(currency) or not isinstance(row, Mapping) or set(row) != {"rate", "provenance", "as_of"}
+                or not _finite_number(row["rate"]) or row["rate"] <= 0
+                or not isinstance(row["provenance"], str) or not row["provenance"]):
+            raise PortfolioBasisError("valuation_frame FX is invalid")
+        _date(row["as_of"], "valuation_frame.fx.as_of")
+        normalized_fx[currency] = {"rate": float(row["rate"]), "provenance": row["provenance"], "as_of": str(row["as_of"])}
+    if aggregate not in normalized_fx or normalized_fx[aggregate]["rate"] != 1.0:
+        raise PortfolioBasisError("valuation_frame aggregate identity FX is required")
+    return "priced", {"as_of": as_of.isoformat(), "aggregate_currency": aggregate,
+                       "prices": normalized_prices, "fx_to_aggregate": normalized_fx,
+                       "coverage": {k: sorted(v) for k, v in coverage.items()}}, as_of
 
 
 def _version_payload(value: Mapping[str, Any]) -> dict[str, Any]:
