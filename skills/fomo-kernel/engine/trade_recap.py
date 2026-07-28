@@ -1119,12 +1119,6 @@ def dim_exit(rts, fwds, n_fwd=N_FWD):
                 n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc, n_fwd=n_fwd,
                 n_winners=n_winners, low_conf=low_conf)
 
-def _finite_positive(value):
-    """True for a real, finite, strictly positive number (never a bool)."""
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and math.isfinite(value) and value > 0)
-
-
 def current_book_projection(held, last_px):
     """Canonical current-book value/weight partition, shared by ``dim_size``
     and ``ticker_diagnosis`` (#477).
@@ -1136,75 +1130,41 @@ def current_book_projection(held, last_px):
     priced-only -- silently zeroing (never flagging ``too_heavy`` for) any
     ticker it had no live price for, and printing ``{wpct_pct} of the
     portfolio`` for a subset that was not actually the whole portfolio. One
-    book could show two different weights for the same ticker. This function
-    is the one shared reader both now call so that arithmetic exists in
-    exactly one place (docs/development-guide.md section 7, "two readers,
-    one fact").
+    book could show two different weights for the same ticker.
 
-    Deliberately mirrors ``portfolio_basis.SizingProjection``'s vocabulary
-    and single-currency algorithm -- a ticker is ``price``, ``cost_fallback``,
-    or ``unavailable``, never dropped or miscounted; ``applicable``/
-    ``reason``/``coverage.scope`` read the same way -- rather than importing
-    it: ``held``/``last_px`` arrive here already collapsed to one common
-    currency (``usd_view()`` runs upstream of every call site below, the same
-    precondition ``dim_size``/``dim_diversify`` already assumed), so there is
-    no ledger, FX, or ``PortfolioBasis`` object to build here -- only the
-    frame-free partition every caller below already needs.
+    The classification arithmetic itself is ``portfolio_basis.value_partition``
+    -- physically the same function ``sizing_projection``'s replay lane runs,
+    per the owner ruling on #477: one classification, one place; a mirrored
+    copy plus a documentation synchronization duty is invisible to half the
+    maintaining agents and drifts. This wrapper only supplies the v1 frame:
+    ``held``/``last_px`` arrive already collapsed to one common currency
+    (``usd_view()`` runs upstream of every call site), so there is no ledger,
+    FX, or ``PortfolioBasis`` object at this layer -- and no arithmetic here.
 
     Returns ``{denominator, values, coverage, applicable, reason}``.
     ``values[ticker]`` is ``{value, weight, source, applicable, reason}``;
     ``weight`` and ``applicable=True`` are set only when the whole projection
     is applicable AND this specific ticker was valued -- a ticker with
     neither a usable live price nor a positive cost basis is ``unavailable``
-    and carries no weight at all, rather than corrupting the sum with
-    ``None`` or a non-positive number the way the two ad hoc computations
-    this replaces would have (both assumed ``cost`` was always a valid
-    positive number, which every current caller happens to guarantee, but
-    neither actually checked).
+    and carries no weight at all (excluded and named, never a silent zero).
     """
-    values, priced, cost_fallback, unavailable = {}, [], [], []
-    for ticker, (shares, cost_total) in held.items():
-        price = (last_px or {}).get(ticker)
-        if _finite_positive(price):
-            values[ticker] = {"value": shares * price, "weight": None,
-                              "source": "price", "applicable": False, "reason": None}
-            priced.append(ticker)
-        elif _finite_positive(cost_total):
-            values[ticker] = {"value": cost_total, "weight": None,
-                              "source": "cost_fallback", "applicable": False, "reason": None}
-            cost_fallback.append(ticker)
-        else:
-            values[ticker] = {"value": None, "weight": None, "source": "unavailable",
-                              "applicable": False, "reason": "value_unavailable"}
-            unavailable.append(ticker)
-    valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
-    try:
-        denominator = math.fsum(valued) if valued else None
-    except OverflowError:
-        denominator = None
+    px = last_px or {}
+    part = portfolio_basis.value_partition(
+        (ticker, px.get(ticker), shares, cost_total)
+        for ticker, (shares, cost_total) in held.items())
     # Current-book dimensions have no honest denominator when every position
     # has been closed (or the supplied values cannot form a positive book).
     # ``0%`` is a measurement in a real book, not a synonym for "there is no
     # book to measure".
-    if not held:
-        reason = "empty_current_book"
-    elif denominator is None:
-        reason = "no_valued_holdings"
-    elif not math.isfinite(denominator) or denominator <= 0:
-        reason = "non_positive_denominator"
-    else:
-        reason = None
-    applicable = reason is None
-    if applicable:
-        for entry in values.values():
-            if entry["value"] is not None:
-                entry.update(weight=entry["value"] / denominator, applicable=True, reason=None)
-    coverage = {"scope": "full_current_book" if not unavailable else "bounded_valued_subset",
-                "total_holdings": len(held), "valued_holdings": len(valued),
-                "priced": sorted(priced), "cost_fallback": sorted(cost_fallback),
-                "unavailable": sorted(unavailable)}
-    return {"denominator": denominator, "values": values, "coverage": coverage,
-            "applicable": applicable, "reason": reason}
+    coverage = {"scope": "full_current_book" if not part["unavailable"] else "bounded_valued_subset",
+                "total_holdings": len(held),
+                "valued_holdings": len(part["priced"]) + len(part["cost_fallback"]),
+                "priced": sorted(part["priced"]),
+                "cost_fallback": sorted(part["cost_fallback"]),
+                "unavailable": sorted(part["unavailable"])}
+    return {"denominator": part["denominator"], "values": part["values"],
+            "coverage": coverage, "applicable": part["reason"] is None,
+            "reason": part["reason"]}
 
 
 def dim_size(rows, held, last_px, max_pos_override=None):
@@ -1618,15 +1578,17 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
 
     sizing_weights:too_heavy 的佔比比照 dim_size 讀同一份 current_book_projection()
     輸出(#477 第二段——診斷=處方的觸發線已對齊,但兩邊曾各自加總分母:dim_size 含成本
-    近似,ticker_diagnosis 只認有價格的檔,同一張卡兩個權重)。呼叫端應餵 dim_size(rows,
-    held_u, last_px, ...)["weights"],讓兩個讀者永遠讀同一個數字,不再各自重算。省略時
-    (單獨呼叫本函式,無姊妹 dim_size)退回就地算同一份 current_book_projection(held,
-    last_px)——同一套算式,只是省了外部那份 dim_size 呼叫。"""
+    近似,ticker_diagnosis 只認有價格的檔,同一張卡兩個權重)。必填:呼叫端餵 dim_size(
+    rows, held_u, last_px, ...)["weights"],讓兩個讀者永遠讀同一個數字。不提供 fallback
+    ——留一條「省略就自己重算」的路,等於留一條可以吃到不同 held(如殘倉過濾後子集)的
+    第二分母路徑,外部審查已給出重現(全帳 A=90%/B=10%,對過濾後 {A} 重算得 A=100%),
+    正是 #477 要消滅的病。"""
     last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
     if sizing_weights is None:
-        projection = current_book_projection(held, last_px)
-        sizing_weights = {t: e["weight"] for t, e in projection["values"].items()
-                          if e["applicable"]}
+        raise ValueError(
+            "ticker_diagnosis requires sizing_weights (feed dim_size(...)['weights']); "
+            "recomputing here could use a different held subset and revive the "
+            "second denominator #477 removed")
     agg = defaultdict(lambda: dict(realized=0.0, unreal=0.0, win_n=0, win_early=0,
                                    cur_ret=None, mval=0.0, px=None, avg_cost=None))
     for r in rts:

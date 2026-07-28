@@ -382,7 +382,8 @@ def test_offline_pipeline_no_crash():
     held, avg_down = tr.positions(rows)
     adds = tr.classify_adds(rows)
     # last_px=None 不得 crash(降級成只用已實現/成本基礎)
-    tdiag = tr.ticker_diagnosis(rts, adds, held, None)
+    tdiag = tr.ticker_diagnosis(rts, adds, held, None,
+                                sizing_weights=tr.dim_size([], held, None)["weights"])
     assert isinstance(tdiag, list)
     ov = tr.overview_stats(rts, {}, held, None)
     assert ov["unrealized"] == 0          # 無價格 → 未實現視為 0,不爆

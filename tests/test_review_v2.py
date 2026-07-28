@@ -8714,7 +8714,8 @@ def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
         base_size = tr.dim_size([], held, last_px, None)
         assert abs(base_size["max_pct"] - 0.27) < 1e-9 and base_size["max_ticker"] == "AAA"
         assert base_size["triggered"] is True, "27% must trip the 25% universal default"
-        base_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=None)
+        base_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=None,
+                                         sizing_weights=base_size["weights"])
         base_aaa = next(d for d in base_tdiag if d["ticker"] == "AAA")
         assert any(t["code"] == "too_heavy" for t in base_aaa["tags"]), \
             "27% position must carry too_heavy under the 25% universal default"
@@ -8731,7 +8732,8 @@ def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
         raised_size = tr.dim_size([], held, last_px, override)
         assert raised_size["triggered"] is False, \
             "sizing dimension must respect the raised 30% cap"
-        raised_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=override)
+        raised_tdiag = tr.ticker_diagnosis([], {}, held, last_px, max_pos_override=override,
+                                           sizing_weights=raised_size["weights"])
         raised_aaa = next(d for d in raised_tdiag if d["ticker"] == "AAA")
         assert not any(t["code"] == "too_heavy" for t in raised_aaa["tags"]), \
             "instrument tag must also respect the raised 30% cap (#477) -- " \

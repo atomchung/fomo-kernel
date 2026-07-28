@@ -850,28 +850,50 @@ def test_current_book_projection_zero_denominator_keeps_both_surfaces_inapplicab
         "整體投影不適用時,too_heavy 不准對任何一檔開火"
 
 
-def test_ticker_diagnosis_without_sibling_dim_size_falls_back_to_its_own_projection():
-    """呼叫端沒有姊妹 dim_size 呼叫時(單獨測試/未來呼叫端),sizing_weights 省略 →
-    退回就地算同一份 current_book_projection(held, last_px),不是退回舊的『只認有
-    現價』算法——省略參數不該讓人重新掉進 #477 的洞。"""
+def test_ticker_diagnosis_requires_sizing_weights():
+    """sizing_weights 必填——先前版本留了「省略就對自己的 held 重算」的 fallback,
+    外部審查(Codex, 2026-07-28)給出重現:main() 餵診斷的是殘倉過濾後的 held_dx,
+    對子集重算的分母 ≠ dim_size 全帳分母(全帳 A=90%/B=10%,對 {A} 重算得 100%),
+    正是 #477 要消滅的第二分母路徑。省略必須炸,不准靜默重算。"""
     held = {"BIG": (10.0, 4000.0), "NOPX": (10.0, 3800.0)}
     last_px = {"BIG": 600.0}
     rts = [_RT("NOPX", 100.0, 150.0, qty=5)]
-    tdiag = tr.ticker_diagnosis(rts, {}, held, last_px)   # sizing_weights 省略
-    nopx = next(d for d in tdiag if d["ticker"] == "NOPX")
-    total = 6000.0 + 3800.0
-    too_heavy = [t for t in nopx["tags"] if t["code"] == "too_heavy"]
-    assert too_heavy and _approx(too_heavy[0]["params"]["wpct"], 3800.0 / total), \
-        "省略 sizing_weights 仍要靠 current_book_projection 算出成本近似的正確佔比"
+    try:
+        tr.ticker_diagnosis(rts, {}, held, last_px)   # sizing_weights 省略
+    except ValueError as exc:
+        assert "sizing_weights" in str(exc)
+    else:
+        raise AssertionError("省略 sizing_weights 必須 raise,不准退回自算的第二分母")
+
+
+def test_negative_cost_ticker_is_excluded_not_a_whole_book_veto():
+    """壞資料(負成本)檔改為排除+具名揭露,其餘檔正常判斷——外部審查(Codex,
+    2026-07-28)以 MAJOR 提出這是行為變化:舊碼把 -500 加進分母,總和 ≤0 → 整本帳
+    inapplicable(一筆壞資料讓所有判斷閉嘴)。新行為即 #485 owner 裁決「不可用的
+    部分排除並揭露,不整份拒答」在本層的形狀,刻意保留並在此釘住。"""
+    held = {"A": (1.0, 100.0), "B": (1.0, -500.0)}
+    last_px = {"A": 200.0}
+    projection = tr.current_book_projection(held, last_px)
+    assert projection["applicable"] is True, \
+        "舊碼:200+(-500)=-300 → 整本 inapplicable;新碼:B 排除,A 正常判斷"
+    assert projection["coverage"]["unavailable"] == ["B"], "壞成本檔必須被具名揭露"
+    assert _approx(projection["values"]["A"]["weight"], 1.0)
+    d_size = tr.dim_size([], held, last_px)
+    assert d_size["applicable"] is True and d_size["sizing_coverage"]["unavailable"] == ["B"]
+    rts = [_RT("A", 10.0, 20.0, qty=5)]
+    tdiag = tr.ticker_diagnosis(rts, {}, held, last_px, sizing_weights=d_size["weights"])
+    a = next(d for d in tdiag if d["ticker"] == "A")
+    assert any(t["code"] == "too_heavy" for t in a["tags"]), \
+        "A 獨佔可估值帳面 100% > 25%,too_heavy 應正常開火,不被 B 的壞資料拖進沉默"
 
 
 def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
-    """current_book_projection 刻意「鏡像」而非 import portfolio_basis 的投影詞彙
-    (其 docstring 記錄了原因:v1 管線到這裡只剩 (held, last_px) 的無框架單幣視圖,
-    沒有 ledger 可建 PortfolioBasis)。鏡像面靜默漂移是本 repo 記錄過的失敗模式
-    (parity-harness 盲區、hand-mirrored surface)——這裡把鏡像鎖到 portfolio_basis
-    的模組常數上:任何一邊改詞彙,這裡先紅,而不是等下游 reader 兩邊對不上才發現。
-    取樣走遍每一條輸出路徑(priced/cost_fallback/unavailable/空倉/全不可估值)。"""
+    """分類算術已物理共用(portfolio_basis.value_partition,owner 裁決 2026-07-28:
+    「讀原始分類,不要創建一份」),不再有可漂移的鏡像。本測試降級為殼層鎖:
+    current_book_projection 的組裝殼(coverage/scope/reason 轉寫)仍是 trade_recap
+    自己的程式碼,這裡鎖住殼的輸出詞彙 == portfolio_basis 的模組常數,防殼層
+    改寫時偏離契約詞彙。取樣走遍每條輸出路徑(priced/cost_fallback/unavailable/
+    空倉/全不可估值)。"""
     samples = [
         tr.current_book_projection({"P": (1.0, 10.0), "C": (1.0, 10.0), "U": (1.0, 0.0)},
                                    {"P": 5.0}),
@@ -1091,9 +1113,10 @@ def test_ticker_diagnosis_ranks_on_aggregate_currency():
     cur_map = {"2330.TW": "TWD", "NVDA": "USD"}
     fx = {"USD": 1.0, "TWD": 1.0 / 30.0}
     rts_u, held_u, lastpx_u = tr.usd_view(rts, {}, {}, cur_map, fx)
-    out = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u)
+    out = tr.ticker_diagnosis(rts_u, {}, held_u, lastpx_u,
+                              sizing_weights=tr.dim_size([], held_u, lastpx_u)["weights"])
     assert out[0]["ticker"] == "NVDA", f"USD 視圖下 NVDA(+5k)應排第一,得 {out[0]['ticker']}"
-    raw = tr.ticker_diagnosis(rts, {}, {}, {})               # 對照:原幣名目讓 2330 假性第一
+    raw = tr.ticker_diagnosis(rts, {}, {}, {}, sizing_weights={})   # 對照:原幣名目讓 2330 假性第一
     assert raw[0]["ticker"] == "2330.TW"
 
 
