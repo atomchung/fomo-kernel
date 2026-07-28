@@ -235,6 +235,7 @@
     "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
     "sizing_coverage": "Some positions have neither a live price nor a cost basis, so position sizing and the too-heavy check cover only the positions that could be valued.",
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
+    "unpriced_exits": "Some positions left the record with no sale price, so those exits are excluded from win rate, payoff, and exit-discipline figures.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
     "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
     "acct_perf_basis": "Account performance rests on an approximate basis — partial anchors, cost-line pricing, FX approximation, trade cash amounts estimated from quantity times price, or a period with no deposit or withdrawal on record — and remains uncertain.",

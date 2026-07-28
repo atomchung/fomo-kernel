@@ -44,7 +44,7 @@ class SnapshotError(ValueError):
 
 
 ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx", "is_complete"}
-POSITION_KEYS = {"ticker", "shares", "avg_cost", "market_value", "market", "currency"}
+POSITION_KEYS = {"ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried"}
 SUPPORTED_MARKETS = {"US", "TW"}
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^_-]{0,31}$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -146,6 +146,15 @@ def _normalize_position(raw, index):
         row["market_value"] = _number(
             raw["market_value"], f"positions[{index}].market_value", positive=True
         )
+    # carried(#485 Slice C):這一列不是這次供給的畫面上讀到的,是從既有紀錄帶過來的
+    # ——使用者回答「只是沒拍到」的持倉。只有 True 才落鍵:每一個既有 snapshot payload
+    # 都被 session._snapshot_payload 內容定址成 snapshot_id,無條件多蓋一個 carried:false
+    # 會讓所有既存錨點改 id、冪等重放失效。
+    if raw.get("carried") is not None:
+        if not isinstance(raw["carried"], bool):
+            raise SnapshotError(f"positions[{index}].carried must be a boolean")
+        if raw["carried"]:
+            row["carried"] = True
     return row
 
 
@@ -189,6 +198,10 @@ def _merge_positions(rows):
         else:
             current["market_value"] = None
         current["shares"] = new_shares
+        # A ticker is carried only when every merged row was carried; one
+        # actually-observed row means the position is on the supplied view.
+        if not row.get("carried"):
+            current.pop("carried", None)
         counts[ticker] += 1
     return [grouped[ticker] for ticker in sorted(grouped)], sum(counts.values()) - len(grouped)
 
@@ -344,6 +357,10 @@ def _anchor(snapshot):
             position["avg_cost"] = row["avg_cost"]
         if row["market_value"] is not None:
             position["market_value"] = row["market_value"]
+        if row.get("carried"):
+            # Identity honesty: the adopted book states which rows came from the
+            # existing record rather than from the view the user just supplied.
+            position["carried"] = True
         positions.append(position)
     event = {
         "type": "snapshot",

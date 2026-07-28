@@ -2055,8 +2055,15 @@ def _due_question(row, language, card=None):
     kind = item.get("kind") or "full"
     label = ((copy.get("exit_choices") or {}).get(kind) or {}).get(reason) if reason else None
     voice_guessed = row.get("prior_capture") == "inferred"
-    base = (f"{ticker} was sold on {item.get('exit_date')} at {item.get('exit_price')}."
-            if en else f"{ticker} 你在 {item.get('exit_date')} 以 {item.get('exit_price')} 賣出。")
+    if revisit.is_priced_exit(item):
+        base = (f"{ticker} was sold on {item.get('exit_date')} at {item.get('exit_price')}."
+                if en else f"{ticker} 你在 {item.get('exit_date')} 以 {item.get('exit_price')} 賣出。")
+    else:
+        # #485 Slice C: a confirmed disappearance has a date and no fill. Naming
+        # a price here — even a cost basis — would put a number in the user's
+        # mouth that nobody supplied.
+        base = (f"{ticker} left your record on {item.get('exit_date')}, with no sale price recorded."
+                if en else f"{ticker} 在 {item.get('exit_date')} 從紀錄中消失，沒有成交價紀錄。")
     recall = ""
     if label:
         if en:
@@ -2181,19 +2188,28 @@ def _asked_because(basis, language):
 def _exit_question(item, language, card=None, prior=None):
     ticker = item.get("ticker") or "position"
     kind = item.get("kind") or "full"
-    notional = revisit._notional(item)
-    amount = _format_notional(notional, item.get("currency"))
+    priced = revisit.is_priced_exit(item)
+    # An unpriced exit has no exit amount. _notional still returns the recorded
+    # cost basis so importance ranking has a magnitude, but that number is not
+    # proceeds and never reaches the stem or the stored `exit_notional`.
+    notional = revisit._notional(item) if priced else None
+    amount = _format_notional(notional, item.get("currency")) if priced else None
     # #226: replay the entry thesis inside the stem. Without a prior thesis the
     # joined parts stay byte-identical to the historical plain stem.
     recall = _thesis_recall(prior, language, "entry")
     if str(language).lower().startswith("en"):
         action = "fully exited" if kind == "full" else "substantially reduced"
-        base = f"{ticker} was {action} on {item.get('exit_date')} for about {amount}."
+        base = (f"{ticker} was {action} on {item.get('exit_date')} for about {amount}."
+                if priced else
+                f"{ticker} left your record on {item.get('exit_date')} — you confirmed it was "
+                "sold, and no sale price was recorded.")
         ask = "What mainly drove that decision?"
         question = " ".join(part for part in (base, recall, ask) if part)
     else:
         action = "全部出清" if kind == "full" else "大幅減倉"
-        base = f"{ticker} 在 {item.get('exit_date')} {action}，出場金額約 {amount}。"
+        base = (f"{ticker} 在 {item.get('exit_date')} {action}，出場金額約 {amount}。"
+                if priced else
+                f"{ticker} 在 {item.get('exit_date')} 從紀錄中消失，你確認是賣掉了，但沒有成交價紀錄。")
         ask = "當時主要是什麼理由？"
         question = "".join(part for part in (base, recall, ask) if part)
     digest = hashlib.sha256(str(item.get("revisit_id")).encode("utf-8")).hexdigest()[:12]
@@ -2841,6 +2857,37 @@ def _authoring_contract(route):
     return contract
 
 
+def _flag_unpriced_exits(card, recent_exits, due_revisits, exit_backlog):
+    """#485 Slice C: name the exits recorded without a fill, so the figures that
+    skip them say so.
+
+    A disappearance the user confirmed as a sale is recorded as a
+    ``position_absence``: the date is known, the fill is not, and the engine may
+    not invent one. Win rate, payoff and exit discipline are computed from the
+    transaction file, so such an exit is excluded from all three *structurally*
+    — nothing needs to remember to skip it. What does need a mechanism is
+    saying so: excluding a real exit from the numbers without naming it is the
+    silent-partial-denominator defect the owner ruled against (exclude and
+    disclose). ``absence_id`` is the marker rather than a missing price, because
+    only an absence is genuinely outside those figures; a trade-sourced row with
+    a damaged price is a different problem and must not borrow this sentence.
+    """
+    items = list(recent_exits or [])
+    items += [row.get("item") or {} for row in due_revisits or []]
+    items += list((exit_backlog or {}).get("items") or [])
+    tickers = sorted({str(row.get("ticker")) for row in items
+                      if isinstance(row, dict) and row.get("ticker") and row.get("absence_id")})
+    if not tickers:
+        return card
+    card = dict(card)
+    honesty = [row for row in card.get("honesty_ledger") or []
+               if row.get("key") != "unpriced_exits"]
+    honesty.append({"key": "unpriced_exits", "status": "excluded",
+                    "data": {"tickers": tickers, "count": len(tickers)}})
+    card["honesty_ledger"] = honesty
+    return card
+
+
 def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
     """#292: surface an in-period breach of the rule the user committed to last time.
 
@@ -2968,6 +3015,9 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     # honesty_ledger is read into required_honesty_keys below, so a match cannot
     # be silently dropped from the agent's authoring gate.
     card = _flag_prior_commitment_breach(card, problem_stats, (previous or {}).get("commitment"))
+    # Same placement rule as the line above: an exit recorded without a fill must
+    # reach required_honesty_keys, or the card ships with the exclusion unstated.
+    card = _flag_unpriced_exits(card, recent_exits, due_revisits, exit_backlog)
     required_honesty_keys = [x.get("key") for x in card.get("honesty_ledger") or []]
     if card_renderer.vs_market_suppressed(card):
         # The ledger keeps recording what the engine triggered; the agent is

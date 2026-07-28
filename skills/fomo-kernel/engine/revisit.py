@@ -14,6 +14,9 @@ revisit.py — 出場後 30/60/90 追蹤 + swap 機會成本(#32/#33;#129 PR-3,�
        idle_cash: bool}
       {type:"resolution", revisit_id, checkpoint("30"|"60"|"90"), status, note?, date}
       status ∈ still_valid(理由成立,賣早也是紀律)/ modified(部分對,要調)/ falsified(真錯,進教訓)
+    出場來源有兩個、只有一個集合(#485 Slice C):trade 走勢偵測 + ledger 的 position_absence
+    (使用者確認賣掉、但沒有成交紀錄)。後者 exit_price=None、帶 cost_basis 供排序用;
+    「有沒有成交價」的唯一判讀點是 is_priced_exit(),缺價的算式一律不算、不假裝。
 
 冷啟動兩層(#170):既有歷史使用者第一次 enqueue 時,2.5 年舊出場的 30/60/90 全在啟用日之前 →
   若照單進 due 會一次噴近百筆、把復盤變審問。解法用每筆 enqueued_at(= 開始追蹤這筆的日期)分兩層:
@@ -113,7 +116,77 @@ def detect_exits(events):
                           "kind": "full" if left <= lg.EPS else "reduce",
                           "market": market, "currency": currency})
         shares[t] = left
-    return exits
+    # #485 Slice C:確認消失的出場沒有 sell trade,走不進上面的 trade walk。從同一個
+    # detect_exits 出來,是為了讓「出場」只有一個來源集合——enqueue/recent/due/backlog/
+    # horizon marker 全部沿用既有路徑,不需要各自再記得多讀一個地方(#461 明確要求)。
+    # 既有 trade 出場的相對順序刻意不動(附加在尾端),避免 revisit.jsonl 追加序漂移。
+    return exits + absence_exits(events)
+
+
+def absence_exits(events):
+    """Exit rows for confirmed disappearances recorded without a fill (#485 Slice C).
+
+    A ``position_absence`` carries no price and no quantity by construction, so
+    everything the exit pipeline needs beyond the date comes from the recorded
+    book as it stood immediately before the row was appended — copied from
+    ``ledger.derive_holdings``, never invented.  ``exit_price`` stays ``None``:
+    the fill is genuinely unknown, and win rate, payoff and exit discipline must
+    exclude the row rather than compute from a manufactured number.
+
+    ``cost_basis`` is the recorded cost of the position that left, and it exists
+    only so importance ranking has a magnitude.  It is not proceeds and no
+    caller may present it as one.
+    """
+    rows = lg.position_absences(events)
+    if not rows:
+        return []
+    # An absence never enters derivation, so every absence appended in one batch
+    # sees the same prior book; key the cache by preceding *deriving* events and
+    # the whole batch costs one derivation.
+    deriving_before, seen = [], 0
+    for ev in events:
+        deriving_before.append(seen)
+        if isinstance(ev, dict) and ev.get("type") in ("snapshot", "trade"):
+            seen += 1
+    cache, out = {}, []
+    for row in rows:
+        key = deriving_before[row["index"]]
+        if key not in cache:
+            cache[key] = lg.derive_holdings(events[:row["index"]])["holdings"]
+        prior = cache[key].get(row["ticker"]) or {}
+        try:
+            shares = round(float(prior.get("shares")), 4)
+        except (TypeError, ValueError):
+            shares = 0.0
+        try:
+            cost = abs(float(prior.get("cost_total")))
+        except (TypeError, ValueError):
+            cost = None
+        out.append({"ticker": row["ticker"], "cycle_id": row["cycle_id"],
+                    "exit_date": row["date"], "exit_price": None,
+                    "shares_sold": shares, "shares_before": shares, "kind": "full",
+                    "market": str(prior.get("market") or "US"),
+                    "currency": str(prior.get("currency") or "USD").upper(),
+                    "cost_basis": round(cost, 2) if cost is not None else None,
+                    "absence_id": row.get("absence_id")})
+    out.sort(key=lambda item: (item["exit_date"], item["ticker"]))
+    return out
+
+
+def is_priced_exit(item):
+    """Single reader for "does this exit have a recorded fill price".
+
+    Every downstream branch that would otherwise divide by, multiply with, or
+    print ``exit_price`` asks here, so an unpriced exit cannot reach one path as
+    a number and another as a blank.
+    """
+    price = (item or {}).get("exit_price")
+    if price is None:
+        return False
+    try:
+        return float(price) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def infer_swaps(events, exit_item, window_days=SWAP_WINDOW_DAYS):
@@ -248,7 +321,16 @@ def scan_due(revisits, resolutions, today):
 
 
 def _notional(item):
-    """出場金額(排序備援用):出場價 × 賣出股數。缺欄防禦回 0。"""
+    """出場金額(排序備援用):出場價 × 賣出股數。缺欄防禦回 0。
+
+    確認消失的出場沒有成交價(#485 Slice C)——退回這個部位的記錄成本當「規模」,
+    否則它在每一個以金額排序的地方都等於 0,永遠排在最後、實質等於看不見。
+    這是排序用的量級,不是賣出所得;任何呈現端都不准把它講成出場金額。"""
+    if not is_priced_exit(item):
+        try:
+            return abs(float(item.get("cost_basis")))
+        except (TypeError, ValueError):
+            return 0.0
     try:
         return float(item.get("exit_price") or 0) * float(item.get("shares_sold") or 0)
     except (TypeError, ValueError):
@@ -328,7 +410,7 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5):
     ret_sum = 0.0
     for it in hist:
         px = (prices or {}).get(it["ticker"])
-        if px:
+        if px and is_priced_exit(it):
             priced += 1
             r = px / it["exit_price"] - 1.0
             ret_sum += r
@@ -356,7 +438,12 @@ def compare(item, prices):
     t = item["ticker"]
     px = (prices or {}).get(t)
     orig_ret = None
-    if px:
+    unpriced = not is_priced_exit(item)
+    if unpriced:
+        # 沒有成交價的出場(#485 Slice C):「續抱會怎樣」的基準點不存在,不是缺現價。
+        # 不進 needs_prices——那句話會叫使用者去補一個補了也算不出來的東西。
+        pass
+    elif px:
         orig_ret = px / item["exit_price"] - 1.0
     else:
         needs.append(t)
@@ -376,11 +463,16 @@ def compare(item, prices):
         if den > 0 and complete:
             swap_ret = num / den
     swap_net = (swap_ret - orig_ret) if (swap_ret is not None and orig_ret is not None) else None
-    return {"orig_ret": round(orig_ret, 6) if orig_ret is not None else None,
-            "swap_ret": round(swap_ret, 6) if swap_ret is not None else None,
-            "swap_net_pp": round(swap_net, 6) if swap_net is not None else None,
-            "idle_cash": bool(item.get("idle_cash")),
-            "needs_prices": sorted(set(needs))}
+    out = {"orig_ret": round(orig_ret, 6) if orig_ret is not None else None,
+           "swap_ret": round(swap_ret, 6) if swap_ret is not None else None,
+           "swap_net_pp": round(swap_net, 6) if swap_net is not None else None,
+           "idle_cash": bool(item.get("idle_cash")),
+           "needs_prices": sorted(set(needs))}
+    if unpriced:
+        # Only stamped when true: every priced exit's comparison stays the exact
+        # object shape the plan, the card and the fixtures already carry.
+        out["unpriced_exit"] = True
+    return out
 
 
 # ─────────────────────────── CLI ───────────────────────────
