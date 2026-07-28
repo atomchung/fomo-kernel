@@ -8646,6 +8646,63 @@ def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
             "before this fix it stayed too_heavy at any cap"
 
 
+def test_frozen_virtual_basis_rejects_changed_candidate_before_any_append():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        csv_path = pathlib.Path(tmp) / "weekly.csv"
+        original = "Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n"
+        csv_path.write_text(original, encoding="utf-8")
+        frozen_dir = tempfile.mkdtemp(prefix="fomo501-test-")
+        inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
+        batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+        frame = review_engine.portfolio_basis.build_valuation_frame(
+            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
+        state = {"date_end": "2026-07-02", "valuation_frame": frame}
+        overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
+        assert receipt["basis"]["state_version"] == receipt["basis_state_version"]
+        csv_path.write_text(original + "\n", encoding="utf-8")
+        try:
+            review_engine._verify_and_ingest_frozen_trades(str(root), inputs, batches, overlay, receipt, {}, state)
+            raise AssertionError("byte mutation must be rejected before append")
+        except review_engine.ReviewError as exc:
+            assert "candidate input changed" in str(exc)
+        assert not (root / "ledger.jsonl").exists()
+
+
+def test_frozen_virtual_basis_verifies_equal_input_and_appends_once():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        csv_path = pathlib.Path(tmp) / "weekly.csv"
+        csv_path.write_text("Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n", encoding="utf-8")
+        frozen_dir = tempfile.mkdtemp(prefix="fomo501-test-")
+        inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
+        batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+        frame = review_engine.portfolio_basis.build_valuation_frame(
+            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
+        state = {"date_end": "2026-07-02", "valuation_frame": frame}
+        overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
+        result, _card, _state = review_engine._verify_and_ingest_frozen_trades(
+            str(root), inputs, batches, overlay, receipt, {}, state)
+        events, skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        assert result["appended"] == 1 and skipped == 0 and len(events) == 1
+
+
+def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forging_price():
+    anchor = {"type": "snapshot", "as_of": "2026-07-01", "is_complete": True,
+              "positions": [{"ticker": "ANCHOR", "shares": 1, "avg_cost": 5,
+                             "market": "US", "currency": "USD"}], "cash": None}
+    candidate = {"type": "trade", "date": "2026-07-02", "ticker": "NEW", "action": "buy",
+                 "qty": 1, "price": 10, "market": "US", "currency": "USD"}
+    source_frame = review_engine.portfolio_basis.build_valuation_frame(
+        as_of="2026-07-02", positions={"NEW": {"currency": "USD"}}, prices={"NEW": 11},
+        aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
+    virtual_frame = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
+    assert virtual_frame["coverage"]["missing_price"] == [{"ticker": "ANCHOR", "currency": "USD"}]
+    assert virtual_frame["prices"] == {"NEW": source_frame["prices"]["NEW"]}
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0

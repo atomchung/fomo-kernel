@@ -193,7 +193,7 @@ def _jsonl(path):
 
 
 def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None,
-                 condition_checks=None):
+                 condition_checks=None, candidate_receipt=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -223,6 +223,9 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
         # would resume the check-less pending session, and the crossing question
         # the lookups just earned would never be asked.
         h.update(b"condition_checks\0" + session.canonical(condition_checks).encode())
+    if candidate_receipt is not None:
+        h.update(b"frozen_candidates\0" + session.canonical(candidate_receipt).encode())
+        return h.hexdigest()
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -233,6 +236,147 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
                     break
                 h.update(block)
     return h.hexdigest()
+
+
+def _sha256_bytes(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def _candidate_receipt(paths, frozen_dir=None):
+    """Freeze ordered source bytes once, before engine work (#501)."""
+    files, frozen_paths = [], []
+    for index, original_path in enumerate(paths):
+        original_path = os.path.abspath(original_path)
+        try:
+            with open(original_path, "rb") as handle:
+                payload = handle.read()
+        except OSError as exc:
+            raise ReviewError(f"cannot freeze candidate input {original_path}: {exc}") from exc
+        if frozen_dir is not None:
+            basename = os.path.basename(original_path) or f"candidate-{index}.csv"
+            ordinal_dir = os.path.join(frozen_dir, f"{index:03d}")
+            frozen_path = os.path.join(ordinal_dir, basename)
+            try:
+                os.mkdir(ordinal_dir)
+                with open(frozen_path, "xb") as handle:
+                    handle.write(payload)
+            except OSError as exc:
+                raise ReviewError(f"cannot write private candidate snapshot: {exc}") from exc
+            frozen_paths.append(frozen_path)
+        files.append({"original_path": original_path, "sha256": _sha256_bytes(payload),
+                      "bytes_n": len(payload)})
+    receipt = {"contract_version": "frozen-candidates-v1", "files": files}
+    receipt["digest"] = _sha256_bytes(session.canonical(receipt).encode("utf-8"))
+    return receipt, frozen_paths
+
+
+def _read_live_ledger(root):
+    """Strictly read one locked live-ledger snapshot and its byte receipt."""
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    try:
+        events, skipped = ledger.load_ledger(ledger_path)
+        if os.path.exists(ledger_path):
+            with open(ledger_path, "rb") as handle:
+                payload = handle.read()
+        else:
+            payload = b""
+    except (OSError, ledger.LedgerIntegrityError) as exc:
+        raise ReviewError(str(exc)) from exc
+    return events, {"sha256": _sha256_bytes(payload), "bytes_n": len(payload),
+                    "events_digest": _sha256_bytes(session.canonical(events).encode("utf-8")),
+                    "skipped_lines": skipped}, payload
+
+
+def _freeze_transaction_inputs(root, paths, frozen_dir):
+    """Take the short pre-engine candidate + ledger snapshot, never a network lock."""
+    candidate, frozen_paths = _candidate_receipt(paths, frozen_dir)
+    with session.projection_transaction(root):
+        events, ledger_receipt, ledger_bytes = _read_live_ledger(root)
+    ledger_snapshot = os.path.join(frozen_dir, "ledger.jsonl")
+    with open(ledger_snapshot, "xb") as handle:
+        handle.write(ledger_bytes)
+    return {"candidate": candidate, "frozen_paths": frozen_paths,
+            "ledger_events": events, "ledger_receipt": ledger_receipt,
+            "ledger_snapshot": ledger_snapshot}
+
+
+def _parse_frozen_candidates(frozen_paths):
+    batches, skipped_non_trade, skipped_future = [], 0, 0
+    for path in frozen_paths:
+        trades, non_trade, future = ledger.trades_from_csv(path)
+        batches.append(trades)
+        skipped_non_trade += non_trade
+        skipped_future += future
+    if skipped_future:
+        raise ReviewError("ledger ingestion rejected normalized input before writing: "
+                          f"{skipped_future} future-dated row(s)")
+    return batches, skipped_non_trade, skipped_future
+
+
+def _frame_identity(frame):
+    return _sha256_bytes(session.canonical(frame).encode("utf-8"))
+
+
+def _virtual_valuation_frame(events, source_frame):
+    """Restrict the engine frame to the exact frozen virtual current book."""
+    if not isinstance(source_frame, dict):
+        raise ReviewError("engine did not return a private valuation_frame")
+    try:
+        portfolio_basis.validate_valuation_frame(source_frame)
+        provisional = portfolio_basis.query_current_book(
+            events, reference_as_of=source_frame.get("as_of"), skipped_lines=0)
+    except portfolio_basis.PortfolioBasisError as exc:
+        raise ReviewError(f"engine valuation_frame is invalid: {exc}") from exc
+    if provisional is None:
+        raise ReviewError("virtual PortfolioBasis could not derive frozen holdings")
+    holdings = provisional.current_book["holdings"]
+    aggregate = source_frame["aggregate_currency"]
+    prices = {ticker: row for ticker, row in source_frame["prices"].items()
+              if ticker in holdings and row.get("currency") == holdings[ticker]["currency"]}
+    needed_fx = set(row["currency"] for row in holdings.values()) - {aggregate}
+    fx = {currency: row for currency, row in source_frame["fx_to_aggregate"].items()
+          if currency == aggregate or currency in needed_fx}
+    missing_price = [{"ticker": ticker, "currency": row["currency"]}
+                     for ticker, row in sorted(holdings.items()) if ticker not in prices]
+    missing_fx = sorted(needed_fx - set(fx))
+    if missing_price and missing_fx:
+        reason = "missing_price_and_fx"
+    elif missing_price:
+        reason = "missing_price"
+    elif missing_fx:
+        reason = "missing_fx"
+    else:
+        reason = None
+    frame = {"contract_version": portfolio_basis.VALUATION_FRAME_VERSION,
+             "as_of": source_frame["as_of"], "aggregate_currency": aggregate,
+             "prices": prices, "fx_to_aggregate": fx,
+             "coverage": {"missing_price": missing_price, "missing_fx": missing_fx},
+             "usable": reason is None, "reason": reason}
+    try:
+        portfolio_basis.validate_valuation_frame(frame, positions=holdings)
+    except portfolio_basis.PortfolioBasisError as exc:
+        raise ReviewError(f"virtual valuation_frame is invalid: {exc}") from exc
+    return frame
+
+
+def _virtual_review_basis(inputs, batches, state):
+    try:
+        overlay = ledger.virtualize(inputs["ledger_events"], batches)
+        frame = _virtual_valuation_frame(overlay["events"], state.get("valuation_frame"))
+        basis = portfolio_basis.query_current_book(
+            overlay["events"], valuation_manifest=frame,
+            reference_as_of=frame.get("as_of"), skipped_lines=inputs["ledger_receipt"]["skipped_lines"])
+    except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
+        raise ReviewError(f"virtual PortfolioBasis rejected frozen input: {exc}") from exc
+    if basis is None:
+        raise ReviewError("virtual PortfolioBasis could not derive frozen input")
+    receipt = {"contract_version": "virtual-review-basis-v1",
+               "candidate_receipt": inputs["candidate"],
+               "ledger_receipt": inputs["ledger_receipt"],
+               "valuation_frame": frame, "valuation_frame_identity": _frame_identity(frame),
+               "basis_state_version": basis.state_version,
+               "basis": basis.to_dict()}
+    return overlay, receipt
 
 
 def _validate_initial_snapshot_root(root, anchor):
@@ -954,6 +1098,56 @@ def _ingest_trades(root, paths, card, state):
     return result, card, state
 
 
+def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_receipt, card, state):
+    """Final short-lock gate for one frozen engine/PB transaction (#501)."""
+    frame = basis_receipt.get("valuation_frame")
+    if not isinstance(frame, dict) or _frame_identity(frame) != basis_receipt["valuation_frame_identity"]:
+        raise ReviewError("virtual PortfolioBasis valuation_frame receipt is invalid")
+    original_paths = [row["original_path"] for row in inputs["candidate"]["files"]]
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    with session.projection_transaction(root):
+        # Byte receipt comes first: a whitespace-only change is still a different
+        # engine input, even if the CSV parser would yield identical trades.
+        with tempfile.TemporaryDirectory(prefix="fomo-verify-") as verify_dir:
+            current_candidate, verify_paths = _candidate_receipt(original_paths, verify_dir)
+            if current_candidate != inputs["candidate"]:
+                raise ReviewError("candidate input changed after engine receipt; retry prepare")
+            # Reparse the just-frozen verifier copy, never the mutable path after
+            # digest comparison. Append reuses the resulting overlay below.
+            verified_batches, skipped_non_trade, skipped_future = _parse_frozen_candidates(verify_paths)
+        if skipped_future:
+            raise ReviewError("candidate input changed after engine receipt; retry prepare")
+        live_events, live_receipt, _payload = _read_live_ledger(root)
+        if live_receipt != inputs["ledger_receipt"]:
+            raise ReviewError("ledger changed after engine receipt; retry prepare")
+        try:
+            verified_overlay = ledger.virtualize(live_events, verified_batches)
+            verified_frame = _virtual_valuation_frame(verified_overlay["events"], state.get("valuation_frame"))
+            verified_basis = portfolio_basis.query_current_book(
+                verified_overlay["events"], valuation_manifest=verified_frame,
+                reference_as_of=frame.get("as_of"), skipped_lines=live_receipt["skipped_lines"])
+        except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
+            raise ReviewError(f"virtual PortfolioBasis rejected final input: {exc}") from exc
+        if (verified_basis is None or _frame_identity(verified_frame) != basis_receipt["valuation_frame_identity"]
+                or verified_basis.state_version != basis_receipt["basis_state_version"]
+                or verified_overlay != overlay):
+            raise ReviewError("virtual PortfolioBasis changed after engine receipt; retry prepare")
+        reconciliation = None
+        if ledger.latest_anchor(live_events) is not None:
+            card, state, reconciliation = _overlay_ledger_holdings(
+                card, state, ledger.derive_holdings(verified_overlay["events"]))
+        if verified_overlay["fresh"]:
+            ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
+        result = {"path": ledger_path, "appended": len(verified_overlay["fresh"]),
+                  "skipped_dup": verified_overlay["skipped_dup"],
+                  "skipped_non_trade": skipped_non_trade,
+                  "skipped_future_dated": skipped_future,
+                  "skipped_ledger_lines": live_receipt["skipped_lines"]}
+        if reconciliation is not None:
+            result["holdings_reconciliation"] = reconciliation
+    return result, card, state
+
+
 def _exit_narrative_index(root):
     """Map revisit_id -> latest captured exit narrative (canonical sessions win).
 
@@ -1084,12 +1278,12 @@ def _prepare_exit_capture(root, state, persist):
                                   "skipped_queue_lines": skipped, "path": queue_path}
 
 
-def _run_engine(paths, root, args):
+def _run_engine(paths, root, args, *, ledger_path=None):
     os.makedirs(root, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fomo-review-") as tmp:
         state_path = os.path.join(tmp, "state.json")
         env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
-                   TR_LEDGER=os.path.join(root, "ledger.jsonl"),
+                   TR_LEDGER=ledger_path or os.path.join(root, "ledger.jsonl"),
                    TR_DISPLAY_CURRENCY=card_renderer.default_display_currency(args.language))
         env.pop("TR_PRICES", None)      # only an explicit --prices may inject a price envelope
         if getattr(args, "prices", None):
@@ -2986,6 +3180,11 @@ def cmd_prepare(args):
     # skill directory, so a caller-relative path would otherwise be fingerprinted
     # from one file and processed from another (or crash mid-run).
     paths = [os.path.abspath(os.path.expanduser(p)) for p in paths]
+    frozen_transaction = None
+    frozen_tmp = None
+    candidate_for_fingerprint = None
+    if not args.snapshot_json and not args.card_json and paths:
+        candidate_for_fingerprint, _unused = _candidate_receipt(paths)
     prepared = None
     if args.snapshot_json:
         try:
@@ -3019,7 +3218,8 @@ def cmd_prepare(args):
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
                                nonce=args.session_nonce or "", prices=supplied_prices,
                                cash=getattr(args, "cash", None),
-                               condition_checks=submitted_checks)
+                               condition_checks=submitted_checks,
+                               candidate_receipt=candidate_for_fingerprint)
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
@@ -3027,8 +3227,20 @@ def cmd_prepare(args):
                "next_action": ("run resume --session-id to reuse any validated question surface; "
                                "then ask question_queue and run preview")})
         return
+    if candidate_for_fingerprint is not None:
+        frozen_tmp = tempfile.TemporaryDirectory(prefix="fomo-review-input-")
+        frozen_transaction = _freeze_transaction_inputs(root, paths, frozen_tmp.name)
+        if frozen_transaction["candidate"] != candidate_for_fingerprint:
+            raise ReviewError("candidate input changed while freezing; retry prepare")
     if prepared is None:
-        card, state, engine_meta = _run_engine(paths, root, args)
+        card, state, engine_meta = _run_engine(
+            (frozen_transaction or {}).get("frozen_paths", paths), root, args,
+            ledger_path=(frozen_transaction or {}).get("ledger_snapshot"))
+    if frozen_transaction is not None:
+        batches, _skipped_non_trade, _skipped_future = _parse_frozen_candidates(
+            frozen_transaction["frozen_paths"])
+        overlay, virtual_basis = _virtual_review_basis(frozen_transaction, batches, state)
+        state["virtual_review_basis"] = virtual_basis
     card, state = _apply_display_currency(card, state, _previous_state(root), language)
     ledger_ingest = None
     if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
@@ -3039,8 +3251,13 @@ def cmd_prepare(args):
             ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
             if isinstance(state.get("snapshot_reconciliation"), dict):
                 ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
+    elif persist and frozen_transaction is not None:
+        ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
+            root, frozen_transaction, batches, overlay, virtual_basis, card, state)
     elif persist and paths:
         ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
+    if frozen_tmp is not None:
+        frozen_tmp.cleanup()
     if route == "snapshot_review":
         recent_exits, due_revisits, exit_backlog = [], [], None
         problem_stats = None
