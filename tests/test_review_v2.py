@@ -27,6 +27,7 @@ import ledger as ledger_engine  # noqa: E402
 import problems as problems_engine  # noqa: E402
 import review as review_engine  # noqa: E402
 import session as session_engine  # noqa: E402
+import snapshot_adapter  # noqa: E402
 import thesis as thesis_engine  # noqa: E402
 import trade_recap as tr  # noqa: E402
 from check_card import check_card  # noqa: E402
@@ -665,11 +666,22 @@ def test_incomplete_snapshot_commits_review_without_accounting_anchor():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        # #485: `is_complete` no longer gates whether a weight may be computed
+        # from the facts the user supplied -- only whether the snapshot may
+        # become the accounting anchor (asserted below, unchanged). A single
+        # PLTR position with a known avg_cost has every fact a weight needs,
+        # so weights_available flips to True and the sizing/diversification
+        # dimensions populate even though this book is declared incomplete.
         assert plan["input"]["ledger_ingest"] == {
             "mode": "canonical_only", "kind": "positions_snapshot",
             "reason": "incomplete_snapshot",
         }
-        assert plan["engine_card"]["snapshot_summary"]["weights_available"] is False
+        assert plan["engine_card"]["snapshot_summary"]["weights_available"] is True
+        assert "weights_unavailable_reason" not in plan["engine_card"]["data_integrity"]
+        assert [row["dim"] for row in plan["engine_card"]["dims_raw"]] == ["部位 sizing", "分散"]
+        assert [hole["dim"] for hole in plan["engine_card"]["top_holes"]] == ["部位 sizing", "分散"]
+        assert plan["engine_state"]["metrics"]["max_pos_pct"] == 1.0
+        assert plan["engine_state"]["metrics"]["max_pos_ticker"] == "PLTR"
         answers = pathlib.Path(tmp) / "answers-incomplete.json"
         narrative = pathlib.Path(tmp) / "narrative-incomplete.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
@@ -837,6 +849,85 @@ def test_incomplete_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguou
     assert thesis_engine.build_incomplete_snapshot_cycle_relinks(
         [prior, ambiguous], earlier, "session-ambiguous", "2026-07-18"
     ) == [], "ticker-only matching must not choose between two open snapshot candidates"
+
+
+def test_weights_unavailable_reason_reports_incomplete_valuation_or_fx_gap():
+    """snapshot_adapter.prepare's weights_unavailable_reason had zero coverage.
+    #485 collapses it to the two causes _global_values can actually produce: a
+    missing price/cost fact (native_values empty -> "incomplete_valuation")
+    and a missing FX fact for a held currency (fx_gaps non-empty ->
+    "fx_gap")."""
+    with tempfile.TemporaryDirectory() as tmp:
+        missing_valuation = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-16",
+            "positions": [{"ticker": "PLTR", "shares": 5,
+                           "market": "US", "currency": "USD"}],
+        }, name="missing-valuation.json")
+        card, _state, _meta = snapshot_adapter.prepare(str(missing_valuation))
+        assert card["snapshot_summary"]["weights_available"] is False
+        assert card["data_integrity"]["weights_unavailable_reason"] == "incomplete_valuation"
+
+        missing_fx = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-16",
+            "positions": [
+                {"ticker": "PLTR", "shares": 5, "avg_cost": 100,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "2330.TW", "shares": 100, "avg_cost": 500,
+                 "market": "TW", "currency": "TWD"},
+            ],
+            "fx": {"USD": 1},
+        }, name="missing-fx.json")
+        card, _state, _meta = snapshot_adapter.prepare(str(missing_fx))
+        assert card["snapshot_summary"]["weights_available"] is False
+        assert card["data_integrity"]["weights_unavailable_reason"] == "fx_gap"
+
+
+def test_weights_unavailable_reason_never_reports_incomplete_snapshot():
+    """Regression guard for #485. Before this fix, `is_complete: false` alone
+    forced weights_available to False inside _global_values, and the reason
+    derivation checked `is_complete` before basis/fx -- so a declaration that
+    was both incomplete AND missing a real price or FX fact was mislabeled
+    "incomplete_snapshot" instead of naming the fact that was actually
+    absent. is_complete now plays no role in _global_values, so the same two
+    genuinely-missing-fact inputs must report the same reason regardless of
+    is_complete, and a fact-complete incomplete-declared book must report no
+    reason at all because weights_available is true."""
+    with tempfile.TemporaryDirectory() as tmp:
+        missing_valuation = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-16", "is_complete": False,
+            "positions": [{"ticker": "PLTR", "shares": 5,
+                           "market": "US", "currency": "USD"}],
+        }, name="incomplete-and-missing-valuation.json")
+        card, _state, _meta = snapshot_adapter.prepare(str(missing_valuation))
+        assert card["snapshot_summary"]["weights_available"] is False
+        reason = card["data_integrity"]["weights_unavailable_reason"]
+        assert reason == "incomplete_valuation"
+        assert reason != "incomplete_snapshot"
+
+        missing_fx = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-16", "is_complete": False,
+            "positions": [
+                {"ticker": "PLTR", "shares": 5, "avg_cost": 100,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "2330.TW", "shares": 100, "avg_cost": 500,
+                 "market": "TW", "currency": "TWD"},
+            ],
+            "fx": {"USD": 1},
+        }, name="incomplete-and-missing-fx.json")
+        card, _state, _meta = snapshot_adapter.prepare(str(missing_fx))
+        assert card["snapshot_summary"]["weights_available"] is False
+        reason = card["data_integrity"]["weights_unavailable_reason"]
+        assert reason == "fx_gap"
+        assert reason != "incomplete_snapshot"
+
+        fact_complete = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-16", "is_complete": False,
+            "positions": [{"ticker": "PLTR", "shares": 5, "avg_cost": 100,
+                           "market": "US", "currency": "USD"}],
+        }, name="incomplete-but-fact-complete.json")
+        card, _state, _meta = snapshot_adapter.prepare(str(fact_complete))
+        assert card["snapshot_summary"]["weights_available"] is True
+        assert "weights_unavailable_reason" not in card["data_integrity"]
 
 
 def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
