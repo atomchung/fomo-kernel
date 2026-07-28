@@ -4914,21 +4914,56 @@ def _legacy_transaction_basis(rows, last_px):
 
 
 def _canonical_consider_before(rows, basis, projection, last_px, max_pos_override,
-                               cash_anchor, fx):
+                               cash_anchor, fx, excluded_holdings=()):
     """Use #494's one canonical denominator for ledger-backed ``consider``.
 
     The consequence engine still owns the hypothetical after-state arithmetic.
     This facade replaces only its *before* sizing facts with the typed
     PortfolioBasis projection and refuses any mismatch, so an old FIFO/cost
     reader can never silently become a second current-book truth source.
+
+    A ``bounded_valued_subset`` projection is accepted (#515): a holding that
+    cannot be valued is excluded and named, not a reason to refuse the whole
+    question. What is *not* relaxed is the agreement requirement — the two
+    readers must name the same excluded set. If the projection can value a
+    holding this adapter dropped (or the reverse), they are describing two
+    different books, and the weight the user is shown would be measured
+    against a denominator no other surface uses. That stays a refusal, because
+    the alternative is a silently wrong percentage.
     """
     projected = projection.to_dict()
-    if not projected["applicable"] or projected["coverage"]["scope"] != "full_current_book":
-        raise ReviewError("canonical PortfolioBasis has no full current-book sizing projection")
+    coverage = projected["coverage"]
+    if not projected["applicable"] or coverage["scope"] == "unavailable_mixed_currency":
+        raise ReviewError("canonical PortfolioBasis has no usable current-book sizing projection")
+    excluded_tickers = {row["ticker"] for row in excluded_holdings or ()}
+    projection_unavailable = set(coverage["unavailable"])
+    # A holding the projection CAN value but this adapter cannot use: it has a
+    # current price and no cost on record. The projection weighs it at market;
+    # the consequence engine cannot represent it at all, because a synthetic
+    # row is `{side: buy, qty, price}` where price is the cost. Keeping the
+    # projection's whole-book denominator for `before` while `after` is
+    # computed without that position would compare two different books, so
+    # this refuses rather than produce a delta measured across two
+    # denominators. Refusing here is narrow and actionable -- the two paths
+    # below both work today -- and #528 tracks teaching the consequence engine
+    # about value-only positions so it need not refuse at all.
+    priced_without_cost = sorted(excluded_tickers - projection_unavailable)
+    if priced_without_cost:
+        raise ReviewError(
+            f"{', '.join(priced_without_cost)} has a current price but no cost on record, and a "
+            "consequence answer needs a cost for every position it reasons about. Add the "
+            "average cost for it, or ask again without --prices to get the answer over the "
+            "part of the book that has costs.")
+    if projection_unavailable != excluded_tickers:
+        raise ReviewError(
+            "canonical PortfolioBasis and the consider adapter disagree about which "
+            "holdings cannot be valued: projection "
+            f"{sorted(projection_unavailable)} vs adapter {sorted(excluded_tickers)}")
     before = consequence.portfolio_state(rows, last_px=last_px,
                                          max_pos_override=max_pos_override,
                                          cash_anchor=cash_anchor, fx=fx)
-    holdings = basis.current_book["holdings"]
+    holdings = {ticker: holding for ticker, holding in basis.current_book["holdings"].items()
+                if ticker not in excluded_tickers}
     if set(before["held"]) != set(holdings):
         raise ReviewError("canonical PortfolioBasis holdings disagree with consider adapter")
     for ticker, holding in holdings.items():
@@ -4957,7 +4992,9 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
     says which one it used rather than implying a currency it does not have).
     Fails closed when neither source yields a usable row: an empty book
     cannot answer a pre-trade question, and inventing one would be worse than
-    refusing."""
+    refusing. A book where only *some* holding cannot be valued is not that
+    case (#515): those holdings come back in the fifth return value and must
+    be carried to wherever the derived numbers are stated."""
     if args.paths:
         paths = [os.path.abspath(os.path.expanduser(p)) for p in args.paths]
         for path in paths:
@@ -4968,7 +5005,9 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
             raise ReviewError(
                 "none of the supplied CSV paths contained a usable BUY/SELL trade row; "
                 "consider cannot answer against an empty book")
-        return rows, _legacy_transaction_basis(rows, last_px), None, None
+        # A CSV book has no basis-level exclusion: every row is a real trade
+        # the user supplied, not a holding whose cost could not be read.
+        return rows, _legacy_transaction_basis(rows, last_px), None, None, []
     ledger_path = os.path.join(root, "ledger.jsonl")
     # A ledger-backed current-book answer has one owner: PortfolioBasis.  Do
     # not reconstruct source events into FIFO rows here; that was a second
@@ -4990,7 +5029,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
             "separate historical transaction view")
     basis_dict = basis.to_dict()
     try:
-        rows = consequence.rows_from_portfolio_basis(basis_dict)
+        rows, excluded_holdings = consequence.rows_from_portfolio_basis(basis_dict)
     except consequence.ConsequenceError as exc:
         raise ReviewError(str(exc)) from exc
     # Freeze only the portable fact identity/disclosure envelope.  The full
@@ -5003,7 +5042,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
         "source", "as_of", "stale_days", "completeness", "cost_basis",
         "valuation_basis", "reconciliation_ref", "state_version")}
     basis_meta["valuation_coverage"] = projection.to_dict()["coverage"]
-    return rows, basis_meta, basis, projection
+    return rows, basis_meta, basis, projection, excluded_holdings
 
 
 def _load_json_arg(value, label):
@@ -5333,7 +5372,7 @@ def cmd_consider(args):
     valuation_manifest = None
     if last_px:
         valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
-    rows, basis, canonical_basis, canonical_projection = _consider_rows(
+    rows, basis, canonical_basis, canonical_projection, excluded_holdings = _consider_rows(
         args, root, valuation_manifest=valuation_manifest, last_px=last_px)
 
     agent_case = None
@@ -5347,13 +5386,14 @@ def cmd_consider(args):
     if canonical_basis is not None:
         before_override = _canonical_consider_before(
             rows, canonical_basis, canonical_projection, last_px, max_pos_override,
-            cash_anchor, fx)
+            cash_anchor, fx, excluded_holdings=excluded_holdings)
 
     try:
         result = consequence.consequence(rows, premise_payload, last_px=last_px,
                                          max_pos_override=max_pos_override,
                                          cash_anchor=cash_anchor, fx=fx,
-                                         before_override=before_override)
+                                         before_override=before_override,
+                                         excluded_holdings=excluded_holdings)
     except consequence.ConsequenceError as exc:
         raise ReviewError(str(exc)) from exc
 
@@ -5362,7 +5402,8 @@ def cmd_consider(args):
     collisions = consequence.rule_collision(rows, premise_payload, rules_report,
                                             last_px=last_px, max_pos_override=max_pos_override,
                                             cash_anchor=cash_anchor, fx=fx,
-                                            before_override=before_override)
+                                            before_override=before_override,
+                                            excluded_holdings=excluded_holdings)
 
     premise_stored = _json_safe_premise(result["premise"])
     created = dt.date.today().isoformat()
@@ -5372,7 +5413,12 @@ def cmd_consider(args):
     # section 7): the id must hash what the row actually carries, not a
     # parallel reconstruction of it that could drift.
     consequence_stored = {"before": result["before"], "after": result["after"],
-                          "delta": result["delta"], "disclosures": result["disclosures"]}
+                          "delta": result["delta"], "disclosures": result["disclosures"],
+                          # #515 invariant 1: the excluded holding travels with
+                          # every number derived from the partial denominator,
+                          # including into the frozen record a later --resolve
+                          # or reconciliation reads back.
+                          "excluded_holdings": result["excluded_holdings"]}
 
     row = {
         "consultation_id": _consultation_id(premise_stored, basis, created,

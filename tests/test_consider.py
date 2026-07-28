@@ -513,13 +513,52 @@ def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
         assert os.path.exists(_consultation_path(tmp))
 
 
-def test_consider_still_refuses_a_held_ticker_with_unknown_cost_and_no_price():
-    """The gate removed above (#485) was a declaration gate. A genuinely
-    missing fact -- no declared avg_cost, and no supplied price -- is a
-    different thing entirely and must still refuse. This is the mutation
-    boundary for this change: deleting the two `completeness` lines in
-    rows_from_portfolio_basis is right; deleting anything below them, such
-    as the `cost_basis` check this exercises, would not be."""
+def test_an_unusable_holding_is_excluded_and_named_instead_of_refusing_everything():
+    """#515's own acceptance sentence, run end to end.
+
+    Six positions, one with no declared cost, and the user asks about a
+    seventh. Before this leaf the whole consultation was refused -- which
+    gives the user nothing and is indistinguishable from a broken product.
+    The ruling: compute over the part that can be used and name what was
+    left out.
+
+    Note what the three tests this replaces had in common: every one of them
+    used a book with exactly ONE holding, so "refuse the book" and "exclude
+    this holding" produced identical output and nothing here could tell them
+    apart. That is why the defect shipped, and it is why this fixture holds
+    six."""
+    priced = [{"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+              for t in ("AAA", "BBB", "CCC", "DDD", "EEE")]
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", priced + [
+                {"ticker": "DARK", "shares": 10, "market": "US", "currency": "USD"}]),  # no avg_cost
+        ])
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "NEWCO", "side": "buy", "qty": 5, '
+                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+        result = row["consequence"]
+        assert "partial_book" in result["disclosures"]
+        assert result["excluded_holdings"] == [{"ticker": "DARK", "reason": "unavailable_cost"}], (
+            "the excluded holding must be named, not merely counted -- a partial "
+            "denominator that does not say WHICH holding is missing is barely "
+            "better than one that does not say it is partial")
+        assert "DARK" not in result["before"]["weights"], (
+            "an unvaluable holding must be absent from the denominator, never "
+            "silently counted at zero")
+        assert set(result["before"]["weights"]) == {"AAA", "BBB", "CCC", "DDD", "EEE"}
+        assert abs(sum(result["before"]["weights"].values()) - 1.0) < 1e-9, (
+            "the weights the user is shown must sum over the priced part")
+        assert result["after"]["weights"]["NEWCO"] > 0, "the question was actually answered"
+        _check_consultation_shape(row)
+
+
+def test_a_book_where_nothing_can_be_valued_still_refuses():
+    """Exclude-and-disclose has a floor. Excluding the only holding leaves an
+    empty denominator, which is not a bounded answer -- it is no answer, and
+    inventing one would be worse than refusing. This is the mutation boundary
+    for #515: turning a whole-book refusal into a per-holding exclusion is
+    right; letting the last holding go and answering anyway is not."""
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [
@@ -527,7 +566,7 @@ def test_consider_still_refuses_a_held_ticker_with_unknown_cost_and_no_price():
         ])
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        _fails(run, "incomplete cost basis")
+        _fails(run, "no holding that can be valued: NVDA")
         assert not os.path.exists(_consultation_path(tmp))
 
 
@@ -543,7 +582,7 @@ def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "USD", "side": "buy", "price": 15.0, "qty": 1}')
-        _fails(run, "no full current-book sizing projection")
+        _fails(run, "no usable current-book sizing projection")
         assert not os.path.exists(_consultation_path(tmp))
 
 
@@ -654,27 +693,96 @@ def test_missing_csv_path_fails_closed_with_a_clear_message():
         _fails(run, "does not exist")
 
 
-def test_anchor_position_with_no_cost_basis_fails_closed_as_incomplete_current_book():
+def test_a_declared_market_value_never_becomes_an_undisclosed_cost_fallback():
+    """The original point of this test survives #515 intact and is now
+    testable properly: a declared market value is a valuation, not a cost, and
+    it must not quietly stand in for one. What changes is the consequence --
+    that holding is excluded and named rather than taking the whole book down
+    with it."""
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [
-                {"ticker": "NVDA", "shares": 10, "market": "US", "currency": "USD"}]),  # no avg_cost
-        ])
-        run = _run("consider", "--root", tmp,
-                   "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        _fails(run, "incomplete cost basis")
-
-
-def test_anchor_market_value_does_not_become_an_undisclosed_cost_fallback():
-    with tempfile.TemporaryDirectory() as tmp:
-        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
-            _snapshot_event("2026-01-01", [
+                {"ticker": "SOLID", "shares": 10, "avg_cost": 100.0,
+                 "market": "US", "currency": "USD"},
                 {"ticker": "NVDA", "shares": 10, "market_value": 1500.0,
                  "market": "US", "currency": "USD"}]),
         ])
-        run = _run("consider", "--root", tmp,
-                   "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        _fails(run, "incomplete cost basis")
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "SOLID", "side": "buy", "qty": 1, '
+                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+        result = row["consequence"]
+        assert result["excluded_holdings"] == [{"ticker": "NVDA", "reason": "unavailable_cost"}]
+        assert "NVDA" not in result["before"]["held"], (
+            "1500.0 is what the position is worth, not what it cost; letting it "
+            "become a cost basis would put an unsupplied number into every "
+            "weight on the card")
+
+
+def test_a_priced_holding_with_no_cost_refuses_with_two_working_paths():
+    """The sub-case #515's fix surfaced rather than created.
+
+    A holding with a current price and no cost on record can be *valued* by the
+    canonical projection but cannot be represented in the consequence engine at
+    all, because a synthetic row carries cost as its price. Keeping the
+    projection's whole-book denominator for `before` while `after` is computed
+    without that position would compare two different books, so this refuses.
+
+    What the refusal owes the user is a way forward, and it has two that both
+    work today. Without that, "supplying more data made it fail" is all they
+    see. #528 tracks removing the refusal entirely."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": "AAA", "shares": 10, "avg_cost": 100.0,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "DARK", "shares": 10, "market": "US", "currency": "USD"}]),
+        ])
+        feed = os.path.join(tmp, "prices.json")
+        with open(feed, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-01-02", "source": "broker", "prices": [
+                {"ticker": "AAA", "close": 100.0, "date": "2026-01-02", "currency": "USD"},
+                {"ticker": "DARK", "close": 50.0, "date": "2026-01-02", "currency": "USD"}]},
+                handle)
+        run = _run("consider", "--root", tmp, "--prices", feed,
+                   "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
+                                '"price": 100.0, "currency": "USD"}')
+        payload = _fails(run, "DARK has a current price but no cost on record")
+        assert "without --prices" in payload["error"] and "average cost" in payload["error"], (
+            "a refusal that names no way forward reads as a broken product")
+        # Path two from that message, verified rather than merely promised.
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
+                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+        assert row["consequence"]["excluded_holdings"] == [
+            {"ticker": "DARK", "reason": "unavailable_cost"}]
+
+
+def test_a_rule_judged_against_a_partial_book_says_so():
+    """#515's second invariant. The user wrote their cap against their whole
+    book. An excluded position reads as weight zero here, so a cap that the
+    hidden position is breaching comes back `clear` -- a verdict computed on a
+    different denominator than the promise was made against, presented as the
+    same claim. It may still be computed; it may not pass silently."""
+    priced = [{"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+              for t in ("AAA", "BBB")]
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", priced + [
+                {"ticker": "DARK", "shares": 10, "market": "US", "currency": "USD"}]),
+        ])
+        with open(os.path.join(tmp, "rules.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "rule", "rule_id": "r1", "date": "2026-01-01",
+                "text": "Cap any single position at 25%.",
+                "metric_key": "max_pos_pct", "problem_key": "oversize",
+                "status": "tracking"}) + "\n")
+        payload = _ok(_run("consider", "--root", tmp,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
+                                        '"price": 100.0, "currency": "USD"}'))
+        collisions = payload["consultation"]["rule_collisions"]
+        assert collisions, "the tracked rule must still be evaluated, not suppressed"
+        assert all(row.get("partial_book") is True for row in collisions), (
+            "every collision judged on the bounded book must carry the marker")
 
 
 # ────────────────────────── D. premise validation ──────────────────────────
