@@ -7,7 +7,7 @@ fomo-kernel · trade-recap engine v0.2
 用法：python3 trade_recap.py [trades.csv ...]   (預設吃 ../mock/mock_trades.csv)
 隱私：本檔不含任何真實帳戶路徑;預設只跑 mock 資料。用戶自己的 CSV 由參數傳入,留在本機。
 """
-import csv, os, re, sys, statistics, datetime as dt, math
+import csv, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 import fetch_cache
@@ -1216,19 +1216,19 @@ def meaningful_tickers(held, last_px, floor=RESIDUAL_POS_TH):
     return {t for t, v in vals.items() if v / tot >= floor}
 
 def dim_diversify(held, last_px):
-    vals = {}
-    for t, (sh, cost) in held.items():
-        px = (last_px or {}).get(t); vals[t] = sh * px if px else cost
-    tot = sum(vals.values())
+    # #516:權重/分母改讀 current_book_projection() 這唯一算式(同 dim_size/ticker_diagnosis,
+    # #477),不再就地算 vals[t]=sh*px if px else cost —— 那份邏輯會把「既無現價也無正成本」
+    # 的檔以 0/雜訊成本併入集中度分母,同一本帳三個權重讀法(#516 案例)。
+    projection = current_book_projection(held, last_px)
     # See dim_size: diversification needs the same positive current-book
     # denominator.  Returning an explicit inapplicable dimension prevents an
     # empty account from being praised as perfectly diversified.
-    if not held or not math.isfinite(tot) or tot <= 0:
+    if not projection["applicable"]:
         return dict(dim="分散", tier=2, applicable=False,
                     triggered=False, severity=0, n=None, n_risk=None,
                     max_sector=None, max_sector_pct=None, ai_pct=None,
                     top3=None, sectors={}, allocation_etfs={})
-    w = {t: v / tot for t, v in vals.items()}
+    w = {t: e["weight"] for t, e in projection["values"].items() if e["applicable"]}
     risk_w = {t: wt for t, wt in w.items()
               if not instrument_policy.is_diversified_allocation(t)}
     sec = defaultdict(float); ai = 0.0

@@ -887,6 +887,49 @@ def test_negative_cost_ticker_is_excluded_not_a_whole_book_veto():
         "A 獨佔可估值帳面 100% > 25%,too_heavy 應正常開火,不被 B 的壞資料拖進沉默"
 
 
+def test_dim_diversify_shares_current_book_projection_denominator():
+    """#516:dim_diversify 是 #477 之後第三個獨立分母讀者——舊碼就地算
+    vals[t]=sh*px if px else cost,把 ZQXC 這種既無現價也無正成本的檔以 0 成本併入
+    集中度分母。新碼必須改讀 current_book_projection(),讓 ZQXC 被排除、具名,且
+    ZQXA/ZQXB 在 dim_diversify 裡用到的權重是投影本身回報的同一個數字,不是
+    dim_diversify 自己另一次獨立加總、只是數值上『恰好』相等的第三個分母。
+    ZQX* 是本測試專用的假 ticker,刻意不在 DRIVER_FALLBACK 裡,落進「未分類」桶,
+    讓 sectors 的加總可預期驗證。"""
+    held = {"ZQXA": (10.0, 6000.0),   # 有現價 → source=price
+            "ZQXB": (10.0, 3000.0),   # 無現價,正成本 → source=cost_fallback
+            "ZQXC": (5.0, 0.0)}       # 無現價,cost_total=0(非正)→ unavailable
+    last_px = {"ZQXA": 600.0}
+    projection = tr.current_book_projection(held, last_px)
+    assert projection["applicable"] is True
+    assert projection["coverage"]["priced"] == ["ZQXA"]
+    assert projection["coverage"]["cost_fallback"] == ["ZQXB"]
+    assert projection["coverage"]["unavailable"] == ["ZQXC"]
+
+    d = tr.dim_diversify(held, last_px)
+    assert d["applicable"] is True
+    assert d["n"] == 2, f"ZQXC 無可估值,#516 前會被就地算成 0 併入分母,實得 n={d['n']}"
+    assert d["n_risk"] == 2
+    assert "ZQXC" not in d["allocation_etfs"]
+    # 兩檔都落進未分類桶 → sectors["未分類"] 必須恰為 current_book_projection 給
+    # ZQXA/ZQXB 的權重「同一個數字」加總,不是 dim_diversify 自己重新算出來的另一組。
+    expected = projection["values"]["ZQXA"]["weight"] + projection["values"]["ZQXB"]["weight"]
+    assert _approx(d["sectors"]["未分類"], expected)
+    assert _approx(d["sectors"]["未分類"], 1.0), "ZQXC 排除後,剩下兩檔的權重加總必為 100%"
+    assert _approx(d["top3"], 1.0)
+
+    # #329 不變式:改讀新分母後,「全無可估值」與「空倉」仍必須維持不適用,不能被
+    # 翻成「0 檔=完美分散」。
+    none_valued_held = {"ZQXD": (5.0, 0.0), "ZQXE": (3.0, -1.0)}   # 兩檔都無現價、成本也非正
+    none_valued = tr.current_book_projection(none_valued_held, {})
+    assert none_valued["applicable"] is False and none_valued["reason"] == "no_valued_holdings"
+    d_none = tr.dim_diversify(none_valued_held, {})
+    assert d_none["applicable"] is False and d_none["triggered"] is False
+    assert d_none["n"] is None and d_none["sectors"] == {}
+
+    d_empty = tr.dim_diversify({}, {})
+    assert d_empty["applicable"] is False, "空倉必須維持不適用,不能被讚美成完美分散(#329)"
+
+
 def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
     """分類算術已物理共用(portfolio_basis.value_partition,owner 裁決 2026-07-28:
     「讀原始分類,不要創建一份」),不再有可漂移的鏡像。本測試降級為殼層鎖:
