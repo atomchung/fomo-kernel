@@ -602,6 +602,28 @@ def dedupe_against(events, new_trades):
     return fresh, dup
 
 
+def virtualize(existing, batches):
+    """Pure post-import view for one prepare attempt (#501).
+
+    ``existing`` must already be the caller's strict ledger read and every
+    batch must already have passed ``trades_from_csv``.  This function has no
+    path, lock, or writer: it only preserves the established sequential
+    occurrence-aware dedupe semantics for existing rows and earlier batches.
+    """
+    if not isinstance(existing, list) or not isinstance(batches, (list, tuple)):
+        raise ValueError("virtualize requires event list and candidate batches")
+    virtual = list(existing)
+    fresh_all, skipped_dup = [], 0
+    for batch in batches:
+        if not isinstance(batch, list):
+            raise ValueError("virtualize candidate batches must be lists")
+        fresh, dup = dedupe_against(virtual, batch)
+        virtual.extend(fresh)
+        fresh_all.extend(fresh)
+        skipped_dup += dup
+    return {"events": virtual, "fresh": fresh_all, "skipped_dup": skipped_dup}
+
+
 # ───────────────────── 共用工具(#166:coach.py/problems.py 收尾原子化)─────────────────────
 
 def atomic_write_text(path, text):

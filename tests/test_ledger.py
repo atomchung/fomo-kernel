@@ -1041,6 +1041,19 @@ def test_snapshot_projection_replay_does_not_duplicate_a_pre_fix_legacy_row():
         "a row that predates the field; absence must stay absence"
 
 
+def test_virtualize_reuses_sequential_dedupe_without_writing():
+    existing = [_tr("2026-07-01", "NVDA", "buy", 1, 100)]
+    duplicate = _tr("2026-07-01", "NVDA", "buy", 1, 100)
+    independent_same_fill = _tr("2026-07-01", "NVDA", "buy", 1, 100)
+    later = _tr("2026-07-02", "AMD", "buy", 2, 50)
+    before = json.dumps(existing, sort_keys=True)
+    result = lg.virtualize(existing, [[duplicate, independent_same_fill], [later]])
+    assert json.dumps(existing, sort_keys=True) == before
+    assert result["skipped_dup"] == 1
+    assert result["fresh"] == [independent_same_fill, later]
+    assert result["events"] == existing + [independent_same_fill, later]
+
+
 # ─────────────────────────── runner ───────────────────────────
 
 def _main():
