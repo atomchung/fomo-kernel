@@ -2303,14 +2303,22 @@ def _candidate_rules(card, state, language):
     seen = set()
     source = list(card.get("candidate_rules") or [])
     for hole in card.get("top_holes") or []:
-        source.append({"dim": hole.get("dim"), "rule": hole.get("lens_rule")})
+        source.append({"dim": hole.get("dim"), "rule": hole.get("lens_rule"),
+                       "applicable": hole.get("applicable"), "raw": hole.get("raw")})
     metrics = state.get("metrics") or {}
     cap_override = (state or {}).get("max_position_pct")  # #324:sizing 規矩文案帶用戶自訂上限(engine 已回填 state)
     for row in source:
         dim = row.get("dim") or row.get("kind")
         dim_id = card_renderer.dimension_id(dim)
         metric = DIM_METRIC.get(dim_id)
-        if not dim or dim in seen or metric not in metrics:
+        raw = row.get("raw") or {}
+        # One applicability gate covers both direct candidate rows and
+        # lens-rule fallbacks synthesized from top_holes.  Existing committed
+        # rules are deliberately outside this function and remain reconcilable.
+        if (not dim or row.get("applicable", True) is False
+                or raw.get("applicable", True) is False
+                or not card_renderer._dimension_is_applicable(card, dim)
+                or dim in seen or metric not in metrics):
             continue
         rule = card_renderer.localized_rule(dim, language, cap=cap_override) or row.get("rule")
         if not rule:

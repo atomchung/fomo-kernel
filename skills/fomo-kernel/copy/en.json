@@ -89,6 +89,7 @@
     "position_sizing": "The highlighted behavior concerned how risk was distributed across position sizes.",
     "diversification": "The highlighted behavior concerned whether the portfolio represented distinct underlying risks.",
     "holding_period": "The highlighted behavior concerned whether holding durations matched a consistent decision horizon.",
+    "holding_period_same_day": "All completed trades were same-day; no overnight holding.",
     "averaging_down": "The highlighted behavior concerned how additions to losing positions were bounded.",
     "alpha_beta": "The highlighted behavior concerned how benchmark-relative results were attributed between exposure and selection.",
     "entry_style": "The highlighted behavior concerned when entries occurred relative to recent price moves."
@@ -514,6 +515,7 @@
     "position_sizing": "your largest single position {max_ticker} was {max_pct}, against a {avg_pct} average across the rest",
     "diversification": "you hold {n} names that look diversified, but AI-capex exposure is {ai_pct}, the largest sector ({max_sector}) is {max_sector_pct} and the top three are {top3} — one and the same driver",
     "holding_no_data": "no closed round trips yet, so holding-time statistics are still pending (positions bought and not yet sold are not counted)",
+    "holding_same_day": "all completed trades were same-day; no overnight holding",
     "holding_base": "your holding periods run {min}–{max} days, median {median_hold} days",
     "holding_inconsistent": "{base}; {n_incon} of {n_multi} names were both day-traded and held long ({tickers}) — no consistent framework within the same name",
     "holding_consistent": "{base} (median {median_hold} days = your main framework; frameworks within a name are broadly consistent)",

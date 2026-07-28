@@ -361,9 +361,42 @@ def effective_oversize_trigger(override=None):
 def _grounding_dims(card):
     dims = {}
     for row in (card or {}).get("dims_raw") or []:
-        if isinstance(row, dict) and row.get("dim"):
+        if isinstance(row, dict) and row.get("dim") and row.get("applicable", True):
             dims[dimension_id(row.get("dim"))] = row
     return dims
+
+
+def _dimension_is_applicable(card, dim):
+    """Whether this card still supports a dimension claim.
+
+    The engine marks zero-denominator current-book dimensions inapplicable.
+    Renderers must honor that marker too: a replayed/hand-built legacy card
+    must not turn an empty book into a sizing or diversification strength,
+    hole, or target merely because it carries stale rows.  A prior
+    user-confirmed standing rule remains visible for reconciliation.
+    """
+    dim_id = dimension_id(dim)
+    for row in (card or {}).get("dims_raw") or []:
+        if isinstance(row, dict) and dimension_id(row.get("dim")) == dim_id:
+            return row.get("applicable", True) is not False
+    return True
+
+
+def _applicable_holes(card):
+    holes = []
+    for hole in ((card or {}).get("top_holes") or []):
+        if not isinstance(hole, dict):
+            continue
+        raw = hole.get("raw") or {}
+        # A hole is its own claim.  Do not rely only on dims_raw: legacy or
+        # hand-built cards can omit it, while the hole still explicitly says
+        # its fact is inapplicable.
+        if hole.get("applicable", True) is False or raw.get("applicable", True) is False:
+            continue
+        dim = raw.get("dim") or hole.get("dim")
+        if _dimension_is_applicable(card, dim):
+            holes.append(hole)
+    return holes
 
 
 def _diagnosis_ticker_order(card):
@@ -1268,6 +1301,8 @@ def _hole_line(hole, language):
     the v1 card, and the CLAUDE.md mirror obligation between the two now covers
     two genuinely independent implementations rather than one string reused."""
     d = hole.get("raw") or {}
+    if d.get("applicable", True) is False:
+        return ""
     dim = dimension_id(d.get("dim"))
     copy = (load_copy(language).get("hole_lines") or {})
     def tickers(values, limit):
@@ -1307,6 +1342,8 @@ def _hole_line(hole, language):
     if dim == "holding_period":
         if d.get("no_data"):
             return copy.get("holding_no_data") or ""
+        if d.get("all_same_day"):
+            return copy.get("holding_same_day") or ""
         median = f"{float(d.get('median_hold') or 0):.0f}"
         base = _format_copy(copy.get("holding_base"), min=d.get("min", 0),
                             max=d.get("max", 0), median_hold=median)
@@ -1343,8 +1380,7 @@ def _best_strength(card, language):
     sentence in both locales. Restoring it needs the engine to emit a
     structured strength (code + params) the way ``top_holes[].raw`` already
     does, which is a change inside the v1 file the contract fences off."""
-    dims = {dimension_id(d.get("dim")): d for d in (card.get("dims_raw") or [])
-            if d.get("dim")}
+    dims = _grounding_dims(card)
     copy = (load_copy(language).get("best_strength") or {})
     candidates = []
 
@@ -2429,7 +2465,7 @@ def _snapshot_hole_lines(card, language):
     finding should read as a dropped leftover. Returns a list of one or more
     lines (never empty)."""
     summary = _snapshot_summary(card)
-    holes = card.get("top_holes") or []
+    holes = _applicable_holes(card)
     hole_copy = (load_copy(language).get("snapshot") or {}).get("holes") or {}
     if summary.get("weights_available") is True:
         lines = []
@@ -3258,7 +3294,7 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     language = copy["language"]
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
-    holes = card.get("top_holes") or []
+    holes = _applicable_holes(card)
     trade_tickers = set(trade_tickers or [])
     motive_lines = [text for ticker, text in _headline_motive_entries(bundle, copy)
                     if not ticker or str(ticker) not in trade_tickers]
@@ -3334,6 +3370,10 @@ def _next_block(bundle, copy, facts, state, snapshot):
     card = bundle.get("engine_card") or {}
     blocks = []
     rule_inner = []
+    # Applicability gates this period's generated findings, not a user's
+    # previously chosen standing rule.  An empty current book must not erase
+    # the commitment they explicitly asked the next review to reconcile.
+    dim = commitment.get("dim")
     rule = commitment.get("rule")
     if rule:
         rule_inner.append(("paragraph", [rule]))
@@ -3345,7 +3385,6 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # need not match headline_dim, so falling back to it would list the
         # wrong positions under the rule. A custom rule without a dimension
         # keeps the aggregate grounding sentence instead.
-        dim = commitment.get("dim")
         # #328: the same standing cap override that shaped the rule text and
         # the engine's own severity (state.max_position_pct, #324) must also
         # govern which positions this line names.
@@ -3750,13 +3789,18 @@ def render_public(bundle):
     card = bundle.get("engine_card") or {}
     snapshot = bundle.get("route") == "snapshot_review"
     snapshot_summary = _snapshot_summary(card)
-    holes = card.get("top_holes") or []
+    holes = _applicable_holes(card)
     hole = holes[0] if holes else {}
     raw = hole.get("raw") or {}
     dim_id = dimension_id(raw.get("dim")) if raw.get("dim") else None
     dim_label = (copy.get("dimensions") or {}).get(dim_id) if dim_id else None
-    pattern = ((copy.get("public_patterns") or {}).get(dim_id)
-               if dim_id and not snapshot else None)
+    pattern = None
+    if dim_id and not snapshot:
+        patterns = copy.get("public_patterns") or {}
+        if dim_id == "holding_period" and raw.get("all_same_day"):
+            pattern = patterns.get("holding_period_same_day")
+        else:
+            pattern = patterns.get(dim_id)
     severity_value = _finite_number(hole.get("severity"))
     severity = (None if snapshot and severity_value is None
                 else _public_band(hole.get("severity"), copy["language"]))

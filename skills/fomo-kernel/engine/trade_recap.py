@@ -7,7 +7,7 @@ fomo-kernel · trade-recap engine v0.2
 用法：python3 trade_recap.py [trades.csv ...]   (預設吃 ../mock/mock_trades.csv)
 隱私：本檔不含任何真實帳戶路徑;預設只跑 mock 資料。用戶自己的 CSV 由參數傳入,留在本機。
 """
-import csv, os, re, sys, statistics, datetime as dt
+import csv, os, re, sys, statistics, datetime as dt, math
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 import fetch_cache
@@ -1122,7 +1122,17 @@ def dim_size(rows, held, last_px, max_pos_override=None):
     for t, (sh, cost) in held.items():
         px = (last_px or {}).get(t)
         vals[t] = sh * px if px else cost
-    tot = sum(vals.values()) or 1
+    tot = sum(vals.values())
+    # Current-book dimensions have no honest denominator when every position
+    # has been closed (or the supplied values cannot form a positive book).
+    # ``0%`` is a measurement in a real book, not a synonym for "there is no
+    # book to measure".  Keep the dimension-shaped payload for compatibility,
+    # but make its applicability explicit so every downstream consumer can
+    # centrally exclude it.
+    if not held or not math.isfinite(tot) or tot <= 0:
+        return dict(dim="部位 sizing", tier=1, applicable=False,
+                    triggered=False, severity=0, max_ticker=None, max_pct=None,
+                    avg_pct=None, weights={}, risk_weights={}, allocation_etfs={})
     weights = {t: v / tot for t, v in vals.items()}
     # 配置型 ETF 是一籃子資產,不拿「單一公司部位上限」誤殺。產業/主題/槓桿 ETF
     # 仍是集中風險;未知 ticker 保守視為 equity,不會因猜測而取得豁免。
@@ -1135,7 +1145,7 @@ def dim_size(rows, held, last_px, max_pos_override=None):
     trigger = effective_oversize_trigger(max_pos_override)
     sev = min(max((max_pct - trigger) / OVERSIZE_SEV_SPAN, 0), 1)
     others = [w for t, w in risk_weights.items() if t != max_t]  # 「其餘平均」排除最大風險部位;配置型 ETF 不混入單一標的基準
-    return dict(dim="部位 sizing", tier=1, triggered=max_pct > trigger,
+    return dict(dim="部位 sizing", tier=1, applicable=True, triggered=max_pct > trigger,
                 severity=sev, max_ticker=max_t, max_pct=max_pct,
                 avg_pct=statistics.mean(others) if others else 0.0, weights=weights,
                 risk_weights=risk_weights,
@@ -1159,7 +1169,15 @@ def dim_diversify(held, last_px):
     vals = {}
     for t, (sh, cost) in held.items():
         px = (last_px or {}).get(t); vals[t] = sh * px if px else cost
-    tot = sum(vals.values()) or 1
+    tot = sum(vals.values())
+    # See dim_size: diversification needs the same positive current-book
+    # denominator.  Returning an explicit inapplicable dimension prevents an
+    # empty account from being praised as perfectly diversified.
+    if not held or not math.isfinite(tot) or tot <= 0:
+        return dict(dim="分散", tier=2, applicable=False,
+                    triggered=False, severity=0, n=None, n_risk=None,
+                    max_sector=None, max_sector_pct=None, ai_pct=None,
+                    top3=None, sectors={}, allocation_etfs={})
     w = {t: v / tot for t, v in vals.items()}
     risk_w = {t: wt for t, wt in w.items()
               if not instrument_policy.is_diversified_allocation(t)}
@@ -1172,7 +1190,7 @@ def dim_diversify(held, last_px):
     top3 = sum(sorted(risk_w.values(), reverse=True)[:3])
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
     trig = (len(risk_w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > TOP3_MAX_TH or ai > AI_MAX_TH
-    return dict(dim="分散", tier=2, triggered=trig, severity=sev, n=len(w),
+    return dict(dim="分散", tier=2, applicable=True, triggered=trig, severity=sev, n=len(w),
                 n_risk=len(risk_w),
                 max_sector=max_sec, max_sector_pct=max_sec_pct, ai_pct=ai,
                 top3=top3, sectors=dict(sec),
@@ -1186,7 +1204,7 @@ def dim_hold(rts):
     hs = [r["hold"] for r in rts]
     if not hs:
         # 無已實現 round-trip(全買未賣)→ keys 補空,讓下游 number_line 不 KeyError
-        return dict(dim="持有時間", tier=2, triggered=False, severity=0,
+        return dict(dim="持有時間", tier=2, applicable=True, triggered=False, severity=0,
                     median_hold=0, iqr=0, min=0, max=0,
                     incon_rate=0, n_incon=0, n_multi=0, incon_tickers=[],
                     no_data=True)
@@ -1200,10 +1218,10 @@ def dim_hold(rts):
     incon = {t: hl for t, hl in multi.items() if any(h < 5 for h in hl) and any(h > 30 for h in hl)}
     incon_rate = len(incon) / len(multi) if multi else 0  # 同檔又當沖(<5d)又長抱(>30d)的比例
     sev = min(max(max(overtrading, incon_rate), 0), 1)
-    return dict(dim="持有時間", tier=2, triggered=(med < 5 or incon_rate > 0.3),
+    return dict(dim="持有時間", tier=2, applicable=True, triggered=(med < 5 or incon_rate > 0.3),
                 severity=sev, median_hold=med, iqr=iqr, min=min(hs), max=max(hs),
                 incon_rate=incon_rate, n_incon=len(incon), n_multi=len(multi),
-                incon_tickers=sorted(incon.keys()))
+                incon_tickers=sorted(incon.keys()), all_same_day=all(h == 0 for h in hs))
 
 def dim_avgdown(avg_down, held, last_px, size_dim):
     # #94:breach 判準改用加碼「當下」的成本權重(positions() 算好放在 weight_then),
@@ -1331,13 +1349,13 @@ def dim_strength(exit_dim, size_dim, avgdown_dim, div_dim, hold_dim, rts=None):
                 eg = f"（例:{b['ticker']} 你賺 {b['ret']*100:.0f}% 出場，賣完它只動 {b['fwd']*100:+.0f}%——沒賣早）"
         c.append((0.7+(0.35-we), f"該獲利了結時你不手軟：賣掉的賺錢單只有 {we*100:.0f}% 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」{eg}"))
     mp = size_dim.get("max_pct", 1)
-    if mp < 0.22:
+    if size_dim.get("applicable", True) and mp is not None and mp < 0.22:
         c.append((1-mp, f"單筆部位有控制：押最重的一檔也只佔 {mp*100:.0f}%,沒把身家壓在一檔上"))
     if avgdown_dim.get("breach", 1) == 0 and avgdown_dim.get("count", 0) >= 2:
         _egt = (avgdown_dim.get("tickers") or [""])[0]         # 帶一個具體標的當案例;「爆倉」是黑話,改人話「越攤越重」
         c.append((0.65, f"你往下加碼 {avgdown_dim['count']} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重"
                         + (f"(例:{_egt})" if _egt else "")))
-    if not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
+    if div_dim.get("applicable", True) and not div_dim.get("triggered") and div_dim.get("n", 0) >= 5:
         c.append((0.6, f"{div_dim['n']} 檔分布在不同驅動因子，沒有全押在同一個故事上"))
     if not hold_dim.get("triggered") and hold_dim.get("median_hold"):
         c.append((0.5, f"進出有一致的節奏：中位持有 {hold_dim['median_hold']:.0f} 天，不是隨機亂買亂賣"))
@@ -1494,7 +1512,7 @@ def prescribe(ab, dims, overview, max_pos_override=None):
     sz = dd.get("部位 sizing", {})
     # #324:處方觸發線對齊到診斷同一條線(原 0.30 → OVERSIZE_TRIGGER，25–30% 不再被標成洞卻拿不到規矩);
     # 觸發線與規矩文案的上限都吃用戶自訂覆寫。#29:解開互斥 gate,攤平與 sizing 可同時成候選。
-    if sz.get("max_pct", 0) > effective_oversize_trigger(max_pos_override):
+    if sz.get("applicable", True) and (sz.get("max_pct") or 0) > effective_oversize_trigger(max_pos_override):
         rx.append(dict(code="cut_oversize", kind="cut_loss", dim="部位 sizing",
                        params={"ticker": sz.get("max_ticker"), "max_pct": sz.get("max_pct", 0)},
                        verify="單筆最大佔比(降→好)",
@@ -1579,6 +1597,11 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
     return out[:top_n]
 def number_line(d):
     n = d["dim"]
+    # The legacy rich-card path prints every raw dimension.  It does not own
+    # applicability filtering, so give it a neutral factual fallback rather
+    # than letting ``None`` masquerade as 0% (or crash on arithmetic).
+    if d.get("applicable", True) is False:
+        return "目前沒有可用持倉，這項結構檢查不適用"
     if n == "出場紀律":
         s = []
         if d["early_rate"] is not None:
@@ -1593,6 +1616,8 @@ def number_line(d):
     if n == "持有時間":
         if d.get("no_data"):
             return "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）"
+        if d.get("all_same_day"):
+            return "所有已完成交易皆為當日進出，沒有隔夜持有"
         base = f"你持有時間 {d['min']}~{d['max']} 天、中位 {d['median_hold']:.0f} 天"
         if d.get("n_incon", 0) > 0:
             return base + f"；其中 {d['n_incon']}/{d['n_multi']} 檔同一檔又當沖又長抱（{', '.join(d['incon_tickers'][:5])}）——同檔沒有一致框架"
@@ -1611,7 +1636,7 @@ HEADLINE_TIER_W = {1: 1.0, 2: 0.7}   # tier1(出場/sizing/攤平)壓 tier2(分�
 
 def _rank_holes(dims):
     """triggered 維按 severity × tier 權重(高→低)= 頭號洞優先序。空 = 無 triggered。"""
-    return sorted((d for d in dims if d.get("triggered")),
+    return sorted((d for d in dims if d.get("applicable", True) and d.get("triggered")),
                   key=lambda d: d.get("severity", 0) * HEADLINE_TIER_W.get(d.get("tier", 2), 0.7),
                   reverse=True)
 
@@ -1657,12 +1682,12 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
                            "amount": round(fwd * r["qty"] * r["sell_px"], 2),
                            "note": f"賣後續漲 {fwd:+.0%}"})
     d_size = dd.get("部位 sizing", {})
-    if d_size.get("triggered"):                            # state:單注過重
+    if d_size.get("applicable", True) and d_size.get("triggered"):  # state:單注過重
         events.append({"key": "oversize", "kind": "state", "week": date_end,
                        "ticker": d_size.get("max_ticker"), "amount": None,
                        "note": f"最大單注 {d_size.get('max_pct', 0):.0%}"})
     d_div = dd.get("分散", {})
-    if d_div.get("triggered"):                             # state:同 driver 集中
+    if d_div.get("applicable", True) and d_div.get("triggered"):  # state:同 driver 集中
         events.append({"key": "concentration", "kind": "state", "week": date_end,
                        "ticker": None, "amount": None,
                        "note": f"top3 {d_div.get('top3', 0):.0%}/同賽道 {d_div.get('ai_pct', 0):.0%}"})
@@ -1682,13 +1707,21 @@ def build_problem_events(dims, rts, avg_down, held, last_px, date_end, prev_end=
     has_gain = any(_px(t) and _px(t) > c / s
                    for t, (s, c) in (held or {}).items() if s > 1e-9) \
         or any(r.get("fwd") is not None and r["ret"] > 0 and _new(r["exit"]) for r in rts or [])
-    has_pos = bool(held)
+    # A non-empty mapping is not enough: an empty/zero-value book has no
+    # denominator and therefore no sizing/diversification opportunity.
+    structural_applicable = (d_size.get("applicable", True)
+                             and d_div.get("applicable", True))
     has_new_exit = any(_new(r["exit"]) for r in rts or [])
     has_new_entry = any(r["side"] == "buy" and _new(r["date"]) for r in rows or [])
     opportunities = {
         "avgdown_breach": has_loss_pos,        # 有浮虧持倉才有機會攤平
         "sell_winner_early": has_gain,         # 有獲利倉(可賣)或本期有 fwd 可觀測的獲利賣出
-        "oversize": has_pos, "concentration": has_pos, "hold_inconsistency": has_pos,
+        "oversize": structural_applicable,
+        "concentration": structural_applicable,
+        # A held position can still make the existing horizon rule actionable
+        # even before a round trip closes; completed round trips add the new
+        # same-day path without regressing that baseline opportunity.
+        "hold_inconsistency": bool(held) or bool(rts),
         # 動機類(事件由 SKILL 收尾補,但機會的「事實面」engine 就能判——缺這幾個 key,
         # 綁它們的規矩會永遠 skipped、held_streak 永不累計(review):
         "exit_anxiety": has_new_exit,          # 本期有賣出,才有機會恐慌落袋
@@ -1924,15 +1957,18 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         "commitment": commitment,                          # 下次對帳的錨點(規矩 + 追蹤 metric)
         "max_position_pct": valid_position_cap(max_pos_override),  # #324:本次診斷/規矩文案採用的用戶自訂上限(None=通用預設);renderer 與下次對帳讀它
         "metrics": {
-            "max_pos_pct": d_size.get("max_pct"),
-            "max_pos_ticker": d_size.get("max_ticker"),
+            # Inapplicable structural dimensions persist as ``None`` rather
+            # than an invented zero.  A later review must not read an empty
+            # book as proof that a sizing/diversification rule was held.
+            "max_pos_pct": d_size.get("max_pct") if d_size.get("applicable", True) else None,
+            "max_pos_ticker": d_size.get("max_ticker") if d_size.get("applicable", True) else None,
             "avgdown_count": d_avg.get("count"),
             "avgdown_breach": d_avg.get("breach"),
             "payoff": (overview or {}).get("payoff"),
-            "ai_pct": d_div.get("ai_pct"),                  # 同一 driver(AI capex)暴險佔比
-            "max_sector_pct": d_div.get("max_sector_pct"),
-            "top3_pct": d_div.get("top3"),
-            "n_holdings": d_div.get("n"),
+            "ai_pct": d_div.get("ai_pct") if d_div.get("applicable", True) else None,  # 同一 driver(AI capex)暴險佔比
+            "max_sector_pct": d_div.get("max_sector_pct") if d_div.get("applicable", True) else None,
+            "top3_pct": d_div.get("top3") if d_div.get("applicable", True) else None,
+            "n_holdings": d_div.get("n") if d_div.get("applicable", True) else None,
             "exit_severity": d_exit.get("severity"),       # v2 commitment:所有 headline 都有可跨期追蹤錨點
             "hold_severity": d_hold.get("severity"),
             "beta": ab.get("beta"),

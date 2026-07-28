@@ -174,9 +174,12 @@ def test_day_trader_top_hole_is_overtrading():
     # 同日進出 → 中位持有 0 天(overtrading),且全平倉 → 無持倉
     assert s["hold"]["median_hold"] < 5
     assert s["hold"]["max"] == 0          # 全部同日 round trip
-    # 當天全平 → 無持倉 → sizing/分散/攤平 全失效(max_pct=0、無持倉檔數)
-    assert s["size"]["max_pct"] == 0 and s["div"]["n"] == 0
+    # 當天全平 → 無 current book。sizing/分散不是「0%/0 檔」的乾淨讀數，
+    # 而是沒有可用分母；持有時間仍是可用且可診斷的行為維度。
+    assert s["size"]["applicable"] is False and s["div"]["applicable"] is False
+    assert s["size"]["max_pct"] is None and s["div"]["n"] is None
     assert not s["size"]["triggered"] and not s["div"]["triggered"]
+    assert s["hold"]["all_same_day"] is True
 
 
 def test_swing_and_day_trader_distinct_by_mechanism():
@@ -185,6 +188,46 @@ def test_swing_and_day_trader_distinct_by_mechanism():
     # day_trader 靠 overtrading(median 0),swing 靠 incon(median>=5、incon_rate 高)
     assert dy["median_hold"] == 0 and dy["incon_rate"] == 0
     assert sw["median_hold"] >= 5 and sw["incon_rate"] > 0.3
+
+
+def test_no_current_book_is_excluded_from_all_structural_consumers():
+    """#329: zero-denominator is one applicability decision, not many 0-value fallbacks."""
+    s = _dims("day_trader")
+    dims = s["dims"]
+    holes = tr._rank_holes(dims)
+    assert [d["dim"] for d in holes] == ["持有時間"]
+
+    rx = tr.prescribe({}, dims, tr.overview_stats(s["rts"], {}, {}, None))
+    assert not any(row.get("dim") in {"部位 sizing", "分散"} for row in rx)
+    card = tr.build_card_data(dims, tr.dim_strength(s["exit"], s["size"], s["avg"],
+                                                     s["div"], s["hold"], s["rts"]),
+                              {}, None, rx, [], {}, None, None)
+    assert [h["dim"] for h in card["top_holes"]] == ["持有時間"]
+    assert not any(row.get("dim") in {"部位 sizing", "分散"}
+                   for row in card["candidate_rules"] + card["prescriptions"])
+
+    events, opportunities = tr.build_problem_events(
+        dims, s["rts"], [], {}, None, s["rows"][-1]["date"].isoformat(), rows=s["rows"])
+    assert not {event["key"] for event in events} & {"oversize", "concentration"}
+    assert opportunities["oversize"] is False
+    assert opportunities["concentration"] is False
+
+    state = tr.build_state(s["rows"], s["rts"], {}, dims,
+                           tr.overview_stats(s["rts"], {}, {}, None), {}, rx, avg_down=[])
+    assert state["metrics"]["max_pos_pct"] is None
+    assert state["metrics"]["ai_pct"] is None
+
+
+def test_holding_rule_opportunity_keeps_buy_only_baseline():
+    """#329 adds completed-round-trip support without making open holdings skipped."""
+    dims = [
+        {"dim": "部位 sizing", "applicable": True, "triggered": False},
+        {"dim": "分散", "applicable": True, "triggered": False},
+        {"dim": "持有時間", "applicable": True, "triggered": False},
+    ]
+    _events, opportunities = tr.build_problem_events(
+        dims, [], [], {"OPEN": (1, 100)}, None, "2026-07-28", rows=[])
+    assert opportunities["hold_inconsistency"] is True
 
 
 def test_personas_have_distinct_headlines():

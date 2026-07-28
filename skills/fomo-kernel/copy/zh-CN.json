@@ -89,6 +89,7 @@
     "position_sizing": "这次浮现的模式，关乎风险如何分配到不同部位。",
     "diversification": "这次浮现的模式，关乎组合是否代表彼此不同的底层风险。",
     "holding_period": "这次浮现的模式，关乎持有时间是否对齐一致的决策时间轴。",
+    "holding_period_same_day": "所有已完成交易均为当日进出，没有隔夜持有。",
     "averaging_down": "这次浮现的模式，关乎亏损部位的加码如何受到界线约束。",
     "alpha_beta": "这次浮现的模式，关乎相对大盘结果如何拆分为市场暴险与选择。",
     "entry_style": "这次浮现的模式，关乎进场时点与近期价格移动的关系。"
@@ -449,6 +450,7 @@
     "position_sizing": "你最大一笔 {max_ticker} 占 {max_pct}，其余平均 {avg_pct}",
     "diversification": "你持有 {n} 档看似分散，但 AI capex 暴险 {ai_pct}、最大板块“{max_sector}”{max_sector_pct}、top3 {top3}——同一个驱动因子",
     "holding_no_data": "暂无已实现 round-trip,持有时间统计待生成（只看买进尚未卖出的不纳入）",
+    "holding_same_day": "所有已完成交易均为当日进出，没有隔夜持有",
     "holding_base": "你持有时间 {min}~{max} 天、中位 {median_hold} 天",
     "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 档同一档又当冲又长抱（{tickers}）——同档没有一致框架",
     "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同档框架大致一致）",
