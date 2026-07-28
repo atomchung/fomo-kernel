@@ -52,6 +52,15 @@ SUITES = [
     ("Design-bundle generator gate (#442)", "tests/test_design_bundle.py"),
     ("Cross-client interaction trajectory", "tests/test_interaction_trajectory.py"),
     ("Automated QA preflight boundary", "tests/test_qa_preflight.py"),
+    # #520: the maintainer's own QA tooling under `qa/` is gated here, with the
+    # product, because this runner is what actually runs before a commit. A
+    # suite that lives outside it is enforced by whoever remembers to type its
+    # path -- which is how `qa/tests/test_receipts.py` shipped and then went
+    # unrun, and how `qa/SKILL.md`'s commands drifted from `ux_receipt.py`
+    # until an operator discovered it at the end of a walkthrough, with the
+    # whole append-only trace already spent.
+    ("QA skill command drift (#520)", "qa/tests/test_skill_commands.py"),
+    ("QA receipt manifest and campaign lineage (#520)", "qa/tests/test_receipts.py"),
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),

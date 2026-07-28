@@ -66,9 +66,17 @@ issues it produces must say so.
    ground truth.
 5. **Archived manifest** — the receipt was archived together with a manifest
    recording `engine_version` (the tested `main@<sha>`), `client`,
-   `data_source`, and `human_involvement`. Honest default for human
-   involvement is `agent_simulated`; only `owner_live` counts as user-experience
-   ground truth.
+   `data_source`, `human_involvement`, a digest of the archived receipt, and
+   the run's campaign attribution: which named acceptance `case_id` it tested,
+   and whether it started from fresh state or continued a named earlier run
+   (#520). Honest default for human involvement is `agent_simulated`; only
+   `owner_live` counts as user-experience ground truth. A verifying receipt
+   proves one presentation trace; without the case and state lineage, a set of
+   individually valid receipts still cannot prove a required multi-step
+   trajectory started where it was supposed to, or that a campaign's cases were
+   covered rather than its easiest one repeated. Manifests archived before this
+   binding existed stay readable as unattributed evidence and are never
+   upgraded after the fact.
 6. **Privacy gate** — if the session touched real trade data, every piece of
    text destined for a public surface passed `tools/privacy_lint.py` first
    (see below).
@@ -89,7 +97,7 @@ machine-enforced versus procedural:
 | 2. Isolation | engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | exporting it, and not overriding it per-command |
 | 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, a missing weekly opener, or a missing/duplicated/misordered `cash_anchor_checked` on a `first_review`/`weekly_review` trace (#357 — the check is tier-blind by design: a light-tier session writes no receipt at all, per the scope rule in `references/interaction-delivery.md`); it machine-reports timing plausibility separately | recording every event honestly, right after the user sees it |
 | 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence | running both flags on human-graded runs; auditing or re-running suspect timing |
-| 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt | on other clients, writing the manifest fields by hand |
+| 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt, and refuses a run that names no campaign/`case_id`/state mode, or claims to continue a `parent_run_id` with no archived manifest behind it (#520) | on other clients, writing the manifest fields by hand; on every client, that the `case_id` is the one the run actually walked |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
 | 7. Findings | `verify --require-findings` fails when the trace has no `findings_recorded` (or more than one), when that row sits *after* the owner verdict, when it omits `findings` or gives it a non-list, when it carries an unrecognized disposition or any field beyond the dispositions, or — **wherever `evals/episodes/` is reachable, which excludes a vendored skill directory** — when an `episode:EP-NNN` id is absent from it, a conversion claim with nothing behind it. Resolved on the write path and again on `verify`, so an edited receipt cannot carry one | judging honestly what counts as a miss; converting it while the wording is still in front of you; and, on a checkout with no bank beside it, that the id is real |
 | 3b. Grounding fidelity | `verify` fails when a `rule_choice_presented` event is missing its grounding-fidelity evidence, or reports a non-verbatim match, with no legacy exemption (#293) | authoring `--grounding-check-file` honestly (candidates + exact presented text) before recording the event |
@@ -174,11 +182,19 @@ step (exact arguments: `tools/ux_receipt.py --help`):
 ```bash
 python3 tools/ux_receipt.py start --session-id <ID> --client <your-client> --route <route> \
   --adapter plain_text
-python3 tools/ux_receipt.py event --event question_presented ...   # after each question is shown
-python3 tools/ux_receipt.py event --event answers_received          # right after the final required answer
-python3 tools/ux_receipt.py event --event card_presented ...        # after the user actually sees a card
-python3 tools/ux_receipt.py event --event rule_choice_presented ... # when the rule choice is shown
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked ... # before the first surface
+python3 tools/ux_receipt.py event --session-id <ID> --event question_presented ...  # after each question is shown
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received        # right after the final required answer
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated ...  # when the card file is written
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented ...      # after the user actually sees it
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented ... # when the rule choice is shown
 ```
+
+Every subcommand needs its own `--session-id`; the trace is a file keyed by it,
+not an implicit session. `artifact_generated` and `card_presented` both take
+`--stage preview|final`, and each stage needs exactly one of each, artifact
+first — a card marked presented before its artifact existed fails verification
+with no way to repair the row.
 
 Non-negotiables while walking (each has burned a real QA run before):
 
@@ -205,14 +221,21 @@ Non-negotiables while walking (each has burned a real QA run before):
 ### 4. Wrap up
 
 ```bash
-python3 tools/ux_receipt.py event --event owner_verdict --controls ... --card ... --memory ... \
+# Gate 7 first. The verdict is the run's last act, so a disposition recorded
+# after it reads as a backfill and verification rejects it. Step 6 below is how
+# you earn this row; record it here, immediately before the verdict.
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded ...
+python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict --controls ... --card ... --memory ... \
   [--question-specificity ... --answer-fit ...]
 python3 tools/ux_receipt.py verify --session-id <ID> \
   --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
-`--require-findings` is gate 7, and it is why step 6 below happens *before* you
-archive rather than whenever someone remembers.
+`--require-findings` is gate 7, and it is why step 6 below happens *before* the
+owner verdict rather than whenever someone remembers. A `weekly_review` run
+additionally needs `--memory pass` or `--memory fail`: `not_applicable` is
+refused under `--require-owner-verdict`, because memory continuity is the whole
+reason that route exists.
 
 The JSON result includes `timing_integrity`. Timestamp reversal or a complete
 owner-verdict trace spanning less than three seconds is `suspect`; ordinary
@@ -227,9 +250,10 @@ under ordinary verification and report `not_assessed`; they are not evidence
 for a new `owner_live` claim.
 
 Archive the receipt with its manifest (tested sha, client, data source, human
-involvement). Claude Code sessions on the owner's machine use the local
-`/fomo-qa` skill's `qa_env.sh archive-receipt` for this; other clients record
-the same manifest fields alongside the receipt file. Report the tested
+involvement, campaign and `case_id`, fresh-or-continued state lineage, and the
+receipt digest — gate 5). Claude Code sessions on the owner's machine use the
+local `/fomo-qa` skill's `qa_env.sh archive-receipt` for this; other clients
+record the same manifest fields alongside the receipt file. Report the tested
 `main@<sha>`, data source, simulated user state, and the answers→card wait.
 
 ### 5. Report findings — through the privacy gate
@@ -288,8 +312,8 @@ later judge could grade it, and worth saying out loud when it cannot: whether
 the card ever reached the screen is a receipt question (step 3), not an answer
 question.
 
-Then record where each one went, which is gate 7 and the last thing before you
-archive:
+Then record where each one went, which is gate 7 and the last thing before the
+owner verdict in step 4:
 
 ```bash
 python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \

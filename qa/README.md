@@ -14,7 +14,13 @@ under `skills/` would imply there are two things to install, and there is exactl
 | `qa_env.sh` | Dogfood environment manager — pinned worktree, isolated coach root, reset. |
 | `receipts.py` | Reads and summarizes `ux_receipt` output across dogfood runs. |
 | `slice_csv.py` | Cuts a fixture CSV down to a date window, for staging a second review period. |
-| `tests/test_receipts.py` | Unit tests for `receipts.py`. |
+| `tests/test_receipts.py` | Unit tests for `receipts.py`, including the campaign/case/state-lineage rules an archived run must satisfy. |
+| `tests/test_skill_commands.py` | Drift gate: every `ux_receipt.py` command in `SKILL.md` must parse against the real CLI, and the documented event order must replay into a trace that verifies (#520). |
+
+Both test files run inside `tests/run_all.py`, the repository's actual commit gate.
+Maintainer tooling is not product code, but a gate that lives outside the runner is
+enforced by whoever remembers — which is how `SKILL.md` accumulated commands that
+could not be executed as written.
 
 ## Relationship to `docs/qa-runbook.md`
 
@@ -28,11 +34,11 @@ each agent client degrades when it lacks a capability.
 
 When the two disagree, the runbook wins.
 
-> The two documents are currently maintained by hand and have measurably drifted
-> (`SKILL.md` calls the gates "seven" in one paragraph and "six" in the next, because the
-> seventh landed on 2026-07-27 and only one sentence was updated). Collapsing the
-> duplicated half into a reference is tracked separately; it changes QA behavior and so
-> does not belong in the commit that merely relocated these files.
+> The two documents are maintained by hand and have drifted before — most expensively
+> in their command examples, which #520 repaired and now gates mechanically via
+> `tests/test_skill_commands.py`. That gate covers the executable surface only: the
+> prose halves (gate wording, gate count, the per-client degradation notes) are still
+> hand-synchronized. Collapsing the duplicated half is tracked in #527.
 
 ## Install
 

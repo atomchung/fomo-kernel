@@ -1,262 +1,363 @@
 ---
 name: fomo-qa
-description: 開發者 dogfood fomo-kernel 時，用來準備一個乾淨、一致的 QA 環境並引導走查一次完整復盤流程。用戶說 /fomo-qa、dogfood fomo-kernel、跑一次 fomo QA、走一次復盤驗收、準備乾淨的測試環境、幫我 QA fomo-kernel 時使用。核心目的是消滅「每個 session 測試環境不一樣導致重工」：固定版本閘（只在最新 origin/main 上測，落後就擋）+ 乾淨 detached dogfood worktree（永不拿來開發）+ 模擬新用戶（dogfood 專屬 coach root，用 qa_env.sh reset 清，絕不碰真實 ~/.trade-coach）+ 標準化資料源（真實交易 / mock persona / test-drive）。這是「開發維護 fomo-kernel 時用的驗收工具」，不是產品本身；要幫真實用戶復盤交易時用產品 skill fomo-kernel，不要用這個。絕不碰 investment_note 真實紀錄。
+description: Prepares a clean, consistent QA environment for dogfooding fomo-kernel and walks one complete review end to end. Use when the user says /fomo-qa, "dogfood fomo-kernel", 跑一次 fomo QA, 走一次復盤驗收, 準備乾淨的測試環境, 幫我 QA fomo-kernel. Its purpose is to kill the rework that comes from every session testing a different environment: a fixed version gate (test only on the latest origin/main, refuse when behind) + a clean detached dogfood worktree (never used for development) + a simulated new user (a dogfood-only coach root, cleared with qa_env.sh reset, never the real ~/.trade-coach) + standardized data sources (real trades / mock persona / test-drive). This is the acceptance tool used while developing and maintaining fomo-kernel, not the product itself; to review a real user's trades, use the product skill fomo-kernel instead. Never touches the real records in investment_note.
 ---
 
 # fomo-qa
 
-把「準備一個乾淨、一致的 fomo-kernel dogfood 環境」規範化。**這是開發/維護時的 QA 工具**，回答的是「我改完引擎後，站在真實用戶的角度走一次，體驗對不對」，並保證每次都測到**同一個東西**：最新的 `origin/main`。
+This makes "prepare a clean, consistent fomo-kernel dogfood environment" a procedure. **It is a QA tool for development and maintenance**, answering "I changed the engine — walking through as a real user would, is the experience right?", and it guarantees every run tests **the same thing**: the latest `origin/main`.
 
-**這是 fomo-kernel dogfood 的標準必經流程（v1 已固化，2026-07-20）**——以後所有 dogfood 都從這裡開始，不要臨場自己準備環境。
+**This is the mandatory standard path for every fomo-kernel dogfood (v1, fixed 2026-07-20)** — every dogfood starts here. Do not improvise an environment on the spot.
 
-**跨 client 契約源（2026-07-21 起）**：`kol_collector/fomo-kernel` repo 的 `docs/qa-runbook.md`（PR #275）定義「什麼才算一次合規 QA run」——**七**道 gate（版本閘／隔離 root／receipt 全程／verdict+verify／archive manifest／隱私 lint／**findings disposition**），缺任一該場就不算 QA、結論不可引用。第七道是 2026-07-27 補的（#417）：前六道全過、卻沒留下任何可重播資產的場，正是這條迴圈一年來的實際樣子。這份 fomo-kernel 自己的 `docs/qa-runbook.md` + repo-root `AGENTS.md` **必須維持獨立於本 skill、獨立於任何個人 registry**——fomo-kernel 是給陌生人在任何機器 clone 的公開產品，不能預期對方有這份 skill；兩者不一致時以 runbook 為準。
+**Cross-client contract source (since 2026-07-21)**: `docs/qa-runbook.md` in the `kol_collector/fomo-kernel` repository (PR #275) defines what counts as a compliant QA run — **seven** gates (version gate / isolated root / receipt throughout / verdict+verify / archived manifest / privacy lint / **findings disposition**). A session missing any of them is not a QA run and its conclusions may not be cited. The seventh was added on 2026-07-27 (#417): a session passing the first six while leaving behind no replayable asset is exactly what this loop actually looked like for a year. That `docs/qa-runbook.md`, together with the repo-root `AGENTS.md`, **must stay independent of this skill and of any personal registry** — fomo-kernel is a public product a stranger clones on any machine, and cannot assume they have this skill. When the two disagree, the runbook wins.
 
-**本 skill 是什麼**：把 runbook 的七道 gate 自動化成一套可重複執行的流程 + `qa_env.sh` 工具，供 ting 自己維護 fomo-kernel 時用（2026-07-21 起透過 `ai-harness` 的 discovery registry，在 Claude / Codex / Antigravity 三邊用同一個名字 `fomo-qa` 呼叫同一份 canonical 內容，見 `ai-harness/inventory/fomo-qa.json`）。**這不是給其他人用的**——一般外部用戶沒有這個 skill，也不需要，他們只會走上面那份公開的 `docs/qa-runbook.md`。
+**What this skill is**: the runbook's seven gates automated into a repeatable procedure plus the `qa_env.sh` tool, for ting's own maintenance of fomo-kernel. Since 2026-07-21 it is reachable through `ai-harness`'s discovery registry, so Claude, Codex and Antigravity all call the same canonical content under the same name `fomo-qa` (see `ai-harness/inventory/fomo-qa.json`). **It is not for anyone else** — an external user has no such skill and needs none; they follow the public `docs/qa-runbook.md` above.
 
-> 為什麼存在：2026-07-19 盤點發現 18 個 worktree 裡 17 個落後 main（最多落後 28 個 commit），dogfood 一直被跑在各自釘死 base 的開發 worktree 上——測到的是過去某個切片，事後還無從得知是哪一片。「跑得起來」不等於「測到最新版」。這個 skill 用機制擋掉它（對應 issue #250）。
+> Why it exists: a 2026-07-19 audit found 17 of 18 worktrees behind main (the worst by 28 commits). Dogfood had been running on development worktrees each pinned to its own base — testing some past slice of the product, with no way to learn afterwards which slice. "It runs" is not "it tested the latest version". This skill blocks that mechanically (issue #250).
 
-> **在 eval 體系的位置**：這同時是 `docs/eval-design.md` 證據層級**第 4 層（Human review）**、第 1 觀測面（content-free interaction receipts）一直缺的執行流程。走查收尾產出一份 `ux_receipt` owner verdict，把 eval 現在標「pending owner dogfood」的那層變成可累積的機讀標註。**2026-07-27 起還多產一樣東西**：Step 6 把每個 miss 轉成 `evals/episodes/` 裡可重播的 episode，所以一場 dogfood 產的是永久回歸資產，不是一次性觀察——這才是「拿到的東西足夠穩定持續」的意思。
+> **Its place in the eval system**: this is also the execution procedure that `docs/eval-design.md`'s evidence level **4 (human review)** and observation surface 1 (content-free interaction receipts) had always lacked. A walkthrough ends by producing a `ux_receipt` owner verdict, turning the layer eval currently marks "pending owner dogfood" into a machine-readable annotation that accumulates. **Since 2026-07-27 it produces one more thing**: step 6 converts every miss into a replayable episode under `evals/episodes/`, so a dogfood produces a permanent regression asset rather than a one-off observation — that is what "what we get is stable enough to keep" means.
 
-## 什麼時候用
+## When to use it
 
-- 用戶說 `/fomo-qa`、「dogfood fomo-kernel」、「跑一次 fomo QA」、「走一次復盤驗收」、「準備乾淨的測試環境」
-- 改完 engine / SKILL.md / 卡片渲染後，想站在用戶角度驗收體驗
-- 想確認某個改動在**最新版**上真的能跑、卡片真的出得來
+- The user says `/fomo-qa`, "dogfood fomo-kernel", "跑一次 fomo QA", "走一次復盤驗收", "準備乾淨的測試環境"
+- After changing the engine, `SKILL.md`, or card rendering, to judge the experience from the user's side
+- To confirm a change really runs on the **latest** version and that the card really comes out
 
-**不是**用來幫真實用戶復盤交易——那是產品 skill `fomo-kernel` 的事。這個 skill 只負責「把驗收環境弄乾淨、弄一致」，走查本身仍照產品的 `SKILL.md`。
+**Not** for reviewing a real user's trades — that is the product skill `fomo-kernel`. This skill only makes the acceptance environment clean and consistent; the walkthrough itself still follows the product's `SKILL.md`.
 
-## 覆蓋範圍（v1 已固化，別越界宣稱）
+## Coverage (v1, fixed — do not claim beyond it)
 
-這一期驗的是 **L1：環境一致性 + 引擎 CLI 契約 + agent 走查行為**。走完 `/fomo-qa` = 「引擎和 agent 行為在最新版上驗過了」，**不等於**「用戶在每個 client 上的體驗都驗過了」。以下是**已知後續、不在本流程**，走完別宣稱體驗全綠（那正是 [#230](https://github.com/atomchung/fomo-kernel/issues/230) 的假通過陷阱）：
+This round verifies **L1: environment consistency + engine CLI contract + agent walkthrough behavior**. Completing `/fomo-qa` means "the engine and agent behavior were verified on the latest version". It does **not** mean "the user's experience was verified on every client". The following are **known follow-ups, out of this procedure**; do not claim the experience is green after a run (that is precisely the false-pass trap in [#230](https://github.com/atomchung/fomo-kernel/issues/230)):
 
-- **L2 卡片視覺**（下一期）：卡片 HTML 沒有真的用瀏覽器渲染 + 截圖比對（現狀連 `test_card_html.py` 都只做字串斷言、零截圖）。畫面一致 / 佈局 / dark-mode 目前只能人眼看。
-- **L3 互動交付**（部分固有天花板）：「選項按鈕真的出現、用戶真的點得到」是 client 層事實（Claude native options vs Codex 手打），headless 驗不到。這裡只驗到「卡片原文有貼進對話、問題有呈現」的契約層（可接 `tools/ux_receipt.py`）；Codex 原生互動那半是 #230 的天花板，靠 owner 人工 verdict。
-- **通用 HTML 互動文檔 + 純文字最快完成體驗**：下一期。
+- **L2 card visuals** (next round): the card HTML is never actually rendered in a browser and compared by screenshot (today even `test_card_html.py` makes string assertions and takes zero screenshots). Visual consistency, layout and dark mode can only be eyeballed.
+- **L3 interaction delivery** (partly an inherent ceiling): "the option buttons really appeared and the user could really click them" is a client-layer fact (Claude native options vs typing by hand in Codex) and cannot be verified headlessly. Here we verify only the contract layer — the card text was pasted into the conversation, the questions were presented — which `tools/ux_receipt.py` can carry. The native-interaction half on Codex is #230's ceiling and rests on the owner's manual verdict.
+- **A general HTML interaction document + the fastest plain-text completion experience**: next round.
 
-## 硬隔離護欄（先讀，不可違反）
+## Hard isolation guardrails (read first, non-negotiable)
 
-1. **絕不碰真實紀錄**：`~/Side_project/investment_note/` 是 ting 的真實投資紀錄，只有「真實交易」資料源會**唯讀**取用其中一個 CSV，其餘一律不讀不寫。
-2. **coach state 隔離到 dogfood 專屬 root**：dogfood 一律用獨立的 `~/.trade-coach-dogfood`（與你真實用產品的 `~/.trade-coach` 完全分離）。清除用 `qa_env.sh reset`（先備份再清，且 fail-closed 拒絕碰真實 root / investment_note）。真實 `~/.trade-coach` 只由 `reset-fomo-coach.sh` 管，dogfood 流程永不碰它。不要自己寫 `rm` 清任何 coach root。
-3. **只在 dogfood worktree 動手**：所有引擎指令都在 `qa_env.sh up` 建出的 detached worktree 裡跑。`qa_env.sh` 本身 fail-closed，只操作路徑含 `dogfood` 的 worktree，避免手滑丟掉別的 session 的未提交工作。
-4. **不改產品碼**：QA 過程只讀不改。若走查中發現 bug，記下來、開 issue，不要在 dogfood worktree 裡順手改（它是 detached、拿來測的，不是開發線）。
-5. **公開文字先過 privacy lint（#274 事故換來的）**：repo 是公開的，真實 ticker／具體金額／`TICKER#日期#序號` 識別碼**絕不得**出現在 issue/PR/留言/commit message——不只檔案，文字管道也算。凡這場 QA 用了真實交易資料，任何要貼上 GitHub 的草稿先跑（在 dogfood worktree 的 `skills/fomo-kernel/` 下）：
+1. **Never touch the real records**: `~/Side_project/investment_note/` holds ting's real investment records. Only the "real trades" data source reads **one** CSV there, read-only; nothing else is read or written.
+2. **Coach state is isolated to a dogfood-only root**: dogfood always uses a separate `~/.trade-coach-dogfood`, fully apart from the `~/.trade-coach` you use with the real product. Clear it with `qa_env.sh reset` (which backs up first and fail-closed refuses to touch the real root or investment_note). The real `~/.trade-coach` is managed only by `reset-fomo-coach.sh`; the dogfood procedure never touches it. Never hand-write an `rm` against any coach root.
+3. **Work only in the dogfood worktree**: every engine command runs inside the detached worktree created by `qa_env.sh up`. `qa_env.sh` is itself fail-closed and only operates on a worktree whose path contains `dogfood`, so a slip cannot discard another session's uncommitted work.
+4. **Do not change product code**: QA reads, it does not edit. If the walkthrough finds a bug, write it down and open an issue; do not fix it in the dogfood worktree (it is detached and exists to be tested, not developed).
+5. **Public text passes the privacy lint first (bought by the #274 incident)**: the repository is public, and real tickers, specific amounts, or `TICKER#date#seq` position ids **must never** appear in an issue, PR, comment or commit message — text channels count, not just files. If this QA session used real trade data, run every draft destined for GitHub through the lint first (from `skills/fomo-kernel/` inside the dogfood worktree):
 
    ```bash
    python3 tools/privacy_lint.py --against ~/Side_project/investment_note/trades/fomo/trades.csv /tmp/draft.md
    ```
 
-   exit 0 才准貼；有 hit 就改寫成去識別化描述（「N 檔個股」「集中度偏高」）再掃，直到乾淨。輸出是遮罩過的，lint 結果本身可安全展示。真實值只准留在本機（memory / 本機筆記）。
+   Only exit 0 may be posted. On a hit, rewrite as a de-identified description ("N individual stocks", "concentration is high") and re-scan until clean. The output is masked, so the lint result itself is safe to show. Real values stay local (memory, local notes).
 
-`qa_env.sh` 就在本 skill 目錄下。下面每個 `qa_env.sh` 指令的路徑以 Claude 端為例（`~/.claude/skills/fomo-qa/qa_env.sh`）；在 Codex 上換成 `~/.agents/skills/fomo-qa/qa_env.sh`，在 Antigravity 上換成 `~/.gemini/config/skills/fomo-qa/qa_env.sh`——三個都是 symlink，指向同一份 canonical `qa_env.sh`，內容完全一樣，純 bash、跟呼叫它的 client 無關。
+`qa_env.sh` lives in this skill's directory. Every `qa_env.sh` path below is written for Claude (`~/.claude/skills/fomo-qa/qa_env.sh`); on Codex use `~/.agents/skills/fomo-qa/qa_env.sh`, and on Antigravity `~/.gemini/config/skills/fomo-qa/qa_env.sh`. All three are symlinks to the same canonical `qa_env.sh` with identical content — pure bash, independent of the client calling it.
 
-**跨 client 執行落差（登記進 discovery registry 只保證找得到，不保證每一步都跑得對，見 `ai-harness` task 紀錄）**：
-- `qa_env.sh`、`tools/ux_receipt.py`、`docs/qa-runbook.md` 七道 gate、Step 0–6 的流程骨架——三個 client 都能原樣執行，無需改寫。
-- Step 4 走查裡「問題呈現」若用 Claude 的原生選項工具（例如 `AskUserQuestion`），這是 Claude 專屬能力；Codex/Antigravity 沒有等價工具，要退化成固定格式的純文字選項呈現，並在 `ux_receipt.py` 記 `plain_text` 模式（不是 `native_options`）。
-- Step 4「試 widget 一次」的規矩鐵則裡提到的渲染管道測試（例如 Claude 端可能用到的某個 Artifact 類發布工具）是 Claude 專屬 MCP 工具；Codex/Antigravity 要用它們自己有的等價渲染能力測，或者根本沒有就直接記 `widget_attempt_failed` 降級成 markdown，不要照抄 Claude 端提到的工具名字。
-- `qa_env.sh` 對「目前工作目錄／worktree」的假設，尚未在 Codex/Antigravity 自己的工作目錄模型下實測過——第一次在那邊跑建議先用 `status`（唯讀）確認行為符合預期，再往下走。
+**Cross-client execution gaps** (being in the discovery registry only guarantees the skill is found, not that every step runs correctly; see the `ai-harness` task record):
+- `qa_env.sh`, `tools/ux_receipt.py`, `docs/qa-runbook.md`'s seven gates, and the Step 0–6 skeleton run as-is on all three clients, with no rewriting.
+- If Step 4 presents questions through Claude's native option tool (for example `AskUserQuestion`), that is a Claude-only capability. Codex and Antigravity have no equivalent and must degrade to fixed-format plain-text options, recorded in `ux_receipt.py` as `plain_text` mode, not `native_options`.
+- The rendering-pipeline test mentioned in walkthrough rule 1's "try the widget once" (for example some Artifact-style publishing tool on Claude) is a Claude-only MCP tool. Codex and Antigravity must test with whatever equivalent rendering they have, or — having none — record `widget_attempt_failed` and degrade to Markdown. Do not copy the Claude-side tool name.
+- `qa_env.sh`'s assumptions about the current working directory and worktree have not been tested against Codex's or Antigravity's own working-directory models. On a first run there, use `status` (read-only) to confirm the behavior matches expectations before going further.
 
-## 固定流程
+## The fixed procedure
 
-### Step 0 — 版本閘（唯讀，先看全景）
+### Step 0 — Version gate (read-only; look at the whole picture first)
 
 ```bash
 ~/.claude/skills/fomo-qa/qa_env.sh status
 ```
 
-一眼看到：`origin/main` 最新 sha、dogfood worktree 落後幾個、**dogfood coach state**（隔離 root，不是真實 `~/.trade-coach`）是不是乾淨的 new-user。**落後就不要往下走**，先 Step 1 更新。把 `main@<sha>` 明確回報給用戶——這次 QA 測的就是這個版本。
+At a glance: the latest `origin/main` sha, how far behind the dogfood worktree is, and whether the **dogfood coach state** (the isolated root, not the real `~/.trade-coach`) is a clean new user. **If it is behind, do not go on** — update via Step 1 first. Report `main@<sha>` to the user explicitly: that is the version this QA tested.
 
-`status` 同時會多報一行**這個 skill 自己的新鮮度**——查的是實際執行 `qa_env.sh` 的那個 checkout（symlink 指到哪個 repo 就查哪個，不一定是 dogfood worktree），有沒有落後 `origin/main`；純報告、不 fetch、絕不因此擋住 `status`，落後時會印出可直接複製貼上的修復指令。
+`status` also reports one extra line, **this skill's own freshness** — checking the checkout actually running `qa_env.sh` (wherever the symlink points, which is not necessarily the dogfood worktree) against `origin/main`. It is report-only: it never fetches and never blocks `status`, and when behind it prints a copy-pasteable fix.
 
-### Step 1 — 乾淨 worktree（釘最新 main）
+### Step 1 — Clean worktree (pinned to the latest main)
 
 ```bash
 ~/.claude/skills/fomo-qa/qa_env.sh up
 ```
 
-建立（或把既有的刷新到）`~/Side_project/kol_collector/fomo-kernel-dogfood`，`--detach origin/main`。這個 worktree 專職 QA，永不拿來開發。之後所有指令的工作目錄：
+Creates (or refreshes) `~/Side_project/kol_collector/fomo-kernel-dogfood` at `--detach origin/main`. This worktree is dedicated to QA and is never used for development. The working directory for every later command:
 
 ```bash
 cd ~/Side_project/kol_collector/fomo-kernel-dogfood/skills/fomo-kernel
 ```
 
-### Step 2 — 模擬用戶狀態
+### Step 2 — Simulate the user's state
 
-**先把整個工具鏈路由到 dogfood 專屬 coach root**（與真實 `~/.trade-coach` 隔離；review.py / coach.py / `tools/ux_receipt.py` **三者都認 `TRADE_COACH_HOME`**（ux_receipt 自 #269 修復、PR #275 已 merge），一次 export，`prepare`/`preview`/`finalize`/`data-status`/receipt 全程一致）：
+**First route the whole toolchain into the dogfood-only coach root** (isolated from the real `~/.trade-coach`; `review.py`, `coach.py` and `tools/ux_receipt.py` **all three** honor `TRADE_COACH_HOME` — ux_receipt since the #269 fix, merged in PR #275 — so one export keeps `prepare`/`preview`/`finalize`/`data-status` and the receipt consistent throughout):
 
 ```bash
 export TRADE_COACH_HOME="$(~/.claude/skills/fomo-qa/qa_env.sh coach-root)"
 ```
 
-- **模擬全新用戶**（預設，走 first-review）：
+- **Simulate a brand-new user** (the default; runs first-review):
 
   ```bash
-  ~/.claude/skills/fomo-qa/qa_env.sh reset   # 備份後清 dogfood root 到 fresh new-user
+  ~/.claude/skills/fomo-qa/qa_env.sh reset   # back up, then clear the dogfood root to a fresh new user
   ```
 
-- **模擬回訪用戶**（走 weekly-review / due-revisit）：**不要** reset。保留上一次 QA 留下的 dogfood coach state，直接進 Step 3。若要精準造一個「第二週」狀態，先以新用戶跑完一次完整流程（含 finalize），再用新資料跑第二次。**0720 教訓：fresh reset 場永遠測不到記憶承接與問題帳連續性（memory=not_applicable、先前問題帳是空的不會「卡住」你）——要驗「上次的問題有沒有追上來」必須走這條，別誤判成修復生效。**
+- **Simulate a returning user** (runs weekly-review / due-revisit): do **not** reset. Keep the dogfood coach state left by the previous QA and go straight to Step 3. To build a precise "second week" state, first run a full flow as a new user (through finalize), then run a second time with new data. **Lesson from 2026-07-20: a freshly reset session can never test memory continuity or problem-ledger continuity** (memory is `not_applicable`, and an empty prior problem ledger will not "catch" you). Verifying "did last time's problem follow up?" requires this path — do not mistake its absence for a fix working.
 
-先跟用戶確認要模擬哪一種；不確定就預設「全新用戶」。**這個 `export` 必須在 Step 4 走查的同一個 shell 維持**——若後續指令各自起新 shell，每個都要重跑這行。
+Confirm with the user which one to simulate; default to "brand-new user" when unsure. **This `export` must survive into the Step 4 walkthrough's shell** — if later commands each start a new shell, re-run this line in every one.
 
-### Step 3 — 選資料源（三選一，標準化）
+### Step 3 — Choose a data source (one of three, standardized)
 
-| 資料源 | 指令用的路徑 | 適用 |
+| Data source | Path used in commands | Fits |
 |---|---|---|
-| **真實交易**（唯讀） | `~/Side_project/investment_note/trades/fomo/trades.csv` | 真驗收：問的是 ting 自己的動機，最能暴露問題 |
-| **mock persona** | worktree 內 `mock/<persona>.csv`（見 `mock/SAMPLES.md`，如 `sample_ai_holder`、`sample_tw_mixed`） | 快、隱私零風險、可重現 |
-| **test-drive** | `--test-drive`（無 CSV） | 純展示，`persist:false` 零寫入、隔離 root |
+| **Real trades** (read-only) | `~/Side_project/investment_note/trades/fomo/trades.csv` | True acceptance: it asks about ting's own motives, which exposes the most |
+| **Mock persona** | `mock/<persona>.csv` inside the worktree (see `mock/SAMPLES.md`, e.g. `sample_ai_holder`, `sample_tw_mixed`) | Fast, zero privacy risk, reproducible |
+| **Test-drive** | `--test-drive` (no CSV) | Demonstration only; `persist:false`, zero writes, isolated root |
 
-真實交易目前約 1125 筆、76 檔標的、含台美混市場與日期格式混用——是很好的壓力測試素材。
+The real trade file currently holds roughly 1,125 rows across 76 symbols, mixing Taiwanese and US markets and mixed date formats — good stress-test material.
 
-### Step 4 — 走查（照產品 fixed lifecycle，不重寫）
+### Step 4 — Walk through (follow the product's fixed lifecycle; do not rewrite it)
 
-在 `cd .../fomo-kernel-dogfood/skills/fomo-kernel` 之後（並確認 Step 2 的 `export TRADE_COACH_HOME` 在這個 shell 生效——`prepare`/`preview`/`finalize` 才會全部落在 dogfood 隔離 root），照**產品** `SKILL.md` 的 fixed lifecycle 走。摘要（細節與邊界一律以產品 `SKILL.md` / `flows/*` / `references/*` 為準）：
+After `cd .../fomo-kernel-dogfood/skills/fomo-kernel` (and confirming Step 2's `export TRADE_COACH_HOME` is live in this shell, so `prepare`/`preview`/`finalize` all land in the isolated dogfood root), follow the **product** `SKILL.md`'s fixed lifecycle. Summary — for detail and edge cases the product's `SKILL.md` / `flows/*` / `references/*` are always authoritative:
 
 ```bash
-# 1. prepare —— 讀 review_plan.flow_path 決定讀哪個 flow
-python3 engine/review.py prepare <CSV 或 --test-drive> --language zh-TW
-#    test-drive 要記下 review_plan.state_root，之後每個 preview/finalize/resume 都要 --root <state_root>
+# 1. prepare —— read review_plan.flow_path to decide which flow to follow
+python3 engine/review.py prepare <CSV or --test-drive> --language zh-TW
+#    for test-drive, note review_plan.state_root; every later preview/finalize/resume needs --root <state_root>
 
-# 2. agent work —— 宣告 host capability、做質性判斷、問 question_queue 裡每個 required 問題、
-#    為未覆蓋部位建 inferred thesis、寫「無數字」narrative（answers.json / narrative.json 要過 schema）
+# 2. agent work —— declare host capability, make the qualitative judgments, ask every required
+#    question in question_queue, build an inferred thesis for uncovered positions, and write the
+#    "no numbers" narrative (answers.json / narrative.json must pass their schemas)
 
-# 3. preview —— 驗證 + 渲染 private / public 預覽
+# 3. preview —— validate, then render the private / public previews
 python3 engine/review.py preview --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
 
-# 4. 內嵌完整卡片預覽 → 請用戶選一條規矩 / 自訂 / skip
+# 4. embed the full card preview → ask the user to pick a rule / write their own / skip
 
-# 5. finalize —— 原子提交 canonical bundle
+# 5. finalize —— atomically commit the canonical bundle
 python3 engine/review.py finalize --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
 ```
 
-**UX receipt 貫穿走查（強制——這是 QA 接進 eval 的載體）**：走查不是「引擎跑完」就算，每一步用戶可見的動作都要進 receipt（產品的 `tools/ux_receipt.py`）。這份 content-free receipt（只有 session id、能力、pass/fail，無 trade 內容）就是餵給 eval 第 4 證據層的機讀標註：
+**The UX receipt runs through the whole walkthrough (mandatory — this is what connects QA to eval)**: a walkthrough is not "the engine finished". Every user-visible step goes into the receipt (the product's `tools/ux_receipt.py`). That content-free receipt — only session id, capabilities, pass/fail, no trade content — is the machine-readable annotation feeding eval's evidence level 4.
+
+Below is a **complete, directly copyable `first_review` trace**. The order is a contract, not a suggestion: `verify` hard-checks which events must appear, exactly how many times, and which precedes which. Get it wrong and the whole session is void with no way to repair it (the trace is append-only). Record each line **immediately after the user actually sees that thing**; never save it all for the end.
 
 ```bash
-# prepare 後立刻宣告當前 client 真正能做什麼——如實宣告、別低報：
-# 互動式 Claude 介面通常是 native_options+plain_text ＋ widget+markdown_inline
+# qa-trace: first_review
+# 0) Declare host capability right after prepare. --adapter must match the capability
+#    set you declare (plain_text / native_options / validated_widget); start adds the
+#    universal plain_text and markdown_inline fallbacks itself — do not pass them again.
 python3 tools/ux_receipt.py start --session-id <ID> --client claude --route first_review \
-  --question-mode native_options --question-mode plain_text \
-  --card-mode widget --card-mode markdown_inline
-# 每問一題、每出一次卡，都在用戶真的看到「之後」記一筆
-python3 tools/ux_receipt.py event --event question_presented --question-id <qid> --mode plain_text
-python3 tools/ux_receipt.py event --event card_presented --stage preview --mode widget
-# 用戶答完最後一題必答「立刻」先記這筆、再去跑 preview——這是 #236「答完→出卡」量測起點
-python3 tools/ux_receipt.py event --event answers_received
-# 「選一條規矩/自訂/skip」呈現給用戶時記一筆
-python3 tools/ux_receipt.py event --event rule_choice_presented --mode plain_text
+  --adapter validated_widget --question-mode native_options --card-mode widget
+
+# 1) Cash anchor (#357): exactly once on first_review / weekly_review, and it must come
+#    before the first question and the first card. It happens during prepare, so recording
+#    it later is judged out of order.
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
+  --cash-outcome found_in_source
+
+# 2) One row per question asked. Question text never enters the trace: a question from a
+#    validated dynamic surface records "source + sha256 of the presented text" instead, and
+#    the two must appear together (this replaces the removed --question-id).
+python3 tools/ux_receipt.py event --session-id <ID> --event question_presented \
+  --mode native_options --surface-source validated_dynamic --surface-digest <64-hex-digest>
+
+# 3) Record this the instant the user answers the last required question, before running
+#    preview — it is #236's measurement start for "answered → card".
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
+
+# 4) Cards are always "artifact first, presented second", and both rows need --stage
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage preview --artifact-path <preview-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage preview --mode widget
+
+# 5) Record when the "pick a rule / write your own / skip" choice is shown.
+#    --grounding-check-file is required (#293)
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
+  --mode native_options --grounding-check-file <grounding-check.json>
+
+# 6) The final card after finalize — again artifact first, then presented
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage final --artifact-path <final-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage final --mode widget
 ```
 
-**只有 `weekly_review` 這條路線再多記一筆——而且 `verify` 會擋**（上面那段是 `first_review` 的範例，不要把這筆抄進去）。`prepare` 選到 `weekly_review` 時，先把「上次講好的規矩」端出來給用戶看，**在第一個問題、第一張卡之前**，然後記：
+> That leading `# qa-trace: <route>` line is not decoration. `qa/tests/test_skill_commands.py` uses it to **actually replay** this file's commands into a trace and send it through `verify` — so an example here that drifts from the CLI or from the event order goes red at commit time, rather than halfway through the next QA run. When adding a block containing `ux_receipt.py` commands, carry this marker; the test blocks a fence that lacks it.
+
+`--grounding-check-file` points at a **transient JSON that never enters the trace** (same nature as `--question-surfaces`: keep it in `/tmp`, out of the repository). The tool performs the verbatim-containment comparison itself and writes only the boolean result and a hash into the receipt; the raw text never lands:
+
+```json
+{
+  "candidates": [
+    {"id": "candidate_0", "grounding": "the engine's own candidate_rules[].grounding sentence"},
+    {"id": "candidate_1"}
+  ],
+  "presented_text": "the exact block of text you showed the user"
+}
+```
+
+A candidate with no `grounding` omits the field entirely (like `candidate_1`) — **do not invent a sentence to fill it**. That is precisely the half #293 cannot catch and only a human can hold.
+
+**The `weekly_review` route carries one extra opener, and `verify` enforces it** (the trace above is `first_review`; do not copy the opener into it). When `prepare` selects `weekly_review`, show the user the rule agreed last time **before the first question and the first card**. The complete trace differs from the one above only in `start` and this row; everything else — cash anchor, questions, answers received, both card stages, rule choice — is copied verbatim:
 
 ```bash
-python3 tools/ux_receipt.py event --event memory_presented --memory-kind prior_commitment
-# 上次是 skip 掉沒定規矩 → 改用 --memory-kind prior_skip。兩者恰好一筆，多一筆少一筆都會 fail。
-# plan 另外回了 exit_reason / due_revisit，各自再記一筆（同樣 --memory-kind，不算 opener）。
+# qa-trace: weekly_review
+python3 tools/ux_receipt.py start --session-id <ID> --client claude --route weekly_review \
+  --adapter validated_widget --question-mode native_options --card-mode widget
+# Opener: exactly one row. One more or one fewer both fail. If last time was a skip with no
+# rule set, use --memory-kind prior_skip instead.
+python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented \
+  --memory-kind prior_commitment
+# If the plan also returned exit_reason / due_revisit, record one row each (same
+# --memory-kind flag; these do not count as the opener):
+#   python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented --memory-kind due_revisit
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
+  --cash-outcome asked_user
+python3 tools/ux_receipt.py event --session-id <ID> --event question_presented --mode native_options
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage preview --artifact-path <preview-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage preview --mode widget
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
+  --mode native_options --grounding-check-file <grounding-check.json>
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage final --artifact-path <final-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage final --mode widget
 ```
 
-**這條就是記憶延續性本身**——上次講好的規矩，這次有沒有被拿出來對帳。`ux_receipt.py` 對 `route == "weekly_review"` 硬檢查兩件事：opener 恰好一筆、且位置在第一個 `question_presented` / `card_presented` 之前。順序錯了照樣 fail，因為「事後補記」證明不了用戶當時真的看到了。
+The wrap-up has the same shape as Step 5, except **`--memory` must be `pass` or `fail`**: a weekly session does not accept `not_applicable`, and `verify --require-owner-verdict` refuses it — memory continuity is the entire reason this route exists, so it may not be waived as inapplicable. This block is written out in full rather than pointing back at Step 5 precisely because that difference is the part copying would miss, and it only bites at the moment of archiving:
 
-**三條走查鐵則（2026-07-20 owner_live 稽核修正，違反其一＝該場 QA 作廢）**：
-1. **能力宣告如實＋widget 每 session 必試一次，但要挑對的工具**：0720 唯一走查偏差＝低報 `card_modes`、零 widget 嘗試，#249 富 HTML 卡生成了但 owner 全程只看到扁平 md（card=fail 主因）。圖形介面必宣告 `widget`，先試 widget、失敗記 `widget_attempt_failed` 再降級 markdown——別讓「artifact 綠≠交付」重演。
+```bash
+# qa-trace: weekly_review
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+  --finding episode:EP-0NN
+python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
+  --controls pass --card pass --memory pass
+python3 tools/ux_receipt.py verify --session-id <ID> \
+  --require-owner-verdict --require-timing-integrity --require-findings
+```
 
-   **2026-07-21 新教訓（見 #230 留言）**：試 widget 不能隨便抓一個看起來像渲染工具的 tool 就用——generic 的圖表/dashboard 類視覺化工具（例如某些 MCP `show_widget`/`visualize` 工具）通常有自己一套獨立設計系統，會把第三方提供的大型自訂 `<style>` 區塊正規化或直接剝除，這不是「host 不能渲染 rich HTML」，是工具本身的預期行為（拿去餵它等於用錯地方）。驗 widget 交付要挑「能原樣保留提供的 `<style>`／HTML、不做設計系統正規化」的管道（例如 Claude Code 的 Artifact 類發布工具：自成一頁、不套用外部設計系統）；不要只因為工具名字聽起來像「widget」就當作等價於 `references/card-delivery.md` 講的「graphical surface: render a widget from the engine HTML artifact」。踩過一次沒分辨清楚，把「選錯工具」誤診成「host 沒有渲染能力」，回頭在 GitHub 上發了錯誤診斷、事後才修正——先確認工具契約（會不會保留原始 CSS），別急著下結論。
+**That opener is memory continuity itself** — was the rule agreed last time actually brought back and reconciled? For `route == "weekly_review"`, `ux_receipt.py` hard-checks two things: exactly one opener, positioned before the first `question_presented` / `card_presented`. Wrong order still fails, because a row backfilled afterwards cannot prove the user saw it at the time.
 
-   **這段工具挑選細節只寫在這裡，不要往上搬進 fomo-kernel 的 `docs/qa-runbook.md`**：那份是 fomo-kernel 公開產品自帶、給任何陌生人 clone 都能讀的跨 client 契約源，目前用的是刻意不點名任何工具的 host-agnostic 語言（「有 rich render 能力就試、失敗就退化成 canonical Markdown」）——這樣才對，因為外部使用者的 client 上根本不會有 Claude 這幾個 MCP 工具，寫死工具名字對他們無意義。這段「怎麼分辨工具會不會正規化 CSS」的具體操作知識，是 Claude 特有的 MCP 工具生態細節，只在本 skill（`fomo-qa`，僅供 ting 自己維護 fomo-kernel 用，不是給外部用戶的公開契約）這裡展開就好，別在改 fomo-kernel 的 runbook 時手滑帶過去。
-2. **`--language` 跟對話語言走**：中文對話一律 `--language zh-TW`（產品 SKILL.md Language 節已明文；0720 mock 場硬帶 en 造成 #262 中英夾雜）。
-3. **量測「答完→出卡」**：`answers_received` → preview `card_presented` 的 ts 差就是機器等待秒數，收尾必回報（#236 複量儀器；事件與 ts 以 `tools/ux_receipt.py --help` 為準）。
+**Three walkthrough rules (from the 2026-07-20 owner_live audit correction; breaking any one voids that QA session)**:
+1. **Declare capability honestly, and try the widget once per session — with the right tool**: the single walkthrough deviation on 2026-07-20 was under-declaring `card_modes` with zero widget attempts. #249's rich HTML card was generated, but the owner saw flat Markdown throughout (the main reason card=fail). A graphical surface must declare `widget`: try the widget first, and on failure record `widget_attempt_failed` before degrading to Markdown — do not let "the artifact was green" stand in for "it was delivered" again.
 
-完整事件序列見產品 `references/interaction-delivery.md`（**參數以 `tools/ux_receipt.py --help` 為準**——doc 偶有 drift，例如 `start --required-question` 已不存在於 code）。**fomo-qa 的差別 = 把這步從「產品建議」升級成「QA 不可跳過」**，因為沒有 receipt 這次 dogfood 就沒有機讀證據、無法進 eval。
+   **New lesson, 2026-07-21 (see the #230 comments)**: trying the widget does not mean grabbing whatever tool sounds like a renderer. Generic chart/dashboard visualization tools (some MCP `show_widget`/`visualize` tools, for instance) usually carry their own design system and will normalize or strip a large third-party `<style>` block. That is not "the host cannot render rich HTML" — it is the tool behaving as designed, and feeding it the card is using the wrong tool. To verify widget delivery, pick a pipeline that **preserves the supplied `<style>` and HTML as-is without design-system normalization** (for example Claude Code's Artifact-style publishing tools: a page of their own, with no external design system applied). Do not treat a tool as equivalent to what `references/card-delivery.md` calls "graphical surface: render a widget from the engine HTML artifact" merely because its name sounds like "widget". This was mis-diagnosed once — "picked the wrong tool" was reported as "the host has no rendering capability", posted to GitHub as a wrong diagnosis, and corrected only afterwards. Confirm the tool's contract (does it preserve the original CSS?) before concluding.
 
-**已知 `ux_receipt.py` CLI 坑（2026-07-21，連續兩場走查各踩一個，記下避免重犯）**：
-- `artifact_generated` 一定要在對應 stage 的 `card_presented` **之前**、且是動作發生的當下就記——事後補記（即使內容正確）一樣會被 `verify` 判定「card was marked presented before its artifact existed」，append-only trace 沒有回頭修的辦法，該場只能作廢重來。別把記 receipt 這件事拖到走查後段一次補。
-- `start --question-mode`/`--card-mode` 只需要宣告這個 client **額外**有的能力（`native_options`/`widget`）——`plain_text`/`markdown_inline` 這兩個通用 fallback，[PR #298](https://github.com/atomchung/fomo-kernel/pull/298) 之後 `start` 會自動幫你補上，不用再手動重複宣告（PR 未 merge 前，仍要照舊手動兩個都傳，否則 `verify` 會在收尾才報「capabilities must declare plain_text/markdown_inline」）。
-- `response_mode`/`response_provenance` 只對 `headline_motive`/`add_thesis` 這類支援私有 surface 的題型有效；`due_revisit`/`rule_breach` 等engine-rendered 題型的 answer 物件裡完全不要帶這兩個欄位，帶了會報「own-words mapping is not enabled for this kind」。
+   **This tool-selection detail belongs here and must not be promoted into fomo-kernel's `docs/qa-runbook.md`**: that document ships with the public product for any stranger who clones it, and deliberately uses host-agnostic language naming no tool ("if the host can render rich content, try it; on failure degrade to canonical Markdown"). That is correct, because an external user's client has none of these Claude MCP tools and a hardcoded tool name means nothing to them. The operational knowledge of "how to tell whether a tool will normalize your CSS" is a Claude-specific MCP-ecosystem detail and belongs only in this skill (`fomo-qa`, for ting's own maintenance of fomo-kernel, not a public contract). Do not let it slip across while editing the runbook.
+2. **`--language` follows the conversation language**: a Chinese conversation always uses `--language zh-TW` (stated in the product `SKILL.md`'s Language section; forcing `en` in the 2026-07-20 mock session caused the mixed-language output in #262).
+3. **Measure "answered → card"**: the timestamp gap from `answers_received` to the preview `card_presented` is the machine wait in seconds, and it must be reported at wrap-up (#236's re-measurement instrument; `tools/ux_receipt.py --help` is authoritative for events and timestamps).
 
-QA 心態，走的時候盯這些（發現就記，別在這改）：
-- 問題問得準不準？有沒有問到不相干 / 漏問關鍵動機？（呼應 #238 提問方向）
-- 「答完 → 出卡」機器等了多久？久不久？（呼應 #236 5–10 分鐘等待；可留意 preview 被 reject 重寫幾次）——用鐵則 3 的 receipt ts 差直接量，別再靠體感
-- 卡片文案有沒有數字幻覺、誠實揭露對不對、規矩有沒有連到實際持倉？
-- 台股 / 混市場 / 現金 / 日期格式這些邊界有沒有出錯？
-- **呈現候選規矩選擇時，agent 自己有沒有偷懶改寫/瞎編 `grounding`？**（2026-07-21 教訓，見 #293）`flows/*.md` 明講候選規矩的 `grounding` 要逐字引用、沒有 `grounding` 的候選不准編一句上去。**機械檢查只守其中一半**：`verify` 會擋「引擎給了 `grounding`、但呈現文字沒有逐字包含它」（#293），而且是拿你自己交的 `--grounding-check-file` 去比對；「候選本來就沒有 `grounding`、agent 自己編一句上去」**擋不到**——沒有引擎原文可比對，`ux_receipt.py` 的 `_grounding_fidelity()` 自己註明這半是 accepted limitation。所以人工對照仍是必要的，而且要對準這一半：呈現前自己看一次 `card_plan.candidate_rules`，確認每個候選的 `grounding` 是引擎給的、不是你補的。
+The complete event sequence lives in the product's `references/interaction-delivery.md` (**arguments per `tools/ux_receipt.py --help`** — the docs drift occasionally; `start --required-question`, for instance, no longer exists in the code). **What fomo-qa changes is promoting this step from "the product recommends it" to "QA cannot skip it"**, because without a receipt this dogfood leaves no machine-readable evidence and cannot enter eval.
 
-### Step 5 — 收尾
+**Known `ux_receipt.py` CLI traps** (2026-07-21; two consecutive walkthroughs hit one each, recorded so they are not repeated):
+- `artifact_generated` must come **before** the `card_presented` of the same stage, and be recorded the moment the action happens. Backfilling it later — even with correct content — is still judged by `verify` as "card was marked presented before its artifact existed", and an append-only trace has no way back: the session can only be voided and redone. Do not defer receipt-writing to the end of the walkthrough.
+- `start --question-mode`/`--card-mode` declare only the capabilities this client has **in addition** (`native_options`/`widget`). The two universal fallbacks `plain_text`/`markdown_inline` are added by `start` itself ([PR #298](https://github.com/atomchung/fomo-kernel/pull/298), merged), and passing them by hand collides with the `--adapter plain_text` check that only the universal fallbacks may be declared.
+- **`--adapter` defaults to `plain_text`**, and the `plain_text` adapter may declare **only** the universal fallbacks. So "declared `native_options`/`widget` but passed no `--adapter`" fails at the very first `start`. Pass `--adapter validated_widget` for a graphical surface, or `--adapter native_options` for native options without a widget.
+- **The enum cannot express "widget cards but plain-text questions"** ([#337](https://github.com/atomchung/fomo-kernel/issues/337)): `--adapter` binds question capability and card capability into one three-tier enum, and `validated_widget` requires `native_options` as well. On such a host — able to embed HTML but with no native interactive controls — the honest move is to declare `--adapter plain_text` without `widget`, and record "card delivery capability was under-declared" as a finding for that session. **Do not misreport `native_options` to satisfy the enum**: that would make the receipt claim an interactive capability the user never got, which is exactly what #230 exists to prevent.
+- `findings_recorded` must come **before** `owner_verdict`: the verdict is the session's last event, and a disposition recorded after it is judged a backfill. This is also why Step 6's episodes are converted during the walkthrough rather than at wrap-up.
+- `response_mode`/`response_provenance` apply only to question kinds that support a private surface, such as `headline_motive`/`add_thesis`. Engine-rendered kinds like `due_revisit`/`rule_breach` must not carry those two fields in their answer object at all; doing so reports "own-words mapping is not enabled for this kind".
 
-1. **owner 判決 + 封存 receipt（QA 的核心產出，別跳過）**：final 卡出來後，你給一個 verdict——選項能不能點（controls）、卡片有沒有可讀地出現（card）、weekly 記憶有沒有承接（memory）、問題夠不夠具體（question-specificity）、答案映射對不對（answer-fit）。這正是 eval 一直缺的 Human-review 標註：
+The QA mindset — watch for these while walking (record what you find; do not fix it here):
+- Are the questions on target? Anything irrelevant asked, or a key motive missed? (#238's line of inquiry)
+- How long did the machine take from "answered" to "card"? Too long? (#236's 5–10 minute wait; watch how many times preview was rejected and rewritten.) Measure it with rule 3's receipt timestamp gap, not by feel.
+- Does the card copy hallucinate numbers? Is the honest disclosure right? Is the rule connected to actual holdings?
+- Do Taiwanese stocks / mixed markets / cash / date formats hit any edge-case error?
+- **When presenting the candidate rule choice, did the agent quietly reword or invent a `grounding`?** (2026-07-21 lesson, see #293.) `flows/*.md` states that a candidate rule's `grounding` must be quoted verbatim and that a candidate without one may not have a sentence invented for it. **The mechanical check covers only half**: `verify` catches "the engine supplied a `grounding` but the presented text does not contain it verbatim" (#293), comparing against the `--grounding-check-file` you supplied yourself. It **cannot** catch "the candidate had no `grounding` and the agent invented one" — there is no engine text to compare against, and `ux_receipt.py`'s `_grounding_fidelity()` documents that half as an accepted limitation. So the human check remains necessary, aimed at exactly that half: before presenting, read `card_plan.candidate_rules` yourself and confirm each candidate's `grounding` came from the engine and was not written by you.
+
+### Step 5 — Wrap up
+
+1. **Owner verdict + archive the receipt (the core output of QA; do not skip it)**: once the final card is out, give a verdict — could the options be clicked (controls), did the card appear readably (card), did the weekly memory carry over (memory), were the questions specific enough (question-specificity), did the answers map correctly (answer-fit). This is exactly the human-review annotation eval has always lacked.
+
+   **The order is hard**: `findings_recorded` (gate 7) first, `owner_verdict` second. The verdict is the session's last event; a disposition recorded after it is a backfill and `verify` refuses it. Where that row's content comes from is Step 6 — episodes are converted **on the spot** during the walkthrough.
 
    ```bash
-   python3 tools/ux_receipt.py event --event owner_verdict --controls pass --card pass --memory not_applicable --question-specificity pass --answer-fit pass
-   # archive 會用同一組 flag 再驗一次,先在這裡碰到失敗比較好修
-   python3 tools/ux_receipt.py verify --require-owner-verdict --require-timing-integrity   # 必須綠
-   # 封存：模型與 effort 必須從當前 host 的設定逐字抄錄；不可猜測或填 unknown/default
-   ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
-     --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>'
+   # qa-trace: first_review
+   python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+     --finding episode:EP-0NN \
+     --finding 'not-episodable:#NN:why this one cannot be replayed'
+   # This session genuinely found nothing (omission is not a declaration of none — say it):
+   #   python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
+
+   python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
+     --controls pass --card pass --memory not_applicable \
+     --question-specificity pass --answer-fit pass
+
+   # archive re-runs the same flags; hitting a failure here first is cheaper to fix (must be green)
+   python3 tools/ux_receipt.py verify --session-id <ID> \
+     --require-owner-verdict --require-timing-integrity --require-findings
    ```
 
-   封存會產出一份 **run manifest**（`<run_id>.manifest.json`），記全這次 dogfood 的來歷：`engine_version`（`main-<sha>`）、`agent.client`、`agent.model`、`agent.effort`、`data_source`、`human_involvement`、`owner_verdict`。模型與 effort 都是 archive 時明確提供的 host label；腳本不從 client 名稱、commit、聊天上下文或後續推論補值。缺任一、或填 `unknown`／`default`，archive 會 fail closed。這讓 report 能把不同模型和 effort 分開比較，而不把它們平均成同一個通過率。
+   ```bash
+   # Archive: copy the model and effort verbatim from the current host's settings.
+   # Never guess, and never fill in unknown/default.
+   ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
+     --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>' \
+     --campaign 'issue:#486' --case-id M0-U01 --state-mode fresh
+   ```
 
-2. **回報測了哪個版本**：`main@<sha>` + 資料源 + 模擬的用戶狀態 + 「答完→出卡」秒數（receipt ts 差）。
-3. **發現的問題**：逐條記下。真的是 bug / 缺口就 `gh issue list` 查重後開 issue（別在 dogfood worktree 順手改）。**這場若用了真實交易資料，issue／留言草稿必先過護欄 5 的 `privacy_lint.py`，exit 0 才貼**。重大結論照 `EVALS.md` 的「Regression record」慣例補一列（receipt 是機讀帳，`EVALS.md` 是人讀帳）。
+   Archiving produces a **run manifest** (`<run_id>.manifest.json`) recording this dogfood's full provenance: `engine_version` (`main-<sha>`), `agent.client`, `agent.model`, `agent.effort`, `data_source`, `human_involvement`, `owner_verdict`, `receipt_sha256`, plus **which acceptance case this session actually tested**: `campaign` / `case_id` / `state_mode` / `parent_run_id`. Model and effort are host labels supplied explicitly at archive time; the script never infers them from the client name, the commit, the chat context, or anything downstream. Missing any of them, or filling `unknown`/`default`, makes archive fail closed. This lets the report compare models and efforts separately rather than averaging them into one pass rate.
 
-   **但開 issue 不是終點——先做完 Step 6 再回來封存**。issue 只記錄「出過事」，不會讓那次失敗可重播，下次沒人知道它是修好了還是只是沒人再踩到。
-4. **清理**（可選）：（先確認 Step 6 做完了）
-   - 想留著 state 供下次「第二週」測 → 不動。
-   - 想回到全新 → 再跑一次 `~/.claude/skills/fomo-qa/qa_env.sh reset`（清 dogfood 隔離 root）。
-   - 不再需要 worktree → `~/.claude/skills/fomo-qa/qa_env.sh down`（只移 worktree，不碰 state）。
+   **Case and state lineage (#520)**: a receipt that verifies proves only that this session's presentation was real. It cannot say which case was tested or what state it started from. Without that, two individually valid manifests still cannot prove #486's matrix was walked rather than the same easy case run five times. So archive now enforces three things:
 
-### Step 6 — 把每個 miss 轉成可重播的 episode（gate 7，封存前的最後一步）
+   | Argument | Value | Rule |
+   |---|---|---|
+   | `--campaign` | `issue:#486` throughout M0 | Owned by that acceptance issue |
+   | `--case-id` | e.g. `M0-U01`, `M0-U02` | Stable identifiers defined in #486; do not invent one on the spot |
+   | `--state-mode` | `fresh` \| `continued` | Did this session start from a clean root, or continue an archived earlier run |
+   | `--parent-run-id` | the previous session's `run_id` | **Only** for `continued`; supplying it on `fresh` is refused |
 
-**這一步 2026-07-27 才補進本 skill，補的是一個實際發生過的洞**：repo 的 `docs/qa-runbook.md` 在 2026-07-26 就加了 step 6，但本 skill 停在 Step 5，收尾寫的還是「開 issue + 補 EVALS.md 一列」——正是 #417 要取代的舊行為。整個 skill 目錄裡「episode」出現 0 次。規矩寫在 repo 三份文件裡、一份都沒進到你真正會按的按鈕，所以一次都沒被執行過。**別再讓它退回成「記得就做」——現在 `archive-receipt` 會擋。**
+   `--parent-run-id` must name a manifest that **actually exists** in the receipt directory, or archive fails closed — lineage pointing at nothing is a claim, not evidence. Conversely it is only an evidence chain, not proof that every byte of state is correct (that belongs to #492, if operational evidence ever justifies it). Old manifests are never backfilled or retro-attributed; `report` labels them `legacy-unattributed`.
 
-走查中每發現一個 miss，**當場**轉成 episode，不要等收尾一起補：agent 產出的那段原文才是資產，下個 session 就沒了。
+2. **Report which version was tested**: `main@<sha>` + data source + the simulated user state + the "answered → card" seconds (the receipt timestamp gap).
+3. **What you found**: write each one down. If it is genuinely a bug or a gap, check `gh issue list` for duplicates and open an issue (do not fix it in the dogfood worktree). **If this session used real trade data, every issue or comment draft must pass guardrail 5's `privacy_lint.py` with exit 0 before posting.** Add a row for significant conclusions following `EVALS.md`'s "Regression record" convention (the receipt is the machine-readable ledger, `EVALS.md` the human-readable one).
+
+   **But opening an issue is not the end — Step 6 must be finished before `owner_verdict` is recorded.** An issue records that something went wrong; it does not make that failure replayable, so next time nobody knows whether it was fixed or merely not stepped on again.
+4. **Cleanup** (optional; confirm Step 6 is done first):
+   - Want to keep the state for a "second week" test next time → leave it alone.
+   - Want to return to a clean slate → run `~/.claude/skills/fomo-qa/qa_env.sh reset` again (clears the isolated dogfood root).
+   - Done with the worktree → `~/.claude/skills/fomo-qa/qa_env.sh down` (removes the worktree only, leaving state alone).
+
+### Step 6 — Convert every miss into a replayable episode (gate 7, the last step before the verdict)
+
+**This step was added to this skill only on 2026-07-27, and it patched a hole that had really happened**: the repo's `docs/qa-runbook.md` added step 6 on 2026-07-26, but this skill stopped at Step 5 and still wrapped up with "open an issue + add a row to EVALS.md" — exactly the old behavior #417 was meant to replace. The word "episode" appeared zero times anywhere in this skill directory. The rule was written in three repo documents and reached none of the buttons you actually press, so it had never once been executed. **Do not let it fall back to "do it if you remember" — `archive-receipt` now enforces it.**
+
+Convert each miss into an episode **on the spot**, as you find it, rather than batching them at wrap-up: the agent's exact wording is the asset, and it is gone by the next session.
 
 ```bash
-# 在 dogfood worktree 的 repo 根目錄
-python3 evals/run_episodes.py --list        # 看 bank 已經靠哪些 fixture
-# 照 evals/episodes/README.md 的 intake 步驟寫 EP-NNN-*.json（先寫 recorded miss，再寫修好的答案）
-python3 evals/run_episodes.py EP-NNN        # 讀它到底踩了哪些 check，別用猜的
+# From the repository root of the dogfood worktree
+python3 evals/run_episodes.py --list        # see which fixtures the bank already leans on
+# Follow evals/episodes/README.md's intake steps to write EP-NNN-*.json
+# (write the recorded miss first, then the repaired answer)
+python3 evals/run_episodes.py EP-NNN        # read which checks it actually trips; do not guess
 python3 tests/run_all.py
 ```
 
-然後在 receipt 上記一筆「每個 miss 去哪了」——這是 runbook 的第七道 gate，`verify --require-findings` 會擋：
+Then record on the receipt where each miss went — the runbook's seventh gate, enforced by `verify --require-findings`. **That `findings_recorded` command lives in Step 5's wrap-up, immediately above `owner_verdict`**, because it must precede the verdict: the verdict is the session's last event, and a disposition recorded after it is a backfill that `verify` fails outright. This step's job is only to give you something real to record.
 
-```bash
-# 在 skills/fomo-kernel/ 下
-python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
-  --finding episode:EP-0NN \
-  --finding 'not-episodable:#NN:為什麼這個沒辦法重播'
-# 這場真的沒發現問題：
-python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
-```
+Three things not to get wrong:
+- **`episode:EP-NNN` is reconciled against `evals/episodes/`** — claiming a conversion that never happened fails outright rather than relying on self-discipline.
+- **"This session found nothing" must be said explicitly** (`--no-findings`); leaving the row out is not a substitute. Omission is not a declaration of none.
+- **Not every miss can become an episode.** Use `not-episodable:#NN:<why>` for those. Whether the card ever reached the screen, for example, is a receipt-layer question (Step 4), not an answer-layer one — saying so is more honest than forcing a fake episode.
 
-三件事別搞錯：
-- **`episode:EP-NNN` 會被拿去 `evals/episodes/` 對帳**——沒真的轉成 episode 就寫「已轉」會直接失敗，不是靠自律。
-- **「這場沒發現問題」必須明講**（`--no-findings`），不能用「不記這筆」代替。省略不等於沒有。
-- **不是每個 miss 都能 episode 化**，那就用 `not-episodable:#NN:<理由>`。例如「卡片到底有沒有出現在螢幕上」是 receipt 層的問題（Step 4），不是答案層的，寫清楚比硬塞一個假 episode 誠實。
+**Sessions using real data**: an episode keeps only the failure's *structure*. De-identify every real ticker, amount and date before writing the fixture — `privacy_trace` is the mechanical backstop (a real value that cannot be traced to the synthetic fixture goes red), but it is a necessary condition, not a sufficient one.
 
-**用真實資料的場**：episode 只留失敗的「結構」，真實 ticker / 金額 / 日期一律去識別化後再寫進 fixture——`privacy_trace` 是機械兜底（真值 trace 不到 synthetic fixture 就會紅），但它只是必要條件，不是充分條件。
+## The dogfood ledger: separating human involvement, aggregating across versions
 
-## dogfood 帳：區分人為介入 + 跨版本聚合
+Archive's `human` argument decides whether a run counts as real experience evidence — this is what the whole ledger's credibility rests on:
 
-archive 的 `human` 參數決定這筆算不算真體驗證據——這是整個帳的可信度關鍵：
-
-| 等級 | 意思 | 算不算體驗 ground truth |
+| Level | Meaning | Counts as experience ground truth |
 |---|---|---|
-| `owner_live` | 你本人全程（答題 + 判 verdict） | ✅ **真 UX ground truth** |
-| `agent_with_owner_verdict` | AI 走流程、你只給最終 verdict | 半人為 |
-| `agent_simulated`（**預設**） | 全 AI 模擬，無真人 | ❌ 只驗契約，**不算體驗信號** |
+| `owner_live` | You personally throughout (answering and judging) | ✅ **Real UX ground truth** |
+| `agent_with_owner_verdict` | The AI walked the flow; you gave only the final verdict | Partly human |
+| `agent_simulated` (**default**) | Fully AI-simulated, no human | ❌ Contract only, **not an experience signal** |
 
-沒主動標就是 `agent_simulated`——寧可低估可信度，也不默默把「AI 自證」當成「用戶說好」（#230 的核心教訓）。
+Unmarked means `agent_simulated` — better to understate credibility than to quietly pass off "the AI attested to itself" as "the user said it was good" (#230's core lesson).
 
-看跨版本、跨人為介入的通過率趨勢：
+To see pass-rate trends across versions and levels of human involvement:
 
 ```bash
 ~/.claude/skills/fomo-qa/qa_env.sh report
 ```
 
-報告嚴格把 `owner_live` 和 `agent_simulated` **分開統計**，並再依 client、agent model、effort 分桶；舊 manifest 會標為 `legacy-unattributed`，不混進新的模型／effort 比較。末尾標明只有前者算 ground truth——`agent_simulated` 再多次全綠也不能宣稱「體驗好」。
+The report keeps `owner_live` and `agent_simulated` **strictly separate**, and buckets further by client, agent model and effort. Old manifests are labeled `legacy-unattributed` and do not mix into new model/effort comparisons. Its closing note states that only the former is ground truth — no number of green `agent_simulated` runs licenses a claim that the experience is good.
 
-## 一次性快速自檢
+## One-off quick self-check
 
-只想確認環境健康、不走完整流程時：
+To confirm the environment is healthy without walking the full procedure:
 
 ```bash
 ~/.claude/skills/fomo-qa/qa_env.sh status
