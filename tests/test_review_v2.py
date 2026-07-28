@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -8684,6 +8685,44 @@ def _refuses(fixture, root=None):
     raise AssertionError("the gate must refuse before any append")
 
 
+def test_every_frozen_lane_refusal_speaks_product_language():
+    """The owner decision for #501 rules internal machinery out of user-facing
+    copy, and `main()` emits `str(exc)` as the entire error field, so every raise
+    on this lane is user-facing — not only the one that carries the A1 message.
+    Asserting the token ban against a single message would be a guard that
+    cannot fail for the paths that break the rule."""
+    import ast
+    frozen_lane = {
+        "_candidate_receipt", "_freeze_transaction_inputs", "_parse_frozen_candidates",
+        "_virtual_valuation_frame", "_virtual_review_basis", "_basis_reference",
+        "_verify_and_ingest_frozen_trades",
+    }
+    tree = ast.parse(pathlib.Path(review_engine.__file__).read_text(encoding="utf-8"))
+    checked, offenders = 0, []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name in frozen_lane):
+            continue
+        frozen_lane.discard(node.name)
+        for call in ast.walk(node):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "ReviewError" and call.args):
+                continue
+            # Only literal copy is readable here; a ReviewError(str(exc)) forwards
+            # another layer's message and is that layer's contract, not this one's.
+            parts = [v.value for v in ast.walk(call.args[0])
+                     if isinstance(v, ast.Constant) and isinstance(v.value, str)]
+            if not parts:
+                continue
+            checked += 1
+            text = " ".join(parts)
+            named = [token for token in _FROZEN_INTERNALS if token in text]
+            if named:
+                offenders.append((node.name, call.lineno, named, text[:70]))
+    assert not frozen_lane, f"the frozen lane lost functions this guard names: {sorted(frozen_lane)}"
+    assert checked >= 8, f"expected the frozen lane's raises to be readable, saw {checked}"
+    assert not offenders, "frozen-lane refusals name internals: " + str(offenders)
+
+
 def test_frozen_virtual_basis_rejects_changed_candidate_before_any_append():
     with tempfile.TemporaryDirectory() as tmp, \
             tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
@@ -8719,9 +8758,12 @@ def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forgin
     source_frame = review_engine.portfolio_basis.build_valuation_frame(
         as_of="2026-07-02", positions={"NEW": {"currency": "USD"}}, prices={"NEW": 11},
         aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-    virtual_frame = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
+    virtual_frame, book_as_of = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
     assert virtual_frame["coverage"]["missing_price"] == [{"ticker": "ANCHOR", "currency": "USD"}]
     assert virtual_frame["prices"] == {"NEW": source_frame["prices"]["NEW"]}
+    # The book's own effective date is returned so staleness is measured from
+    # the book, never from the price bar (which is routinely older).
+    assert book_as_of == "2026-07-02"
 
 
 def test_frozen_gate_rejects_live_ledger_change_without_appending_candidate():
@@ -8834,13 +8876,14 @@ def test_frozen_prepare_is_the_real_user_lane_and_a_rerun_appends_no_duplicate()
         rows = (pathlib.Path(root) / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
         assert len(rows) == 2
 
-        # The frozen receipt is private local state: persisted for replay, never
-        # echoed onto the agent surface.
+        # The frozen receipt lives only in memory, for the length of the gate.
+        # It reaches neither the agent surface nor durable state: it carries the
+        # ledger's byte digest, and session_id_from_state() hashes engine_state,
+        # so persisting it would give the same CSV a new session id as soon as
+        # its own trades landed.
         assert "virtual_review_basis" not in first.stdout
         plan = _pending_plan(root, first.stdout)
-        receipt = plan["engine_state"]["virtual_review_basis"]
-        assert receipt["contract_version"] == "virtual-review-basis-v1"
-        assert receipt["basis_state_version"] == receipt["basis"]["state_version"]
+        assert "virtual_review_basis" not in plan["engine_state"]
 
         # A retry of the same facts converges: the candidate deduplicates against
         # the ledger it already produced instead of doubling the book.
@@ -8877,9 +8920,62 @@ def test_frozen_test_drive_runs_the_same_validation_and_persists_nothing():
         assert ingest["skipped_dup"] == 0 and ingest["skipped_non_trade"] == 0, ingest
         assert not (pathlib.Path(root) / "ledger.jsonl").exists(), \
             "test drive cannot persist real trade facts"
-        assert _pending_plan(root, run.stdout)["engine_state"]["virtual_review_basis"][
-            "contract_version"] == "virtual-review-basis-v1", \
-            "test drive must freeze the same private receipt it would in production"
+        assert "virtual_review_basis" not in _pending_plan(root, run.stdout)["engine_state"]
+
+
+def test_frozen_prepare_survives_a_book_newer_than_the_last_price_bar():
+    """A price frame is dated at the last close, and the recorded book is
+    routinely newer than that -- a weekend review, or the documented onboarding
+    order where a holdings snapshot is declared and an earlier CSV week is
+    reviewed after it. Feeding the frame's date in as the staleness reference
+    made that ordinary case abort the whole review instead of reporting zero
+    staleness, and the anchor branch it dies in had no coverage at all."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        (pathlib.Path(root) / "ledger.jsonl").write_text(json.dumps({
+            "type": "snapshot", "as_of": "2026-07-27", "source": "user_declared",
+            "is_complete": True, "cash": None,
+            "positions": [{"ticker": "ACME", "shares": 10, "avg_cost": 50,
+                           "market": "US", "currency": "USD"}]}) + "\n", encoding="utf-8")
+        csv_path = pathlib.Path(tmp) / "week.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,5,52,2026-07-09,Trade,US,USD\n"
+            "ACME,SELL,5,55,2026-07-10,Trade,US,USD\n",
+            encoding="utf-8")
+        run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+                   "--session-nonce", "newer-book", env=_offline_engine_env(tmp))
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["input"]["ledger_ingest"]["appended"] == 2, plan["input"]["ledger_ingest"]
+        # The reconciliation branch this fixture reaches -- an anchored ledger
+        # plus fresh candidates -- is the one the frozen lane had never run.
+        assert "holdings_reconciliation" in plan["input"]["ledger_ingest"]
+
+
+def test_frozen_prepare_keeps_one_session_identity_for_the_same_input():
+    """#166: session identity is content-addressed so an interrupted session is
+    recoverable and finalize stays idempotent. The frozen receipt carries the
+    ledger's byte digest, so persisting it into engine_state would hand the same
+    CSV a new identity as soon as its own trades landed."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        csv_path = pathlib.Path(tmp) / "same.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n",
+            encoding="utf-8")
+        env = _offline_engine_env(tmp)
+        ids = []
+        for _attempt in (1, 2):
+            run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+                       "--session-nonce", "same", env=env)
+            assert run.returncode == 0, run.stdout + run.stderr
+            ids.append(json.loads(run.stdout)["review_plan"]["session_id"])
+            # Drop the pending bundle so the second run recomputes the identity
+            # instead of resuming, which is what finalize leaves behind.
+            shutil.rmtree(pathlib.Path(root) / ".pending", ignore_errors=True)
+        assert ids[0] == ids[1], \
+            f"the same CSV and nonce must keep one session identity, got {ids}"
 
 
 def main():

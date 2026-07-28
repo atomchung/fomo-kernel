@@ -330,18 +330,36 @@ def _frame_identity(frame):
     return _sha256_bytes(session.canonical(frame).encode("utf-8"))
 
 
+def _basis_reference(frame_as_of, book_as_of):
+    """The 'now' a virtual basis is measured against.
+
+    `reference_as_of` answers "how stale is this book", so it may never precede
+    the book itself. The price frame's `as_of` is the last close, and a book is
+    routinely newer than that — a weekend review, or any snapshot/trade dated
+    after the last bar. Feeding the frame date in directly made that ordinary
+    case raise instead of report zero staleness (#501 review).
+    """
+    return max(value for value in (frame_as_of, book_as_of) if value)
+
+
 def _virtual_valuation_frame(events, source_frame):
-    """Restrict the engine frame to the exact frozen virtual current book."""
+    """Restrict the engine frame to the exact frozen virtual current book.
+
+    Returns the narrowed frame and the book's own effective date, which the
+    caller needs to measure staleness from without inverting the two.
+    """
     if not isinstance(source_frame, dict):
-        raise ReviewError("engine did not return a private valuation_frame")
+        raise ReviewError("this review has no usable price basis; rerun prepare")
     try:
         portfolio_basis.validate_valuation_frame(source_frame)
-        provisional = portfolio_basis.query_current_book(
-            events, reference_as_of=source_frame.get("as_of"), skipped_lines=0)
+        # No reference and no manifest: this query exists only to learn which
+        # tickers the virtual book holds, so it must not also adjudicate
+        # freshness against a price date it was never measured against.
+        provisional = portfolio_basis.query_current_book(events, skipped_lines=0)
     except portfolio_basis.PortfolioBasisError as exc:
-        raise ReviewError(f"engine valuation_frame is invalid: {exc}") from exc
+        raise ReviewError(f"this review's price basis could not be read: {exc}") from exc
     if provisional is None:
-        raise ReviewError("virtual PortfolioBasis could not derive frozen holdings")
+        raise ReviewError("your current holdings could not be derived from this input")
     holdings = provisional.current_book["holdings"]
     aggregate = source_frame["aggregate_currency"]
     prices = {ticker: row for ticker, row in source_frame["prices"].items()
@@ -368,21 +386,22 @@ def _virtual_valuation_frame(events, source_frame):
     try:
         portfolio_basis.validate_valuation_frame(frame, positions=holdings)
     except portfolio_basis.PortfolioBasisError as exc:
-        raise ReviewError(f"virtual valuation_frame is invalid: {exc}") from exc
-    return frame
+        raise ReviewError(f"this review's price basis does not match your holdings: {exc}") from exc
+    return frame, provisional.as_of
 
 
 def _virtual_review_basis(inputs, batches, state):
     try:
         overlay = ledger.virtualize(inputs["ledger_events"], batches)
-        frame = _virtual_valuation_frame(overlay["events"], state.get("valuation_frame"))
+        frame, book_as_of = _virtual_valuation_frame(overlay["events"], state.get("valuation_frame"))
         basis = portfolio_basis.query_current_book(
             overlay["events"], valuation_manifest=frame,
-            reference_as_of=frame.get("as_of"), skipped_lines=inputs["ledger_receipt"]["skipped_lines"])
+            reference_as_of=_basis_reference(frame.get("as_of"), book_as_of),
+            skipped_lines=inputs["ledger_receipt"]["skipped_lines"])
     except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
-        raise ReviewError(f"virtual PortfolioBasis rejected frozen input: {exc}") from exc
+        raise ReviewError(f"your book could not be read from this input: {exc}") from exc
     if basis is None:
-        raise ReviewError("virtual PortfolioBasis could not derive frozen input")
+        raise ReviewError("your book could not be derived from this input")
     receipt = {"contract_version": "virtual-review-basis-v1",
                "candidate_receipt": inputs["candidate"],
                "ledger_receipt": inputs["ledger_receipt"],
@@ -1115,7 +1134,7 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
     """Final short-lock gate for one frozen engine/PB transaction (#501)."""
     frame = basis_receipt.get("valuation_frame")
     if not isinstance(frame, dict) or _frame_identity(frame) != basis_receipt["valuation_frame_identity"]:
-        raise ReviewError("virtual PortfolioBasis valuation_frame receipt is invalid")
+        raise ReviewError("this review's price basis changed while it was being prepared; rerun prepare")
     original_paths = [row["original_path"] for row in inputs["candidate"]["files"]]
     ledger_path = os.path.join(root, "ledger.jsonl")
     with session.projection_transaction(root):
@@ -1137,12 +1156,14 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
             raise ReviewError(BASIS_CHANGED_MESSAGE)
         try:
             verified_overlay = ledger.virtualize(live_events, verified_batches)
-            verified_frame = _virtual_valuation_frame(verified_overlay["events"], state.get("valuation_frame"))
+            verified_frame, verified_book_as_of = _virtual_valuation_frame(
+                verified_overlay["events"], state.get("valuation_frame"))
             verified_basis = portfolio_basis.query_current_book(
                 verified_overlay["events"], valuation_manifest=verified_frame,
-                reference_as_of=frame.get("as_of"), skipped_lines=live_receipt["skipped_lines"])
+                reference_as_of=_basis_reference(frame.get("as_of"), verified_book_as_of),
+                skipped_lines=live_receipt["skipped_lines"])
         except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
-            raise ReviewError(f"virtual PortfolioBasis rejected final input: {exc}") from exc
+            raise ReviewError(f"your book could not be read before saving: {exc}") from exc
         if (verified_basis is None or _frame_identity(verified_frame) != basis_receipt["valuation_frame_identity"]
                 or verified_basis.state_version != basis_receipt["basis_state_version"]
                 or verified_overlay != overlay):
@@ -3254,8 +3275,13 @@ def cmd_prepare(args):
         if frozen_transaction is not None:
             batches, _skipped_non_trade, _skipped_future = _parse_frozen_candidates(
                 frozen_transaction["frozen_paths"])
+            # Deliberately not stored on `state`. The gate reads the in-memory
+            # receipt below, and nothing else reads it at all — while `state` is
+            # what session_id_from_state() hashes, so persisting a receipt that
+            # carries the ledger's byte digest would give the same CSV a new
+            # session id the moment its own trades landed, breaking the #166
+            # content-addressed identity the idempotent-finalize guard needs.
             overlay, virtual_basis = _virtual_review_basis(frozen_transaction, batches, state)
-            state["virtual_review_basis"] = virtual_basis
         card, state = _apply_display_currency(card, state, _previous_state(root), language)
         ledger_ingest = None
         if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
