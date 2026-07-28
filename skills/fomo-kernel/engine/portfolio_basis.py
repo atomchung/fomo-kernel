@@ -31,6 +31,11 @@ _VALUATION_BASES = {"unpriced", "priced"}
 _VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
 _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
                        "non_positive_denominator", "mixed_native_currencies"}
+# trade_recap.current_book_projection deliberately mirrors this vocabulary for
+# the frame-free v1 pipeline (its docstring records why importing the full
+# projection is not possible there); a drift test in test_engine_units.py locks
+# the mirror to these module constants, so keep them the single spelling.
+_COVERAGE_SCOPES = {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -776,7 +781,7 @@ def validate_sizing_projection(value, *, basis=None):
         raise PortfolioBasisError("sizing_projection applicability disagrees")
     _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable", "currencies"},
                 "sizing_projection.coverage")
-    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}:
+    if coverage["scope"] not in _COVERAGE_SCOPES:
         raise PortfolioBasisError("sizing_projection coverage scope is invalid")
     if any(isinstance(coverage[k], bool) or not isinstance(coverage[k], int) or coverage[k] < 0
            for k in ("total_holdings", "valued_holdings")):

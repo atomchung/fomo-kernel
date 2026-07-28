@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(SKILL, "engine"))
 import trade_recap as tr  # noqa: E402
 import horizon as hz  # noqa: E402  # #148 item5:horizon 時間軸矛盾(純狀態側,閾值下沉)
 import perf as pf  # noqa: E402  # #171 B 路線:XIRR solver(純函式;#164 已部署 XIRR 未來共用)
+import portfolio_basis as pb  # noqa: E402  # #477 J3:current_book_projection 詞彙 drift 鎖
 from test_support import preserve_driver_state  # noqa: E402
 
 _SKIP = "__skip__"        # 與 test_sample_styles 一致的 skip 哨兵(本檔暫無 network 測試)
@@ -862,6 +863,40 @@ def test_ticker_diagnosis_without_sibling_dim_size_falls_back_to_its_own_project
     too_heavy = [t for t in nopx["tags"] if t["code"] == "too_heavy"]
     assert too_heavy and _approx(too_heavy[0]["params"]["wpct"], 3800.0 / total), \
         "省略 sizing_weights 仍要靠 current_book_projection 算出成本近似的正確佔比"
+
+
+def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
+    """current_book_projection 刻意「鏡像」而非 import portfolio_basis 的投影詞彙
+    (其 docstring 記錄了原因:v1 管線到這裡只剩 (held, last_px) 的無框架單幣視圖,
+    沒有 ledger 可建 PortfolioBasis)。鏡像面靜默漂移是本 repo 記錄過的失敗模式
+    (parity-harness 盲區、hand-mirrored surface)——這裡把鏡像鎖到 portfolio_basis
+    的模組常數上:任何一邊改詞彙,這裡先紅,而不是等下游 reader 兩邊對不上才發現。
+    取樣走遍每一條輸出路徑(priced/cost_fallback/unavailable/空倉/全不可估值)。"""
+    samples = [
+        tr.current_book_projection({"P": (1.0, 10.0), "C": (1.0, 10.0), "U": (1.0, 0.0)},
+                                   {"P": 5.0}),
+        tr.current_book_projection({"P": (1.0, 10.0)}, {"P": 5.0}),
+        tr.current_book_projection({}, {}),
+        tr.current_book_projection({"U": (1.0, 0.0)}, {}),
+    ]
+    sources = {e["source"] for s in samples for e in s["values"].values()}
+    assert sources == pb._VALUE_SOURCES, \
+        f"value source 詞彙偏離 portfolio_basis._VALUE_SOURCES: {sources}"
+    scopes = {s["coverage"]["scope"] for s in samples}
+    assert scopes <= pb._COVERAGE_SCOPES and len(scopes) == 2, \
+        f"coverage scope 詞彙偏離 portfolio_basis._COVERAGE_SCOPES: {scopes}"
+    proj_reasons = {s["reason"] for s in samples}
+    assert proj_reasons <= pb._PROJECTION_REASONS, \
+        f"projection reason 詞彙偏離 portfolio_basis._PROJECTION_REASONS: {proj_reasons}"
+    # 兩個枚舉本函式構造不出(混幣在 usd_view 上游已收斂;非正分母要 shares*px 相消),
+    # 但 non_positive_denominator 在程式碼裡是活分支——留給未來輸入,不斷言可達性。
+    entry_reasons = {e["reason"] for s in samples for e in s["values"].values()} - {None}
+    assert entry_reasons == {"value_unavailable"}, \
+        f"per-ticker reason 應與 portfolio_basis._projection_entry 同拼字: {entry_reasons}"
+    # coverage 鍵形狀 = portfolio_basis 的 _exact_keys 集合減 currencies(本函式無幣別
+    # 概念,docstring 已記錄這個刻意差異)。
+    assert set(samples[0]["coverage"]) == {"scope", "total_holdings", "valued_holdings",
+                                           "priced", "cost_fallback", "unavailable"}
 
 
 # ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
