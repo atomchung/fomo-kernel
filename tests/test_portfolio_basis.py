@@ -232,6 +232,36 @@ def test_sizing_projection_fails_closed_on_invalid_or_tampered_basis():
     assert pb.sizing_projection(basis) is None
 
 
+def test_sizing_projection_validator_rejects_weight_and_coverage_lies():
+    basis = pb.query_current_book([_trade("2026-07-01", "A", "buy", 2, 10),
+                                   _trade("2026-07-01", "B", "buy", 1, 20)],
+                                  reference_as_of="2026-07-02",
+                                  valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15, "B": 30}})
+    projection = pb.sizing_projection(basis)
+    assert projection
+    mutations = []
+    bad_weight = copy.deepcopy(projection.to_dict()); bad_weight["values"]["A"]["weight"] = 0.75; mutations.append(bad_weight)
+    bad_sum = copy.deepcopy(projection.to_dict()); bad_sum["values"]["A"]["weight"] = 0.4; mutations.append(bad_sum)
+    bad_source = copy.deepcopy(projection.to_dict()); bad_source["coverage"]["cost_fallback"] = ["A"]; bad_source["coverage"]["priced"] = ["B"]; mutations.append(bad_source)
+    bad_scope = copy.deepcopy(projection.to_dict()); bad_scope["coverage"]["scope"] = "bounded_valued_subset"; mutations.append(bad_scope)
+    for mutation in mutations:
+        try:
+            pb.validate_sizing_projection(mutation)
+            raise AssertionError("projection mutation must be rejected")
+        except pb.PortfolioBasisError:
+            pass
+
+
+def test_sizing_projection_fails_closed_on_finite_multiplication_overflow():
+    basis = pb.query_current_book(
+        [_snap("2026-07-01", [{"ticker": "A", "shares": 1e308, "avg_cost": 1}])],
+        reference_as_of="2026-07-02",
+        valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 2.0}},
+    )
+    assert basis
+    assert pb.sizing_projection(basis) is None
+
+
 def _main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
     failed = 0

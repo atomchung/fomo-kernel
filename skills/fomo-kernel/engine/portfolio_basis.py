@@ -28,6 +28,8 @@ _VALUATION_BASES = {"unpriced", "priced"}
 _VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
 _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
                        "non_positive_denominator"}
+_PROJECTION_REL_TOL = 1e-12
+_PROJECTION_ABS_TOL = 1e-12
 
 
 class PortfolioBasisError(ValueError):
@@ -446,7 +448,10 @@ def sizing_projection(basis):
         holding = holdings[ticker]
         shares, price, cost_total = holding["shares"], prices.get(ticker), holding["cost_total"]
         if _finite_number(price) and price > 0:
-            values[ticker] = _projection_entry(float(shares) * float(price), "price", None)
+            value = float(shares) * float(price)
+            if not math.isfinite(value):
+                return None
+            values[ticker] = _projection_entry(value, "price", None)
             priced.append(ticker)
         elif _finite_number(cost_total) and cost_total > 0:
             values[ticker] = _projection_entry(float(cost_total), "cost_fallback", None)
@@ -455,7 +460,12 @@ def sizing_projection(basis):
             values[ticker] = _projection_entry(None, "unavailable", "value_unavailable")
             unavailable.append(ticker)
     valued = [entry["value"] for entry in values.values() if entry["value"] is not None]
-    denominator = sum(valued) if valued else None
+    try:
+        denominator = math.fsum(valued) if valued else None
+    except OverflowError:
+        return None
+    if denominator is not None and not math.isfinite(denominator):
+        return None
     if not holdings:
         reason = "empty_current_book"
     elif denominator is None:
@@ -504,8 +514,10 @@ def validate_sizing_projection(value):
         raise PortfolioBasisError("sizing_projection coverage tickers are invalid")
     sets = [set(coverage[k]) for k in groups]
     if (coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
-            or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))):
+            or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))
+            or coverage["scope"] != ("full_current_book" if not sets[2] else "bounded_valued_subset")):
         raise PortfolioBasisError("sizing_projection coverage disagrees")
+    weight_sum = 0.0
     for ticker, entry in value["values"].items():
         if not isinstance(ticker, str) or not ticker:
             raise PortfolioBasisError("sizing_projection ticker is invalid")
@@ -515,14 +527,28 @@ def validate_sizing_projection(value):
         if entry["source"] == "unavailable":
             if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != "value_unavailable":
                 raise PortfolioBasisError("sizing_projection unavailable value is invalid")
+            if ticker not in sets[2]:
+                raise PortfolioBasisError("sizing_projection unavailable source disagrees with coverage")
         elif not _finite_number(entry["value"]) or entry["value"] <= 0:
             raise PortfolioBasisError("sizing_projection value is invalid")
         elif value["applicable"]:
             if (not _finite_number(entry["weight"]) or entry["weight"] <= 0
                     or not entry["applicable"] or entry["reason"] is not None):
                 raise PortfolioBasisError("sizing_projection applicable weight is invalid")
+            expected = entry["value"] / denominator
+            if not math.isclose(entry["weight"], expected, rel_tol=_PROJECTION_REL_TOL,
+                                abs_tol=_PROJECTION_ABS_TOL):
+                raise PortfolioBasisError("sizing_projection weight disagrees with denominator")
+            weight_sum += entry["weight"]
         elif entry["weight"] is not None or entry["applicable"] or entry["reason"] != "denominator_unavailable":
             raise PortfolioBasisError("sizing_projection unavailable denominator value is invalid")
+        if entry["source"] == "price" and ticker not in sets[0]:
+            raise PortfolioBasisError("sizing_projection price source disagrees with coverage")
+        if entry["source"] == "cost_fallback" and ticker not in sets[1]:
+            raise PortfolioBasisError("sizing_projection cost source disagrees with coverage")
+    if value["applicable"] and not math.isclose(weight_sum, 1.0, rel_tol=_PROJECTION_REL_TOL,
+                                                  abs_tol=_PROJECTION_ABS_TOL):
+        raise PortfolioBasisError("sizing_projection weights do not sum to one")
 
 
 def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifest: Optional[Mapping[str, Any]] = None,
