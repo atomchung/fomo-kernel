@@ -33,6 +33,102 @@ def test_transaction_replay_is_unverified_and_stable():
     assert one.current_book["holdings"]["NVDA"]["shares"] == 10.0
 
 
+def test_valuation_frame_is_typed_and_changes_basis_version():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 2, "avg_cost": 10,
+                                      "currency": "USD"}])]
+    frame = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 15},
+        aggregate_currency="USD", fx_to_aggregate={}, price_provenance="engine_fetch",
+        fx_provenance="engine_fetch").to_dict()
+    basis = pb.query_current_book(events, reference_as_of="2026-07-02", valuation_manifest=frame)
+    legacy = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                   valuation_manifest={"as_of": "2026-07-02", "prices": {"A": 15}})
+    assert basis and legacy and basis.state_version != legacy.state_version
+    assert basis.current_book["valuation_manifest"]["aggregate_currency"] == "USD"
+    assert basis.current_book["valuation_manifest"]["contract_version"] == pb.VALUATION_FRAME_VERSION
+
+
+def test_valuation_frame_rejects_missing_fx_and_malformed_native_price():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10, "currency": "TWD"}])]
+    missing_fx = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"A": {"currency": "TWD"}}, prices={"A": 15},
+        aggregate_currency="USD", fx_to_aggregate={}, price_provenance="engine_fetch",
+        fx_provenance="unavailable").to_dict()
+    basis = pb.query_current_book(events, valuation_manifest=missing_fx)
+    assert basis and basis.current_book["valuation_manifest"]["coverage"]["missing_fx"] == ["TWD"]
+
+
+def test_valuation_frame_exact_partition_and_state_version_sensitivity():
+    events = [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10, "currency": "USD"},
+                                     {"ticker": "B", "shares": 1, "avg_cost": 20, "currency": "TWD"}])]
+    frame = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"A": {"currency": "USD"}, "B": {"currency": "TWD"}},
+        prices={"A": 11}, aggregate_currency="USD", fx_to_aggregate={"TWD": 0.03},
+        price_provenance="price_feed", fx_provenance="fx_feed").to_dict()
+    assert frame["coverage"] == {"missing_price": [{"ticker": "B", "currency": "TWD"}], "missing_fx": []}
+    one = pb.query_current_book(events, valuation_manifest=frame)
+    changed = copy.deepcopy(frame); changed["fx_to_aggregate"]["TWD"]["rate"] = 0.04
+    two = pb.query_current_book(events, valuation_manifest=changed)
+    assert one and two and one.state_version != two.state_version
+    bad = copy.deepcopy(frame); bad["prices"]["X"] = bad["prices"].pop("A")
+    try:
+        pb.query_current_book(events, valuation_manifest=bad)
+    except pb.PortfolioBasisError:
+        pass
+    else:
+        raise AssertionError("prices must exactly partition current holdings")
+
+
+def test_valuation_frame_rejects_adversarial_shapes_without_typeerror():
+    frame = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={},
+        aggregate_currency="USD", fx_to_aggregate={}, price_provenance="unavailable",
+        fx_provenance="engine_fetch").to_dict()
+    for mutate in (
+        lambda x: x.__setitem__("prices", []),
+        lambda x: x["coverage"].__setitem__("missing_price", [{"ticker": "A", "currency": "USD"}] * 2),
+        lambda x: x["fx_to_aggregate"].__setitem__("EUR", {"rate": 1, "provenance": "x", "as_of": "2026-07-02"}),
+    ):
+        bad = copy.deepcopy(frame); mutate(bad)
+        try:
+            pb.validate_valuation_frame(bad, positions={"A": {"currency": "USD"}})
+        except pb.PortfolioBasisError:
+            pass
+        else:
+            raise AssertionError("adversarial valuation frame accepted")
+    for kwargs in (
+        {"prices": {"X": 1}, "fx_to_aggregate": {}},
+        {"prices": {}, "fx_to_aggregate": {"EUR": 1}},
+    ):
+        try:
+            pb.build_valuation_frame(as_of="2026-07-02", positions={"A": {"currency": "USD"}},
+                                     aggregate_currency="USD", price_provenance="unavailable",
+                                     fx_provenance="engine_fetch", **kwargs)
+        except pb.PortfolioBasisError:
+            pass
+        else:
+            raise AssertionError("unknown builder input accepted")
+
+
+def test_nested_frame_partition_cannot_be_forged_with_a_recomputed_state_version():
+    basis = pb.query_current_book(
+        [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10, "currency": "USD"}])],
+        valuation_manifest=pb.build_valuation_frame(
+            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="price_feed",
+            fx_provenance="fx_feed").to_dict())
+    forged = basis.to_dict()
+    forged["current_book"]["valuation_manifest"]["prices"] = {
+        "X": forged["current_book"]["valuation_manifest"]["prices"].pop("A")}
+    forged["state_version"] = pb._digest(pb._version_payload(forged))
+    try:
+        pb.validate_portfolio_basis(forged)
+    except pb.PortfolioBasisError:
+        pass
+    else:
+        raise AssertionError("rehashed nested frame must still partition current holdings")
+
+
 def test_anchor_and_post_anchor_semantics_and_same_day_version():
     anchor = _snap("2026-07-05", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100}],
                    cash={"USD": 1000}, source="broker", projection_sequence=2)

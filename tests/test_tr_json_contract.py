@@ -53,7 +53,7 @@ STATE_KEYS = {
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
-    "price_snapshot", "market_context",                # #191 PR B:frozen prices + SPY/QQQ/VIX window for private-card reconciliation
+    "price_snapshot", "valuation_frame", "market_context",  # #500 receipt is private state only
     "price_provenance", "price_request",                # #289:價格來源/覆蓋率 + 待補清單,degraded 模式必須可觀測
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
@@ -261,6 +261,23 @@ def main():
         ok(st["insufficient_data"] is False, "mock(19 筆跨 300+ 天)不觸發 insufficient gate")
         ok(set(st["price_snapshot"]) == {"as_of", "prices"},
            "price_snapshot freezes one review-time price map", repr(st["price_snapshot"])[:120])
+        frame = st["valuation_frame"]
+        ok(set(frame) == {"contract_version", "as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage", "usable", "reason"},
+           "valuation frame is private typed state", repr(frame)[:120])
+        ok("valuation_frame" not in card,
+           "valuation frame never enters TR_JSON/card", repr(card.keys()))
+        # The FX fetcher always carries USD identity. A single-TWD book must
+        # still build its private frame: aggregate identity belongs to PB, not
+        # to the fetcher's unrelated default rate map.
+        twd_csv = pathlib.Path(tmp) / "single-twd.csv"
+        twd_csv.write_text(
+            "Symbol,Quantity,Price,Action,TradeDate,RecordType,Market,Currency\n"
+            "2330.TW,10,1000,BUY,2025-01-02,Trade,TW,TWD\n", encoding="utf-8")
+        twd_run, twd_state_path = run_engine_offline(tmp, csv=twd_csv, state_name="twd-state.json")
+        ok(twd_run.returncode == 0, "single TWD TR_STATE_OUT exit 0", twd_run.stderr[-180:])
+        twd_frame = json.loads(twd_state_path.read_text(encoding="utf-8"))["valuation_frame"]
+        ok(twd_frame["aggregate_currency"] == "TWD" and set(twd_frame["fx_to_aggregate"]) == {"TWD"},
+           "single TWD frame keeps only its aggregate identity", repr(twd_frame))
         ok(set(st["market_context"]) == {"start", "end", "benchmarks", "missing", "error"},
            "market_context shape stays explicit even offline", repr(st["market_context"])[:160])
         cm = st["commitment"]

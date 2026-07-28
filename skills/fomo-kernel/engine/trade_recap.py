@@ -14,6 +14,7 @@ import fetch_cache
 import instruments as instrument_policy
 import market_context as market_context_engine
 import price_feed
+import portfolio_basis
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
@@ -1866,7 +1867,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
                 max_pos_override=None, price_provenance=None, price_request=None,
-                prices=None):
+                prices=None, valuation_frame=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -1990,12 +1991,14 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
         "price_snapshot": price_snapshot,                   # #191 PR B:review-time prices for deterministic exit/swap comparison; frozen in the session plan
+        "valuation_frame": valuation_frame,                 # #500 private canonical native-price/FX receipt; never card JSON
         "price_provenance": price_provenance,               # #289:價格來源與覆蓋率(engine_fetch / agent_feed / unavailable),degraded 模式必須可觀測
         "price_request": price_request,                     # #289:還缺哪些價的機讀清單,agent 據此去公認資料源補檔再重跑 prepare
         "market_context": market_context,                   # #191 PR B:SPY/QQQ/VIX review window; renderer consumes without refetching
         "problem_events": p_events,                         # #137 問題帳:本次規約出的事件(SKILL 收尾 append 進 problems.jsonl)
         "problem_opportunities": p_opps,                    # 各 key 本期有無機會犯(規矩對位的 Opportunity Check)
     }
+
 
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
 def _attribution_gaps(ab):
@@ -2544,6 +2547,27 @@ def main():
     if os.environ.get("TR_STATE_OUT"):                    # 設了才寫薄 state;不設 → 卡片 stdout 零變
         import json, tempfile
         path = os.environ["TR_STATE_OUT"]
+        frame = portfolio_basis.build_valuation_frame(
+            as_of=price_as_of,
+            positions={ticker: {"currency": cur_map.get(ticker, "USD")} for ticker in held},
+            # ``last_px`` also contains benchmarks; the frame's strict price
+            # partition is only the current held book.
+            prices={ticker: last_px.get(ticker) for ticker in held},
+            aggregate_currency=currency_meta["aggregate_currency"],
+            # ``fetch_fx`` has a USD identity default even when USD is not in
+            # this book (for example a pure TWD review).  The domain builder
+            # owns the aggregate identity; it receives only needed non-
+            # aggregate current-holding rates.
+            fx_to_aggregate={
+                currency: fx[currency]
+                for currency in {cur_map.get(ticker, "USD") for ticker in held}
+                if currency != currency_meta["aggregate_currency"] and currency in fx
+            },
+            price_provenance=str(price_provenance.get("mode") or "unavailable"),
+            # FX provenance is intentionally a separate fact: price delivery
+            # must never be silently attributed to the exchange-rate source.
+            fx_provenance=("engine_fetch" if not fx_err else "unavailable"),
+        ).to_dict()
         state = build_state(rows, rts, held, dims, overview, ab, rx,
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
@@ -2552,7 +2576,7 @@ def main():
                             price_snapshot=price_snapshot, market_context=review_market,
                             max_pos_override=max_pos_override,
                             price_provenance=price_provenance, price_request=price_request,
-                            prices=px)
+                            prices=px, valuation_frame=frame)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."
