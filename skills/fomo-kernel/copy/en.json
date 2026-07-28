@@ -233,6 +233,7 @@
     "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
     "price_plausibility": "A supplied closing price differs sharply from that ticker's own last recorded trade price; the source should be re-verified before the figure is trusted.",
     "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
+    "sizing_coverage": "Some positions have neither a live price nor a cost basis, so position sizing and the too-heavy check cover only the positions that could be valued.",
     "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
     "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
     "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",

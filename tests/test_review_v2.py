@@ -8738,6 +8738,59 @@ def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
             "before this fix it stayed too_heavy at any cap"
 
 
+def test_set_cap_moves_dim_size_and_too_heavy_tag_together_with_a_cost_fallback_denominator():
+    """#477 second half: the test above proves cap-*threshold* parity on an
+    all-priced book, which cannot expose a denominator split -- both readers
+    already summed the same two priced values. This drives the same real
+    `set-cap` CLI over a book with one priced ticker and one held-but-unpriced
+    ticker (cost-basis only), the exact shape where dim_size's denominator
+    (price-or-cost) and ticker_diagnosis's old denominator (priced only,
+    #477's original bug) used to disagree. Both dim_size's own weight and
+    ticker_diagnosis's too_heavy percentage must be the identical number, at
+    both the universal default and the raised override."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "root")
+        # NOPX is unpriced (cost-basis only) and the larger of the two by
+        # cost; AAA is priced. NOPX has no realized round-trip of its own in
+        # this fixture, so give it one small closed lot purely so it clears
+        # ticker_diagnosis's |impact| >= $1 filter and appears in the output
+        # -- the tag/weight assertions below are what this test is for.
+        held = {"AAA": (10.0, 1000.0), "NOPX": (10.0, 3500.0)}
+        last_px = {"AAA": 100.0}
+        rts = [{"ticker": "NOPX", "buy_px": 10.0, "sell_px": 12.0, "qty": 5,
+                "ret": 0.2, "hold": 10, "entry": dt.date(2026, 1, 1), "exit": dt.date(2026, 2, 1)}]
+        total = 1000.0 + 3500.0   # AAA priced 1000 + NOPX cost-fallback 3500
+
+        base_size = tr.dim_size([], held, last_px, None)
+        assert base_size["applicable"] is True
+        base_weight = base_size["weights"]["NOPX"]
+        assert abs(base_weight - 3500.0 / total) < 1e-9
+        base_tdiag = tr.ticker_diagnosis(rts, {}, held, last_px,
+                                         max_pos_override=None, sizing_weights=base_size["weights"])
+        base_nopx = next(d for d in base_tdiag if d["ticker"] == "NOPX")
+        base_hits = [t for t in base_nopx["tags"] if t["code"] == "too_heavy"]
+        assert base_hits and base_hits[0]["params"]["wpct"] == base_weight, \
+            "at the universal 25% default, NOPX's cost-based 77.8% weight must be a hole " \
+            "AND the too_heavy tag must carry that exact same weight"
+
+        run = _run("set-cap", "--root", root, "--pct", "0.80")
+        assert run.returncode == 0, run.stdout + run.stderr
+        override = review_engine._position_cap_override(root)
+        assert override == 0.80
+
+        raised_size = tr.dim_size([], held, last_px, override)
+        assert raised_size["triggered"] is False, "77.8% must clear a raised 80% cap"
+        raised_weight = raised_size["weights"]["NOPX"]
+        assert raised_weight == base_weight, \
+            "the weight itself never depends on the cap -- only whether it trips the trigger"
+        raised_tdiag = tr.ticker_diagnosis(rts, {}, held, last_px,
+                                          max_pos_override=override, sizing_weights=raised_size["weights"])
+        raised_nopx = next(d for d in raised_tdiag if d["ticker"] == "NOPX")
+        assert not any(t["code"] == "too_heavy" for t in raised_nopx["tags"]), \
+            "too_heavy must also clear at the raised 80% cap for the cost-fallback ticker -- " \
+            "this is the exact reader split #477's second half fixed"
+
+
 # #501: the pre-append refusal is a message the user actually reads (main()
 # emits str(exc) as the whole error field), so it may not name the internal
 # machinery the owner decision explicitly ruled out of user-facing copy.

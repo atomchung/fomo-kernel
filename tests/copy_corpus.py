@@ -422,6 +422,18 @@ def _condition_then_now(kind="numeric", **check_over):
     return _condition_check(prior=prior, checks=[_check_row(**check_over)])
 
 
+def _sizing_coverage_bounded(language):
+    """#477: a genuine valuation gap (a held ticker with neither a live price
+    nor a positive cost basis) rides the Block-1 footnote like every other
+    honesty-ledger key (`_performance_block` pops ``honesty`` wholesale), but
+    no mock persona's book ever contains one -- every current caller either
+    fully values every held ticker or does not call dim_size at all (see
+    ``current_book_projection``'s own docstring). Without this scene the
+    fallback sentence would ship unread by any renderer."""
+    return _bundle(language, card={"honesty_ledger": [
+        {"key": "sizing_coverage", "status": "bounded", "data": {"tickers": ["GONE"]}}]})
+
+
 # `copy/*.json` keys this scene is responsible for lighting; the coverage
 # report below reads them.
 SCENES = (
@@ -673,6 +685,12 @@ SCENES = (
     ("alpha_interval/per_market_scope", (), _alpha_interval(True, (0.07, 0.54), scope="TW")),
     ("exit_followup/all_branches", ("exit_followup",), _exit_followup),
     ("exit_followup/fallbacks", (), _exit_followup_fallback),
+    # #477: not claimed as a register -- "honesty" is not otherwise exercised
+    # anywhere in this corpus (persona_sweep/test_review_v2 own that
+    # lifecycle coverage for the other honesty keys), and claiming it here
+    # would report all of them unreached rather than pin the one new
+    # sentence this issue actually changed.
+    ("sizing_coverage/bounded", (), _sizing_coverage_bounded),
     *[(f"problems/{'_'.join(group[:1])}", ("problems", "problem_keys") if index == 0 else (),
        _problem_ledger(group, with_rules=index == 0))
       for index, group in enumerate(PROBLEM_GROUPS)],
