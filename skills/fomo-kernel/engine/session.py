@@ -731,6 +731,12 @@ SNAPSHOT_RECONCILIATION_STALE = (
     "run prepare again with the same snapshot to refreeze the diff"
 )
 
+VANISHED_POSITION_NEEDS_ANSWER = (
+    "this declaration drops a position the record still holds, and only you can "
+    "say whether it was sold or simply missing from the view; run "
+    "`review.py refresh --snapshot-json ...` to settle it, then review"
+)
+
 
 def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
     """Return the conflict sources blocking an initial snapshot declaration.
@@ -830,6 +836,23 @@ def _assert_initial_snapshot_boundary(root, bundle):
         raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
     if canonical(current) != canonical(frozen):
         raise SessionError(SNAPSHOT_RECONCILIATION_STALE)
+    # #530's backstop, and deliberately not a second copy of prepare's
+    # criterion.  Prepare decides *which* differences need the user by asking
+    # book_refresh, and that predicate needs the declaration envelope, which a
+    # committed bundle does not carry.  Reconstructing one here would assemble
+    # the same fact from a second source — the defect class CLAUDE.md names.
+    # So this asserts only the narrower thing a frozen diff can answer by
+    # itself: the one difference kind that destroys information never reaches
+    # append_book_adoption.  A vanished position becomes an exit only when
+    # somebody asked; the review lane never asks, so it must never adopt one.
+    #
+    # Two paths reach here that prepare's check does not cover: a bundle
+    # prepared before #530 and finalized after it, and the --card-json/
+    # --state-json developer route, which skips _validate_initial_snapshot_root
+    # entirely.  Both converge on this line.
+    if any(row.get("kind") == "only_derived"
+           for row in (current.get("diff") or {}).get("positions") or ()):
+        raise SessionError(VANISHED_POSITION_NEEDS_ANSWER)
 
 
 def _project_snapshot_anchor(root, bundle):

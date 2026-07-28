@@ -1299,6 +1299,66 @@ def test_a_vanished_position_is_refused_but_an_avg_cost_difference_is_reviewed()
             "and it produces no absence, because none was ever confirmed"
 
 
+def test_finalize_refuses_a_vanished_position_prepare_never_saw():
+    """The backstop under the projection lock, for the bundles prepare cannot reach (#530).
+
+    Prepare's refusal covers the live route, but two paths arrive at finalize
+    without having passed it: a bundle prepared before #530 and finalized after
+    it, and the `--card-json`/`--state-json` developer route, which skips
+    `_validate_initial_snapshot_root` entirely. Either one carries a frozen
+    `adjusted` diff that may drop a position the record still holds, and the
+    review lane has no absence to hand the shared writer -- so the exit would
+    vanish exactly as it did before this change.
+
+    This asserts only what a frozen diff can answer by itself. It is not a
+    second copy of prepare's criterion: *which* differences need the user is
+    still decided in one place, by asking the book-update lane. What is
+    asserted here is narrower and permanent -- the one difference kind that
+    destroys information never reaches `append_book_adoption`."""
+    initial = {
+        "as_of": "2026-07-10",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market": "US", "currency": "USD"},
+            {"ticker": "PLTR", "shares": 20, "avg_cost": 30, "market": "US", "currency": "USD"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan1, _path = _snapshot_prepare(tmp, root, payload=initial, name="first.json")
+        assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
+        baseline = _ledger_rows(root)
+
+        # Built the way a pre-#530 bundle was: the adapter runs, the frozen
+        # reconciliation is whatever the ledger says, and nothing asked.
+        vanished = _snapshot_json(tmp, payload={
+            "as_of": "2026-07-15",
+            "positions": [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                           "market": "US", "currency": "USD"}],
+        }, name="vanished.json")
+        _card, state, _meta = snapshot_adapter.prepare(vanished)
+        anchor = state["snapshot_anchor"]
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        frozen = ledger_engine.snapshot_reconciliation(events, anchor)
+        assert frozen["status"] == "adjusted"
+        assert [row["kind"] for row in frozen["diff"]["positions"]] == ["only_derived"], \
+            "PLTR is in the record and absent from the declaration"
+
+        bundle = {
+            "session_id": "legacy-pending",
+            "review_plan": {"input": {"kind": "positions_snapshot"}},
+            "engine_state": {"snapshot_anchor": anchor, "snapshot_reconciliation": frozen},
+        }
+        try:
+            session_engine._assert_initial_snapshot_boundary(str(root), bundle)
+        except session_engine.SessionError as exc:
+            assert str(exc) == session_engine.VANISHED_POSITION_NEEDS_ANSWER, str(exc)
+        else:
+            raise AssertionError(
+                "finalize adopted a declaration that drops a held position without "
+                "anyone having been asked whether it was sold")
+        assert _ledger_rows(root) == baseline, "the refusal happens before any append"
+
+
 def test_second_snapshot_fail_closed_edges():
     """Incomplete second declarations, older-than-anchor views, and a ledger
     that changed after prepare all fail closed without partial writes."""
