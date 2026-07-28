@@ -56,15 +56,48 @@ def _history_path() -> pathlib.Path:
     return _state_root() / "judge" / "narrative-runs.jsonl"
 
 
-def _record(row: dict) -> None:
-    """Append 一行。寫不進去只警告,絕不把一次好好的跑變成 crash。"""
+def _fsync_dir(path: pathlib.Path) -> None:
+    """Persist directory entries; unsupported platforms fail closed for evidence."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _new_directory_chain(path: pathlib.Path) -> list[pathlib.Path]:
+    """Missing ancestors, outermost first, so each new name can be persisted."""
+    missing = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return list(reversed(missing))
+
+
+def _record(row: dict) -> bool:
+    """Append one durable row; warn and return False when persistence fails."""
     path = _history_path()
     try:
+        created = _new_directory_chain(path.parent)
         path.parent.mkdir(parents=True, exist_ok=True)
+        for directory in created:
+            _fsync_dir(directory.parent)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        # This persists the newly created file entry, and is still necessary
+        # when its parent existed before this run.
+        _fsync_dir(path.parent)
+        return True
     except OSError as e:
         print(f"⚠️  這次的結果沒記錄成功({path}):{e}")
+        return False
 
 
 def _read_history() -> list:
@@ -184,18 +217,22 @@ def _main(argv=None):
     if blocked:
         print(f"❌ {blocked}")
         # 擋掉的跑也要留一行:歷史裡出現空窗時,才分得出「沒人跑」和「跑了但沒評到」。
-        _record({**row, "blocked": blocked, "verified": 0, "total": 0, "cases": []})
+        if not _record({**row, "blocked": blocked, "verified": 0, "total": 0, "cases": []}):
+            print("❌ 本次 run 未被記錄，因此不是可採信的 evidence。")
         return 1
 
     # 判決是哪個模型給的要印出來:換模型後這份驗活結果就不能直接沿用。
     print(f"model={MODEL}, effort={EFFORT}, {N_RUNS} run(s) per fixture\n")
     results = [_run_case(c) for c in cases]
     n_ok, n_total = sum(r["ok"] for r in results), len(results)
-    _record({**row, "verified": n_ok, "total": n_total, "cases": results})
+    recorded = _record({**row, "verified": n_ok, "total": n_total, "cases": results})
     print(f"\n{n_ok}/{n_total} mutation case 符合預期")
     if n_ok < n_total:
         print("judge 沒能分辨出至少一個刻意壞掉的 fixture —— 先修 rubric/prompt,"
               "再拿它去判真卡(docs/eval-design.md §6)。")
+    if not recorded:
+        print("❌ 本次 run 未被記錄，因此不是可採信的 evidence。")
+        return 1
     print(f"已記錄到 {_history_path()}(看漂移:--history)")
     return 0 if n_ok == n_total else 1
 

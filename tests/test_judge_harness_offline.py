@@ -277,17 +277,65 @@ def test_history_reader_shows_drift():
 
 
 def test_recording_failure_never_kills_the_run():
-    """寫不進去只該警告。一次好好的驗活不能因為記錄失敗就變成 crash。"""
+    """寫不進去只警告並回 False，不能 crash 或偽裝成已持久化。"""
     original = R._history_path
     R._history_path = lambda: pathlib.Path("/proc/nonexistent-dir/x.jsonl")
     try:
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            R._record({"run_at": "x"})
+            recorded = R._record({"run_at": "x"})
+        ok(recorded is False, "記錄寫失敗時 _record 回 False")
         ok("沒記錄成功" in buf.getvalue(), "記錄寫失敗時警告而不是拋例外")
     except Exception as exc:                               # noqa: BLE001
         ok(False, f"記錄失敗不該拋例外,卻拋了 {exc!r}")
     finally:
         R._history_path = original
+
+
+def test_green_run_without_durable_history_is_not_evidence():
+    """#466: a green judge result is not evidence until its audit row exists."""
+    good = (FIXTURES / "card_good.txt").read_text(encoding="utf-8")
+    original_judge, original_path, original_fsync = R.judge, R._history_path, R._fsync_dir
+    R.judge = lambda text: {"overall": 5 if text == good else 1}
+    with tempfile.TemporaryDirectory() as tmp:
+        R._history_path = lambda: pathlib.Path(tmp) / "new-root" / "judge" / "narrative-runs.jsonl"
+        R._fsync_dir = lambda _path: (_ for _ in ()).throw(OSError("directory fsync failed"))
+        try:
+            rc, out = _run_main_with_cases([
+                {"file": "card_good.txt", "expect": "pass", "label": "x"},
+                {"file": "card_bad_vague.txt", "expect": "fail", "label": "y"},
+            ])
+        finally:
+            R.judge, R._history_path, R._fsync_dir = original_judge, original_path, original_fsync
+    ok(rc == 1, "otherwise-green judge run loses exit 0 when history persistence fails")
+    ok("沒記錄成功" in out and "不是可採信的 evidence" in out,
+       "persistence failure is warned and explicitly marked non-evidence")
+    ok("已記錄到" not in out, "failed persistence never claims durable success")
+
+
+def test_directory_entries_are_synced_and_failure_is_not_success():
+    original_path, original_fsync = R._history_path, R._fsync_dir
+    with tempfile.TemporaryDirectory() as tmp:
+        history = pathlib.Path(tmp) / "state" / "judge" / "narrative-runs.jsonl"
+        calls = []
+        R._history_path = lambda: history
+        R._fsync_dir = lambda path: calls.append(pathlib.Path(path))
+        try:
+            ok(R._record({"run_at": "dir-sync"}) is True,
+               "directory-synced record reports durable success")
+            ok(history.parent.parent in calls and history.parent in calls,
+               "new directory entries and final history parent are fsynced")
+        finally:
+            R._history_path, R._fsync_dir = original_path, original_fsync
+
+
+def test_record_success_is_durable_and_readable():
+    before = len(R._read_history())
+    row = {"run_at": "2099-01-01T00:00:00Z", "model": "test", "effort": "low",
+           "verified": 1, "total": 1, "cases": []}
+    ok(R._record(row) is True, "successful append reports durable success")
+    rows = R._read_history()
+    ok(len(rows) == before + 1 and rows[-1] == row,
+       "successful append remains readable from the history surface")
 
 
 def test_history_on_empty_store_is_friendly():
@@ -373,6 +421,9 @@ def main():
         test_every_run_is_recorded_and_readable()
         test_history_reader_shows_drift()
         test_recording_failure_never_kills_the_run()
+        test_green_run_without_durable_history_is_not_evidence()
+        test_directory_entries_are_synced_and_failure_is_not_success()
+        test_record_success_is_durable_and_readable()
         test_history_on_empty_store_is_friendly()
     finally:
         shutil.rmtree(_TMP_HOME, ignore_errors=True)
