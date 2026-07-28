@@ -8646,46 +8646,67 @@ def test_set_cap_moves_dim_size_and_too_heavy_tag_together():
             "before this fix it stayed too_heavy at any cap"
 
 
+# #501: the pre-append refusal is a message the user actually reads (main()
+# emits str(exc) as the whole error field), so it may not name the internal
+# machinery the owner decision explicitly ruled out of user-facing copy.
+_FROZEN_INTERNALS = ("state_version", "valuation_frame", "ValuationFrame", "PortfolioBasis",
+                     "fingerprint", "receipt", "sha256", "overlay", "Traceback")
+
+
+def _frozen_fixture(tmp, frozen_dir, name="coach", rows=None, prices=None):
+    """Freeze one candidate CSV plus the live ledger, exactly as prepare does."""
+    root = pathlib.Path(tmp) / name
+    csv_path = pathlib.Path(tmp) / f"{name}-weekly.csv"
+    csv_path.write_text(
+        rows or "Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n",
+        encoding="utf-8")
+    inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
+    batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+    frame = review_engine.portfolio_basis.build_valuation_frame(
+        as_of="2026-07-02", positions={"A": {"currency": "USD"}},
+        prices=prices if prices is not None else {"A": 11},
+        aggregate_currency="USD", fx_to_aggregate={},
+        price_provenance="test", fx_provenance="test").to_dict()
+    state = {"date_end": "2026-07-02", "valuation_frame": frame}
+    overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
+    return {"root": root, "csv": csv_path, "inputs": inputs, "batches": batches,
+            "overlay": overlay, "receipt": receipt, "state": state}
+
+
+def _refuses(fixture, root=None):
+    """Run the locked gate, require a refusal, and return its user-facing text."""
+    try:
+        review_engine._verify_and_ingest_frozen_trades(
+            str(root or fixture["root"]), fixture["inputs"], fixture["batches"],
+            fixture["overlay"], fixture["receipt"], {}, fixture["state"])
+    except review_engine.ReviewError as exc:
+        return str(exc)
+    raise AssertionError("the gate must refuse before any append")
+
+
 def test_frozen_virtual_basis_rejects_changed_candidate_before_any_append():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = pathlib.Path(tmp) / "coach"
-        csv_path = pathlib.Path(tmp) / "weekly.csv"
-        original = "Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n"
-        csv_path.write_text(original, encoding="utf-8")
-        with tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
-            inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
-            batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
-            frame = review_engine.portfolio_basis.build_valuation_frame(
-                as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
-                aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-            state = {"date_end": "2026-07-02", "valuation_frame": frame}
-            overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
-            assert receipt["basis"]["state_version"] == receipt["basis_state_version"]
-            csv_path.write_text(original + "\n", encoding="utf-8")
-            try:
-                review_engine._verify_and_ingest_frozen_trades(str(root), inputs, batches, overlay, receipt, {}, state)
-                raise AssertionError("byte mutation must be rejected before append")
-            except review_engine.ReviewError as exc:
-                assert "candidate input changed" in str(exc)
-        assert not (root / "ledger.jsonl").exists()
+    with tempfile.TemporaryDirectory() as tmp, \
+            tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
+        fixture = _frozen_fixture(tmp, frozen_dir)
+        assert fixture["receipt"]["basis"]["state_version"] == fixture["receipt"]["basis_state_version"]
+        # A whitespace-only edit changes no parsed trade, but it is still a
+        # different engine input than the one the frozen receipt describes.
+        fixture["csv"].write_text(fixture["csv"].read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        message = _refuses(fixture)
+        assert message == review_engine.BASIS_CHANGED_MESSAGE, message
+        leaked = [token for token in _FROZEN_INTERNALS if token in message]
+        assert not leaked, f"pre-append refusal copy names internals: {leaked}"
+        assert not (fixture["root"] / "ledger.jsonl").exists()
 
 
 def test_frozen_virtual_basis_verifies_equal_input_and_appends_once():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = pathlib.Path(tmp) / "coach"
-        csv_path = pathlib.Path(tmp) / "weekly.csv"
-        csv_path.write_text("Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n", encoding="utf-8")
-        with tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
-            inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
-            batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
-            frame = review_engine.portfolio_basis.build_valuation_frame(
-                as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
-                aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-            state = {"date_end": "2026-07-02", "valuation_frame": frame}
-            overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
-            result, _card, _state = review_engine._verify_and_ingest_frozen_trades(
-                str(root), inputs, batches, overlay, receipt, {}, state)
-        events, skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+    with tempfile.TemporaryDirectory() as tmp, \
+            tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
+        fixture = _frozen_fixture(tmp, frozen_dir)
+        result, _card, _state = review_engine._verify_and_ingest_frozen_trades(
+            str(fixture["root"]), fixture["inputs"], fixture["batches"],
+            fixture["overlay"], fixture["receipt"], {}, fixture["state"])
+        events, skipped = ledger_engine.load_ledger(str(fixture["root"] / "ledger.jsonl"))
         assert result["appended"] == 1 and skipped == 0 and len(events) == 1
 
 
@@ -8701,6 +8722,164 @@ def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forgin
     virtual_frame = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
     assert virtual_frame["coverage"]["missing_price"] == [{"ticker": "ANCHOR", "currency": "USD"}]
     assert virtual_frame["prices"] == {"NEW": source_frame["prices"]["NEW"]}
+
+
+def test_frozen_gate_rejects_live_ledger_change_without_appending_candidate():
+    """A book-affecting write landing between the frozen receipt and the locked
+    reread must abort before the first append (owner decision A1), leaving the
+    ledger byte-identical rather than mixing this attempt's candidate into a
+    book the analysis never saw."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as frozen:
+        fixture = _frozen_fixture(tmp, frozen)
+        root = fixture["root"]
+        root.mkdir(parents=True, exist_ok=True)
+        raw = (b'{"type":"trade","date":"2026-06-01","ticker":"OLD","action":"buy",'
+               b'"qty":1,"price":1,"market":"US","currency":"USD"}\n')
+        (root / "ledger.jsonl").write_bytes(raw)
+        message = _refuses(fixture)
+        assert message == review_engine.BASIS_CHANGED_MESSAGE, message
+        assert (root / "ledger.jsonl").read_bytes() == raw, \
+            "a refused attempt may not leave one candidate byte behind"
+
+
+def test_frozen_gate_fails_closed_on_a_corrupt_live_ledger_before_appending():
+    """#462's contract on the #501 lane: a corrupt row appearing in the live
+    ledger must block the import rather than let the locked recompute run over a
+    silently shortened read. This refusal is a different situation from a race,
+    so it keeps the diagnostic corruption text instead of the A1 message."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as frozen:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True)
+        good = (b'{"type":"trade","date":"2026-06-01","ticker":"OLD","action":"buy",'
+                b'"qty":1,"price":1,"market":"US","currency":"USD"}\n')
+        (root / "ledger.jsonl").write_bytes(good)
+        fixture = _frozen_fixture(tmp, frozen, name="coach")
+        assert fixture["inputs"]["ledger_receipt"]["bytes_n"] == len(good), \
+            "the fixture must have frozen the existing ledger, not an empty root"
+        corrupt = good + b'{"type":"trade","date":"nope"\n'
+        (root / "ledger.jsonl").write_bytes(corrupt)
+        message = _refuses(fixture, root=root)
+        assert "unreadable row" in message, message
+        assert (root / "ledger.jsonl").read_bytes() == corrupt, \
+            "a corrupt ledger must not be appended to"
+
+
+def test_frozen_basis_refuses_a_missing_or_invalid_valuation_frame_before_any_write():
+    """The frozen basis is only meaningful against a valid frame. Both a state
+    that carries no frame and a structurally broken frame must fail during
+    analysis -- before the locked lane, so no ledger file is ever created."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as frozen:
+        root = pathlib.Path(tmp) / "coach"
+        csv_path = pathlib.Path(tmp) / "weekly.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n",
+            encoding="utf-8")
+        inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen)
+        batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+        for label, state in (("missing", {"date_end": "2026-07-02"}),
+                             ("invalid", {"date_end": "2026-07-02",
+                                          "valuation_frame": {"contract_version": "not-a-frame"}})):
+            try:
+                review_engine._virtual_review_basis(inputs, batches, state)
+                raise AssertionError(f"a {label} valuation frame must refuse")
+            except review_engine.ReviewError:
+                pass
+        assert not (root / "ledger.jsonl").exists()
+
+
+def test_frozen_gate_releases_the_projection_lock_after_a_pre_append_refusal():
+    """A refusal must not leave the root-wide transaction held. If it did, the
+    rerun the A1 message asks the user to perform would block forever instead of
+    producing a review -- a hang is a worse outcome than the conflict itself."""
+    import fcntl
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as frozen:
+        fixture = _frozen_fixture(tmp, frozen)
+        fixture["csv"].write_text(fixture["csv"].read_text(encoding="utf-8") + "\n",
+                                  encoding="utf-8")
+        assert _refuses(fixture) == review_engine.BASIS_CHANGED_MESSAGE
+        locks = list(fixture["root"].rglob(".projections.lock"))
+        assert locks, "the gate must have created the root-wide projection lock"
+        # Non-blocking on purpose: a leaked flock makes this raise instead of
+        # hanging the suite the way a blocking reacquire would.
+        handle = os.open(str(locks[0]), os.O_RDWR)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        except OSError as exc:
+            raise AssertionError(f"refusal leaked the projection lock: {exc}") from exc
+        finally:
+            os.close(handle)
+
+
+def test_frozen_prepare_is_the_real_user_lane_and_a_rerun_appends_no_duplicate():
+    """The frozen transaction -- not `_ingest_trades` -- is what a real user
+    reaches (a plain `prepare trades.csv --root ...` with no injected
+    artifacts). Every other ingest-detail test in this file injects
+    --card-json/--state-json and therefore exercises the legacy lane only, so
+    this is the coverage for the new lane's counts, its idempotent retry, and
+    the privacy of the receipt it freezes."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        csv_path = pathlib.Path(tmp) / "real.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n",
+            encoding="utf-8")
+        env = _offline_engine_env(tmp)
+        first = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+                     "--session-nonce", "frozen-1", env=env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        ingest = json.loads(first.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert ingest["appended"] == 2 and ingest["skipped_dup"] == 0, ingest
+        rows = (pathlib.Path(root) / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(rows) == 2
+
+        # The frozen receipt is private local state: persisted for replay, never
+        # echoed onto the agent surface.
+        assert "virtual_review_basis" not in first.stdout
+        plan = _pending_plan(root, first.stdout)
+        receipt = plan["engine_state"]["virtual_review_basis"]
+        assert receipt["contract_version"] == "virtual-review-basis-v1"
+        assert receipt["basis_state_version"] == receipt["basis"]["state_version"]
+
+        # A retry of the same facts converges: the candidate deduplicates against
+        # the ledger it already produced instead of doubling the book.
+        again = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+                     "--session-nonce", "frozen-2", env=env)
+        assert again.returncode == 0, again.stdout + again.stderr
+        repeat = json.loads(again.stdout)["review_plan"]["input"]["ledger_ingest"]
+        assert repeat["appended"] == 0 and repeat["skipped_dup"] == 2, repeat
+        assert (pathlib.Path(root) / "ledger.jsonl").read_text(
+            encoding="utf-8").splitlines() == rows, "a retry may not rewrite the book"
+
+
+def test_frozen_test_drive_runs_the_same_validation_and_persists_nothing():
+    """Test drive must differ from a real review only at the effect boundary:
+    the same parse / virtual basis / frame / locked verification chain runs, and
+    only the append is skipped. A test drive that quietly took a shorter path
+    would stop being evidence about the production lane."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        csv_path = pathlib.Path(tmp) / "demo.csv"
+        csv_path.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "ACME,BUY,10,50,2026-03-02,Trade,US,USD\n"
+            "ACME,SELL,10,55,2026-03-03,Trade,US,USD\n",
+            encoding="utf-8")
+        env = _offline_engine_env(tmp)
+        run = _run("prepare", csv_path, "--test-drive", "--root", root,
+                   "--session-nonce", "demo-1", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["persist"] is False
+        ingest = plan["input"]["ledger_ingest"]
+        assert ingest is not None and ingest["appended"] == 0, \
+            f"the frozen verification must still run under test drive: {ingest}"
+        assert ingest["skipped_dup"] == 0 and ingest["skipped_non_trade"] == 0, ingest
+        assert not (pathlib.Path(root) / "ledger.jsonl").exists(), \
+            "test drive cannot persist real trade facts"
+        assert _pending_plan(root, run.stdout)["engine_state"]["virtual_review_basis"][
+            "contract_version"] == "virtual-review-basis-v1", \
+            "test drive must freeze the same private receipt it would in production"
 
 
 def main():

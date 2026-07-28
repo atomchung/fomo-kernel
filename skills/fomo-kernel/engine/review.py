@@ -239,6 +239,17 @@ def _sha256_bytes(value):
     return hashlib.sha256(value).hexdigest()
 
 
+# One controlled message for every #501 pre-append refusal (owner decision A1).
+# The user's action is identical whichever input moved — rerun prepare — so the
+# distinction stays in the tests, not in copy that would have to name
+# state_version / receipt / ValuationFrame to be precise.
+BASIS_CHANGED_MESSAGE = (
+    "Your portfolio or source file changed while this review was being prepared. "
+    "Nothing from this attempt was saved. Start the review again so every number "
+    "uses one consistent snapshot."
+)
+
+
 def _candidate_receipt(paths, frozen_dir=None):
     """Freeze ordered source bytes once, before engine work (#501)."""
     files, frozen_paths = [], []
@@ -290,8 +301,13 @@ def _freeze_transaction_inputs(root, paths, frozen_dir):
     with session.projection_transaction(root):
         events, ledger_receipt, ledger_bytes = _read_live_ledger(root)
     ledger_snapshot = os.path.join(frozen_dir, "ledger.jsonl")
-    with open(ledger_snapshot, "xb") as handle:
-        handle.write(ledger_bytes)
+    try:
+        with open(ledger_snapshot, "xb") as handle:
+            handle.write(ledger_bytes)
+    except OSError as exc:
+        # An unguarded write here would leave a raw traceback on the agent's
+        # stdout instead of one controlled error line.
+        raise ReviewError(f"cannot write the private review snapshot: {exc}") from exc
     return {"candidate": candidate, "frozen_paths": frozen_paths,
             "ledger_events": events, "ledger_receipt": ledger_receipt,
             "ledger_snapshot": ledger_snapshot}
@@ -1108,15 +1124,15 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
         with tempfile.TemporaryDirectory(prefix="fomo-verify-") as verify_dir:
             current_candidate, verify_paths = _candidate_receipt(original_paths, verify_dir)
             if current_candidate != inputs["candidate"]:
-                raise ReviewError("candidate input changed after engine receipt; retry prepare")
+                raise ReviewError(BASIS_CHANGED_MESSAGE)
             # Reparse the just-frozen verifier copy, never the mutable path after
             # digest comparison. Append reuses the resulting overlay below.
             verified_batches, skipped_non_trade, skipped_future = _parse_frozen_candidates(verify_paths)
         if skipped_future:
-            raise ReviewError("candidate input changed after engine receipt; retry prepare")
+            raise ReviewError(BASIS_CHANGED_MESSAGE)
         live_events, live_receipt, _payload = _read_live_ledger(root)
         if live_receipt != inputs["ledger_receipt"]:
-            raise ReviewError("ledger changed after engine receipt; retry prepare")
+            raise ReviewError(BASIS_CHANGED_MESSAGE)
         try:
             verified_overlay = ledger.virtualize(live_events, verified_batches)
             verified_frame = _virtual_valuation_frame(verified_overlay["events"], state.get("valuation_frame"))
@@ -1128,7 +1144,7 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
         if (verified_basis is None or _frame_identity(verified_frame) != basis_receipt["valuation_frame_identity"]
                 or verified_basis.state_version != basis_receipt["basis_state_version"]
                 or verified_overlay != overlay):
-            raise ReviewError("virtual PortfolioBasis changed after engine receipt; retry prepare")
+            raise ReviewError(BASIS_CHANGED_MESSAGE)
         reconciliation = None
         if append and ledger.latest_anchor(live_events) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
@@ -3179,9 +3195,10 @@ def cmd_prepare(args):
     paths = [os.path.abspath(os.path.expanduser(p)) for p in paths]
     frozen_transaction = None
     frozen_tmp = None
-    candidate_for_fingerprint = None
-    if not args.snapshot_json and not args.card_json and paths:
-        candidate_for_fingerprint, _unused = _candidate_receipt(paths)
+    # A CSV route owns the #501 frozen transaction.  The snapshot/card-json
+    # developer routes do not carry candidate trade batches, so they keep the
+    # pre-existing lane below.
+    freeze_candidates = bool(paths) and not args.snapshot_json and not args.card_json
     prepared = None
     if args.snapshot_json:
         try:
@@ -3223,37 +3240,42 @@ def cmd_prepare(args):
                "next_action": ("run resume --session-id to reuse any validated question surface; "
                                "then ask question_queue and run preview")})
         return
-    if candidate_for_fingerprint is not None:
+    if freeze_candidates:
         frozen_tmp = tempfile.TemporaryDirectory(prefix="fomo-review-input-")
-        frozen_transaction = _freeze_transaction_inputs(root, paths, frozen_tmp.name)
-        if frozen_transaction["candidate"] != candidate_for_fingerprint:
-            raise ReviewError("candidate input changed while freezing; retry prepare")
-    if prepared is None:
-        card, state, engine_meta = _run_engine(
-            (frozen_transaction or {}).get("frozen_paths", paths), root, args,
-            ledger_path=(frozen_transaction or {}).get("ledger_snapshot"))
-    if frozen_transaction is not None:
-        batches, _skipped_non_trade, _skipped_future = _parse_frozen_candidates(
-            frozen_transaction["frozen_paths"])
-        overlay, virtual_basis = _virtual_review_basis(frozen_transaction, batches, state)
-        state["virtual_review_basis"] = virtual_basis
-    card, state = _apply_display_currency(card, state, _previous_state(root), language)
-    ledger_ingest = None
-    if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
-        if state["snapshot_anchor"].get("is_complete", True) is False:
-            ledger_ingest = {"mode": "canonical_only", "kind": "positions_snapshot",
-                             "reason": "incomplete_snapshot"}
-        else:
-            ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
-            if isinstance(state.get("snapshot_reconciliation"), dict):
-                ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
-    elif frozen_transaction is not None:
-        ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
-            root, frozen_transaction, batches, overlay, virtual_basis, card, state, append=persist)
-    elif persist and paths:
-        ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
-    if frozen_tmp is not None:
-        frozen_tmp.cleanup()
+    try:
+        if frozen_tmp is not None:
+            frozen_transaction = _freeze_transaction_inputs(root, paths, frozen_tmp.name)
+        if prepared is None:
+            card, state, engine_meta = _run_engine(
+                (frozen_transaction or {}).get("frozen_paths", paths), root, args,
+                ledger_path=(frozen_transaction or {}).get("ledger_snapshot"))
+        if frozen_transaction is not None:
+            batches, _skipped_non_trade, _skipped_future = _parse_frozen_candidates(
+                frozen_transaction["frozen_paths"])
+            overlay, virtual_basis = _virtual_review_basis(frozen_transaction, batches, state)
+            state["virtual_review_basis"] = virtual_basis
+        card, state = _apply_display_currency(card, state, _previous_state(root), language)
+        ledger_ingest = None
+        if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
+            if state["snapshot_anchor"].get("is_complete", True) is False:
+                ledger_ingest = {"mode": "canonical_only", "kind": "positions_snapshot",
+                                 "reason": "incomplete_snapshot"}
+            else:
+                ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
+                if isinstance(state.get("snapshot_reconciliation"), dict):
+                    ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
+        elif frozen_transaction is not None:
+            ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
+                root, frozen_transaction, batches, overlay, virtual_basis, card, state,
+                append=persist)
+        elif persist and paths:
+            ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
+    finally:
+        # The frozen directory holds byte copies of the user's CSV and ledger.
+        # A refusal above is an expected path (#501 A1), so cleanup cannot sit
+        # on the success line only.
+        if frozen_tmp is not None:
+            frozen_tmp.cleanup()
     if route == "snapshot_review":
         recent_exits, due_revisits, exit_backlog = [], [], None
         problem_stats = None
