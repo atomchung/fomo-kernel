@@ -660,7 +660,8 @@ def sizing_projection(basis):
         manifest = basis.current_book.get("valuation_manifest")
         if (isinstance(manifest, Mapping)
                 and manifest.get("contract_version") == VALUATION_FRAME_VERSION
-                and manifest.get("usable") is True):
+                and manifest.get("usable") is True
+                and basis.completeness == "declared_complete"):
             frame_identity = _valuation_frame_identity(manifest)
             aggregate = manifest["aggregate_currency"]
             values = {}

@@ -399,7 +399,11 @@ def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rej
         prices={"USD": 15, "TWD": 110}, aggregate_currency="USD", fx_to_aggregate={"TWD": 0.03},
         price_provenance="price_feed", fx_provenance="fx_feed",
     )
-    basis = pb.query_current_book(events, reference_as_of="2026-07-02", valuation_manifest=frame.to_dict())
+    basis = pb.query_current_book(
+        [_snap("2026-07-02", [{"ticker": "USD", "shares": 2, "avg_cost": 10, "currency": "USD"},
+                                {"ticker": "TWD", "shares": 3, "avg_cost": 100, "currency": "TWD"}])],
+        reference_as_of="2026-07-02", valuation_manifest=frame.to_dict(),
+    )
     projection = pb.sizing_projection(basis)
     assert projection and projection.applicable and projection.reason is None
     assert projection.coverage["scope"] == "full_current_book" and projection.coverage["currencies"] == ["TWD", "USD"]
@@ -435,6 +439,21 @@ def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rej
                                              valuation_manifest=missing_fx_frame.to_dict())
     missing_fx = pb.sizing_projection(missing_fx_basis)
     assert missing_fx and not missing_fx.applicable and missing_fx.reason == "mixed_native_currencies"
+
+    partial_basis = pb.query_current_book(
+        events + [_snap("2026-07-02", [{"ticker": "USD", "shares": 2, "currency": "USD"},
+                                        {"ticker": "TWD", "shares": 3, "currency": "TWD"}], is_complete=False)],
+        reference_as_of="2026-07-02", valuation_manifest=frame.to_dict(),
+    )
+    unverified_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                             valuation_manifest=frame.to_dict())
+    for incomplete_basis, expected_completeness in ((partial_basis, "declared_partial"),
+                                                    (unverified_basis, "unverified")):
+        assert incomplete_basis and incomplete_basis.completeness == expected_completeness
+        incomplete = pb.sizing_projection(incomplete_basis)
+        assert incomplete and not incomplete.applicable and incomplete.denominator is None
+        assert incomplete.reason == "mixed_native_currencies"
+        assert incomplete.coverage["scope"] == "unavailable_mixed_currency"
 
 
 def test_sizing_projection_fails_closed_when_currency_identity_is_missing_or_invalid():
