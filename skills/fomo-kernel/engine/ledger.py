@@ -21,8 +21,10 @@ as_of 日收盤後狀態,同日交易視為已反映在宣告數字內);沒有�
 
 adjustment 事件是 reconcile 的差異留痕(給人回看),不進推導 —— 差異的實際修正由
 reconcile 後追加的新 snapshot(新錨點)承擔,避免雙重套用。reconciliation 事件是
-乾淨對帳的標記(宣告與推導一致,#220),同樣不進推導。二次宣告的窄 diff 契約見
-snapshot_reconciliation() docstring 與 docs/prd-ledger.md。
+乾淨對帳的標記(宣告與推導一致,#220),同樣不進推導。position_absence(#485 Slice C)
+同樣不進推導:它記的是「使用者確認某日起這檔不在帳上」,沒有成交價與股數可寫,
+持倉變更一樣由同批的新錨點承擔;它存在的理由是讓出場管線(revisit)讀得到這次出場。
+二次宣告的窄 diff 契約見 snapshot_reconciliation() docstring 與 docs/prd-ledger.md。
 
 CLI(SKILL 消費;JSON 走 stdout、人話訊息走 stderr,對齊 TR_JSON 模式):
   python3 ledger.py holdings        [--ledger P]                      # 推導當前持倉+integrity
@@ -53,7 +55,22 @@ DEFAULT_LEDGER = os.path.expanduser("~/.trade-coach/ledger.jsonl")
 EPS = 1e-6
 SHARES_TOL = 1e-4          # reconcile 股數容差(對齊事件 round 精度:qty round4)
 CASH_TOL = 0.005           # cash / avg-cost absolute tolerance (broker cent rounding)
-EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation")
+EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation", "position_absence")
+
+# position_absence(#485 Slice C):使用者確認「這檔賣掉了」但沒有成交紀錄時,唯一能誠實
+# 寫下的事實 —— 某日起這檔不在帳上。成交價與股數是未知的,所以這個事件「結構上」就沒有
+# 放它們的欄位:build_position_absence() 自己驗證輸出鍵集合,想加價格欄位的人會讓 builder
+# 直接爆掉(而不是靠一條註解或一個測試提醒)。這條線跟 condition-check.schema.json 拒收
+# 引擎自寫 user_response 是同一條:勝率/盈虧比/出場紀律永遠不准從捏造的數字算出來。
+# 它跟 adjustment 一樣不進 derive_holdings 推導——持倉的實際變更由同批寫入的新錨點承擔,
+# 這個事件是「出場管線讀得到的訊號」+ 稽核留痕,避免雙重套用。
+ABSENCE_IDENTITY_KEYS = ("type", "date", "ticker", "cycle_id")
+ABSENCE_KEYS = frozenset(ABSENCE_IDENTITY_KEYS) | {"absence_id", "session_id", "v", "recorded_at"}
+# 任何帶「成交長什麼樣」語意的欄位名;出現在 ABSENCE_KEYS 或 builder 產出即為契約破口。
+ABSENCE_FORBIDDEN_KEYS = frozenset({
+    "price", "exit_price", "qty", "quantity", "shares", "shares_sold",
+    "amount", "proceeds", "value", "market_value", "avg_cost", "cost", "fee",
+})
 
 
 class LedgerIntegrityError(ValueError):
@@ -163,6 +180,70 @@ def append_events(path, events, *, recorded_at=None):
                 ev.setdefault("recorded_at", recorded_at)
             f.write(json.dumps(ev, ensure_ascii=False, sort_keys=True) + "\n")
     return len(events)
+
+
+# ───────────────────── 確認消失(position_absence)─────────────────────
+
+def _absence_identity(date, ticker, cycle_id):
+    """Validated identity tuple for one confirmed disappearance; fails closed."""
+    try:
+        day = dt.date.fromisoformat(str(date)).isoformat()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"position_absence has an invalid date: {date!r}") from exc
+    if not ticker or not isinstance(ticker, str):
+        raise ValueError("position_absence requires a ticker")
+    if not cycle_id or not isinstance(cycle_id, str):
+        raise ValueError(f"position_absence for {ticker} requires a cycle_id")
+    return {"type": "position_absence", "date": day, "ticker": ticker, "cycle_id": cycle_id}
+
+
+def build_position_absence(*, date, ticker, cycle_id, session_id=None):
+    """Build one `position_absence` event (content-addressed, fill-free).
+
+    ``absence_id`` hashes only ABSENCE_IDENTITY_KEYS, so re-running the same
+    confirmation is the same row and finalize stays idempotent the way
+    ``snapshot_id``/``adjustment_id`` already are.
+
+    The returned key set is checked against ABSENCE_KEYS and
+    ABSENCE_FORBIDDEN_KEYS here, in the writer itself, rather than in a test:
+    adding a price or share field to this event makes every caller raise
+    immediately instead of quietly persisting a manufactured fill that win
+    rate, payoff and exit discipline would then compute from.
+    """
+    identity = _absence_identity(date, ticker, cycle_id)
+    event = dict(identity)
+    event["absence_id"] = "absence-" + hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    if session_id is not None:
+        event["session_id"] = str(session_id)
+    unknown = set(event) - ABSENCE_KEYS
+    if unknown:
+        raise ValueError("position_absence has unknown fields: " + ", ".join(sorted(unknown)))
+    forbidden = (set(event) | ABSENCE_KEYS) & ABSENCE_FORBIDDEN_KEYS
+    if forbidden:
+        raise ValueError(
+            "position_absence must not carry fill facts: " + ", ".join(sorted(forbidden)))
+    return event
+
+
+def position_absences(events):
+    """Well-formed `position_absence` rows with their index, in ledger order.
+
+    The index is what a reader needs to see the recorded book as it stood
+    immediately before the row was appended — the only honest source for the
+    shares, currency and cost basis the event itself deliberately omits.
+    """
+    out = []
+    for index, ev in enumerate(events):
+        if not isinstance(ev, dict) or ev.get("type") != "position_absence":
+            continue
+        try:
+            identity = _absence_identity(ev.get("date"), ev.get("ticker"), ev.get("cycle_id"))
+        except ValueError:
+            continue          # 壞行語意跟 bad_trade_event 一致:跳過,不讓它變成錯的推導
+        out.append({"index": index, "absence_id": ev.get("absence_id"), **identity})
+    return out
 
 
 # ─────────────────────────── 推導 ───────────────────────────

@@ -434,6 +434,19 @@ def _sizing_coverage_bounded(language):
         {"key": "sizing_coverage", "status": "bounded", "data": {"tickers": ["GONE"]}}]})
 
 
+def _unpriced_exits_excluded(language):
+    """#485 Slice C: a position that left the record with no sale price. The
+    exit is real, so win rate / payoff / exit discipline exclude it and the
+    footnote has to say so -- but nothing can produce one until the refresh
+    flow's confirmation exists, and no persona ledger carries a
+    ``position_absence`` row, so without this scene the fallback sentence would
+    ship unread by any renderer (same argument as ``_sizing_coverage_bounded``
+    above)."""
+    return _bundle(language, card={"honesty_ledger": [
+        {"key": "unpriced_exits", "status": "excluded",
+         "data": {"tickers": ["ACME"], "count": 1}}]})
+
+
 # `copy/*.json` keys this scene is responsible for lighting; the coverage
 # report below reads them.
 SCENES = (
@@ -691,6 +704,7 @@ SCENES = (
     # would report all of them unreached rather than pin the one new
     # sentence this issue actually changed.
     ("sizing_coverage/bounded", (), _sizing_coverage_bounded),
+    ("unpriced_exits/excluded", (), _unpriced_exits_excluded),
     *[(f"problems/{'_'.join(group[:1])}", ("problems", "problem_keys") if index == 0 else (),
        _problem_ledger(group, with_rules=index == 0))
       for index, group in enumerate(PROBLEM_GROUPS)],
