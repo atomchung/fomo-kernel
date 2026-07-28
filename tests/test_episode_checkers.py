@@ -20,6 +20,7 @@ prepare-derived path on every run.
 import json
 import pathlib
 import sys
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "evals"))
@@ -794,6 +795,119 @@ def test_a_run_that_would_judge_nothing_is_not_a_pass():
     assert J.nothing_to_judge([], set()) is not None
     assert J.nothing_to_judge(judged, set()) is None
     assert J.nothing_to_judge(bank, set()) is None
+
+
+# The backend seam. `agy` needs no key and is a different vendor from the one
+# that authored the answers, which is the point; what it cannot give is the
+# shape guarantee forced tool use provides, so everything below is what replaces
+# that guarantee. None of it calls a model.
+
+def test_a_reply_the_harness_cannot_read_is_not_a_verdict():
+    axes = ["two_sided"]
+    good = '{"two_sided": {"verdict": "fail", "reason": "one direction only"}}'
+    assert J._parse_verdicts(good, axes)["two_sided"]["verdict"] == "fail"
+    # Real shapes a CLI returns: fenced, and wrapped in prose.
+    assert J._parse_verdicts("```json\n" + good + "\n```", axes) is not None
+    assert J._parse_verdicts("Sure! Here is my assessment:\n" + good, axes) is not None
+    for unreadable in ("", "no json here at all", "{not json}", '{"two_sided": "fail"}',
+                       '{"two_sided": {"verdict": "maybe", "reason": "x"}}',
+                       '["two_sided"]', '{"overrulable": {"verdict": "fail", "reason": "x"}}'):
+        assert J._parse_verdicts(unreadable, axes) is None, unreadable
+
+
+def test_a_partial_reply_is_discarded_whole():
+    """All-or-nothing: keeping the axes a reply did answer, while silently
+    dropping the one it skipped, is how a judge starts grading less than it
+    claims to."""
+    both = ["two_sided", "overrulable"]
+    partial = '{"two_sided": {"verdict": "fail", "reason": "x"}}'
+    assert J._parse_verdicts(partial, both) is None
+    assert J._parse_verdicts(partial, ["two_sided"]) is not None
+
+
+def test_unusable_samples_are_reported_and_never_counted_as_agreement():
+    episode = _judged(axes=["two_sided"], fails=["two_sided"])
+    miss = episode["answers"][0]
+    # Every sample unreadable: the axis gets no votes, so it votes ambiguous —
+    # a failure — and the unusable count is stated rather than swallowed.
+    failures, observed = J.grade_answer(episode, miss, ["two_sided"], [None, None, None])
+    assert any("unreadable" in message for message in failures), failures
+    assert any("split" in message for message in failures), failures
+    assert observed == {}, "an unreadable sample must not count toward coverage"
+    # One unusable among three still reports it, and the survivors still decide.
+    failures, observed = J.grade_answer(
+        episode, miss, ["two_sided"],
+        [None] + _samples({"two_sided": "fail"}, runs=2))
+    assert any("1/3 sample(s) came back unreadable" in m for m in failures), failures
+    assert observed == {"two_sided": {"fail"}}
+
+
+def test_backend_resolution_names_both_routes_and_refuses_an_unknown_one():
+    """Availability is injected, never probed, so this decides the same thing on
+    every machine. The first cut called `resolve_backend()` bare and passed only
+    where a backend happened to be installed — asserting the environment rather
+    than the logic, which is the fake-green shape this file already caught once.
+    CI, which has neither backend, went red while the author's machine stayed
+    green."""
+    both = {"agy": True, "anthropic": True}
+    only_sdk = {"agy": False, "anthropic": True}
+    neither = {"agy": False, "anthropic": False}
+
+    # auto prefers agy: on a machine with both, it is the one needing no key.
+    assert J.resolve_backend("auto", both) == ("agy", J.DEFAULT_MODELS["agy"])
+    assert J.resolve_backend("auto", only_sdk) == ("anthropic", J.DEFAULT_MODELS["anthropic"])
+    # An explicit choice is honoured even when the other is also present.
+    assert J.resolve_backend("anthropic", both)[0] == "anthropic"
+
+    for name, available, expected in (
+            ("auto", neither, "needs a model"),          # names both routes, not one
+            ("hunyuan", both, "unknown TR_JUDGE_BACKEND"),
+            ("agy", only_sdk, "not installed here"),     # asked for by name, absent
+    ):
+        try:
+            J.resolve_backend(name, available)
+        except SystemExit as reason:
+            assert expected in str(reason), (name, reason)
+        else:
+            raise AssertionError(f"resolve_backend({name!r}, {available}) should have failed")
+    # The no-backend message must name both routes, so a maintainer is not sent
+    # down the one that happens to be mentioned first.
+    try:
+        J.resolve_backend("auto", neither)
+    except SystemExit as reason:
+        assert "agy" in str(reason) and "anthropic" in str(reason), reason
+
+
+def test_anthropic_judge_uses_the_resolved_model_for_default_and_override():
+    """The main sampler must pass resolve_backend's model, not global MODEL."""
+    sent = []
+
+    class Messages:
+        def create(self, **kwargs):
+            sent.append(kwargs)
+            return types.SimpleNamespace(
+                stop_reason="tool_use", stop_details=None,
+                content=[types.SimpleNamespace(
+                    type="tool_use", input={"two_sided": {"verdict": "pass", "reason": "x"}})])
+
+    client = types.SimpleNamespace(messages=Messages())
+    anthropic = types.SimpleNamespace(APIError=RuntimeError)
+    episode = _judged(axes=("two_sided",), fails=())
+    answer = episode["answers"][0]
+    original_model = J.MODEL
+    try:
+        J.MODEL = None
+        backend, model = J.resolve_backend("auto", {"agy": False, "anthropic": True})
+        assert backend == "anthropic" and model == J.DEFAULT_MODELS["anthropic"]
+        J.judge_once(model, client, anthropic, episode, answer, ("two_sided",))
+        assert sent[-1]["model"] == model
+
+        J.MODEL = "claude-opus-5-explicit"
+        _backend, override = J.resolve_backend("anthropic", {"agy": False, "anthropic": True})
+        J.judge_once(override, client, anthropic, episode, answer, ("two_sided",))
+        assert sent[-1]["model"] == "claude-opus-5-explicit"
+    finally:
+        J.MODEL = original_model
 
 
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():

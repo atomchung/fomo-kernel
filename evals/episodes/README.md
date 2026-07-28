@@ -55,8 +55,27 @@ ask a judge whether a number reconciles.
 
 ```bash
 python3 evals/judge_episodes.py --plan   # what would be judged + the call count
-python3 evals/judge_episodes.py          # needs ANTHROPIC_API_KEY; costs money
+python3 evals/judge_episodes.py          # judge the bank
 ```
+
+Two backends, resolved automatically. **`agy`** (the Antigravity CLI) needs no
+API key, and reaches Gemini and GPT-OSS tiers — so the judge can be a different
+vendor from the one that authored the answers under test. That independence is
+the point, not a cost saving: a Claude judge shares Claude's priors about what
+good reasoning looks like. **`anthropic`** is the portable route — any maintainer
+with their own key can run it, including in CI on a checkout that knows nothing
+about one person's machine — and it guarantees the response *shape* through
+forced tool use, which a CLI cannot.
+
+That missing guarantee is what `_parse_verdicts` replaces, and it fails closed in
+three directions: a reply carrying no readable JSON is `None`, a reply answering
+only some of the axes is discarded **whole** rather than partially believed, and
+an unusable sample is dropped, counted, and reported. Its axis is then short of
+votes, which votes `ambiguous` — a failure. Silence from the judge must never
+read as agreement with it.
+
+Pin either with `TR_JUDGE_BACKEND=agy|anthropic`, and the model with
+`TR_JUDGE_MODEL`.
 
 An episode opts in by declaring a `judge` block; an answer declares the axes it
 must fail. Both are graded nowhere in `run_episodes.py` — but both are *validated*
