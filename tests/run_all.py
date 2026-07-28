@@ -26,6 +26,7 @@ SUITES = [
     ("Pre-trade consultation CLI (Layer 2 entry point)", "tests/test_consider.py"),
     ("Behavior verdicts (#446)", "tests/test_verdicts.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
+    ("PortfolioBasis current-book contract (#484)", "tests/test_portfolio_basis.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),
     ("Market context", "tests/test_market_context.py"),
     ("Problem ledger", "tests/test_problems.py"),
