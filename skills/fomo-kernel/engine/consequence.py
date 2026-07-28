@@ -95,6 +95,7 @@ the mechanically verified kind (docs/development-guide.md section 5).
 """
 import datetime as dt
 import re
+from collections.abc import Mapping
 
 import instruments
 import trade_recap
@@ -210,6 +211,59 @@ def _fifo_held(rows):
     docstring for why the two bases must not be mixed."""
     _, open_lots = trade_recap.round_trips(rows)
     return trade_recap.fifo_held(open_lots)
+
+
+def rows_from_portfolio_basis(basis):
+    """Adapt one complete canonical current book to consequence input rows.
+
+    ``PortfolioBasis`` is the owner of the held shares and average cost for a
+    ledger-backed current-book question.  Replaying its source events here
+    would create a second reader with a different lot convention (FIFO versus
+    the ledger's average-cost book).  Instead, make one synthetic opening row
+    per already-held position.  These rows are merely the input shape required
+    by the established consequence arithmetic; their quantities and costs are
+    copied from the frozen basis, never re-derived.
+
+    A partial, unverified, damaged, empty, or cost-incomplete basis cannot
+    safely make a current-book verdict.  The caller must keep historical CSV
+    mode separate rather than quietly treating it as this adapter.
+    """
+    if not isinstance(basis, Mapping):
+        raise ConsequenceError("canonical PortfolioBasis is not an object")
+    if basis.get("completeness") != "declared_complete":
+        raise ConsequenceError("canonical PortfolioBasis is not a complete declared current book")
+    if basis.get("cost_basis") != "average_cost":
+        raise ConsequenceError("canonical PortfolioBasis has incomplete cost basis")
+    if basis.get("integrity"):
+        raise ConsequenceError("canonical PortfolioBasis has claim-affecting integrity warnings")
+    current_book = basis.get("current_book")
+    holdings = current_book.get("holdings") if isinstance(current_book, Mapping) else None
+    if not isinstance(holdings, Mapping) or not holdings:
+        raise ConsequenceError("canonical PortfolioBasis has no held positions")
+    try:
+        as_of = dt.date.fromisoformat(str(basis["as_of"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConsequenceError("canonical PortfolioBasis has invalid as_of") from exc
+
+    rows = []
+    for ticker in sorted(holdings):
+        holding = holdings[ticker]
+        if not isinstance(ticker, str) or not isinstance(holding, Mapping):
+            raise ConsequenceError("canonical PortfolioBasis has invalid holding")
+        try:
+            qty = float(holding["shares"])
+            # PortfolioBasis rounds avg_cost for display but preserves the
+            # canonical cost_total.  Derive the synthetic row price from the
+            # latter so a rounded display average cannot alter the held cost.
+            price = float(holding["cost_total"]) / qty
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConsequenceError("canonical PortfolioBasis has unavailable holding cost") from exc
+        if qty <= 0 or price <= 0:
+            raise ConsequenceError("canonical PortfolioBasis has non-positive holding facts")
+        rows.append({"ticker": ticker, "side": "buy", "qty": qty, "price": price,
+                     "date": as_of, "market": holding.get("market", "US"),
+                     "currency": holding.get("currency", "USD")})
+    return rows
 
 
 # ─────────────────────────────── validation ───────────────────────────────
@@ -405,7 +459,8 @@ def _delta(before, after, ticker):
     return out
 
 
-def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=None, fx=None):
+def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=None, fx=None,
+                before_override=None):
     """{"premise", "before", "after", "delta", "disclosures"} for one
     hypothetical trade. `after` is portfolio_state over `rows` plus the
     premise appended as one more row; `before` is portfolio_state over `rows`
@@ -422,8 +477,9 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     normalized = validate_premise(premise, rows)
     premise_row = _premise_row(normalized)
 
-    before = portfolio_state(rows, last_px=last_px, max_pos_override=max_pos_override,
-                             cash_anchor=cash_anchor, fx=fx)
+    before = before_override or portfolio_state(rows, last_px=last_px,
+                                                max_pos_override=max_pos_override,
+                                                cash_anchor=cash_anchor, fx=fx)
     after = portfolio_state(rows + [premise_row], last_px=last_px,
                             max_pos_override=max_pos_override, cash_anchor=cash_anchor, fx=fx)
 
@@ -565,7 +621,7 @@ def _avgdown_collision(ticker, before_events, after_events):
 
 
 def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=None,
-                   cash_anchor=None, fx=None):
+                   cash_anchor=None, fx=None, before_override=None):
     """For each currently-tracked rule, whether this hypothetical trade would
     collide with it right now. See the module docstring for the full
     unmapped/unjudged/real-verdict discipline.
@@ -590,7 +646,7 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
     """
     tracking = rules_report[0]
     result = consequence(rows, premise, last_px=last_px, max_pos_override=max_pos_override,
-                         cash_anchor=cash_anchor, fx=fx)
+                         cash_anchor=cash_anchor, fx=fx, before_override=before_override)
     normalized = result["premise"]
     before = result["before"]
     after = result["after"]

@@ -24,12 +24,12 @@
     "basis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "as_of", "stale_days"],
-      "description": "What book this consultation was computed against (issue #456). A pre-trade question cannot demand a fresh CSV the way a review can, so the record must say its own footing rather than imply a currency it does not have.",
+      "required": ["source", "as_of", "stale_days", "completeness", "cost_basis", "valuation_basis", "reconciliation_ref", "state_version"],
+      "description": "Frozen evaluation footing. Ledger-backed current-book consultations carry PortfolioBasis identity/disclosures so a later reader can see exactly what holdings fact answered; explicit CSV input remains the separate historical FIFO compatibility lane and declares itself unverified rather than impersonating a reconciled current book.",
       "properties": {
         "source": {
-          "enum": ["ledger", "transactions"],
-          "description": "ledger: reconstructed from <root>/ledger.jsonl (the snapshot anchor plus trades after it). transactions: the caller supplied CSV paths directly, read through trade_recap.load()."
+          "enum": ["snapshot_anchor", "transaction_replay", "empty", "transactions"],
+          "description": "PortfolioBasis source for ledger-backed current-book evaluation; transactions denotes the separate explicit CSV/FIFO compatibility lane."
         },
         "as_of": {
           "type": "string",
@@ -40,6 +40,46 @@
           "type": "integer",
           "minimum": 0,
           "description": "created minus as_of, in days. Disclosed, never gated on -- issue #456 leaves the question of an interruption-worthy threshold explicitly unresolved; a large value means the answer is confidently computed on a record that may no longer match the real book, not that the answer was refused."
+        },
+        "completeness": {
+          "enum": ["declared_complete", "declared_partial", "unverified"],
+          "description": "Whether the current-book source was declared complete. Only declared_complete can support a ledger current-book consequence; partial and unverified facts must not be read as a complete verdict."
+        },
+        "cost_basis": {
+          "enum": ["average_cost", "partial_average_cost", "unavailable", "fifo"],
+          "description": "Cost convention used by the frozen basis. fifo exists only for explicit CSV compatibility; canonical PortfolioBasis uses the other values."
+        },
+        "valuation_basis": {
+          "enum": ["unpriced", "priced"],
+          "description": "Whether the current-book basis carried a supplied valuation manifest. An unpriced consequence remains a disclosed cost-basis computation, not a zero-price valuation."
+        },
+        "reconciliation_ref": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false,
+             "required": ["anchor_as_of", "anchor_source", "projection_sequence"],
+             "properties": {"anchor_as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}, "anchor_source": {"type": "string", "minLength": 1}, "projection_sequence": {"type": ["integer", "null"], "minimum": 1}}}
+          ],
+          "description": "The selected canonical snapshot anchor, if one exists."
+        },
+        "state_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deterministic basis identity. PortfolioBasis uses pb-v1:<sha256>; CSV compatibility uses its own csv-v1:<sha256> identity and is not a current-book reconciliation version."
+        },
+        "valuation_coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable"],
+          "properties": {
+            "scope": {"enum": ["full_current_book", "bounded_valued_subset"]},
+            "total_holdings": {"type": "integer", "minimum": 0},
+            "valued_holdings": {"type": "integer", "minimum": 0},
+            "priced": {"type": "array", "items": {"type": "string"}},
+            "cost_fallback": {"type": "array", "items": {"type": "string"}},
+            "unavailable": {"type": "array", "items": {"type": "string"}}
+          },
+          "description": "Canonical sizing projection coverage for a ledger-backed current-book consultation. This makes mixed price/cost fallback visible; absent on the separate CSV compatibility lane."
         }
       }
     },

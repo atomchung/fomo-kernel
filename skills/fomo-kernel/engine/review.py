@@ -33,6 +33,7 @@ import instruments
 import ledger
 import price_feed
 import problems
+import portfolio_basis
 import question_surface
 import revisit
 import session
@@ -4577,7 +4578,64 @@ def _rows_from_ledger(events):
     return rows
 
 
-def _consider_rows(args, root):
+def _legacy_transaction_basis(rows, last_px):
+    """Frozen disclosure for the explicit CSV compatibility lane.
+
+    CSV input remains the historical FIFO/round-trip route.  It is not a
+    declared current-book anchor, so callers can see that its completeness is
+    unverified instead of mistaking a context-free invocation for the ledger
+    basis used by current-book claims.
+    """
+    as_of = rows[-1]["date"]
+    evidence = [{"ticker": row["ticker"], "side": row["side"], "qty": row["qty"],
+                 "price": row["price"], "date": row["date"].isoformat(),
+                 "currency": row.get("currency", "USD")}
+                for row in rows]
+    digest = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True,
+                                       separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {"source": "transactions", "as_of": as_of.isoformat(),
+            "stale_days": (dt.date.today() - as_of).days, "completeness": "unverified",
+            "cost_basis": "fifo", "valuation_basis": "priced" if last_px else "unpriced",
+            "reconciliation_ref": None, "state_version": "csv-v1:" + digest}
+
+
+def _canonical_consider_before(rows, basis, projection, last_px, max_pos_override,
+                               cash_anchor, fx):
+    """Use #494's one canonical denominator for ledger-backed ``consider``.
+
+    The consequence engine still owns the hypothetical after-state arithmetic.
+    This facade replaces only its *before* sizing facts with the typed
+    PortfolioBasis projection and refuses any mismatch, so an old FIFO/cost
+    reader can never silently become a second current-book truth source.
+    """
+    projected = projection.to_dict()
+    if not projected["applicable"] or projected["coverage"]["scope"] != "full_current_book":
+        raise ReviewError("canonical PortfolioBasis has no full current-book sizing projection")
+    before = consequence.portfolio_state(rows, last_px=last_px,
+                                         max_pos_override=max_pos_override,
+                                         cash_anchor=cash_anchor, fx=fx)
+    holdings = basis.current_book["holdings"]
+    if set(before["held"]) != set(holdings):
+        raise ReviewError("canonical PortfolioBasis holdings disagree with consider adapter")
+    for ticker, holding in holdings.items():
+        held = before["held"][ticker]
+        if (abs(held["shares"] - float(holding["shares"])) > 1e-6
+                or abs(held["cost"] - float(holding["cost_total"])) > 1e-6):
+            raise ReviewError("canonical PortfolioBasis cost disagrees with consider adapter")
+    weights = {ticker: entry["weight"] for ticker, entry in projected["values"].items()
+               if entry["applicable"]}
+    if set(weights) != set(before["held"]):
+        raise ReviewError("canonical PortfolioBasis sizing coverage is incomplete")
+    before = dict(before)
+    before["weights"] = weights
+    before["max_ticker"] = max(sorted(weights), key=weights.get)
+    before["max_pct"] = weights[before["max_ticker"]]
+    before["oversize_triggered"] = (
+        before["max_pct"] > trade_recap.effective_oversize_trigger(max_pos_override))
+    return before
+
+
+def _consider_rows(args, root, valuation_manifest=None, last_px=None):
     """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
     a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
     #456 names this the ledger basis, distinct from a review's own CSV/FIFO
@@ -4596,21 +4654,42 @@ def _consider_rows(args, root):
             raise ReviewError(
                 "none of the supplied CSV paths contained a usable BUY/SELL trade row; "
                 "consider cannot answer against an empty book")
-        return rows, "transactions"
+        return rows, _legacy_transaction_basis(rows, last_px), None, None
     ledger_path = os.path.join(root, "ledger.jsonl")
-    # #462: a corrupt row must not let the ledger-reconstruction fallback
-    # quietly answer a pre-trade question against a shortened book — a wrong
-    # rule-collision verdict here is worse than refusing to answer.
+    # A ledger-backed current-book answer has one owner: PortfolioBasis.  Do
+    # not reconstruct source events into FIFO rows here; that was a second
+    # cost/weight reader and diverged on multi-lot partial sells.
     try:
-        events, _skipped = ledger.load_ledger(ledger_path)
+        events, skipped_lines = ledger.load_ledger(ledger_path)
     except ledger.LedgerIntegrityError as exc:
         raise ReviewError(str(exc)) from exc
-    rows = _rows_from_ledger(events)
-    if not rows:
+    if not events:
         raise ReviewError(
             f"no usable trade or snapshot history in {ledger_path}; run a review first, or pass "
             "CSV paths directly, before asking consider about a hypothetical trade")
-    return rows, "ledger"
+    basis = portfolio_basis.query_current_book(
+        events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+        reference_as_of=dt.date.today().isoformat())
+    if basis is None:
+        raise ReviewError(
+            f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
+            "separate historical transaction view")
+    basis_dict = basis.to_dict()
+    try:
+        rows = consequence.rows_from_portfolio_basis(basis_dict)
+    except consequence.ConsequenceError as exc:
+        raise ReviewError(str(exc)) from exc
+    # Freeze only the portable fact identity/disclosure envelope.  The full
+    # current_book remains the canonical ledger query, not a copied second
+    # persisted book inside every consultation.
+    projection = portfolio_basis.sizing_projection(basis)
+    if projection is None:
+        raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
+    basis_meta = {key: basis_dict[key] for key in (
+        "source", "as_of", "stale_days", "completeness", "cost_basis",
+        "valuation_basis", "reconciliation_ref", "state_version")}
+    basis_meta["valuation_coverage"] = projection.to_dict()["coverage"]
+    return rows, basis_meta, basis, projection
 
 
 def _load_json_arg(value, label):
@@ -4915,7 +4994,6 @@ def cmd_consider(args):
         raise ReviewError("consider requires --premise, or --resolve together with --decision")
 
     premise_payload = _load_json_arg(args.premise, "--premise")
-    rows, basis_source = _consider_rows(args, root)
 
     if args.driver_map:
         trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
@@ -4938,6 +5016,12 @@ def cmd_consider(args):
         except ValueError as exc:
             raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
 
+    valuation_manifest = None
+    if last_px:
+        valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
+    rows, basis, canonical_basis, canonical_projection = _consider_rows(
+        args, root, valuation_manifest=valuation_manifest, last_px=last_px)
+
     agent_case = None
     if args.agent_case:
         agent_case = _load_json(os.path.abspath(os.path.expanduser(args.agent_case)), "--agent-case")
@@ -4945,10 +5029,17 @@ def cmd_consider(args):
 
     max_pos_override = _position_cap_override(root)
 
+    before_override = None
+    if canonical_basis is not None:
+        before_override = _canonical_consider_before(
+            rows, canonical_basis, canonical_projection, last_px, max_pos_override,
+            cash_anchor, fx)
+
     try:
         result = consequence.consequence(rows, premise_payload, last_px=last_px,
                                          max_pos_override=max_pos_override,
-                                         cash_anchor=cash_anchor, fx=fx)
+                                         cash_anchor=cash_anchor, fx=fx,
+                                         before_override=before_override)
     except consequence.ConsequenceError as exc:
         raise ReviewError(str(exc)) from exc
 
@@ -4956,13 +5047,11 @@ def cmd_consider(args):
     rules_report = problems.load_rules_report(os.path.join(root, "rules.jsonl"), muted_ids)
     collisions = consequence.rule_collision(rows, premise_payload, rules_report,
                                             last_px=last_px, max_pos_override=max_pos_override,
-                                            cash_anchor=cash_anchor, fx=fx)
+                                            cash_anchor=cash_anchor, fx=fx,
+                                            before_override=before_override)
 
     premise_stored = _json_safe_premise(result["premise"])
     created = dt.date.today().isoformat()
-    as_of = rows[-1]["date"]
-    basis = {"source": basis_source, "as_of": as_of.isoformat(),
-             "stale_days": (dt.date.today() - as_of).days}
     # Built once and reused for both the id seed and the stored field below —
     # a second, separately-assembled copy is exactly the "two readers, one
     # fact" shape this fix exists to close (docs/development-guide.md
