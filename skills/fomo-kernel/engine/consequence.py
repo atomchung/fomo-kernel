@@ -214,7 +214,7 @@ def _fifo_held(rows):
 
 
 def rows_from_portfolio_basis(basis):
-    """Adapt one complete canonical current book to consequence input rows.
+    """Adapt one canonical current book to consequence input rows.
 
     ``PortfolioBasis`` is the owner of the held shares and average cost for a
     ledger-backed current-book question.  Replaying its source events here
@@ -224,14 +224,15 @@ def rows_from_portfolio_basis(basis):
     by the established consequence arithmetic; their quantities and costs are
     copied from the frozen basis, never re-derived.
 
-    A partial, unverified, damaged, empty, or cost-incomplete basis cannot
-    safely make a current-book verdict.  The caller must keep historical CSV
-    mode separate rather than quietly treating it as this adapter.
+    A damaged (claim-affecting integrity warning), empty, or cost-incomplete
+    basis cannot safely make a current-book verdict.  Whatever facts the user
+    supplied are the complete account (#485): how the book was declared --
+    a snapshot anchor versus replayed trade history, partial versus
+    unverified -- never gates this adapter; only a genuinely missing fact
+    does.
     """
     if not isinstance(basis, Mapping):
         raise ConsequenceError("canonical PortfolioBasis is not an object")
-    if basis.get("completeness") != "declared_complete":
-        raise ConsequenceError("canonical PortfolioBasis is not a complete declared current book")
     if basis.get("cost_basis") != "average_cost":
         raise ConsequenceError("canonical PortfolioBasis has incomplete cost basis")
     if basis.get("integrity"):
