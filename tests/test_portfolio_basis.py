@@ -392,6 +392,9 @@ def test_sizing_projection_refuses_mixed_native_currency_without_fx_frame():
 
 
 def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rejects_forgery():
+    """#485: a usable frame prices mixed-currency holdings regardless of
+    completeness -- declared_partial and unverified bases must size identically
+    to a declared_complete one once every native price and FX rate is present."""
     events = [_trade("2026-07-01", "USD", "buy", 2, 10, currency="USD"),
               _trade("2026-07-01", "TWD", "buy", 3, 100, currency="TWD")]
     frame = pb.build_valuation_frame(
@@ -447,13 +450,31 @@ def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rej
     )
     unverified_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
                                              valuation_manifest=frame.to_dict())
+    # #485: completeness must have ZERO effect on mixed-currency sizing once the
+    # frame is usable.  A declared_partial and an unverified basis, given the
+    # exact same usable frame and the exact same holdings, must reproduce the
+    # declared_complete projection above byte-for-byte -- except
+    # `basis_state_version`, which is a fingerprint of the basis object itself
+    # (completeness is one of the facts folded into that fingerprint) and
+    # legitimately differs; it is not a sizing output.
+    declared_complete_dict = projection.to_dict()
     for incomplete_basis, expected_completeness in ((partial_basis, "declared_partial"),
                                                     (unverified_basis, "unverified")):
         assert incomplete_basis and incomplete_basis.completeness == expected_completeness
         incomplete = pb.sizing_projection(incomplete_basis)
-        assert incomplete and not incomplete.applicable and incomplete.denominator is None
-        assert incomplete.reason == "mixed_native_currencies"
-        assert incomplete.coverage["scope"] == "unavailable_mixed_currency"
+        assert incomplete and incomplete.applicable and incomplete.reason is None
+        assert incomplete.denominator == projection.denominator
+        assert incomplete.coverage == projection.coverage
+        assert incomplete.coverage["scope"] == "full_current_book"
+        incomplete_dict = incomplete.to_dict()
+        stamped_version = incomplete_dict["frame"]["basis_state_version"]
+        assert stamped_version == incomplete_basis.state_version
+        assert stamped_version != basis.state_version
+        normalized = copy.deepcopy(incomplete_dict)
+        normalized["frame"]["basis_state_version"] = declared_complete_dict["frame"]["basis_state_version"]
+        for row in normalized["values"].values():
+            row["frame_proof"]["basis_state_version"] = declared_complete_dict["frame"]["basis_state_version"]
+        assert normalized == declared_complete_dict
 
 
 def test_sizing_projection_fails_closed_when_currency_identity_is_missing_or_invalid():

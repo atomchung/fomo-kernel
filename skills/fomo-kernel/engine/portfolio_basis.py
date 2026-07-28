@@ -654,14 +654,19 @@ def sizing_projection(basis):
     holdings = basis.current_book["holdings"]
     currencies = sorted({holding["currency"] for holding in holdings.values()})
     # Native prices and costs cannot be summed across currencies.  The sole
-    # exception is a complete, typed valuation frame that binds every native
-    # price and FX rate to this exact current-book state.
+    # exception is a typed valuation frame that binds every native price and
+    # FX rate to this exact current-book state.  `usable is True` is already
+    # the genuine-missing-fact check here: `validate_valuation_frame` forces
+    # it to mean `coverage.missing_price` and `coverage.missing_fx` are both
+    # empty, verified against these exact holdings (#485).  `basis.completeness`
+    # answers an unrelated question -- whether the user declared this snapshot
+    # to be their complete external account -- and per #485 must not gate a
+    # calculation the engine can already perform from facts it has.
     if len(currencies) > 1:
         manifest = basis.current_book.get("valuation_manifest")
         if (isinstance(manifest, Mapping)
                 and manifest.get("contract_version") == VALUATION_FRAME_VERSION
-                and manifest.get("usable") is True
-                and basis.completeness == "declared_complete"):
+                and manifest.get("usable") is True):
             frame_identity = _valuation_frame_identity(manifest)
             aggregate = manifest["aggregate_currency"]
             values = {}
