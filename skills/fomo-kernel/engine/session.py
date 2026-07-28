@@ -731,6 +731,12 @@ SNAPSHOT_RECONCILIATION_STALE = (
     "run prepare again with the same snapshot to refreeze the diff"
 )
 
+VANISHED_POSITION_NEEDS_ANSWER = (
+    "this declaration drops a position the record still holds, and only you can "
+    "say whether it was sold or simply missing from the view; run "
+    "`review.py refresh --snapshot-json ...` to settle it, then review"
+)
+
 
 def scan_initial_snapshot_conflicts(root, anchor, exclude_session_id=None):
     """Return the conflict sources blocking an initial snapshot declaration.
@@ -830,6 +836,23 @@ def _assert_initial_snapshot_boundary(root, bundle):
         raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
     if canonical(current) != canonical(frozen):
         raise SessionError(SNAPSHOT_RECONCILIATION_STALE)
+    # #530's backstop, and deliberately not a second copy of prepare's
+    # criterion.  Prepare decides *which* differences need the user by asking
+    # book_refresh, and that predicate needs the declaration envelope, which a
+    # committed bundle does not carry.  Reconstructing one here would assemble
+    # the same fact from a second source — the defect class CLAUDE.md names.
+    # So this asserts only the narrower thing a frozen diff can answer by
+    # itself: the one difference kind that destroys information never reaches
+    # append_book_adoption.  A vanished position becomes an exit only when
+    # somebody asked; the review lane never asks, so it must never adopt one.
+    #
+    # Two paths reach here that prepare's check does not cover: a bundle
+    # prepared before #530 and finalized after it, and the --card-json/
+    # --state-json developer route, which skips _validate_initial_snapshot_root
+    # entirely.  Both converge on this line.
+    if any(row.get("kind") == "only_derived"
+           for row in (current.get("diff") or {}).get("positions") or ()):
+        raise SessionError(VANISHED_POSITION_NEEDS_ANSWER)
 
 
 def _project_snapshot_anchor(root, bundle):
@@ -845,6 +868,13 @@ def _project_snapshot_anchor(root, bundle):
     ``adjusted`` appends one content-addressed adjustment event preserving the
     narrow diff plus the newly declared anchor, whose ``projection_sequence``
     lets ``ledger.latest_anchor`` adopt it.  Every write replays as a no-op.
+
+    Since #530 an ``adjusted`` declaration only reaches this lane when the
+    book-update lane would have adopted it without asking anything — prepare
+    puts every declaration to ``book_refresh.plan_refresh`` first and refuses
+    the ones that raise a confirmation.  That is why this caller passes no
+    ``absences``: a book whose differences nobody had to answer for produced
+    none, by construction rather than by omission.
     """
     if bundle.get("route") != "snapshot_review":
         return None
@@ -906,6 +936,14 @@ def append_book_adoption(ledger_path, *, anchor, reconciliation, actor_id,
     matters and is not cosmetic: ``revisit.absence_exits`` reads the book as it
     stood *before* each absence row, so an absence appended after its anchor
     would see the position already gone.
+
+    ``absences`` has exactly one supplier, and that is the same argument the
+    shared writer itself rests on (#530).  A disappearance becomes an exit only
+    once somebody asked the user whether the position was sold or merely missed
+    by the capture; one lane asks that question, and a second place asking it
+    would be a second chance to ask it differently — or, as the review lane did
+    until #530, not at all.  The review lane now never arrives with a book that
+    raised the question, so it never has an absence to pass.
 
     ``actor_id`` is written as ``session_id`` — a review session for the review
     lane, the refresh id for the refresh lane.  Every write replays as a no-op.

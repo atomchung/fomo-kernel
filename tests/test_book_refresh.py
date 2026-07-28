@@ -179,6 +179,30 @@ def test_a_root_with_no_recorded_book_is_routed_to_onboarding():
         assert out["status"] == "error" and "prepare --snapshot-json" in out["error"], out
 
 
+def test_a_root_with_a_recorded_book_routes_a_differing_view_back_to_this_lane():
+    """The mirror image of the test above, and the pair is the whole point (#530).
+
+    Onboarding and updating are different jobs with different entry points, and
+    neither is reachable by accident: an empty root is sent from here to
+    `prepare`, and an anchored root whose book has moved is sent from `prepare`
+    back to here. Before this, the review lane accepted the differing view and
+    adopted it at finalize -- so ACME, which is in the record and absent from
+    the supplied view, left the book with nobody ever asked whether it was
+    sold. This lane is the only one that asks, so it is the only one that can
+    hand `append_book_adoption` an absence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        before = _ledger_rows(root)
+        out = subprocess.run(
+            [sys.executable, os.path.join(ENGINE, "review.py"), "prepare",
+             "--route", "snapshot_review", "--root", root, "--language", "en",
+             "--snapshot-json", _snapshot(tmp, KEPT)],
+            capture_output=True, text=True, check=False)
+        assert out.returncode == 2, out.stdout + out.stderr
+        assert "refresh --snapshot-json" in json.loads(out.stdout)["error"], out.stdout
+        assert _ledger_rows(root) == before, "the refusal happens before any append"
+
+
 def test_valuation_coverage_names_what_it_could_not_value():
     with tempfile.TemporaryDirectory() as tmp:
         seed = dict(SEED, positions=[

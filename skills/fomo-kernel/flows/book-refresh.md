@@ -1,11 +1,13 @@
 # Book refresh flow
 
-Use when the user wants the recorded book to match a newer holdings view and is not asking for a review. "Here's my portfolio now", "update my holdings", "I sold some things since last time" — that is this flow. It is not part of the review lifecycle: it produces no card, consumes no review question budget, creates no session, and never touches theses, rules, or problem tracking. Review and `consider` read whatever book this flow leaves behind.
+Use whenever a newer holdings view arrives against a book that already exists — "here's my portfolio now", "update my holdings", "I sold some things since last time", and equally "here's my portfolio now, how am I doing?". This is not a side lane the user has to ask for by name. Recording new facts and discussing them are two jobs, and this is the first one: when the new view holds anything this flow would have to ask about, `prepare --route snapshot_review` refuses and names `refresh`, because only this flow asks what happened to a position that disappeared. If the user also wants a review, run it afterwards on the book this flow leaves behind.
+
+It is still not part of the review lifecycle: it produces no card, consumes no review question budget, creates no session, and never touches theses, rules, or problem tracking. Review and `consider` read whatever book this flow leaves behind.
 
 Two routes, and the difference is whether a book already exists:
 
-- **No recorded book yet** — that is onboarding. Use `flows/snapshot-review.md`; the first declaration opens a real review card, and this flow refuses it and says so.
-- **A recorded book already exists** — this flow.
+- **No recorded book yet** — that is onboarding. Use `flows/snapshot-review.md`; the first declaration opens a real review card, and this flow refuses it and says so. It has no prior book, so nothing can have disappeared from it.
+- **A recorded book already exists** — this flow, first.
 
 ## Step 0 — get the holdings into the envelope
 
@@ -63,5 +65,5 @@ What still applies is the part that is about the human: step 2 is a real questio
 
 - Never invent a sale price, date, or quantity for a confirmed disappearance. The engine's absence record structurally has no field for one.
 - Never present a position's cost basis as what it sold for.
-- Do not run `prepare`, `preview`, `finalize`, or `capture` as part of this flow. If the user wants a review afterwards, that is a separate conversation against the book this flow just updated.
+- Do not run `prepare`, `preview`, `finalize`, or `capture` as part of this flow. A review afterwards is its own turn, against the book this flow just updated — report what was recorded first, then start it.
 - Do not edit `ledger.jsonl` or any artifact by hand to "fix" a difference.
