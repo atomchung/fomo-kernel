@@ -35,6 +35,14 @@ SUITES = [
     ("Persona end-to-end", "tests/test_sample_styles.py"),
     ("State-loop end-to-end", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
     ("Card and state checker probes", "tests/test_checkers_offline.py"),
+    # The narrative judge itself stays out of this gate -- it is opt-in,
+    # billable and non-deterministic. What belongs here is its pure logic: the
+    # manifest gate that refuses a fixture set which could not catch a
+    # rubber-stamp judge, the refusal branch that must run before any content
+    # block is read, and the request/schema shape. Same rule
+    # `evals/judge_episodes.py` states for its own interlocks -- one only
+    # reachable by someone holding an API key is one nobody re-verifies.
+    ("Judge harness offline interlocks", "tests/test_judge_harness_offline.py"),
     ("Local data-control CLI", "tests/test_coach_data_cli.py"),
     ("Skill dependency preflight (doctor)", "tests/test_deps_doctor.py"),
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
