@@ -419,19 +419,116 @@ def test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_sell():
         assert row["basis"]["valuation_coverage"] == projection.coverage
 
 
-def test_consider_refuses_partial_or_unverified_current_book_claims():
+def test_consider_succeeds_on_a_declared_partial_or_unverified_current_book():
+    """#485: how a book was declared -- a snapshot the user marked partial,
+    or a book replayed purely from trade history with no snapshot at all --
+    must never gate whether `consider` can compute a verdict; only a
+    genuinely missing fact does (see the fail-closed proof further below).
+    Mirrors test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_
+    sell's rigor: compare the CLI's own numbers against a basis/projection
+    built directly from the same events, not merely "it did not error".
+
+    The `declared_partial` case cannot be a bare partial snapshot on its
+    own: `ledger.latest_anchor` never treats a partial snapshot as an
+    anchor ("review evidence, not a replacement for the complete account"),
+    so a ledger holding nothing else would legitimately fail the *empty
+    holdings* gate below -- a real fact gate, untouched by this change.
+    Keeping an old partial snapshot alongside a later complete one exercises
+    `declared_partial` (`_partial_snapshot_present` looks at all history,
+    not just the anchor) while still leaving real holdings to assert on.
+    """
     cases = [
-        [{**_snapshot_event("2026-01-01", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100.0}]),
-          "is_complete": False}],
-        [_trade_event("2026-01-01", "NVDA", "buy", 10, 100.0)],
+        ("declared_partial",
+         [{**_snapshot_event("2025-06-01", []), "is_complete": False},
+          _snapshot_event("2026-01-01", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100.0,
+                                          "market": "US", "currency": "USD"}])]),
+        ("unverified",
+         [_trade_event("2026-01-01", "NVDA", "buy", 10, 100.0)]),
     ]
-    for events in cases:
+    for expected_completeness, events in cases:
+        basis = portfolio_basis_engine.query_current_book(events, reference_as_of="2026-01-01")
+        assert basis is not None and basis.completeness == expected_completeness
+        expected_holding = basis.current_book["holdings"]["NVDA"]
+        projection = portfolio_basis_engine.sizing_projection(basis)
+        assert projection is not None and projection.applicable
         with tempfile.TemporaryDirectory() as tmp:
             _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
-            run = _run("consider", "--root", tmp,
-                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}')
-            _fails(run, "not a complete declared current book")
-            assert not os.path.exists(_consultation_path(tmp))
+            row = _ok(_run("consider", "--root", tmp,
+                           "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}'))["consultation"]
+            assert row["basis"]["completeness"] == expected_completeness
+            held = row["consequence"]["before"]["held"]["NVDA"]
+            assert held["shares"] == expected_holding["shares"] == 10.0
+            assert abs(held["cost"] - expected_holding["cost_total"]) < 1e-6
+            weight = row["consequence"]["before"]["weights"]["NVDA"]
+            assert weight == projection.values["NVDA"]["weight"] == 1.0
+            assert row["basis"]["state_version"] == basis.state_version
+            _check_consultation_shape(row)
+            assert os.path.exists(_consultation_path(tmp))
+
+
+def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
+    """The regression net for the actual shipped bug (#485, #496): every
+    other fixture in this file seeds the ledger through
+    `_snapshot_event(..., is_complete=True)`, which is exactly why a
+    completeness gate on `rows_from_portfolio_basis` shipped green and
+    stayed green -- it never ran against the product's own primary input
+    route. Here the ledger is built the way a real user's is: `prepare`
+    ingesting a trades CSV, which writes only `trade` events and no
+    snapshot, ever. Without this test, that gate could come back and every
+    other fixture in this file would still pass."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prepare_run = _run("prepare", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                           "--route", "weekly_review")
+        assert prepare_run.returncode == 0, (
+            f"prepare on a trades CSV must succeed: {prepare_run.returncode}: "
+            f"{prepare_run.stdout}{prepare_run.stderr}")
+
+        ledger_path = os.path.join(tmp, "ledger.jsonl")
+        with open(ledger_path, encoding="utf-8") as f:
+            written_events = [json.loads(line) for line in f if line.strip()]
+        assert written_events, "prepare must append the CSV's trades to the ledger"
+        assert {event["type"] for event in written_events} == {"trade"}, (
+            "the primary CSV route must never write a snapshot event -- that is "
+            "what made the now-removed completeness gate unreachable")
+
+        basis = portfolio_basis_engine.query_current_book(
+            written_events, reference_as_of=dt.date.today().isoformat())
+        assert basis is not None and basis.completeness == "unverified"
+        expected_holding = basis.current_book["holdings"]["NVDA"]
+        projection = portfolio_basis_engine.sizing_projection(basis)
+        assert projection is not None and projection.applicable
+
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "NVDA", "side": "buy", "qty": 5, '
+                                    '"price": 130.0, "currency": "USD"}'))["consultation"]
+        assert row["basis"]["source"] == "transaction_replay"
+        assert row["basis"]["completeness"] == "unverified"
+        held = row["consequence"]["before"]["held"]["NVDA"]
+        assert held["shares"] == expected_holding["shares"] == 120.0
+        assert abs(held["cost"] - expected_holding["cost_total"]) < 1e-6
+        weight = row["consequence"]["before"]["weights"]["NVDA"]
+        assert weight == projection.values["NVDA"]["weight"]
+        assert row["basis"]["state_version"] == basis.state_version
+        _check_consultation_shape(row)
+        assert os.path.exists(_consultation_path(tmp))
+
+
+def test_consider_still_refuses_a_held_ticker_with_unknown_cost_and_no_price():
+    """The gate removed above (#485) was a declaration gate. A genuinely
+    missing fact -- no declared avg_cost, and no supplied price -- is a
+    different thing entirely and must still refuse. This is the mutation
+    boundary for this change: deleting the two `completeness` lines in
+    rows_from_portfolio_basis is right; deleting anything below them, such
+    as the `cost_basis` check this exercises, would not be."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": "NVDA", "shares": 10, "market": "US", "currency": "USD"}]),  # no avg_cost
+        ])
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
+        _fails(run, "incomplete cost basis")
+        assert not os.path.exists(_consultation_path(tmp))
 
 
 def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
