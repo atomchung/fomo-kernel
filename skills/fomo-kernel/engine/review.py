@@ -193,7 +193,7 @@ def _jsonl(path):
 
 
 def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None,
-                 condition_checks=None, candidate_receipt=None):
+                 condition_checks=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -223,9 +223,6 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
         # would resume the check-less pending session, and the crossing question
         # the lookups just earned would never be asked.
         h.update(b"condition_checks\0" + session.canonical(condition_checks).encode())
-    if candidate_receipt is not None:
-        h.update(b"frozen_candidates\0" + session.canonical(candidate_receipt).encode())
-        return h.hexdigest()
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -1098,7 +1095,7 @@ def _ingest_trades(root, paths, card, state):
     return result, card, state
 
 
-def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_receipt, card, state):
+def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_receipt, card, state, *, append=True):
     """Final short-lock gate for one frozen engine/PB transaction (#501)."""
     frame = basis_receipt.get("valuation_frame")
     if not isinstance(frame, dict) or _frame_identity(frame) != basis_receipt["valuation_frame_identity"]:
@@ -1133,12 +1130,12 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
                 or verified_overlay != overlay):
             raise ReviewError("virtual PortfolioBasis changed after engine receipt; retry prepare")
         reconciliation = None
-        if ledger.latest_anchor(live_events) is not None:
+        if append and ledger.latest_anchor(live_events) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
                 card, state, ledger.derive_holdings(verified_overlay["events"]))
-        if verified_overlay["fresh"]:
+        if append and verified_overlay["fresh"]:
             ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
-        result = {"path": ledger_path, "appended": len(verified_overlay["fresh"]),
+        result = {"path": ledger_path, "appended": len(verified_overlay["fresh"]) if append else 0,
                   "skipped_dup": verified_overlay["skipped_dup"],
                   "skipped_non_trade": skipped_non_trade,
                   "skipped_future_dated": skipped_future,
@@ -3218,8 +3215,7 @@ def cmd_prepare(args):
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
                                nonce=args.session_nonce or "", prices=supplied_prices,
                                cash=getattr(args, "cash", None),
-                               condition_checks=submitted_checks,
-                               candidate_receipt=candidate_for_fingerprint)
+                               condition_checks=submitted_checks)
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         _emit({"status": "resumed", "session_id": existing["session_id"],
@@ -3251,9 +3247,9 @@ def cmd_prepare(args):
             ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
             if isinstance(state.get("snapshot_reconciliation"), dict):
                 ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
-    elif persist and frozen_transaction is not None:
+    elif frozen_transaction is not None:
         ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
-            root, frozen_transaction, batches, overlay, virtual_basis, card, state)
+            root, frozen_transaction, batches, overlay, virtual_basis, card, state, append=persist)
     elif persist and paths:
         ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
     if frozen_tmp is not None:

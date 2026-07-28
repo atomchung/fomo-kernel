@@ -8652,21 +8652,21 @@ def test_frozen_virtual_basis_rejects_changed_candidate_before_any_append():
         csv_path = pathlib.Path(tmp) / "weekly.csv"
         original = "Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n"
         csv_path.write_text(original, encoding="utf-8")
-        frozen_dir = tempfile.mkdtemp(prefix="fomo501-test-")
-        inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
-        batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
-        frame = review_engine.portfolio_basis.build_valuation_frame(
-            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
-            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-        state = {"date_end": "2026-07-02", "valuation_frame": frame}
-        overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
-        assert receipt["basis"]["state_version"] == receipt["basis_state_version"]
-        csv_path.write_text(original + "\n", encoding="utf-8")
-        try:
-            review_engine._verify_and_ingest_frozen_trades(str(root), inputs, batches, overlay, receipt, {}, state)
-            raise AssertionError("byte mutation must be rejected before append")
-        except review_engine.ReviewError as exc:
-            assert "candidate input changed" in str(exc)
+        with tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
+            inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
+            batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+            frame = review_engine.portfolio_basis.build_valuation_frame(
+                as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+                aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
+            state = {"date_end": "2026-07-02", "valuation_frame": frame}
+            overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
+            assert receipt["basis"]["state_version"] == receipt["basis_state_version"]
+            csv_path.write_text(original + "\n", encoding="utf-8")
+            try:
+                review_engine._verify_and_ingest_frozen_trades(str(root), inputs, batches, overlay, receipt, {}, state)
+                raise AssertionError("byte mutation must be rejected before append")
+            except review_engine.ReviewError as exc:
+                assert "candidate input changed" in str(exc)
         assert not (root / "ledger.jsonl").exists()
 
 
@@ -8675,16 +8675,16 @@ def test_frozen_virtual_basis_verifies_equal_input_and_appends_once():
         root = pathlib.Path(tmp) / "coach"
         csv_path = pathlib.Path(tmp) / "weekly.csv"
         csv_path.write_text("Symbol,Action,Quantity,Price,TradeDate,RecordType\nA,BUY,2,10,2026-07-01,Trade\n", encoding="utf-8")
-        frozen_dir = tempfile.mkdtemp(prefix="fomo501-test-")
-        inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
-        batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
-        frame = review_engine.portfolio_basis.build_valuation_frame(
-            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
-            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-        state = {"date_end": "2026-07-02", "valuation_frame": frame}
-        overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
-        result, _card, _state = review_engine._verify_and_ingest_frozen_trades(
-            str(root), inputs, batches, overlay, receipt, {}, state)
+        with tempfile.TemporaryDirectory(prefix="fomo501-test-") as frozen_dir:
+            inputs = review_engine._freeze_transaction_inputs(str(root), [str(csv_path)], frozen_dir)
+            batches, _skipped, _future = review_engine._parse_frozen_candidates(inputs["frozen_paths"])
+            frame = review_engine.portfolio_basis.build_valuation_frame(
+                as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+                aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
+            state = {"date_end": "2026-07-02", "valuation_frame": frame}
+            overlay, receipt = review_engine._virtual_review_basis(inputs, batches, state)
+            result, _card, _state = review_engine._verify_and_ingest_frozen_trades(
+                str(root), inputs, batches, overlay, receipt, {}, state)
         events, skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
         assert result["appended"] == 1 and skipped == 0 and len(events) == 1
 
