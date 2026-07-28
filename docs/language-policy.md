@@ -12,6 +12,9 @@ Use English for:
 - `skills/fomo-kernel/SKILL.md`, flows, references, rubrics, specifications, and mock documentation
 - English runtime assets such as `card-template.html` (generated) and `card-template.src.html` (its authored source), `copy/en.json`, evaluation prompts, and lens JSON
 - developer-facing test documentation
+- everything under `qa/`, the maintainer dogfood tooling, including its `SKILL.md`
+
+`qa/` has one narrow exception, and it is not a licence to mix languages. A skill's trigger phrases are the words a maintainer literally types, so translating them would stop the skill matching a request made in that language. They are data, like a `--language zh-TW` flag value, not prose. The exception is enforced line by line rather than file by file: `qa/tests/test_skill_commands.py` declares which line prefixes may carry non-English text and fails both when other lines do, and when a declared exception stops being needed. This directory was copied in from a personal skill folder carrying Traditional Chinese throughout, and nothing detected it, which is why the rule is now mechanical rather than stated.
 
 Do not mix translated explanations into these files. One implementation contract makes cross-agent behavior easier to review and keeps code identifiers, schemas, and documentation aligned.
 

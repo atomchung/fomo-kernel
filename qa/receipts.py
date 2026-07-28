@@ -300,7 +300,9 @@ def report(argv):
         )
         for verdict_key in VERDICT_KEYS:
             vals = [(r.get("owner_verdict") or {}).get(verdict_key) for r in group]
-            vals = [v for v in vals if v in ("pass", "fail")]  # not_applicable / None 不計入分母
+            # not_applicable and None stay out of the denominator: a verdict the
+            # route never asked for is not a verdict the run failed to earn.
+            vals = [v for v in vals if v in ("pass", "fail")]
             if not vals:
                 continue
             passes = sum(1 for v in vals if v == "pass")

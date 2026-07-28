@@ -12,13 +12,21 @@ existed, omitted the required `--grounding-check-file` and the cash anchor, and
 documented `findings_recorded` after `owner_verdict` when `verify` requires it
 before.
 
-Four checks, none of which restate the tool's vocabulary:
+Seven checks, none of which restate the tool's vocabulary:
 
 1. every documented invocation parses against the real `build_parser()`;
 2. the documented order, replayed for real, produces a trace that verifies;
 3. the doc's `verify` example is not weaker than the gate `qa_env.sh` applies
    at archive time (derived from that script, not copied into this file);
-4. the public runbook's non-placeholder invocations still parse.
+4. the public runbook's non-placeholder invocations still parse;
+5. every route the tool supports is either walked by the doc or explicitly
+   exempted with a reason — a route grown without a walkthrough is a silent
+   invitation to improvise a receipt;
+6. the runbook's two independent gate enumerations agree on numbering and
+   order (#527) — structure only, never wording, since the two documents are
+   in different languages by design;
+7. `qa/` is English outside declared trigger phrases, which is the check that
+   was missing when this directory was copied in carrying another language.
 
 The single authority for every flag is the parser itself, and for the archive
 gate it is `qa_env.sh`. Nothing here hand-mirrors either: a hand-copied list
@@ -61,6 +69,21 @@ QA_TRACE_TAG = re.compile(r"^#\s*qa-trace:\s*(\S+)\s*$")
 # prose, not copy-paste commands, and are excluded rather than "fixed".
 ELISION = "..."
 
+# --- issue #527: the runbook states its gates twice, ~50 lines apart --------
+#
+# `docs/qa-runbook.md` enumerates its QA gates in two independent places: a
+# numbered list under RUNBOOK_GATE_LIST_HEADING (`1. **Version gate** — ...`
+# through `7. **Findings disposition** — ...`), and an enforcement table
+# further down (`| 1. Version | ... |` through `| 7. Findings | ... |`, plus
+# a lettered sub-row `| 3b. Grounding fidelity | ... |` the list has no
+# counterpart for). Nothing keeps the two in sync; see GateCountConsistencyTest
+# below for what this checks and, just as importantly, what it deliberately
+# does not.
+RUNBOOK_GATE_LIST_HEADING = "## What counts as a QA run (fail closed)"
+RUNBOOK_GATE_LIST_ITEM = re.compile(r"^(\d+)\.\s+\*\*", re.MULTILINE)
+RUNBOOK_TABLE_HEADER = "| Gate | Machine-enforced by | Procedural part |"
+RUNBOOK_TABLE_ROW = re.compile(r"^\|\s*(\d+)([A-Za-z]?)\.\s+\S", re.MULTILINE)
+
 # Routes `ux_receipt.py` accepts for which `SKILL.md` documents no walkthrough,
 # each with the reason it is absent. Every other supported route must have a
 # `# qa-trace:` fence.
@@ -87,6 +110,35 @@ UNDOCUMENTED_ROUTES = {
         "one here would ship exactly the defect #520 repaired, so it is named "
         "rather than guessed at. See also #523, which blocks the refresh half of "
         "the same journey at the tool layer."
+    ),
+}
+
+
+# --- language: qa/ is developer documentation, and that means English --------
+#
+# `docs/language-policy.md` requires English for implementation and developer
+# surfaces. `tests/test_doc_language.py` enforces it, but its scan covers
+# `docs/`, `evals/`, `skills/fomo-kernel/` and `tests/agent/` — not `qa/`, which
+# arrived later by being *copied* out of a personal skill directory, carrying
+# the Traditional Chinese it had been written in. Nothing checked, so it sat in
+# a public repository in the wrong language, and the cost was concrete: the two
+# QA documents could not be kept in sync by generating one from the other,
+# because generating across a language boundary is translation.
+#
+# CJK is permitted on exactly the lines below, for exactly one reason: a
+# skill's trigger phrases are the words the maintainer actually types. They are
+# data, not prose — translating them would stop `/fomo-qa` matching a request
+# made in Chinese. Everything else in `qa/` is English.
+# Written as escapes, not literal characters, so this file does not trip its own
+# scan — the first cut did exactly that, and the failure was indistinguishable
+# from a real one.
+CJK = re.compile(r"[\u3400-\u9fff]")
+CJK_ALLOWED_PREFIXES = {
+    "SKILL.md": (
+        # the frontmatter description, which is what the host matches against
+        "description:",
+        # the same trigger phrases restated for a human reader
+        "- The user says",
     ),
 }
 
@@ -294,6 +346,56 @@ def archive_required_flags():
             f"no --require-* flag found in {QA_ENV}'s archive function; this check "
             "would silently pass, so it fails instead")
     return flags
+
+
+def runbook_gate_list():
+    """The runbook's `N. **Name** — ...` gate numbers, in document order.
+
+    Scoped to the body of RUNBOOK_GATE_LIST_HEADING's section (up to the next
+    top-level heading) so a numbered list elsewhere in the document — there is
+    none today, but nothing stops one appearing — cannot be swept in.
+    """
+    text = RUNBOOK.read_text(encoding="utf-8")
+    start = text.find(RUNBOOK_GATE_LIST_HEADING)
+    if start < 0:
+        raise AssertionError(f"{RUNBOOK}: heading {RUNBOOK_GATE_LIST_HEADING!r} not found")
+    start += len(RUNBOOK_GATE_LIST_HEADING)
+    next_heading = re.search(r"^## ", text[start:], re.MULTILINE)
+    body = text[start:start + next_heading.start()] if next_heading else text[start:]
+    numbers = [int(match.group(1)) for match in RUNBOOK_GATE_LIST_ITEM.finditer(body)]
+    if not numbers:
+        raise AssertionError(
+            f"{RUNBOOK}: RUNBOOK_GATE_LIST_ITEM matched no numbered gate under "
+            f"{RUNBOOK_GATE_LIST_HEADING!r}; the heading text or the list's "
+            "markup changed and this regex needs updating, not silently skipping")
+    return numbers
+
+
+def runbook_enforcement_table_rows():
+    """The enforcement table's `(number, letter)` row keys, in document order.
+
+    `letter` is `""` for a top-level gate row (`1.`) and e.g. `"b"` for a
+    lettered sub-row (`3b.`). The table's extent is found by scanning forward
+    from its header line for the first line break not immediately followed by
+    another `|`-prefixed line — i.e. the first line that falls out of the
+    table — so trailing prose is never mistaken for a row.
+    """
+    text = RUNBOOK.read_text(encoding="utf-8")
+    start = text.find(RUNBOOK_TABLE_HEADER)
+    if start < 0:
+        raise AssertionError(f"{RUNBOOK}: enforcement table header {RUNBOOK_TABLE_HEADER!r} not found")
+    end = re.search(r"\n(?!\|)", text[start:])
+    table = text[start:start + end.start()] if end else text[start:]
+    rows = [
+        (int(match.group(1)), match.group(2).lower())
+        for match in RUNBOOK_TABLE_ROW.finditer(table)
+    ]
+    if not rows:
+        raise AssertionError(
+            f"{RUNBOOK}: RUNBOOK_TABLE_ROW matched no row under header "
+            f"{RUNBOOK_TABLE_HEADER!r}; the table's markup changed and this "
+            "regex needs updating, not silently skipping")
+    return rows
 
 
 class SkillCommandTest(unittest.TestCase):
@@ -522,6 +624,123 @@ class SkillCommandTest(unittest.TestCase):
                         f"applies: {QA_ENV}'s archive step requires {' '.join(required)}, "
                         f"and this example omits {flag}.\n  command: {command.text}")
         self.assertTrue(checked, f"{SKILL_DOC} documents no verify command to check")
+
+
+class QaDirectoryLanguageTest(unittest.TestCase):
+    """Everything under `qa/` is English, except declared trigger phrases.
+
+    Deliberately scoped to `qa/` rather than added to
+    `tests/test_doc_language.py`: that suite's allowlist is whole-file, which
+    here would license the skill to drift back into Chinese wholesale. The
+    exception this needs is line-level and reasoned, so it is declared as one.
+    """
+
+    def scanned_files(self):
+        files = sorted(
+            path for pattern in ("*.md", "*.py", "*.sh")
+            for path in QA_DIR.rglob(pattern)
+        )
+        # A scan that finds nothing to scan is not a passing scan.
+        self.assertTrue(files, f"no documentation or source files found under {QA_DIR}")
+        return files
+
+    def test_qa_directory_is_english_outside_declared_trigger_phrases(self):
+        offenders = []
+        for path in self.scanned_files():
+            allowed = CJK_ALLOWED_PREFIXES.get(path.name, ())
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not CJK.search(line):
+                    continue
+                if any(line.lstrip().startswith(prefix) for prefix in allowed):
+                    continue
+                offenders.append(f"{path.relative_to(REPO)}:{number}: {line.strip()[:90]}")
+        self.assertEqual(
+            offenders, [],
+            "qa/ is developer documentation and docs/language-policy.md requires English "
+            "there. Translate these lines, or — if one is a trigger phrase the maintainer "
+            "actually types — add its line prefix to CJK_ALLOWED_PREFIXES with the reason:\n  "
+            + "\n  ".join(offenders))
+
+    def test_declared_trigger_phrase_exceptions_are_all_still_used(self):
+        """An exception nothing needs is an exception that will be reused wrongly."""
+        for name, prefixes in CJK_ALLOWED_PREFIXES.items():
+            path = QA_DIR / name
+            self.assertTrue(path.is_file(), f"CJK_ALLOWED_PREFIXES names {name}, which does not exist")
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for prefix in prefixes:
+                matched = [
+                    line for line in lines
+                    if line.lstrip().startswith(prefix) and CJK.search(line)
+                ]
+                self.assertTrue(
+                    matched,
+                    f"CJK_ALLOWED_PREFIXES excuses {name} lines starting {prefix!r}, but no such "
+                    "line carries CJK any more. Drop the entry rather than leaving a licence "
+                    "nothing needs.")
+
+
+class GateCountConsistencyTest(unittest.TestCase):
+    """`docs/qa-runbook.md` enumerates its QA gates twice — a numbered list
+    under `## What counts as a QA run (fail closed)`, and an enforcement
+    table roughly fifty lines later — and nothing forces the two to agree.
+    That is the gap issue #527 is about: a gate can be added, removed, or
+    renumbered in one enumeration and not the other, and both still read as
+    complete on their own.
+
+    This class pins STRUCTURE only: which gate numbers exist, and in what
+    order, in each enumeration. It does not, and must not, compare gate
+    NAMES between the list and the table (e.g. "Version gate" vs.
+    "Version") — those are two independent phrasings of the same gate and
+    are free to word it differently. Do not "improve" this into a wording
+    match; that would pin prose this repository has no rule requiring to
+    match, only numbering it does.
+
+    `qa/SKILL.md` also states a gate count — in Traditional Chinese CJK
+    numerals, in more than one paragraph — and is not checked here. It is
+    about to be converted from Traditional Chinese to English, so a check
+    anchored to its current CJK wording would fail on contact with that
+    rewrite; a follow-up check belongs beside `runbook_gate_list()` once the
+    conversion lands, comparing the skill's (English) stated count the same
+    way `test_enforcement_table_matches_gate_list` below compares the table.
+    """
+
+    def test_runbook_gate_list_is_contiguous(self):
+        numbers = runbook_gate_list()
+        self.assertEqual(
+            len(numbers), len(set(numbers)),
+            f"{RUNBOOK}: the numbered gate list under "
+            f"{RUNBOOK_GATE_LIST_HEADING!r} repeats a gate number: "
+            f"{sorted(numbers)}. Renumber so each gate appears exactly once.")
+        total = len(numbers)
+        self.assertEqual(
+            sorted(numbers), list(range(1, total + 1)),
+            f"{RUNBOOK}: the numbered gate list under "
+            f"{RUNBOOK_GATE_LIST_HEADING!r} is not contiguous starting at 1: "
+            f"found {sorted(numbers)}. A gap means some later reference to "
+            "'gate N' does not point at what its author thinks it does.")
+
+    def test_enforcement_table_matches_gate_list(self):
+        gate_numbers = runbook_gate_list()
+        rows = runbook_enforcement_table_rows()
+        top_level = [number for number, letter in rows if not letter]
+        sub_rows = [(number, letter) for number, letter in rows if letter]
+
+        self.assertEqual(
+            top_level, gate_numbers,
+            f"{RUNBOOK}: the enforcement table's top-level rows are "
+            f"{top_level} but the numbered gate list under "
+            f"{RUNBOOK_GATE_LIST_HEADING!r} is {gate_numbers}. Add, remove, or "
+            "reorder a table row so the two enumerate the same gate numbers "
+            "in the same order — the gate NAMES may still differ in wording.")
+
+        gate_set = set(gate_numbers)
+        for number, letter in sub_rows:
+            self.assertIn(
+                number, gate_set,
+                f"{RUNBOOK}: enforcement table sub-row '{number}{letter}.' "
+                f"attaches to gate {number}, which is not one of the numbered "
+                f"gates {sorted(gate_set)}. Point the sub-row at a real gate "
+                "number, or remove it if the gate it described is gone.")
 
 
 if __name__ == "__main__":
