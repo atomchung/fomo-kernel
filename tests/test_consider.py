@@ -718,6 +718,45 @@ def test_a_declared_market_value_never_becomes_an_undisclosed_cost_fallback():
             "weight on the card")
 
 
+def test_a_priced_holding_with_no_cost_refuses_with_two_working_paths():
+    """The sub-case #515's fix surfaced rather than created.
+
+    A holding with a current price and no cost on record can be *valued* by the
+    canonical projection but cannot be represented in the consequence engine at
+    all, because a synthetic row carries cost as its price. Keeping the
+    projection's whole-book denominator for `before` while `after` is computed
+    without that position would compare two different books, so this refuses.
+
+    What the refusal owes the user is a way forward, and it has two that both
+    work today. Without that, "supplying more data made it fail" is all they
+    see. #528 tracks removing the refusal entirely."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": "AAA", "shares": 10, "avg_cost": 100.0,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "DARK", "shares": 10, "market": "US", "currency": "USD"}]),
+        ])
+        feed = os.path.join(tmp, "prices.json")
+        with open(feed, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-01-02", "source": "broker", "prices": [
+                {"ticker": "AAA", "close": 100.0, "date": "2026-01-02", "currency": "USD"},
+                {"ticker": "DARK", "close": 50.0, "date": "2026-01-02", "currency": "USD"}]},
+                handle)
+        run = _run("consider", "--root", tmp, "--prices", feed,
+                   "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
+                                '"price": 100.0, "currency": "USD"}')
+        payload = _fails(run, "DARK has a current price but no cost on record")
+        assert "without --prices" in payload["error"] and "average cost" in payload["error"], (
+            "a refusal that names no way forward reads as a broken product")
+        # Path two from that message, verified rather than merely promised.
+        row = _ok(_run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
+                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+        assert row["consequence"]["excluded_holdings"] == [
+            {"ticker": "DARK", "reason": "unavailable_cost"}]
+
+
 def test_a_rule_judged_against_a_partial_book_says_so():
     """#515's second invariant. The user wrote their cap against their whole
     book. An excluded position reads as weight zero here, so a cap that the

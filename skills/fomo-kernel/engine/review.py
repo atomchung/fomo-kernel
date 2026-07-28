@@ -4936,11 +4936,29 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
     if not projected["applicable"] or coverage["scope"] == "unavailable_mixed_currency":
         raise ReviewError("canonical PortfolioBasis has no usable current-book sizing projection")
     excluded_tickers = {row["ticker"] for row in excluded_holdings or ()}
-    if set(coverage["unavailable"]) != excluded_tickers:
+    projection_unavailable = set(coverage["unavailable"])
+    # A holding the projection CAN value but this adapter cannot use: it has a
+    # current price and no cost on record. The projection weighs it at market;
+    # the consequence engine cannot represent it at all, because a synthetic
+    # row is `{side: buy, qty, price}` where price is the cost. Keeping the
+    # projection's whole-book denominator for `before` while `after` is
+    # computed without that position would compare two different books, so
+    # this refuses rather than produce a delta measured across two
+    # denominators. Refusing here is narrow and actionable -- the two paths
+    # below both work today -- and #528 tracks teaching the consequence engine
+    # about value-only positions so it need not refuse at all.
+    priced_without_cost = sorted(excluded_tickers - projection_unavailable)
+    if priced_without_cost:
+        raise ReviewError(
+            f"{', '.join(priced_without_cost)} has a current price but no cost on record, and a "
+            "consequence answer needs a cost for every position it reasons about. Add the "
+            "average cost for it, or ask again without --prices to get the answer over the "
+            "part of the book that has costs.")
+    if projection_unavailable != excluded_tickers:
         raise ReviewError(
             "canonical PortfolioBasis and the consider adapter disagree about which "
             "holdings cannot be valued: projection "
-            f"{sorted(coverage['unavailable'])} vs adapter {sorted(excluded_tickers)}")
+            f"{sorted(projection_unavailable)} vs adapter {sorted(excluded_tickers)}")
     before = consequence.portfolio_state(rows, last_px=last_px,
                                          max_pos_override=max_pos_override,
                                          cash_anchor=cash_anchor, fx=fx)
