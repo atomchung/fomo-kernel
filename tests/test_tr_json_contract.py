@@ -266,6 +266,18 @@ def main():
            "valuation frame is private typed state", repr(frame)[:120])
         ok("valuation_frame" not in card,
            "valuation frame never enters TR_JSON/card", repr(card.keys()))
+        # The FX fetcher always carries USD identity. A single-TWD book must
+        # still build its private frame: aggregate identity belongs to PB, not
+        # to the fetcher's unrelated default rate map.
+        twd_csv = pathlib.Path(tmp) / "single-twd.csv"
+        twd_csv.write_text(
+            "Symbol,Quantity,Price,Action,TradeDate,RecordType,Market,Currency\n"
+            "2330.TW,10,1000,BUY,2025-01-02,Trade,TW,TWD\n", encoding="utf-8")
+        twd_run, twd_state_path = run_engine_offline(tmp, csv=twd_csv, state_name="twd-state.json")
+        ok(twd_run.returncode == 0, "single TWD TR_STATE_OUT exit 0", twd_run.stderr[-180:])
+        twd_frame = json.loads(twd_state_path.read_text(encoding="utf-8"))["valuation_frame"]
+        ok(twd_frame["aggregate_currency"] == "TWD" and set(twd_frame["fx_to_aggregate"]) == {"TWD"},
+           "single TWD frame keeps only its aggregate identity", repr(twd_frame))
         ok(set(st["market_context"]) == {"start", "end", "benchmarks", "missing", "error"},
            "market_context shape stays explicit even offline", repr(st["market_context"])[:160])
         cm = st["commitment"]

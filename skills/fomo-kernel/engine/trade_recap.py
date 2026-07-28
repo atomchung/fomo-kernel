@@ -2554,7 +2554,15 @@ def main():
             # partition is only the current held book.
             prices={ticker: last_px.get(ticker) for ticker in held},
             aggregate_currency=currency_meta["aggregate_currency"],
-            fx_to_aggregate=fx,
+            # ``fetch_fx`` has a USD identity default even when USD is not in
+            # this book (for example a pure TWD review).  The domain builder
+            # owns the aggregate identity; it receives only needed non-
+            # aggregate current-holding rates.
+            fx_to_aggregate={
+                currency: fx[currency]
+                for currency in {cur_map.get(ticker, "USD") for ticker in held}
+                if currency != currency_meta["aggregate_currency"] and currency in fx
+            },
             price_provenance=str(price_provenance.get("mode") or "unavailable"),
             # FX provenance is intentionally a separate fact: price delivery
             # must never be silently attributed to the exchange-rate source.

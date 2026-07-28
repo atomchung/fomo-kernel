@@ -110,6 +110,25 @@ def test_valuation_frame_rejects_adversarial_shapes_without_typeerror():
             raise AssertionError("unknown builder input accepted")
 
 
+def test_nested_frame_partition_cannot_be_forged_with_a_recomputed_state_version():
+    basis = pb.query_current_book(
+        [_snap("2026-07-01", [{"ticker": "A", "shares": 1, "avg_cost": 10, "currency": "USD"}])],
+        valuation_manifest=pb.build_valuation_frame(
+            as_of="2026-07-02", positions={"A": {"currency": "USD"}}, prices={"A": 11},
+            aggregate_currency="USD", fx_to_aggregate={}, price_provenance="price_feed",
+            fx_provenance="fx_feed").to_dict())
+    forged = basis.to_dict()
+    forged["current_book"]["valuation_manifest"]["prices"] = {
+        "X": forged["current_book"]["valuation_manifest"]["prices"].pop("A")}
+    forged["state_version"] = pb._digest(pb._version_payload(forged))
+    try:
+        pb.validate_portfolio_basis(forged)
+    except pb.PortfolioBasisError:
+        pass
+    else:
+        raise AssertionError("rehashed nested frame must still partition current holdings")
+
+
 def test_anchor_and_post_anchor_semantics_and_same_day_version():
     anchor = _snap("2026-07-05", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100}],
                    cash={"USD": 1000}, source="broker", projection_sequence=2)

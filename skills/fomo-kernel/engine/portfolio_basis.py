@@ -547,7 +547,11 @@ def _validate_current_book(current_book: Mapping[str, Any]) -> None:
             raise PortfolioBasisError("current_book.version_evidence entry is invalid")
     valuation = current_book["valuation_manifest"]
     if valuation is not None:
-        _valuation_manifest(valuation)
+        # A structurally valid frame can still price a different book.  The
+        # persisted basis validator must retain the same holdings-bound exact
+        # partition gate as the query path, including after a forged hash is
+        # recomputed.
+        _valuation_manifest(valuation, positions=holdings)
 
 
 def validate_portfolio_basis(value: Mapping[str, Any]) -> None:
