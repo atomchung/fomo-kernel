@@ -2600,6 +2600,39 @@ def test_rule_grounding_facts_and_localization():
     assert grounded and "INTC, PYPL" in grounded[0]["grounding"], grounded
 
 
+def test_zero_denominator_renderer_skips_structural_claims_and_keeps_same_day_fact():
+    """#329: defensive rendering honors producer applicability across locales."""
+    same_day = {"dim": "持有時間", "tier": 2, "triggered": True,
+                "severity": 1.0, "median_hold": 0, "all_same_day": True}
+    sizing = {"dim": "部位 sizing", "tier": 1, "applicable": False,
+              "triggered": True, "severity": 1.0, "max_ticker": "GHOST", "max_pct": 1.0}
+    diversification = {"dim": "分散", "tier": 2, "applicable": False,
+                       "triggered": True, "severity": 1.0, "n": 0}
+    card = {"dims_raw": [sizing, diversification, same_day],
+            "top_holes": [{"dim": "部位 sizing", "raw": sizing},
+                          {"dim": "持有時間", "raw": same_day}]}
+    assert [hole["dim"] for hole in card_renderer._applicable_holes(card)] == ["持有時間"]
+    assert card_renderer.rule_grounding_facts(card, "position_sizing") is None
+    assert "GHOST" not in (card_renderer._best_strength(card, "en") or "")
+    # The hole's own applicability is authoritative even when a legacy card
+    # omitted dims_raw.  Public rendering must not revive that claim.
+    stale_hole_card = {"top_holes": [{"dim": "部位 sizing", "raw": sizing}]}
+    assert card_renderer._applicable_holes(stale_hole_card) == []
+    assert "position sizing" not in card_renderer.render_public(
+        {"language": "en", "engine_card": stale_hole_card})
+    selectable = review_engine._candidate_rules(
+        {"candidate_rules": [{"dim": "部位 sizing", "rule": "stale", "applicable": False}],
+         "top_holes": [{"dim": "部位 sizing", "lens_rule": "stale", "raw": sizing}]},
+        {"metrics": {"max_pos_pct": 1.0}}, "en")
+    assert selectable == [], selectable
+    for language, expected in (("en", "same-day"), ("zh-TW", "當日進出"),
+                               ("zh-CN", "当日进出")):
+        line = card_renderer._hole_line({"raw": same_day}, language)
+        assert expected in line, (language, line)
+        public = card_renderer.render_public({"language": language, "engine_card": card})
+        assert expected in public, (language, public)
+
+
 def test_candidate_comparison_reflects_severity_not_list_order_and_degrades_cleanly():
     """#302(c): the interaction-layer "why the other candidates ranked lower"
     sentence must follow the same severity x tier-weight key `_rank_holes`
