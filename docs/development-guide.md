@@ -174,6 +174,28 @@ read by no mechanical consumer, and repeatedly invited misreading.
 - The second recurrence of a symptom is a design issue, not a second patch
   (#357: the cash-anchor gap recurred three times as one-off patches before it
   was named a design problem).
+- **An availability gate needs a named user scene, not just a true
+  proposition.** "A transaction export cannot prove it covers the whole
+  account" is true. Modelling it as a `completeness` tier and gating on it made
+  the product refuse instead of answer: `declared_complete` is reachable only
+  through a snapshot anchor, CSV ingestion writes no snapshot event, so
+  `consider` aborted for every user whose book came from trade history — the
+  primary input route (#496 added that gate, #506 added a second one on the
+  same field, #485 removes both). The tier is also derived from all history,
+  so one superseded partial snapshot downgraded a book permanently. Before
+  adding an availability tier, write "user X, in scene Y, sees Z instead of W"
+  into the acceptance criteria; a gate that cannot produce that sentence is
+  refusing on the product's behalf for nothing. This is a different act from
+  suppressing a calculation whose *fact* is missing — no price, no FX rate,
+  corrupt event, zero denominator — which names what is absent rather than
+  judging what the user supplied. Splitting an architecture into small
+  reviewable leaves does not preserve this by itself: no leaf-level review
+  asked what the gate bought a user, so each acceptance list needs the
+  sentence of its own. Ungated, and the near-miss is instructive — all 54
+  cases in `tests/test_consider.py` seed a complete snapshot event, so a gate
+  that locked the capability out of its main route shipped green twice. The
+  closest mechanical proxy is one end-to-end test per capability over the
+  primary input route.
 
 ## 4. Order discipline
 
