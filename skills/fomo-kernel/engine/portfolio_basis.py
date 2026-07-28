@@ -27,7 +27,7 @@ _COST_BASES = {"average_cost", "partial_average_cost", "unavailable"}
 _VALUATION_BASES = {"unpriced", "priced"}
 _VALUE_SOURCES = {"price", "cost_fallback", "unavailable"}
 _PROJECTION_REASONS = {None, "empty_current_book", "no_valued_holdings",
-                       "non_positive_denominator"}
+                       "non_positive_denominator", "mixed_native_currencies"}
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
 
@@ -441,6 +441,21 @@ def sizing_projection(basis):
     if basis is None:
         return None
     holdings = basis.current_book["holdings"]
+    currencies = sorted({holding["currency"] for holding in holdings.values()})
+    # A price/cost fallback is denominated in the holding's native currency.
+    # Until a later domain contract supplies a canonical FX valuation frame,
+    # summing a USD and TWD value would be a fabricated portfolio number.
+    # Keep identities only in coverage and expose no ununit aggregate values.
+    if len(currencies) > 1:
+        values = {ticker: _projection_entry(None, "unavailable", "mixed_native_currencies")
+                  for ticker in sorted(holdings)}
+        coverage = {"scope": "unavailable_mixed_currency", "total_holdings": len(holdings),
+                    "valued_holdings": 0, "priced": [], "cost_fallback": [],
+                    "unavailable": sorted(holdings), "currencies": currencies}
+        projection = SizingProjection(denominator=None, values=values, coverage=coverage,
+                                      applicable=False, reason="mixed_native_currencies")
+        validate_sizing_projection(projection.to_dict())
+        return projection
     manifest = basis.current_book.get("valuation_manifest")
     prices = (manifest or {}).get("prices") or {}
     values, priced, cost_fallback, unavailable = {}, [], [], []
@@ -485,7 +500,8 @@ def sizing_projection(basis):
                 entry["reason"] = "denominator_unavailable"
     coverage = {"scope": "full_current_book" if not unavailable else "bounded_valued_subset",
                 "total_holdings": len(holdings), "valued_holdings": len(valued),
-                "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable}
+                "priced": priced, "cost_fallback": cost_fallback, "unavailable": unavailable,
+                "currencies": currencies}
     projection = SizingProjection(denominator=denominator, values=values, coverage=coverage,
                                   applicable=applicable, reason=reason)
     validate_sizing_projection(projection.to_dict())
@@ -502,9 +518,9 @@ def validate_sizing_projection(value):
         raise PortfolioBasisError("sizing_projection denominator is invalid")
     if value["applicable"] != (value["reason"] is None) or value["applicable"] != (denominator is not None):
         raise PortfolioBasisError("sizing_projection applicability disagrees")
-    _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable"},
+    _exact_keys(coverage, {"scope", "total_holdings", "valued_holdings", "priced", "cost_fallback", "unavailable", "currencies"},
                 "sizing_projection.coverage")
-    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset"}:
+    if coverage["scope"] not in {"full_current_book", "bounded_valued_subset", "unavailable_mixed_currency"}:
         raise PortfolioBasisError("sizing_projection coverage scope is invalid")
     if any(isinstance(coverage[k], bool) or not isinstance(coverage[k], int) or coverage[k] < 0
            for k in ("total_holdings", "valued_holdings")):
@@ -513,11 +529,24 @@ def validate_sizing_projection(value):
     if not all(isinstance(coverage[k], list) and all(isinstance(t, str) and t for t in coverage[k]) for k in groups):
         raise PortfolioBasisError("sizing_projection coverage tickers are invalid")
     sets = [set(coverage[k]) for k in groups]
+    currencies = coverage["currencies"]
+    if (not isinstance(currencies, list) or not currencies
+            and coverage["total_holdings"] != 0
+            or any(not isinstance(currency, str) or not currency for currency in currencies)
+            or len(currencies) != len(set(currencies))):
+        raise PortfolioBasisError("sizing_projection coverage currencies are invalid")
     if (any(len(coverage[k]) != len(tickers) for k, tickers in zip(groups, sets))
             or coverage["total_holdings"] != len(value["values"]) or coverage["valued_holdings"] != len(sets[0]) + len(sets[1])
             or set.union(*sets) != set(value["values"]) or any(sets[i] & sets[j] for i in range(3) for j in range(i))
-            or coverage["scope"] != ("full_current_book" if not sets[2] else "bounded_valued_subset")):
+            or (coverage["scope"] == "full_current_book" and bool(sets[2]))
+            or (coverage["scope"] == "bounded_valued_subset" and not sets[2])):
         raise PortfolioBasisError("sizing_projection coverage disagrees")
+    mixed = len(currencies) > 1
+    if mixed != (coverage["scope"] == "unavailable_mixed_currency"):
+        raise PortfolioBasisError("sizing_projection currency scope disagrees")
+    if mixed and (value["applicable"] or value["reason"] != "mixed_native_currencies"
+                  or denominator is not None or sets[0] or sets[1]):
+        raise PortfolioBasisError("sizing_projection mixed currency must be unavailable")
     weight_sum = 0.0
     for ticker, entry in value["values"].items():
         if not isinstance(ticker, str) or not ticker:
@@ -526,7 +555,8 @@ def validate_sizing_projection(value):
         if entry["source"] not in _VALUE_SOURCES or not isinstance(entry["applicable"], bool):
             raise PortfolioBasisError("sizing_projection value source is invalid")
         if entry["source"] == "unavailable":
-            if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != "value_unavailable":
+            expected_reason = "mixed_native_currencies" if mixed else "value_unavailable"
+            if entry["value"] is not None or entry["weight"] is not None or entry["applicable"] or entry["reason"] != expected_reason:
                 raise PortfolioBasisError("sizing_projection unavailable value is invalid")
             if ticker not in sets[2]:
                 raise PortfolioBasisError("sizing_projection unavailable source disagrees with coverage")
