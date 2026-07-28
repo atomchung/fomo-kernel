@@ -391,6 +391,71 @@ def test_sizing_projection_refuses_mixed_native_currency_without_fx_frame():
         pass
 
 
+def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rejects_forgery():
+    events = [_trade("2026-07-01", "USD", "buy", 2, 10, currency="USD"),
+              _trade("2026-07-01", "TWD", "buy", 3, 100, currency="TWD")]
+    frame = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"USD": {"currency": "USD"}, "TWD": {"currency": "TWD"}},
+        prices={"USD": 15, "TWD": 110}, aggregate_currency="USD", fx_to_aggregate={"TWD": 0.03},
+        price_provenance="price_feed", fx_provenance="fx_feed",
+    )
+    basis = pb.query_current_book(
+        [_snap("2026-07-02", [{"ticker": "USD", "shares": 2, "avg_cost": 10, "currency": "USD"},
+                                {"ticker": "TWD", "shares": 3, "avg_cost": 100, "currency": "TWD"}])],
+        reference_as_of="2026-07-02", valuation_manifest=frame.to_dict(),
+    )
+    projection = pb.sizing_projection(basis)
+    assert projection and projection.applicable and projection.reason is None
+    assert projection.coverage["scope"] == "full_current_book" and projection.coverage["currencies"] == ["TWD", "USD"]
+    assert projection.aggregate_currency == "USD"
+    assert projection.frame and projection.frame["aggregate_currency"] == "USD"
+    assert projection.frame["basis_state_version"] == basis.state_version
+    assert projection.values["USD"]["value"] == 30 and projection.values["TWD"]["value"] == 9.9
+    assert projection.values["TWD"]["frame_proof"] == {
+        "native_currency": "TWD", "native_price": 110.0, "fx_rate": 0.03, "converted_value": 9.9,
+        "frame_identity": projection.frame["identity"], "basis_state_version": basis.state_version,
+    }
+    assert abs(projection.denominator - 39.9) < 1e-12
+
+    mutations = []
+    forged_fx = copy.deepcopy(projection.to_dict()); forged_fx["values"]["TWD"]["frame_proof"]["fx_rate"] = 1.0; mutations.append(forged_fx)
+    forged_price = copy.deepcopy(projection.to_dict()); forged_price["values"]["TWD"]["frame_proof"]["native_price"] = 100; mutations.append(forged_price)
+    forged_value = copy.deepcopy(projection.to_dict()); forged_value["values"]["TWD"]["value"] = 330; forged_value["values"]["TWD"]["frame_proof"]["converted_value"] = 330; forged_value["denominator"] = 360; forged_value["values"]["USD"]["weight"] = 1 / 12; forged_value["values"]["TWD"]["weight"] = 11 / 12; mutations.append(forged_value)
+    forged_identity = copy.deepcopy(projection.to_dict()); forged_identity["frame"]["identity"] = "vf-v1:" + "0" * 64; forged_identity["values"]["USD"]["frame_proof"]["frame_identity"] = forged_identity["frame"]["identity"]; forged_identity["values"]["TWD"]["frame_proof"]["frame_identity"] = forged_identity["frame"]["identity"]; mutations.append(forged_identity)
+    forged_state = copy.deepcopy(projection.to_dict()); forged_state["frame"]["basis_state_version"] = "pb-v1:" + "0" * 64; forged_state["values"]["USD"]["frame_proof"]["basis_state_version"] = forged_state["frame"]["basis_state_version"]; forged_state["values"]["TWD"]["frame_proof"]["basis_state_version"] = forged_state["frame"]["basis_state_version"]; mutations.append(forged_state)
+    for mutation in mutations:
+        try:
+            pb.validate_sizing_projection(mutation, basis=basis)
+            raise AssertionError("forged frame-bound projection must be rejected")
+        except pb.PortfolioBasisError:
+            pass
+
+    missing_fx_frame = pb.build_valuation_frame(
+        as_of="2026-07-02", positions={"USD": {"currency": "USD"}, "TWD": {"currency": "TWD"}},
+        prices={"USD": 15, "TWD": 110}, aggregate_currency="USD", fx_to_aggregate={},
+        price_provenance="price_feed", fx_provenance="unavailable",
+    )
+    missing_fx_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                             valuation_manifest=missing_fx_frame.to_dict())
+    missing_fx = pb.sizing_projection(missing_fx_basis)
+    assert missing_fx and not missing_fx.applicable and missing_fx.reason == "mixed_native_currencies"
+
+    partial_basis = pb.query_current_book(
+        events + [_snap("2026-07-02", [{"ticker": "USD", "shares": 2, "currency": "USD"},
+                                        {"ticker": "TWD", "shares": 3, "currency": "TWD"}], is_complete=False)],
+        reference_as_of="2026-07-02", valuation_manifest=frame.to_dict(),
+    )
+    unverified_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
+                                             valuation_manifest=frame.to_dict())
+    for incomplete_basis, expected_completeness in ((partial_basis, "declared_partial"),
+                                                    (unverified_basis, "unverified")):
+        assert incomplete_basis and incomplete_basis.completeness == expected_completeness
+        incomplete = pb.sizing_projection(incomplete_basis)
+        assert incomplete and not incomplete.applicable and incomplete.denominator is None
+        assert incomplete.reason == "mixed_native_currencies"
+        assert incomplete.coverage["scope"] == "unavailable_mixed_currency"
+
+
 def test_sizing_projection_fails_closed_when_currency_identity_is_missing_or_invalid():
     missing = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency="")])
     invalid = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency=3)])
