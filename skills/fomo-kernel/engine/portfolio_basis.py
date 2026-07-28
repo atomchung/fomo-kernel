@@ -21,6 +21,7 @@ import ledger
 
 
 CONTRACT_VERSION = "portfolio-basis-v1"
+VALUATION_FRAME_VERSION = "valuation-frame-v1"
 STATE_VERSION_PREFIX = "pb-v1:"
 _COMPLETENESS = {"declared_complete", "declared_partial", "unverified"}
 _SOURCES = {"snapshot_anchor", "transaction_replay", "empty"}
@@ -94,16 +95,88 @@ class SizingProjection:
 class ValuationFrame:
     """Private, frozen native prices and explicit common-currency rates."""
 
+    contract_version: str
     as_of: str
     aggregate_currency: str
     prices: dict[str, dict[str, Any]]
     fx_to_aggregate: dict[str, dict[str, Any]]
-    coverage: dict[str, list[str]]
+    coverage: dict[str, Any]
+    usable: bool
+    reason: Optional[str]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"as_of": self.as_of, "aggregate_currency": self.aggregate_currency,
+        return {"contract_version": self.contract_version, "as_of": self.as_of, "aggregate_currency": self.aggregate_currency,
                 "prices": self.prices, "fx_to_aggregate": self.fx_to_aggregate,
-                "coverage": self.coverage}
+                "coverage": self.coverage, "usable": self.usable, "reason": self.reason}
+
+
+def _frame_reason(missing_price: list[dict[str, str]], missing_fx: list[str]) -> Optional[str]:
+    if missing_price and missing_fx:
+        return "missing_price_and_fx"
+    if missing_price:
+        return "missing_price"
+    if missing_fx:
+        return "missing_fx"
+    return None
+
+
+def build_valuation_frame(*, as_of: Any, positions: Mapping[str, Mapping[str, Any]],
+                          prices: Mapping[str, Any], aggregate_currency: Any,
+                          fx_to_aggregate: Mapping[str, Any],
+                          price_provenance: Any, fx_provenance: Any) -> ValuationFrame:
+    """Build the sole v1 native-price/FX receipt from already-frozen facts.
+
+    This is intentionally a domain builder, not a renderer helper.  Every
+    position is represented exactly once as a usable native price or as a
+    ``{ticker,currency}`` gap; every non-aggregate position currency is likewise
+    represented exactly once by an FX rate or an FX gap.
+    """
+    as_of_date = _date(as_of, "valuation_frame.as_of")
+    if not isinstance(positions, Mapping) or not isinstance(prices, Mapping) or not isinstance(fx_to_aggregate, Mapping):
+        raise PortfolioBasisError("valuation_frame inputs must be objects")
+    if not _currency(aggregate_currency):
+        raise PortfolioBasisError("valuation_frame aggregate_currency is invalid")
+    if not isinstance(price_provenance, str) or not price_provenance:
+        raise PortfolioBasisError("valuation_frame price provenance is invalid")
+    if not isinstance(fx_provenance, str) or not fx_provenance:
+        raise PortfolioBasisError("valuation_frame FX provenance is invalid")
+    aggregate = aggregate_currency
+    expected: dict[str, str] = {}
+    for ticker, position in positions.items():
+        if not isinstance(ticker, str) or not ticker or not isinstance(position, Mapping) or not _currency(position.get("currency")):
+            raise PortfolioBasisError("valuation_frame position identity is invalid")
+        expected[ticker] = position["currency"]
+    if set(prices) - set(expected):
+        raise PortfolioBasisError("valuation_frame prices contain unknown tickers")
+    native, missing_price = {}, []
+    for ticker, currency in sorted(expected.items()):
+        price = prices.get(ticker)
+        if _finite_number(price) and price > 0:
+            native[ticker] = {"price": float(price), "currency": currency,
+                              "provenance": price_provenance}
+        else:
+            missing_price.append({"ticker": ticker, "currency": currency})
+    needed_fx = sorted(set(expected.values()) - {aggregate})
+    # The fetcher supplies USD identity even on a single-currency book; the
+    # builder remains owner of its receipt and writes canonical identity below.
+    if set(fx_to_aggregate) - (set(needed_fx) | {aggregate}):
+        raise PortfolioBasisError("valuation_frame FX contains unneeded currencies")
+    rates = {aggregate: {"rate": 1.0, "provenance": "identity", "as_of": as_of_date.isoformat()}}
+    missing_fx = []
+    for currency in needed_fx:
+        rate = fx_to_aggregate.get(currency)
+        if _finite_number(rate) and rate > 0:
+            rates[currency] = {"rate": float(rate), "provenance": fx_provenance,
+                               "as_of": as_of_date.isoformat()}
+        else:
+            missing_fx.append(currency)
+    reason = _frame_reason(missing_price, missing_fx)
+    frame = ValuationFrame(VALUATION_FRAME_VERSION, as_of_date.isoformat(), aggregate,
+                           native, rates,
+                           {"missing_price": missing_price, "missing_fx": missing_fx},
+                           reason is None, reason)
+    validate_valuation_frame(frame.to_dict(), positions=expected)
+    return frame
 
 
 def _date(value: Any, field: str) -> dt.date:
@@ -298,13 +371,13 @@ def _version_evidence(events: Sequence[Mapping[str, Any]], anchor_date: Optional
     return [item[2] for item in evidence]
 
 
-def _valuation_manifest(manifest: Optional[Mapping[str, Any]]) -> tuple[str, Optional[dict[str, Any]], Optional[dt.date]]:
+def _valuation_manifest(manifest: Optional[Mapping[str, Any]], *, positions: Optional[Mapping[str, Any]] = None) -> tuple[str, Optional[dict[str, Any]], Optional[dt.date]]:
     if manifest is None:
         return "unpriced", None, None
     if not isinstance(manifest, Mapping):
         raise PortfolioBasisError("valuation_manifest must be an object")
-    if set(manifest) == {"as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage"}:
-        return _valuation_frame(manifest)
+    if manifest.get("contract_version") == VALUATION_FRAME_VERSION:
+        return _valuation_frame(manifest, positions=positions)
     if set(manifest) != {"as_of", "prices"} or not isinstance(manifest.get("prices"), Mapping):
         raise PortfolioBasisError("valuation_manifest requires exactly as_of and prices")
     manifest_date = _date(manifest["as_of"], "valuation_manifest.as_of")
@@ -316,7 +389,12 @@ def _valuation_manifest(manifest: Optional[Mapping[str, Any]]) -> tuple[str, Opt
     return "priced", normalized, manifest_date
 
 
-def _valuation_frame(value: Mapping[str, Any]) -> tuple[str, dict[str, Any], dt.date]:
+def validate_valuation_frame(value: Mapping[str, Any], *, positions: Optional[Mapping[str, Any]] = None) -> None:
+    """Validate a typed frame, optionally against the exact current holdings."""
+    _exact_keys(value, {"contract_version", "as_of", "aggregate_currency", "prices", "fx_to_aggregate",
+                        "coverage", "usable", "reason"}, "valuation_frame")
+    if value["contract_version"] != VALUATION_FRAME_VERSION:
+        raise PortfolioBasisError("unsupported valuation_frame version")
     as_of = _date(value["as_of"], "valuation_frame.as_of")
     aggregate, prices, fx, coverage = (value.get("aggregate_currency"), value.get("prices"),
                                         value.get("fx_to_aggregate"), value.get("coverage"))
@@ -324,7 +402,8 @@ def _valuation_frame(value: Mapping[str, Any]) -> tuple[str, dict[str, Any], dt.
         raise PortfolioBasisError("valuation_frame has invalid identity")
     if not isinstance(coverage, Mapping) or set(coverage) != {"missing_price", "missing_fx"}:
         raise PortfolioBasisError("valuation_frame coverage is invalid")
-    if not all(isinstance(coverage[k], list) and all(isinstance(x, str) and x for x in coverage[k]) for k in coverage):
+    if (not isinstance(coverage["missing_price"], list) or not isinstance(coverage["missing_fx"], list)
+            or not isinstance(value["usable"], bool) or value["reason"] not in {None, "missing_price", "missing_fx", "missing_price_and_fx"}):
         raise PortfolioBasisError("valuation_frame coverage is invalid")
     normalized_prices, normalized_fx = {}, {}
     for ticker, row in prices.items():
@@ -340,12 +419,53 @@ def _valuation_frame(value: Mapping[str, Any]) -> tuple[str, dict[str, Any], dt.
                 or not isinstance(row["provenance"], str) or not row["provenance"]):
             raise PortfolioBasisError("valuation_frame FX is invalid")
         _date(row["as_of"], "valuation_frame.fx.as_of")
-        normalized_fx[currency] = {"rate": float(row["rate"]), "provenance": row["provenance"], "as_of": str(row["as_of"])}
-    if aggregate not in normalized_fx or normalized_fx[aggregate]["rate"] != 1.0:
+        normalized_fx[currency] = {"rate": float(row["rate"]), "provenance": row["provenance"], "as_of": _date(row["as_of"], "valuation_frame.fx.as_of").isoformat()}
+    if (aggregate not in normalized_fx or normalized_fx[aggregate]["rate"] != 1.0
+            or normalized_fx[aggregate]["provenance"] != "identity"
+            or normalized_fx[aggregate]["as_of"] != as_of.isoformat()):
         raise PortfolioBasisError("valuation_frame aggregate identity FX is required")
-    return "priced", {"as_of": as_of.isoformat(), "aggregate_currency": aggregate,
-                       "prices": normalized_prices, "fx_to_aggregate": normalized_fx,
-                       "coverage": {k: sorted(v) for k, v in coverage.items()}}, as_of
+    missing_price = []
+    for row in coverage["missing_price"]:
+        if (not isinstance(row, Mapping) or set(row) != {"ticker", "currency"}
+                or not isinstance(row["ticker"], str) or not row["ticker"] or not _currency(row["currency"])):
+            raise PortfolioBasisError("valuation_frame missing_price is invalid")
+        missing_price.append({"ticker": row["ticker"], "currency": row["currency"]})
+    missing_fx = coverage["missing_fx"]
+    if any(not _currency(currency) for currency in missing_fx):
+        raise PortfolioBasisError("valuation_frame missing_fx is invalid")
+    if len({(row["ticker"], row["currency"]) for row in missing_price}) != len(missing_price) or len(set(missing_fx)) != len(missing_fx):
+        raise PortfolioBasisError("valuation_frame coverage has duplicates")
+    if value["reason"] != _frame_reason(missing_price, missing_fx) or value["usable"] != (value["reason"] is None):
+        raise PortfolioBasisError("valuation_frame usability disagrees with coverage")
+    if positions is not None:
+        expected = {}
+        for ticker, position in positions.items():
+            currency = position.get("currency") if isinstance(position, Mapping) else position
+            if not isinstance(ticker, str) or not ticker or not _currency(currency):
+                raise PortfolioBasisError("valuation_frame position identity is invalid")
+            expected[ticker] = currency
+        priced = {(ticker, row["currency"]) for ticker, row in normalized_prices.items()}
+        missing = {(row["ticker"], row["currency"]) for row in missing_price}
+        expected_pairs = set(expected.items())
+        if priced & missing or priced | missing != expected_pairs:
+            raise PortfolioBasisError("valuation_frame prices do not exactly partition holdings")
+        needed = set(expected.values()) - {aggregate}
+        if (set(normalized_fx) != ((needed - set(missing_fx)) | {aggregate})
+                or set(missing_fx) != needed - set(normalized_fx)):
+            raise PortfolioBasisError("valuation_frame FX does not exactly partition needed currencies")
+
+
+def _valuation_frame(value: Mapping[str, Any], positions: Optional[Mapping[str, Any]] = None) -> tuple[str, dict[str, Any], dt.date]:
+    try:
+        validate_valuation_frame(value, positions=positions)
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, PortfolioBasisError):
+            raise
+        raise PortfolioBasisError("valuation_frame is invalid") from exc
+    as_of = _date(value["as_of"], "valuation_frame.as_of")
+    normalized = _canonical(dict(value))
+    normalized["as_of"] = as_of.isoformat()
+    return "priced", normalized, as_of
 
 
 def _version_payload(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -681,7 +801,8 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
         # An empty ledger is a valid but unverified empty current-book query.
         effective_date = _date(reference_as_of, "reference_as_of") if reference_as_of else dt.date(1970, 1, 1)
 
-    valuation_basis, valuation, valuation_date = _valuation_manifest(valuation_manifest)
+    holdings = _canonical(derived["holdings"])
+    valuation_basis, valuation, valuation_date = _valuation_manifest(valuation_manifest, positions=holdings)
     reference_date = _date(reference_as_of, "reference_as_of") if reference_as_of else valuation_date
     if reference_date is not None and reference_date < effective_date:
         raise PortfolioBasisError("reference_as_of cannot precede current-book as_of")
@@ -697,7 +818,6 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
     else:
         source = "empty"
         completeness = "declared_partial" if partial else "unverified"
-    holdings = _canonical(derived["holdings"])
     cost_basis = "unavailable" if not holdings else (
         "average_cost" if all(row.get("avg_cost") is not None for row in holdings.values())
         else "partial_average_cost")

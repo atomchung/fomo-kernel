@@ -262,7 +262,7 @@ def main():
         ok(set(st["price_snapshot"]) == {"as_of", "prices"},
            "price_snapshot freezes one review-time price map", repr(st["price_snapshot"])[:120])
         frame = st["valuation_frame"]
-        ok(set(frame) == {"as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage"},
+        ok(set(frame) == {"contract_version", "as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage", "usable", "reason"},
            "valuation frame is private typed state", repr(frame)[:120])
         ok("valuation_frame" not in card,
            "valuation frame never enters TR_JSON/card", repr(card.keys()))

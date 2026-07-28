@@ -14,6 +14,7 @@ import fetch_cache
 import instruments as instrument_policy
 import market_context as market_context_engine
 import price_feed
+import portfolio_basis
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
@@ -1999,31 +2000,6 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     }
 
 
-def valuation_frame(as_of, held, last_px, cur_map, aggregate_currency, fx, price_provenance):
-    """Build the private #500 receipt solely from already-fetched engine facts."""
-    aggregate = str(aggregate_currency or "USD").upper()
-    source = str((price_provenance or {}).get("mode") or "unavailable")
-    prices, missing_price = {}, []
-    for ticker in sorted(held):
-        currency = str(cur_map.get(ticker, "USD")).upper()
-        price = (last_px or {}).get(ticker)
-        if isinstance(price, (int, float)) and not isinstance(price, bool) and math.isfinite(float(price)) and price > 0:
-            prices[ticker] = {"price": round(float(price), 6), "currency": currency, "provenance": source}
-        else:
-            missing_price.append(ticker)
-    rates = {aggregate: {"rate": 1.0, "provenance": "identity", "as_of": as_of}}
-    missing_fx = []
-    for currency in sorted({str(cur_map.get(ticker, "USD")).upper() for ticker in held}):
-        if currency == aggregate:
-            continue
-        rate = (fx or {}).get(currency)
-        if isinstance(rate, (int, float)) and not isinstance(rate, bool) and math.isfinite(float(rate)) and rate > 0:
-            rates[currency] = {"rate": float(rate), "provenance": source, "as_of": as_of}
-        else:
-            missing_fx.append(currency)
-    return {"as_of": as_of, "aggregate_currency": aggregate, "prices": prices,
-            "fx_to_aggregate": rates, "coverage": {"missing_price": missing_price, "missing_fx": missing_fx}}
-
 # ─────────────────── 結構化 card data(給 Claude 寫敘事卡用)───────────────────
 def _attribution_gaps(ab):
     """Return every market whose allocation/selection split is incomplete.
@@ -2571,8 +2547,19 @@ def main():
     if os.environ.get("TR_STATE_OUT"):                    # 設了才寫薄 state;不設 → 卡片 stdout 零變
         import json, tempfile
         path = os.environ["TR_STATE_OUT"]
-        frame = valuation_frame(price_as_of, held, last_px, cur_map,
-                                currency_meta["aggregate_currency"], fx, price_provenance)
+        frame = portfolio_basis.build_valuation_frame(
+            as_of=price_as_of,
+            positions={ticker: {"currency": cur_map.get(ticker, "USD")} for ticker in held},
+            # ``last_px`` also contains benchmarks; the frame's strict price
+            # partition is only the current held book.
+            prices={ticker: last_px.get(ticker) for ticker in held},
+            aggregate_currency=currency_meta["aggregate_currency"],
+            fx_to_aggregate=fx,
+            price_provenance=str(price_provenance.get("mode") or "unavailable"),
+            # FX provenance is intentionally a separate fact: price delivery
+            # must never be silently attributed to the exchange-rate source.
+            fx_provenance=("engine_fetch" if not fx_err else "unavailable"),
+        ).to_dict()
         state = build_state(rows, rts, held, dims, overview, ab, rx,
                             currency_meta=currency_meta,
                             avg_down=avg_down, last_px=last_px,
