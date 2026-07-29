@@ -412,6 +412,42 @@ class ReceiptManifestTest(unittest.TestCase):
             self.assertIn("parent manifest not in this directory", result.stdout)
 
 
+class VerdictKeyDriftTest(unittest.TestCase):
+    """The manifest must keep every axis a verdict can carry.
+
+    `receipts.py` reads a *file*, not the tool, so its `VERDICT_KEYS` is a
+    hand-written list — and an axis missing from it is dropped silently, at
+    archive time, with nothing failing. #523's `change` axis is the case that
+    makes this expensive: on the card-free `refresh` route it is the only
+    judgment of what the user actually saw, so losing it would archive a run
+    whose verdict recorded nothing about its own lane.
+
+    Extra keys are deliberately allowed: an archived receipt from an older
+    checkout simply carries none, and `_parse_receipt` skips what is absent.
+    """
+
+    def test_verdict_keys_cover_every_axis_the_tool_can_record(self):
+        import importlib.util
+
+        tool = SKILL_DIR.parent / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
+        spec = importlib.util.spec_from_file_location("ux_receipt_for_receipts", tool)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        writer = importlib.util.spec_from_file_location("qa_receipts", WRITER)
+        receipts = importlib.util.module_from_spec(writer)
+        writer.loader.exec_module(receipts)
+
+        declared = set()
+        for contract in module.ROUTE_CONTRACTS.values():
+            declared |= set(contract["verdict"])
+        missing = sorted(declared - set(receipts.VERDICT_KEYS))
+        self.assertEqual(
+            missing, [],
+            "ux_receipt routes can record these owner-verdict axes, but "
+            "receipts.py VERDICT_KEYS drops them from every archived manifest: "
+            f"{missing}")
+
+
 class ArchiveReceiptOrderingTest(unittest.TestCase):
     """Shell-level proof of the fail-closed ordering: `receipts.py build`
     must succeed BEFORE qa_env.sh touches the receipt dir at all, so a
