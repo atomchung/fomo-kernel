@@ -1746,6 +1746,118 @@ def test_a_row_written_before_context_existed_stays_readable():
             "the declined legacy row is settled; only the new one is open"
 
 
+# ───────────────── M. split basis on both routes (#550/#558) ─────────────────
+#
+# `consider`'s promise is to challenge a contemplated trade against the book
+# the user actually holds. A share count accumulated across a split is not that
+# book: 90 bought before a ten-for-one, minus 100 sold after it, is zero. The
+# ledger route was fixed in #567; the CSV route reads `trade_recap.load()` rows
+# and had no adjustment at all.
+
+_SPLIT_CSV = [("NVDA", "BUY", 90, 150.00, "2023-01-10"),
+              ("NVDA", "BUY", 30, 480.00, "2023-11-15"),
+              ("NVDA", "SELL", 20, 950.00, "2024-05-20"),
+              ("NVDA", "SELL", 100, 197.00, "2026-07-28")]
+_NVDA_TEN_FOR_ONE = [["2024-06-10", 10]]
+_NVDA_PREMISE = ('{"ticker": "NVDA", "side": "buy", "qty": 10, '
+                 '"price": 197.0, "currency": "USD"}')
+
+
+def _price_feed(path, *, splits=None, ticker="NVDA", close=197.0, as_of="2026-07-29"):
+    row = {"ticker": ticker, "close": close, "date": as_of, "currency": "USD"}
+    if splits is not None:
+        row["splits"] = splits
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"as_of": as_of, "source": "broker", "prices": [row]}, handle)
+    return path
+
+
+def test_the_csv_route_reasons_over_a_split_adjusted_book():
+    """The user holds 900 NVDA. Told nothing about the split, `consider`
+    computes the whole answer — weight, concentration, what the new buy does
+    to the book — against a book that does not contain the position at all,
+    and says nothing about it. The envelope's own `splits` is what it reads;
+    no fetch is added to this command."""
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "trades.csv")
+        _write_csv(csv_path, _SPLIT_CSV)
+        told = _price_feed(os.path.join(tmp, "told.json"), splits=_NVDA_TEN_FOR_ONE)
+        row = _ok(_run("consider", csv_path, "--root", tmp, "--prices", told,
+                       "--premise", _NVDA_PREMISE))["evaluation"]
+        held = row["consequence"]["before"]["held"]
+        assert "NVDA" in held, f"the split-crossing position must be in the book: {held}"
+        assert abs(held["NVDA"]["shares"] - 900.0) < 1e-6, held["NVDA"]
+
+        # The control: the same CSV with a silent envelope is the pre-fix
+        # answer, which is a book with no NVDA in it — kept here so a later
+        # change that makes both paths agree by accident is visible.
+        silent = _price_feed(os.path.join(tmp, "silent.json"))
+        blind = _run("consider", csv_path, "--root", tmp, "--prices", silent,
+                     "--premise", _NVDA_PREMISE)
+        blind_held = _ok(blind)["evaluation"]["consequence"]["before"]["held"]
+        assert "NVDA" not in blind_held, \
+            f"pre-#558 behaviour must stay reproducible with no map: {blind_held}"
+
+
+def test_a_book_that_never_split_answers_identically_with_or_without_a_map():
+    """The counterweight, and the reason the adjustment may be applied
+    unconditionally: a map that says nothing about this book must change
+    nothing about the answer — including the frozen `state_version`, which is
+    a digest of the very rows the adjustment would have touched."""
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "trades.csv")
+        _write_csv(csv_path, [("ACME", "BUY", 10, 100.00, "2026-01-05"),
+                              ("ACME", "SELL", 4, 120.00, "2026-02-05")])
+        premise = ('{"ticker": "ACME", "side": "buy", "qty": 1, '
+                   '"price": 120.0, "currency": "USD"}')
+        without = _price_feed(os.path.join(tmp, "a.json"), ticker="ACME", close=120.0)
+        withmap = _price_feed(os.path.join(tmp, "b.json"), ticker="ACME", close=120.0,
+                              splits=_NVDA_TEN_FOR_ONE)   # a split on a ticker not held
+        first = _ok(_run("consider", csv_path, "--root", tmp, "--prices", without,
+                         "--premise", premise))["evaluation"]
+        second = _ok(_run("consider", csv_path, "--root", tmp, "--prices", withmap,
+                          "--premise", premise))["evaluation"]
+        assert first["basis"]["state_version"] == second["basis"]["state_version"], \
+            "an inapplicable split map must not move the frozen basis identity"
+        assert first["consequence"] == second["consequence"], "nor any computed number"
+
+
+def test_the_ledger_route_takes_the_supplied_map_too():
+    """Both routes resolve the map the same way, so the answer does not depend
+    on which book happened to answer. Before this, the ledger route read only
+    the map a previous review froze — a root that has never been reviewed had
+    no way to be told, even by an agent holding the fact."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _trade_event("2023-01-10", "NVDA", "BUY", 90, 150.0),
+            _trade_event("2023-11-15", "NVDA", "BUY", 30, 480.0),
+            _trade_event("2024-05-20", "NVDA", "SELL", 20, 950.0),
+            _trade_event("2026-07-28", "NVDA", "SELL", 100, 197.0)])
+        told = _price_feed(os.path.join(tmp, "told.json"), splits=_NVDA_TEN_FOR_ONE)
+        row = _ok(_run("consider", "--root", tmp, "--prices", told,
+                       "--premise", _NVDA_PREMISE))["evaluation"]
+        held = row["consequence"]["before"]["held"]
+        assert "NVDA" in held and abs(held["NVDA"]["shares"] - 900.0) < 1e-6, held
+
+
+def test_a_malformed_split_in_the_envelope_never_reaches_the_book():
+    """Fail closed. A ratio is a multiplier on a share count, so a bad one
+    silently dropped is a confident wrong number — the rule `splits.py` already
+    holds, asserted here on the path that reaches a user."""
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "trades.csv")
+        _write_csv(csv_path, _SPLIT_CSV)
+        bad = os.path.join(tmp, "bad.json")
+        with open(bad, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-07-29", "source": "broker", "prices": [
+                {"ticker": "NVDA", "close": 197.0, "date": "2026-07-29", "currency": "USD",
+                 "splits": [["2024-06-10", "not-a-ratio"]]}]}, handle)
+        run = _run("consider", csv_path, "--root", tmp, "--prices", bad,
+                   "--premise", _NVDA_PREMISE)
+        assert run.returncode != 0, f"a bad ratio must refuse, not round down to 1: {run.stdout}"
+        assert not _read_evaluations(tmp), "nothing may be recorded from a refused envelope"
+
+
 # ─────────────────────────────── runner ───────────────────────────────
 
 def _tests():
