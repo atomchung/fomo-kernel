@@ -1,0 +1,386 @@
+{
+  "locale": "zh-TW",
+  "split": "calibration",
+  "prompts": [
+    {
+      "id": "zh-TW-cal-rev-01",
+      "class": "review_positive",
+      "text": "這是我今年的股票對帳單，可以幫我整理一下，看看我下單的習慣到底出了什麼問題嗎？",
+      "note": "CSV/對帳單整體檢討請求。"
+    },
+    {
+      "id": "zh-TW-cal-rev-02",
+      "class": "review_positive",
+      "text": "上禮拜我把台積電全部出清了，我想回頭檢討一下，這筆交易的出場理由到底站不站得住腳。",
+      "note": "特定已完成交易的事後檢討。"
+    },
+    {
+      "id": "zh-TW-cal-rev-03",
+      "class": "review_positive",
+      "text": "我懷疑自己每次都追高殺低，可以把我最近這二十筆交易抓出來，看看是不是真的這樣？",
+      "note": "行為模式回顧請求。"
+    },
+    {
+      "id": "zh-TW-cal-rev-04",
+      "class": "review_positive",
+      "text": "附件是我複委託帳戶的交易紀錄，我想知道自己的勝率跟盈虧比實際上是多少。",
+      "note": "帳戶層級指標，來自真實成交。"
+    },
+    {
+      "id": "zh-TW-cal-rev-05",
+      "class": "review_positive",
+      "text": "禮拜天了，該做每週的交易檢討了，就接續上次那份對帳單繼續看。",
+      "note": "週期性／回頭客語氣。"
+    },
+    {
+      "id": "zh-TW-cal-rev-06",
+      "class": "review_positive",
+      "text": "我這一年一直在攤平一檔虧錢的股票，麻煩幫我看整個交易紀錄，老實告訴我這是有計畫的分批，還是單純不甘心認賠。",
+      "note": "攤平行為模式，回顧性。"
+    },
+    {
+      "id": "zh-TW-cal-rev-07",
+      "class": "review_positive",
+      "text": "上次檢討的時候你提醒我常常抱太久才停損，我這三個月又有新的交易了，我想知道到底有沒有改。",
+      "note": "回頭客核對先前發現的問題。"
+    },
+    {
+      "id": "zh-TW-cal-rev-08",
+      "class": "review_positive",
+      "text": "這是我券商匯出的CSV，只有股數跟成交價，沒有金額欄位，這樣還能幫我做交易行為的檢討嗎？",
+      "note": "資料欄位很陽春，仍要求行為檢討。"
+    },
+    {
+      "id": "zh-TW-cal-rev-09",
+      "class": "review_positive",
+      "text": "我上個月連續認賠出場三筆，一直告訴自己是大盤不好，可以幫我對照交易紀錄看看是不是真的這樣？",
+      "note": "自我說詞對照紀錄。"
+    },
+    {
+      "id": "zh-TW-cal-rev-10",
+      "class": "review_positive",
+      "text": "我把兩家券商的庫存合併匯出了，想把它當成同一個投資組合來檢討交易表現。",
+      "note": "跨券商合併檢討。"
+    },
+    {
+      "id": "zh-TW-cal-rev-11",
+      "class": "review_positive",
+      "text": "這檔股票我在下跌的時候分三次加碼，我想知道每一次加碼到底有沒有新的理由，還是只是想攤低成本。",
+      "note": "加碼模式，回顧性。"
+    },
+    {
+      "id": "zh-TW-cal-rev-12",
+      "class": "review_positive",
+      "text": "這是我的帳戶截圖，可以幫我檢討這幾個月我實際上做了哪些操作嗎？",
+      "note": "以截圖為本的檢討請求。"
+    },
+    {
+      "id": "zh-TW-cal-rev-13",
+      "class": "review_positive",
+      "text": "我想知道自己到底是讓獲利部位繼續跑，還是每次賺一點就急著出場，麻煩看我實際成交紀錄，不要聽我自己講。",
+      "note": "盈虧形狀檢討，明確要求以紀錄而非記憶為準。"
+    },
+    {
+      "id": "zh-TW-cal-rev-14",
+      "class": "review_positive",
+      "text": "在做任何新的決定之前，我想先針對這個月出場的兩筆交易做一次完整的檢討。",
+      "note": "先檢討已平倉交易，再做後續決定。"
+    },
+    {
+      "id": "zh-TW-cal-rev-15",
+      "class": "review_positive",
+      "text": "上次我們談好單一持股不能超過帳戶的兩成，我想確認這段時間的交易有沒有真的守住這個規矩。",
+      "note": "先前承諾的規矩對帳。"
+    },
+    {
+      "id": "zh-TW-cal-rev-16",
+      "class": "review_positive",
+      "text": "我這次除權息前後的交易特別多，可以幫我檢討一下除權息前後我是不是容易因為緊張而亂賣嗎？",
+      "note": "除權息期間的特定行為問題。"
+    },
+    {
+      "id": "zh-TW-cal-rev-17",
+      "class": "review_positive",
+      "text": "這是我今年完整的交易紀錄，我從來沒有整體看過，想從頭開始了解自己的操作模式。",
+      "note": "首次完整年度檢討。"
+    },
+    {
+      "id": "zh-TW-cal-rev-18",
+      "class": "review_positive",
+      "text": "這檔股票我攤平了兩次才終於停損，麻煩幫我確認第二次加碼的時候，我有沒有講出任何站得住腳的新理由。",
+      "note": "特定攤平序列，回顧性。"
+    },
+    {
+      "id": "zh-TW-cal-rev-19",
+      "class": "review_positive",
+      "text": "距離上次檢討已經一個月了，這段期間帳戶裡有新的交易，接續之前那次繼續看。",
+      "note": "回頭客，接續前次檢討。"
+    },
+    {
+      "id": "zh-TW-cal-rev-20",
+      "class": "review_positive",
+      "text": "我想確認一件事：我出場的時候，賺錢的部位跟賠錢的部位，速度是不是差很多，賠錢的是不是常常拖很久？",
+      "note": "出場速度對稱性問題，基於真實成交。"
+    },
+    {
+      "id": "zh-TW-cal-pre-01",
+      "class": "pre_trade_positive",
+      "text": "我手上已經有台積電，今天拉回了快6%，我現在加碼算不算追高，還是這其實是個合理的加碼點？",
+      "note": "加碼決策，明確既有持股加追高框架。"
+    },
+    {
+      "id": "zh-TW-cal-pre-02",
+      "class": "pre_trade_positive",
+      "text": "我持有的聯發科滿倉了，今天看到新聞想再加買，這樣會不會讓我的持股集中度太高？",
+      "note": "加碼決策，明確要求對組合影響。"
+    },
+    {
+      "id": "zh-TW-cal-pre-03",
+      "class": "pre_trade_positive",
+      "text": "我有個規矩是單一持股不能超過帳戶兩成，如果我再買五萬進去這檔已經有的部位，會不會破了這個規矩？",
+      "note": "擬加碼交易的規矩衝突檢查。"
+    },
+    {
+      "id": "zh-TW-cal-pre-04",
+      "class": "pre_trade_positive",
+      "text": "我想開一個新的部位，買半導體相關的ETF，以我現在的持股來看，這會不會讓我的板塊曝險太集中？",
+      "note": "新部位決策，對照既有持股。"
+    },
+    {
+      "id": "zh-TW-cal-pre-05",
+      "class": "pre_trade_positive",
+      "text": "我當初買這檔的理由是毛利率會持續改善，這個邏輯目前還成立，我在考慮加碼，但想先知道這樣對整體部位有什麼影響。",
+      "note": "加碼前的論點一致性檢查。"
+    },
+    {
+      "id": "zh-TW-cal-pre-06",
+      "class": "pre_trade_positive",
+      "text": "我在考慮把0050的部位減一點，拿去買一檔我觀察很久的小型股，這筆交易實際上會對我的組合造成什麼影響？",
+      "note": "賣出換買入的交換決策。"
+    },
+    {
+      "id": "zh-TW-cal-pre-07",
+      "class": "pre_trade_positive",
+      "text": "這已經是我第三次在下跌的時候加碼這檔了，下單之前我想先確認，這樣做跟我自己訂的規矩會不會衝突。",
+      "note": "下單前的重複加碼規矩檢查。"
+    },
+    {
+      "id": "zh-TW-cal-pre-08",
+      "class": "pre_trade_positive",
+      "text": "我想攤平一檔已經跌了15%的股票，考量到我現在整體的持股，這樣做真的划算嗎？",
+      "note": "攤平決策，考量整體持股。"
+    },
+    {
+      "id": "zh-TW-cal-pre-09",
+      "class": "pre_trade_positive",
+      "text": "我在考慮買進一檔新的股票，但我不想事後才發現它跟我現有的持股高度重疊，可以先幫我確認嗎？",
+      "note": "新買入前的重疊檢查。"
+    },
+    {
+      "id": "zh-TW-cal-pre-10",
+      "class": "pre_trade_positive",
+      "text": "我手上有一筆閒置的現金，正在猶豫要加碼現有部位還是開一個新部位，這兩個選項分別會讓我的集中度變怎樣？",
+      "note": "資金部署決策，兩個候選交易。"
+    },
+    {
+      "id": "zh-TW-cal-pre-11",
+      "class": "pre_trade_positive",
+      "text": "我的規矩是虧到兩成就停損，這檔現在虧了18%，我還在猶豫要不要先出場，賣掉跟繼續抱各自對我的帳戶會有什麼影響？",
+      "note": "尚未執行的預先停損決策。"
+    },
+    {
+      "id": "zh-TW-cal-pre-12",
+      "class": "pre_trade_positive",
+      "text": "這檔財報優於預期，我想在既有部位上加碼，這樣算是合理加碼贏家，還是我要小心變得太集中？",
+      "note": "贏家加碼決策，集中度顧慮。"
+    },
+    {
+      "id": "zh-TW-cal-pre-13",
+      "class": "pre_trade_positive",
+      "text": "下單之前我想先知道：明天再加碼這個部位，會不會讓我超過自己訂的分散標準？",
+      "note": "下單前的分散度檢查。"
+    },
+    {
+      "id": "zh-TW-cal-pre-14",
+      "class": "pre_trade_positive",
+      "text": "我在猶豫要加碼現有的部位，還是開一個相關產業的新部位，這兩個選擇對我的重疊度跟現金水位各會有什麼差別？",
+      "note": "兩選一的加碼決策。"
+    },
+    {
+      "id": "zh-TW-cal-pre-15",
+      "class": "pre_trade_positive",
+      "text": "股價跌成這樣我其實有點怕再加碼，但我還是相信原本的邏輯，可以幫我算一下如果真的加碼，我的帳戶會變成怎樣嗎？",
+      "note": "情緒化但仍對照持股的加碼決策。"
+    },
+    {
+      "id": "zh-TW-cal-pre-16",
+      "class": "pre_trade_positive",
+      "text": "我有個規矩是同一檔加碼兩次都沒有起色就不能再加了，這次會是第三次加碼，這樣會不會違反我自己的規矩？",
+      "note": "明確個人規矩對照擬第三次加碼。"
+    },
+    {
+      "id": "zh-TW-cal-pre-17",
+      "class": "pre_trade_positive",
+      "text": "我想把手上的現金部位降低，投入一檔我已經很有信心的股票，這樣做對我的權重跟風險實際上會有什麼影響？",
+      "note": "現金轉股票決策。"
+    },
+    {
+      "id": "zh-TW-cal-pre-18",
+      "class": "pre_trade_positive",
+      "text": "我當初買進的理由是新產品循環，現在產品也如期上市了，我在考慮要不要加碼，想先看看部位的數字再決定。",
+      "note": "論點觸發的加碼決策，要求先看數字。"
+    },
+    {
+      "id": "zh-TW-cal-pre-19",
+      "class": "pre_trade_positive",
+      "text": "我在考慮賣掉一部分賺錢的部位，去買一檔我覺得被低估的公司，這個換股動作實際上會怎麼影響我的組合？",
+      "note": "贏家減碼換新買入。"
+    },
+    {
+      "id": "zh-TW-cal-pre-20",
+      "class": "pre_trade_positive",
+      "text": "我手上已經有兩檔記憶體股，現在在考慮買第三檔，加碼之前我想知道這樣會讓我的組合相關性變多高。",
+      "note": "同主題第三檔前的相關性檢查。"
+    },
+    {
+      "id": "zh-TW-cal-adj-01",
+      "class": "adjacent_negative",
+      "text": "台積電現在是不是值得買進？",
+      "note": "聽起來像買進判斷，但其實是不涉及使用者持股或進行中交易的一般性評價／時機意見——與 issue 的『is NVDA a good company』例子同型，只是換成買進判斷。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-02",
+      "class": "adjacent_negative",
+      "text": "如果現在手上有五十萬閒錢，你會放去哪裡？",
+      "note": "不特定對象的假設性橫財，沒有標的也沒有既有持股——一般性資產配置建議，不是使用者在權衡實際部位。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-03",
+      "class": "adjacent_negative",
+      "text": "現在整體來說是不是進場的好時機？",
+      "note": "純粹的大盤時機意見，沒有對應到特定標的或使用者的持股。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-04",
+      "class": "adjacent_negative",
+      "text": "如果想開始用複委託買美股零股，該用哪一家券商比較好？",
+      "note": "關於怎麼交易的券商／流程問題，不是對既有持股的實際交易決策。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-05",
+      "class": "adjacent_negative",
+      "text": "長期投資人是不是只要大盤跌一成就應該進場加碼？",
+      "note": "針對『長期投資人』這個群體的一般投資哲學問題，不是使用者自己在考慮的交易。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-06",
+      "class": "adjacent_negative",
+      "text": "什麼叫做向下攤平，大家為什麼會這樣做？",
+      "note": "使用檢討相關詞彙的定義／教育性問題，沒有對應到使用者自己做過的任何交易。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-07",
+      "class": "adjacent_negative",
+      "text": "專業操盤人是怎麼訓練自己不要追高的？",
+      "note": "與檢討能力用詞重疊的行為問題，但問的是操盤人這個群體，不是要求檢討使用者自己的交易紀錄。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-08",
+      "class": "adjacent_negative",
+      "text": "新手投資人第一年最容易犯的錯誤有哪些？",
+      "note": "關於投資人這個類別的一般清單式問題，不是要求檢討使用者自己的交易。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-09",
+      "class": "adjacent_negative",
+      "text": "波段操作一般來說勝率要多高才算健康？",
+      "note": "要求一般性的基準數字，不是對使用者自己已平倉交易的評估。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-10",
+      "class": "adjacent_negative",
+      "text": "投資人心理上為什麼會捨不得停損，一直抱著賠錢的部位？",
+      "note": "一般化的交易心理問題，不是要求檢視使用者自己的歷史紀錄。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-TW-cal-adj-11",
+      "class": "adjacent_negative",
+      "text": "今天大盤指數表現怎麼樣？",
+      "note": "純粹的市場數據查詢，是issue『what's the S&P doing』例子的在地版本。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-12",
+      "class": "adjacent_negative",
+      "text": "台積電是一間好公司嗎？",
+      "note": "沒有任何買進或組合框架的公司品質意見，是issue『is NVDA a good company』例子的在地版本。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-13",
+      "class": "adjacent_negative",
+      "text": "可以幫我整理一下今天的市場新聞重點嗎？",
+      "note": "新聞摘要請求，沒有交易或檢討框架。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-14",
+      "class": "adjacent_negative",
+      "text": "KD指標到底是在看什麼？",
+      "note": "純粹的技術指標詞彙問題。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-15",
+      "class": "adjacent_negative",
+      "text": "除權息之後股價會怎麼變化？",
+      "note": "市場機制教育問題，沒有個人交易脈絡。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-16",
+      "class": "adjacent_negative",
+      "text": "可以解釋一下選擇權的Delta是什麼意思嗎？",
+      "note": "選擇權教育請求，沒有連結任何部位或交易。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-17",
+      "class": "adjacent_negative",
+      "text": "升息通常會怎麼影響成長股的評價？",
+      "note": "總經／評價理論問題，沒有個人部位。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-18",
+      "class": "adjacent_negative",
+      "text": "可以介紹一下台積電先進製程的業務狀況嗎？",
+      "note": "公司／業務研究問題，沒有決策框架。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-19",
+      "class": "adjacent_negative",
+      "text": "2022年那波熊市是什麼原因造成的？",
+      "note": "歷史市場事件研究問題。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-TW-cal-adj-20",
+      "class": "adjacent_negative",
+      "text": "多頭市場跟空頭市場實際上差在哪裡？",
+      "note": "基礎術語／教育性問題。",
+      "near_miss_of": "general"
+    }
+  ]
+}

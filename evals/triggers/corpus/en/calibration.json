@@ -1,0 +1,386 @@
+{
+  "locale": "en",
+  "split": "calibration",
+  "prompts": [
+    {
+      "id": "en-cal-rev-01",
+      "class": "review_positive",
+      "text": "I exported my trades from Fidelity as a CSV — can you review the whole file and tell me what patterns show up in how I traded?",
+      "note": "CSV/brokerage export review request."
+    },
+    {
+      "id": "en-cal-rev-02",
+      "class": "review_positive",
+      "text": "Here's my brokerage statement for the last two quarters. I want an honest look at whether I've been cutting winners too early.",
+      "note": "Statement review, exit-discipline framing."
+    },
+    {
+      "id": "en-cal-rev-03",
+      "class": "review_positive",
+      "text": "Can you go through my trade history and tell me if I have a pattern of averaging down on losers instead of admitting I was wrong?",
+      "note": "Behavioral-pattern review request."
+    },
+    {
+      "id": "en-cal-rev-04",
+      "class": "review_positive",
+      "text": "I sold my whole NVDA position last Tuesday after it dropped 8% in a day. Looking back at the trade, was that a stop-loss decision or a panic sell?",
+      "note": "Specific completed-trade postmortem."
+    },
+    {
+      "id": "en-cal-rev-05",
+      "class": "review_positive",
+      "text": "It's Sunday, so it's time for my weekly trade review. Same CSV as before, just picking up from where we left off.",
+      "note": "Periodic/returning-user review language."
+    },
+    {
+      "id": "en-cal-rev-06",
+      "class": "review_positive",
+      "text": "I think I've been chasing momentum stocks and buying near the top every time. Can you check my last twenty trades and see if that's actually true?",
+      "note": "Retrospective pattern check against real trades."
+    },
+    {
+      "id": "en-cal-rev-07",
+      "class": "review_positive",
+      "text": "Attached is my full transaction history for the year. I want a report card on my trading behavior, not stock picks.",
+      "note": "Explicit behavior-not-advice framing."
+    },
+    {
+      "id": "en-cal-rev-08",
+      "class": "review_positive",
+      "text": "Last time we reviewed my trades you flagged that I hold losers too long. I have three months of new trades since then — did I actually fix it?",
+      "note": "Returning-user reconciliation of a prior finding."
+    },
+    {
+      "id": "en-cal-rev-09",
+      "class": "review_positive",
+      "text": "Can you look at my realized gains and losses from this account and tell me my actual win rate and payoff ratio?",
+      "note": "Account-level metrics from real closed trades."
+    },
+    {
+      "id": "en-cal-rev-10",
+      "class": "review_positive",
+      "text": "I want to understand why my portfolio underperformed the S&P even though most of my individual trades were profitable. Here's the trade log.",
+      "note": "Performance-attribution review with an attached log."
+    },
+    {
+      "id": "en-cal-rev-11",
+      "class": "review_positive",
+      "text": "My broker's export only has quantity and price, no total amount column. Can you still review my trading behavior from this?",
+      "note": "Thin/bare export still asking for a behavior review."
+    },
+    {
+      "id": "en-cal-rev-12",
+      "class": "review_positive",
+      "text": "I closed out my TSLA position for a loss yesterday. Before I do anything else, I want to go back through why I originally bought it and whether I sold for the right reason.",
+      "note": "Specific recent exit, thesis-consistency postmortem."
+    },
+    {
+      "id": "en-cal-rev-13",
+      "class": "review_positive",
+      "text": "Here's the CSV. I specifically want to know if I've been treating 'the price dropped' as new information instead of an actual thesis change.",
+      "note": "Evidence-quality review request."
+    },
+    {
+      "id": "en-cal-rev-14",
+      "class": "review_positive",
+      "text": "Continuing my review from before — I have new trades since we last talked and I want to reconcile whether I kept the rule I committed to.",
+      "note": "Returning-user rule reconciliation."
+    },
+    {
+      "id": "en-cal-rev-15",
+      "class": "review_positive",
+      "text": "I keep telling myself each loss was 'unlucky.' Can you go through my transaction history and check if that's true or if there's an actual pattern?",
+      "note": "Self-narrative vs. record check."
+    },
+    {
+      "id": "en-cal-rev-16",
+      "class": "review_positive",
+      "text": "This is my combined statement across two brokers. I want one review that treats it as a single portfolio's trading history.",
+      "note": "Multi-broker combined review."
+    },
+    {
+      "id": "en-cal-rev-17",
+      "class": "review_positive",
+      "text": "I added to my position in a stock three separate times while it kept falling. Walk me through the trade history and tell me honestly if that was a plan or denial.",
+      "note": "Averaging-down pattern, retrospective."
+    },
+    {
+      "id": "en-cal-rev-18",
+      "class": "review_positive",
+      "text": "Here is a screenshot of my account activity — can you review what I actually did over the last few months?",
+      "note": "Screenshot-based review request."
+    },
+    {
+      "id": "en-cal-rev-19",
+      "class": "review_positive",
+      "text": "I want to check whether I've been letting winners run or cutting them short, based on my actual closed trades, not my memory of them.",
+      "note": "Payoff-shape review request, explicitly record-over-memory."
+    },
+    {
+      "id": "en-cal-rev-20",
+      "class": "review_positive",
+      "text": "Before I make any new decisions, I want a proper postmortem on the two trades I closed this month.",
+      "note": "Postmortem on specific closed trades before moving on."
+    },
+    {
+      "id": "en-cal-pre-01",
+      "class": "pre_trade_positive",
+      "text": "I already own some NVDA. It just pulled back 6% — am I chasing if I add more here, or is this a legitimate opportunity to build the position?",
+      "note": "Add decision, explicit existing holding + chase framing."
+    },
+    {
+      "id": "en-cal-pre-02",
+      "class": "pre_trade_positive",
+      "text": "I'm holding a full position in AMD and thinking about adding another 20 shares after today's news. What would that do to my portfolio concentration?",
+      "note": "Add decision with explicit portfolio-impact ask."
+    },
+    {
+      "id": "en-cal-pre-03",
+      "class": "pre_trade_positive",
+      "text": "I have a rule that no single stock can be more than 20% of my account. If I buy $5,000 more of the position I already hold, would that break it?",
+      "note": "Rule-collision check on a contemplated add."
+    },
+    {
+      "id": "en-cal-pre-04",
+      "class": "pre_trade_positive",
+      "text": "I want to start a new position in a semiconductor ETF. Given what I already hold, what would it do to my sector exposure?",
+      "note": "New-position decision weighed against existing book."
+    },
+    {
+      "id": "en-cal-pre-05",
+      "class": "pre_trade_positive",
+      "text": "My original reason for buying this stock was margin expansion. That's still playing out, so I'm considering adding — but I want to check what it does to my book before I do it.",
+      "note": "Thesis-consistency check before an add."
+    },
+    {
+      "id": "en-cal-pre-06",
+      "class": "pre_trade_positive",
+      "text": "I'm thinking about trimming my SPY position to fund a new position in a small-cap I've been watching. What does that trade actually do to my portfolio?",
+      "note": "Sell-to-fund-buy swap decision."
+    },
+    {
+      "id": "en-cal-pre-07",
+      "class": "pre_trade_positive",
+      "text": "This would be my third time adding to this position while it's down. Before I place the order, I want to know if that still makes sense given my other rules.",
+      "note": "Repeated-add rule check, pre-order."
+    },
+    {
+      "id": "en-cal-pre-08",
+      "class": "pre_trade_positive",
+      "text": "I want to average down on a stock I already hold — it's down 15% since my entry. Is that wise given what else is in my portfolio right now?",
+      "note": "Averaging-down decision, book-aware."
+    },
+    {
+      "id": "en-cal-pre-09",
+      "class": "pre_trade_positive",
+      "text": "Considering buying into a new name today. I don't want to find out afterward that it overlaps heavily with something I already hold — can you check that first?",
+      "note": "Overlap check before a new buy."
+    },
+    {
+      "id": "en-cal-pre-10",
+      "class": "pre_trade_positive",
+      "text": "I have cash sitting on the sidelines and I'm deciding whether to add to an existing position or start a new one. What does each option do to my concentration?",
+      "note": "Cash-deployment decision between two contemplated trades."
+    },
+    {
+      "id": "en-cal-pre-11",
+      "class": "pre_trade_positive",
+      "text": "My rule says I cut a loser at -20%. This position just hit -18%. I'm not sure whether to sell now or wait — what would selling versus holding actually do to my account?",
+      "note": "Pre-emptive stop-loss decision, not yet executed."
+    },
+    {
+      "id": "en-cal-pre-12",
+      "class": "pre_trade_positive",
+      "text": "I want to buy more of a stock I hold after its earnings beat. Is that adding to a winner responsibly, or am I about to over-concentrate?",
+      "note": "Winner-add decision, concentration concern."
+    },
+    {
+      "id": "en-cal-pre-13",
+      "class": "pre_trade_positive",
+      "text": "Before I place this order, I want to know: does adding to this position tomorrow put me over my own diversification threshold?",
+      "note": "Pre-order diversification check."
+    },
+    {
+      "id": "en-cal-pre-14",
+      "class": "pre_trade_positive",
+      "text": "I'm torn between adding to my current position or opening a new one in a related company. What does each do to my portfolio's overlap and cash?",
+      "note": "Two-option add-vs-new decision."
+    },
+    {
+      "id": "en-cal-pre-15",
+      "class": "pre_trade_positive",
+      "text": "I'm nervous about buying more after this drop, but I still believe in the story. Can you tell me what actually happens to my portfolio if I do?",
+      "note": "Emotionally-hedged add decision, book-referencing."
+    },
+    {
+      "id": "en-cal-pre-16",
+      "class": "pre_trade_positive",
+      "text": "I have a rule against adding to a position after two prior adds already failed to work out. This would be the third add — would that break the rule?",
+      "note": "Explicit personal rule vs. contemplated third add."
+    },
+    {
+      "id": "en-cal-pre-17",
+      "class": "pre_trade_positive",
+      "text": "I want to reduce my cash by putting new money into a position I already have conviction in. What's the actual effect on my weight and risk?",
+      "note": "Cash-to-equity decision on an existing conviction position."
+    },
+    {
+      "id": "en-cal-pre-18",
+      "class": "pre_trade_positive",
+      "text": "Should I add here, given that my thesis was 'new product cycle' and the product just launched on schedule? I want the portfolio math before I decide.",
+      "note": "Thesis-triggered add decision with an explicit ask for consequence math."
+    },
+    {
+      "id": "en-cal-pre-19",
+      "class": "pre_trade_positive",
+      "text": "I'm considering selling a chunk of my winning position to buy into a company I think is undervalued. What would that swap actually do to my book?",
+      "note": "Winner-trim-to-fund-new-buy swap."
+    },
+    {
+      "id": "en-cal-pre-20",
+      "class": "pre_trade_positive",
+      "text": "I already hold two chipmakers. I'm thinking about buying a third. Before I do, I want to know how correlated that would make my portfolio.",
+      "note": "Correlation check before a third same-theme buy."
+    },
+    {
+      "id": "en-cal-adj-01",
+      "class": "adjacent_negative",
+      "text": "Is NVDA a good buy right now?",
+      "note": "Sounds evaluative like a buy decision, but asks for a general quality verdict with no reference to the user's own holdings, reason, or book — the SKILL.md trigger-case table's 'stock recommendation' exclusion, not a weighed trade against a real portfolio.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-cal-adj-02",
+      "class": "adjacent_negative",
+      "text": "If someone had $10,000 to invest today, where would you put it?",
+      "note": "A hypothetical stranger's money with no ticker and no existing book — generic allocation advice-seeking, not the user weighing an actual contemplated trade.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-cal-adj-03",
+      "class": "adjacent_negative",
+      "text": "Is now a good time to get into the market in general?",
+      "note": "Market-timing opinion with no specific security or portfolio reference — closer to a forecast request than a pre-trade evaluation about a real position.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-cal-adj-04",
+      "class": "adjacent_negative",
+      "text": "Which broker should I use if I want to start buying fractional shares?",
+      "note": "Logistics/tooling question about how to trade, not a decision about a specific trade against an existing book.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-cal-adj-05",
+      "class": "adjacent_negative",
+      "text": "Should long-term investors buy the dip whenever the market drops 10%?",
+      "note": "General investing philosophy phrased for 'long-term investors' in the abstract, not the user's own contemplated trade.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-cal-adj-06",
+      "class": "adjacent_negative",
+      "text": "What is averaging down, and why do traders do it?",
+      "note": "Definitional/educational question using review-adjacent vocabulary, with no reference to any trade the user actually made.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-cal-adj-07",
+      "class": "adjacent_negative",
+      "text": "How do professional traders train themselves out of chasing momentum?",
+      "note": "Behavioral vocabulary overlapping the review capability, but about traders in general, not a review of the user's own transaction history.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-cal-adj-08",
+      "class": "adjacent_negative",
+      "text": "What mistakes do most new investors make in their first year?",
+      "note": "Generic listicle-style question about investors as a category, not a request to review the user's own trades.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-cal-adj-09",
+      "class": "adjacent_negative",
+      "text": "What's considered a healthy win rate for a swing trader?",
+      "note": "Asks for a generic benchmark number, not an evaluation of the user's own closed trades.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-cal-adj-10",
+      "class": "adjacent_negative",
+      "text": "Why do investors psychologically hold onto losing positions for too long?",
+      "note": "Psychology-of-trading question phrased generically about 'investors', not a request to examine the user's own history for that pattern.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-cal-adj-11",
+      "class": "adjacent_negative",
+      "text": "What's the S&P 500 doing today?",
+      "note": "Pure market-data lookup; the issue's own canonical example of an obviously off-topic-adjacent prompt.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-12",
+      "class": "adjacent_negative",
+      "text": "Is NVIDIA a good company?",
+      "note": "Company-quality opinion with no purchase or portfolio framing at all; the issue's own canonical example.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-13",
+      "class": "adjacent_negative",
+      "text": "Can you summarize today's market news for me?",
+      "note": "News-digest request, no trade or review framing.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-14",
+      "class": "adjacent_negative",
+      "text": "What does the RSI indicator actually measure?",
+      "note": "Pure technical-analysis glossary question.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-15",
+      "class": "adjacent_negative",
+      "text": "How does a stock split change the share price?",
+      "note": "Mechanics-of-markets education question, no personal trade context.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-16",
+      "class": "adjacent_negative",
+      "text": "Can you explain how options Greeks work?",
+      "note": "Options education request with no position or trade attached.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-17",
+      "class": "adjacent_negative",
+      "text": "How do rising interest rates typically affect growth stock valuations?",
+      "note": "Macro/valuation theory question, no personal position.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-18",
+      "class": "adjacent_negative",
+      "text": "Tell me about NVIDIA's data center business segment.",
+      "note": "Company/business research question, no decision framing.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-19",
+      "class": "adjacent_negative",
+      "text": "What caused the 2022 bear market?",
+      "note": "Historical market-event research question.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-cal-adj-20",
+      "class": "adjacent_negative",
+      "text": "What's the difference between a bull market and a bear market?",
+      "note": "Basic terminology/education question.",
+      "near_miss_of": "general"
+    }
+  ]
+}

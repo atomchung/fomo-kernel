@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/trigger-prompt-corpus.schema.json",
+  "title": "Fomo Kernel trigger-matrix prompt corpus (#458)",
+  "description": "One locale/split slice of the trigger corpus: evals/triggers/corpus/<locale>/<split>.json. The readable contract; evals/triggers/run_triggers.py's load_corpus()/load_corpus_file() hold the enforcement, because the offline suite carries no jsonschema dependency (same posture as evals/episodes/episode.schema.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["locale", "split", "prompts"],
+  "properties": {
+    "locale": {
+      "enum": ["en", "zh-TW", "zh-CN"],
+      "description": "Must match the file's own parent directory name. Locale is the corpus dimension; host is an execution dimension carried only in the result log (see the module docstring in run_triggers.py for why the corpus is not also split per host)."
+    },
+    "split": {
+      "enum": ["calibration", "holdout"],
+      "description": "Must match the file's own filename. calibration may inform one bounded trigger-description iteration (#458); holdout is the untouched release-decision evidence and must never be read, quoted, or reasoned about while writing or adjusting a trigger description."
+    },
+    "prompts": {
+      "type": "array",
+      "description": "Exactly 20 items per class (review_positive, pre_trade_positive, adjacent_negative) -- enforced by load_corpus_file(), not merely documented here.",
+      "items": { "$ref": "#/$defs/prompt" }
+    }
+  },
+  "$defs": {
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "text", "note"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(en|zh-TW|zh-CN)-(cal|hold)-(rev|pre|adj)-[0-9]{2}$",
+          "description": "Stable id, unique across the entire corpus (every locale and split), not merely within one file -- load_corpus() checks this globally so a copy-paste across a locale or split boundary cannot slip in unnoticed."
+        },
+        "class": {
+          "enum": ["review_positive", "pre_trade_positive", "adjacent_negative"],
+          "description": "review_positive: the user is asking for a retrospective review of trades already made. pre_trade_positive: the user is weighing a trade not yet made, against their own book -- M1's capability. adjacent_negative: market/research/education/general-advice content that must NOT trigger the skill; the corpus's hard cases sit deliberately near the boundary of one of the two positive classes rather than being obviously off-topic."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The literal opening message text, in the prompt's own locale script and vocabulary. Never machine-translated from another locale's prompt (docs/language-policy.md; the module docstring explains why zh-TW and zh-CN are authored independently)."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "English maintainer-facing design rationale: what variation this prompt exercises, or (for adjacent_negative) what makes it a near-miss rather than an obviously off-topic prompt. Never shown to a host or a user -- data for whoever reads the bank, the same role episode.schema.json's answers[].note plays."
+        },
+        "near_miss_of": {
+          "enum": ["review_positive", "pre_trade_positive", "general"],
+          "description": "Required on adjacent_negative prompts only (forbidden on the two positive classes). Which boundary this prompt sits near: a positive class's trigger surface, or general market/research/education content not closer to either (\"general\"). Used for the corpus's own boundary-coverage check (tests/test_triggers.py) -- every locale/split must exercise all three values, not only obviously-negative content."
+        }
+      }
+    }
+  }
+}

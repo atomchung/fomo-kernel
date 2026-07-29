@@ -1,0 +1,386 @@
+{
+  "locale": "en",
+  "split": "holdout",
+  "prompts": [
+    {
+      "id": "en-hold-rev-01",
+      "class": "review_positive",
+      "text": "Take a look at this transaction export and tell me what my behavior actually looks like across the trades, not just the P&L.",
+      "note": "Behavior-over-P&L review request, different phrasing from calibration set."
+    },
+    {
+      "id": "en-hold-rev-02",
+      "class": "review_positive",
+      "text": "I want a quarterly review of my account. Here's the CSV covering January through March.",
+      "note": "Quarterly cadence review."
+    },
+    {
+      "id": "en-hold-rev-03",
+      "class": "review_positive",
+      "text": "Two weeks ago I sold half my position in a stock that had run up fast. I want to go back and check if that exit made sense given how I got in.",
+      "note": "Specific partial-exit postmortem."
+    },
+    {
+      "id": "en-hold-rev-04",
+      "class": "review_positive",
+      "text": "My trading journal says I 'stuck to the plan' on every trade this year, but I don't trust myself. Can you check the actual CSV against that?",
+      "note": "Self-report vs. record cross-check."
+    },
+    {
+      "id": "en-hold-rev-05",
+      "class": "review_positive",
+      "text": "This is week four of my review — same account as before. I have five new closed trades since the last session.",
+      "note": "Returning-user weekly cadence, explicit trade count."
+    },
+    {
+      "id": "en-hold-rev-06",
+      "class": "review_positive",
+      "text": "I noticed I keep buying more of a stock every time it dips another 10%. Can you pull that pattern out of my trade history and tell me if it's disciplined or just hope?",
+      "note": "Self-noticed pattern, asking for record-based verdict."
+    },
+    {
+      "id": "en-hold-rev-07",
+      "class": "review_positive",
+      "text": "Here's my full options and stock activity for the account. I want to know what my actual exit discipline looks like, not what I think it looks like.",
+      "note": "Mixed options+equity account review."
+    },
+    {
+      "id": "en-hold-rev-08",
+      "class": "review_positive",
+      "text": "I sold a position for a small gain last week and I already regret it — it kept running afterward. Was that a legitimate rule-based exit or did I just get scared?",
+      "note": "Recent exit second-guessing."
+    },
+    {
+      "id": "en-hold-rev-09",
+      "class": "review_positive",
+      "text": "Can you review my broker statement and flag every trade where I seem to have added risk right after a loss, like I was trying to win it back?",
+      "note": "Revenge-trading pattern check."
+    },
+    {
+      "id": "en-hold-rev-10",
+      "class": "review_positive",
+      "text": "I have a full year of trades from this account and I've never actually looked at them as a whole. Start from scratch and tell me what you see.",
+      "note": "First-time full-year review."
+    },
+    {
+      "id": "en-hold-rev-11",
+      "class": "review_positive",
+      "text": "This CSV only has BUY and SELL rows with dates and prices — no notes on why I made each trade. Can you still build a behavior review from it?",
+      "note": "Bare transaction log, review still requested."
+    },
+    {
+      "id": "en-hold-rev-12",
+      "class": "review_positive",
+      "text": "Last review we agreed I'd cap any single position at 15% of the account. I want to check the trades since then and see if I actually held to that.",
+      "note": "Prior-commitment reconciliation, different cap value from calibration."
+    },
+    {
+      "id": "en-hold-rev-13",
+      "class": "review_positive",
+      "text": "I closed three losing trades this month and I keep telling myself the market was just unusually bad. Go through the CSV and tell me if that holds up.",
+      "note": "Self-excuse vs. record check."
+    },
+    {
+      "id": "en-hold-rev-14",
+      "class": "review_positive",
+      "text": "Here's the statement from my new brokerage — I moved accounts mid-year, so I want the review to cover the whole picture across both exports.",
+      "note": "Account-migration combined review."
+    },
+    {
+      "id": "en-hold-rev-15",
+      "class": "review_positive",
+      "text": "I want to understand my own pattern around earnings season specifically — do I tend to sell right before earnings out of nerves? Here's the trade history.",
+      "note": "Earnings-season-specific behavioral question."
+    },
+    {
+      "id": "en-hold-rev-16",
+      "class": "review_positive",
+      "text": "Reviewing my account after a rough stretch: three trades closed at a loss in a row. I want an honest read on whether that's variance or a real behavioral issue.",
+      "note": "Losing-streak review."
+    },
+    {
+      "id": "en-hold-rev-17",
+      "class": "review_positive",
+      "text": "My account statement shows I doubled down on a losing position twice before finally cutting it. Walk me through whether the second add had any new justification.",
+      "note": "Specific double-down sequence, retrospective."
+    },
+    {
+      "id": "en-hold-rev-18",
+      "class": "review_positive",
+      "text": "It's been a month since our last session — picking the review back up with whatever's new in the account.",
+      "note": "Returning-user, vaguer cadence than the calibration equivalent."
+    },
+    {
+      "id": "en-hold-rev-19",
+      "class": "review_positive",
+      "text": "I want to check something specific: across my closed trades, did I actually sell winners and losers at similar speed, or do I let losers drag on?",
+      "note": "Symmetry-of-exit-speed question over real closed trades."
+    },
+    {
+      "id": "en-hold-rev-20",
+      "class": "review_positive",
+      "text": "Here's my brokerage CSV. Before I decide anything about next quarter, I want to understand what actually happened in the trades I already made.",
+      "note": "Forward-decision gated on a prior review of completed trades."
+    },
+    {
+      "id": "en-hold-pre-01",
+      "class": "pre_trade_positive",
+      "text": "I hold a starter position and I'm deciding whether now is the right time to size up to a full position. What would that do to my account?",
+      "note": "Starter-to-full sizing decision."
+    },
+    {
+      "id": "en-hold-pre-02",
+      "class": "pre_trade_positive",
+      "text": "This stock just dropped after a guidance cut, and I'm considering buying more because I think the market overreacted. What would that trade do to my existing exposure?",
+      "note": "Guidance-cut add decision, overreaction framing."
+    },
+    {
+      "id": "en-hold-pre-03",
+      "class": "pre_trade_positive",
+      "text": "I'm weighing whether to add to my position or just hold what I have — the price hasn't moved much, but I have new cash to deploy. Can you help me think through it against my current book?",
+      "note": "Flat-price add-vs-hold decision with new cash."
+    },
+    {
+      "id": "en-hold-pre-04",
+      "class": "pre_trade_positive",
+      "text": "My rule is I only add on a pullback of 10% or more from my last entry. It just hit exactly that. Should I actually place the order?",
+      "note": "Rule-triggered add, asking whether to actually execute."
+    },
+    {
+      "id": "en-hold-pre-05",
+      "class": "pre_trade_positive",
+      "text": "I'm thinking about buying into a company I've been researching for months, but I already hold a competitor. Would that be doubling down on the same bet?",
+      "note": "Competitor-overlap decision before a new buy."
+    },
+    {
+      "id": "en-hold-pre-06",
+      "class": "pre_trade_positive",
+      "text": "Before I add more to this losing position, I want to know honestly whether I have new evidence or I'm just trying to lower my average cost.",
+      "note": "Evidence-vs-cost-basis self-check before an add."
+    },
+    {
+      "id": "en-hold-pre-07",
+      "class": "pre_trade_positive",
+      "text": "I'm considering trimming a position that's now my largest holding after a big run-up. What would trimming it down to my target weight actually look like?",
+      "note": "Trim decision to reach a target weight."
+    },
+    {
+      "id": "en-hold-pre-08",
+      "class": "pre_trade_positive",
+      "text": "I want to put my next paycheck's savings into an existing position instead of starting something new. Walk me through what that does to my concentration.",
+      "note": "Future-cash-flow allocation decision."
+    },
+    {
+      "id": "en-hold-pre-09",
+      "class": "pre_trade_positive",
+      "text": "Is this the moment to cut my losses on this position, or does my own rule say I should give it more room first?",
+      "note": "Stop-loss timing decision, rule-referencing."
+    },
+    {
+      "id": "en-hold-pre-10",
+      "class": "pre_trade_positive",
+      "text": "I already have a large ETF position and I'm considering also buying the sector's top individual stock directly. Would that be redundant exposure?",
+      "note": "ETF-plus-single-name overlap decision."
+    },
+    {
+      "id": "en-hold-pre-11",
+      "class": "pre_trade_positive",
+      "text": "I'm thinking about adding to this position after two quarters of it going nowhere. What does my history with this exact stock say about doing that again?",
+      "note": "Stagnant-position add decision, history-aware."
+    },
+    {
+      "id": "en-hold-pre-12",
+      "class": "pre_trade_positive",
+      "text": "Before I buy more, I want to check: would this trade push any single sector past what I'd consider safe for my account?",
+      "note": "Sector-concentration check before a buy."
+    },
+    {
+      "id": "en-hold-pre-13",
+      "class": "pre_trade_positive",
+      "text": "I've got a big cash balance from a bonus and I'm deciding between adding to my highest-conviction position or diversifying into something new. What does each path do to my risk?",
+      "note": "Windfall-cash decision between two contemplated trades."
+    },
+    {
+      "id": "en-hold-pre-14",
+      "class": "pre_trade_positive",
+      "text": "This would break my rule about not adding within a week of an earnings report. I'm tempted anyway — what's actually at stake if I do it?",
+      "note": "Rule-breaking temptation before an add, asking for the consequence."
+    },
+    {
+      "id": "en-hold-pre-15",
+      "class": "pre_trade_positive",
+      "text": "I'm considering selling half of a long-held winner to reduce concentration, but I'm not sure if it still counts as 'letting a winner run' if I trim it. What would half a trim change?",
+      "note": "Partial-trim decision on a long-held winner."
+    },
+    {
+      "id": "en-hold-pre-16",
+      "class": "pre_trade_positive",
+      "text": "My thesis when I bought was a specific product launch. That launch just got delayed. Should I still add here, or does that change the calculus?",
+      "note": "Thesis-invalidation check before an add."
+    },
+    {
+      "id": "en-hold-pre-17",
+      "class": "pre_trade_positive",
+      "text": "I want to know before I click buy: does this order make my portfolio's cash cushion too thin given my other rules?",
+      "note": "Pre-order cash-buffer check."
+    },
+    {
+      "id": "en-hold-pre-18",
+      "class": "pre_trade_positive",
+      "text": "I'm thinking about re-entering a position I exited a few months ago at a loss. Would going back in now conflict with why I sold in the first place?",
+      "note": "Re-entry decision, consistency-with-prior-exit check."
+    },
+    {
+      "id": "en-hold-pre-19",
+      "class": "pre_trade_positive",
+      "text": "I have two ways to deploy new cash — top up an existing position or open a small starter position in something new. Which one keeps me inside my own risk limits?",
+      "note": "Two-option cash-deployment decision, rule-bounded."
+    },
+    {
+      "id": "en-hold-pre-20",
+      "class": "pre_trade_positive",
+      "text": "Before I average down again, I want an honest check: has anything actually changed since my last add, or would this just be a fourth attempt at the same bet?",
+      "note": "Repeated averaging-down self-check before a fourth add."
+    },
+    {
+      "id": "en-hold-adj-01",
+      "class": "adjacent_negative",
+      "text": "What are the best AI stocks to buy this year?",
+      "note": "Asks for a general 'best of' ranking, not a decision about a specific contemplated trade against the user's own holdings.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-hold-adj-02",
+      "class": "adjacent_negative",
+      "text": "Should I put my money into stocks or bonds at my age?",
+      "note": "Generic asset-allocation advice tied to demographics, not a specific security or an actual position being weighed.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-hold-adj-03",
+      "class": "adjacent_negative",
+      "text": "What's a reasonable position size for a single stock, as a rule of thumb?",
+      "note": "Asks for a generic sizing heuristic, not evaluation of an actual contemplated trade against the user's real book.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-hold-adj-04",
+      "class": "adjacent_negative",
+      "text": "What do you think of Tesla's current valuation?",
+      "note": "Valuation opinion question with no purchase intent or book reference — equity research, not a pre-trade evaluation.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-hold-adj-05",
+      "class": "adjacent_negative",
+      "text": "What's historically been a good entry point for buying gold?",
+      "note": "Generic historical pattern question about an asset class, not the user's own contemplated trade.",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "en-hold-adj-06",
+      "class": "adjacent_negative",
+      "text": "What's the difference between panic selling and disciplined stop-loss selling?",
+      "note": "Definitional distinction using review-adjacent vocabulary, no reference to the user's own trade history.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-hold-adj-07",
+      "class": "adjacent_negative",
+      "text": "I've had a rough month watching my portfolio value swing around.",
+      "note": "Emotional market commentary with no explicit ask to review specific trades — a lead-in, not a review request.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-hold-adj-08",
+      "class": "adjacent_negative",
+      "text": "How should I structure a trading journal so I actually stick with it?",
+      "note": "Process/tooling question about journaling, not a request to review trades that already happened.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-hold-adj-09",
+      "class": "adjacent_negative",
+      "text": "What does a good trade postmortem usually cover?",
+      "note": "Meta question about the format of a postmortem in general, not a request for one on the user's own trades.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-hold-adj-10",
+      "class": "adjacent_negative",
+      "text": "What's a typical drawdown before retail investors start panic selling?",
+      "note": "Generic statistics-of-investor-behavior question, not a review of the user's own account.",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "en-hold-adj-11",
+      "class": "adjacent_negative",
+      "text": "What's the Fed expected to do with interest rates at the next meeting?",
+      "note": "Macro/rate-forecast question with no trade or portfolio framing.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-12",
+      "class": "adjacent_negative",
+      "text": "Explain covered calls to me.",
+      "note": "Options-strategy education request; the issue's own canonical example.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-13",
+      "class": "adjacent_negative",
+      "text": "Why did the market drop today?",
+      "note": "Market-event explanation request, no personal position.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-14",
+      "class": "adjacent_negative",
+      "text": "What's the outlook for semiconductor stocks this year?",
+      "note": "Sector-outlook research question, no purchase or review framing.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-15",
+      "class": "adjacent_negative",
+      "text": "What's the difference between a Roth IRA and a traditional IRA?",
+      "note": "Account-type/tax education question, unrelated to a specific trade or review.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-16",
+      "class": "adjacent_negative",
+      "text": "What does a P/E ratio actually tell you about a stock?",
+      "note": "Valuation-metric glossary question.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-17",
+      "class": "adjacent_negative",
+      "text": "Which sectors are outperforming the market this quarter?",
+      "note": "Market-breadth research question, no personal position.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-18",
+      "class": "adjacent_negative",
+      "text": "What is dollar-cost averaging?",
+      "note": "Investing-strategy definitional question.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-19",
+      "class": "adjacent_negative",
+      "text": "How do I read a candlestick chart?",
+      "note": "Charting-education question, no trade or review context.",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "en-hold-adj-20",
+      "class": "adjacent_negative",
+      "text": "What's the historical average annual return of the US stock market?",
+      "note": "General market-statistics question.",
+      "near_miss_of": "general"
+    }
+  ]
+}
