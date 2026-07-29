@@ -404,7 +404,7 @@ The QA mindset — watch for these while walking (record what you find; do not f
 
 ### Step 5 — Close out this route run (the campaign stays open)
 
-This step ends **one route run**, not the conversation. Archive is not a stop signal: after it, the worktree, the isolated root and the campaign identity are all still live, and the next natural request starts the next route run against the same book. Only an explicit stop from the maintainer reaches step 4's cleanup — see "Continuing in the same campaign" below.
+This step ends **one route run**, not the conversation. Archive is not a stop signal: after it, the worktree, the isolated root and the campaign identity are all still live, and the next natural request starts the next route run against the same book. Only an explicit stop from the maintainer reaches this step's own item 4, the cleanup — see "Continuing in the same campaign" below.
 
 1. **Owner verdict + archive the receipt (the core output of QA; do not skip it)**: once the final card is out, give a verdict — could the options be clicked (controls), did the card appear readably (card), did the weekly memory carry over (memory), were the questions specific enough (question-specificity), did the answers map correctly (answer-fit). This is exactly the human-review annotation eval has always lacked.
 
