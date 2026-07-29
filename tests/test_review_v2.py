@@ -7882,14 +7882,14 @@ def test_all_json_schemas_parse():
              "question-surface.schema.json", "capture.schema.json",
              "price-feed.schema.json", "condition-slot.schema.json",
              "condition-check.schema.json", "trade-premise.schema.json",
-             "pre-trade-consultation.schema.json", "behavior-verdict.schema.json",
+             "trade-evaluation.schema.json", "behavior-verdict.schema.json",
              "portfolio-basis.schema.json", "book-refresh.schema.json",
              # #414 Wave A: a new, standalone schema for the semantically-richer
              # --agent-case claim envelope engine/answer_provenance.py checks.
              # Not a shared schema and not wired into any review.py path yet
              # (Wave B's job) -- see answer-provenance.schema.json's own
              # description for why this is a new file, not an edit to
-             # pre-trade-consultation.schema.json's existing claim $defs.
+             # trade-evaluation.schema.json's existing claim $defs.
              "answer-provenance.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):

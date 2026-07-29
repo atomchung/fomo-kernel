@@ -25,9 +25,9 @@ issue's Wave allocation comment)::
 ``agent_case``, ``basis``, ``consequence``, and ``rule_collisions`` are
 exactly ``cmd_consider``'s own frozen shapes — the same dicts that already
 end up as ``row["agent_case"]``, ``row["basis"]``, ``row["consequence"]``,
-and ``row["rule_collisions"]`` (schemas/pre-trade-consultation.schema.json).
+and ``row["rule_collisions"]`` (schemas/trade-evaluation.schema.json).
 ``user_statements`` is new: an optional, frozen collection of exact strings
-the user is on record as having said for this consultation (#479's
+the user is on record as having said for this evaluation (#479's
 decision-context envelope is the expected future supplier; empty by
 default, so a context-free ``consider`` call — which never captured user
 prose — validates exactly as if this parameter did not exist, preserving
@@ -38,7 +38,7 @@ provenance-clean) or an ``AnswerProvenanceError`` naming exactly which
 claim, and which rule, failed. There is no third "valid-with-warnings"
 outcome — the issue's "returns a decisive result the caller can fail
 closed on" requirement — so Wave B can call this immediately before
-``_append_consultation_row`` (review.py:5490, right after the existing
+``_append_evaluation_row`` (review.py:5490, right after the existing
 structural call to ``_validate_agent_case`` at review.py:5434) exactly the
 way every other hand-rolled validator in this engine is already used: a
 raise before that point means the row is never written and never returned
@@ -191,7 +191,7 @@ What this module does not do
   module, schema, and tests only (issue #414's Wave allocation comment).
   Wave B — the single integration owner, alongside #479 — is the one that
   calls ``validate_agent_case`` from ``cmd_consider`` before
-  ``_append_consultation_row``, and is also the one that must prove
+  ``_append_evaluation_row``, and is also the one that must prove
   round-trip/idempotency for a *valid* payload and read-compatibility for a
   legacy row recorded before this gate existed. Both are stated in the
   issue's acceptance section, and both are properties of the integration,
@@ -453,7 +453,7 @@ def _check_disclosures_covered(resolved_anchors, basis, consequence):
     missing = required - covered
     if missing:
         raise AnswerProvenanceError(
-            "agent_case drops an engine disclosure the consultation was given: "
+            "agent_case drops an engine disclosure the evaluation was given: "
             + ", ".join(sorted(missing)))
 
     stale_days = basis.get("stale_days")
@@ -462,7 +462,7 @@ def _check_disclosures_covered(resolved_anchors, basis, consequence):
     incomplete = basis.get("completeness") != "declared_complete"
     if (stale or incomplete) and not any(anchor.startswith("basis.") for anchor, _ in resolved_anchors):
         raise AnswerProvenanceError(
-            "agent_case drops the basis/staleness disclosure the consultation was given")
+            "agent_case drops the basis/staleness disclosure the evaluation was given")
 
 
 # ─────────────────────────── public entry point ───────────────────────────

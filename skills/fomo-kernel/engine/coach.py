@@ -417,7 +417,7 @@ DATA_FILES = [
     ("verdicts.jsonl", "jsonl", "引擎判定的「說到 vs 做到」落差記錄(#446;目前只有 horizon 矛盾，可重算驗證，不進規矩對帳)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
-    ("pre_trade_consultations.jsonl", "jsonl", "買進/賣出前的假設性諮詢記錄(review.py consider):凍結當時算出的 before/after/rule collision,--resolve 才追加你後續的決定,不覆寫舊列"),
+    ("trade_evaluations.jsonl", "jsonl", "買進/賣出前的假設性評估記錄(review.py consider):凍結當時算出的 before/after/rule collision,--resolve 才追加你後續的決定,不覆寫舊列"),
     ("revisit.jsonl", "jsonl", "出場後 30/60/90 天追蹤佇列"),
     ("cards", "dir", "每次復盤的完整復盤卡(含絕對金額/ticker/佔比)"),
     ("sessions", "tree", "v2 canonical session bundles(private/public cards + manifest)"),

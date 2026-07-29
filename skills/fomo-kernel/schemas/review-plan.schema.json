@@ -455,29 +455,29 @@
         }
       }
     },
-    "consultation_reconciliation": {
+    "evaluation_reconciliation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["items", "summary"],
-      "description": "Every still-open `review.py consider` consultation (schemas/pre-trade-consultation.schema.json), reconciled against the transaction record as of this review's date_end (#317; #429's rule one layer up -- a consultation nobody reconciles is the same dead-store shape #429 names for a question nobody reads). States a fact, never a cause: `status: matched` means a qualifying trade exists in the record, never that the user traded because of the consultation, and nothing here ever writes `decision` -- schemas/pre-trade-consultation.schema.json's `decision` moves only through `consider --resolve`. A supply-side fact surface, not a card section or a question: issue #440 parks card layout, issue #453 leaves whether this earns a turn to the agent's per-scene judgment.",
+      "description": "Every still-open `review.py consider` evaluation (schemas/trade-evaluation.schema.json), reconciled against the transaction record as of this review's date_end (#317; #429's rule one layer up -- an evaluation nobody reconciles is the same dead-store shape #429 names for a question nobody reads). States a fact, never a cause: `status: matched` means a qualifying trade exists in the record, never that the user traded because of the evaluation, and nothing here ever writes `decision` -- schemas/trade-evaluation.schema.json's `decision` moves only through `consider --resolve`. A supply-side fact surface, not a card section or a question: issue #440 parks card layout, issue #453 leaves whether this earns a turn to the agent's per-scene judgment.",
       "properties": {
         "items": {
           "type": "array",
-          "description": "Capped at review.py's CONSULTATION_RECONCILE_CAP, oldest `created` first; `summary` states what a cap held back.",
+          "description": "Capped at review.py's EVALUATION_RECONCILE_CAP, oldest `created` first; `summary` states what a cap held back.",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["consultation_id", "created", "premise", "status", "matched_trade"],
+            "required": ["evaluation_id", "created", "premise", "status", "matched_trade"],
             "properties": {
-              "consultation_id": {"type": "string", "minLength": 1},
+              "evaluation_id": {"type": "string", "minLength": 1},
               "created": {
                 "type": "string",
                 "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-                "description": "The consultation's own created date (schemas/pre-trade-consultation.schema.json's `created`), not this review's date_end."
+                "description": "The evaluation's own created date (schemas/trade-evaluation.schema.json's `created`), not this review's date_end."
               },
               "premise": {
                 "$ref": "trade-premise.schema.json",
-                "description": "The hypothetical trade this consultation asked about, unchanged from when it was recorded."
+                "description": "The hypothetical trade this evaluation asked about, unchanged from when it was recorded."
               },
               "status": {
                 "enum": ["matched", "unmatched"],
@@ -500,7 +500,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["open_total", "shown", "beyond_cap"],
-          "description": "States the bound so `items` can never be mistaken for the complete list of open consultations -- the same discipline card_plan.question_selection and state_snapshot.condition_slots_summary use for their own caps.",
+          "description": "States the bound so `items` can never be mistaken for the complete list of open evaluations -- the same discipline card_plan.question_selection and state_snapshot.condition_slots_summary use for their own caps.",
           "properties": {
             "open_total": {"type": "integer", "minimum": 0},
             "shown": {"type": "integer", "minimum": 0},

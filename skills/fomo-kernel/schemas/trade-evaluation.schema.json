@@ -1,21 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://fomo-kernel.local/schemas/pre-trade-consultation.schema.json",
-  "title": "Fomo Kernel Pre-Trade Consultation",
-  "description": "One row per `review.py consider` call (docs/decision-fomo-kernel-shape.md Layer 2): a user mid-decision asks what a hypothetical trade does to their book, away from any review session. The readable contract; skills/fomo-kernel/engine/review.py's cmd_consider holds the enforcement, because the offline suite carries no jsonschema dependency. Stored in <root>/pre_trade_consultations.jsonl, append-only. Every field is a frozen value computed at the time of the ask, never a pointer into mutable state -- the ledger keeps growing after this row is written, and a later reconciliation must see what the engine actually said then, not what it would say now (the frozen-subject design ratified in issue #446's specification comment). A resolution (`--resolve`) appends a new row carrying the same consultation_id rather than rewriting this one; the fold picks whichever row for that id appears last in the file.",
+  "$id": "https://fomo-kernel.local/schemas/trade-evaluation.schema.json",
+  "title": "Fomo Kernel Trade Evaluation",
+  "description": "One row per `review.py consider` call (docs/decision-fomo-kernel-shape.md Layer 2): a user mid-decision asks what a hypothetical trade does to their book, away from any review session. The readable contract; skills/fomo-kernel/engine/review.py's cmd_consider holds the enforcement, because the offline suite carries no jsonschema dependency. Stored in <root>/trade_evaluations.jsonl, append-only. Every field is a frozen value computed at the time of the ask, never a pointer into mutable state -- the ledger keeps growing after this row is written, and a later reconciliation must see what the engine actually said then, not what it would say now (the frozen-subject design ratified in issue #446's specification comment). A resolution (`--resolve`) appends a new row carrying the same evaluation_id rather than rewriting this one; the fold picks whichever row for that id appears last in the file.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["consultation_id", "created", "premise", "basis", "consequence", "rule_collisions", "decision", "decided_on"],
+  "required": ["evaluation_id", "created", "premise", "basis", "consequence", "rule_collisions", "decision", "decided_on"],
   "properties": {
-    "consultation_id": {
+    "evaluation_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Engine-assigned, content-addressed identity (consult-<hash of premise+basis+created>), the same convention session.py uses for snapshot_id/adjustment_id/reconciliation_id. Asking the identical premise again the same day against an unchanged book converges on the same id rather than minting a new one."
+      "description": "Engine-assigned, content-addressed identity (eval-<hash of premise+basis+created>), the same convention session.py uses for snapshot_id/adjustment_id/reconciliation_id. Asking the identical premise again the same day against an unchanged book converges on the same id rather than minting a new one."
     },
     "created": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-      "description": "The date this consultation was asked (today, at CLI invocation time) -- distinct from premise.date, which is when the hypothetical trade itself would happen."
+      "description": "The date this evaluation was asked (today, at CLI invocation time) -- distinct from premise.date, which is when the hypothetical trade itself would happen."
     },
     "premise": {
       "$ref": "trade-premise.schema.json",
@@ -25,7 +25,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["source", "as_of", "stale_days", "completeness", "cost_basis", "valuation_basis", "reconciliation_ref", "state_version"],
-      "description": "Frozen evaluation footing. Ledger-backed current-book consultations carry PortfolioBasis identity/disclosures so a later reader can see exactly what holdings fact answered; explicit CSV input remains the separate historical FIFO compatibility lane and declares itself unverified rather than impersonating a reconciled current book.",
+      "description": "Frozen evaluation footing. Ledger-backed current-book evaluations carry PortfolioBasis identity/disclosures so a later reader can see exactly what holdings fact answered; explicit CSV input remains the separate historical FIFO compatibility lane and declares itself unverified rather than impersonating a reconciled current book.",
       "properties": {
         "source": {
           "enum": ["snapshot_anchor", "transaction_replay", "empty", "transactions"],
@@ -80,7 +80,7 @@
             "unavailable": {"type": "array", "items": {"type": "string"}},
             "currencies": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{3}$"}}
           },
-          "description": "Canonical sizing projection coverage for a ledger-backed current-book consultation. This makes mixed price/cost fallback visible; absent on the separate CSV compatibility lane."
+          "description": "Canonical sizing projection coverage for a ledger-backed current-book evaluation. This makes mixed price/cost fallback visible; absent on the separate CSV compatibility lane."
         }
       }
     },
@@ -158,7 +158,7 @@
     "decision": {
       "enum": ["open", "acted", "declined", "modified"],
       "default": "open",
-      "description": "What the user did with this consultation. open until a --resolve call records one of the other three; never rewritten in place -- --resolve appends a new row with the same consultation_id."
+      "description": "What the user did with this evaluation. open until a --resolve call records one of the other three; never rewritten in place -- --resolve appends a new row with the same evaluation_id."
     },
     "decided_on": {
       "type": ["string", "null"],
