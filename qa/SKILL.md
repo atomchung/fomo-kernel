@@ -232,6 +232,136 @@ python3 tools/ux_receipt.py verify --session-id <ID> \
 
 **That opener is memory continuity itself** — was the rule agreed last time actually brought back and reconciled? For `route == "weekly_review"`, `ux_receipt.py` hard-checks two things: exactly one opener, positioned before the first `question_presented` / `card_presented`. Wrong order still fails, because a row backfilled afterwards cannot prove the user saw it at the time.
 
+### The `snapshot_review` route: a declared book, no trade history
+
+Selected when the user has a position table or screenshot and no transaction history. Transcribe it into the envelope in `references/data-contract.md` (`/tmp/fomo-kernel-positions.json`, never inside the repository), then walk `flows/snapshot-review.md`:
+
+```bash
+python3 engine/review.py prepare --route snapshot_review \
+  --snapshot-json /tmp/fomo-kernel-positions.json --language en
+python3 engine/review.py preview  --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
+python3 engine/review.py finalize --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
+```
+
+Three differences from `first_review` decide the trace, and all three were read off a real run rather than assumed:
+
+- **No cash anchor row.** The route's contract does not carry the #357 pre-flight, because the snapshot envelope declares `cash` inline (`references/ux-receipt.md` says so, and `verify` demands `cash_anchor_checked` only on `first_review` / `weekly_review`). Recording one here proves nothing that the envelope did not already state.
+- **No question rows.** The observed plan came back with `question_queue: []` and `card_plan.question_policy` of `{"min": 0, "max": 0, "route": "snapshot_review"}` — the budget is structurally zero, because a snapshot holds no action history to ask about. Do not manufacture a question or a dynamic surface to fill the gap; the flow says so too.
+- **The rule choice is still reached.** `preview` returned `candidate_rules` with a `grounding` sentence on each candidate, so `--grounding-check-file` is required here exactly as on `first_review`. This is the route's one real control, and it is what `--controls` judges.
+
+Everything else matches `first_review`: both card stages, artifact before card, `--memory not_applicable` (a snapshot review has no prior period to carry, and unlike `weekly_review` this route accepts that value).
+
+```bash
+# qa-trace: snapshot_review
+# 0) Declare capability the moment `prepare` returns. The trace's session id is
+#    the plan's own session_id.
+python3 tools/ux_receipt.py start --session-id <ID> --client claude --route snapshot_review \
+  --adapter validated_widget --question-mode native_options --card-mode widget
+
+# 1) No cash_anchor_checked and no question_presented on this route — see above.
+#    The latency marker still belongs here, immediately before `preview`: it is
+#    what makes the wait until the card appears measurable (#236), and on a route
+#    that asks nothing it times the authored thesis_updates/narrative going in.
+python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
+
+# 2) The preview card, artifact first. The path is preview's own
+#    `private_card_html_path`.
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage preview --artifact-path <preview-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage preview --mode widget
+
+# 3) The rule choice, with its #293 grounding evidence.
+python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
+  --mode native_options --grounding-check-file <grounding-check.json>
+
+# 4) The final card after `finalize`. The path is its `private_card_html`.
+python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
+  --stage final --artifact-path <final-card.html>
+python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
+  --stage final --mode widget
+
+# 5) Wrap up: findings first, verdict last.
+python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
+  --finding episode:EP-0NN
+#   this run genuinely found nothing (a declaration, not an omission):
+#   python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded --no-findings
+python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
+  --controls pass --card pass --memory not_applicable
+python3 tools/ux_receipt.py verify --session-id <ID> \
+  --require-owner-verdict --require-timing-integrity --require-findings
+```
+
+### The `refresh` route: recording the book comes before reviewing it
+
+Once a book exists, a newer holdings view is **not** a review. `prepare --route snapshot_review` refuses any declaration the book-update lane would raise a confirmation for, and names the lane (#530). Its `{"status": "error"}` payload carries this message, observed verbatim on exit code 2:
+
+```text
+this holdings view has changes only you can settle before the recorded book can
+catch up; run `review.py refresh --snapshot-json ...` first, then review it
+```
+
+So the real journey is composed — record, then review — and it produces **two receipts on two routes**, never one. Walk `flows/book-refresh.md` first:
+
+```bash
+# step 1: read-only. Writes nothing; returns the frozen diff, a summary, and
+# pending_confirmations, keyed by a refresh_id.
+python3 engine/review.py refresh --snapshot-json /tmp/fomo-kernel-positions.json
+
+# step 3: adopt, passing that refresh_id back verbatim.
+python3 engine/review.py refresh --snapshot-json /tmp/fomo-kernel-positions.json \
+  --answers /tmp/refresh-answers.json
+```
+
+Then come back to the review with the same declaration; the observed rerun of `prepare --route snapshot_review` succeeded and carried `engine_state.snapshot_reconciliation` with `status: reconciled`, because the refresh had already brought the book up to date.
+
+What makes this route's trace different:
+
+- **A refresh creates no session**, so the trace is keyed by the engine's own `refresh_id` (`references/ux-receipt.md`). Declare capabilities only after step 1 has returned one.
+- **No card events at all.** `verify` refuses `artifact_generated`, `card_presented`, `widget_attempt_failed` and `rule_choice_presented` on this route — a card delivery that structurally cannot have happened. What the trace owes instead is a **change surface**.
+- **The question row depends on what the engine raised, and so does the verdict.** Step 1 returns `status: pending_confirmation` with a non-empty `pending_confirmations` (the observed run raised a disappearance and an appearance), or `status: ready` with `pending_confirmations: []` when only small, cash, market or currency differences moved. The first shape presents **one** question covering every raised item — never one per ticker — and its verdict carries `--controls pass|fail`; the second presents no question and its verdict must carry `--controls not_applicable`.
+- **That `--controls` choice is not recoverable.** Recording `--controls pass` on a refresh that raised nothing is accepted at write time and then rejected by `verify` with `owner controls verdict must be not_applicable on a refresh trace`. The trace is append-only, so the run is void and has to be walked again. Decide it from step 1's `pending_confirmations`, before the verdict, not after.
+
+```bash
+# qa-trace: refresh
+# 0) Session id = the refresh_id returned by step 1 of the flow above. This lane
+#    renders no card, so `widget` has nothing to declare and `--adapter
+#    validated_widget` would be a claim about a surface that does not exist here;
+#    `native_options` is the honest ceiling on a host with real controls, and a
+#    host without them declares `--adapter plain_text` and records the question
+#    below as `--mode plain_text` (the form references/ux-receipt.md shows).
+python3 tools/ux_receipt.py start --session-id <refresh_id> --client claude --route refresh \
+  --adapter native_options --question-mode native_options
+
+# 1) The engine's difference, as you narrated it. change_presented carries only
+#    its kind: the diff itself holds tickers and share counts, and no trace ever
+#    holds those.
+python3 tools/ux_receipt.py event --session-id <refresh_id> --event change_presented \
+  --change-kind diff
+
+# 2) Only when step 1 came back `pending_confirmation`: the one question covering
+#    every raised item. Omit this row entirely on a `ready` plan, and read the
+#    --controls note above before the verdict.
+python3 tools/ux_receipt.py event --session-id <refresh_id> --event question_presented \
+  --mode native_options
+
+# 3) After the adopt call returns: what was recorded, or that nothing was.
+python3 tools/ux_receipt.py event --session-id <refresh_id> --event change_presented \
+  --change-kind result
+
+# 4) Wrap up. --card not_applicable is required rather than optional: it is the
+#    positive claim that no card was owed. --change is the load-bearing axis —
+#    did what the receipt showed match what actually happened to the book.
+python3 tools/ux_receipt.py event --session-id <refresh_id> --event findings_recorded \
+  --finding episode:EP-0NN
+python3 tools/ux_receipt.py event --session-id <refresh_id> --event owner_verdict \
+  --controls pass --card not_applicable --memory not_applicable --change pass
+python3 tools/ux_receipt.py verify --session-id <refresh_id> \
+  --require-owner-verdict --require-timing-integrity --require-findings
+```
+
+Archive the two receipts separately. The refresh and the review that follows it are one journey and one `--case-id`, so the second archive is `--state-mode continued --parent-run-id <the first run_id>` — a fresh review archived beside a refresh it actually continued would lose exactly the lineage #520 added.
+
 **Three walkthrough rules (from the 2026-07-20 owner_live audit correction; breaking any one voids that QA session)**:
 1. **Declare capability honestly, and try the widget once per session — with the right tool**: the single walkthrough deviation on 2026-07-20 was under-declaring `card_modes` with zero widget attempts. #249's rich HTML card was generated, but the owner saw flat Markdown throughout (the main reason card=fail). A graphical surface must declare `widget`: try the widget first, and on failure record `widget_attempt_failed` before degrading to Markdown — do not let "the artifact was green" stand in for "it was delivered" again.
 
