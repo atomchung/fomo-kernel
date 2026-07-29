@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/decision-context.schema.json",
+  "title": "Fomo Kernel Decision Context",
+  "description": "What the user said, in their own words, at the moment they were deciding (issue #479): the reason they give for the trade, what they say changed to make it now, and the handful of things they point at as evidence. Supplied through `review.py consider --decision-context`, entirely optional -- a plain --premise call is a complete use of consider, and a call without this envelope behaves exactly as it did before this schema existed. The readable contract; skills/fomo-kernel/engine/review.py's _validate_decision_context holds the enforcement, the same 'no jsonschema dependency' posture every other schema file in this directory states about its own hand-rolled checker. Declared here rather than inline in trade-evaluation.schema.json so the agent-facing shape has exactly one definition: that schema $refs this file for its `context` property, the same way it already $refs trade-premise.schema.json for `premise`. Unlike condition-slot.schema.json this document has no `input` sub-object, because it has no engine-assigned half -- every field is the caller's, and the engine never writes, rewrites, translates or infers one. Two boundaries no consumer may cross. This envelope enters the evaluation's identity (review.py's _evaluation_id seeds on it, which is what makes the same premise re-asked with a different why_now a distinct evaluation rather than a silent supersede) and it never enters any arithmetic: consequence and rule_collisions are computed before the seed is taken, from the premise and the book alone. And an absent context contributes nothing -- the key is omitted from both the stored row and the identity seed, never stored as null, so a caller who never sends one converges on the same id they always did.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason", "why_now"],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "The user's exact current reason for the trade, in their own words. Stored verbatim and never translated (the same rule condition-slot.schema.json's `criterion` states). Over the length limit the call is refused and names the limit, never truncated: a shortened reason is a statement the user did not make."
+    },
+    "why_now": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "The user's exact answer to what changed, in their own words. Required whenever this envelope is sent at all -- the same both-sides-or-nothing rule trade-evaluation.schema.json's agent_case states, and for the same reason: telling new evidence apart from a price move or a rationalization is the question this envelope exists to make askable, and a context carrying a reason with no why_now is precisely the half that lets it pass unasked. A caller who does not have this answer yet should ask the user for it, or call consider without the envelope."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "Zero to a small bounded number of things the user or host deliberately pointed at: a filing, a release, a headline, a link, a note of their own. Deliberately unstructured strings -- this records what was cited, not a researched fact, and the engine neither fetches, resolves, dates nor believes any of them. The count limit is review.EVALUATION_EVIDENCE_REFS_CAP and a list over it is refused with the limit named, never silently shortened (issue #479: an unbounded list is the #429 shape, riding in every later agent context and growing forever; a truncated one is a claim the user never made).",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    }
+  }
+}

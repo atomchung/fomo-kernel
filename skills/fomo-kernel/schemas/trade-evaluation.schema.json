@@ -10,7 +10,7 @@
     "evaluation_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Engine-assigned, content-addressed identity (eval-<hash of premise+basis+created>), the same convention session.py uses for snapshot_id/adjustment_id/reconciliation_id. Asking the identical premise again the same day against an unchanged book converges on the same id rather than minting a new one."
+      "description": "Engine-assigned, content-addressed identity (eval-<hash of premise+basis+created+consequence+rule_collisions, plus context when one was supplied>), the same convention session.py uses for snapshot_id/adjustment_id/reconciliation_id. Asking the identical premise again the same day against an unchanged book converges on the same id rather than minting a new one; asking it with a different stated why_now does not, because that is a different question about the same trade (issue #479). See review.py's _evaluation_id for why the seed carries the frozen result rather than an enumerated list of the inputs that produced it."
     },
     "created": {
       "type": "string",
@@ -20,6 +20,10 @@
     "premise": {
       "$ref": "trade-premise.schema.json",
       "description": "The normalized hypothetical trade consequence.validate_premise() returned: ticker, side, qty, price, date, currency. notional, when the caller supplied it, is already consumed into qty by validation time and never appears here."
+    },
+    "context": {
+      "$ref": "decision-context.schema.json",
+      "description": "The user's own reason, why-now and evidence references at the moment of the ask (issue #479), when the caller supplied them through --decision-context. The shape is declared once, in decision-context.schema.json, and $ref-ed here rather than restated -- the same treatment `premise` gets above. Absent, never null, on a call that carried no context: this property's presence is exactly the condition review.py's _evaluation_id uses to decide whether the context enters the identity seed, so a row without the key and a seed without the key are the same fact read twice. Frozen like every other field here -- a --resolve appends a new row carrying this context unchanged, and nothing rewrites, translates or re-derives the user's words afterwards."
     },
     "basis": {
       "type": "object",

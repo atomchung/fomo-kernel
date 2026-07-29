@@ -92,7 +92,7 @@ CONDITION_CROSSING_NUMERIC_CHOICES = {"confirmed", "overridden", "skip"}
 CONDITION_CROSSING_EVENT_CHOICES = {"yes", "no", "skip"}
 CONDITION_BASIS_CHOICES = {"revise_threshold", "revise_metric", "keep", "skip"}
 # `consider`'s own vocabulary (Layer 2, docs/decision-fomo-kernel-shape.md §3-4).
-# CONSIDER_DECISIONS is what --resolve may record; "open" (schemas/pre-trade-
+# CONSIDER_DECISIONS is what --resolve may record; "open" (schemas/trade-
 # evaluation.schema.json's default) is a row's starting state, never something
 # a caller resolves *to*. Kept as one tuple so the argparse choices and the
 # schema enum cannot silently drift apart (tests/test_consider.py checks it).
@@ -111,6 +111,19 @@ AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
 # _evaluation_reconciliation's summary discloses whatever the cap holds
 # back, the same "a bounded surface must say what it dropped" rule.
 EVALUATION_RECONCILE_CAP = 8
+# The optional DecisionContext an agent may hand `consider` (#479 Wave A,
+# schemas/decision-context.schema.json). Both bounds refuse rather than
+# truncate: a shortened reason, or an evidence list quietly cut to fit, is a
+# statement the user never made, and this envelope's whole purpose is to hold
+# their exact words. The count is five because the issue's own scene is a
+# person naming "a few" things they are looking at in the moment they decide,
+# not an engine-maintained rotation over their whole history — the two caps
+# above are eight for that different job. Unbounded is not an option: this
+# envelope is re-read into agent context on every later turn that surfaces the
+# evaluation, which is the #429 shape one layer up.
+EVALUATION_EVIDENCE_REFS_CAP = 5
+EVALUATION_CONTEXT_TEXT_MAX = 1000
+EVALUATION_EVIDENCE_REF_MAX = 500
 
 
 class ReviewError(ValueError):
@@ -5156,6 +5169,65 @@ def _validate_agent_case(payload):
                     + ", ".join(AGENT_CASE_PROVENANCE))
 
 
+def _validate_decision_context(payload):
+    """Fail-closed structural check for ``--decision-context``, hand-rolled to
+    mirror ``schemas/decision-context.schema.json`` — the same "no jsonschema
+    dependency" posture ``_validate_agent_case`` just above already keeps for
+    its own envelope. The bounds are the module constants, and
+    tests/test_consider.py locks them against the schema's own maxLength /
+    maxItems so the two cannot drift.
+
+    Everything here refuses rather than repairs (#479's acceptance:
+    "oversized/malformed/unsupported context fails clearly without truncation
+    or rewriting"). The envelope holds the user's exact words at the moment
+    they decided; a value this function shortened, filled in, or accepted
+    half-stated would be attributed to them anyway by every surface that reads
+    it back. Both ``reason`` and ``why_now`` are required once the envelope is
+    sent at all — the same both-sides-or-nothing rule ``--agent-case`` follows,
+    and for the same reason: distinguishing new evidence from a price move is
+    the question this envelope exists to make askable, and a reason with no
+    why_now is the half that lets it pass unasked. A caller who does not have
+    that answer asks the user for it, or calls ``consider`` with no envelope at
+    all — which stays a complete, unchanged use of the command."""
+    if not isinstance(payload, dict):
+        raise ReviewError("--decision-context must be a JSON object")
+    unknown = set(payload) - {"reason", "why_now", "evidence_refs"}
+    if unknown:
+        raise ReviewError("--decision-context has unknown fields: " + ", ".join(sorted(unknown)))
+    for field in ("reason", "why_now"):
+        if field not in payload:
+            raise ReviewError(
+                f"--decision-context must carry both 'reason' and 'why_now' (missing {field!r}); "
+                "ask the user for the missing one, or call consider without --decision-context")
+        value = payload[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ReviewError(f"--decision-context.{field} must be a non-empty string")
+        if len(value) > EVALUATION_CONTEXT_TEXT_MAX:
+            raise ReviewError(
+                f"--decision-context.{field} is {len(value)} characters, over the limit of "
+                f"{EVALUATION_CONTEXT_TEXT_MAX}; send the user's own words within the limit "
+                "rather than a shortened version of them")
+    refs = payload.get("evidence_refs")
+    if refs is None:
+        return
+    if not isinstance(refs, list):
+        raise ReviewError("--decision-context.evidence_refs must be a list of strings")
+    if len(refs) > EVALUATION_EVIDENCE_REFS_CAP:
+        raise ReviewError(
+            f"--decision-context.evidence_refs carries {len(refs)} references, over the limit "
+            f"of {EVALUATION_EVIDENCE_REFS_CAP}; send the ones that actually moved the "
+            "decision — the list is refused rather than shortened, because a truncated one "
+            "would read as everything the user cited")
+    for index, ref in enumerate(refs):
+        if not isinstance(ref, str) or not ref.strip():
+            raise ReviewError(
+                f"--decision-context.evidence_refs[{index}] must be a non-empty string")
+        if len(ref) > EVALUATION_EVIDENCE_REF_MAX:
+            raise ReviewError(
+                f"--decision-context.evidence_refs[{index}] is {len(ref)} characters, over the "
+                f"limit of {EVALUATION_EVIDENCE_REF_MAX}; name the source rather than pasting it")
+
+
 def _json_safe_premise(normalized):
     """consequence.validate_premise()'s normalized premise carries a real
     ``datetime.date`` for ``date``; every other field is already JSON-safe.
@@ -5167,7 +5239,8 @@ def _json_safe_premise(normalized):
     return premise
 
 
-def _evaluation_id(premise, basis, created, consequence_frozen, rule_collisions):
+def _evaluation_id(premise, basis, created, consequence_frozen, rule_collisions,
+                   context=None):
     """Engine-assigned, content-addressed identity — the same convention
     session.py uses for ``snapshot_id``/``adjustment_id``/``reconciliation_id``.
 
@@ -5190,9 +5263,32 @@ def _evaluation_id(premise, basis, created, consequence_frozen, rule_collisions)
     therefore the same id — ``_append_evaluation_row`` relies on this for
     its no-op-repeat idempotency — and ``created`` stays in the seed so an
     unchanged premise asked again on a different day mints a fresh
-    evaluation rather than silently reusing yesterday's answer."""
-    seed = session.canonical({"premise": premise, "basis": basis, "created": created,
-                              "consequence": consequence_frozen, "rule_collisions": rule_collisions})
+    evaluation rather than silently reusing yesterday's answer.
+
+    ``context`` (#479 Wave A) is the optional DecisionContext, and it joins the
+    seed for one reason: the same premise, the same book, the same day, but a
+    different stated ``why_now`` is a different question about the same trade,
+    and without this it hashed identically — so the second ask would have
+    folded silently over the first under ``_fold_evaluations``' latest-wins
+    semantics. Seeding identity on it does **not** make it an input to any
+    arithmetic: ``consequence`` and ``rule_collisions`` are already computed,
+    from the premise and the book alone, before this function is called at all.
+
+    An absent context contributes **nothing** — the key is left out of the
+    seed rather than sent as ``None``. Sending ``"context": null`` would change
+    the hash of every context-free call ever made, so an existing user's next
+    plain re-ask would mint a fresh id instead of converging on the row already
+    on disk: a duplicated row, and both halves of #479's own "context-free
+    ``consider`` remains compatible" / "exact retry does not duplicate"
+    acceptance broken at once. The presence test here is ``is not None``, which
+    is the identical condition ``cmd_consider`` uses to decide whether the row
+    carries a ``context`` key at all — the row and its identity read one fact,
+    not two (docs/development-guide.md section 7)."""
+    seed_obj = {"premise": premise, "basis": basis, "created": created,
+                "consequence": consequence_frozen, "rule_collisions": rule_collisions}
+    if context is not None:
+        seed_obj["context"] = context
+    seed = session.canonical(seed_obj)
     return "eval-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
@@ -5377,6 +5473,15 @@ def cmd_consider(args):
     reconstruction from the local ledger when no CSV is handed over — the two
     can disagree about a position's weight, and how many days stale the
     record was when asked.
+
+    ``--decision-context`` (#479 Wave A, schemas/decision-context.schema.json)
+    freezes what the user said beside what the engine computed: their reason,
+    their why-now, and up to ``EVALUATION_EVIDENCE_REFS_CAP`` things they
+    pointed at. Entirely optional — a plain ``--premise`` call behaves exactly
+    as it did before the flag existed, down to the ``evaluation_id`` it
+    returns. Supplied, it joins the identity seed, so the same trade re-asked
+    with a different why-now is a distinct evaluation rather than a silent
+    supersede; it never joins a computation.
     """
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     language = card_renderer.resolve_language(args.language)
@@ -5387,6 +5492,7 @@ def cmd_consider(args):
             ("--prices", args.prices), ("--driver-map", args.driver_map),
             ("--instrument-map", args.instrument_map), ("--cash", args.cash),
             ("--agent-case", args.agent_case),
+            ("--decision-context", args.decision_context),
         ) if value]
         if conflicting:
             raise ReviewError("--resolve takes no premise; remove " + ", ".join(conflicting))
@@ -5400,6 +5506,21 @@ def cmd_consider(args):
         raise ReviewError("consider requires --premise, or --resolve together with --decision")
 
     premise_payload = _load_json_arg(args.premise, "--premise")
+
+    # #479 Wave A. Validated here, before any book is read or any number is
+    # computed: a refusal costs the caller one round trip, where an envelope
+    # accepted half-stated is attributed to the user by every surface that
+    # reads the row back. Nothing below this line lets it near an arithmetic
+    # path — the frozen consequence is computed from the premise and the book,
+    # and the context only ever reaches the identity seed and the stored row.
+    # `is not None`, not truthiness: a caller who sent the flag with an empty
+    # value had something to say and lost it somewhere, and silently recording
+    # the evaluation as though the user stated nothing is the worse of the two
+    # outcomes. _load_json_arg refuses it by name.
+    decision_context = None
+    if args.decision_context is not None:
+        decision_context = _load_json_arg(args.decision_context, "--decision-context")
+        _validate_decision_context(decision_context)
 
     if args.driver_map:
         trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
@@ -5475,7 +5596,8 @@ def cmd_consider(args):
 
     row = {
         "evaluation_id": _evaluation_id(premise_stored, basis, created,
-                                        consequence_stored, collisions),
+                                        consequence_stored, collisions,
+                                        context=decision_context),
         "created": created,
         "premise": premise_stored,
         "basis": basis,
@@ -5484,6 +5606,12 @@ def cmd_consider(args):
         "decision": "open",
         "decided_on": None,
     }
+    # `is not None` on both sides: the row carries the key exactly when the
+    # seed above did, so an evaluation's identity and its stored content can
+    # never disagree about whether a context was supplied. A context is never
+    # stored as null — the absence is the fact.
+    if decision_context is not None:
+        row["context"] = decision_context
     if agent_case is not None:
         row["agent_case"] = agent_case
 
@@ -5693,6 +5821,11 @@ def build_parser():
                           help="optional path to a JSON file: the structured case for and "
                                "against, {for: [...], against: [...]} "
                                "(references/trade-consequence.md)")
+    consider.add_argument("--decision-context",
+                          help="optional: what the user said at the moment of deciding, as a "
+                               "path to a JSON file or an inline JSON object — "
+                               "{reason, why_now, evidence_refs?} "
+                               "(schemas/decision-context.schema.json)")
     consider.add_argument("--language", default="en",
                           help="any language tag; unsupported tags fall back to en")
     consider.set_defaults(func=cmd_consider)
