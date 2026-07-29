@@ -24,9 +24,11 @@ Seven checks, none of which restate the tool's vocabulary:
 5. every route the tool supports is either walked by the doc or explicitly
    exempted with a reason — a route grown without a walkthrough is a silent
    invitation to improvise a receipt;
-6. the runbook's two independent gate enumerations agree on numbering and
-   order (#527) — structure only, never wording, since the two documents are
-   in different languages by design;
+6. the three independent gate enumerations agree on how many gates there are
+   (#527) — the runbook's numbered list and its enforcement table on their
+   numbering and order too, `qa/SKILL.md` on its stated count and the arity
+   of its inline roster; structure only, never wording, since each is
+   phrased for its own reader;
 7. `qa/` is English outside declared trigger phrases, which is the check that
    was missing when this directory was copied in carrying another language.
 
@@ -71,20 +73,38 @@ QA_TRACE_TAG = re.compile(r"^#\s*qa-trace:\s*(\S+)\s*$")
 # prose, not copy-paste commands, and are excluded rather than "fixed".
 ELISION = "..."
 
-# --- issue #527: the runbook states its gates twice, ~50 lines apart --------
+# --- issue #527: the same gate set is enumerated three times ----------------
 #
 # `docs/qa-runbook.md` enumerates its QA gates in two independent places: a
 # numbered list under RUNBOOK_GATE_LIST_HEADING (`1. **Version gate** — ...`
 # through `7. **Findings disposition** — ...`), and an enforcement table
 # further down (`| 1. Version | ... |` through `| 7. Findings | ... |`, plus
 # a lettered sub-row `| 3b. Grounding fidelity | ... |` the list has no
-# counterpart for). Nothing keeps the two in sync; see GateCountConsistencyTest
-# below for what this checks and, just as importantly, what it deliberately
-# does not.
+# counterpart for). `qa/SKILL.md` states the same set a third time, as a count
+# in more than one paragraph plus one inline roster of the names. Nothing kept
+# the three in sync; see GateCountConsistencyTest below for what this checks
+# and, just as importantly, what it deliberately does not.
 RUNBOOK_GATE_LIST_HEADING = "## What counts as a QA run (fail closed)"
 RUNBOOK_GATE_LIST_ITEM = re.compile(r"^(\d+)\.\s+\*\*", re.MULTILINE)
 RUNBOOK_TABLE_HEADER = "| Gate | Machine-enforced by | Procedural part |"
 RUNBOOK_TABLE_ROW = re.compile(r"^\|\s*(\d+)([A-Za-z]?)\.\s+\S", re.MULTILINE)
+
+# The skill's own statement of the count, e.g. `**seven** gates` or `7 gates`.
+# Only a number-shaped qualifier matches, so ordinary prose about "the gates"
+# is not swept in and then failed for not being a numeral. A count word this
+# map does not know cannot match at all, which would show up as the zero-claims
+# failure rather than as a silent skip.
+GATE_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+SKILL_GATE_COUNT = re.compile(
+    r"\*{0,2}\b(" + "|".join(GATE_NUMBER_WORDS) + r"|\d{1,2})\b\*{0,2}\s+gates\b",
+    re.IGNORECASE)
+# `(version gate / isolated root / ...)` immediately after such a claim. Slash
+# is the document's own separator; a gate name containing one would be counted
+# as two, and the failure message says to reword rather than to widen this.
+SKILL_GATE_ROSTER_OPENS = re.compile(r"[ \t]*\(")
 
 # Routes `ux_receipt.py` accepts for which `SKILL.md` documents no walkthrough,
 # each with the reason it is absent. Every other supported route must have a
@@ -398,6 +418,52 @@ def runbook_enforcement_table_rows():
     return rows
 
 
+def skill_gate_roster(text, after):
+    """The `(a / b / c)` roster opening at `after`, or None if none does.
+
+    Parenthesis-balanced rather than read to the first `)`, so a name that
+    parenthesizes an aside is not truncated into a shorter roster. Only a
+    roster on the same line as its claim counts: a `(` on the next line opens
+    something else.
+    """
+    if not SKILL_GATE_ROSTER_OPENS.match(text, after):
+        return None
+    opened = text.index("(", after)
+    depth = 0
+    for index in range(opened, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return [part.strip(" *") for part in text[opened + 1:index].split("/")]
+    raise AssertionError(
+        f"{SKILL_DOC}: the gate roster opening at offset {opened} is never closed")
+
+
+def skill_gate_claims():
+    """Every `<number> gates` claim in `qa/SKILL.md`, as (line, count, roster).
+
+    `roster` is the inline list of gate names following a claim, or None for
+    the claims that carry none — the skill states the count in more than one
+    paragraph but spells the names out once.
+
+    Reading English number words is safe here only because
+    `QaDirectoryLanguageTest` holds `qa/` to English. This claim was written in
+    CJK numerals until the directory was converted, and a rewrite back would
+    fail there rather than quietly reducing this to zero matches — which the
+    callers below treat as a failure in its own right anyway.
+    """
+    text = SKILL_DOC.read_text(encoding="utf-8")
+    claims = []
+    for match in SKILL_GATE_COUNT.finditer(text):
+        token = match.group(1).lower()
+        stated = GATE_NUMBER_WORDS.get(token) or int(token)
+        line = text.count("\n", 0, match.start()) + 1
+        claims.append((line, stated, skill_gate_roster(text, match.end())))
+    return claims
+
+
 class SkillCommandTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -708,28 +774,32 @@ class QaDirectoryLanguageTest(unittest.TestCase):
 
 
 class GateCountConsistencyTest(unittest.TestCase):
-    """`docs/qa-runbook.md` enumerates its QA gates twice — a numbered list
-    under `## What counts as a QA run (fail closed)`, and an enforcement
-    table roughly fifty lines later — and nothing forces the two to agree.
+    """The same gate set is enumerated three times, and nothing forced them
+    to agree. `docs/qa-runbook.md` states it twice — a numbered list under
+    `## What counts as a QA run (fail closed)`, and an enforcement table
+    roughly fifty lines later — and `qa/SKILL.md` states it a third time, as
+    a count in more than one paragraph plus one inline roster of the names.
     That is the gap issue #527 is about: a gate can be added, removed, or
-    renumbered in one enumeration and not the other, and both still read as
-    complete on their own.
+    renumbered in one enumeration and not the others, and each still reads as
+    complete on its own. The recorded drift has exactly that shape — the
+    seventh gate landed and only one sentence was updated.
 
-    This class pins STRUCTURE only: which gate numbers exist, and in what
-    order, in each enumeration. It does not, and must not, compare gate
-    NAMES between the list and the table (e.g. "Version gate" vs.
-    "Version") — those are two independent phrasings of the same gate and
-    are free to word it differently. Do not "improve" this into a wording
-    match; that would pin prose this repository has no rule requiring to
-    match, only numbering it does.
+    This class pins STRUCTURE only: which gate numbers exist and in what
+    order, how many gates the skill says there are, and how many names its
+    roster carries. It does not, and must not, compare gate NAMES — not
+    between the runbook's list and its table ("Version gate" vs. "Version"),
+    and not between the runbook and the skill ("Isolated state root" vs.
+    "isolated root"). Those are independent phrasings of one gate, each
+    worded for its own reader, and pinning them would pin prose this
+    repository has an explicit rule against pinning. Do not "improve" this
+    into a wording match; count, numbering and order are the only facts here
+    with one right answer, and the runbook holds it.
 
-    `qa/SKILL.md` also states a gate count — in Traditional Chinese CJK
-    numerals, in more than one paragraph — and is not checked here. It is
-    about to be converted from Traditional Chinese to English, so a check
-    anchored to its current CJK wording would fail on contact with that
-    rewrite; a follow-up check belongs beside `runbook_gate_list()` once the
-    conversion lands, comparing the skill's (English) stated count the same
-    way `test_enforcement_table_matches_gate_list` below compares the table.
+    The skill's half was deferred once: `qa/SKILL.md` was still Traditional
+    Chinese, and a check anchored to its wording would have broken on contact
+    with the English rewrite. That rewrite landed and
+    `QaDirectoryLanguageTest` holds it there, so the deferred check is
+    `test_skill_states_the_runbook_gate_count` below.
     """
 
     def test_runbook_gate_list_is_contiguous(self):
@@ -769,6 +839,56 @@ class GateCountConsistencyTest(unittest.TestCase):
                 f"attaches to gate {number}, which is not one of the numbered "
                 f"gates {sorted(gate_set)}. Point the sub-row at a real gate "
                 "number, or remove it if the gate it described is gone.")
+
+    def test_skill_states_the_runbook_gate_count(self):
+        """Every paragraph that states a count, not just the first one found.
+
+        The skill says it three times over, which is how the drift this check
+        exists for happened: one sentence was updated and the rest kept the
+        old number, each reading as authoritative on its own.
+        """
+        total = len(runbook_gate_list())
+        claims = skill_gate_claims()
+        self.assertTrue(
+            claims,
+            f"{SKILL_DOC} states no '<number> gates' anywhere, so this check has "
+            f"nothing to compare and would pass on any {RUNBOOK} at all. The skill "
+            f"is the operator-facing restatement of the runbook's {total} gates and "
+            "must say how many there are; if that is deliberately no longer its job, "
+            "delete this check rather than leaving it green and empty.")
+        for line, stated, _ in claims:
+            with self.subTest(line=line):
+                self.assertEqual(
+                    stated, total,
+                    f"{SKILL_DOC}:{line} says {stated} gates, but the numbered list "
+                    f"under {RUNBOOK_GATE_LIST_HEADING!r} in {RUNBOOK} defines "
+                    f"{total}. The runbook wins. Update the count in EVERY paragraph "
+                    "of the skill that states one — the gate names are free to stay "
+                    "worded differently, only the number is being compared.")
+
+    def test_skill_inline_gate_roster_has_one_entry_per_gate(self):
+        """The roster is where a count is updated and the names are not.
+
+        Bumping `**seven**` to `**eight**` is one keystroke; adding the eighth
+        name to the parenthetical beside it is the step that gets skipped, and
+        the result reads as complete to anyone not counting.
+        """
+        total = len(runbook_gate_list())
+        rosters = [(line, roster) for line, _, roster in skill_gate_claims() if roster]
+        self.assertTrue(
+            rosters,
+            f"{SKILL_DOC} states a gate count but no longer spells the gates out "
+            f"beside it, so this check compares nothing. Restore the inline "
+            "'(name / name / ...)' roster, or drop this check along with it.")
+        for line, roster in rosters:
+            with self.subTest(line=line):
+                self.assertEqual(
+                    len(roster), total,
+                    f"{SKILL_DOC}:{line} lists {len(roster)} gate name(s) — "
+                    f"{roster} — but {RUNBOOK} defines {total} gates. Add or remove "
+                    "a name so the roster is complete. Its wording is not compared, "
+                    "only how many entries it has; if a name needs a '/' of its own, "
+                    "reword it, since '/' is what separates entries here.")
 
 
 if __name__ == "__main__":
