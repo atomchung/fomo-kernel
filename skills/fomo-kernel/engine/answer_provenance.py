@@ -4,11 +4,15 @@
 answer (issue #414, "Production provenance gate for decision-surface
 answers", Wave A scope only).
 
-``review.py::_validate_agent_case`` (review.py:5126) already enforces the
-*structural* shape of ``--agent-case``: it is an object with exactly
-``for``/``against``, each a list of ``{claim, provenance}`` objects,
+``review.py::_validate_agent_case`` already enforces the *structural* shape
+of ``--agent-case``: it is an object with exactly ``for``/``against``, each
+a list of objects carrying at least ``claim``/``provenance``,
 ``provenance`` one of ``review.AGENT_CASE_PROVENANCE``, ``claim`` a
-non-empty string. That check has no opinion on whether a claim labelled
+non-empty string. It deliberately stops there and does not pin the exact
+field set a claim may carry — that is provenance-dependent (``anchor``/
+``worsens`` for ``engine_fact``, ``source``/``as_of`` for ``public_fact``)
+and belongs to this module alone (#479 Wave B). That check has no opinion
+on whether a claim labelled
 ``engine_fact`` actually describes the frozen consequence it claims to,
 whether a ``public_fact`` claim carries a citation, or whether either side
 is merely present-but-empty. This module is that missing semantic layer:
@@ -187,15 +191,17 @@ What this module does not do
   NLI/factuality scoring #414 defers; a regex narrowly fitted to this one
   case would be the same false confidence CLAUDE.md's "a checker that stays
   green under its own mutation is not evidence" warns against.
-- It is not wired into review.py. Nothing calls it yet: Wave A owns the
-  module, schema, and tests only (issue #414's Wave allocation comment).
-  Wave B — the single integration owner, alongside #479 — is the one that
-  calls ``validate_agent_case`` from ``cmd_consider`` before
-  ``_append_evaluation_row``, and is also the one that must prove
-  round-trip/idempotency for a *valid* payload and read-compatibility for a
-  legacy row recorded before this gate existed. Both are stated in the
-  issue's acceptance section, and both are properties of the integration,
-  not of this pure function.
+- It is wired into review.py (#479 Wave B, the single integration owner
+  named in issue #414's Wave allocation comment): ``cmd_consider`` calls
+  ``validate_agent_case`` once ``consequence``/``rule_collisions`` are
+  frozen and before the row is built, appended, or emitted, passing the
+  supplied ``--decision-context``'s exact ``reason``/``why_now`` as
+  ``user_statements`` (``()`` when no context was supplied). A rejection
+  there raises ``ReviewError`` and nothing is stored or returned for that
+  attempt. Round-trip/idempotency for a *valid* payload and
+  read-compatibility for a legacy row recorded before this gate existed are
+  properties of that integration, proved in ``tests/test_consider.py``, not
+  of this pure function.
 """
 from __future__ import annotations
 
