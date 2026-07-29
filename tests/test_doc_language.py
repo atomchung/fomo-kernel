@@ -64,6 +64,14 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
     # through `consider`, which this rule names -- an entry point carrying
     # "answered briefly" without this clause invites compressing that away.
     "Brevity bounds what an answer produces, never which facts it owes",
+    # #543 second cut (owner reversal 2026-07-29): the named set stopped
+    # being empty, so the entry points must now say what it always meant --
+    # a ceiling on the agent's own unprompted production, never a licence to
+    # refuse an explicit user request. Without this clause in both places, a
+    # future edit could silently narrow "no chart unless asked" back into
+    # "no chart, full stop" in one entry point while the other still permits
+    # it, the same one-sided-drop shape the phrase above already guards.
+    "bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for",
 )
 
 
