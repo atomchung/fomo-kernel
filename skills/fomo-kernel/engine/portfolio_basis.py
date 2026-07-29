@@ -966,7 +966,8 @@ def _validate_frame_bound_projection(value: Mapping[str, Any], basis: PortfolioB
 
 
 def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifest: Optional[Mapping[str, Any]] = None,
-                       reference_as_of: Optional[str] = None, skipped_lines: int = 0) -> Optional[PortfolioBasis]:
+                       reference_as_of: Optional[str] = None, skipped_lines: int = 0,
+                       splits: Optional[Mapping[str, Any]] = None) -> Optional[PortfolioBasis]:
     """Return the canonical basis, or ``None`` when ledger state is unknowable.
 
     ``reference_as_of`` is an explicitly injected freshness reference (normally
@@ -984,7 +985,7 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
     events = list(events)
     if not _semantically_known_events(events):
         return None
-    derived = ledger.derive_holdings(events)
+    derived = ledger.derive_holdings(events, splits=splits)
     integrity = [_canonical(item) for item in derived["integrity"]]
     if _bad_integrity(integrity):
         return None
