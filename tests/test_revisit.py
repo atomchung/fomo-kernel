@@ -379,6 +379,79 @@ def test_enqueue_migration_keeps_same_day_second_round():
     assert dup == 1, f"cycle1(存量已排)應計 1 dup,實得 {dup}"
 
 
+# ────── C2b. 確認消失:同一次 departure 只追蹤一次(#571)──────
+#
+# 一筆確認消失(#485 Slice C)有兩個身分:ledger 事件自己的 absence_id(內容定址,不變),
+# 以及 revisit_id(含 shares_sold,從帳本讀出來 → 讀法一修就會變)。#570 就是這樣一次修正:
+# absence 車道原本用未校正的股數。修正後,存量列與重算列描述同一件事卻差一個分割倍數。
+
+def _absence_ledger(led, splits=NVDA_SPLIT):
+    """跨分割的持倉,之後由 refresh 確認消失。回傳消失當下的(校正後)持倉。"""
+    events = [_tr("2023-01-10", "NVDA", "buy", 100, 150.0)]
+    held = lg.derive_holdings(events, splits=splits)["holdings"]["NVDA"]
+    events.append(lg.build_position_absence(
+        date="2026-07-28", ticker="NVDA", cycle_id=held["cycle_id"]))
+    lg.append_events(led, events)
+    return held
+
+
+def _queue_row(exit_row):
+    """把一筆 exit 包成 queue 列,形狀與 enqueue_from_ledger 寫下的一致。"""
+    return dict(type="revisit", revisit_id=rv._revisit_id(exit_row), **exit_row,
+                due={"30": "2026-08-27", "60": "2026-09-26", "90": "2026-10-26"},
+                enqueued_at="2026-07-28", swaps=[], idle_cash=True)
+
+
+def test_a_repaired_absence_quantity_does_not_re_ask_about_one_departure():
+    """#571:存量列是 #570 之前的引擎寫的——同一次消失,未校正的股數基準。修正後
+    重算的 revisit_id 不一樣(1000 vs 100),只認 revisit_id 的去重會把它當新出場再排一次。
+
+    後果不是佇列虛胖而已:每一列都會在 30/60/90 各問一次「你為什麼賣」,同一次
+    消失就被問兩輪。absence_id 不隨股數讀法改變,所以它是這裡的第二把 key。"""
+    led, q = _mk_paths()
+    held = _absence_ledger(led)
+    events, _ = lg.load_ledger(led)
+    pre_fix = rv.absence_exits(events, splits=None)[0]          # 修正前那一列
+    assert (pre_fix["shares_sold"], held["shares"]) == (100.0, 1000.0), \
+        f"前提:修正前後股數必須真的不同,否則這條測試什麼都沒證明:{pre_fix}"
+    lg.append_events(q, [_queue_row(pre_fix)])
+    before = open(q, encoding="utf-8").read()
+
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 29), splits=NVDA_SPLIT)
+    assert (len(new), dup) == (0, 1), \
+        f"同一個 absence_id 已在佇列,不可再排一次:new={new} dup={dup}"
+    assert open(q, encoding="utf-8").read() == before, \
+        "append-only:存量列原樣保留當證據,不改寫(#571 Decision)"
+
+
+def test_a_confirmed_disappearance_still_gets_tracked_the_first_time():
+    """反面一:去重不能變成「absence 一律不排」。乾淨佇列首排要進去,而且股數是校正後的。"""
+    led, q = _mk_paths()
+    held = _absence_ledger(led)
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 29), splits=NVDA_SPLIT)
+    assert (len(new), dup) == (1, 0), f"首次確認消失必須被追蹤:new={new} dup={dup}"
+    assert new[0]["shares_sold"] == held["shares"] == 1000.0, new[0]
+    assert new[0]["exit_price"] is None, "確認消失沒有成交價,不可被造出來"
+    again, dup2 = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 29), splits=NVDA_SPLIT)
+    assert (len(again), dup2) == (0, 1), "原樣重跑仍冪等"
+
+
+def test_two_different_disappearances_stay_two_revisits():
+    """反面二:absence_id 是「這一次消失」的身分,不是「消失」這個類別的身分。
+    兩檔各自消失 → 兩筆,否則第二檔的賣出理由永遠問不到。"""
+    led, q = _mk_paths()
+    events = [_tr("2026-01-05", "NVDA", "buy", 10, 100.0),
+              _tr("2026-01-05", "AVGO", "buy", 5, 200.0)]
+    holdings = lg.derive_holdings(events)["holdings"]
+    for ticker in ("NVDA", "AVGO"):
+        events.append(lg.build_position_absence(
+            date="2026-07-28", ticker=ticker, cycle_id=holdings[ticker]["cycle_id"]))
+    lg.append_events(led, events)
+    new, dup = rv.enqueue_from_ledger(led, q, today=dt.date(2026, 7, 29))
+    assert sorted(n["ticker"] for n in new) == ["AVGO", "NVDA"], f"兩次消失要各自追蹤:{new}"
+    assert len({n["absence_id"] for n in new}) == 2 and dup == 0, new
+
+
 def test_scan_due_progression_and_resolution():
     """30 到期未答 → 只出 30(不跳 60);答完 30 → 60 到期才出 60;全答 → 不再出。"""
     led, q = _mk_paths()

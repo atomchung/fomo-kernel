@@ -64,7 +64,6 @@ def detect_exits(events, splits=None):
     回 [{ticker, cycle_id, exit_date, exit_price, shares_sold, kind}]。
     kind: full=清倉 / reduce=單筆賣 ≥50% 賣前持倉。同一天清倉多筆只記最後一筆(合併語意)。
 
-<<<<<<< HEAD
     ``splits`` (#550) — this ticker's split events, in ``splits.normalize``'s
     accepted shapes. The ledger stores quantities exactly as transacted, which
     is correct and must stay that way; but a running balance accumulated across
@@ -319,6 +318,29 @@ def _canonical_id(item):
     return item.get("revisit_id")            # 極端防禦:壞條目真缺 cycle_id → 退回自身 id,至少不 KeyError
 
 
+def _absence_key(item):
+    """The second identity an absence-derived revisit carries (#571).
+
+    A confirmed disappearance (#485 Slice C) has a stable `absence_id` from the
+    ledger event itself, content-addressed on date/ticker/cycle_id. Its
+    `revisit_id` is not stable in the same way: it embeds `shares_sold`, which
+    is read from the recorded book, so a correction to how that book is read
+    moves the id for a disappearance already in the queue. #570 was exactly
+    such a correction — the absence lane was reading raw quantities across a
+    split — and after it a legacy row and the recomputed one disagree by the
+    split factor while describing the identical event.
+
+    Deduping on `absence_id` as well keeps the queue append-only *and*
+    idempotent across that repair: the legacy row stays untouched as the
+    evidence it is, and the user is not asked a second time about one
+    departure. Returns `None` for a trade-derived exit, which has no second
+    identity and must keep being distinguished by quantity — two round trips
+    of the same cycle on the same day are genuinely two exits (#143).
+    """
+    absence_id = item.get("absence_id")
+    return absence_id if isinstance(absence_id, str) and absence_id else None
+
+
 def load_queue(path):
     """讀 revisit.jsonl → (revisits{id: item}, resolutions{(id, checkpoint): status})。壞行跳過計數。"""
     revisits, resolutions, skipped = {}, {}, 0
@@ -352,18 +374,24 @@ def enqueue_from_ledger(ledger_path, queue_path, today=None, splits=None):
     「為什麼賣」只有出場當週問得到,已在佇列的出場不重報,所以 new 非空 = 本週有新出場要問。
     #170:每筆蓋 enqueued_at(= 開始追蹤這筆的日期,預設今天;today 供測試注入)——scan 用它區分
     「啟用後才到期的 due」與「啟用前就過期的歷史存量(→ backlog,不催)」。
-    #550:``splits`` 原樣傳給 detect_exits;呼叫端供給,本函式不取回任何東西。"""
+    #550:``splits`` 原樣傳給 detect_exits;呼叫端供給,本函式不取回任何東西。
+    #571:去重有兩把 key。revisit_id 認得每一筆出場(含同日同 cycle 的兩趟來回),
+    absence_id 認得「同一次確認消失」——後者不隨股數讀法的修正而變,前者會(見 _absence_key)。"""
     enqueued_at = (today or dt.date.today()).isoformat()
     events, _ = lg.load_ledger(ledger_path)
     revisits, _, _ = load_queue(queue_path)
     # #143:去重 key 一律用「新格式正規 id」。既有條目(含存量 legacy)先用其 cycle_id 重建 →
     # 同日同股數的不同輪次分得開,遷移時舊出場不重排、真第二輪也不被連坐誤殺。
     seen_ids = {_canonical_id(it) for it in revisits.values()}
+    # #571:確認消失另帶 absence_id——見 _absence_key。quantity 會因讀法修正而改,
+    # 這個不會,所以一次消失即使 revisit_id 變了也只追蹤一次。
+    seen_absences = {key for key in map(_absence_key, revisits.values()) if key}
     new = []
     dup = 0
     for x in detect_exits(events, splits=splits):
         rid = _revisit_id(x)
-        if rid in seen_ids:
+        absence_key = _absence_key(x)
+        if rid in seen_ids or (absence_key is not None and absence_key in seen_absences):
             dup += 1
             continue
         d0 = dt.date.fromisoformat(x["exit_date"])
@@ -374,6 +402,8 @@ def enqueue_from_ledger(ledger_path, queue_path, today=None, splits=None):
                     swaps=swaps, idle_cash=not swaps)
         new.append(item)
         seen_ids.add(rid)                     # 同一輪內去重(detect_exits 若回同 exit 兩次)
+        if absence_key is not None:
+            seen_absences.add(absence_key)
     if new:
         lg.append_events(queue_path, new)
     return new, dup
