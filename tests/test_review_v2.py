@@ -9208,7 +9208,10 @@ def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forgin
     source_frame = review_engine.portfolio_basis.build_valuation_frame(
         as_of="2026-07-02", positions={"NEW": {"currency": "USD"}}, prices={"NEW": 11},
         aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-    virtual_frame, book_as_of = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
+    # `splits` is required rather than defaulted (#558 follow-up), so a caller
+    # with nothing to supply says so. This book holds no split either way.
+    virtual_frame, book_as_of = review_engine._virtual_valuation_frame(
+        [anchor, candidate], source_frame, splits=None)
     assert virtual_frame["coverage"]["missing_price"] == [{"ticker": "ANCHOR", "currency": "USD"}]
     assert virtual_frame["prices"] == {"NEW": source_frame["prices"]["NEW"]}
     # The book's own effective date is returned so staleness is measured from

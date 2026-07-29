@@ -358,7 +358,7 @@ def _basis_reference(frame_as_of, book_as_of):
     return max(value for value in (frame_as_of, book_as_of) if value)
 
 
-def _virtual_valuation_frame(events, source_frame, splits=None):
+def _virtual_valuation_frame(events, source_frame, *, splits):
     """Restrict the engine frame to the exact frozen virtual current book.
 
     Returns the narrowed frame and the book's own effective date, which the
@@ -374,6 +374,13 @@ def _virtual_valuation_frame(events, source_frame, splits=None):
     exactly partition holdings" and ``prepare`` refuses the very book
     ``derive_holdings``, ``refresh`` and ``consider`` read correctly (#558
     follow-up).
+
+    Required, and keyword-only, deliberately. A default would let the next
+    caller omit it silently, and the reader net in ``tests/test_split_basis.py``
+    could not report that: the net reads *this function's* call to
+    ``query_current_book``, which forwards the map faithfully whatever the
+    caller passed. A caller with genuinely nothing to supply passes ``None``
+    and says so.
     """
     if not isinstance(source_frame, dict):
         raise ReviewError("this review has no usable price basis; rerun prepare")
