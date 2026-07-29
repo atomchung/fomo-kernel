@@ -489,6 +489,15 @@ class ArchiveReceiptOrderingTest(unittest.TestCase):
         env["FOMO_DOGFOOD_COACH"] = str(root / "trade-coach-dogfood")
         env["FOMO_DOGFOOD_BACKUPS"] = str(root / "trade-coach-dogfood-backups")
         env["FOMO_QA_RECEIPTS"] = str(receipts_dir)
+        # #557: qa_env.sh refuses every command, archiving included, until the
+        # shell it runs in has the account's own coach root out of reach — a
+        # drifted run must not be able to produce citable evidence. So this
+        # test archives the way a real run now has to: under a throwaway HOME
+        # where `~/.trade-coach` names nothing, with the dogfood root declared.
+        isolated_home = root / "qa-home"
+        isolated_home.mkdir(exist_ok=True)
+        env["HOME"] = str(isolated_home)
+        env["TRADE_COACH_HOME"] = str(root / "trade-coach-dogfood")
         return env
 
     def test_bad_state_mode_leaves_no_partial_artifact(self):

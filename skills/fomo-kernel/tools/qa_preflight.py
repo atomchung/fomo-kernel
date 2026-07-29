@@ -8,10 +8,16 @@ fixtures are not attributable QA evidence.  A green result means the engine
 and artifact contracts passed, not that a target client's controls or card
 delivery passed.
 
+``isolate-check`` is a different kind of check and makes no claim about the
+suite at all: it inspects the environment a QA run is about to execute in and
+fails closed when the account's own coach root is still reachable through the
+path every reader composes.  It is runbook gate 2's machine half (#557).
+
 Usage:
   python3 skills/fomo-kernel/tools/qa_preflight.py status
   python3 skills/fomo-kernel/tools/qa_preflight.py refresh
   python3 skills/fomo-kernel/tools/qa_preflight.py run [--refresh]
+  python3 skills/fomo-kernel/tools/qa_preflight.py isolate-check
 """
 
 from __future__ import annotations
@@ -26,8 +32,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+try:  # POSIX only, which is every platform this toolchain supports.
+    import pwd
+except ImportError:  # pragma: no cover - Windows has no password database
+    pwd = None  # type: ignore[assignment]
+
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
+# The directory name every reader of this product composes under a home
+# directory: the engine (`session.default_root()`), `coach.py`, and
+# `tools/ux_receipt.py` all fall back to `~/.trade-coach`, and so does a model
+# with a shell that decides the isolated root looks wrong (#557).
+DEFAULT_STATE_DIR = ".trade-coach"
 ISOLATED_ENV_KEYS = (
     "TRADE_COACH_HOME",
     "TR_TEST_NETWORK",
@@ -159,6 +175,144 @@ def _run_suite(repo_root: Path, runner: Path | None = None) -> int:
     return result.returncode
 
 
+# --- runbook gate 2: isolation, verified rather than instructed (#557) -------
+#
+# `TRADE_COACH_HOME` routes a *writer*.  It cannot bound a *reader*, and during
+# a real probe the reader was a language model with a shell: pointed at a
+# throwaway root it judged empty, it composed the hardcoded default
+# `$HOME/.trade-coach` on its own initiative and read the account's real store.
+# A read-only sandbox stopped nothing, because nothing was written.
+#
+# So the run's `HOME` is replaced for its duration, which makes that default
+# composition name nothing -- and this check is what refuses to let a run start
+# until that actually took effect.  It observes the environment, never the code
+# that is supposed to set it: asserting "the export exists" is exactly the shape
+# of assurance #557 says failed twice already (#255, #269).
+
+
+def _account_home() -> Path | None:
+    """The account's own home directory, read from the password database.
+
+    Deliberately not ``$HOME`` and not ``Path.home()`` (which reads ``$HOME``
+    first): the whole point of this lane is that ``$HOME`` has been replaced,
+    so a check reading the replacement cannot tell whether the replacement
+    happened.  ``pwd`` is the one source that survives the override.
+    """
+    if pwd is None:
+        return None
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, OSError):  # pragma: no cover - unusable password database
+        return None
+
+
+def _resolved(value: str) -> Path | None:
+    try:
+        return Path(value).resolve()
+    except (OSError, RuntimeError, ValueError):  # pragma: no cover - hostile path
+        return None
+
+
+def _expanded(value: str, home: str) -> str:
+    """POSIX ``~`` expansion against the environment being inspected.
+
+    ``os.path.expanduser`` would expand against *this* process's ``HOME``,
+    which is not necessarily the one under inspection.
+    """
+    if value == "~":
+        return home
+    if value.startswith("~/"):
+        return os.path.join(home, value[2:])
+    return value
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    return child == parent or parent in child.parents
+
+
+def isolation_report(
+    env: dict[str, str] | None = None,
+    account_home: str | Path | None = None,
+) -> dict[str, Any]:
+    """Judge whether this environment has the account's coach root out of reach.
+
+    ``account_home`` exists so tests can state an account home instead of
+    touching the real one.  It is a Python-API argument only: the CLI never
+    reads it from the environment, because a gate an agent can redirect with an
+    export is not a gate.
+
+    The report carries booleans and check names, never absolute paths -- the
+    output is meant to be pasteable into a public issue or PR without passing
+    through `tools/privacy_lint.py` first.
+    """
+    env = os.environ if env is None else env
+    account = Path(account_home) if account_home is not None else _account_home()
+    account = _resolved(str(account)) if account is not None else None
+    account_root = account / DEFAULT_STATE_DIR if account is not None else None
+
+    failures: list[dict[str, str]] = []
+
+    def fail(check: str, detail: str) -> None:
+        failures.append({"check": check, "detail": detail})
+
+    home_declared = (env.get("HOME") or "").strip()
+    home = _resolved(home_declared) if home_declared else None
+    if not home_declared:
+        fail("home_undeclared",
+             "HOME is unset, so every '~' composition falls back to the account's own home.")
+    elif home is None or not home.is_dir():
+        fail("home_not_a_directory",
+             "HOME does not name a directory, so a tool reading it falls back unpredictably.")
+
+    default_root = home / DEFAULT_STATE_DIR if home is not None else None
+    default_root_present = default_root is not None and os.path.lexists(default_root)
+    if default_root_present:
+        fail("default_root_reachable",
+             f"'~/{DEFAULT_STATE_DIR}' resolves to something that exists, so an agent "
+             "composing the product's default path reaches a live store.")
+
+    if account is None:
+        fail("account_home_unresolvable",
+             "this account's home cannot be read from the password database, so whether "
+             "its coach root is reachable cannot be established. Fail closed.")
+
+    # `home_is_the_account_home` is reported below but is deliberately NOT a
+    # failure on its own.  The criterion is "the account's coach root cannot be
+    # reached", not "HOME was changed": in a container or ephemeral runner --
+    # the other lane #557 names, and the one the owner may still choose -- the
+    # password database and `$HOME` agree on `/root`, and there is no coach root
+    # under it.  Refusing that would build this gate as an obstacle to the
+    # stronger fix.  Where they agree AND a root is there, `default_root_reachable`
+    # is already the same path and fires.
+
+    state_declared = (env.get("TRADE_COACH_HOME") or "").strip()
+    if not state_declared:
+        fail("state_root_undeclared",
+             "TRADE_COACH_HOME is unset, so review.py, coach.py and ux_receipt.py all fall "
+             f"back to '~/{DEFAULT_STATE_DIR}'.")
+    elif account_root is not None:
+        state_root = _resolved(_expanded(state_declared, home_declared))
+        if state_root is not None and _is_within(state_root, account_root):
+            fail("state_root_is_the_account_root",
+                 "TRADE_COACH_HOME points into this account's own coach root, so the run "
+                 "would write its dogfood state into the real one.")
+
+    return {
+        "kind": "fomo_kernel_isolation_check",
+        "isolated": not failures,
+        "failures": failures,
+        "observations": {
+            "home_declared": bool(home_declared),
+            "home_is_the_account_home": (
+                home is not None and account is not None and home == account
+            ),
+            "default_root_present": default_root_present,
+            "account_root_present": account_root is not None and os.path.lexists(account_root),
+            "state_root_declared": bool(state_declared),
+        },
+    }
+
+
 def _repo_root(value: str) -> Path:
     root = Path(value).expanduser().resolve()
     if not (root / ".git").exists() or not (root / "tests" / "run_all.py").is_file():
@@ -180,6 +334,10 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("refresh", help="fetch origin/main, then report refreshed Git facts")
     run = commands.add_parser("run", help="run the deterministic suite and emit a preflight result")
     run.add_argument("--refresh", action="store_true", help="fetch origin/main before running")
+    commands.add_parser(
+        "isolate-check",
+        help="runbook gate 2: exit non-zero unless this environment has the account's "
+             "own coach root out of reach")
     return parser
 
 
@@ -195,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             report = _base_report(repo_root, "unverified")
             report["status"] = "ready"
+        elif args.command == "isolate-check":
+            report = isolation_report()
+            _emit(report, report_path)
+            for failure in report["failures"]:
+                print(f"ISOLATION: {failure['check']}: {failure['detail']}", file=sys.stderr)
+            return 0 if report["isolated"] else 1
         else:
             remote_freshness = "unverified"
             if args.refresh:

@@ -64,6 +64,10 @@ SUITES = [
     # whole append-only trace already spent.
     ("QA skill command drift (#520)", "qa/tests/test_skill_commands.py"),
     ("QA receipt manifest and campaign lineage (#520)", "qa/tests/test_receipts.py"),
+    # #557: isolation stopped being an instruction. The harness refuses every
+    # command until the account's own coach root is out of reach, and this is
+    # the suite that watches the refusal rather than the export.
+    ("QA run isolation gate (#557)", "qa/tests/test_isolation_gate.py"),
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),
