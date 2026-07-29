@@ -891,5 +891,86 @@ class GateCountConsistencyTest(unittest.TestCase):
                     "reword it, since '/' is what separates entries here.")
 
 
+class ContinuousCampaignTest(unittest.TestCase):
+    """The campaign survives an archive (#544 Slice A).
+
+    Before Slice A the skill wrapped up after one route: archive, offer
+    cleanup, stop. Covering four routes therefore cost four full ceremonies in
+    four conversations, and the routes that were never walked were never walked
+    for that reason. What replaced it is one section — the campaign keeps
+    running and the next natural request starts the next route run — and a
+    section is exactly the kind of thing a later edit quietly removes while
+    every other check stays green.
+
+    These do not pin the section's prose. They pin two facts it carries: that a
+    reader is offered more than one route to continue into, and that its claim
+    about `consider` still matches what `ux_receipt.py` actually supports.
+    """
+
+    SECTION = "## Continuing in the same campaign"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tool = load_receipt_tool()
+        text = SKILL_DOC.read_text(encoding="utf-8")
+        start = text.find(cls.SECTION)
+        cls.section = "" if start < 0 else text[start:].split("\n## ", 1)[0]
+
+    def test_the_campaign_section_survives(self):
+        self.assertTrue(
+            self.section,
+            f"{SKILL_DOC} no longer has a {self.SECTION!r} section. That section is "
+            "the whole of #544 Slice A: without it the procedure reads as 'archive, "
+            "then stop', which is the state that made walking four routes cost four "
+            "separate ceremonies. If the section was renamed, update SECTION here; if "
+            "it was deleted, this is the regression it exists to catch.")
+
+    def test_it_routes_into_more_than_one_route(self):
+        """One continuation is a footnote; several is a campaign.
+
+        Read only the routing table's own rows. The first cut of this check
+        searched the whole section and passed a mutation that emptied the
+        table, because the prose below it happens to list every route name
+        while explaining which one `consider` is not — a sentence about an
+        absence kept the check green.
+        """
+        rows = [line for line in self.section.splitlines()
+                if line.lstrip().startswith("|")]
+        named = {route for route in self.tool.ROUTES
+                 if any(f"`{route}`" in row for row in rows)}
+        self.assertGreater(
+            len(named), 1,
+            f"{SKILL_DOC}'s {self.SECTION!r} routes to {sorted(named) or 'no'} "
+            f"route(s) of {sorted(self.tool.ROUTES)} in its table. The table's job is "
+            "to send the next natural request to the right real command, so it has to "
+            "offer a choice between real routes — named in backticks, in table rows. "
+            "One route is a leftover, not a router.")
+
+    def test_the_consider_boundary_matches_the_tool(self):
+        """The one claim here that can silently rot.
+
+        The section tells the operator to invoke `review.py consider` but never
+        to archive it, because `ux_receipt.py` has no route for it and a route
+        without a contract cannot exist there (#523). That is true today and is
+        precisely what #544 Slice B changes. When Slice B lands, this fails —
+        which is the point: the prohibition has to be lifted in the same change
+        that makes it false, not left standing as a stale warning that the
+        operator learns to ignore.
+        """
+        self.assertIn(
+            "consider", self.section,
+            f"{SKILL_DOC}'s {self.SECTION!r} no longer mentions `consider`. A "
+            "pre-trade question is the follow-up most likely to arrive mid-campaign, "
+            "and #543 records what happens when the skill says nothing about it: it "
+            "gets answered by hand, outside any lifecycle, in 34 turns.")
+        self.assertNotIn(
+            "consider", self.tool.ROUTES,
+            f"{TOOL} now supports a 'consider' route, so {SKILL_DOC}'s claim that "
+            "one cannot be archived is false. Give the route a `# qa-trace: consider` "
+            "walkthrough, move it into the routing table as an archived run, and "
+            "delete the exploratory-only paragraph — then this check goes away with "
+            "it. (#544 Slice B.)")
+
+
 if __name__ == "__main__":
     unittest.main()
