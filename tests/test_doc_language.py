@@ -59,6 +59,11 @@ FREEFORM_ANSWER_SECTIONS = {
 FREEFORM_ANSWER_REQUIRED_PHRASES = (
     "no chart, no rendered artifact, no multi-tool production",
     "`references/freeform-answers.md`",
+    # The effort ceiling must not read as licence to drop a disclosure the
+    # surface already owes. #479's visible two-sided challenge is delivered
+    # through `consider`, which this rule names -- an entry point carrying
+    # "answered briefly" without this clause invites compressing that away.
+    "Brevity bounds what an answer produces, never which facts it owes",
 )
 
 
