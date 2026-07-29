@@ -199,6 +199,32 @@ def test_an_exit_after_the_split_is_left_alone():
     assert rv.rebased_exit_price(item, SPLITS) == 197.0
 
 
+def test_a_confirmed_disappearance_leaves_on_the_basis_the_book_recorded():
+    """`detect_exits` returns rows from two code paths — the trade walk, and
+    `absence_exits` for a disappearance confirmed without a fill (#485 Slice
+    C). Both must be on one basis, or that single list is #550's own defect
+    one level down: the book says 1,000 shares left and the exit row beside
+    it says 100. `absence_exits` reads the prior book, so it needs the same
+    map the trade walk gets; it shipped without it (#558 follow-up).
+
+    The basis is the absence's own date, matching the trade lane — so
+    `shares_sold` is the count the position actually stood at when it left,
+    and `revisit_id`, which embeds it, does not churn when a later split
+    arrives.
+    """
+    events = [_trade("2023-01-10", "BUY", 100.0, 150.0)]
+    held = lg.derive_holdings(events, splits=SPLITS)["holdings"]["NVDA"]
+    assert held["shares"] == 1000.0, held["shares"]        # the split is behind us
+    events.append(lg.build_position_absence(
+        date="2026-07-28", ticker="NVDA", cycle_id=held["cycle_id"]))
+
+    rows = rv.detect_exits(events, splits=SPLITS)
+    assert len(rows) == 1, rows                            # no trade exit in this history
+    assert rows[0]["exit_price"] is None, rows[0]          # it is the absence row
+    assert rows[0]["shares_sold"] == held["shares"], rows[0]
+    assert rows[0]["shares_before"] == held["shares"], rows[0]
+
+
 def test_an_unpriced_exit_stays_unpriced():
     """A confirmed disappearance (#485 Slice C) has no execution price. It is
     not a missing quote and must not become a number."""
