@@ -36,9 +36,19 @@ When the two disagree, the runbook wins.
 
 > The two documents are maintained by hand and have drifted before — most expensively
 > in their command examples, which #520 repaired and now gates mechanically via
-> `tests/test_skill_commands.py`. That gate covers the executable surface only: the
-> prose halves (gate wording, gate count, the per-client degradation notes) are still
-> hand-synchronized. Collapsing the duplicated half is tracked in #527.
+> `tests/test_skill_commands.py`. #527 then gated the structural half of the prose,
+> across all three enumerations of the gates: the runbook's numbered list and its
+> enforcement table must agree on numbering and order, and this skill's stated count
+> — in every paragraph that states one — and the number of names in its inline roster
+> must both equal that list's length. So a gate cannot be added to or removed from the
+> runbook and left stale here.
+>
+> What is deliberately *not* compared is wording: what each gate means, the names
+> themselves, the order this skill happens to list them in, and the per-client
+> degradation notes. Each document phrases the same gate for its own reader, and
+> pinning that would pin prose. The cost of that choice is real and worth naming —
+> renumbering the runbook's gates leaves this skill's roster in the old order with
+> nothing to catch it.
 
 ## Install
 
