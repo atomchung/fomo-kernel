@@ -7884,6 +7884,12 @@ def test_all_json_schemas_parse():
              "condition-check.schema.json", "trade-premise.schema.json",
              "trade-evaluation.schema.json", "behavior-verdict.schema.json",
              "portfolio-basis.schema.json", "book-refresh.schema.json",
+             # #479 Wave A: the bounded DecisionContext envelope, declared once
+             # here and $ref-ed by trade-evaluation.schema.json's `context`
+             # property -- the same treatment `premise` already gets from
+             # trade-premise.schema.json, so the agent-facing shape has exactly
+             # one definition.
+             "decision-context.schema.json",
              # #414 Wave A: a new, standalone schema for the semantically-richer
              # --agent-case claim envelope engine/answer_provenance.py checks.
              # Not a shared schema and not wired into any review.py path yet

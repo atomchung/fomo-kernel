@@ -36,6 +36,26 @@ Validated against [../schemas/trade-premise.schema.json](../schemas/trade-premis
 
 A rejected premise returns a `ReviewError` naming the field. Fix it and rerun; nothing is recorded until the call succeeds.
 
+## What the user said
+
+The premise is the trade. `--decision-context` is optionally the *reason* — what the user tells you they are doing and why today, frozen in their own words beside what the engine computed. Validated against [../schemas/decision-context.schema.json](../schemas/decision-context.schema.json), and accepted as a file path or inline JSON like `--premise`:
+
+```json
+{
+  "reason": "It is still my highest-conviction name and the build-out has room to run.",
+  "why_now": "Their main supplier raised capacity guidance this morning.",
+  "evidence_refs": ["Supplier capacity guidance, this morning"]
+}
+```
+
+Entirely optional. A plain `--premise` call is a complete use of `consider` and behaves exactly as it always has, down to the `evaluation_id` it returns.
+
+- `reason` and `why_now` are the user's exact words, quoted, not your summary of them and never translated. Send them together or not at all: telling new evidence apart from a price move is the question this envelope exists to make askable, and a reason with no why-now is the half that lets it pass unasked. If the user has not said why today, ask them — that question is the product working.
+- `evidence_refs` is what they pointed at: a filing, a release, a headline, a note of their own. Zero to five, and only what actually moved the decision. The engine does not fetch, date or believe any of them; this records what was cited.
+- Anything over a limit is refused with the limit named, never shortened. A truncated reason or a clipped evidence list reads back as something the user said, which they did not.
+
+Sending a context changes what the call *is*, not what it computes. The consequence and the rule collisions come from the premise and the book alone — identical, byte for byte, whatever the user's reason. What it does change is identity: the same trade asked twice on the same day with two different why-nows is two evaluations, not one silently overwriting the other. That is the point. A user who re-asks after the price moved has told you something, and the record keeps both askings.
+
 ## Reading the consequence
 
 The response carries `before` and `after` — the book's own state without and with the hypothetical trade — plus `delta` (only the readings that actually moved) and `disclosures` (see below). Weight, concentration (`ai_pct`, `max_sector_pct`, `top3`), whether the position-size cap or the concentration line is triggered, cash balance and weight, and how many holdings the book would carry are all in both snapshots, so a before/after comparison never has to be recomputed by hand.
@@ -116,7 +136,7 @@ Every call is recorded in a local, append-only log — nothing about it is prese
 python3 engine/review.py consider --resolve <evaluation_id> --decision acted
 ```
 
-`--decision` is one of `acted`, `declined`, or `modified`. `--resolve` takes no premise and no other consideration flags — the evaluation it names already carries all of that, frozen from when it was asked. A resolution never rewrites the original record; it appends a new entry that supersedes the old by id, so what the engine actually said at the time is never lost.
+`--decision` is one of `acted`, `declined`, or `modified`. `--resolve` takes no premise and no other consideration flags — the evaluation it names already carries all of that, frozen from when it was asked, including any decision context. A resolution never rewrites the original record; it appends a new entry that supersedes the old by id, carrying the frozen premise, basis, consequence and the user's own words forward unchanged, so what the engine actually said at the time — and what the user said it was for — is never lost.
 
 There is no obligation to call `--resolve`, and no review step depends on it. Do it when it is natural in the conversation, not as a checklist item.
 

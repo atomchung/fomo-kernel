@@ -109,6 +109,7 @@ def _schema(name):
 EVALUATION_SCHEMA = _schema("trade-evaluation.schema.json")
 PREMISE_SCHEMA = _schema("trade-premise.schema.json")
 PLAN_SCHEMA = _schema("review-plan.schema.json")
+CONTEXT_SCHEMA = _schema("decision-context.schema.json")
 
 
 def _check_evaluation_shape(row):
@@ -155,6 +156,20 @@ def _check_evaluation_shape(row):
     assert set(PREMISE_SCHEMA["required"]) <= set(premise)
     assert "notional" not in premise
     assert premise["side"] in ("buy", "sell")
+
+    # context (#479 Wave A) is optional and, when absent, absent -- never a
+    # stored null. That distinction is load-bearing: review._evaluation_id
+    # keys the identity seed on exactly this presence test, so a row carrying
+    # `context: null` would be an evaluation whose id says it had no context
+    # and whose content says it had an empty one.
+    if "context" in row:
+        assert isinstance(row["context"], dict), "a stored context is an object, never null"
+        assert set(CONTEXT_SCHEMA["required"]) <= set(row["context"])
+        assert set(row["context"]) <= set(CONTEXT_SCHEMA["properties"])
+        for field in ("reason", "why_now"):
+            assert isinstance(row["context"][field], str) and row["context"][field].strip()
+        refs = row["context"].get("evidence_refs", [])
+        assert len(refs) <= CONTEXT_SCHEMA["properties"]["evidence_refs"]["maxItems"]
 
     if "agent_case" in row:
         case_schema = EVALUATION_SCHEMA["properties"]["agent_case"]
@@ -1259,6 +1274,319 @@ def test_a_different_cash_anchor_the_same_day_produces_a_different_evaluation_id
         rows = _read_evaluations(tmp)
         assert len(rows) == 2, f"both evaluations must be preserved, not folded into one: {rows}"
         assert {row["evaluation_id"] for row in rows} == {id_1, id_2}
+
+
+# ───────────────── L. decision context (#479 Wave A) ─────────────────
+# The optional envelope carrying what the user said at the moment they were
+# deciding: their reason, their why-now, and a bounded handful of things they
+# pointed at. Three properties this section exists to hold, each one an
+# acceptance criterion of #479 that the obvious implementation breaks:
+#
+#   1. an absent context contributes NOTHING to the identity seed, so a caller
+#      who never sends one keeps minting the ids they always did;
+#   2. a different context on the same premise/book/day mints a distinct
+#      evaluation, while the frozen arithmetic is byte-identical;
+#   3. an over-limit envelope is refused with its limit named, never truncated.
+#
+# All fixtures below are fictional and public-safe (#479's own privacy
+# boundary): a made-up ticker where the row is built by hand, and the repo's
+# synthetic mock CSV where a real call is needed.
+
+# A fixed, fictional evaluation. Nothing here reads a clock, so this is the one
+# place in this file where a hash can be pinned as a literal at all.
+_PINNED_PREMISE = {"ticker": "ACME", "side": "buy", "qty": 10.0, "price": 25.0,
+                   "date": "2026-03-02", "currency": "USD"}
+_PINNED_BASIS = {"source": "snapshot_anchor", "as_of": "2026-03-01", "stale_days": 0,
+                 "completeness": "declared_complete", "cost_basis": "average_cost",
+                 "valuation_basis": "unpriced", "reconciliation_ref": None,
+                 "state_version": "pb-v1:" + "0" * 64}
+_PINNED_CREATED = "2026-03-01"
+_PINNED_CONSEQUENCE = {"before": {}, "after": {}, "delta": {}, "disclosures": [],
+                       "excluded_holdings": []}
+_PINNED_COLLISIONS = []
+
+# Two contexts differing in why_now alone -- #479's acceptance names exactly
+# this pair, because it is the one an agent produces when the user re-asks the
+# same trade with a different story about why today.
+_CONTEXT_EVIDENCE = {
+    "reason": "This is my highest-conviction name and the build-out still has room.",
+    "why_now": "Their main supplier guided capacity up this morning.",
+    "evidence_refs": ["Supplier capacity guidance, this morning"],
+}
+_CONTEXT_PRICE = {
+    "reason": "This is my highest-conviction name and the build-out still has room.",
+    "why_now": "It is down 8% today and I do not want to miss the bounce.",
+    "evidence_refs": ["Supplier capacity guidance, this morning"],
+}
+
+
+def _consider_with(tmp, context=None, premise=None):
+    args = ["consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", premise or '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}']
+    if context is not None:
+        args += ["--decision-context", json.dumps(context, ensure_ascii=False)]
+    return _run(*args)
+
+
+def test_a_context_free_evaluation_id_is_exactly_what_it_was_before_context_existed():
+    """The pin the whole envelope hangs on.
+
+    `_evaluation_id` hashes `session.canonical({...})`. The obvious way to add
+    an optional field is to put `"context": context` in that dict
+    unconditionally -- which changes the hash of *every* call, including every
+    context-free one. An existing user's next plain re-ask would then mint a
+    fresh id instead of converging on the row already on disk: a duplicated
+    row, and both of #479's own "context-free consider remains byte compatible"
+    and "exact retry does not duplicate" criteria broken at once, silently,
+    with the entire suite still green (nothing else in this file pins an id
+    *value*).
+
+    So the value below is not a fixture -- it is the literal this function
+    returned on main@52df7f9, before `context` was a parameter at all, run
+    against these same arguments. It must never move again. If a future change
+    to the seed makes this fail, that change is the finding.
+    """
+    assert review_engine._evaluation_id(
+        _PINNED_PREMISE, _PINNED_BASIS, _PINNED_CREATED,
+        _PINNED_CONSEQUENCE, _PINNED_COLLISIONS) == "eval-a8d8c02f625ce105"
+    # ... and passing the parameter explicitly as absent is the same call.
+    assert review_engine._evaluation_id(
+        _PINNED_PREMISE, _PINNED_BASIS, _PINNED_CREATED,
+        _PINNED_CONSEQUENCE, _PINNED_COLLISIONS, context=None) == "eval-a8d8c02f625ce105"
+    # A supplied context must move it -- otherwise the pin above is satisfied
+    # by a seed that ignores context entirely, and this test would be green on
+    # an implementation that fails every other test in this section.
+    assert review_engine._evaluation_id(
+        _PINNED_PREMISE, _PINNED_BASIS, _PINNED_CREATED,
+        _PINNED_CONSEQUENCE, _PINNED_COLLISIONS,
+        context=_CONTEXT_EVIDENCE) != "eval-a8d8c02f625ce105"
+
+
+def test_a_context_free_row_carries_no_context_key_at_all():
+    """The storage half of the same fact: absent, not null. The row's presence
+    test and the seed's are the same condition, so a stored null would be a row
+    whose id says no context and whose content says an empty one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _ok(_consider_with(tmp))
+        row = payload["evaluation"]
+        assert "context" not in row, f"a context-free row must not carry the key: {row}"
+        assert _read_evaluations(tmp)[0] == row
+        _check_evaluation_shape(row)
+
+
+def test_a_different_why_now_mints_a_distinct_evaluation_with_identical_arithmetic():
+    """#479's acceptance, both halves in one place: same premise, same book,
+    same day, different why_now -> distinct evaluations; and no context field
+    changes any numeric computation. The second assertion is what keeps the
+    first honest -- seeding identity on the context is only legitimate because
+    `consequence` and `rule_collisions` are computed from the premise and the
+    book, before the seed is taken, and never see the context at all."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))["evaluation"]
+        second = _ok(_consider_with(tmp, _CONTEXT_PRICE))["evaluation"]
+
+        assert first["evaluation_id"] != second["evaluation_id"], \
+            "the same trade asked with a different why_now is a different question"
+        assert first["created"] == second["created"], "fixture must pin the same day"
+
+        for field in ("consequence", "rule_collisions", "basis", "premise"):
+            assert json.dumps(first[field], sort_keys=True) == \
+                json.dumps(second[field], sort_keys=True), \
+                f"{field} must be byte-identical: no context field touches arithmetic"
+
+        assert first["context"] == _CONTEXT_EVIDENCE
+        assert second["context"] == _CONTEXT_PRICE
+        rows = _read_evaluations(tmp)
+        assert len(rows) == 2, f"neither may fold over the other: {rows}"
+        _check_evaluation_shape(first)
+        _check_evaluation_shape(second)
+
+
+def test_an_identical_context_bearing_retry_is_still_a_no_op():
+    """Idempotency survives the seed change: the same call twice converges on
+    one id and appends one row, exactly as a context-free repeat does."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))["evaluation"]
+        second = _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))["evaluation"]
+        assert first["evaluation_id"] == second["evaluation_id"]
+        assert len(_read_evaluations(tmp)) == 1
+
+
+def test_evidence_refs_over_the_cap_are_refused_and_the_error_names_the_limit():
+    """An unbounded evidence list is the #429 shape -- it rides into agent
+    context on every later turn that surfaces the evaluation and grows without
+    limit. It is refused rather than truncated: a shortened list would read
+    back as everything the user cited, a claim they never made. The cap itself
+    must appear in the message, or the caller cannot tell what to send instead.
+    """
+    cap = review_engine.EVALUATION_EVIDENCE_REFS_CAP
+    with tempfile.TemporaryDirectory() as tmp:
+        at_cap = dict(_CONTEXT_EVIDENCE, evidence_refs=[f"note {i}" for i in range(cap)])
+        row = _ok(_consider_with(tmp, at_cap))["evaluation"]
+        assert len(row["context"]["evidence_refs"]) == cap, "the cap itself must be accepted"
+
+        over_cap = dict(_CONTEXT_EVIDENCE, evidence_refs=[f"note {i}" for i in range(cap + 1)])
+        payload = _fails(_consider_with(tmp, over_cap), "evidence_refs")
+        assert str(cap) in payload["error"], \
+            f"the refusal must name the limit, got {payload['error']!r}"
+        assert str(cap + 1) in payload["error"], "and what was actually sent"
+
+        rows = _read_evaluations(tmp)
+        assert len(rows) == 1, "a refused call records nothing"
+        assert len(rows[0]["context"]["evidence_refs"]) == cap, \
+            "and above all does not store a truncated list"
+
+
+def test_oversized_reason_or_why_now_is_refused_rather_than_shortened():
+    with tempfile.TemporaryDirectory() as tmp:
+        limit = review_engine.EVALUATION_CONTEXT_TEXT_MAX
+        for field in ("reason", "why_now"):
+            over = dict(_CONTEXT_EVIDENCE)
+            over[field] = "x" * (limit + 1)
+            payload = _fails(_consider_with(tmp, over), field)
+            assert str(limit) in payload["error"], "the refusal must name the limit"
+        assert not os.path.exists(_evaluation_path(tmp)), "nothing is recorded"
+
+        long_ref = dict(_CONTEXT_EVIDENCE,
+                        evidence_refs=["y" * (review_engine.EVALUATION_EVIDENCE_REF_MAX + 1)])
+        _fails(_consider_with(tmp, long_ref), "evidence_refs[0]")
+
+
+def test_decision_context_requires_both_reason_and_why_now():
+    """The same both-sides-or-nothing rule --agent-case follows. Telling new
+    evidence apart from a price move is the question this envelope exists to
+    make askable; a reason with no why_now is the half that lets it pass
+    unasked. The refusal names the fix, because the caller's next move is to
+    ask the user one more question -- which is the product working, not
+    failing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for missing in ("reason", "why_now"):
+            partial = {k: v for k, v in _CONTEXT_EVIDENCE.items()
+                       if k != missing and k != "evidence_refs"}
+            payload = _fails(_consider_with(tmp, partial), "must carry both")
+            assert missing in payload["error"]
+        _fails(_consider_with(tmp, {}), "must carry both")
+        _fails(_consider_with(tmp, dict(_CONTEXT_EVIDENCE, reason="   ")), "non-empty string")
+        # a flag sent with nothing behind it is a lost statement, not a
+        # context-free call: refused by name rather than quietly ignored
+        _fails(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                    "--decision-context", ""),
+               "--decision-context must not be empty")
+        # the escape hatch the refusal points at must actually work
+        _ok(_consider_with(tmp))
+
+
+def test_decision_context_refuses_a_field_the_schema_does_not_declare():
+    """Derived from the schema rather than mirrored against it: every declared
+    property must be accepted together, and a name it does not declare must be
+    refused. A field the agent invents is not silently dropped -- the row is
+    the user's own words, and a dropped one is a statement that vanished."""
+    with tempfile.TemporaryDirectory() as tmp:
+        declared = {"reason": "A real reason.", "why_now": "A real change.",
+                    "evidence_refs": ["One reference"]}
+        assert set(declared) == set(CONTEXT_SCHEMA["properties"]), \
+            "this fixture must exercise every declared property"
+        row = _ok(_consider_with(tmp, declared))["evaluation"]
+        assert row["context"] == declared
+
+        payload = _fails(_consider_with(tmp, dict(declared, sentiment="bullish")),
+                         "unknown fields")
+        assert "sentiment" in payload["error"]
+
+
+def test_decision_context_bounds_are_the_same_numbers_the_schema_publishes():
+    """review.py's constants feed the refusals; decision-context.schema.json's
+    maxItems/maxLength are what a reader of the contract sees. A second person
+    relaxing one and not the other is the "two readers, one fact" shape
+    (development-guide.md section 7) -- the same drift test
+    test_consider_decisions_constant_matches_the_schemas_decision_enum runs
+    over the decision enum."""
+    props = CONTEXT_SCHEMA["properties"]
+    assert props["evidence_refs"]["maxItems"] == review_engine.EVALUATION_EVIDENCE_REFS_CAP
+    assert props["evidence_refs"]["items"]["maxLength"] == review_engine.EVALUATION_EVIDENCE_REF_MAX
+    for field in ("reason", "why_now"):
+        assert props[field]["maxLength"] == review_engine.EVALUATION_CONTEXT_TEXT_MAX
+    assert set(CONTEXT_SCHEMA["required"]) == {"reason", "why_now"}
+    # and the evaluation row reaches this shape by $ref, never by restating it
+    ref = EVALUATION_SCHEMA["properties"]["context"]["$ref"]
+    assert ref == "decision-context.schema.json", \
+        "the agent-facing shape is declared once, the way `premise` already is"
+
+
+def test_a_context_survives_resolve_export_and_reset():
+    """Round-trip, #479's acceptance: the exact supplied context must come back
+    unchanged through retry/idempotency/export, and data-reset must still see
+    the file. --resolve appends a new row for the same id, so the context has
+    to travel with it -- a resolution that dropped the user's words would leave
+    the record thinner than the conversation that produced it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        created = _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))["evaluation"]
+        resolved = _ok(_run("consider", "--root", tmp, "--resolve",
+                            created["evaluation_id"], "--decision", "acted"))["evaluation"]
+        assert resolved["context"] == _CONTEXT_EVIDENCE, "the words travel with the resolution"
+        assert resolved["evaluation_id"] == created["evaluation_id"], \
+            "resolving does not re-derive the id, so the context cannot move it"
+        _check_evaluation_shape(resolved)
+
+        export = os.path.join(tmp, "export.zip")
+        run = subprocess.run([sys.executable, str(COACH_PY), "data-export",
+                              "--out", export, "--root", tmp],
+                             cwd=ROOT, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, run.stdout + run.stderr
+        import zipfile
+        with zipfile.ZipFile(export) as zf:
+            exported = zf.read("trade_evaluations.jsonl").decode("utf-8")
+        rows = [json.loads(line) for line in exported.splitlines() if line.strip()]
+        assert [row["context"] for row in rows] == [_CONTEXT_EVIDENCE, _CONTEXT_EVIDENCE], \
+            "the export carries the user's words verbatim, not a summary of them"
+
+        reset = subprocess.run([sys.executable, str(COACH_PY), "data-reset", "--confirm",
+                                "--root", tmp], cwd=ROOT, capture_output=True, text=True,
+                               timeout=30)
+        assert reset.returncode == 0, reset.stdout + reset.stderr
+        assert not os.path.exists(_evaluation_path(tmp))
+
+
+def test_resolve_refuses_a_decision_context():
+    """--resolve takes no premise and no other consideration flag: the
+    evaluation it names already froze the user's words along with everything
+    else. Accepting one here would let a later call restate what was said at
+    decision time, under an id that still hashes the original."""
+    with tempfile.TemporaryDirectory() as tmp:
+        created = _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))["evaluation"]
+        run = _run("consider", "--root", tmp, "--resolve", created["evaluation_id"],
+                   "--decision", "acted",
+                   "--decision-context", json.dumps(_CONTEXT_PRICE, ensure_ascii=False))
+        _fails(run, "--decision-context")
+
+
+def test_a_row_written_before_context_existed_stays_readable():
+    """Replay compatibility, the engine_version/authoring_contract precedent: a
+    row on a user's disk from before this field existed carries no context, and
+    every reader must go on working -- the fold, --resolve, and the review's own
+    reconciliation. A resolution of one stays context-free rather than being
+    back-filled with an empty envelope."""
+    with tempfile.TemporaryDirectory() as tmp:
+        legacy = _open_evaluation("eval-legacyrow000001", "2026-02-01", "ACME", "buy")
+        assert "context" not in legacy, "the fixture must be a genuine pre-context row"
+        _write_evaluations(tmp, [legacy])
+
+        folded = review_engine._fold_evaluations(_read_evaluations(tmp))
+        assert set(folded) == {"eval-legacyrow000001"}
+
+        resolved = _ok(_run("consider", "--root", tmp, "--resolve", "eval-legacyrow000001",
+                            "--decision", "declined"))["evaluation"]
+        assert "context" not in resolved, "an old row is not back-filled with an empty context"
+        assert resolved["decision"] == "declined"
+
+        # and a review still reconciles it, beside a context-bearing sibling
+        _ok(_consider_with(tmp, _CONTEXT_EVIDENCE))
+        rows = [_tr_row("ACME", "buy", 10, 100.0, "2026-02-05")]
+        payload = review_engine._evaluation_reconciliation(tmp, rows, "2026-02-28")
+        _check_reconciliation_shape(payload)
+        assert payload["summary"]["open_total"] == 1, \
+            "the declined legacy row is settled; only the new one is open"
 
 
 # ─────────────────────────────── runner ───────────────────────────────
