@@ -15,7 +15,9 @@ before.
 Seven checks, none of which restate the tool's vocabulary:
 
 1. every documented invocation parses against the real `build_parser()`;
-2. the documented order, replayed for real, produces a trace that verifies;
+2. every documented route's order, replayed for real, produces a trace that
+   verifies — the routes come from the doc's own fences, so a fence nothing
+   executes is a failure rather than an omission;
 3. the doc's `verify` example is not weaker than the gate `qa_env.sh` applies
    at archive time (derived from that script, not copied into this file);
 4. the public runbook's non-placeholder invocations still parse;
@@ -103,21 +105,6 @@ UNDOCUMENTED_ROUTES = {
         "the demo route: persist:false, no owner_live acceptance journey rides "
         "it, and docs/qa-runbook.md already states it is not evidence for "
         "first-review or weekly-memory behavior. Permanent, not a backlog item."
-    ),
-    "snapshot_review": (
-        "#526: the route exists in the tool and #486's M0-U02 journey starts on "
-        "it, but no verified walkthrough has been written. Writing an unverified "
-        "one here would ship exactly the defect #520 repaired, so it is named "
-        "rather than guessed at."
-    ),
-    "refresh": (
-        "#526, the other half of the same journey. #523 gave the card-free "
-        "book-refresh lane an honest route and contract at the tool layer "
-        "(change surface instead of a card, `change`/`card=not_applicable` in "
-        "the verdict), which is what makes a walkthrough writable at all — but "
-        "the walkthrough itself must be observed on merged main and replayed, "
-        "not guessed at here. `references/ux-receipt.md` documents the commands "
-        "in the meantime."
     ),
 }
 
@@ -312,6 +299,11 @@ def placeholders(workspace):
         "<preview-card.html>": str(preview),
         "<final-card.html>": str(final),
         "<grounding-check.json>": str(grounding),
+        # A refresh creates no session, so its trace is keyed by the engine's
+        # own refresh_id. The doc writes that stand-in under its real name
+        # rather than reusing `<ID>`, because reading "session id" on a lane
+        # that has no session is how an operator ends up inventing one.
+        "<refresh_id>": SESSION_ID,
         "EP-0NN": episode_id(),
         "#NN": "#520",
         # Runbook-only: it documents the route and client as stand-ins where
@@ -582,26 +574,54 @@ class SkillCommandTest(unittest.TestCase):
                 f"the documented {route} sequence does not verify:\n{result.stderr.strip()}")
             return json.loads(result.stdout)
 
-    def test_documented_first_review_trace_verifies(self):
-        # `--require-timing-integrity` is deliberately absent. A replay finishes
-        # far inside the tool's 3-second minimum span, so timing integrity is
-        # `suspect` BY CONSTRUCTION here — an honest, stated limit of this
-        # oracle. Sleeping or rewriting timestamps to get past it would only
-        # teach the suite to fake the one signal that exists to catch faking.
-        report = self.replay_route(
-            "first_review", "--require-owner-verdict", "--require-findings")
-        self.assertEqual(report["status"], "pass")
+    def replay_gates(self):
+        """The archive gate, minus the one a replay cannot honestly satisfy.
 
-    def test_documented_weekly_review_trace_verifies(self):
-        # Held to the same gates as first_review, because the weekly wrap-up is
-        # now written out rather than delegated to Step 5. That difference is
-        # the point: a weekly verdict must carry `--memory pass|fail`, and an
-        # example that borrowed Step 5's `not_applicable` would only bite at
-        # archive time. Timing integrity is excluded for the same
-        # replay-burst reason as first_review.
-        report = self.replay_route(
-            "weekly_review", "--require-owner-verdict", "--require-findings")
-        self.assertEqual(report["status"], "pass")
+        Derived from `qa_env.sh` like check 3 rather than listed here, so a gate
+        added to archiving is applied to the replay too instead of being
+        remembered. `--require-timing-integrity` is the single deliberate
+        exclusion: a replay finishes far inside the tool's 3-second minimum
+        span, so timing integrity is `suspect` BY CONSTRUCTION — an honest,
+        stated limit of this oracle. Sleeping or rewriting timestamps to get
+        past it would only teach the suite to fake the one signal that exists
+        to catch faking. Naming the excluded flag as a literal is safe in the
+        one direction that matters: if it is ever renamed, this stops matching
+        and the replay goes red rather than quietly passing.
+        """
+        return [flag for flag in archive_required_flags()
+                if flag != "--require-timing-integrity"]
+
+    def test_every_documented_route_trace_verifies(self):
+        """Replay every `# qa-trace:` route, not a hand-picked list of them.
+
+        This used to be one test method per route, and adding a route meant
+        remembering to add a method — the same shape of hole `UNDOCUMENTED_ROUTES`
+        exists to close one level up. `snapshot_review` and `refresh` (#526) are
+        the routes that made the difference concrete: a fence can be written,
+        pass the parser check, satisfy the exemption check, and still never be
+        executed.
+
+        What the loop holds each route to is the archive gate, so a route-specific
+        wrap-up cannot document something weaker than what archiving applies. Two
+        such differences are live today and only bite at archive time: a weekly
+        verdict must carry `--memory pass|fail` where a first or snapshot review
+        may say `not_applicable`, and the card-free `refresh` verdict must carry
+        `--card not_applicable` plus `--change`.
+
+        The coverage assertion is what stops this passing vacuously: replaying
+        zero fences, or all but the one someone just added, is a failure rather
+        than a green run.
+        """
+        expected = set(self.tool.ROUTES) - set(UNDOCUMENTED_ROUTES)
+        replayed = {route for route in self.routes() if route in expected}
+        self.assertEqual(
+            replayed, expected,
+            "the routes this test actually replayed do not cover every supported, "
+            f"non-exempt route: replayed {sorted(replayed)}, expected {sorted(expected)}")
+        for route in sorted(replayed):
+            with self.subTest(route=route):
+                report = self.replay_route(route, *self.replay_gates())
+                self.assertEqual(report["status"], "pass")
 
     # --- check 3: the documented gate is not weaker than the enforced one ----
 
