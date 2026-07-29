@@ -35,6 +35,8 @@ ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
 import book_refresh as br  # noqa: E402
 import ledger as lg  # noqa: E402
+import portfolio_basis as pb  # noqa: E402
+import review  # noqa: E402
 import revisit as rv  # noqa: E402
 import snapshot_adapter  # noqa: E402
 
@@ -236,11 +238,104 @@ def test_an_unpriced_exit_stays_unpriced():
         {"ticker": "NVDA", "exit_date": "2024-05-20", "exit_price": None}, SPLITS) is None
 
 
+# ─────────── the review lane prices the book it is going to report ───────────
+
+# #550's own repro ledger: 90 + 30 bought and 20 sold before the split, 100
+# sold after. Raw arithmetic reaches exactly zero, so a split-blind reader
+# reports no position at all — the sharpest shape for a ticker-discovery bug.
+_CROSSING = [_trade("2023-01-10", "BUY", 90.0, 150.0),
+             _trade("2023-11-15", "BUY", 30.0, 480.0),
+             _trade("2024-05-20", "SELL", 20.0, 950.0),
+             _trade("2026-07-28", "SELL", 100.0, 197.0)]
+
+
+def _engine_frame(as_of="2026-07-28", priced=("NVDA",)):
+    """A complete engine-side price frame, before review narrows it."""
+    return {"contract_version": pb.VALUATION_FRAME_VERSION, "as_of": as_of,
+            "aggregate_currency": "USD",
+            "prices": {ticker: {"price": 197.0, "currency": "USD", "provenance": "test"}
+                       for ticker in priced},
+            "fx_to_aggregate": {"USD": {"rate": 1.0, "provenance": "identity", "as_of": as_of}},
+            "coverage": {"missing_price": [], "missing_fx": []}, "usable": True, "reason": None}
+
+
+def _review_basis(events, state):
+    inputs = {"ledger_events": list(events), "candidate": {"files": []},
+              "ledger_receipt": {"skipped_lines": 0}}
+    return review._virtual_review_basis(inputs, [], state)[1]
+
+
+def test_the_review_frame_is_narrowed_from_the_book_the_basis_will_report():
+    """`prepare` reads the book twice: once to learn which tickers need a
+    price, and once — canonically, split-aware — to build the basis it
+    validates that frame against. Split-blind on the first read, a position
+    whose raw quantities reach zero is dropped from the frame and is not even
+    listed as `missing_price`; the canonical read then restores it and refuses
+    with "prices do not exactly partition holdings".
+
+    So the failure is not a wrong number on a card. It is `review prepare`
+    declining to run at all on the same split-crossing book `derive_holdings`,
+    `refresh` and `consider` were fixed to read correctly (#558 follow-up) —
+    and the finalize-side re-verification narrows through the same function, so
+    a review that somehow started could not have been saved either.
+    """
+    receipt = _review_basis(_CROSSING, {"valuation_frame": _engine_frame(), "splits": SPLITS})
+
+    frame = receipt["valuation_frame"]
+    assert "NVDA" in frame["prices"], frame                    # discovery kept the position
+    assert frame["coverage"]["missing_price"] == [], frame     # and did not merely excuse it
+    holdings = receipt["basis"]["current_book"]["holdings"]
+    assert holdings["NVDA"]["shares"] == 900.0, holdings
+
+    # The state version the review reports is the one a direct canonical query
+    # produces from the same events — the acceptance criterion that review and
+    # `consider` answer on one denominator, exercised rather than asserted.
+    direct = pb.query_current_book(
+        _CROSSING, valuation_manifest=frame, skipped_lines=0, splits=SPLITS,
+        reference_as_of=review._basis_reference(
+            frame["as_of"], pb.query_current_book(_CROSSING, skipped_lines=0, splits=SPLITS).as_of))
+    assert receipt["basis_state_version"] == direct.state_version
+
+
+def test_a_price_the_review_frame_really_lacks_is_still_reported_missing():
+    """The counterweight. Telling the narrowing read about splits must not turn
+    it into a read that accepts anything: a held position with no price still
+    has to leave the frame unusable, or the fix would have bought its green by
+    loosening the partition the previous test depends on."""
+    receipt = _review_basis(_CROSSING, {"valuation_frame": _engine_frame(priced=()),
+                                        "splits": SPLITS})
+    frame = receipt["valuation_frame"]
+    assert frame["coverage"]["missing_price"] == [{"ticker": "NVDA", "currency": "USD"}], frame
+    assert frame["usable"] is False and frame["reason"] == "missing_price", frame
+
+
+def test_a_review_with_no_split_map_still_reads_its_own_book():
+    """`splits=None` is what an offline or never-fetched review carries, and it
+    must go on working: unadjusted, consistently, on both reads. The frame is
+    narrowed from the same book the basis reports, whatever basis that is."""
+    events = [_trade("2023-01-10", "BUY", 100.0, 150.0),
+              _trade("2026-07-28", "SELL", 40.0, 197.0)]
+    receipt = _review_basis(events, {"valuation_frame": _engine_frame()})
+    assert "NVDA" in receipt["valuation_frame"]["prices"]
+    assert receipt["basis"]["current_book"]["holdings"]["NVDA"]["shares"] == 60.0
+
+
 # ─────────────── every reader of the book is told about splits ───────────────
 
 # Where `splits` sits in each signature, so a positional call counts as passing
-# it and only a genuinely split-blind call is reported.
-_BOOK_READERS = {"derive_holdings": 1, "holdings_as_of": 2}
+# it and only a genuinely split-blind call is reported. `None` means the
+# parameter is keyword-only, so no argument count can satisfy it.
+#
+# The wrapper readers are here for the reason the whole net exists. Watching
+# only the two `ledger` functions made a split-blind `query_current_book` call
+# invisible — it reads the book through `derive_holdings`, which passes its own
+# map faithfully, so the audit saw a compliant call and the caller one level up
+# went unexamined for a release. That caller was `review`'s provisional frame
+# narrowing, and it made `prepare` refuse a split-crossing book (#558
+# follow-up). A reader of the book is anything that returns one, not only the
+# function that sums the quantities.
+_BOOK_READERS = {"derive_holdings": 1, "holdings_as_of": 2,
+                 "query_current_book": None, "query_current_book_from_ledger": None}
 
 # (module, enclosing function) -> why this reader legitimately has no map.
 # Keyed by name rather than line so it survives edits above it, and every entry
@@ -272,8 +367,9 @@ def _book_reader_calls():
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
             if name not in _BOOK_READERS:
                 continue
+            position = _BOOK_READERS[name]
             passes = (any(k.arg == "splits" for k in node.keywords)
-                      or len(node.args) > _BOOK_READERS[name])
+                      or (position is not None and len(node.args) > position))
             enclosing, cur = "<module>", node
             while cur in parents:
                 cur = parents[cur]
