@@ -8026,10 +8026,13 @@ def test_all_json_schemas_parse():
              "decision-context.schema.json",
              # #414 Wave A: a new, standalone schema for the semantically-richer
              # --agent-case claim envelope engine/answer_provenance.py checks.
-             # Not a shared schema and not wired into any review.py path yet
-             # (Wave B's job) -- see answer-provenance.schema.json's own
-             # description for why this is a new file, not an edit to
-             # trade-evaluation.schema.json's existing claim $defs.
+             # #479 Wave B $ref-ed it from trade-evaluation.schema.json's own
+             # `agent_case` property (the `context`/decision-context.schema.json
+             # precedent just above) rather than restating it a second time,
+             # and wired engine/answer_provenance.py::validate_agent_case into
+             # cmd_consider itself -- see answer-provenance.schema.json's own
+             # description for why this stayed a new file rather than an edit
+             # to trade-evaluation.schema.json's old, narrower claim $defs.
              "answer-provenance.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):

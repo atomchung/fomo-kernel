@@ -111,22 +111,33 @@ Every claim you add carries its own label: state your record says (drawn straigh
 
 Name what nobody checked, every time. `consider` measures weight, concentration, driver overlap, cash, and rule collisions — nothing else. Liquidity, valuation, tax consequences, and whether the position still fits this person are all real risks the engine does not measure. Silence about a risk it did not check reads as a clean bill of health it never gave. Record staleness (above) belongs on this list too whenever `stale_days` is more than trivial.
 
-You may optionally structure this case with `--agent-case`, a path to a JSON file:
+You may optionally structure this case with `--agent-case`, a path to a JSON file, checked by `engine/answer_provenance.py::validate_agent_case` (#414) before anything is stored or returned:
 
 ```json
 {
   "for": [
-    {"claim": "Your last three adds to this position each preceded a >10% move.", "provenance": "engine_fact"}
+    {"claim": "You have historically held through drawdowns of this size in this name without selling.", "provenance": "agent_judgment"}
   ],
   "against": [
-    {"claim": "This trade would push NVDA to 64% of the book, above your own 25% guideline.", "provenance": "engine_fact"},
-    {"claim": "The stock trades at a much higher multiple than when you first bought it.", "provenance": "public_fact"},
-    {"claim": "You have added to this name three times in two months, which reads more like averaging into a story than reacting to new evidence.", "provenance": "agent_judgment"}
+    {"claim": "This grows NVDA to 64% of the book.", "provenance": "engine_fact", "anchor": "consequence.after.max_pct"},
+    {"claim": "This is priced on cost, not a live market value, so the weight above may be off.", "provenance": "engine_fact", "anchor": "consequence.disclosures.0"},
+    {"claim": "The record is several days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
+    {"claim": "The stock trades at a much higher earnings multiple than when you first bought it.", "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-20"}
   ]
 }
 ```
 
-Structured claims only, never a free prose blob. If you send it, both `for` and `against` are required — a one-sided submission is refused, matching the owner ruling above. `provenance` is one of `engine_fact` (drawn from `consider`'s own output), `public_fact` (something you looked up), or `agent_judgment` (your own reasoning) — docs/decision-fomo-kernel-shape.md §3's Layer 3 vocabulary. This flag is entirely optional; a plain `--premise` call is a complete, valid use of `consider`.
+Structured claims only, never a free prose blob. If you send it, both `for` and `against` are required and neither may be empty — a one-sided or empty-sided submission is refused, matching the owner ruling above. `provenance` is one of `engine_fact` (drawn from `consider`'s own output), `public_fact` (something you looked up), or `agent_judgment` (your own reasoning) — docs/decision-fomo-kernel-shape.md §3's Layer 3 vocabulary. This flag is entirely optional; a plain `--premise` call is a complete, valid use of `consider`.
+
+**A claim's provenance decides what else it must carry**, per `schemas/answer-provenance.schema.json`:
+
+- `engine_fact` must carry `anchor`: a dot-separated path into exactly this call's own frozen `basis`, `consequence`, or `rule_collisions` (`rule_collisions` is addressed by `rule_id`, e.g. `rule_collisions.rule-1.worsens`, never by list position). The path must resolve to one fact, never a container, and copy it verbatim from the JSON `consider` already handed you rather than retyping it by hand. When the resolved fact is a number, quote it in the claim's own prose within half a display unit, at whichever scale the record itself uses — a fraction-shaped value (weights, `max_pct`, `ai_pct`, …) is written ×100 as a percent, everything else (`stale_days`, share counts, dollar balances) as-is. A claim anchored at a `rule_collisions[...].state` or `.worsens` field whose frozen state is `already_over` with `worsens` not null must also carry its own `worsens` boolean, matching the frozen one exactly (see [Reading a rule collision](#reading-a-rule-collision) above) — and `worsens` is forbidden on every other engine_fact claim.
+- `public_fact` must carry `source` (the named external source) and `as_of` (an ISO date). It must never restate what the user themselves said through `--decision-context`'s `reason`/`why_now` — copying the user's own words and relabelling them as an outside fact is refused, not stored.
+- `agent_judgment` carries nothing beyond `claim` and `provenance`.
+
+**Every disclosure this call owes must be covered, or the whole case is refused.** For each key in the frozen `consequence.disclosures`, at least one `engine_fact` claim must anchor into it (`consequence.disclosures.<index>`) — silently dropping a disclosure the evaluation was given is exactly the gap this check exists to close. Likewise, whenever the basis is stale (`stale_days > 0`) or not a declared-complete snapshot, at least one `engine_fact` claim must anchor somewhere under `basis`. This is why the example above anchors `consequence.disclosures.0` and `basis.stale_days` even though neither reads as dramatic on its own — leaving either out is refused the same as a wrong number.
+
+A rejected case is refused before it is stored or shown: the caller gets the validator's own error, naming the exact claim and the exact rule it failed, and `consider` persists and returns nothing for that attempt. Fix the claim and resend, or drop `--agent-case` and present the case in plain prose instead.
 
 ## Recording what the user did
 

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 
+import answer_provenance
 import book_refresh
 import card_renderer
 import conditions
@@ -5192,14 +5193,26 @@ def _load_json_arg(value, label):
 
 
 def _validate_agent_case(payload):
-    """Fail-closed structural check for ``--agent-case``, hand-rolled to
-    mirror ``schemas/trade-evaluation.schema.json#/properties/agent_case``
-    — the same "no jsonschema dependency" posture consequence.py,
-    conditions.py, and price_feed.py already keep for their own envelopes.
-    Both ``for`` and ``against`` are required once ``agent_case`` is sent at
-    all: owner ruling 2026-07-27, the agent lists the case for and against
-    and does not take a position, so a one-sided submission is refused
-    rather than accepted."""
+    """Fail-closed structural precheck for ``--agent-case``: cheap shape
+    only, run before any book is read or any number is computed (right
+    after the flag is loaded in ``cmd_consider``). Both ``for`` and
+    ``against`` are required once ``agent_case`` is sent at all: owner
+    ruling 2026-07-27, the agent lists the case for and against and does
+    not take a position, so a one-sided submission is refused rather than
+    accepted.
+
+    This does not enforce the exact field set a claim may carry — that set
+    is provenance-dependent (``anchor``/``worsens`` for ``engine_fact``,
+    ``source``/``as_of`` for ``public_fact``; see
+    ``schemas/answer-provenance.schema.json``'s ``$defs``) and is checked
+    exactly once, by ``answer_provenance.validate_agent_case``, after the
+    frozen ``consequence``/``rule_collisions`` this call needs actually
+    exist (docs/development-guide.md section 7: one reader, not two). An
+    earlier version of this function required every claim to carry exactly
+    ``{claim, provenance}`` regardless of provenance — which rejected every
+    engine_fact/public_fact claim carrying the field its own provenance
+    requires before it could ever reach that check, making both provenance
+    kinds unusable (#479 Wave B)."""
     if not isinstance(payload, dict):
         raise ReviewError("--agent-case must be a JSON object")
     unknown = set(payload) - {"for", "against"}
@@ -5212,9 +5225,9 @@ def _validate_agent_case(payload):
         if not isinstance(claims, list):
             raise ReviewError(f"--agent-case.{side} must be a list")
         for index, claim in enumerate(claims):
-            if not isinstance(claim, dict) or set(claim) != {"claim", "provenance"}:
+            if not isinstance(claim, dict) or not {"claim", "provenance"} <= set(claim):
                 raise ReviewError(
-                    f"--agent-case.{side}[{index}] must be an object with exactly "
+                    f"--agent-case.{side}[{index}] must be an object carrying at least "
                     "'claim' and 'provenance'")
             if not isinstance(claim["claim"], str) or not claim["claim"].strip():
                 raise ReviewError(f"--agent-case.{side}[{index}].claim must be a non-empty string")
@@ -5537,6 +5550,18 @@ def cmd_consider(args):
     returns. Supplied, it joins the identity seed, so the same trade re-asked
     with a different why-now is a distinct evaluation rather than a silent
     supersede; it never joins a computation.
+
+    ``--agent-case`` (schemas/answer-provenance.schema.json) is optionally a
+    structured case for and against, checked against this call's own frozen
+    ``basis``/``consequence``/``rule_collisions`` by
+    ``answer_provenance.validate_agent_case`` before the row is written or
+    anything is returned (#414, wired in here by #479 Wave B). A claim that
+    misquotes the frozen record, cites an anchor that does not resolve,
+    drops a disclosure this evaluation owes, or relabels the user's own
+    ``--decision-context`` words as an outside ``public_fact`` is refused —
+    the caller sees the validator's own message and nothing is persisted.
+    Like ``--agent-case`` itself, none of this touches the ``evaluation_id``
+    seed or the computed consequence.
     """
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     language = card_renderer.resolve_language(args.language)
@@ -5648,6 +5673,35 @@ def cmd_consider(args):
                           # including into the frozen record a later --resolve
                           # or reconciliation reads back.
                           "excluded_holdings": result["excluded_holdings"]}
+
+    # #414 / #479 Wave B: the semantic provenance gate. Runs here — after
+    # consequence_stored and collisions exist, before the row is built,
+    # appended, or emitted — because answer_provenance.validate_agent_case
+    # checks each claim against the frozen result it claims to describe,
+    # and that result does not exist any earlier in this function. A
+    # rejected case is neither stored nor delivered: fail closed, surfacing
+    # the validator's own message, which names the exact claim and rule (or
+    # disclosure) that failed. agent_case itself never joins _evaluation_id's
+    # seed below — it is the agent's interpretation, not the subject being
+    # evaluated — so this call decides only whether the row gets written at
+    # all, never what its identity is.
+    if agent_case is not None:
+        # user_statements is the exact reason/why_now the user supplied
+        # through --decision-context (#479), never a summary, normalization,
+        # or translation of them: case 8 catches an agent that copies the
+        # user's own words and relabels them with a public_fact citation
+        # they never earned, and a paraphrase would defeat that comparison.
+        # () when no context was supplied — a context-free consider call
+        # captured no user prose, so case 8 has nothing to compare against,
+        # exactly as answer_provenance.py's own module docstring specifies.
+        user_statements = ((decision_context["reason"], decision_context["why_now"])
+                           if decision_context is not None else ())
+        try:
+            answer_provenance.validate_agent_case(
+                agent_case, basis=basis, consequence=consequence_stored,
+                rule_collisions=collisions, user_statements=user_statements)
+        except answer_provenance.AnswerProvenanceError as exc:
+            raise ReviewError(str(exc)) from exc
 
     row = {
         "evaluation_id": _evaluation_id(premise_stored, basis, created,

@@ -169,28 +169,8 @@
       "description": "The date --resolve recorded a decision (ISO date), or null while decision is open."
     },
     "agent_case": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["for", "against"],
-      "description": "Optional structured case for and against the trade, supplied by the caller through --agent-case. Never required, and never free prose -- owner ruling 2026-07-27: the agent lists the case for and against and does not take a position, so a submission missing either side is refused rather than accepted one-sided.",
-      "properties": {
-        "for": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
-        "against": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
-      }
-    }
-  },
-  "$defs": {
-    "claim": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["claim", "provenance"],
-      "properties": {
-        "claim": {"type": "string", "minLength": 1, "description": "One sentence, the caller's own words."},
-        "provenance": {
-          "enum": ["engine_fact", "public_fact", "agent_judgment"],
-          "description": "docs/decision-fomo-kernel-shape.md Layer 3: mark each claim as your record says (engine_fact), public fact, or my judgment (agent_judgment) -- per-sentence provenance rather than a blanket disclaimer."
-        }
-      }
+      "$ref": "answer-provenance.schema.json",
+      "description": "Optional structured case for and against the trade, supplied by the caller through --agent-case and checked by engine/answer_provenance.py::validate_agent_case against this row's own frozen basis/consequence/rule_collisions before the row is ever written (#414, wired in by #479 Wave B). Never required, and never free prose -- owner ruling 2026-07-27: the agent lists the case for and against and does not take a position, so a submission missing either side is refused rather than accepted one-sided. The shape is declared once, in answer-provenance.schema.json, and $ref-ed here rather than restated -- the same treatment `premise` and `context` get above. That file's own description explains why the shape could not stay this schema's own additionalProperties:false claim $defs: which fields a claim may carry (`anchor`/`worsens`, or `source`/`as_of`) depends on its provenance, and reconciling the two was Wave B's integration decision."
     }
   }
 }

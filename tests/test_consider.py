@@ -110,6 +110,22 @@ EVALUATION_SCHEMA = _schema("trade-evaluation.schema.json")
 PREMISE_SCHEMA = _schema("trade-premise.schema.json")
 PLAN_SCHEMA = _schema("review-plan.schema.json")
 CONTEXT_SCHEMA = _schema("decision-context.schema.json")
+# trade-evaluation.schema.json's own `agent_case` property is a bare $ref to
+# this file (#479 Wave B) rather than a restated claim shape -- see that
+# property's own description. Loaded separately here for the same reason:
+# EVALUATION_SCHEMA["properties"]["agent_case"] carries no "required" or
+# "properties" of its own any more to read a claim's shape off of.
+ANSWER_PROVENANCE_SCHEMA = _schema("answer-provenance.schema.json")
+# review.AGENT_CASE_PROVENANCE / answer_provenance.PROVENANCE's own values,
+# restated here only as dict keys into ANSWER_PROVENANCE_SCHEMA's three
+# per-provenance $defs -- the same mapping idea
+# test_answer_provenance.py's _CLAIM_DEF_BY_PROVENANCE already uses for the
+# identical lookup in that file's own suite.
+_CLAIM_DEF_BY_PROVENANCE = {
+    "engine_fact": "engineFactClaim",
+    "public_fact": "publicFactClaim",
+    "agent_judgment": "judgmentClaim",
+}
 
 
 def _check_evaluation_shape(row):
@@ -172,13 +188,19 @@ def _check_evaluation_shape(row):
         assert len(refs) <= CONTEXT_SCHEMA["properties"]["evidence_refs"]["maxItems"]
 
     if "agent_case" in row:
-        case_schema = EVALUATION_SCHEMA["properties"]["agent_case"]
-        assert set(case_schema["required"]) <= set(row["agent_case"])
-        provenances = set(EVALUATION_SCHEMA["$defs"]["claim"]["properties"]["provenance"]["enum"])
+        assert set(row["agent_case"]) == {"for", "against"}
         for side in ("for", "against"):
-            for claim in row["agent_case"][side]:
-                assert set(claim) == {"claim", "provenance"}
-                assert claim["provenance"] in provenances
+            claims = row["agent_case"][side]
+            assert claims, f"agent_case.{side} must be non-empty once agent_case is sent"
+            for claim in claims:
+                assert claim["provenance"] in _CLAIM_DEF_BY_PROVENANCE
+                defn = ANSWER_PROVENANCE_SCHEMA["$defs"][_CLAIM_DEF_BY_PROVENANCE[claim["provenance"]]]
+                assert set(defn["required"]) <= set(claim), (
+                    f"{side} claim missing required fields for {claim['provenance']}: "
+                    f"{set(defn['required']) - set(claim)}")
+                assert set(claim) <= set(defn["properties"]), (
+                    f"{side} claim carries fields {claim['provenance']} must not: "
+                    f"{set(claim) - set(defn['properties'])}")
 
 
 # ──────────────── evaluation_reconciliation fixtures (section J) ────────────────
@@ -1009,13 +1031,37 @@ def test_agent_case_rejects_an_unknown_provenance():
         _fails(run, "provenance must be one of")
 
 
+def _valid_agent_case_for_sample_momentum():
+    """A provenance-clean case against the frozen consequence
+    `consider --premise '{"ticker":"NVDA","side":"buy","price":130.0,"qty":5}'`
+    produces over sample_momentum.csv: after.max_pct ~60.8%, disclosures
+    ["cost_basis", "cash_unreliable"], basis.completeness "unverified".
+    answer_provenance's case 6 requires an anchored claim covering every
+    disclosure plus one basis/staleness fact -- this fixture is the minimal
+    case that clears every check, used everywhere a passing --agent-case is
+    needed against this exact premise/CSV pair."""
+    return {
+        "for": [
+            {"claim": "Momentum is intact.", "provenance": "agent_judgment"},
+            {"claim": "This is priced on cost, not a live market value.",
+             "provenance": "engine_fact", "anchor": "consequence.disclosures.0"},
+            {"claim": "The cash balance has no anchor and is a running sum only.",
+             "provenance": "engine_fact", "anchor": "consequence.disclosures.1"},
+        ],
+        "against": [
+            {"claim": "This grows NVDA to about 61% of the book, already the largest position.",
+             "provenance": "engine_fact", "anchor": "consequence.after.max_pct"},
+            {"claim": "This book comes from an unreconciled CSV import, not a declared snapshot.",
+             "provenance": "engine_fact", "anchor": "basis.completeness"},
+        ],
+    }
+
+
 def test_agent_case_is_stored_when_supplied_and_absent_when_not():
     with tempfile.TemporaryDirectory() as tmp:
         case_path = os.path.join(tmp, "case.json")
         with open(case_path, "w", encoding="utf-8") as f:
-            json.dump({"for": [{"claim": "Momentum is intact.", "provenance": "agent_judgment"}],
-                      "against": [{"claim": "Already the largest position.",
-                                   "provenance": "engine_fact"}]}, f)
+            json.dump(_valid_agent_case_for_sample_momentum(), f)
         with_case = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                              "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
                              "--agent-case", case_path))
@@ -1026,6 +1072,100 @@ def test_agent_case_is_stored_when_supplied_and_absent_when_not():
                                 "--premise",
                                 '{"ticker": "NVDA", "side": "buy", "price": 131.0, "qty": 5}'))
         assert "agent_case" not in without_case["evaluation"]
+
+
+def test_agent_case_with_a_wrong_number_is_rejected_on_the_production_path():
+    """#414 / #479 Wave B: engine/answer_provenance.py::validate_agent_case
+    is wired into cmd_consider itself, not only exercised in that module's
+    own unit tests. A claim that quotes a number the frozen consequence does
+    not support is refused through the real CLI -- and because the check
+    runs before _append_evaluation_row, nothing lands in
+    trade_evaluations.jsonl for the rejected attempt. The frozen after.max_pct
+    for this exact premise/CSV pair is ~60.8% (see
+    _valid_agent_case_for_sample_momentum); 90% is well outside tolerance."""
+    with tempfile.TemporaryDirectory() as tmp:
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump({"for": [{"claim": "The trade is a modest sizing increase.",
+                                "provenance": "agent_judgment"}],
+                      "against": [{"claim": "This grows NVDA to about 90% of the book.",
+                                   "provenance": "engine_fact",
+                                   "anchor": "consequence.after.max_pct"}]}, f)
+        run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                  "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                  "--agent-case", case_path)
+        _fails(run, "quotes a number that does not match the frozen value")
+        assert _read_evaluations(tmp) == [], "a rejected agent_case must append nothing"
+
+
+def test_agent_case_public_fact_restating_the_users_own_decision_context_is_rejected():
+    """The load-bearing wiring named in #479 Wave B: --decision-context's
+    exact reason/why_now become validate_agent_case's user_statements, so an
+    agent that copies the user's own words back and mislabels them as an
+    outside public_fact citation is refused (answer_provenance.py case 8) --
+    through the real CLI, with both flags supplied together, not just inside
+    that module's own fixtures."""
+    with tempfile.TemporaryDirectory() as tmp:
+        reason = "It is still my highest-conviction name in the book."
+        context_path = os.path.join(tmp, "context.json")
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump({"reason": reason,
+                      "why_now": "Their main supplier raised capacity guidance this morning."}, f)
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump({"for": [{"claim": reason, "provenance": "public_fact",
+                               "source": "Reuters", "as_of": "2026-07-29"}],
+                      "against": [{"claim": "This trade would grow the position further.",
+                                   "provenance": "agent_judgment"}]}, f)
+        run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                  "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                  "--decision-context", context_path, "--agent-case", case_path)
+        _fails(run, "restates what the user said as public_fact")
+        assert _read_evaluations(tmp) == [], "a rejected agent_case must append nothing"
+
+
+def test_agent_case_public_fact_not_restating_context_is_accepted():
+    """The other direction of the same wiring: a public_fact claim that does
+    not match the supplied decision context's words is not case 8, and a
+    fully provenance-clean case (with a real decision context alongside it)
+    is stored, not refused."""
+    with tempfile.TemporaryDirectory() as tmp:
+        context_path = os.path.join(tmp, "context.json")
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump({"reason": "It is still my highest-conviction name in the book.",
+                      "why_now": "Their main supplier raised capacity guidance this morning."}, f)
+        case = _valid_agent_case_for_sample_momentum()
+        case["against"].append(
+            {"claim": "The stock trades at a much higher multiple than a year ago.",
+             "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-29"})
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(case, f)
+        result = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                          "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                          "--decision-context", context_path, "--agent-case", case_path))
+        assert "agent_case" in result["evaluation"]
+        assert "context" in result["evaluation"]
+        _check_evaluation_shape(result["evaluation"])
+
+
+def test_agent_case_with_an_empty_side_is_rejected_though_structurally_a_list():
+    """answer_provenance.py case 5: an empty for/against list passes the
+    cheap structural precheck (`isinstance(claims, list)` is true for `[]`)
+    but is refused by the semantic gate -- the exact gap #479 Wave B closes.
+    A minimal, anchor-free reproduction, kept distinct from the
+    wrong-number test above so a future change to the numeric-tolerance
+    check cannot accidentally make this one pass for the wrong reason."""
+    with tempfile.TemporaryDirectory() as tmp:
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump({"for": [], "against": [{"claim": "Momentum is intact.",
+                                               "provenance": "agent_judgment"}]}, f)
+        run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                  "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                  "--agent-case", case_path)
+        _fails(run, "must be a non-empty list of claims")
+        assert _read_evaluations(tmp) == [], "a rejected agent_case must append nothing"
 
 
 # ───────────────────────── I. read-only w.r.t. review state ─────────────────────────
