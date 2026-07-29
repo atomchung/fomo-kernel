@@ -233,8 +233,9 @@ def main():
     ok.append(("holdings 每檔有 cycle_id + 絕對值、不含 weight（雙審 gemini#4）",
                all("cycle_id" in p and "shares" in p and "weight" not in p
                    for p in st2["holdings"]["positions"].values())))
-    ok.append(("holdings 標 is_complete=False（不宣稱完整持倉，雙審 codex#3）",
-               st2["holdings"].get("is_complete") is False))
+    ok.append(("holdings 只說來源、不宣稱涵蓋範圍（#549 移除 is_complete）",
+               st2["holdings"].get("derived_from") == "trades_csv"
+               and "is_complete" not in st2["holdings"]))
 
     print("── 驗收 ──")
     allok = True

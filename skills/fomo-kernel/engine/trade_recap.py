@@ -2041,7 +2041,10 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         "holdings": {                                       # 目標3：持倉 snapshot（絕對值，跨期 diff 用）
             "as_of": rows[-1]["date"].isoformat() if rows else None,
             "derived_from": "trades_csv",                   # 從交易推算，可能漏期初持倉
-            "is_complete": False,                           # CSV 無法自證完整（雙審 codex#3）：不宣稱完整持倉真相
+            # #549:這裡曾經標 is_complete:False（「CSV 無法自證完整」）。那條旗標與本
+            # 產品的原則直接矛盾——使用者給什麼就是他當下的持倉，沒有一份輸入需要先
+            # 證明自己涵蓋某個外部帳戶才算數；而標了 False 的那份宣告會失去更新帳本
+            # 的資格，帳本從此靜默不動。derived_from 已經誠實說了這份是從交易推算的。
             "positions": holdings,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)

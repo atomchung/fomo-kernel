@@ -1407,17 +1407,21 @@ def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
                 "zh-TW": {"subject_with_count": '使用者提供的 {positions} 個持倉',
                           "opening_as_of": '這是針對{subject}的開場組合檢查，快照截至 {as_of}。',
                           "valuation_market_value": '結構權重採使用者提供的市值口徑。',
-                          "strength_complete": '這份持倉快照已建立完整的開場組合結構基線。'},
+                          "strength_weighted": '已用你提供的持倉建立組合結構基線，並據此評分權重；缺少的輸入維持明示，不用推測補齊。'},
                 "en": {"subject_with_count": '{positions} supplied positions',
                        "opening_as_of": 'This is an opening portfolio check of {subject} as of {as_of}.',
                        "valuation_market_value": 'Structural weights use the supplied market-value basis.',
-                       "strength_complete": 'The supplied snapshot establishes a complete structural baseline for the opening portfolio check.'},
+                       "strength_weighted": 'The supplied positions establish a structural baseline, and their weights are scored; missing inputs remain explicit rather than inferred.'},
             }[language]
             subject = snap_templates["subject_with_count"].format(positions="4")
             expected_opening = snap_templates["opening_as_of"].format(
                 subject=subject, as_of="2026-07-20")
             expected_valuation = snap_templates["valuation_market_value"]
-            expected_strength = snap_templates["strength_complete"]
+            # #549: the third branch of `_snapshot_strength_line` is gone with
+            # the completeness flag. What is left is what the engine can see --
+            # the supplied facts either supported weights or they did not -- and
+            # this fixture supplies market values, so it takes the weighted one.
+            expected_strength = snap_templates["strength_weighted"]
             markdown = card_renderer.render_private(bundle)
             html_card = html.unescape(card_renderer.render_html(bundle))
             for expected, label in ((expected_opening, "opening"),

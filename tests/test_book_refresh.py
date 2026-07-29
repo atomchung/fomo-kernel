@@ -423,10 +423,93 @@ def test_the_receipt_reads_the_book_through_the_declaration_s_own_window():
             "number; 150 here would be today's book, not the declaration's")
 
 
-def test_a_root_with_no_recorded_book_is_routed_to_onboarding():
+def test_a_root_with_no_history_at_all_is_routed_to_onboarding():
+    """The name matters, and the old one was the defect (#549).
+
+    This used to be called `test_a_root_with_no_recorded_book_is_routed_to_
+    onboarding` while seeding an **empty** ledger -- so the test's own name
+    asserted the false equivalence the code made: `latest_anchor is None`
+    covered two different roots, an empty one and one holding trades, and only
+    the empty half had an oracle. The trades-only half is the test below, and
+    it now routes the other way.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         out = _cli(_root(tmp, ()), _snapshot(tmp, KEPT))
         assert out["status"] == "error" and "prepare --snapshot-json" in out["error"], out
+        assert "no holdings yet" in out["error"], (
+            "the refusal must describe the root it is actually shown to: this one "
+            "really has nothing recorded")
+
+
+def _trade(date, ticker, action, qty, price):
+    return {"type": "trade", "date": date, "ticker": ticker, "action": action,
+            "qty": qty, "price": price, "market": "US", "currency": "USD"}
+
+
+def test_a_root_whose_book_came_from_trades_can_be_refreshed():
+    """#549's whole point, and the case no test covered.
+
+    A user onboards with a transaction CSV, gets a review, and later wants to
+    correct the book with a holdings view -- the cheaper input #485 was written
+    to support. Before this, both doors were locked and each pointed at the
+    other: `refresh` said the root had no recorded book (it had trades and
+    positions), and `prepare --route snapshot_review` said the history needed a
+    reconciliation that could not be computed without one.
+
+    The trades below are the same shape the ingest lane writes, plus the row it
+    now writes beside them. WIDGET disappears from the view and NEWCO appears,
+    so the lane raises exactly the two confirmations it exists to raise instead
+    of refusing the user outright.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        trades = [_trade("2026-06-01", "ACME", "buy", 100, 12.0),
+                  _trade("2026-06-02", "WIDGET", "buy", 50, 30.0)]
+        recorded = lg.build_derived_book(trades, as_of="2026-06-30")
+        assert recorded is not None and recorded["source"] == lg.DERIVED_BOOK_SOURCE
+        root = _root(tmp, tuple(trades) + (recorded,))
+
+        view = [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                 "market": "US", "currency": "USD"},
+                {"ticker": "NEWCO", "shares": 7, "avg_cost": 20.0,
+                 "market": "US", "currency": "USD"}]
+        receipt = _cli(root, _snapshot(tmp, view))
+        assert receipt["status"] == "pending_confirmation", receipt
+        raised = {row["ticker"]: row for row in receipt["pending_confirmations"]}
+        assert raised["WIDGET"]["kind"] == "disappearance"
+        assert raised["WIDGET"]["cycle_id"] == "WIDGET#2026-06-02#1", (
+            "the cycle that would close comes from the trades, not from the "
+            "summary row -- a restatement is never the replay's base")
+        assert raised["NEWCO"]["kind"] == "appearance"
+
+        before = _ledger_rows(root)
+        answers = {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "WIDGET", "classification": "sold"},
+            {"ticker": "NEWCO", "classification": "confirmed", "held_months": 3}]}
+        adopted = _cli(root, _snapshot(tmp, view), answers)
+        assert adopted["status"] == "adopted", adopted
+        assert adopted["recorded_absent"] == ["WIDGET"] and adopted["recorded_new"] == ["NEWCO"]
+        after = _ledger_rows(root)
+        assert after[:len(before)] == before, "adoption is append-only"
+        assert lg.derive_holdings(after)["holdings"].keys() == {"ACME", "NEWCO"}
+
+
+def test_an_unanswered_disappearance_on_a_trades_built_book_still_fails_closed():
+    """The invariant #549 requires to survive: opening this lane to a book built
+    from trades must not open a path where a disappearance is adopted without an
+    answer. Same refusal as every other root, reached through the newly
+    reachable one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        trades = [_trade("2026-06-01", "ACME", "buy", 100, 12.0),
+                  _trade("2026-06-02", "WIDGET", "buy", 50, 30.0)]
+        root = _root(tmp, tuple(trades) + (lg.build_derived_book(trades, as_of="2026-06-30"),))
+        view = [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                 "market": "US", "currency": "USD"}]
+        receipt = _cli(root, _snapshot(tmp, view))
+        before = _ledger_rows(root)
+        out = _cli(root, _snapshot(tmp, view),
+                   {"refresh_id": receipt["refresh_id"], "answers": []})
+        assert out["status"] == "error", out
+        assert _ledger_rows(root) == before, "a refusal writes nothing"
 
 
 def test_a_root_with_a_recorded_book_routes_a_differing_view_back_to_this_lane():
@@ -955,14 +1038,26 @@ def test_the_classification_enum_matches_the_engine_constant():
         "an engine-assigned field still has to be a field a position may carry")
 
 
-def test_the_refresh_lane_never_reads_is_complete():
-    """Owner ruling 1: legacy `is_complete:false` rows stay historical slices and
-    never become anchors retroactively. The lane that maintains the current book
-    must not resurrect the concept the rest of M0 spent four PRs removing."""
-    with open(os.path.join(ENGINE, "book_refresh.py"), encoding="utf-8") as handle:
-        source = handle.read()
-    body = source.split('"""', 2)[-1]      # skip the module docstring, which names it
-    assert "is_complete" not in body, "book_refresh must not read or write is_complete"
+def test_no_engine_module_reads_is_complete_any_more():
+    """#549 removed the flag outright, so the old single-module guard is now a
+    repo-wide one. A reader coming back anywhere in the engine would revive the
+    same defect this issue reports: a declaration that disqualifies itself, and
+    a book that silently stops updating."""
+    import ast
+    offenders = []
+    for name in sorted(os.listdir(ENGINE)):
+        if not name.endswith(".py") or name.startswith("test_"):
+            continue
+        source = open(os.path.join(ENGINE, name), encoding="utf-8").read()
+        for node in ast.walk(ast.parse(source)):
+            # An exact string constant is how this field would be read or
+            # written -- `event["is_complete"]`, `.get("is_complete")`, a dict
+            # literal key. Prose that merely names the removed flag mentions it
+            # as a substring of a longer docstring and is not a reader, which is
+            # why this parses rather than greps.
+            if isinstance(node, ast.Constant) and node.value == "is_complete":
+                offenders.append(f"{name}:{node.lineno}")
+    assert not offenders, "is_complete is gone; these read or write it: " + ", ".join(offenders)
 
 
 def test_the_adapter_validator_is_shared_not_reimplemented():

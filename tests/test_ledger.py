@@ -61,13 +61,12 @@ def _tmpfile(text, suffix):
     return p
 
 
-def _snapshot_bundle(session_id, ticker, *, is_complete=True, as_of="2026-07-18",
+def _snapshot_bundle(session_id, ticker, *, as_of="2026-07-18",
                       date_end=None, reconciliation=None):
     anchor = _snap(
         as_of,
         [{"ticker": ticker, "shares": 1, "avg_cost": 10,
           "market": "US", "currency": "USD"}],
-        is_complete=is_complete,
     )
     engine_state = {"date_end": date_end if date_end is not None else as_of,
                     "snapshot_anchor": anchor, "metrics": {}, "problem_events": []}
@@ -305,10 +304,135 @@ def test_latest_anchor_sequence_beats_repair_file_order_but_legacy_stays_compati
         "pre-sequence same-day snapshots retain their historical file-order rule"
     assert lg.latest_anchor([newer, second]) is newer, \
         "repairing a legacy row later must not override a finalized sequence-aware anchor"
-    incomplete = _snap("2026-07-02", [{"ticker": "PARTIAL", "shares": 1}],
-                       is_complete=False, projection_sequence=3)
-    assert lg.latest_anchor([newer, incomplete]) is newer, \
-        "an explicitly incomplete declaration can never replace the accounting anchor"
+    # #549: a declaration the user marked as covering part of the account used
+    # to be skipped here, which is what silently froze their book. Nothing has
+    # to qualify any more -- the later row is the recorded book, full stop.
+    partial = _snap("2026-07-02", [{"ticker": "PARTIAL", "shares": 1}],
+                    is_complete=False, projection_sequence=3)
+    assert lg.latest_anchor([newer, partial]) is partial, \
+        "a legacy completeness flag no longer disqualifies a recorded book"
+
+
+# ── #549:交易匯入寫下它推導出的帳本 ──────────────────────────────
+
+# 每一組都是一段真實可能出現的交易史。共同的驗收是同一條:把 build_derived_book
+# 寫下的那一列附回去,再推導一次,必須拿到完全同一本帳。這是整個 #549 安全性的
+# 支點——記錄下來的那一列如果會改變推導結果,它就不是「記下引擎的結論」,而是
+# 一個會靜默覆蓋結論的第二本帳。
+_RESTATEMENT_HISTORIES = {
+    # 單一持倉,最單純的一本。
+    "single_open": [_tr("2026-06-01", "AAA", "buy", 10, 100.0)],
+    # 賣光重建 → cycle 序號是 2,不是 1。天真的「錨點持倉序號一律從 1 起」會在
+    # 這裡把 cycle_id 改掉,而 cycle_id 正是 thesis / condition / revisit 的身分。
+    "closed_and_reopened": [
+        _tr("2026-06-01", "AAA", "buy", 10, 100.0),
+        _tr("2026-06-05", "AAA", "sell", 10, 120.0),
+        _tr("2026-06-10", "AAA", "buy", 8, 90.0)],
+    # 加碼 → add_count / decision_cursor 非零。
+    "scaled_in": [
+        _tr("2026-06-01", "BBB", "buy", 10, 100.0),
+        _tr("2026-06-03", "BBB", "buy", 5, 80.0),
+        _tr("2026-06-04", "BBB", "buy", 5, 70.0)],
+    # 錨點 + 錨點後交易:寫下的那一列不得取代原本的宣告當推導基準。
+    "declared_then_traded": [
+        _snap("2026-06-01", [{"ticker": "CCC", "shares": 20, "avg_cost": 50.0}]),
+        _tr("2026-06-15", "CCC", "buy", 5, 60.0),
+        _tr("2026-06-20", "DDD", "buy", 3, 30.0)],
+    # 多幣別 / 多市場,欄位要原樣帶過去。
+    "mixed_markets": [
+        _tr("2026-06-01", "EEE", "buy", 100, 12.5, market="TW", currency="TWD"),
+        _tr("2026-06-02", "FFF", "buy", 4, 1000.25)],
+    # 均價不可知(錨點沒宣告 avg_cost)→ None 必須繼續傳播,不得被編一個數字。
+    "unknown_cost": [
+        _snap("2026-06-01", [{"ticker": "GGG", "shares": 7}]),
+        _tr("2026-06-09", "GGG", "buy", 3, 40.0)],
+}
+
+
+def test_a_recorded_derived_book_re_derives_to_exactly_the_same_book():
+    """#549 的支點不變式:寫下來的那一列 == 引擎當時的結論,再讀一次還是它。
+
+    交易匯入現在會把它推導出的帳本寫成一列 snapshot,好讓之後任何來源都有東西
+    可以更新(在這之前 CSV 只留下交易,refresh 因此說「這個 root 沒有記錄的帳本」,
+    而那個 root 有 23 筆交易和三個持倉)。這條檢查釘住的是它的代價必須是零:
+    附上那一列之後,derive_holdings 的每一個欄位——股數、均價、總成本、幣別、
+    market、origin、since、cycle_id、add_count、decision_cursor——都必須一字不差。
+
+    對應的突變:讓 derive_holdings 改用 latest_anchor(events)(也就是把
+    trades_derived 那一列也當成重放基準)。closed_and_reopened 的 cycle_id 會從
+    AAA#2026-06-10#2 變成 AAA#2026-06-10#1、scaled_in 的 add_count 會從 2 掉成 0、
+    origin 會從 trades 變成 snapshot——三種各自獨立的記憶斷裂,一次全紅。
+    """
+    for name, events in sorted(_RESTATEMENT_HISTORIES.items()):
+        before = lg.derive_holdings(events)
+        recorded = lg.build_derived_book(events, as_of="2026-06-30")
+        assert recorded is not None, name
+        assert recorded["source"] == lg.DERIVED_BOOK_SOURCE, name
+        after = lg.derive_holdings(events + [recorded])
+        assert after["holdings"] == before["holdings"], (
+            f"{name}: recording the book changed it\n"
+            f"  before={json.dumps(before['holdings'], sort_keys=True)}\n"
+            f"  after ={json.dumps(after['holdings'], sort_keys=True)}")
+        assert after["integrity"] == before["integrity"], name
+        # 而且它真的是「記錄下來的帳本」——問「這個 root 有沒有帳本」的那些讀者
+        # 看得見它,問「重放從哪一列起算」的那些看不見。
+        assert lg.latest_anchor(events + [recorded]) is recorded, name
+        assert lg.latest_anchor(events + [recorded], declared_only=True) is \
+            lg.latest_anchor(events, declared_only=True), name
+
+
+def test_recording_the_book_twice_is_the_same_book_and_stays_exact():
+    """連續兩次匯入各寫一列,推導結果仍然只由交易決定(重放不會逐次退化)。"""
+    first = list(_RESTATEMENT_HISTORIES["closed_and_reopened"])
+    first.append(lg.build_derived_book(first, as_of="2026-06-30"))
+    second = first + [_tr("2026-07-02", "AAA", "buy", 2, 95.0)]
+    expected = lg.derive_holdings(
+        [ev for ev in second if ev.get("source") != lg.DERIVED_BOOK_SOURCE])
+    second.append(lg.build_derived_book(second, as_of="2026-07-31"))
+    assert lg.derive_holdings(second)["holdings"] == expected["holdings"]
+
+
+def test_a_root_with_nothing_held_records_no_book():
+    """沒有持倉就沒有帳本可記——完全沒有歷史的 root 仍然走 onboarding(#549 必須
+    存活的不變式)。清倉到零的 root 同理:那不是「記錄了一本空帳」。"""
+    assert lg.build_derived_book([], as_of="2026-06-30") is None
+    flat = [_tr("2026-06-01", "AAA", "buy", 10, 100.0),
+            _tr("2026-06-05", "AAA", "sell", 10, 120.0)]
+    assert lg.build_derived_book(flat, as_of="2026-06-30") is None
+
+
+def test_a_recorded_book_may_not_be_dated_behind_its_own_trades():
+    """錨點語意是「as_of 收盤後」,所以一列日期早於它所總結的交易的帳本會讓
+    snapshot_reconciliation 反過來拒絕一份其實更新的持倉畫面。fail closed。"""
+    events = [_tr("2026-06-01", "AAA", "buy", 10, 100.0),
+              _tr("2026-07-05", "AAA", "buy", 1, 110.0)]
+    try:
+        lg.build_derived_book(events, as_of="2026-06-30")
+    except ValueError as exc:
+        assert "2026-07-05" in str(exc), exc
+    else:
+        raise AssertionError("a book dated before its own facts must fail closed")
+
+
+def test_a_recorded_book_carries_only_declarable_position_fields_and_no_cash():
+    """欄位白名單由 SNAPSHOT_POSITION_KEYS 單點宣告,builder 自己驗;現金不寫——
+    這條線學不到餘額,而 perf.cash_reconcile_residuals 會把每一列帶現金的 snapshot
+    當成一次宣告,兩列一樣的餘額夾著真實入金就是它報「對不上」的形狀。"""
+    events = [_snap("2026-06-01", [{"ticker": "CCC", "shares": 20, "avg_cost": 50.0}],
+                    cash={"USD": 1000.0}),
+              _tr("2026-06-15", "CCC", "buy", 5, 60.0)]
+    recorded = lg.build_derived_book(events, as_of="2026-06-30")
+    assert "cash" not in recorded, "a derived book states positions, never a balance"
+    for row in recorded["positions"]:
+        assert set(row) <= set(lg.SNAPSHOT_POSITION_KEYS), row
+        assert not set(row) & set(lg.ENGINE_ASSIGNED_POSITION_KEYS), (
+            "a derived book states what is held, not a reconstructed cycle start")
+    # 而現金比對的基準仍然是最後一次「宣告」的餘額,不因為中間匯入過交易而消失。
+    declared = {"as_of": "2026-07-15", "positions": [
+        {"ticker": "CCC", "shares": 25.0, "market": "US", "currency": "USD"}],
+        "cash": {"USD": 900.0}}
+    diff = lg.snapshot_reconciliation(events + [recorded], declared)
+    assert diff["diff"]["cash"] == [{"currency": "USD", "derived": 1000.0, "declared": 900.0}]
 
 
 def test_adjustment_is_provenance_only():
@@ -894,33 +1018,39 @@ def test_cli_doctor_on_a_ledger_that_does_not_exist_yet():
 
 # ─────────────── E. snapshot session projection ordering ───────────────
 
-def test_snapshot_identity_normalizes_completeness_and_excludes_sequence():
+def test_snapshot_identity_excludes_sequence_and_separates_how_it_was_recorded():
     base = _snap("2026-07-18", [{"ticker": "A", "shares": 1}])
-    explicit = {**base, "is_complete": True, "projection_sequence": 99}
-    incomplete = {**base, "is_complete": False, "projection_sequence": 99}
-    assert session_engine._snapshot_payload(base) == session_engine._snapshot_payload(explicit), \
-        "legacy missing completeness means complete, and sequence is projection metadata"
-    assert session_engine._snapshot_payload(base) != session_engine._snapshot_payload(incomplete), \
-        "an incomplete declaration must have a distinct accounting identity"
+    sequenced = {**base, "projection_sequence": 99}
+    assert session_engine._snapshot_payload(base) == session_engine._snapshot_payload(sequenced), \
+        "sequence is projection metadata, not part of the accounting fact"
+    # #549: `source` is what distinguishes two recorded books now. A user's own
+    # declaration and the trade-import lane's restatement of the same positions
+    # on the same day are two facts, so neither deduplicates the other away.
+    declared = {**base, "source": lg.DECLARED_BOOK_SOURCE}
+    restated = {**base, "source": lg.DERIVED_BOOK_SOURCE}
+    assert session_engine._snapshot_payload(declared) != session_engine._snapshot_payload(restated)
 
 
-def test_incomplete_snapshot_commits_but_projection_is_visibly_skipped():
+def test_a_declaration_covering_part_of_an_account_still_records_the_book():
+    """#549. This used to commit and then visibly *skip* its ledger projection,
+    on the grounds that a partial view could not be an accounting anchor. That
+    was the same defect this issue reports, wearing a different hat: the user
+    who screenshots one brokerage of several got a helpful `is_complete:false`
+    from the agent and their book silently stopped updating. The flag is gone,
+    so the row projects like any other."""
     root = tempfile.mkdtemp()
-    bundle = _snapshot_bundle("2026-07-18__incomplete", "PARTIAL", is_complete=False)
+    bundle = _snapshot_bundle("2026-07-18__partial", "PARTIAL")
+    bundle["engine_state"]["snapshot_anchor"]["is_complete"] = False   # legacy field
     result, projection, projection_error = _finalize_snapshot(root, bundle)
     assert result["status"] == "committed" and projection_error is None
     snapshot_row = projection["rows"][0]
-    assert snapshot_row["status"] == "skipped_incomplete" and snapshot_row["appended"] == 0
-    assert not os.path.exists(os.path.join(root, "ledger.jsonl")), \
-        "explicitly incomplete holdings are review evidence, never a ledger anchor"
+    assert snapshot_row["status"] == "projected" and snapshot_row["appended"] == 1
+    rows = session_engine._read_jsonl(os.path.join(root, "ledger.jsonl"))
+    assert lg.latest_anchor(rows)["positions"][0]["ticker"] == "PARTIAL"
+    assert "is_complete" not in lg.latest_anchor(rows), \
+        "the identity payload no longer carries a completeness flag"
     canonical = session_engine.load_committed(root, bundle["session_id"])
-    assert canonical["engine_state"]["snapshot_anchor"]["is_complete"] is False
-    assert "projection_sequence" not in canonical["engine_state"], \
-        "a skipped accounting fact must not consume ordering"
-    report = session_engine.read_json(
-        os.path.join(root, "projections", bundle["session_id"] + ".json"))
-    assert report["rows"][0]["status"] == "skipped_incomplete", \
-        "the durable projection report must make the skip visible"
+    assert canonical["engine_state"]["projection_sequence"] == 1
 
 
 def test_snapshot_projection_sequence_is_reserved_reused_and_repairs_deterministically():

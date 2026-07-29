@@ -2444,15 +2444,19 @@ def _snapshot_overview_lines(card, copy):
 
 
 def _snapshot_strength_line(card, language):
+    """What this opening check established, in one sentence.
+
+    Two states, and completeness is not one of them (#549). Until then a third
+    branch praised a "complete structural baseline" whenever the agent had left
+    `is_complete` unset — a claim about an external account the product does not
+    model, and the same flag whose `false` value silently stopped a user's book
+    from ever updating. What remains is what the engine can actually see: either
+    the supplied facts supported weights, or they did not.
+    """
     summary = _snapshot_summary(card)
-    complete = summary.get("is_complete") is True
     weighted = summary.get("weights_available") is True
     strength_copy = (load_copy(language).get("snapshot") or {}).get("strength") or {}
-    if complete and weighted:
-        return strength_copy.get("complete", "")
-    if weighted:
-        return strength_copy.get("partial", "")
-    return strength_copy.get("baseline", "")
+    return strength_copy.get("weighted" if weighted else "baseline", "")
 
 
 def _snapshot_hole_lines(card, language):

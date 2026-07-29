@@ -64,6 +64,7 @@ def detect_exits(events, splits=None):
     回 [{ticker, cycle_id, exit_date, exit_price, shares_sold, kind}]。
     kind: full=清倉 / reduce=單筆賣 ≥50% 賣前持倉。同一天清倉多筆只記最後一筆(合併語意)。
 
+<<<<<<< HEAD
     ``splits`` (#550) — this ticker's split events, in ``splits.normalize``'s
     accepted shapes. The ledger stores quantities exactly as transacted, which
     is correct and must stay that way; but a running balance accumulated across
@@ -84,9 +85,16 @@ def detect_exits(events, splits=None):
     frozen into ``state``), keeping this module standard-library and offline.
     Absent split data leaves the pre-existing unadjusted answer rather than a
     guessed one.
+
+    The anchor read is ``declared_only`` (#549). "Same anchor semantics as
+    ``derive_holdings``" used to be a sentence in this docstring; it is now the
+    mechanism, because a CSV import writes down the book it derived. Without
+    the filter this function would take that restatement as its starting
+    position and swallow the very trades the row summarizes, so an exit that
+    happened before it would stop being detected.
     """
     split_events = split_policy.normalize(splits)
-    anchor = lg.latest_anchor(events)
+    anchor = lg.latest_anchor(events, declared_only=True)
     shares = {}
     since = {}
     seq = {}

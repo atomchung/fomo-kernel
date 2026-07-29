@@ -6,7 +6,7 @@ It is still not part of the review lifecycle: it produces no card, consumes no r
 
 Two routes, and the difference is whether a book already exists:
 
-- **No recorded book yet** — that is onboarding. Use `flows/snapshot-review.md`; the first declaration opens a real review card, and this flow refuses it and says so. It has no prior book, so nothing can have disappeared from it.
+- **No recorded book yet** — that is onboarding. Use `flows/snapshot-review.md`; the first declaration opens a real review card, and this flow refuses it and says so. Nothing has been recorded, so nothing can have disappeared from it. This means a root with no history at all: a user who onboarded with a transaction export has a recorded book, because every source records the book at its own time (#549), so they belong in the route below.
 - **A recorded book already exists** — this flow, first.
 
 ## Step 0 — get the holdings into the envelope

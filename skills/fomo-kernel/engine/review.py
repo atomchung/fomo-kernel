@@ -430,13 +430,13 @@ def _validate_initial_snapshot_root(root, anchor):
     """Resolve how a runtime snapshot declaration may enter this coach root.
 
     Empty history or an exact idempotent replay returns ``None`` (initial
-    onboarding path, unchanged).  A different complete declaration against an
-    anchored ledger returns the reconciliation the Review Plan freezes: the
+    onboarding path, unchanged).  A different declaration against a root that
+    has recorded a book returns the reconciliation the Review Plan freezes: the
     narrow fact diff plus the ``reconciled``/``adjusted`` verdict from
-    ``ledger.snapshot_reconciliation``.  Everything else stays fail-closed —
-    an incomplete second declaration, a declaration older than the current
-    anchor, and history without a complete anchor (replay-only trades, unknown
-    ledger event types, or an unrepaired ledger projection) are rejected.
+    ``ledger.snapshot_reconciliation``.  Everything else stays fail-closed — a
+    declaration older than the current book, and history that recorded no book
+    at all (unknown ledger event types or an unrepaired ledger projection) are
+    rejected.
 
     Whether a returned verdict may be *reviewed* is a separate question, and a
     different function answers it: see ``_refuse_if_the_book_must_catch_up``
@@ -454,8 +454,6 @@ def _validate_initial_snapshot_root(root, anchor):
         return None
     if not session.scan_initial_snapshot_conflicts(root, anchor):
         return None
-    if anchor.get("is_complete", True) is not True:
-        raise ReviewError(session.INCOMPLETE_SNAPSHOT_RECONCILIATION)
     # #462: a corrupt/unknown row anywhere in the ledger must block the
     # reconciliation this function computes, not just the conflict-detection
     # scan_initial_snapshot_conflicts already did above — that scan only
@@ -1093,7 +1091,6 @@ def _overlay_ledger_holdings(card, state, derived):
     state["holdings"] = {
         "as_of": state.get("date_end") or (state.get("holdings") or {}).get("as_of"),
         "derived_from": "snapshot_plus_trades",
-        "is_complete": True,
         "positions": positions,
     }
     state["n_held"] = len(positions)
@@ -1117,6 +1114,46 @@ def _overlay_ledger_holdings(card, state, derived):
     if mismatches:
         _gate_current_view(card, state, detail)
     return card, state, detail
+
+
+def _record_derived_book(root, ledger_path, events, state):
+    """Write down the book this import produced, at the time it produced it (#549).
+
+    The single place either transaction lane records its result, so the two
+    cannot drift about what a recorded book is or when one is written.  Before
+    this, a CSV import left trade rows and no statement of what the engine
+    concluded was held, so a holdings view arriving later had no predecessor to
+    update: ``refresh`` said the root had no recorded book while the root held
+    twenty-three trades and three positions, and ``prepare --route
+    snapshot_review`` said the history needed reconciliation that could not be
+    computed without one.  Owner ruling on #549: every source that arrives
+    records the book at its own time, and ``source`` records which kind of
+    source it was without that ever deciding whether the row counts.
+
+    The row is written under the caller's projection transaction, immediately
+    after the trades it summarizes, so an abandoned session can never leave
+    trades whose conclusion was never recorded.  ``ledger.build_derived_book``
+    returns ``None`` for a book with no positions, which is what keeps a root
+    with no history at all on the onboarding path.
+    """
+    day = state.get("date_end")
+    trade_days = [row for row in (ledger._norm_trade(event) for event in events
+                                  if event.get("type") == "trade") if row is not None]
+    latest_trade = max((row[0].isoformat() for row in trade_days), default=None)
+    # The book cannot be dated before its own newest fact: `snapshot_reconciliation`
+    # refuses a declaration older than the recorded book, so a row stamped behind
+    # its trades would refuse a holdings view that is genuinely newer.
+    as_of = max(value for value in (day, latest_trade) if value) if (day or latest_trade) else None
+    if as_of is None:
+        return None
+    recorded = ledger.build_derived_book(events, as_of=as_of)
+    if recorded is None:
+        return None
+    return session.append_book_adoption(
+        ledger_path, anchor=recorded, reconciliation=None,
+        actor_id=f"trades-import-{as_of}",
+        sequence=session.next_projection_sequence(root),
+        recorded_at=day)
 
 
 def _ingest_trades(root, paths, card, state):
@@ -1169,10 +1206,14 @@ def _ingest_trades(root, paths, card, state):
             virtual.extend(fresh)
             skipped_dup += dup
         reconciliation = None
-        # A complete snapshot is the accounting source of truth for current
+        # A declared snapshot is the accounting source of truth for current
         # holdings.  Derive against the virtual post-import ledger before the first
         # write so the card can fail closed without leaving a partial import.
-        if ledger.latest_anchor(existing) is not None:
+        # `declared_only` deliberately: this lane's own `trades_derived`
+        # restatement (#549) is the very derivation being compared, so routing it
+        # here would reconcile the book against itself and gate the card on
+        # rounding.
+        if ledger.latest_anchor(existing, declared_only=True) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
                 card, state, ledger.derive_holdings(virtual)
             )
@@ -1181,6 +1222,7 @@ def _ingest_trades(root, paths, card, state):
             # proxy _build_exit_narratives already uses for "when the system
             # learned this" — deterministic within a review, unlike wall-clock.
             ledger.append_events(ledger_path, fresh_all, recorded_at=state.get("date_end"))
+        recorded_book = _record_derived_book(root, ledger_path, virtual, state)
         result = {
             "path": ledger_path,
             "appended": len(fresh_all),
@@ -1189,6 +1231,8 @@ def _ingest_trades(root, paths, card, state):
             "skipped_future_dated": skipped_future,
             "skipped_ledger_lines": skipped_lines,
         }
+        if recorded_book is not None:
+            result["recorded_book"] = recorded_book
         if reconciliation is not None:
             result["holdings_reconciliation"] = reconciliation
     return result, card, state
@@ -1233,16 +1277,20 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
                 or verified_overlay != overlay):
             raise ReviewError(BASIS_CHANGED_MESSAGE)
         reconciliation = None
-        if append and ledger.latest_anchor(live_events) is not None:
+        if append and ledger.latest_anchor(live_events, declared_only=True) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
                 card, state, ledger.derive_holdings(verified_overlay["events"]))
         if append and verified_overlay["fresh"]:
             ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
+        recorded_book = (_record_derived_book(root, ledger_path, verified_overlay["events"], state)
+                         if append else None)
         result = {"path": ledger_path, "appended": len(verified_overlay["fresh"]) if append else 0,
                   "skipped_dup": verified_overlay["skipped_dup"],
                   "skipped_non_trade": skipped_non_trade,
                   "skipped_future_dated": skipped_future,
                   "skipped_ledger_lines": live_receipt["skipped_lines"]}
+        if recorded_book is not None:
+            result["recorded_book"] = recorded_book
         if reconciliation is not None:
             result["holdings_reconciliation"] = reconciliation
     return result, card, state
@@ -1680,9 +1728,9 @@ def _thesis_cycle_index(positions, thesis_rows, cycle_relinks):
     has to be able to say *which* thesis it stopped guarding, and the position
     it names is by then gone from ``positions``.
 
-    The one wrinkle is the provisional cycle id an incomplete opening snapshot
+    The one wrinkle is the provisional cycle id an opening snapshot
     hands out. A later transaction review can relink that holding to its real
-    cycle (``thesis.build_incomplete_snapshot_cycle_relinks``), and a condition
+    cycle (``thesis.build_snapshot_cycle_relinks``), and a condition
     written against the provisional id would then look closed while the user
     still holds the position. Raw thesis rows carry the mapping permanently, so
     the alias is read from them rather than from the folded state, which a later
@@ -3057,7 +3105,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     thesis_states = thesis.reconstruct_states(thesis_rows, decision_rows, cycle_ids)
     cycle_relinks = []
     if route != "snapshot_review":
-        cycle_relinks = thesis.build_incomplete_snapshot_cycle_relinks(
+        cycle_relinks = thesis.build_snapshot_cycle_relinks(
             thesis_states, positions, session_id, state.get("date_end")
         )
         if cycle_relinks:
@@ -3413,13 +3461,9 @@ def cmd_prepare(args):
         card, state = _apply_display_currency(card, state, _previous_state(root), language)
         ledger_ingest = None
         if persist and route == "snapshot_review" and state.get("snapshot_anchor"):
-            if state["snapshot_anchor"].get("is_complete", True) is False:
-                ledger_ingest = {"mode": "canonical_only", "kind": "positions_snapshot",
-                                 "reason": "incomplete_snapshot"}
-            else:
-                ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
-                if isinstance(state.get("snapshot_reconciliation"), dict):
-                    ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
+            ledger_ingest = {"mode": "finalize_projection", "kind": "positions_snapshot"}
+            if isinstance(state.get("snapshot_reconciliation"), dict):
+                ledger_ingest["reconciliation"] = state["snapshot_reconciliation"].get("status")
         elif frozen_transaction is not None:
             ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
                 root, frozen_transaction, batches, overlay, virtual_basis, card, state,
@@ -3656,8 +3700,6 @@ def _assign_thesis_ids(plan, updates):
             row["cycle_provenance"] = {
                 "kind": "snapshot_inference",
                 "snapshot_as_of": anchor.get("as_of") if isinstance(anchor, dict) else None,
-                "snapshot_complete": (anchor.get("is_complete", True)
-                                      if isinstance(anchor, dict) else None),
             }
         prior = prior_by_cycle.get(row.get("cycle_id")) or {}
         thesis_id = prior.get("thesis_id") or thesis.stable_thesis_id(row.get("cycle_id"))
@@ -4928,15 +4970,17 @@ def _ledger_trade_events(events):
 
 def _rows_from_ledger(events):
     """trade_recap.load()'s row shape, reconstructed from ledger events the
-    way ``ledger.derive_holdings`` trusts them: the latest complete snapshot
-    anchor (``ledger.latest_anchor``), synthesized as one buy per position
+    way ``ledger.derive_holdings`` trusts them: the same replay base it uses
+    (``ledger.latest_anchor(..., declared_only=True)`` — a trades-derived
+    restatement is not one, so this lane replays the trades it summarizes
+    exactly as ``derive_holdings`` does), synthesized as one buy per position
     dated at the anchor's ``as_of``, then every trade strictly after that
     date layered on top — an anchor is ``as_of``'s close-of-day state, so a
     same-day trade is already reflected in its declared numbers, the same
     cutoff ``derive_holdings`` applies. No anchor at all falls back to every
     trade event, matching ``derive_holdings``' own backward-compatible
     pure-replay path."""
-    anchor = ledger.latest_anchor(events)
+    anchor = ledger.latest_anchor(events, declared_only=True)
     anchor_date = None
     rows = []
     if anchor is not None:

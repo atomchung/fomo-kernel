@@ -89,6 +89,14 @@ ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis"})
 # "unknown" = 使用者說不知道,不編日期。
 SINCE_BASES = ("user_estimate", "unknown")
 
+# A snapshot row's ``source`` says how the book it states was learned (#549).
+# It is recorded, never used to decide whether the row counts as the recorded
+# book: owner ruling 2026-07-29 — "we always take what the user gave us as their
+# current positions", so a transaction export and a holdings view are equal on
+# that axis and only differ in when each arrived.
+DECLARED_BOOK_SOURCE = "user_declared"
+DERIVED_BOOK_SOURCE = "trades_derived"
+
 ABSENCE_IDENTITY_KEYS = ("type", "date", "ticker", "cycle_id")
 ABSENCE_KEYS = frozenset(ABSENCE_IDENTITY_KEYS) | {"absence_id", "session_id", "v", "recorded_at"}
 # 任何帶「成交長什麼樣」語意的欄位名;出現在 ABSENCE_KEYS 或 builder 產出即為契約破口。
@@ -273,8 +281,31 @@ def position_absences(events):
 
 # ─────────────────────────── 推導 ───────────────────────────
 
-def latest_anchor(events):
-    """Return the latest valid snapshot anchor.
+def latest_anchor(events, *, declared_only=False):
+    """Return the latest recorded book row.
+
+    Every ``type: "snapshot"`` row is one, whatever its ``source`` and whoever
+    wrote it (#549).  Nothing has to qualify: the book is simply what the
+    system last recorded, and a transaction import records it as legitimately
+    as a holdings view does.  Before #549 this skipped rows the user had marked
+    as covering only part of the account, which made a helpful answer
+    disqualify the book from ever updating; #485 had already abolished the
+    concept that skip rested on.
+
+    ``declared_only`` answers the one different question in the system: which
+    row *re-bases the replay* in :func:`derive_holdings`.  A
+    ``DERIVED_BOOK_SOURCE`` row restates a book this ledger's own trades
+    already produce, so replaying those trades reproduces it exactly, while
+    re-basing on it would discard the cycle starts, cycle sequence and add
+    counts the trades carry and the summary row cannot.  Expressed as one
+    argument on one function rather than a second selector, so the two
+    questions cannot drift apart about ordering or validity
+    (development-guide.md §7).  Its callers are exactly the readers that
+    reconstruct the book from the same events: ``derive_holdings``,
+    ``portfolio_basis.query_current_book``, ``review._rows_from_ledger``, and
+    ``revisit.detect_exits`` — each of which already states in its own
+    docstring that it follows ``derive_holdings``' anchor semantics, and now
+    does so by calling the same function rather than by intention.
 
     Same-day adapter projections carry a root-wide monotonic
     ``projection_sequence``.  When both candidates have one, the higher
@@ -286,9 +317,7 @@ def latest_anchor(events):
     for i, ev in enumerate(events):
         if ev.get("type") != "snapshot":
             continue
-        if ev.get("is_complete", True) is not True:
-            # Partial declarations may exist in old/manual ledgers.  They are
-            # review evidence, not a replacement for the complete account.
+        if declared_only and ev.get("source") == DERIVED_BOOK_SOURCE:
             continue
         try:
             d = dt.date.fromisoformat(str(ev.get("as_of")))
@@ -374,8 +403,16 @@ def derive_holdings(events):
                         market, origin(snapshot|trades), since, cycle_id,
                         add_count, decision_cursor}}
     integrity: 壞事件 / oversell(賣超,clamp 後照走)清單 —— 資料誠實層,呈現端要帶出。
+
+    The replay re-bases on the latest *declaration* only (#549). A
+    ``DERIVED_BOOK_SOURCE`` row is this function's own output written down, so
+    replaying the trades it summarizes returns the identical book — that
+    equality is gated in tests/test_ledger.py — while re-basing on it would
+    silently drop what a summary row cannot carry: the real cycle start, the
+    cycle sequence, and the add count. One definition of what is held, one
+    place it is computed.
     """
-    anchor = latest_anchor(events)
+    anchor = latest_anchor(events, declared_only=True)
     integrity = []
     pos = {}
     seq_base = defaultdict(int)      # ticker → 最後用過的 cycle 序號(清倉後保留,重建 +1)
@@ -478,6 +515,69 @@ def derive_holdings(events):
             "counts": {"events": len(events),
                        "trades_applied": len(trades),
                        "positions": len(holdings)}}
+
+
+def build_derived_book(events, *, as_of, session_id=None):
+    """The snapshot row that writes down the book these events already produce.
+
+    Owner ruling on #549: *every source that arrives records the book at its own
+    time*.  Before this, a transaction import left trade rows and no statement of
+    what the system concluded was held, so the next source to arrive — a holdings
+    view the user wanted to correct the book with — had no predecessor to update
+    and both doors refused, each pointing at the other.  A holdings view already
+    wrote such a row; a CSV import now writes one too, and ``source`` records
+    which of the two it was.  That distinction is worth recording and is never
+    used to decide whether a row counts: :func:`latest_anchor` reads them alike.
+
+    Returns ``None`` when the events produce no positions.  A root with no
+    history at all therefore still records nothing and still opens through
+    onboarding — the invariant #549 requires to survive.
+
+    ``as_of`` is when the book is being recorded, and it may not precede the
+    newest trade the row summarizes: a book dated before its own facts would
+    make :func:`snapshot_reconciliation` refuse a holdings view that is actually
+    newer.
+
+    No ``cash``: this lane learns positions, never a balance.  Copying the last
+    declared balance forward would state a declaration nobody made, and
+    ``perf.cash_reconcile_residuals`` reads every cash-bearing snapshot row as
+    one — two rows carrying the same balance across a period with real deposits
+    is exactly the shape it reports as an unexplained residual.
+    ``snapshot_reconciliation`` keeps reading the last *declared* balance
+    instead, so nothing is lost by staying silent here.
+    """
+    derived = derive_holdings(events)
+    holdings = derived["holdings"]
+    if not holdings:
+        return None
+    try:
+        day = dt.date.fromisoformat(str(as_of))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"derived book has an invalid as_of: {as_of!r}") from exc
+    for ev in events:
+        norm = _norm_trade(ev) if ev.get("type") == "trade" else None
+        if norm is not None and norm[0] > day:
+            raise ValueError(
+                f"derived book dated {day.isoformat()} would exclude a trade dated "
+                f"{norm[0].isoformat()} it was derived from")
+    positions = []
+    for ticker in sorted(holdings):
+        fact = holdings[ticker]
+        row = {"ticker": ticker, "shares": fact["shares"],
+               "market": fact.get("market") or "US",
+               "currency": fact.get("currency") or "USD"}
+        if fact.get("avg_cost") is not None:
+            row["avg_cost"] = fact["avg_cost"]
+        unknown = set(row) - SNAPSHOT_POSITION_KEYS
+        if unknown:
+            raise ValueError(
+                "derived book position has unknown fields: " + ", ".join(sorted(unknown)))
+        positions.append(row)
+    event = {"type": "snapshot", "as_of": day.isoformat(),
+             "source": DERIVED_BOOK_SOURCE, "positions": positions}
+    if session_id is not None:
+        event["session_id"] = str(session_id)
+    return event
 
 
 # ─────────────────────────── 對帳 ───────────────────────────
@@ -584,13 +684,14 @@ def holdings_as_of(events, as_of):
 
 
 def snapshot_reconciliation(events, declared):
-    """Fact-only reconciliation between the ledger and a newer complete declaration.
+    """Fact-only reconciliation between the recorded book and a newer declaration.
 
     Implements the docs/prd-ledger.md reconciliation contract: compare
     ledger-derived holdings, as of the declared snapshot's end-of-day ``as_of``,
-    with the newly declared positions and cash.  Returns ``None`` when the
-    ledger has no complete anchor (replay-only history keeps the
-    initial-onboarding fail-closed boundary), otherwise::
+    with the newly declared positions and cash.  Returns ``None`` only when the
+    ledger has recorded no book at all, which since #549 means a root with no
+    history rather than one whose history happens to be trades — that root keeps
+    the initial-onboarding fail-closed boundary.  Otherwise::
 
         {"schema_version": 1, "status": "reconciled" | "adjusted",
          "as_of": ..., "against": {"as_of": ..., "snapshot_id": ...},
@@ -610,6 +711,10 @@ def snapshot_reconciliation(events, declared):
       is an end-of-day view and later ledger trades are not part of it.
     - Cash is compared only when the declaration carries a cash object; within
       it, a currency present on only one side is itself a listed difference.
+      The recorded side is the last balance the user *declared*: a trades
+      import records positions and never a balance (#549), so reading cash off
+      the newest recorded row would retire the baseline the moment a CSV
+      arrived.
     - A declaration older than the current anchor raises ``ValueError``; only
       the newer view can reconcile (same-day is resolved by the existing
       ``projection_sequence`` tie-break at adoption time).
@@ -617,6 +722,7 @@ def snapshot_reconciliation(events, declared):
     anchor = latest_anchor(events)
     if anchor is None:
         return None
+    declaration = latest_anchor(events, declared_only=True)
     try:
         declared_as_of = dt.date.fromisoformat(str(declared.get("as_of")))
     except (TypeError, ValueError) as exc:
@@ -662,7 +768,8 @@ def snapshot_reconciliation(events, declared):
     cash = []
     declared_cash = declared.get("cash")
     if isinstance(declared_cash, dict):
-        anchor_cash = anchor.get("cash") if isinstance(anchor.get("cash"), dict) else {}
+        recorded_cash = (declaration or {}).get("cash")
+        anchor_cash = recorded_cash if isinstance(recorded_cash, dict) else {}
         derived_cash = {str(key).upper(): value for key, value in anchor_cash.items()}
         claimed_cash = {str(key).upper(): value for key, value in declared_cash.items()}
         for currency in sorted(set(derived_cash) | set(claimed_cash)):

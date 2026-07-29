@@ -361,8 +361,7 @@
       "missing_fx": "Reliable FX coverage was missing for: {currencies}."
     },
     "strength": {
-      "complete": "The supplied snapshot establishes a complete structural baseline for the opening portfolio check.",
-      "partial": "The available fields establish a structural baseline; missing inputs remain explicit rather than inferred.",
+      "weighted": "The supplied positions establish a structural baseline, and their weights are scored; missing inputs remain explicit rather than inferred.",
       "baseline": "The supplied positions establish a structural baseline; weight-based strengths remain unscored."
     },
     "holes": {

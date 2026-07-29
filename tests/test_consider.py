@@ -92,8 +92,8 @@ def _write_ledger(path, events):
 
 
 def _snapshot_event(as_of, positions):
-    return {"type": "snapshot", "as_of": as_of, "source": "user_declared",
-            "is_complete": True, "positions": positions}
+    return {"type": "snapshot", "as_of": as_of,
+            "source": ledger_engine.DECLARED_BOOK_SOURCE, "positions": positions}
 
 
 def _trade_event(date, ticker, action, qty, price, market="US", currency="USD"):
@@ -278,7 +278,7 @@ def _minimal_prepare_artifacts(tmp, date_end):
                     "longest_hold_days": None, "longest_hold_ticker": None,
                     "worst_cur_ret": None, "worst_cur_ret_ticker": None},
         "rule": None, "insufficient_data": True,
-        "holdings": {"as_of": date_end, "derived_from": "trades_csv", "is_complete": False,
+        "holdings": {"as_of": date_end, "derived_from": "trades_csv",
                      "positions": {}},
         "currency_meta": {"aggregate_currency": "USD", "mixed": False},
         "portfolio_structure": None,
@@ -434,29 +434,33 @@ def test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_sell():
         assert row["basis"]["valuation_coverage"] == projection.coverage
 
 
-def test_consider_succeeds_on_a_declared_partial_or_unverified_current_book():
-    """#485: how a book was declared -- a snapshot the user marked partial,
-    or a book replayed purely from trade history with no snapshot at all --
-    must never gate whether `consider` can compute a verdict; only a
-    genuinely missing fact does (see the fail-closed proof further below).
-    Mirrors test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_
-    sell's rigor: compare the CLI's own numbers against a basis/projection
-    built directly from the same events, not merely "it did not error".
+def test_consider_succeeds_however_the_current_book_was_recorded():
+    """#485/#549: how a book came to be recorded -- a holdings view the user
+    declared, a legacy row they marked as covering part of an account, a book
+    replayed purely from trade history, or that replay written down by the
+    trade-import lane -- must never gate whether `consider` can compute a
+    verdict; only a genuinely missing fact does (see the fail-closed proof
+    further below). Mirrors test_consider_uses_portfolio_basis_cost_for_multi_
+    lot_partial_sell's rigor: compare the CLI's own numbers against a
+    basis/projection built directly from the same events, not merely "it did
+    not error".
 
-    The `declared_partial` case cannot be a bare partial snapshot on its
-    own: `ledger.latest_anchor` never treats a partial snapshot as an
-    anchor ("review evidence, not a replacement for the complete account"),
-    so a ledger holding nothing else would legitimately fail the *empty
-    holdings* gate below -- a real fact gate, untouched by this change.
-    Keeping an old partial snapshot alongside a later complete one exercises
-    `declared_partial` (`_partial_snapshot_present` looks at all history,
-    not just the anchor) while still leaving real holdings to assert on.
+    The middle case is #549's own regression: a `trades_derived` restatement
+    is a recorded book for the lane that asks whether one exists, and must
+    still leave `consider` reading the replay it summarizes -- not re-based on
+    it, and not re-gated by it.
     """
     cases = [
-        ("declared_partial",
-         [{**_snapshot_event("2025-06-01", []), "is_complete": False},
-          _snapshot_event("2026-01-01", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100.0,
-                                          "market": "US", "currency": "USD"}])]),
+        ("declared_complete",
+         [{**_snapshot_event("2025-06-01", [{"ticker": "NVDA", "shares": 10, "avg_cost": 100.0,
+                                             "market": "US", "currency": "USD"}]),
+           "is_complete": False}]),
+        ("unverified",
+         [_trade_event("2026-01-01", "NVDA", "buy", 10, 100.0),
+          {"type": "snapshot", "as_of": "2026-01-01",
+           "source": ledger_engine.DERIVED_BOOK_SOURCE,
+           "positions": [{"ticker": "NVDA", "shares": 10.0, "avg_cost": 100.0,
+                          "market": "US", "currency": "USD"}]}]),
         ("unverified",
          [_trade_event("2026-01-01", "NVDA", "buy", 10, 100.0)]),
     ]
@@ -483,14 +487,20 @@ def test_consider_succeeds_on_a_declared_partial_or_unverified_current_book():
 
 def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
     """The regression net for the actual shipped bug (#485, #496): every
-    other fixture in this file seeds the ledger through
-    `_snapshot_event(..., is_complete=True)`, which is exactly why a
-    completeness gate on `rows_from_portfolio_basis` shipped green and
-    stayed green -- it never ran against the product's own primary input
-    route. Here the ledger is built the way a real user's is: `prepare`
-    ingesting a trades CSV, which writes only `trade` events and no
-    snapshot, ever. Without this test, that gate could come back and every
-    other fixture in this file would still pass."""
+    other fixture in this file seeds the ledger through a declared
+    `_snapshot_event`, which is exactly why a completeness gate on
+    `rows_from_portfolio_basis` shipped green and stayed green -- it never ran
+    against the product's own primary input route. Here the ledger is built the
+    way a real user's is: `prepare` ingesting a trades CSV. Without this test,
+    that gate could come back and every other fixture in this file would still
+    pass.
+
+    Since #549 that route also writes down the book it derived, so the ledger
+    holds one `trades_derived` snapshot beside the trades. This test pins both
+    halves of that change: the row is written (a later holdings view now has a
+    predecessor to update), and it changes nothing about what `consider`
+    reads -- still `transaction_replay`, still `unverified`, still the shares
+    the trades produce."""
     with tempfile.TemporaryDirectory() as tmp:
         prepare_run = _run("prepare", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--route", "weekly_review")
@@ -502,9 +512,16 @@ def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
         with open(ledger_path, encoding="utf-8") as f:
             written_events = [json.loads(line) for line in f if line.strip()]
         assert written_events, "prepare must append the CSV's trades to the ledger"
-        assert {event["type"] for event in written_events} == {"trade"}, (
-            "the primary CSV route must never write a snapshot event -- that is "
-            "what made the now-removed completeness gate unreachable")
+        recorded = [event for event in written_events if event["type"] == "snapshot"]
+        assert {event["type"] for event in written_events} == {"trade", "snapshot"}
+        assert len(recorded) == 1 and recorded[0]["source"] == ledger_engine.DERIVED_BOOK_SOURCE, (
+            "#549: the primary CSV route records the book it derived, exactly once, "
+            "and marks how it was learned")
+        assert "is_complete" not in recorded[0], (
+            "#549 removed the flag; a recorded book never claims to cover an account")
+        assert ledger_engine.latest_anchor(written_events) is recorded[0]
+        assert ledger_engine.latest_anchor(written_events, declared_only=True) is None, (
+            "a restatement of the replay must never become the replay's own base")
 
         basis = portfolio_basis_engine.query_current_book(
             written_events, reference_as_of=dt.date.today().isoformat())

@@ -54,7 +54,7 @@ def _artifacts(tmp):
             "worst_cur_ret": -0.18, "worst_cur_ret_ticker": "PLTR",
         },
         "rule": None, "insufficient_data": False,
-        "holdings": {"as_of": "2026-07-14", "derived_from": "trades_csv", "is_complete": False,
+        "holdings": {"as_of": "2026-07-14", "derived_from": "trades_csv",
                      "positions": {"PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
                                                 "cycle_start": "2026-01-01",
                                                 "cycle_id": "PLTR#2026-01-01#1",
@@ -657,25 +657,25 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
         assert clean_md.count(markers["en"][1]) == 1, "unlock hint still renders exactly once"
 
 
-def test_incomplete_snapshot_commits_review_without_accounting_anchor():
+def test_a_view_covering_part_of_an_account_records_the_book_like_any_other():
+    """#549. This test used to assert the opposite: a user who told the agent
+    their screenshot covered one brokerage of several got `is_complete:false`,
+    the review still ran, and the ledger projection was *visibly skipped* --
+    their recorded book silently stopped moving. The flag is gone from the
+    input contract entirely, so this declaration records the book like any
+    other, and the ledger row is written."""
     payload = {
         "as_of": "2026-07-16",
-        "is_complete": False,
         "positions": [{"ticker": "PLTR", "shares": 5, "avg_cost": 100,
                        "market": "US", "currency": "USD"}],
     }
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp) / "coach"
         plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
-        # #485: `is_complete` no longer gates whether a weight may be computed
-        # from the facts the user supplied -- only whether the snapshot may
-        # become the accounting anchor (asserted below, unchanged). A single
-        # PLTR position with a known avg_cost has every fact a weight needs,
-        # so weights_available flips to True and the sizing/diversification
-        # dimensions populate even though this book is declared incomplete.
+        # A single PLTR position with a known avg_cost has every fact a weight
+        # needs, so the sizing/diversification dimensions populate.
         assert plan["input"]["ledger_ingest"] == {
-            "mode": "canonical_only", "kind": "positions_snapshot",
-            "reason": "incomplete_snapshot",
+            "mode": "finalize_projection", "kind": "positions_snapshot",
         }
         assert plan["engine_card"]["snapshot_summary"]["weights_available"] is True
         assert "weights_unavailable_reason" not in plan["engine_card"]["data_integrity"]
@@ -692,8 +692,11 @@ def test_incomplete_snapshot_commits_review_without_accounting_anchor():
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
         assert result["projection_error"] is None
-        assert result["projection"]["rows"][0]["status"] == "skipped_incomplete"
-        assert not (root / "ledger.jsonl").exists()
+        assert result["projection"]["rows"][0]["status"] == "projected"
+        rows = _ledger_rows(root)
+        assert [row["type"] for row in rows] == ["snapshot"]
+        assert rows[0]["positions"][0]["ticker"] == "PLTR"
+        assert "is_complete" not in rows[0]
         bundle = json.loads(
             (root / "sessions" / plan["session_id"] / "bundle.json").read_text()
         )
@@ -701,16 +704,18 @@ def test_incomplete_snapshot_commits_review_without_accounting_anchor():
         assert inferred["cycle_provenance"] == {
             "kind": "snapshot_inference",
             "snapshot_as_of": "2026-07-16",
-            "snapshot_complete": False,
         }
         repaired = _run("repair-projections", "--root", root)
-        assert repaired.returncode == 0 and not (root / "ledger.jsonl").exists()
+        assert repaired.returncode == 0 and _ledger_rows(root) == rows
 
 
-def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
+def test_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
+    """#549 widened this from incomplete snapshots to every snapshot-inferred
+    cycle. The completeness flag was never the reason the cycle start was
+    provisional -- a declaration says what is held, never since when -- and it
+    is gone, so the narrow fail-closed conditions below are what holds."""
     payload = {
         "as_of": "2026-07-16",
-        "is_complete": False,
         "positions": [{"ticker": "PLTR", "shares": 10, "avg_cost": 100,
                        "market": "US", "currency": "USD"}],
     }
@@ -742,7 +747,7 @@ def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persist
         state_data.update({"date_start": "2026-07-01", "date_end": "2026-07-18",
                            "n_held": 1})
         state_data["holdings"] = {
-            "as_of": "2026-07-18", "derived_from": "trades_csv", "is_complete": False,
+            "as_of": "2026-07-18", "derived_from": "trades_csv",
             "positions": {"PLTR": {
                 "shares": 10, "cost": 1000, "avg_cost": 100,
                 "market": "US", "currency": "USD", "cycle_start": "2026-07-01",
@@ -760,7 +765,7 @@ def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persist
         )
 
         prepared = _run(
-            "prepare", history, "--root", root, "--language", "en",
+            "prepare", "--root", root, "--language", "en",
             "--card-json", card, "--state-json", state,
             "--session-nonce", "reveal-cycle-start",
         )
@@ -778,7 +783,7 @@ def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persist
         assert relink["thesis_id"] == prior["thesis_id"]
         assert relink["revises"] == prior["event_id"]
         assert relink["cycle_provenance"] == {
-            "kind": "incomplete_snapshot_cycle_relink",
+            "kind": "snapshot_cycle_relink",
             "from_cycle_id": prior["cycle_id"],
             "snapshot_as_of": "2026-07-16",
             "revealed_cycle_start": "2026-07-01",
@@ -809,7 +814,7 @@ def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persist
         assert later_bundle["thesis_updates"] == [relink]
 
         replay = _run(
-            "prepare", history, "--root", root, "--language", "en",
+            "prepare", "--root", root, "--language", "en",
             "--card-json", card, "--state-json", state,
             "--session-nonce", "after-cycle-relink",
         )
@@ -822,7 +827,7 @@ def test_incomplete_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persist
         assert replay_active[0]["thesis_id"] == prior["thesis_id"]
 
 
-def test_incomplete_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguous_ticker():
+def test_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguous_ticker():
     prior = {
         "ticker": "PLTR", "cycle_id": "PLTR#2026-07-16#1",
         "thesis_id": "thesis-opening", "event_id": "event-opening",
@@ -832,13 +837,12 @@ def test_incomplete_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguou
         "position_status": "open",
         "cycle_provenance": {
             "kind": "snapshot_inference", "snapshot_as_of": "2026-07-16",
-            "snapshot_complete": False,
         },
     }
     reopened = {"PLTR": {
         "cycle_id": "PLTR#2026-07-17#2", "cycle_start": "2026-07-17", "shares": 1,
     }}
-    assert thesis_engine.build_incomplete_snapshot_cycle_relinks(
+    assert thesis_engine.build_snapshot_cycle_relinks(
         [prior], reopened, "session-reopened", "2026-07-18"
     ) == [], "a post-snapshot cycle may be a close/reopen and must receive a new thesis"
 
@@ -847,7 +851,7 @@ def test_incomplete_snapshot_thesis_relink_fails_closed_for_reopened_or_ambiguou
     }}
     ambiguous = {**prior, "cycle_id": "PLTR#2026-07-15#9",
                  "event_id": "event-other", "last_event_id": "event-other"}
-    assert thesis_engine.build_incomplete_snapshot_cycle_relinks(
+    assert thesis_engine.build_snapshot_cycle_relinks(
         [prior, ambiguous], earlier, "session-ambiguous", "2026-07-18"
     ) == [], "ticker-only matching must not choose between two open snapshot candidates"
 
@@ -883,22 +887,23 @@ def test_weights_unavailable_reason_reports_incomplete_valuation_or_fx_gap():
         assert card["data_integrity"]["weights_unavailable_reason"] == "fx_gap"
 
 
-def test_weights_unavailable_reason_never_reports_incomplete_snapshot():
-    """Regression guard for #485. Before this fix, `is_complete: false` alone
-    forced weights_available to False inside _global_values, and the reason
-    derivation checked `is_complete` before basis/fx -- so a declaration that
-    was both incomplete AND missing a real price or FX fact was mislabeled
-    "incomplete_snapshot" instead of naming the fact that was actually
-    absent. is_complete now plays no role in _global_values, so the same two
-    genuinely-missing-fact inputs must report the same reason regardless of
-    is_complete, and a fact-complete incomplete-declared book must report no
-    reason at all because weights_available is true."""
+def test_weights_unavailable_reason_always_names_the_missing_fact():
+    """Regression guard for #485, kept alive after #549 removed the flag it was
+    written about. Before #485's fix, `is_complete: false` alone forced
+    weights_available to False inside `_global_values`, and the reason
+    derivation checked it before basis/fx -- so a declaration that was both
+    marked partial AND missing a real price or FX fact was mislabeled
+    "incomplete_snapshot" instead of naming the fact that was actually absent.
+    #549 then removed the flag from the envelope entirely, which is why the
+    fixtures below no longer carry it; what still needs a guard is the rule it
+    exposed: a suppressed weight names the fact it is missing, and a book whose
+    facts are all present is scored."""
     with tempfile.TemporaryDirectory() as tmp:
         missing_valuation = _snapshot_json(tmp, payload={
-            "as_of": "2026-07-16", "is_complete": False,
+            "as_of": "2026-07-16",
             "positions": [{"ticker": "PLTR", "shares": 5,
                            "market": "US", "currency": "USD"}],
-        }, name="incomplete-and-missing-valuation.json")
+        }, name="missing-valuation.json")
         card, _state, _meta = snapshot_adapter.prepare(str(missing_valuation))
         assert card["snapshot_summary"]["weights_available"] is False
         reason = card["data_integrity"]["weights_unavailable_reason"]
@@ -906,7 +911,7 @@ def test_weights_unavailable_reason_never_reports_incomplete_snapshot():
         assert reason != "incomplete_snapshot"
 
         missing_fx = _snapshot_json(tmp, payload={
-            "as_of": "2026-07-16", "is_complete": False,
+            "as_of": "2026-07-16",
             "positions": [
                 {"ticker": "PLTR", "shares": 5, "avg_cost": 100,
                  "market": "US", "currency": "USD"},
@@ -914,7 +919,7 @@ def test_weights_unavailable_reason_never_reports_incomplete_snapshot():
                  "market": "TW", "currency": "TWD"},
             ],
             "fx": {"USD": 1},
-        }, name="incomplete-and-missing-fx.json")
+        }, name="missing-fx.json")
         card, _state, _meta = snapshot_adapter.prepare(str(missing_fx))
         assert card["snapshot_summary"]["weights_available"] is False
         reason = card["data_integrity"]["weights_unavailable_reason"]
@@ -922,10 +927,10 @@ def test_weights_unavailable_reason_never_reports_incomplete_snapshot():
         assert reason != "incomplete_snapshot"
 
         fact_complete = _snapshot_json(tmp, payload={
-            "as_of": "2026-07-16", "is_complete": False,
+            "as_of": "2026-07-16",
             "positions": [{"ticker": "PLTR", "shares": 5, "avg_cost": 100,
                            "market": "US", "currency": "USD"}],
-        }, name="incomplete-but-fact-complete.json")
+        }, name="fact-complete.json")
         card, _state, _meta = snapshot_adapter.prepare(str(fact_complete))
         assert card["snapshot_summary"]["weights_available"] is True
         assert "weights_unavailable_reason" not in card["data_integrity"]
@@ -1373,14 +1378,17 @@ def test_second_snapshot_fail_closed_edges():
         assert _finalize_snapshot_session(tmp, root, plan1, "first").returncode == 0
         baseline = _ledger_rows(root)
 
-        incomplete = _snapshot_json(tmp, payload={
+        # #549: a declaration can no longer disqualify itself. The flag that let
+        # it is refused at the envelope boundary rather than quietly ignored, so
+        # an agent still writing it is told, not silently taken at face value.
+        with_flag = _snapshot_json(tmp, payload={
             "as_of": "2026-07-15", "is_complete": False,
             "positions": [{"ticker": "SPY", "shares": 3, "market": "US", "currency": "USD"}],
-        }, name="incomplete.json")
+        }, name="with-completeness-flag.json")
         run = _run("prepare", "--route", "snapshot_review", "--snapshot-json",
-                   incomplete, "--root", root, "--language", "en")
+                   with_flag, "--root", root, "--language", "en")
         assert run.returncode == 2
-        assert "incomplete snapshot cannot reconcile" in run.stdout
+        assert "unknown fields: is_complete" in run.stdout
 
         older = _snapshot_json(tmp, payload={
             "as_of": "2026-07-05",
@@ -1458,7 +1466,7 @@ def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
         state_data = json.loads(state.read_text())
         state_data.update({"date_start": "2026-07-02", "date_end": "2026-07-02", "n_held": 1})
         state_data["holdings"] = {
-            "as_of": "2026-07-02", "derived_from": "trades_csv", "is_complete": False,
+            "as_of": "2026-07-02", "derived_from": "trades_csv",
             "positions": {"PLTR": {
                 "shares": 2, "cost": 220, "avg_cost": 110,
                 "market": "US", "currency": "USD",
@@ -1519,8 +1527,13 @@ def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
         assert reconciliation["status"] == "current_view_gated"
 
         events = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
-        assert events[0] == anchor_before and sum(row["type"] == "snapshot" for row in events) == 1
+        # The declaration is untouched: a transaction import records the book it
+        # derived beside it (#549) and never rewrites the declared anchor.
+        declared = [row for row in events if row["type"] == "snapshot"
+                    and row.get("source") != ledger_engine.DERIVED_BOOK_SOURCE]
+        assert events[0] == anchor_before and declared == [anchor_before]
         assert sum(row["type"] == "trade" for row in events[1:]) == 1
+        assert ledger_engine.latest_anchor(events, declared_only=True) == anchor_before
         resumed = _run("prepare", csv_path, "--root", root, "--card-json", card,
                        "--state-json", state, "--session-nonce", "history-upgrade")
         assert resumed.returncode == 0 and json.loads(resumed.stdout)["status"] == "resumed"
@@ -1554,7 +1567,7 @@ def test_snapshot_full_history_keeps_stable_thesis_and_current_surfaces():
         card_data, state_data = json.loads(card.read_text()), json.loads(state.read_text())
         state_data.update({"date_start": "2026-06-01", "date_end": "2026-07-01", "n_held": 2})
         state_data["holdings"] = {
-            "as_of": "2026-07-01", "derived_from": "trades_csv", "is_complete": False,
+            "as_of": "2026-07-01", "derived_from": "trades_csv",
             "positions": {
                 "PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
                          "market": "US", "currency": "USD", "cycle_start": "2026-06-01",
@@ -1672,7 +1685,7 @@ def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
         state_data = json.loads(state.read_text())
         state_data.update({"date_start": "2026-07-02", "date_end": "2026-07-03", "n_held": 1})
         state_data["holdings"] = {
-            "as_of": "2026-07-03", "derived_from": "trades_csv", "is_complete": False,
+            "as_of": "2026-07-03", "derived_from": "trades_csv",
             "positions": {"PLTR": {"shares": 5, "cost": 600, "avg_cost": 120,
                                       "market": "US", "currency": "USD",
                                       "cycle_start": "2026-07-03",
@@ -2548,7 +2561,8 @@ def test_trade_ingest_and_initial_snapshot_share_one_root_boundary_lock():
             session_engine._assert_initial_snapshot_boundary = real_boundary
 
         rows = session_engine._read_jsonl(str(ledger_path))
-        assert [row["type"] for row in rows] == ["trade"]
+        assert [row["type"] for row in rows] == ["trade", "snapshot"]
+        assert rows[1]["source"] == ledger_engine.DERIVED_BOOK_SOURCE
         assert not os.path.isdir(
             session_engine.session_dir(str(root), snapshot["session_id"])
         )
@@ -4735,15 +4749,26 @@ def test_a_live_falsifier_past_the_lookup_cap_is_still_adjudicated():
 
 
 def _relink_scenario(tmp, root):
-    """An incomplete opening snapshot, then the transaction review that reveals
-    the holding's real cycle start.
+    """An opening snapshot, then the review that reveals the holding's real
+    cycle start.
 
     Returns ``(provisional_cycle_id, card, state, history)``. The thesis is
     relinked from the snapshot's provisional cycle id to the revealed one, and
     the relink exists **only in the plan** until that review is finalized — which
-    is the whole point of the scenario below."""
+    is the whole point of the scenario below.
+
+    #549 note: the reveal used to arrive with a transaction CSV, because an
+    opening snapshot the user marked partial never became a ledger anchor and
+    the ledger kept replaying the trades that showed the real open date. With
+    the completeness flag gone, every declaration anchors, and an anchor
+    absorbs the trades dated before it -- so the transaction import can no
+    longer surface an earlier cycle start on its own. The reveal is expressed
+    here through the developer `--state-json` route instead: what this test
+    exists for is the plan/card join over a relink (#444 rounds 3-4), not the
+    input that produced one.
+    """
     opening, _path = _snapshot_prepare(tmp, root, payload={
-        "as_of": "2026-07-16", "is_complete": False,
+        "as_of": "2026-07-16",
         "positions": [{"ticker": "PLTR", "shares": 10, "avg_cost": 100,
                        "market": "US", "currency": "USD"}]}, language="en")
     answers = _write_json(tmp, "relink-open-answers.json",
@@ -4761,7 +4786,7 @@ def _relink_scenario(tmp, root):
     state_data = json.loads(state.read_text(encoding="utf-8"))
     state_data.update({"date_start": "2026-07-01", "date_end": "2026-07-18", "n_held": 1})
     state_data["holdings"] = {
-        "as_of": "2026-07-18", "derived_from": "trades_csv", "is_complete": False,
+        "as_of": "2026-07-18", "derived_from": "trades_csv",
         "positions": {"PLTR": {"shares": 10, "cost": 1000, "avg_cost": 100,
                                "market": "US", "currency": "USD",
                                "cycle_start": "2026-07-01",
@@ -4827,7 +4852,7 @@ def test_a_falsifier_live_only_through_a_relink_survives_the_cap_and_reaches_the
                        "observation": {"value": 92.0, "as_of": "2026-07-18",
                                        "source": "10-Q", "period": "FY2027Q2",
                                        "document": "10-Q 2026-07-18"}}}]})
-        run = _run("prepare", history, "--root", root, "--language", "en",
+        run = _run("prepare", "--root", root, "--language", "en",
                    "--card-json", card, "--state-json", state,
                    "--session-nonce", "relink-beyond-cap", "--condition-checks", checks)
         assert run.returncode == 0, run.stdout + run.stderr
@@ -4871,7 +4896,7 @@ def test_a_genuinely_exited_cycle_still_retires_when_a_relink_exists_for_another
             {"PLTR": {"cycle_id": "PLTR#2026-07-01#1"}},
             [{"cycle_id": "NVDA#2026-01-05#1", "ticker": "NVDA"}],
             [{"cycle_id": "PLTR#2026-07-01#1", "ticker": "PLTR",
-              "cycle_provenance": {"kind": "incomplete_snapshot_cycle_relink",
+              "cycle_provenance": {"kind": "snapshot_cycle_relink",
                                    "from_cycle_id": "PLTR#2026-07-16#1"}}])
         assert index["PLTR#2026-07-16#1"]["live"] is True, "the provisional id is live via the relink"
         assert index["PLTR#2026-07-01#1"]["live"] is True
@@ -5646,14 +5671,16 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         assert "OLD" not in {q.get("ticker") for q in plan["question_queue"]}, \
             "historical exits must not flood a cold-start review"
         ledger_rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
-        assert len(ledger_rows) == 8 and not (root / "theses.jsonl").exists(), \
-            "validated trade facts persist at prepare, but answers do not project before finalize"
+        assert ([row["type"] for row in ledger_rows] == ["trade"] * 8 + ["snapshot"]
+                and not (root / "theses.jsonl").exists()), \
+            "validated trade facts and the book they derive persist at prepare, " \
+            "but answers do not project before finalize"
 
         resumed = _run("resume", "--root", root, "--session-id", plan["session_id"])
         resumed_plan = json.loads(resumed.stdout)["plan"]
         assert resumed_plan["question_queue"] == plan["question_queue"], \
             "resume returns the exact same ranked questions without re-ingesting"
-        assert len((root / "ledger.jsonl").read_text().splitlines()) == 8
+        assert len((root / "ledger.jsonl").read_text().splitlines()) == 9
 
         answers_path = pathlib.Path(tmp) / "exit-answers.json"
         narrative_path = pathlib.Path(tmp) / "exit-narrative.json"
@@ -5792,11 +5819,18 @@ def test_ingest_trades_stamps_recorded_at_from_review_period_not_wall_clock():
         run = _run("prepare", csv_path, "--root", root, "--card-json", card, "--state-json", state)
         assert run.returncode == 0, run.stdout + run.stderr
         rows = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
-        assert len(rows) == 1
+        # #549: the trade, then the book that import derived, both stamped from
+        # the same review period.
+        assert [row["type"] for row in rows] == ["trade", "snapshot"]
         assert rows[0]["date"] == "2026-01-05", "the trade's own date must stay untouched"
-        assert rows[0]["recorded_at"] == "2026-07-14", (
-            "recorded_at must come from the review period's date_end "
-            "(state['date_end']), not the trade's own historical date and not wall-clock today"
+        for row in rows:
+            assert row["recorded_at"] == "2026-07-14", (
+                "recorded_at must come from the review period's date_end "
+                "(state['date_end']), not the trade's own historical date and not wall-clock today"
+            )
+        assert rows[1]["source"] == ledger_engine.DERIVED_BOOK_SOURCE
+        assert rows[1]["as_of"] == "2026-07-14", (
+            "the book is recorded at the period it was derived in, never behind its own trades"
         )
 
 
@@ -8624,7 +8658,6 @@ def _density_artifacts(tmp, tag, positions, thesis_questions, date_end="2026-07-
     card = json.loads(card_path.read_text(encoding="utf-8"))
     state["date_end"] = date_end
     state["holdings"]["positions"] = positions
-    state["holdings"]["is_complete"] = False
     state["metrics"]["n_holdings"] = len(positions)
     card["thesis_questions"] = list(thesis_questions)
     card["ticker_diagnosis"] = []
@@ -9156,7 +9189,11 @@ def test_frozen_virtual_basis_verifies_equal_input_and_appends_once():
             str(fixture["root"]), fixture["inputs"], fixture["batches"],
             fixture["overlay"], fixture["receipt"], {}, fixture["state"])
         events, skipped = ledger_engine.load_ledger(str(fixture["root"] / "ledger.jsonl"))
-        assert result["appended"] == 1 and skipped == 0 and len(events) == 1
+        # `appended` counts the candidate trades; the recorded book (#549) rides
+        # the same locked transaction and is reported separately.
+        assert result["appended"] == 1 and skipped == 0
+        assert [event["type"] for event in events] == ["trade", "snapshot"]
+        assert result["recorded_book"]["status"] == "projected"
 
 
 def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forging_price():
