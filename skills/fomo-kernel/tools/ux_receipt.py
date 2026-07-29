@@ -25,6 +25,14 @@ backfilled inside a few seconds is suspect: normal verification warns for
 compatibility, while human-graded QA can fail closed with
 `--require-timing-integrity`.
 
+Not every route renders a card. A book refresh (`flows/book-refresh.md`) shows
+the user a difference and what it recorded, and nothing else; it is still a real
+user-visible step that acceptance evidence has to be able to cover. What each
+route owes — cards, cash anchor, opening memory, change surface, verdict axes —
+is therefore declared once in `ROUTE_CONTRACTS` and read by `verify_rows`, so a
+route either carries an obligation or it does not, and a lane with no card is
+never left with fabricating one as its only way to pass.
+
 The trace lives inside the protected state directory, the same trust boundary
 as the canonical ledger: never committed and never published. The root resolves
 exactly like the engine CLIs (`--state-root` > `TRADE_COACH_HOME` >
@@ -81,23 +89,21 @@ ADAPTER_REQUIREMENTS = {
         {"markdown_inline", "widget"},
     ),
 }
-ROUTES = ("first_review", "weekly_review", "snapshot_review", "test_drive")
 STAGES = ("preview", "final")
 MEMORY_KINDS = ("prior_commitment", "prior_skip", "exit_reason", "due_revisit")
 WEEKLY_OPENERS = ("prior_commitment", "prior_skip")
 CASH_OUTCOMES = ("found_in_source", "asked_user", "skipped")
-# The cash anchor is a `prepare`-time input (references/data-contract.md), so
-# the check it documents already happened by the time a session_id exists to
-# receipt it against. Routes that read a trade/transaction history can carry
-# a cash anchor; a declared positions snapshot already states `cash` inline
-# (or omits it) in its own envelope, and test_drive never persists an
-# accounting anchor at all — both stay out of this requirement (#357).
-CASH_ANCHOR_ROUTES = ("first_review", "weekly_review")
+# The two moments a card-free lane becomes visible to the user (#523). A book
+# refresh (`flows/book-refresh.md`) narrates the engine's own difference and
+# then reports what it recorded; those are the surfaces this trace can prove
+# reached a human, in place of a card it never renders.
+CHANGE_KINDS = ("diff", "result")
 EVENT_KINDS = (
     "question_presented",
     "answers_received",
     "artifact_generated",
     "card_presented",
+    "change_presented",
     "rule_choice_presented",
     "memory_presented",
     "widget_attempt_failed",
@@ -105,6 +111,118 @@ EVENT_KINDS = (
     "findings_recorded",
     "owner_verdict",
 )
+# Everything a card delivery is made of. A route that renders no card must show
+# none of these, so the list is named once rather than restated per check.
+CARD_LIFECYCLE_EVENTS = (
+    "artifact_generated",
+    "card_presented",
+    "widget_attempt_failed",
+    # the rule choice is offered after the preview card and only there, so it
+    # belongs to the card lifecycle rather than to questions in general
+    "rule_choice_presented",
+)
+PASS_FAIL = ("pass", "fail")
+PASS_FAIL_OR_NA = ("pass", "fail", "not_applicable")
+ONLY_NOT_APPLICABLE = ("not_applicable",)
+# Ordered for message stability; `question_specificity`/`answer_fit` are not
+# here because they are gated by what the trace shows (a validated dynamic
+# surface), not by which route it declared.
+VERDICT_AXES = ("controls", "card", "memory", "change")
+
+# --- What each route owes -----------------------------------------------------
+#
+# Every obligation below used to sit beside the check that enforced it, one
+# `if route == ...` at a time: `CASH_ANCHOR_ROUTES` for the #357 pre-flight, a
+# `route == "weekly_review"` block for the opening memory, an ungated
+# `for stage in STAGES` loop for the cards, and a second weekly branch inside
+# the owner gate. #523 would have made a fifth, because a book refresh renders
+# no card by design and that loop could therefore only ever fail it — leaving
+# fabricated card events as the one way to pass, which is precisely the
+# dishonesty this tool exists to prevent.
+#
+# So the obligations are declared once, here, and `verify_rows` reads them.
+# Adding a route means adding a row, not adding a branch.
+#
+#   cards       True  — exactly one `artifact_generated` and one
+#                       `card_presented` per stage, each card after its
+#                       artifact, final after preview.
+#               False — the card lifecycle must be ABSENT. Not merely
+#                       unrequired: a card-free route that only stopped
+#                       *demanding* cards would accept a receipt claiming a
+#                       delivery that could not have happened, which is the
+#                       same hole one level down.
+#   cash_anchor the #357 pre-flight, on the routes that read a trade history.
+#               A declared positions snapshot states `cash` inline in its own
+#               envelope, and `test_drive` persists no accounting anchor at
+#               all, so neither owes one.
+#   opener      memory kinds, exactly one of which must precede the first
+#               surface. `()` for a route that carries no opening memory.
+#   change      True  — at least one visible change surface: the narrated diff
+#                       or recorded result (`change_presented`), or the
+#                       confirmation question when one was raised. A refresh
+#                       receipt holding only a start row and a verdict has
+#                       proven nothing; the change surface is what makes it
+#                       evidence.
+#               False — `change_presented` must be absent, for the same reason
+#                       `cards: False` forbids rather than exempts.
+#   verdict     legal values per owner-verdict axis. An axis this map omits
+#               must not appear on the route's verdict at all — a card route
+#               claiming a `change` judgment, or a refresh claiming a card one,
+#               is judging a surface it never had.
+#   must_pass   axes that must carry their affirmative value (see `_affirmative`)
+#               before `--require-owner-verdict` accepts the run.
+ROUTE_CONTRACTS = {
+    "first_review": {
+        "cards": True, "cash_anchor": True, "opener": (), "change": False,
+        "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
+        "must_pass": ("controls", "card"),
+    },
+    "weekly_review": {
+        "cards": True, "cash_anchor": True, "opener": WEEKLY_OPENERS, "change": False,
+        "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
+        # memory continuity is the entire reason this route exists, so it may
+        # not be waived as inapplicable the way a first review legitimately can.
+        "must_pass": ("controls", "card", "memory"),
+    },
+    "snapshot_review": {
+        "cards": True, "cash_anchor": False, "opener": (), "change": False,
+        "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
+        "must_pass": ("controls", "card"),
+    },
+    "test_drive": {
+        "cards": True, "cash_anchor": False, "opener": (), "change": False,
+        "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
+        "must_pass": ("controls", "card"),
+    },
+    # The book-refresh lane (#523). It records new facts about the book; it is
+    # not a review, produces no card, and creates no session — so the evidence
+    # it can honestly carry is the change it showed the user.
+    #
+    # The verdict still judges what the user actually saw, which is the whole
+    # point of asking for one:
+    #   change  — the new axis, and the load-bearing one: did what the receipt
+    #             showed match what actually happened to the book.
+    #   card    — pinned to `not_applicable`. Stating "no card was owed" is a
+    #             positive claim the gate can check; leaving the axis free would
+    #             let a lane with no card record a passing card verdict.
+    #   controls — narrowed by the trace itself (`_verdict_scales`), because a
+    #             refresh that raised nothing has no control to judge and a
+    #             refresh that raised something must not call it inapplicable.
+    #   memory  — left open. The diff is computed against the recorded book, so
+    #             "did it remember my book" is a real judgment here, but it is
+    #             already visible through `change` and is not gated twice.
+    "refresh": {
+        "cards": False, "cash_anchor": False, "opener": (), "change": True,
+        "verdict": {"controls": PASS_FAIL_OR_NA, "card": ONLY_NOT_APPLICABLE,
+                    "memory": PASS_FAIL_OR_NA, "change": PASS_FAIL},
+        "must_pass": ("controls", "card", "change"),
+    },
+}
+ROUTES = tuple(ROUTE_CONTRACTS)
+# An unrecognized route is already an error; fall back to the strictest
+# card-producing contract so every remaining check still runs against it rather
+# than silently exempting the trace from all of them.
+UNKNOWN_ROUTE_CONTRACT = ROUTE_CONTRACTS["snapshot_review"]
 SURFACE_DIGEST = re.compile(r"^[a-f0-9]{64}$")
 # Where a miss went. #417 gave converted misses a home; what it did not give
 # them was a moment that asks. A QA run's last act is archiving, and nothing at
@@ -424,6 +542,10 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.mode not in CARD_MODES:
             raise ReceiptError(f"card mode must be one of {CARD_MODES}")
         row["mode"] = args.mode
+    if args.event == "change_presented":
+        if args.change_kind not in CHANGE_KINDS:
+            raise ReceiptError(f"change_presented requires --change-kind in {CHANGE_KINDS}")
+        row["change_kind"] = args.change_kind
     if args.event == "memory_presented":
         if not args.memory_kind:
             raise ReceiptError("memory_presented requires --memory-kind")
@@ -439,6 +561,14 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if any(value is None for value in verdicts.values()):
             raise ReceiptError("owner_verdict requires --controls, --card, and --memory")
         row.update(verdicts)
+        # Deliberately not route-gated here. No cross-row or per-route rule in
+        # this tool is enforced at write time — card ordering, the cash-anchor
+        # pre-flight and the weekly opener are all `verify`'s job — and route
+        # obligations live in exactly one reader (ROUTE_CONTRACTS, read by
+        # verify_rows). Teaching the append path a second, partial copy of them
+        # is how the two would eventually disagree.
+        if args.change is not None:
+            row["change"] = args.change
         question_verdicts = {
             "question_specificity": args.question_specificity,
             "answer_fit": args.answer_fit,
@@ -468,25 +598,99 @@ def _positions(rows: list[dict], event: str, **matches) -> list[int]:
     ]
 
 
+def _contract(rows: list[dict]) -> dict:
+    """The obligations the trace's declared route carries."""
+    route = rows[0].get("route") if rows else None
+    return ROUTE_CONTRACTS.get(route, UNKNOWN_ROUTE_CONTRACT)
+
+
+def _change_surfaces(rows: list[dict]) -> list[int]:
+    """Rows where a card-free route showed the user what changed.
+
+    Two kinds count, and #523's design names both: `change_presented` (the
+    narrated diff, or the report of what was recorded) and the confirmation
+    question a raised item produces — in `flows/book-refresh.md` that question
+    *is* the difference, stated for the items only the user can settle.
+    """
+    return sorted(_positions(rows, "change_presented")
+                  + _positions(rows, "question_presented"))
+
+
+def _first_surface(rows: list[dict]) -> int:
+    """Index of the first thing the user saw, whatever kind of surface it was.
+
+    The anti-backfill checks (cash anchor, weekly opener) are all of the form
+    "this had to happen before anything was shown", so they share one reading
+    of what "shown" means rather than each enumerating surfaces it knows about.
+    """
+    return min(_positions(rows, "question_presented")
+               + _positions(rows, "card_presented")
+               + _positions(rows, "change_presented")
+               or [len(rows)])
+
+
+def _verdict_scales(contract: dict, rows: list[dict]) -> dict:
+    """The route's verdict scales, narrowed by what the trace actually shows.
+
+    Exactly one narrowing exists, and it is the card-free lane's own honesty
+    problem. `controls` asks whether the user could answer through real
+    controls; a book refresh that raised no confirmation never showed one, so
+    "pass" there would be a judgment about nothing — the same fabrication as a
+    card verdict on a run that rendered no card. A refresh that *did* raise one
+    must judge it rather than calling it inapplicable. Both directions are
+    mechanically decidable from the trace, so neither is left to discipline.
+
+    Routes whose declared `controls` scale has no `not_applicable` (every
+    card-producing route) are untouched by this.
+    """
+    scales = dict(contract["verdict"])
+    if "not_applicable" in scales.get("controls", ()):
+        scales["controls"] = PASS_FAIL if _positions(rows, "question_presented") \
+            else ONLY_NOT_APPLICABLE
+    return scales
+
+
+def _affirmative(scale: tuple) -> str:
+    """The value that means "this axis is fine" on a given scale.
+
+    `pass` wherever the axis can pass; otherwise the single value the scale
+    allows — which is how `card: not_applicable` satisfies the owner gate on a
+    lane that owes no card without that lane needing its own branch.
+    """
+    return "pass" if "pass" in scale else scale[0]
+
+
 def timing_integrity(rows: list[dict]) -> dict:
     """Assess timestamp plausibility without invalidating legacy receipts.
 
-    Only a structurally complete, owner-verdict, preview-and-final trace is
-    eligible for the assessment. Missing timestamps therefore remain
-    compatible and machine-visible as ``not_assessed``. A fully timestamped
-    trace is ``suspect`` when row timestamps reverse or the complete walk was
-    recorded in less than ``MIN_OWNER_TRACE_SPAN_SECONDS``. These checks do not
-    assert what happened in the host; they prevent implausible self-attestation
-    from being cited directly as owner-live ground truth.
+    Only a structurally complete owner-verdict trace is eligible for the
+    assessment, and what "complete" means is the route's own contract: the
+    preview-and-final card walk on a card-producing route, the visible change
+    surface on a card-free one. Reading the same table `verify_rows` reads is
+    what keeps a lane that cannot render cards from being permanently
+    ``not_assessed`` — and therefore permanently unarchivable under
+    ``--require-timing-integrity`` (#523). Missing timestamps remain compatible
+    and machine-visible as ``not_assessed``. A fully timestamped trace is
+    ``suspect`` when row timestamps reverse or the complete walk was recorded in
+    less than ``MIN_OWNER_TRACE_SPAN_SECONDS``. These checks do not assert what
+    happened in the host; they prevent implausible self-attestation from being
+    cited directly as owner-live ground truth.
     """
-    required_positions = (
-        _positions(rows, "artifact_generated", stage="preview"),
-        _positions(rows, "card_presented", stage="preview"),
-        _positions(rows, "artifact_generated", stage="final"),
-        _positions(rows, "card_presented", stage="final"),
-        _positions(rows, "owner_verdict"),
-    )
-    complete = all(len(positions) == 1 for positions in required_positions)
+    contract = _contract(rows)
+    verdicts = _positions(rows, "owner_verdict")
+    if contract["cards"]:
+        anchors = (
+            _positions(rows, "artifact_generated", stage="preview"),
+            _positions(rows, "card_presented", stage="preview"),
+            _positions(rows, "artifact_generated", stage="final"),
+            _positions(rows, "card_presented", stage="final"),
+        )
+        complete = all(len(positions) == 1 for positions in anchors)
+        reason = "complete owner-verdict multi-stage trace required"
+    else:
+        complete = bool(_change_surfaces(rows))
+        reason = "owner-verdict trace with a visible change surface required"
+    complete = complete and len(verdicts) == 1
     base = {
         "status": "not_assessed",
         "owner_live_eligible": None,
@@ -495,7 +699,7 @@ def timing_integrity(rows: list[dict]) -> dict:
         "findings": [],
     }
     if not complete:
-        base["reason"] = "complete owner-verdict multi-stage trace required"
+        base["reason"] = reason
         return base
 
     if not all(_valid_ts(row.get("ts")) for row in rows):
@@ -512,8 +716,7 @@ def timing_integrity(rows: list[dict]) -> dict:
                 "previous_row": index,
             })
 
-    owner_position = required_positions[-1][0]
-    span_seconds = int((timestamps[owner_position] - timestamps[0]).total_seconds())
+    span_seconds = int((timestamps[verdicts[0]] - timestamps[0]).total_seconds())
     if 0 <= span_seconds < MIN_OWNER_TRACE_SPAN_SECONDS:
         findings.append({
             "code": "implausible_one_burst_backfill",
@@ -558,8 +761,10 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 require_findings: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
-    Scope is deliberately narrow: prove that each engine-rendered card actually
-    reached the user, in order, plus the weekly opening memory. Answer and
+    Scope is deliberately narrow: prove that whatever the route renders — an
+    engine card, or the change a card-free lane showed instead — actually
+    reached the user, in order, plus the weekly opening memory. Which of those a
+    trace owes is read from `ROUTE_CONTRACTS`, never branched on here. Answer and
     commitment completeness belong to the engine and are not re-verified here.
     `ts` is optional metadata (legacy traces predate it) validated only for
     format when present; row order, not `ts`, is the ordering authority.
@@ -570,6 +775,7 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     declaration = rows[0]
     session_id = declaration.get("session_id")
     route = declaration.get("route")
+    contract = _contract(rows)
     if declaration.get("version") != VERSION:
         errors.append(f"unsupported trace version: {declaration.get('version')!r}")
     if route not in ROUTES:
@@ -591,6 +797,18 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
             errors.append(f"row {index} has unsupported stage {row.get('stage')!r}")
         if event == "memory_presented" and row.get("memory_kind") not in MEMORY_KINDS:
             errors.append(f"row {index} has unsupported memory kind {row.get('memory_kind')!r}")
+        if event == "change_presented":
+            # Same discipline as answers_received and findings_recorded: this
+            # row states that a surface appeared, never what it said. The diff
+            # it narrates holds tickers and share counts, so a free-text field
+            # here would put position content inside the trace.
+            extra = sorted(set(row) - {"version", "event", "session_id", "ts", "change_kind"})
+            if extra:
+                errors.append(
+                    f"row {index} change_presented contains unsupported fields: {', '.join(extra)}"
+                )
+            if row.get("change_kind") not in CHANGE_KINDS:
+                errors.append(f"row {index} has unsupported change kind {row.get('change_kind')!r}")
         if event == "cash_anchor_checked" and row.get("cash_outcome") not in CASH_OUTCOMES:
             errors.append(f"row {index} has unsupported cash outcome {row.get('cash_outcome')!r}")
         if event == "question_presented":
@@ -671,45 +889,69 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
         if row.get("event") == "rule_choice_presented" and row.get("mode") not in question_modes:
             errors.append(f"rule choice used undeclared mode {row.get('mode')!r}")
 
-    # Presentation is the whole point: each stage must show its engine artifact
-    # actually reached the user inline, in order.
-    for stage in STAGES:
-        artifacts = _positions(rows, "artifact_generated", stage=stage)
-        cards = _positions(rows, "card_presented", stage=stage)
-        if len(artifacts) != 1:
-            errors.append(f"{stage} artifact_generated must appear exactly once")
-        if len(cards) != 1:
-            errors.append(f"{stage} card_presented must appear exactly once")
-        if len(artifacts) == len(cards) == 1 and artifacts[0] >= cards[0]:
-            errors.append(f"{stage} card was marked presented before its artifact existed")
-        for position in cards:
-            mode = rows[position].get("mode")
-            if mode not in card_modes:
-                errors.append(f"{stage} card used undeclared mode {mode!r}")
-            if mode == "markdown_inline" and "widget" in card_modes:
-                if not _positions(rows[:position], "widget_attempt_failed"):
-                    errors.append(
-                        f"{stage} used Markdown despite widget capability without recording a failed widget attempt"
-                    )
-
     preview_card = _positions(rows, "card_presented", stage="preview")
     final_card = _positions(rows, "card_presented", stage="final")
     final_artifact = _positions(rows, "artifact_generated", stage="final")
-    if preview_card and final_card and preview_card[0] >= final_card[0]:
-        errors.append("final card presentation must follow the preview card")
-    if preview_card and final_artifact and final_artifact[0] <= preview_card[0]:
-        errors.append("final artifact was generated before the preview card was presented")
+    first_surface = _first_surface(rows)
+
+    # Presentation is the whole point: each stage must show its engine artifact
+    # actually reached the user inline, in order.
+    if contract["cards"]:
+        for stage in STAGES:
+            artifacts = _positions(rows, "artifact_generated", stage=stage)
+            cards = _positions(rows, "card_presented", stage=stage)
+            if len(artifacts) != 1:
+                errors.append(f"{stage} artifact_generated must appear exactly once")
+            if len(cards) != 1:
+                errors.append(f"{stage} card_presented must appear exactly once")
+            if len(artifacts) == len(cards) == 1 and artifacts[0] >= cards[0]:
+                errors.append(f"{stage} card was marked presented before its artifact existed")
+            for position in cards:
+                mode = rows[position].get("mode")
+                if mode not in card_modes:
+                    errors.append(f"{stage} card used undeclared mode {mode!r}")
+                if mode == "markdown_inline" and "widget" in card_modes:
+                    if not _positions(rows[:position], "widget_attempt_failed"):
+                        errors.append(
+                            f"{stage} used Markdown despite widget capability without recording a failed widget attempt"
+                        )
+        if preview_card and final_card and preview_card[0] >= final_card[0]:
+            errors.append("final card presentation must follow the preview card")
+        if preview_card and final_artifact and final_artifact[0] <= preview_card[0]:
+            errors.append("final artifact was generated before the preview card was presented")
+    else:
+        # Forbidden, not merely unrequired. Exempting a card-free route from the
+        # sequence above and stopping there would let its receipt claim a card
+        # delivery that structurally cannot have happened — the same fabricated
+        # evidence, recorded voluntarily instead of under duress.
+        claimed = [index for index, row in enumerate(rows, 1)
+                   if row.get("event") in CARD_LIFECYCLE_EVENTS]
+        if claimed:
+            errors.append(
+                f"{route} renders no card, so rows {claimed} record a card delivery "
+                "that cannot have happened")
+
+    # The card-free counterpart: what the user saw instead. A trace holding only
+    # a declaration and a verdict has proven nothing about the lane it claims to
+    # have walked.
+    change_surfaces = _change_surfaces(rows) if contract["change"] else []
+    if contract["change"]:
+        if not change_surfaces:
+            errors.append(
+                f"{route} must show at least one visible change surface — the narrated "
+                "diff or recorded result (change_presented), or the confirmation "
+                "question when one was raised")
+    elif _positions(rows, "change_presented"):
+        errors.append(f"{route} presents cards, not a change surface; change_presented "
+                      "does not belong on this route")
 
     # #357: the cash anchor is resolved before the first surface (first_review:
     # before `prepare` runs; weekly_review: after the cadence-tier gate, and a
     # light-tier session never calls this tool at all), so this event is
     # retrospective evidence the check happened — it cannot be skipped by
     # forgetting, the way plain data-contract.md prose could.
-    if route in CASH_ANCHOR_ROUTES:
+    if contract["cash_anchor"]:
         checks = _positions(rows, "cash_anchor_checked")
-        first_surface = min(
-            _positions(rows, "question_presented") + preview_card + final_card or [len(rows)]
-        )
         if len(checks) != 1:
             errors.append(f"{route} must record exactly one cash_anchor_checked event")
         elif checks[0] >= first_surface:
@@ -718,19 +960,18 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     if Counter(row.get("event") for row in rows)["widget_attempt_failed"] and "widget" not in card_modes:
         errors.append("widget failure was recorded without declared widget capability")
 
-    # Weekly review must prove the opening memory (the committed prior rule, or an
-    # explicit prior skip) was actually surfaced before the first card.
-    if route == "weekly_review":
+    # A route that carries an opening memory must prove it (the committed prior
+    # rule, or an explicit prior skip) was actually surfaced before the first
+    # card. Today only weekly_review does; the contract says so, not this check.
+    if contract["opener"]:
         openers = [
             index
             for index, row in enumerate(rows)
-            if row.get("event") == "memory_presented" and row.get("memory_kind") in WEEKLY_OPENERS
+            if row.get("event") == "memory_presented"
+            and row.get("memory_kind") in contract["opener"]
         ]
-        first_surface = min(
-            _positions(rows, "question_presented") + preview_card + final_card or [len(rows)]
-        )
         if len(openers) != 1:
-            errors.append("weekly_review must present exactly one prior commitment or skip opener")
+            errors.append(f"{route} must present exactly one prior commitment or skip opener")
         elif openers[0] >= first_surface:
             errors.append("weekly opening memory was presented after the first question or card")
 
@@ -750,20 +991,31 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     verdicts = _positions(rows, "owner_verdict")
     if len(verdicts) > 1:
         errors.append("owner_verdict may appear at most once")
+    scales = _verdict_scales(contract, rows)
     if verdicts:
         verdict = rows[verdicts[0]]
-        if verdict.get("controls") not in {"pass", "fail"}:
-            errors.append("owner controls verdict must be pass or fail")
-        if verdict.get("card") not in {"pass", "fail"}:
-            errors.append("owner card verdict must be pass or fail")
-        if verdict.get("memory") not in {"pass", "fail", "not_applicable"}:
-            errors.append("owner memory verdict must be pass, fail, or not_applicable")
+        for axis in VERDICT_AXES:
+            allowed = scales.get(axis)
+            if allowed is None:
+                # An axis this route has no surface for. Judging it would be
+                # judging something the user was never shown.
+                if verdict.get(axis) is not None:
+                    errors.append(f"owner {axis} verdict does not apply on a {route} trace")
+            elif verdict.get(axis) not in allowed:
+                errors.append(f"owner {axis} verdict must be {' or '.join(allowed)} "
+                              f"on a {route} trace")
         question_verdicts = (verdict.get("question_specificity"), verdict.get("answer_fit"))
         if any(value is not None for value in question_verdicts):
             if any(value not in {"pass", "fail"} for value in question_verdicts):
                 errors.append("owner question specificity and answer fit verdicts must both be pass or fail")
+        # The verdict is the last act, so it must follow whatever the route
+        # actually put in front of the user — the final card, or the change
+        # surface on a lane that renders none. A verdict recorded before it
+        # judged nothing.
         if final_card and verdicts[0] <= final_card[0]:
             errors.append("owner_verdict must follow the final card presentation")
+        if change_surfaces and verdicts[0] <= max(change_surfaces):
+            errors.append("owner_verdict must follow the change surface it judges")
         # Both documents say findings are recorded before the verdict, and the
         # first cut enforced no ordering at all — the docs described a discipline
         # the tool did not hold anyone to (external review, 2026-07-27). The
@@ -774,12 +1026,18 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
             errors.append("findings_recorded must precede the owner verdict — a "
                           "disposition recorded after the run was judged is a backfill")
     if require_owner_verdict:
+        # Which axes must be affirmative is the route's contract, not a chain of
+        # route tests: `card=pass` on a card route and `card=not_applicable` on
+        # a card-free one are the same statement — "the thing this route renders
+        # was fine" — and `_affirmative` is where that equivalence lives.
+        wanted = {axis: _affirmative(scales[axis]) for axis in contract["must_pass"]}
+        unmet = [f"{axis}={value}" for axis, value in wanted.items()
+                 if verdicts and rows[verdicts[0]].get(axis) != value]
         if len(verdicts) != 1:
             errors.append("manual verification requires exactly one owner_verdict")
-        elif any(rows[verdicts[0]].get(key) != "pass" for key in ("controls", "card")):
-            errors.append("manual verification requires passing controls and card verdicts")
-        elif route == "weekly_review" and rows[verdicts[0]].get("memory") != "pass":
-            errors.append("weekly manual verification requires a passing memory verdict")
+        elif unmet:
+            errors.append(f"manual verification of a {route} trace requires "
+                          f"{', '.join(unmet)} in the owner verdict")
         elif any(row.get("event") == "question_presented" and
                  row.get("surface_source") == "validated_dynamic" for row in rows):
             verdict = rows[verdicts[0]]
@@ -856,10 +1114,16 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--stage", choices=STAGES)
     event.add_argument("--artifact-path")
     event.add_argument("--memory-kind", choices=MEMORY_KINDS)
+    event.add_argument("--change-kind", choices=CHANGE_KINDS,
+                       help="change_presented only: the narrated engine diff, or "
+                            "the report of what the refresh recorded")
     event.add_argument("--cash-outcome", choices=CASH_OUTCOMES)
-    event.add_argument("--controls", choices=("pass", "fail"))
-    event.add_argument("--card", choices=("pass", "fail"))
-    event.add_argument("--memory", choices=("pass", "fail", "not_applicable"))
+    event.add_argument("--controls", choices=PASS_FAIL_OR_NA)
+    event.add_argument("--card", choices=PASS_FAIL_OR_NA)
+    event.add_argument("--memory", choices=PASS_FAIL_OR_NA)
+    event.add_argument("--change", choices=PASS_FAIL,
+                       help="owner_verdict on a card-free route: did what the "
+                            "receipt showed match what happened to the book")
     event.add_argument("--question-specificity", choices=("pass", "fail"))
     event.add_argument("--answer-fit", choices=("pass", "fail"))
     event.add_argument("--finding", action="append", default=[],

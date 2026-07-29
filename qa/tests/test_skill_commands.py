@@ -108,8 +108,16 @@ UNDOCUMENTED_ROUTES = {
         "#526: the route exists in the tool and #486's M0-U02 journey starts on "
         "it, but no verified walkthrough has been written. Writing an unverified "
         "one here would ship exactly the defect #520 repaired, so it is named "
-        "rather than guessed at. See also #523, which blocks the refresh half of "
-        "the same journey at the tool layer."
+        "rather than guessed at."
+    ),
+    "refresh": (
+        "#526, the other half of the same journey. #523 gave the card-free "
+        "book-refresh lane an honest route and contract at the tool layer "
+        "(change surface instead of a card, `change`/`card=not_applicable` in "
+        "the verdict), which is what makes a walkthrough writable at all — but "
+        "the walkthrough itself must be observed on merged main and replayed, "
+        "not guessed at here. `references/ux-receipt.md` documents the commands "
+        "in the meantime."
     ),
 }
 

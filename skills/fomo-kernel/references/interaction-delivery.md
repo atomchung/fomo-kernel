@@ -4,7 +4,9 @@ Claude, Codex, Cursor, and future hosts share one Review Plan, schemas, question
 
 The engine already fail-closes on review content at `preview`/`finalize`: a missing required answer, invalid motive provenance, or an absent commitment cannot get through. This file covers the part the engine cannot see — whether the host actually *presented* each question and card to a human. Recording that evidence is described in [`ux-receipt.md`](ux-receipt.md); read it when you start a session, not while deciding how to word a question.
 
-**Scope: full-tier reviews only.** A light-tier capture (`flows/light-capture.md`) renders no card and asks at most one plain-text question, so nothing here applies to it. Neither does it apply to a book refresh (`flows/book-refresh.md`), which is not a review at all: it renders no card, holds no session to attach a receipt to, and asks one plain question. Both flows still owe the user that question as its own visible turn — that rule is about the human, not about the review lifecycle, and each states it in its own file.
+**Scope: full-tier reviews only.** A light-tier capture (`flows/light-capture.md`) renders no card and asks at most one plain-text question, so nothing here applies to it. Neither does it apply to a book refresh (`flows/book-refresh.md`), which is not a review at all: it renders no card and holds no review session. Both flows still owe the user that question as its own visible turn — that rule is about the human, not about the review lifecycle, and each states it in its own file.
+
+The presentation *trace* is scoped differently from this contract. A refresh renders no card, but it does show the user something, so [`ux-receipt.md`](ux-receipt.md) carries a card-free `refresh` route whose evidence is that change surface. Recording it is how a refresh can be archived as acceptance evidence at all; nothing in this file's card-delivery rules applies to it.
 
 ## Capability resolution
 

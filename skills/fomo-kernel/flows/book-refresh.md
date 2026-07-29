@@ -61,7 +61,9 @@ Report what was recorded, in the user's terms:
 
 ## How this flow relates to the shared runtime contracts
 
-There is no card in this flow, so the card delivery contract has nothing to route. `references/interaction-delivery.md` is scoped to full-tier reviews and its presentation-evidence machinery (`references/ux-receipt.md`) does not apply here either — there is no card to prove was shown, and no session to attach a receipt to.
+There is no card in this flow, so the card delivery contract has nothing to route: `references/interaction-delivery.md` is scoped to full-tier reviews, and none of its card rules apply here.
+
+The presentation trace is a separate question, and the answer changed with #523. This flow shows the user something real — the difference, and then what was recorded — so `references/ux-receipt.md` carries a card-free `refresh` route whose evidence is exactly that change surface, with the engine's `refresh_id` as the trace's session id. A maintainer QA walkthrough records it; an ordinary refresh needs no receipt, the same way it needs no session.
 
 What still applies is the part that is about the human: step 2 is a real question with real consequences, so it gets its own visible turn and a real answer before step 3 runs. Do not bundle it into a status update, and do not answer it on the user's behalf from context.
 
