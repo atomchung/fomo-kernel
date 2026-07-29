@@ -50,6 +50,8 @@ import sys
 import tempfile
 from collections import defaultdict
 
+import splits as sp
+
 SCHEMA_V = 1
 DEFAULT_LEDGER = os.path.expanduser("~/.trade-coach/ledger.jsonl")
 EPS = 1e-6
@@ -396,13 +398,49 @@ def _anchored_cycle_start(position, anchor_date, ticker, integrity):
     return stated.isoformat(), False
 
 
-def derive_holdings(events):
+def _carry_position(position, events, day):
+    """Carry a running position into ``day``'s split basis, in place (#558).
+
+    Shares scale by every split in ``(basis_date, day]``; ``cost_total`` is
+    untouched because a split is a zero-dollar event. The position's basis
+    moves to ``day``, so the next carry starts where this one left off and no
+    split is ever applied twice.
+    """
+    factor = sp.factor_between(events, position.get("basis_date"), day)
+    if abs(factor - 1.0) > 1e-12:
+        position["shares"] *= factor
+    position["basis_date"] = day
+
+
+def derive_holdings(events, splits=None, as_of=None):
     """錨點推導當前持倉。回傳 {anchor, holdings, integrity, counts}。
 
     holdings: {ticker: {shares, avg_cost(None=未宣告且不可知), cost_total, currency,
                         market, origin(snapshot|trades), since, cycle_id,
                         add_count, decision_cursor}}
     integrity: 壞事件 / oversell(賣超,clamp 後照走)清單 —— 資料誠實層,呈現端要帶出。
+
+    ``splits`` (#558) — this ticker's split events, in ``splits.normalize``'s
+    accepted spellings. Every quantity below is stored as transacted, in the
+    basis of its own day, so a running balance accumulated across a split is
+    not a balance at all: 90 bought before a ten-for-one split and 100 sold
+    after it cannot be subtracted from each other. The rule lives in
+    ``engine/splits.py`` and is applied here at three points — the anchor's
+    declared shares, each trade as it arrives, and once more at the tail — so
+    that every comparison happens in the basis of the moment it describes.
+    ``None`` means no split information and reproduces the pre-#558 answer
+    exactly; it does not mean "no splits".
+
+    ``as_of`` bounds the tail rebase for a caller reading the book through an
+    earlier day (:func:`holdings_as_of`). Omitted, every known split applies,
+    which is what "the book as it stands today" means — and is the case with
+    no post-split trading at all, the most common one in the wild.
+
+    ``cost_total`` is deliberately untouched by every one of those rebases: a
+    split is a zero-dollar event, so preserving cost while shares move is what
+    makes the derived ``avg_cost`` fall out correct without a second
+    adjustment. ``since`` is likewise untouched — a split does not restart a
+    holding period.
 
     The replay re-bases on the latest *declaration* only (#549). A
     ``DERIVED_BOOK_SOURCE`` row is this function's own output written down, so
@@ -412,6 +450,7 @@ def derive_holdings(events):
     cycle sequence, and the add count. One definition of what is held, one
     place it is computed.
     """
+    split_events = sp.normalize(splits)
     anchor = latest_anchor(events, declared_only=True)
     integrity = []
     pos = {}
@@ -442,7 +481,9 @@ def derive_holdings(events):
             pos[t] = {"shares": sh, "cost_total": cost_total,
                       "currency": p.get("currency", "USD"), "market": p.get("market", "US"),
                       "origin": "snapshot", "since": since,
-                      "cycle_unknown": cycle_unknown, "add_count": 0}
+                      "cycle_unknown": cycle_unknown, "add_count": 0,
+                      # A declaration states shares in its own as_of basis (#558).
+                      "basis_date": anchor_date}
             seq_base[t] = 1                # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)
 
     trades = []
@@ -462,13 +503,18 @@ def derive_holdings(events):
 
     for d, t, act, qty, px, ev in trades:
         cur = pos.get(t)
+        if cur is not None:
+            # #558: put the running position in this trade's own basis before
+            # adding to or subtracting from it. Without this the two sides of
+            # the arithmetic are quantities from different days.
+            _carry_position(cur, split_events.get(t), d)
         if act == "buy":
             if cur is None or cur["shares"] <= EPS:
                 seq_base[t] += 1
                 pos[t] = {"shares": qty, "cost_total": qty * px,
                           "currency": ev.get("currency", "USD"), "market": ev.get("market", "US"),
                           "origin": "trades", "since": d.isoformat(),
-                          "add_count": 0}
+                          "add_count": 0, "basis_date": d}
             else:
                 cur["shares"] += qty
                 cur["add_count"] += 1
@@ -488,6 +534,21 @@ def derive_holdings(events):
             cur["shares"] -= take
             if cur["shares"] <= EPS:
                 pos.pop(t)                # 清倉;seq_base 留著給重建 +1
+
+    # #558 tail: a split after the last trade — or after the anchor, for a book
+    # with no trades in that ticker at all — still moves the share count. This
+    # is the most common shape in the wild: the user simply has not traded it
+    # since. ``as_of`` bounds the window for a caller reading an earlier day;
+    # omitted, every known split applies, which is what "as it stands" means.
+    for t, p in pos.items():
+        events_t = split_events.get(t)
+        if not events_t:
+            continue
+        basis = p.get("basis_date")
+        factor = (sp.factor_after(events_t, basis) if as_of is None
+                  else sp.factor_between(events_t, basis, as_of))
+        if abs(factor - 1.0) > 1e-12:
+            p["shares"] *= factor
 
     holdings = {}
     for t in sorted(pos):
@@ -517,7 +578,7 @@ def derive_holdings(events):
                        "positions": len(holdings)}}
 
 
-def build_derived_book(events, *, as_of, session_id=None):
+def build_derived_book(events, *, as_of, session_id=None, splits=None):
     """The snapshot row that writes down the book these events already produce.
 
     Owner ruling on #549: *every source that arrives records the book at its own
@@ -546,7 +607,9 @@ def build_derived_book(events, *, as_of, session_id=None):
     ``snapshot_reconciliation`` keeps reading the last *declared* balance
     instead, so nothing is lost by staying silent here.
     """
-    derived = derive_holdings(events)
+    # #558: this row is *written down*, so an unadjusted share count here does
+    # not stay a read-time error — it becomes a durable one.
+    derived = derive_holdings(events, splits=splits, as_of=as_of)
     holdings = derived["holdings"]
     if not holdings:
         return None
@@ -582,11 +645,11 @@ def build_derived_book(events, *, as_of, session_id=None):
 
 # ─────────────────────────── 對帳 ───────────────────────────
 
-def reconcile(events, declared_positions):
+def reconcile(events, declared_positions, splits=None):
     """宣告持倉 vs 推導持倉 diff(唯讀,不寫任何東西)。
     declared_positions: [{ticker, shares, ...}];回傳 {match, mismatch, clean}。
     mismatch.kind: shares_mismatch | only_declared(推導漏=中間有沒看到的交易) | only_derived(宣告漏=可能已清倉)。"""
-    derived = derive_holdings(events)["holdings"]
+    derived = derive_holdings(events, splits=splits)["holdings"]
     dec = {}
     for p in declared_positions:
         t = p.get("ticker") if isinstance(p, dict) else None
@@ -659,7 +722,7 @@ def _cash_amount(value, label):
     return value
 
 
-def holdings_as_of(events, as_of):
+def holdings_as_of(events, as_of, splits=None):
     """Derived holdings as a declaration dated ``as_of`` sees them.
 
     A snapshot is an end-of-day view, so a trade dated after ``as_of`` is not
@@ -680,10 +743,10 @@ def holdings_as_of(events, as_of):
             if norm is not None and norm[0] > day:
                 continue
         aligned.append(ev)
-    return derive_holdings(aligned)["holdings"]
+    return derive_holdings(aligned, splits=splits, as_of=day)["holdings"]
 
 
-def snapshot_reconciliation(events, declared):
+def snapshot_reconciliation(events, declared, splits=None):
     """Fact-only reconciliation between the recorded book and a newer declaration.
 
     Implements the docs/prd-ledger.md reconciliation contract: compare
@@ -735,7 +798,7 @@ def snapshot_reconciliation(events, declared):
             "same-day declaration can reconcile")
     declared_map = _declared_positions_map(declared)
 
-    derived = holdings_as_of(events, declared_as_of)
+    derived = holdings_as_of(events, declared_as_of, splits=splits)
 
     positions = []
     for ticker in sorted(set(derived) | set(declared_map)):

@@ -268,7 +268,7 @@ def _pending_confirmations(diff, derived, declared, partition, units):
     return pending
 
 
-def plan_refresh(events, snapshot, anchor):
+def plan_refresh(events, snapshot, anchor, splits=None):
     """Freeze one refresh: what differs, and what must be confirmed. Writes nothing.
 
     Raises ``RefreshError`` when there is no recorded book to refresh (that is
@@ -284,7 +284,7 @@ def plan_refresh(events, snapshot, anchor):
     if lg.latest_anchor(events) is None:
         raise RefreshError(NO_ANCHOR)
     try:
-        reconciliation = lg.snapshot_reconciliation(events, anchor)
+        reconciliation = lg.snapshot_reconciliation(events, anchor, splits=splits)
     except ValueError as exc:
         raise RefreshError(str(exc)) from exc
     if reconciliation is None:                     # defensive: latest_anchor said otherwise
@@ -294,7 +294,7 @@ def plan_refresh(events, snapshot, anchor):
     # one snapshot_reconciliation stated its diff on. Calling derive_holdings
     # here instead would attach today's shares, cycle id and cost basis to a
     # difference computed for the snapshot date.
-    derived = lg.holdings_as_of(events, reconciliation["as_of"])
+    derived = lg.holdings_as_of(events, reconciliation["as_of"], splits=splits)
     declared = _declared_map(anchor)
     units = _unit_values(derived, declared, snapshot.get("fx"))
     partition = _recorded_book_partition(derived, units)
@@ -537,7 +537,7 @@ def _carried_row(ticker, fact):
     return row
 
 
-def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
+def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, splits=None):
     """Turn confirmed answers into the exact rows finalize will append.
 
     Returns ``{"status": "resupply", ...}`` when the user says the supplied view
@@ -564,7 +564,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
         return {"status": "resupply", "refresh_id": receipt.get("refresh_id"),
                 "tickers": resupply}
 
-    derived = lg.holdings_as_of(events, snapshot["as_of"])
+    derived = lg.holdings_as_of(events, snapshot["as_of"], splits=splits)
     recorded = _declared_map(lg.latest_anchor(events, declared_only=True) or {})
     by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
     carried, sold, appeared = [], [], {}
@@ -603,7 +603,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
         raise RefreshError(f"the adopted book failed validation: {exc}") from exc
 
     try:
-        reconciliation = lg.snapshot_reconciliation(events, adopted_anchor)
+        reconciliation = lg.snapshot_reconciliation(events, adopted_anchor, splits=splits)
     except ValueError as exc:
         raise RefreshError(str(exc)) from exc
     if reconciliation is None:

@@ -223,6 +223,34 @@ def absence_exits(events):
     return out
 
 
+def rebased_exit_price(item, splits=None):
+    """The stored exit price restated in today's split basis (#559).
+
+    An exit price is what actually executed, in the share basis of its own
+    day. A current quote is always in today's basis. Comparing the two across
+    a split reports the split as if it were a price move: on a ten-for-one, an
+    exit at 950 against a 197 quote reads as -79% when the truth is +107% —
+    the sign itself inverts, so "you sold before it fell" is printed about a
+    position that doubled.
+
+    Rebasing happens here, at read time, and is never stored: ``revisit_id``
+    is derived from what executed and must not churn the next time the ticker
+    splits. Returns ``None`` for an exit with no price (#485 Slice C), which
+    is a different thing from a missing quote.
+    """
+    price = (item or {}).get("exit_price")
+    if price is None:
+        return None
+    events = split_policy.normalize(splits).get((item or {}).get("ticker"))
+    if not events:
+        return float(price)
+    try:
+        day = dt.date.fromisoformat(str(item.get("exit_date")))
+    except (TypeError, ValueError):
+        return float(price)
+    return float(price) / split_policy.factor_after(events, day)
+
+
 def is_priced_exit(item):
     """Single reader for "does this exit have a recorded fill price".
 
@@ -429,7 +457,7 @@ def _resolved_any(rid, resolutions):
     return any((rid, cp) in resolutions for cp in CHECKPOINTS)
 
 
-def scan_backlog(revisits, resolutions, prices=None, limit=5):
+def scan_backlog(revisits, resolutions, prices=None, limit=5, splits=None):
     """#170 冷啟動兩層的下半:啟用前的歷史出場不灌 due,改成 on-demand backlog。
     回 (backlog_topN, summary, total)。
       backlog_topN —— #343 排序鍵:每筆先算 compare()(需要價才有 swap_net_pp/閒置機會成本),
@@ -445,7 +473,7 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5):
             if _is_historical(it) and not _resolved_any(it.get("revisit_id"), resolutions)]
     # compare() 要對每一筆算(不能只對「notional 前 limit 名」算)否則排在 notional 第 6+ 名、
     # 但 swap 翻轉幅度最大的那筆永遠沒機會被看見——這正是舊版排序看起來「隨便挑幾筆」的病灶。
-    scored = [(it, compare(it, prices)) for it in hist]
+    scored = [(it, compare(it, prices, splits=splits)) for it in hist]
     scored = [(it, cmp, _impact_dollars(it, cmp)) for it, cmp in scored]
     scored.sort(key=lambda row: (row[2] is None,
                                   -abs(row[2]) if row[2] is not None else 0.0,
@@ -463,7 +491,7 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5):
         px = (prices or {}).get(it["ticker"])
         if px and is_priced_exit(it):
             priced += 1
-            r = px / it["exit_price"] - 1.0
+            r = px / rebased_exit_price(it, splits) - 1.0
             ret_sum += r
             if r > 0:
                 sold_before_rise += 1                 # 賣掉後續漲 = 賣飛(系統性賣太早的訊號)
@@ -481,7 +509,7 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5):
     return topn, summary, len(hist)
 
 
-def compare(item, prices):
+def compare(item, prices, splits=None):
     """賣飛/swap 對比(#33 swap framing)。prices={ticker: 現價};缺價 → None,列 needs_prices。
     orig_ret = 原標的出場價→現價;swap_ret = 各換入標的買入→現價的金額加權;
     swap_net_pp = swap_ret − orig_ret(>0 = 換對了;<0 = 換錯;idle → 機會成本 = orig_ret)。"""
@@ -495,7 +523,7 @@ def compare(item, prices):
         # 不進 needs_prices——那句話會叫使用者去補一個補了也算不出來的東西。
         pass
     elif px:
-        orig_ret = px / item["exit_price"] - 1.0
+        orig_ret = px / rebased_exit_price(item, splits) - 1.0
     else:
         needs.append(t)
     swap_ret = None

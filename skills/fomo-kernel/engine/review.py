@@ -412,7 +412,8 @@ def _virtual_review_basis(inputs, batches, state):
         basis = portfolio_basis.query_current_book(
             overlay["events"], valuation_manifest=frame,
             reference_as_of=_basis_reference(frame.get("as_of"), book_as_of),
-            skipped_lines=inputs["ledger_receipt"]["skipped_lines"])
+            skipped_lines=inputs["ledger_receipt"]["skipped_lines"],
+            splits=state.get("splits"))
     except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
         raise ReviewError(f"your book could not be read from this input: {exc}") from exc
     if basis is None:
@@ -503,7 +504,8 @@ def _refuse_if_the_book_must_catch_up(root, snapshot_path):
     try:
         events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
         snapshot, anchor = snapshot_adapter.normalize_book(snapshot_path)
-        plan = book_refresh.plan_refresh(events, snapshot, anchor)
+        plan = book_refresh.plan_refresh(events, snapshot, anchor,
+                                         splits=_recorded_splits(root))
     except (ValueError, snapshot_adapter.SnapshotError) as exc:
         # Fail closed. Everything here already passed its own validator on the
         # way in, so a refusal at this point is not a user input error to
@@ -612,6 +614,20 @@ def _previous_state(root):
         return session.read_json(path)
     except (OSError, ValueError):
         return None
+
+
+def _recorded_splits(root):
+    """The split map the last review froze, for lanes that have no review of
+    their own (#558).
+
+    ``refresh`` runs as two separate CLI calls and content-addresses exactly
+    what the user was shown, so its split basis has to be identical across
+    both. Reading the frozen map keeps that deterministic; fetching per call
+    would let a network blip between the plan and the answer invalidate a
+    refresh_id the user is in the middle of answering. A root that has never
+    been reviewed carries no map and degrades to unadjusted, as before.
+    """
+    return (_previous_state(root) or {}).get("splits")
 
 
 def _profile_path(root):
@@ -1146,7 +1162,8 @@ def _record_derived_book(root, ledger_path, events, state):
     as_of = max(value for value in (day, latest_trade) if value) if (day or latest_trade) else None
     if as_of is None:
         return None
-    recorded = ledger.build_derived_book(events, as_of=as_of)
+    recorded = ledger.build_derived_book(events, as_of=as_of,
+                                         splits=state.get("splits"))
     if recorded is None:
         return None
     return session.append_book_adoption(
@@ -1215,7 +1232,7 @@ def _ingest_trades(root, paths, card, state):
         # rounding.
         if ledger.latest_anchor(existing, declared_only=True) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
-                card, state, ledger.derive_holdings(virtual)
+                card, state, ledger.derive_holdings(virtual, splits=state.get("splits"))
             )
         if fresh_all:
             # #472: recorded_at = this review period's own date_end, the same
@@ -1269,7 +1286,8 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
             verified_basis = portfolio_basis.query_current_book(
                 verified_overlay["events"], valuation_manifest=verified_frame,
                 reference_as_of=_basis_reference(frame.get("as_of"), verified_book_as_of),
-                skipped_lines=live_receipt["skipped_lines"])
+                skipped_lines=live_receipt["skipped_lines"],
+                splits=state.get("splits"))
         except (ValueError, portfolio_basis.PortfolioBasisError) as exc:
             raise ReviewError(f"your book could not be read before saving: {exc}") from exc
         if (verified_basis is None or _frame_identity(verified_frame) != basis_receipt["valuation_frame_identity"]
@@ -1279,7 +1297,8 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
         reconciliation = None
         if append and ledger.latest_anchor(live_events, declared_only=True) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
-                card, state, ledger.derive_holdings(verified_overlay["events"]))
+                card, state, ledger.derive_holdings(verified_overlay["events"],
+                                                   splits=state.get("splits")))
         if append and verified_overlay["fresh"]:
             ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
         recorded_book = (_record_derived_book(root, ledger_path, verified_overlay["events"], state)
@@ -1425,12 +1444,13 @@ def _prepare_exit_capture(root, state, persist):
         due.append({
             "revisit_id": row.get("revisit_id"), "checkpoint": row.get("checkpoint"),
             "due_date": row.get("due_date"), "item": item,
-            "compare": revisit.compare(item, prices),
+            "compare": revisit.compare(item, prices, splits=state.get("splits")),
             "prior_exit_reason": prior.get("exit_reason"),
             "prior_note": prior.get("note"),
             "prior_capture": prior.get("capture"),
         })
-    topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=prices)
+    topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=prices,
+                                                splits=state.get("splits"))
     backlog = {"items": topn[:2], "summary": summary, "total": total} if total else None
     return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
                                   "skipped_queue_lines": skipped, "path": queue_path}
@@ -5143,7 +5163,8 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
             "CSV paths directly, before asking consider about a hypothetical trade")
     basis = portfolio_basis.query_current_book(
         events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
-        reference_as_of=dt.date.today().isoformat())
+        reference_as_of=dt.date.today().isoformat(),
+        splits=_recorded_splits(root))
     if basis is None:
         raise ReviewError(
             f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
@@ -5700,8 +5721,11 @@ def cmd_refresh(args):
     ledger_path = os.path.join(root, "ledger.jsonl")
     snapshot, anchor = snapshot_adapter.normalize_book(args.snapshot_json)
 
+    frozen_splits = _recorded_splits(root)
+
     def _frozen(events):
-        return book_refresh.plan_refresh(events, snapshot, anchor)
+        return book_refresh.plan_refresh(events, snapshot, anchor,
+                                         splits=frozen_splits)
 
     if not args.answers:
         events, _skipped = ledger.load_ledger(ledger_path)
@@ -5718,7 +5742,8 @@ def cmd_refresh(args):
         if submitted.get("refresh_id") != receipt["refresh_id"]:
             raise ReviewError(book_refresh.REFRESH_STALE)
         adoption = book_refresh.build_adoption(
-            receipt, events, snapshot, anchor, submitted.get("answers") or [])
+            receipt, events, snapshot, anchor, submitted.get("answers") or [],
+            splits=frozen_splits)
         if adoption["status"] == "resupply":
             _emit({"status": "resupply_requested", "refresh_id": adoption["refresh_id"],
                    "tickers": adoption["tickers"],
