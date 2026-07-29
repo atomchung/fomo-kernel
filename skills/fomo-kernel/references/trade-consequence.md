@@ -103,6 +103,17 @@ For every rule currently in the user's rotation (a muted rule is excluded, match
 
 The CSV/FIFO path a review uses and the ledger reconstruction `consider` falls back to can legitimately disagree about a position's weight — they are answering different questions from different completeness requirements. Say which basis was used rather than presenting either as the only number.
 
+### Stock splits
+
+Both books add up share counts, and a quantity recorded before a split is not comparable to one recorded after it. Ninety shares bought before a ten-for-one, minus a hundred sold after it, is zero — so a position the user still holds can be missing from the book this answer reasons about, with nothing said about it.
+
+`consider` never fetches split data. It reads, in order:
+
+1. the `splits` field on a `--prices` row ([price-feed.md](price-feed.md)) — supply it whenever you supply prices for a ticker the user has held across one;
+2. otherwise, the map the last review in this coach root froze.
+
+A root that has never been reviewed and a `--prices` envelope that says nothing about splits leave the answer on as-transacted quantities. That is the pre-existing behaviour and it is silent, which is the reason to fill in the envelope rather than rely on the fallback.
+
 ## What the answer owes
 
 Every `consider` response carries a `challenge` block beside the evaluation: the engine's own statement of what *this* answer has to put in front of *this* user. It exists because the obligations used to live only in this file, to be re-derived by hand on every call from a payload with roughly forty fields in it — and because `consider`'s answer is plain conversation, so nothing between the frozen result and a user told half of it.

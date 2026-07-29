@@ -41,7 +41,7 @@ import question_surface
 import revisit
 import session
 import snapshot_adapter
-import splits
+import splits as split_policy   # #550 一份分割規則;別名讓 `splits=` 參數不遮蔽模組
 import thesis
 import trade_recap
 import verdicts
@@ -1441,7 +1441,7 @@ def _prepare_exit_capture(root, state, persist):
                                                splits=state.get("splits"))
     except ledger.LedgerIntegrityError as exc:
         raise ReviewError(str(exc)) from exc
-    except splits.SplitDataError as exc:
+    except split_policy.SplitDataError as exc:
         raise ReviewError(f"this review's split history could not be read: {exc}") from exc
     revisits, resolutions, skipped = revisit.load_queue(queue_path)
     narratives = _exit_narrative_index(root)
@@ -5147,7 +5147,7 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
     return before
 
 
-def _consider_rows(args, root, valuation_manifest=None, last_px=None):
+def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=None):
     """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
     a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
     #456 names this the ledger basis, distinct from a review's own CSV/FIFO
@@ -5157,7 +5157,26 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
     cannot answer a pre-trade question, and inventing one would be worse than
     refusing. A book where only *some* holding cannot be valued is not that
     case (#515): those holdings come back in the fifth return value and must
-    be carried to wherever the derived numbers are stated."""
+    be carried to wherever the derived numbers are stated.
+
+    ``splits`` reaches both routes, because both accumulate share counts and a
+    split is what makes two of them incomparable (#550/#558). The two apply it
+    differently, and that difference is the established one: the ledger route
+    hands the map to the canonical book, which carries the *running position*
+    across each split, while the CSV route rebases the rows themselves onto
+    today's basis with ``trade_recap.adjust_for_splits`` — the same call
+    ``prepare`` makes at ``trade_recap.py:2365``, and the right one here
+    because ``last_px`` is a current quote and the rows have to be denominated
+    against it. Absent map, both degrade to as-transacted quantities exactly as
+    before.
+
+    The map is resolved once, here, for both routes: an agent-supplied one
+    (``--prices``' envelope, passed in) wins, otherwise the one the last review
+    froze. `consider` is a single CLI call, so unlike `refresh` it has no
+    two-call determinism to protect — but it still never fetches, per #558's
+    retrieval ruling: no store, no schedule, no new path."""
+    if splits is None:
+        splits = _recorded_splits(root)
     if args.paths:
         paths = [os.path.abspath(os.path.expanduser(p)) for p in args.paths]
         for path in paths:
@@ -5168,6 +5187,17 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
             raise ReviewError(
                 "none of the supplied CSV paths contained a usable BUY/SELL trade row; "
                 "consider cannot answer against an empty book")
+        # The rows are what `consequence.portfolio_state` sums into the book
+        # this answer reasons about, so an unadjusted pre-split quantity is
+        # #558's defect on the one route that never got a fix: 90 bought
+        # before a ten-for-one minus 100 sold after it is zero, and `consider`
+        # then challenges a trade against a book missing the position it is
+        # about. Rebase before the basis digest is taken, so the frozen
+        # `state_version` describes the rows the answer actually used.
+        try:
+            trade_recap.adjust_for_splits(rows, splits)
+        except split_policy.SplitDataError as exc:
+            raise ReviewError(f"split data rejected: {exc}") from exc
         # A CSV book has no basis-level exclusion: every row is a real trade
         # the user supplied, not a holding whose cost could not be read.
         return rows, _legacy_transaction_basis(rows, last_px), None, None, []
@@ -5186,7 +5216,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
     basis = portfolio_basis.query_current_book(
         events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
         reference_as_of=dt.date.today().isoformat(),
-        splits=_recorded_splits(root))
+        splits=splits)
     if basis is None:
         raise ReviewError(
             f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
@@ -5649,7 +5679,7 @@ def cmd_consider(args):
     if args.instrument_map:
         instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
 
-    last_px, fx = None, None
+    last_px, fx, supplied_splits = None, None, None
     if args.prices:
         try:
             feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
@@ -5657,6 +5687,12 @@ def cmd_consider(args):
             raise ReviewError(f"price feed rejected: {exc}") from exc
         last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
         fx = price_feed.fx_rates(feed)
+        # The envelope's own splits, already schema-validated on the way in
+        # (references/price-feed.md). Preferred over the frozen map below
+        # because it arrived with these quotes, on one basis at one instant —
+        # and because a CSV-route caller may have no review in this root to
+        # have frozen anything.
+        supplied_splits = price_feed.splits_map(feed) or None
 
     cash_anchor = None
     if args.cash:
@@ -5669,7 +5705,8 @@ def cmd_consider(args):
     if last_px:
         valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
     rows, basis, canonical_basis, canonical_projection, excluded_holdings = _consider_rows(
-        args, root, valuation_manifest=valuation_manifest, last_px=last_px)
+        args, root, valuation_manifest=valuation_manifest, last_px=last_px,
+        splits=supplied_splits)
 
     agent_case = None
     if args.agent_case:
