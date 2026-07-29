@@ -1,6 +1,6 @@
 ---
 name: fomo-qa
-description: Prepares a clean, consistent QA environment for dogfooding fomo-kernel and walks one complete review end to end. Use when the user says /fomo-qa, "dogfood fomo-kernel", 跑一次 fomo QA, 走一次復盤驗收, 準備乾淨的測試環境, 幫我 QA fomo-kernel. Its purpose is to kill the rework that comes from every session testing a different environment: a fixed version gate (test only on the latest origin/main, refuse when behind) + a clean detached dogfood worktree (never used for development) + a simulated new user (a dogfood-only coach root, cleared with qa_env.sh reset, never the real ~/.trade-coach) + standardized data sources (real trades / mock persona / test-drive). This is the acceptance tool used while developing and maintaining fomo-kernel, not the product itself; to review a real user's trades, use the product skill fomo-kernel instead. Never touches the real records in investment_note.
+description: Prepares a clean, consistent QA environment for dogfooding fomo-kernel and walks the real product routes — review, refresh, and what follows — as one continuous campaign in a single conversation. Use when the user says /fomo-qa, "dogfood fomo-kernel", 跑一次 fomo QA, 走一次復盤驗收, 準備乾淨的測試環境, 幫我 QA fomo-kernel. Its purpose is to kill the rework that comes from every session testing a different environment: a fixed version gate (test only on the latest origin/main, refuse when behind) + a clean detached dogfood worktree (never used for development) + a simulated new user (a dogfood-only coach root, cleared with qa_env.sh reset, never the real ~/.trade-coach) + standardized data sources (real trades / mock persona / test-drive). This is the acceptance tool used while developing and maintaining fomo-kernel, not the product itself; to review a real user's trades, use the product skill fomo-kernel instead. Never touches the real records in investment_note.
 ---
 
 # fomo-qa
@@ -79,7 +79,19 @@ Creates (or refreshes) `~/Side_project/kol_collector/fomo-kernel-dogfood` at `--
 cd ~/Side_project/kol_collector/fomo-kernel-dogfood/skills/fomo-kernel
 ```
 
-### Step 2 — Simulate the user's state
+### Step 2 — Open the campaign (once per conversation, not once per route)
+
+Steps 0–3 are the **campaign** setup: one worktree, one isolated root, one client/model/effort identity, one acceptance campaign. They happen **once**. Everything after them is a **route run** — one `first_review`, one `refresh`, one `weekly_review` — and a conversation may contain several, each with its own receipt and its own archived `run_id`.
+
+Three identities that are deliberately not one-to-one (#544):
+
+| | What it is | How many |
+|---|---|---|
+| **Campaign** | this conversation, this worktree, this isolated root | one |
+| **Route run** | one product command lifecycle: `prepare → preview → finalize`, or a `refresh` | as many as the session walks |
+| **Receipt** | one route-specific, append-only evidence trace | exactly one per route run |
+
+**Never merge route runs into one receipt.** A `first_review` owes two cards and a cash anchor, a `refresh` owes a card-free change surface and no cards at all — one mixed trace could satisfy neither verifier. The reusable unit is the campaign, not the receipt.
 
 **First route the whole toolchain into the dogfood-only coach root** (isolated from the real `~/.trade-coach`; `review.py`, `coach.py` and `tools/ux_receipt.py` **all three** honor `TRADE_COACH_HOME` — ux_receipt since the #269 fix, merged in PR #275 — so one export keeps `prepare`/`preview`/`finalize`/`data-status` and the receipt consistent throughout):
 
@@ -93,9 +105,11 @@ export TRADE_COACH_HOME="$(~/.claude/skills/fomo-qa/qa_env.sh coach-root)"
   ~/.claude/skills/fomo-qa/qa_env.sh reset   # back up, then clear the dogfood root to a fresh new user
   ```
 
-- **Simulate a returning user** (runs weekly-review / due-revisit): do **not** reset. Keep the dogfood coach state left by the previous QA and go straight to Step 3. To build a precise "second week" state, first run a full flow as a new user (through finalize), then run a second time with new data. **Lesson from 2026-07-20: a freshly reset session can never test memory continuity or problem-ledger continuity** (memory is `not_applicable`, and an empty prior problem ledger will not "catch" you). Verifying "did last time's problem follow up?" requires this path — do not mistake its absence for a fix working.
+- **Simulate a returning user** (runs weekly-review / due-revisit): do **not** reset. Keep the dogfood coach state left by a previous campaign and go straight to Step 3. **Lesson from 2026-07-20: a freshly reset session can never test memory continuity or problem-ledger continuity** (memory is `not_applicable`, and an empty prior problem ledger will not "catch" you). Verifying "did last time's problem follow up?" requires a book that already has a finalized review behind it — do not mistake its absence for a fix working.
 
-Confirm with the user which one to simulate; default to "brand-new user" when unsure. **This `export` must survive into the Step 4 walkthrough's shell** — if later commands each start a new shell, re-run this line in every one.
+Confirm with the user which one to simulate; default to "brand-new user" when unsure. This is a **campaign-level** choice, made once. It is not re-asked before each route run: a campaign that opened fresh and then finalized a `first_review` **is** a returning user for everything that follows, without a reset and without leaving the conversation. That is the cheapest way to reach the returning-user routes, and since #544 it is the documented one.
+
+**This `export` must survive into every later shell** — if commands each start a new shell, re-run this line in every one, for every route run in the campaign.
 
 ### Step 3 — Choose a data source (one of three, standardized)
 
@@ -388,7 +402,9 @@ The QA mindset — watch for these while walking (record what you find; do not f
 - Do Taiwanese stocks / mixed markets / cash / date formats hit any edge-case error?
 - **When presenting the candidate rule choice, did the agent quietly reword or invent a `grounding`?** (2026-07-21 lesson, see #293.) `flows/*.md` states that a candidate rule's `grounding` must be quoted verbatim and that a candidate without one may not have a sentence invented for it. **The mechanical check covers only half**: `verify` catches "the engine supplied a `grounding` but the presented text does not contain it verbatim" (#293), comparing against the `--grounding-check-file` you supplied yourself. It **cannot** catch "the candidate had no `grounding` and the agent invented one" — there is no engine text to compare against, and `ux_receipt.py`'s `_grounding_fidelity()` documents that half as an accepted limitation. So the human check remains necessary, aimed at exactly that half: before presenting, read `card_plan.candidate_rules` yourself and confirm each candidate's `grounding` came from the engine and was not written by you.
 
-### Step 5 — Wrap up
+### Step 5 — Close out this route run (the campaign stays open)
+
+This step ends **one route run**, not the conversation. Archive is not a stop signal: after it, the worktree, the isolated root and the campaign identity are all still live, and the next natural request starts the next route run against the same book. Only an explicit stop from the maintainer reaches step 4's cleanup — see "Continuing in the same campaign" below.
 
 1. **Owner verdict + archive the receipt (the core output of QA; do not skip it)**: once the final card is out, give a verdict — could the options be clicked (controls), did the card appear readably (card), did the weekly memory carry over (memory), were the questions specific enough (question-specificity), did the answers map correctly (answer-fit). This is exactly the human-review annotation eval has always lacked.
 
@@ -416,8 +432,10 @@ The QA mindset — watch for these while walking (record what you find; do not f
    # Never guess, and never fill in unknown/default.
    ~/.claude/skills/fomo-qa/qa_env.sh archive-receipt <receipt-path> mock:sample_ai_holder owner_live \
      --agent-model '<exact-host-model-label>' --effort '<exact-host-effort>' \
-     --campaign 'issue:#486' --case-id M0-U01 --state-mode fresh
+     --campaign 'issue:#486' --case-id M0-F1 --state-mode fresh
    ```
+
+   The `--case-id` values are defined by the acceptance issue, never invented here: #486's are `M0-F1`…`M0-F6` (one per user flow) since its 2026-07-29 ruling, plus `M0-T01`…`M0-T10` for the contract lane. Read the issue before the first archive of a campaign — an id that looks plausible but names nothing leaves a manifest that cannot be checked off against anything.
 
    Archiving produces a **run manifest** (`<run_id>.manifest.json`) recording this dogfood's full provenance: `engine_version` (`main-<sha>`), `agent.client`, `agent.model`, `agent.effort`, `data_source`, `human_involvement`, `owner_verdict`, `receipt_sha256`, plus **which acceptance case this session actually tested**: `campaign` / `case_id` / `state_mode` / `parent_run_id`. Model and effort are host labels supplied explicitly at archive time; the script never infers them from the client name, the commit, the chat context, or anything downstream. Missing any of them, or filling `unknown`/`default`, makes archive fail closed. This lets the report compare models and efforts separately rather than averaging them into one pass rate.
 
@@ -436,10 +454,10 @@ The QA mindset — watch for these while walking (record what you find; do not f
 3. **What you found**: write each one down. If it is genuinely a bug or a gap, check `gh issue list` for duplicates and open an issue (do not fix it in the dogfood worktree). **If this session used real trade data, every issue or comment draft must pass guardrail 5's `privacy_lint.py` with exit 0 before posting.** Add a row for significant conclusions following `EVALS.md`'s "Regression record" convention (the receipt is the machine-readable ledger, `EVALS.md` the human-readable one).
 
    **But opening an issue is not the end — Step 6 must be finished before `owner_verdict` is recorded.** An issue records that something went wrong; it does not make that failure replayable, so next time nobody knows whether it was fixed or merely not stepped on again.
-4. **Cleanup** (optional; confirm Step 6 is done first):
-   - Want to keep the state for a "second week" test next time → leave it alone.
-   - Want to return to a clean slate → run `~/.claude/skills/fomo-qa/qa_env.sh reset` again (clears the isolated dogfood root).
-   - Done with the worktree → `~/.claude/skills/fomo-qa/qa_env.sh down` (removes the worktree only, leaving state alone).
+4. **Cleanup — only when the maintainer says the campaign is over.** Do not offer it as the natural next step after an archive, and never run it to "tidy up" between route runs: the isolated root *is* the campaign's state, and clearing it ends every lineage the following runs would have continued. Confirm Step 6 is done, then:
+   - Staying in the campaign, or keeping the book for a later one → leave it alone. **This is the default.**
+   - Explicitly asked for a clean slate → `~/.claude/skills/fomo-qa/qa_env.sh reset` (clears the isolated dogfood root).
+   - Explicitly done with the worktree → `~/.claude/skills/fomo-qa/qa_env.sh down` (removes the worktree only, leaving state alone).
 
 ### Step 6 — Convert every miss into a replayable episode (gate 7, the last step before the verdict)
 
@@ -464,6 +482,38 @@ Three things not to get wrong:
 - **Not every miss can become an episode.** Use `not-episodable:#NN:<why>` for those. Whether the card ever reached the screen, for example, is a receipt-layer question (Step 4), not an answer-layer one — saying so is more honest than forcing a fake episode.
 
 **Sessions using real data**: an episode keeps only the failure's *structure*. De-identify every real ticker, amount and date before writing the fixture — `privacy_trace` is the mechanical backstop (a real value that cannot be traced to the synthetic fixture goes red), but it is a necessary condition, not a sufficient one.
+
+## Continuing in the same campaign
+
+After a route run is archived, **stay here**. The maintainer is now a user with a book, and the next thing they say is the next route run's trigger. Do not re-run Steps 0–3, do not reset, and do not treat the archive as the end of testing (#544: walking four routes used to cost four full ceremonies in four sessions, which is why routes went unwalked).
+
+Route the request to the **real command**. Answering it by hand — recomputing holdings, tallying a position, estimating what an addition would do — produces zero evidence and is the exact failure #543 recorded: an ad hoc portfolio question answered outside any lifecycle, 34 turns and a chart nobody asked for.
+
+| The maintainer says | Route run to start | Lineage |
+|---|---|---|
+| "my holdings changed", "I bought/sold something", hands over a newer holdings view | `refresh` — record before reviewing (`flows/book-refresh.md`) | `continued` |
+| "review it again", "run the weekly one" on a book with a finalized review behind it | `weekly_review` | `continued` |
+| hands over a position table with no trade history, on a fresh root | `snapshot_review` | `fresh` |
+| hands over a transaction CSV, on a fresh root | `first_review` | `fresh` |
+| "what if I add to X", "should I buy Y" | `review.py consider` — see the boundary below | **not archived** |
+
+Every continued run archives with `--state-mode continued --parent-run-id <the preceding accepted run_id>`, and each keeps its **own** receipt under its own route contract. The campaign identity (`--campaign`) stays the same across all of them; the `--case-id` is whichever acceptance case that particular run walks.
+
+### `consider` is reachable, but it is not receipted evidence yet
+
+`review.py consider` is a real product command and the campaign should invoke it rather than improvise an answer. But `tools/ux_receipt.py` has **no `consider` route** — `ROUTES` is `first_review`, `refresh`, `snapshot_review`, `test_drive`, `weekly_review`, and a route without a contract cannot exist there by construction (#523). So there is nothing for `verify` to check and nothing legitimate to archive.
+
+Until #544's Slice B decides what a `consider` answer visibly owes and gives it a route contract:
+
+- **do** invoke the real command against the campaign's own book, so the engine computes the consequence;
+- **do** record what you find as findings, issues or episodes like any other observation;
+- **do not** run `archive-receipt` for it, and do not cite it as a `consider` QA pass. #486's `M0-F5` is walked as exploratory evidence for this reason; the formal acceptance of this surface belongs to #488, after the M1 TradeEvaluation contract exists.
+
+Calling an unarchivable run "tested" is the same false pass a green `agent_simulated` run is — see the ledger below.
+
+### Ending the campaign
+
+The campaign ends only when the maintainer explicitly says so ("that's enough", "we're done", "reset it"). Then, and only then, run Step 5's cleanup. An interrupted campaign resumes by reusing the same isolated root and starting a **new** receipt for the next route run — receipts are append-only and one is never reopened, rewritten, or repurposed for a route it did not trace.
 
 ## The dogfood ledger: separating human involvement, aggregating across versions
 

@@ -41,6 +41,16 @@ that skips any of them is an informal exploration: its findings may still be
 reported, but it must not be counted, archived, or cited as "QA passed", and
 issues it produces must say so.
 
+**"Session" here means one product route's lifecycle, not one conversation.**
+One conversation may walk several routes against the same isolated root — a
+first review, then a book refresh, then a review of the refreshed book — and
+each of those is a separate run with its own receipt, its own verdict and its
+own archived manifest, chained by `--state-mode continued --parent-run-id`.
+Merging them into a single trace satisfies no route's verifier, because what a
+trace owes is read from its declared route (gate 3). The environment gates
+below, by contrast, are properties of the checkout and the root: establish them
+once and they hold for every run that follows in the same conversation.
+
 1. **Version gate** — it ran against the latest `origin/main`, and the tested
    sha was recorded before starting. Testing a stale worktree measures a past
    slice of the product and the result cannot be attributed afterwards.
