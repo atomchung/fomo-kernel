@@ -48,11 +48,13 @@ The stamp is opt-in, with no wall-clock default inside the writer: `append_event
 
 ## Holding derivation
 
-1. Use the accepted complete initial snapshot as the anchor.
+1. Use the latest *declared* snapshot as the anchor.
 2. Apply only trades with `date > snapshot.as_of`.
-3. If no snapshot exists, replay all available trades and mark completeness limitations.
+3. If no declaration exists, replay all available trades and mark completeness limitations.
 
-An accepted complete snapshot represents end-of-day state, so same-day trades are already reflected. Missing pre-anchor history is normal and does not invalidate the ledger-derived holdings. An incomplete snapshot does not enter this derivation. A second or subsequent broker snapshot does not supersede the canonical current holdings until the reconciler compares it with the ledger; adoption then flows through the same `latest_anchor` ordering (`as_of` first, `projection_sequence` for same-day declarations).
+A declared snapshot represents end-of-day state, so same-day trades are already reflected. Missing pre-anchor history is normal and does not invalidate the ledger-derived holdings.
+
+A `trades_derived` snapshot row is deliberately **not** an anchor for this derivation (#549). It is this derivation's own result written down at the time an import produced it, so replaying the trades it summarizes reproduces it exactly, while re-basing on it would discard what a summary row cannot carry: the real cycle start, the cycle sequence, and the add count. `ledger.latest_anchor(events, declared_only=True)` is the single reader of that distinction, and `tests/test_ledger.py` gates the equality it rests on. Every other reader — "has this root recorded a book at all", the refresh lane's `against` stamp — sees both kinds alike, which is the whole point of writing the row. A second or subsequent broker snapshot does not supersede the canonical current holdings until the reconciler compares it with the ledger; adoption then flows through the same `latest_anchor` ordering (`as_of` first, `projection_sequence` for same-day declarations).
 
 ## Reconciliation (implemented 2026-07-18, #220)
 
@@ -95,7 +97,7 @@ The agent may map broker labels, normalize dates, and complete provider ticker s
 
 The opening portfolio check may claim only engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. It initializes an inferred thesis for every uncovered open cycle and labels the holding history as left-truncated. Averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, and historical motives remain unavailable until later transaction history supports them.
 
-A complete initial snapshot may establish the accounting anchor. An incomplete snapshot still yields the bounded opening check but is not projected as an anchor. Later transaction files may unlock supported historical dimensions while ledger-derived current holdings remain canonical. A second or subsequent complete snapshot enters through the same command and is routed to the reconciliation contract above; only that comparison may certify that the ledger matches a fresh broker view or adopt the newer declaration, and a declaration carrying something only the user can settle is sent to `refresh` first (#530).
+Every incoming source records the book at its own time (#549): a holdings view records it as `user_declared`, and a transaction import records the book it derived as `trades_derived`. Nothing has to qualify to be recorded, and the source marking is never read as an eligibility test. Later transaction files may unlock supported historical dimensions while ledger-derived current holdings remain canonical. A second or subsequent complete snapshot enters through the same command and is routed to the reconciliation contract above; only that comparison may certify that the ledger matches a fresh broker view or adopt the newer declaration, and a declaration carrying something only the user can settle is sent to `refresh` first (#530).
 
 ## Multi-market and currency policy
 

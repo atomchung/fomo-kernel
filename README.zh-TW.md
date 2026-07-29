@@ -122,7 +122,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # 真的全
 ```
 
 - **下週回來要匯哪份 CSV?** 直接把**全歷史**再匯出來丟給它就好——你不用手動追增量。跟之前重疊的列會自動去重（去重就是為這個設計的），所以**每週丟整份對帳單都安全**；引擎用上次復盤的截點判斷哪些是新的，卡第一句就對帳你上次承諾的那條規矩。
-- **snapshot 會錨定什麼？** 完整的第一次 snapshot 可以成為 ledger 的會計錨點；不完整 snapshot 仍可產出有邊界的健檢，但不寫成錨點。之後補交易檔可解鎖有證據支持的歷史分析，當前持倉仍以 ledger 推導結果為準。第二次或後續 snapshot 的差異比對、對帳與 adjustment event 明確留在 P1；需要這層對帳才能成立的當前畫面說法維持不可用。
+- **snapshot 會錨定什麼？** 每一份進來的資料都會在它自己的時間點被記下來成為當時的帳本——持倉畫面是一種，交易紀錄匯入後也是一種。沒有任何一份需要先證明自己「完整」才算數，紀錄只註明它是哪一種來源，而那個註記不決定任何事。之後補交易檔可解鎖有證據支持的歷史分析，當前持倉仍以 ledger 推導結果為準。更新的持倉畫面走 `review.py refresh` 與已記錄的帳本比對，列出窄差異，並在採納前先問只有你能決定的那幾項。
 - **看歷次復盤** → `cat ~/.trade-coach/log.jsonl`。
 - **重新開始 / 清空對帳基準** → `coach.py data-reset --confirm`（或自己刪掉/改名 `~/.trade-coach/`，效果一樣：下次就當第一次）。
 - **thesis 寫歪了** → 在下一次復盤新增修訂 event，指回舊 thesis；不要直接手改 `theses.jsonl`，它現在是 canonical session 的可重建 projection。
@@ -158,7 +158,7 @@ cp -r skills/fomo-kernel ~/.claude/skills/                         # B. 複製(�
 ```
 你的 CSV 來自**任何券商**都行——Claude 會自動讀懂、轉成引擎要的欄位（`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`，台股等非美股可加選填欄 `Market / Currency`，如 `2330.TW / TW / TWD`；不填 = 美股 USD），不必你手動整理。
 
-持倉表或截圖則由 agent 在本機把畫面上的事實轉成標準 JSON envelope（`as_of`、`positions`，以及選填的現金、匯率與完整性事實），把暫存檔放在 repo 外，再交給 `review.py`。權重、cycle ID、風險 metric 與 ETF 定性都由引擎計算，不由 agent 手算。第一次 snapshot 會為尚未覆蓋的持倉建立 inferred thesis；只有完整的第一次 snapshot 可以成為會計錨點。之後補交易紀錄可解鎖有證據支持的歷史行為診斷，但不會宣稱 ledger 持倉已對上更新的券商畫面。
+持倉表或截圖則由 agent 在本機把畫面上的事實轉成標準 JSON envelope（`as_of`、`positions`，以及選填的現金與匯率），把暫存檔放在 repo 外，再交給 `review.py`。權重、cycle ID、風險 metric 與 ETF 定性都由引擎計算，不由 agent 手算。第一次 snapshot 會為尚未覆蓋的持倉建立 inferred thesis，並把當下的帳本記下來。之後補交易紀錄可解鎖有證據支持的歷史行為診斷，但不會宣稱 ledger 持倉已對上更新的券商畫面。
 
 > 🏷️ **冷門標的**可由 agent 提出本機 driver map；冷門 ETF 另可提出 instrument map。但只有明確分類為大盤、區域、債券或商品 ETF 才取得配置豁免；未知標的預設仍算集中風險。
 

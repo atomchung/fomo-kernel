@@ -58,9 +58,11 @@ also picking up "this is an estimate".
 No answer memory in v1 (owner: 每次都問). A recurring "not captured" is friction
 that correctly pushes the user to record the position properly.
 
-Deliberately absent: ``is_complete``. Legacy partial rows stay frozen as
-historical slices and are never read here (owner ruling 1 — the system maintains
-exactly one current book; every prior state is a slice, never a competitor).
+Deliberately absent: ``is_complete``. #549 removed the flag outright — a user
+who said their view covered part of an account had that view disqualified as a
+baseline and their book silently stopped updating, which is the same defect this
+lane exists to fix. The system maintains exactly one current book; every prior
+state is a slice, never a competitor.
 """
 import datetime as dt
 import hashlib
@@ -110,9 +112,16 @@ CLASSIFICATIONS_BY_KIND = {
 # not have. The cap is a sanity bound, not a product rule.
 HELD_MONTHS_MAX = 1200
 
+# Reachable only for a root that has recorded no book at all — no holdings view
+# and no transaction import that produced a position. Since #549 a transaction
+# import records the book it derived, so "has trades" is no longer a root this
+# sentence can be shown to; saying otherwise was factually false for a root
+# holding twenty-three trades and three positions, and it sent that user to a
+# door that refused them right back.
 NO_ANCHOR = (
-    "this coach root has no recorded book yet; run "
-    "`review.py prepare --snapshot-json ...` to open one, then refresh it here"
+    "this coach root has recorded no holdings yet; open one with "
+    "`review.py prepare --snapshot-json ...` (a holdings view) or by reviewing "
+    "a transaction export, then refresh it here"
 )
 # The mirror of NO_ANCHOR, and the review lane raises it (#530). Updating the
 # recorded book is a mandatory node, not an alternative to reviewing it, so a
@@ -266,6 +275,11 @@ def plan_refresh(events, snapshot, anchor):
     onboarding's job, and routing it here would let a first declaration adopt
     without the initial-history boundary the review lane enforces) or when the
     supplied book is older than the current anchor.
+
+    Since #549 that first condition means what it says. Every source records the
+    book at its own time, so there is no longer such a thing as a root that
+    holds positions but no recorded book — the state in which this lane refused
+    the only users #485 wrote the cheaper correction surface for.
     """
     if lg.latest_anchor(events) is None:
         raise RefreshError(NO_ANCHOR)
@@ -489,8 +503,10 @@ def _carry_forward_provenance(row, recorded, derived):
     position is not appearing, it is simply still held.
 
     Two gates, and both are about not carrying a stamp onto a different cycle.
-    The stamp is read from the recorded anchor's own row (the only place that
-    says a start was answered rather than assumed). And it is applied only while
+    The stamp is read from the last declaration's own row (the only place that
+    says a start was answered rather than assumed; a ``trades_derived``
+    restatement never stamps one, so reading the newest recorded row instead
+    would spend the user's answer the first time they imported a CSV). And it is applied only while
     the record still traces the position back to that anchor
     (``origin == "snapshot"``): a position sold and bought back reads
     ``origin == "trades"``, and its real recorded open date must win over a
@@ -549,7 +565,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
                 "tickers": resupply}
 
     derived = lg.holdings_as_of(events, snapshot["as_of"])
-    recorded = _declared_map(lg.latest_anchor(events) or {})
+    recorded = _declared_map(lg.latest_anchor(events, declared_only=True) or {})
     by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
     carried, sold, appeared = [], [], {}
     for ticker, answer in sorted(classifications.items()):

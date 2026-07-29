@@ -47,7 +47,7 @@
         },
         "completeness": {
           "enum": ["declared_complete", "declared_partial", "unverified"],
-          "description": "Whether the current-book source was declared complete. Only declared_complete can support a ledger current-book consequence; partial and unverified facts must not be read as a complete verdict."
+          "description": "How the frozen current-book source was obtained: declared_complete when a recorded book row anchored it, unverified when the book came from transaction replay alone. Disclosed, never gated on -- #485 removed the completeness gates and #549 removed the completeness flag itself. declared_partial is retained for replay compatibility only: no engine path can produce it since #549, and a stored row carrying it predates that change."
         },
         "cost_basis": {
           "enum": ["average_cost", "partial_average_cost", "unavailable", "fifo"],

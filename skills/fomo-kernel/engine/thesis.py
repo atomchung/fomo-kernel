@@ -249,15 +249,25 @@ def _iso_date(value):
         return None
 
 
-def build_incomplete_snapshot_cycle_relinks(states, active_positions, session_id, review_date):
+def build_snapshot_cycle_relinks(states, active_positions, session_id, review_date):
     """Build fail-closed, engine-owned links from provisional snapshot cycles.
 
-    An incomplete opening snapshot knows that one ticker is held, but its
-    snapshot-date cycle id is provisional.  A later transaction review can
-    reveal an earlier start for the *same still-open holding*.  Reuse the
-    inferred thesis only when one unambiguous candidate exists and the visible
-    transaction cycle already existed at the snapshot date.  A cycle starting
-    after the snapshot is a possible close/reopen and must receive a new thesis.
+    An opening snapshot knows that one ticker is held, but its snapshot-date
+    cycle id is provisional: the declaration says what is held, never since
+    when.  A later transaction review can reveal an earlier start for the *same
+    still-open holding*.  Reuse the inferred thesis only when one unambiguous
+    candidate exists and the visible transaction cycle already existed at the
+    snapshot date.  A cycle starting after the snapshot is a possible
+    close/reopen and must receive a new thesis.
+
+    #549 removed the extra requirement that the snapshot had been *declared
+    incomplete*.  That flag is gone, and it was never the reason this applies:
+    every snapshot-inferred cycle start is an assumption the ledger can later
+    correct, whatever the user said about how much of an account the view
+    covered.  The narrow conditions below are what keeps it fail-closed — one
+    open ticker, an engine-inferred candidate thesis with no decision, exit or
+    add recorded against it, and a revealed cycle that already existed on the
+    snapshot date.
     """
     states = [row for row in (states or []) if isinstance(row, dict)]
     positions = active_positions or {}
@@ -289,7 +299,6 @@ def build_incomplete_snapshot_cycle_relinks(states, active_positions, session_id
             and prior.get("maturity") == "inferred"
             and prior.get("source_confidence") == "candidate"
             and provenance.get("kind") == "snapshot_inference"
-            and provenance.get("snapshot_complete") is False
             and not prior.get("last_decision")
             and not prior.get("last_exit")
             and not prior.get("decision_cursor")
@@ -320,7 +329,7 @@ def build_incomplete_snapshot_cycle_relinks(states, active_positions, session_id
             "position_status": "open",
             "origin": "snapshot",
             "cycle_provenance": {
-                "kind": "incomplete_snapshot_cycle_relink",
+                "kind": "snapshot_cycle_relink",
                 "from_cycle_id": prior.get("cycle_id"),
                 "snapshot_as_of": snapshot_day.isoformat(),
                 "revealed_cycle_start": cycle_day.isoformat(),

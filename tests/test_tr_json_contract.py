@@ -287,8 +287,8 @@ def main():
         ok(cm["metric_key"] in st["metrics"], "commitment.metric_key 可在 metrics 反查(對帳的前提)")
 
         hold = st["holdings"]
-        ok(set(hold.keys()) == {"as_of", "derived_from", "is_complete", "positions"},
-           "holdings 結構 4 欄位")
+        ok(set(hold.keys()) == {"as_of", "derived_from", "positions"},
+           "holdings 結構 3 欄位(#549 移除 is_complete)")
         pos = hold["positions"]
         ok(len(pos) >= 1, "mock 至少 1 檔在手持倉")
         ok(cov["held_n"] == len(pos),

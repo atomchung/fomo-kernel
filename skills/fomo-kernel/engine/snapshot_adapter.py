@@ -15,8 +15,7 @@ The accepted JSON envelope is intentionally small::
          "market": "US", "currency": "USD", "market_value": 6800}
       ],
       "cash": {"USD": 8200},
-      "fx": {"USD": 1, "TWD": 0.0307},
-      "is_complete": true
+      "fx": {"USD": 1, "TWD": 0.0307}
     }
 
 ``fx`` values are USD per unit of the original currency.  Missing FX is an
@@ -43,7 +42,7 @@ class SnapshotError(ValueError):
     """The normalized snapshot violates the deterministic input contract."""
 
 
-ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx", "is_complete"}
+ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx"}
 POSITION_KEYS = set(ledger.SNAPSHOT_POSITION_KEYS)   # single declaration: ledger.py
 # Engine-assigned, never agent-supplied. Also declared once, in ledger.py.
 ENGINE_ASSIGNED_KEYS = set(ledger.ENGINE_ASSIGNED_POSITION_KEYS)
@@ -326,15 +325,11 @@ def normalize_envelope(raw, today, *, allow_engine_provenance=False):
         if position.get("since") and _strict_date(position["since"], "since") > as_of:
             raise SnapshotError(
                 f"{position['ticker']} states a cycle start after the book's as_of")
-    is_complete = raw.get("is_complete", True)
-    if not isinstance(is_complete, bool):
-        raise SnapshotError("is_complete must be a boolean")
     return {
         "as_of": as_of.isoformat(),
         "positions": positions,
         "cash": _normalize_cash(raw.get("cash")),
         "fx": _normalize_fx(raw.get("fx")),
-        "is_complete": is_complete,
         "merged_rows": merged_rows,
         "input_rows": len(positions_raw),
     }
@@ -465,8 +460,7 @@ def _anchor(snapshot):
     event = {
         "type": "snapshot",
         "as_of": snapshot["as_of"],
-        "source": "user_declared",
-        "is_complete": snapshot["is_complete"],
+        "source": ledger.DECLARED_BOOK_SOURCE,
         "positions": positions,
     }
     if snapshot["cash"] is not None:
@@ -475,14 +469,7 @@ def _anchor(snapshot):
 
 
 def _state_positions(snapshot, anchor):
-    # ``ledger.derive_holdings`` correctly ignores incomplete declarations as
-    # accounting anchors.  The opening-check card still needs deterministic
-    # cycle identities for its bounded, canonical review state, so derive those
-    # identities from an in-memory complete view only.  The original anchor
-    # keeps ``is_complete:false`` and finalize never projects it to the ledger.
-    cycle_anchor = dict(anchor)
-    cycle_anchor["is_complete"] = True
-    derived = ledger.derive_holdings([cycle_anchor])
+    derived = ledger.derive_holdings([anchor])
     if derived.get("integrity"):
         raise SnapshotError("normalized snapshot could not produce a clean holdings anchor")
     by_ticker = {row["ticker"]: row for row in snapshot["positions"]}
@@ -572,7 +559,7 @@ def _honesty(snapshot, currencies, fx_gaps, unclassified, portfolio_structure):
     entries = [{
         "key": "snapshot_scope",
         "status": "limited",
-        "data": {"is_complete": snapshot["is_complete"]},
+        "data": {"positions_n": len(snapshot["positions"])},
     }]
     if len(currencies) > 1:
         entries.append({
@@ -635,7 +622,6 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
         "positions_n": len(snapshot["positions"]),
         "valuation_basis": basis,
         "weights_available": weights_available,
-        "is_complete": snapshot["is_complete"],
         "missing_avg_cost": missing_avg_cost,
         "fx_gaps": fx_gaps,
     }
@@ -648,7 +634,6 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
     }
     data_integrity = {
         "source": "positions_snapshot",
-        "snapshot_complete": snapshot["is_complete"],
         "missing_avg_cost": missing_avg_cost,
         "unclassified_drivers": unclassified,
     }
@@ -703,7 +688,6 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
         "holdings": {
             "as_of": snapshot["as_of"],
             "derived_from": "positions_snapshot",
-            "is_complete": snapshot["is_complete"],
             "positions": holdings,
         },
         "currency_meta": currency_meta,

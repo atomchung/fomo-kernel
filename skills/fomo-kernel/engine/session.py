@@ -605,16 +605,13 @@ def _project_card(root, bundle, private_md):
 def _snapshot_payload(event):
     """Return the stable snapshot identity payload.
 
-    Completeness is part of the accounting fact: an explicitly partial
-    declaration must never collide with a complete one.  The old envelope did
-    not persist the field, so absence normalizes to ``True``.  Projection order
-    is deliberately excluded; a retry with the same fact and sequence is still
-    the same snapshot.
+    ``source`` is part of the identity, so a book derived from a transaction
+    import and one the user declared on the same day are two recorded facts
+    rather than a collision (#549).  Projection order is deliberately excluded;
+    a retry with the same fact and sequence is still the same snapshot.
     """
-    payload = {key: event[key] for key in ("type", "as_of", "source", "positions", "cash")
-               if key in event}
-    payload["is_complete"] = event.get("is_complete", True)
-    return payload
+    return {key: event[key] for key in ("type", "as_of", "source", "positions", "cash")
+            if key in event}
 
 
 def _positive_projection_sequence(value):
@@ -668,14 +665,6 @@ def _snapshot_bundle_for_commit(root, bundle):
     anchor = ((bundle.get("engine_state") or {}).get("snapshot_anchor"))
     if not isinstance(anchor, dict) or anchor.get("type") != "snapshot":
         return bundle  # compatibility for pre-adapter snapshot bundles
-    if anchor.get("is_complete", True) is False:
-        # Partial declarations are review evidence, never accounting anchors,
-        # so they do not reserve a ledger ordering number.
-        prepared = dict(bundle)
-        state = dict(bundle.get("engine_state") or {})
-        state.pop("projection_sequence", None)
-        prepared["engine_state"] = state
-        return prepared
     reconciliation = (bundle.get("engine_state") or {}).get("snapshot_reconciliation")
     if isinstance(reconciliation, dict) and reconciliation.get("status") == "reconciled":
         # A clean reconciliation marks the ledger without adopting a new
@@ -719,11 +708,6 @@ def _snapshot_bundle_for_commit(root, bundle):
 INITIAL_SNAPSHOT_CONFLICT = (
     "initial snapshot onboarding cannot replace existing coach history; "
     "second or subsequent snapshots require reconciliation"
-)
-
-INCOMPLETE_SNAPSHOT_RECONCILIATION = (
-    "an incomplete snapshot cannot reconcile existing coach history; "
-    "declare the complete account view to compare it with the ledger"
 )
 
 SNAPSHOT_RECONCILIATION_STALE = (
@@ -790,11 +774,10 @@ def _assert_initial_snapshot_boundary(root, bundle):
     and that frozen diff must still equal a recomputation under this root
     projection lock — otherwise finalize fails closed instead of writing an
     adjustment the user never previewed.  A ledger whose current anchor is
-    already the declared fact is an idempotent post-adoption replay.  History
-    without a complete anchor (replay-only trades, unknown event types, or an
-    unrepaired ledger projection) keeps the original fail-closed rejection, and
-    an incomplete declaration can never reconcile.  The caller holds the root
-    projection lock, closing the two-finalize race.
+    already the declared fact is an idempotent post-adoption replay.  A root
+    that has recorded no book at all (unknown event types or an unrepaired
+    ledger projection) keeps the original fail-closed rejection.  The caller
+    holds the root projection lock, closing the two-finalize race.
     """
     plan = bundle.get("review_plan") or {}
     if (plan.get("input") or {}).get("kind") != "positions_snapshot":
@@ -808,8 +791,6 @@ def _assert_initial_snapshot_boundary(root, bundle):
     frozen = (bundle.get("engine_state") or {}).get("snapshot_reconciliation")
     if not isinstance(frozen, dict):
         raise SessionError(INITIAL_SNAPSHOT_CONFLICT)
-    if anchor.get("is_complete", True) is not True:
-        raise SessionError(INCOMPLETE_SNAPSHOT_RECONCILIATION)
     # #462: this is the authoritative, under-the-projection-lock mirror of
     # review.py's prepare-time _validate_initial_snapshot_root — a corrupt
     # row must fail this layer exactly as it fails that one, or a bad ledger
@@ -900,13 +881,6 @@ def _project_snapshot_anchor(root, bundle):
     status = (reconciliation or {}).get("status")
     if reconciliation is not None and status not in ("reconciled", "adjusted"):
         raise SessionError(f"unsupported snapshot reconciliation status: {status}")
-    if payload["is_complete"] is False:
-        if reconciliation is not None:
-            raise SessionError("an incomplete snapshot cannot carry a reconciliation")
-        return {"path": ledger_path, "appended": 0, "status": "skipped_incomplete",
-                "snapshot_id": snapshot_id}
-    if payload["is_complete"] is not True:
-        raise SessionError("snapshot projection requires boolean is_complete")
     sequence = _positive_projection_sequence(state.get("projection_sequence"))
     if "projection_sequence" in state and sequence is None:
         raise SessionError("snapshot projection_sequence must be a positive integer")

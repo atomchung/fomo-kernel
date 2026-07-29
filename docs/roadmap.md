@@ -43,7 +43,7 @@ Delivered after the P0 release-gate scope was frozen:
 - temporary normalized JSON kept outside the repository
 - opening portfolio check limited to cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity
 - inferred thesis initialization for every uncovered open cycle
-- complete initial snapshots may establish an accounting anchor; incomplete snapshots produce a review without becoming an anchor
+- every incoming source records the book at its own time, marked with where its numbers came from; that marking is recorded, never used to decide whether the row counts (#549)
 - transaction-history upgrade path for later supported history-dependent behavioral diagnostics, while ledger-derived current holdings remain canonical and unreconciled current-view claims fail closed
 - no engine OCR, cloud upload, agent-calculated weights, or hand-assembled card/state artifacts
 

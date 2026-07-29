@@ -10,6 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
 
+import ledger  # noqa: E402
 import portfolio_basis as pb  # noqa: E402
 
 
@@ -185,12 +186,34 @@ def test_freshness_reference_is_not_a_current_book_version_change():
     assert old.state_version == fresh.state_version
 
 
-def test_incomplete_snapshot_is_not_anchor_and_remains_distinct():
-    partial = _snap("2026-07-10", [{"ticker": "A", "shares": 999}], is_complete=False)
-    basis = pb.query_current_book([_trade("2026-07-01", "A", "buy", 2, 10), partial])
+def test_a_trades_derived_restatement_is_recorded_but_never_a_replay_base():
+    """#549. The trade-import lane writes down the book it derived, so a later
+    holdings view has a predecessor to update. That row must not then become the
+    thing the replay re-bases on: it is this replay's own output, and re-basing
+    would let a stale or hand-edited summary quietly replace the trades. The
+    discriminant is `source`, and it is the *only* difference between the two
+    rows asserted here -- an identical row declared by the user does anchor.
+
+    The 999 is deliberate: if the restatement were read as a base, this book
+    would report it instead of the two shares the trades actually produce."""
+    positions = [{"ticker": "A", "shares": 999}]
+    trade = _trade("2026-07-01", "A", "buy", 2, 10)
+    restated = _snap("2026-07-10", positions, source=ledger.DERIVED_BOOK_SOURCE)
+    basis = pb.query_current_book([trade, restated])
     assert basis and basis.source == "transaction_replay"
-    assert basis.completeness == "declared_partial"
+    assert basis.completeness == "unverified"
     assert basis.current_book["holdings"]["A"]["shares"] == 2.0
+    assert basis.current_book["anchor"] is None
+    assert [event["date"] for event in basis.current_book["post_anchor_events"]] == ["2026-07-01"]
+
+    declared = _snap("2026-07-10", positions, source=ledger.DECLARED_BOOK_SOURCE)
+    anchored = pb.query_current_book([trade, declared])
+    assert anchored and anchored.source == "snapshot_anchor"
+    assert anchored.current_book["holdings"]["A"]["shares"] == 999.0
+    # The recorded row is still a recorded book for the lane that asks whether
+    # one exists at all -- that is the whole point of writing it (#549).
+    assert ledger.latest_anchor([trade, restated]) is restated
+    assert ledger.latest_anchor([trade, restated], declared_only=True) is None
 
 
 def test_partial_sell_unknown_cost_and_valuation_manifest_affect_version():
@@ -234,7 +257,8 @@ def test_semantic_preflight_rejects_adapter_shape_and_valuation_damage_without_t
     ]
     for position in bad_positions:
         assert pb.query_current_book([_snap("2026-07-02", [position]), valid]) is None
-    assert pb.query_current_book([_snap("2026-07-02", [{"ticker": "A", "shares": 1}], is_complete="yes"), valid]) is None
+    assert pb.query_current_book([_snap("2026-07-02", [{"ticker": "A", "shares": 1}], source=7), valid]) is None
+    assert pb.query_current_book([_snap("2026-07-02", [{"ticker": "A", "shares": 1}], source=""), valid]) is None
     assert pb.query_current_book([_snap("2026-07-02", [{"ticker": "A", "shares": 1}], projection_sequence=0), valid]) is None
     assert pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10, currency=3)]) is None
     try:
@@ -254,7 +278,13 @@ def test_strict_ledger_reader_never_derives_across_corrupt_jsonl():
 def test_schema_and_typed_contract_reject_adversarial_mutations_and_bad_hash():
     schema_path = os.path.join(ROOT, "skills", "fomo-kernel", "schemas", "portfolio-basis.schema.json")
     schema = json.loads(open(schema_path, encoding="utf-8").read())
-    assert "declared_partial" in schema["properties"]["completeness"]["enum"]
+    # #549: `declared_partial` is gone from the enum because nothing can produce
+    # it -- the completeness flag it came from is gone. The schema and the
+    # module's own vocabulary are locked to each other so one cannot outlive the
+    # other silently.
+    assert set(schema["properties"]["completeness"]["enum"]) == pb._COMPLETENESS
+    assert "is_complete" not in schema["$defs"]["anchor"]["properties"]
+    assert "is_complete" not in schema["$defs"]["anchor"]["required"]
     assert schema["$defs"]["currentBook"]["additionalProperties"] is False
     assert schema["$defs"]["integrity"]["additionalProperties"] is False
     basis = pb.query_current_book([_trade("2026-07-01", "A", "buy", 1, 10)])
@@ -443,22 +473,23 @@ def test_sizing_projection_uses_complete_frozen_frame_for_mixed_currency_and_rej
     missing_fx = pb.sizing_projection(missing_fx_basis)
     assert missing_fx and not missing_fx.applicable and missing_fx.reason == "mixed_native_currencies"
 
-    partial_basis = pb.query_current_book(
+    restated_basis = pb.query_current_book(
         events + [_snap("2026-07-02", [{"ticker": "USD", "shares": 2, "currency": "USD"},
-                                        {"ticker": "TWD", "shares": 3, "currency": "TWD"}], is_complete=False)],
+                                        {"ticker": "TWD", "shares": 3, "currency": "TWD"}],
+                        source=ledger.DERIVED_BOOK_SOURCE)],
         reference_as_of="2026-07-02", valuation_manifest=frame.to_dict(),
     )
     unverified_basis = pb.query_current_book(events, reference_as_of="2026-07-02",
                                              valuation_manifest=frame.to_dict())
-    # #485: completeness must have ZERO effect on mixed-currency sizing once the
-    # frame is usable.  A declared_partial and an unverified basis, given the
-    # exact same usable frame and the exact same holdings, must reproduce the
-    # declared_complete projection above byte-for-byte -- except
-    # `basis_state_version`, which is a fingerprint of the basis object itself
-    # (completeness is one of the facts folded into that fingerprint) and
-    # legitimately differs; it is not a sizing output.
+    # #485/#549: how the book was recorded must have ZERO effect on
+    # mixed-currency sizing once the frame is usable.  A basis carrying a
+    # trades-derived restatement and one carrying nothing at all, given the exact
+    # same usable frame and the exact same holdings, must reproduce the anchored
+    # projection above byte-for-byte -- except `basis_state_version`, which is a
+    # fingerprint of the basis object itself (the recorded rows are folded into
+    # that fingerprint) and legitimately differs; it is not a sizing output.
     declared_complete_dict = projection.to_dict()
-    for incomplete_basis, expected_completeness in ((partial_basis, "declared_partial"),
+    for incomplete_basis, expected_completeness in ((restated_basis, "unverified"),
                                                     (unverified_basis, "unverified")):
         assert incomplete_basis and incomplete_basis.completeness == expected_completeness
         incomplete = pb.sizing_projection(incomplete_basis)

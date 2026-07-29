@@ -4,8 +4,9 @@
 
 This module deliberately owns neither a workflow nor persistence.  It adapts
 the ledger's established anchor/replay semantics into a small, versioned fact
-object which later consumers can share.  In particular, it does *not* make an
-incomplete snapshot an anchor and it does not calculate cash from trades.
+object which later consumers can share.  In particular, it does *not* treat a
+trades-derived restatement of the book as a replay base (#549), and it does not
+calculate cash from trades.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ CONTRACT_VERSION = "portfolio-basis-v1"
 VALUATION_FRAME_VERSION = "valuation-frame-v1"
 VALUATION_FRAME_ID_PREFIX = "vf-v1:"
 STATE_VERSION_PREFIX = "pb-v1:"
-_COMPLETENESS = {"declared_complete", "declared_partial", "unverified"}
+_COMPLETENESS = {"declared_complete", "unverified"}
 _SOURCES = {"snapshot_anchor", "transaction_replay", "empty"}
 _COST_BASES = {"average_cost", "partial_average_cost", "unavailable"}
 _VALUATION_BASES = {"unpriced", "priced"}
@@ -226,11 +227,6 @@ def _valuation_frame_identity(frame: Mapping[str, Any]) -> str:
     return VALUATION_FRAME_ID_PREFIX + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _partial_snapshot_present(events: Sequence[Mapping[str, Any]]) -> bool:
-    return any(event.get("type") == "snapshot" and event.get("is_complete", True) is not True
-               for event in events)
-
-
 def _finite_number(value: Any) -> bool:
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(float(value)))
@@ -272,8 +268,6 @@ def _valid_snapshot(event: Mapping[str, Any]) -> bool:
         if "currency" in position and not _currency(position["currency"]):
             return False
     if "source" in event and (not isinstance(event["source"], str) or not event["source"]):
-        return False
-    if "is_complete" in event and not isinstance(event["is_complete"], bool):
         return False
     if "projection_sequence" in event:
         sequence = event["projection_sequence"]
@@ -340,9 +334,8 @@ def _normalized_anchor(anchor: Optional[Mapping[str, Any]]) -> Optional[dict[str
         sequence = None
     return {
         "as_of": str(anchor.get("as_of")),
-        "source": str(anchor.get("source", "user_declared")),
+        "source": str(anchor.get("source", ledger.DECLARED_BOOK_SOURCE)),
         "projection_sequence": sequence,
-        "is_complete": anchor.get("is_complete", True) is True,
         "positions": normalized_positions,
         "cash": ({currency: float(amount) for currency, amount in sorted(anchor.get("cash", {}).items())}
                  if anchor.get("cash") is not None else None),
@@ -505,9 +498,9 @@ def _validate_current_book(current_book: Mapping[str, Any]) -> None:
     _exact_keys(current_book, {"anchor", "holdings", "post_anchor_events", "version_evidence", "valuation_manifest"}, "current_book")
     anchor = current_book["anchor"]
     if anchor is not None:
-        _exact_keys(anchor, {"as_of", "source", "projection_sequence", "is_complete", "positions", "cash"}, "current_book.anchor")
+        _exact_keys(anchor, {"as_of", "source", "projection_sequence", "positions", "cash"}, "current_book.anchor")
         _date(anchor["as_of"], "current_book.anchor.as_of")
-        if not isinstance(anchor["source"], str) or not isinstance(anchor["is_complete"], bool):
+        if not isinstance(anchor["source"], str) or not anchor["source"]:
             raise PortfolioBasisError("current_book.anchor has invalid scalar fields")
         sequence = anchor["projection_sequence"]
         if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0):
@@ -996,7 +989,11 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
     if _bad_integrity(integrity):
         return None
 
-    anchor_raw = ledger.latest_anchor(events)
+    # The replay base, the same row ``derive_holdings`` above re-based on (#549).
+    # A ``trades_derived`` restatement is this book written down, not a second
+    # declaration of it; reading it here would report a `post_anchor_events` list
+    # emptied of the very trades the holdings were replayed from.
+    anchor_raw = ledger.latest_anchor(events, declared_only=True)
     anchor = _normalized_anchor(anchor_raw)
     anchor_date = _date(anchor["as_of"], "anchor.as_of") if anchor is not None else None
     applied_events = _post_anchor_events(events, anchor_date)
@@ -1015,16 +1012,15 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
         raise PortfolioBasisError("reference_as_of cannot precede current-book as_of")
     stale_days = (reference_date - effective_date).days if reference_date is not None else 0
 
-    partial = _partial_snapshot_present(events)
     if anchor is not None:
         source = "snapshot_anchor"
-        completeness = "declared_partial" if partial else "declared_complete"
+        completeness = "declared_complete"
     elif applied_events:
         source = "transaction_replay"
-        completeness = "declared_partial" if partial else "unverified"
+        completeness = "unverified"
     else:
         source = "empty"
-        completeness = "declared_partial" if partial else "unverified"
+        completeness = "unverified"
     cost_basis = "unavailable" if not holdings else (
         "average_cost" if all(row.get("avg_cost") is not None for row in holdings.values())
         else "partial_average_cost")

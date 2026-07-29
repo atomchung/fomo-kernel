@@ -528,7 +528,8 @@ def test_build_state_alpha_always_reported_with_uncertainty():
     assert _approx(st["metrics"]["alpha_ann"], 0.25), "v2:不 credible 也出數(語氣另管)"
     assert _approx(st["metrics"]["alpha_t"], 0.8), "不確定性(t)一起入狀態,對帳才知道數字多可信"
     assert st["metrics"]["alpha_credible"] is False
-    assert st["holdings"]["is_complete"] is False, "CSV 推算不宣稱完整持倉"
+    assert "is_complete" not in st["holdings"], "#549:CSV 推算不再宣稱涵蓋範圍"
+    assert st["holdings"]["derived_from"] == "trades_csv"
 
 
 def test_build_state_freezes_the_split_history_it_applied():
