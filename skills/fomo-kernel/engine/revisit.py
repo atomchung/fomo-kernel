@@ -165,10 +165,10 @@ def detect_exits(events, splits=None):
     # detect_exits 出來,是為了讓「出場」只有一個來源集合——enqueue/recent/due/backlog/
     # horizon marker 全部沿用既有路徑,不需要各自再記得多讀一個地方(#461 明確要求)。
     # 既有 trade 出場的相對順序刻意不動(附加在尾端),避免 revisit.jsonl 追加序漂移。
-    return exits + absence_exits(events)
+    return exits + absence_exits(events, splits=splits)
 
 
-def absence_exits(events):
+def absence_exits(events, splits=None):
     """Exit rows for confirmed disappearances recorded without a fill (#485 Slice C).
 
     A ``position_absence`` carries no price and no quantity by construction, so
@@ -181,6 +181,15 @@ def absence_exits(events):
     ``cost_basis`` is the recorded cost of the position that left, and it exists
     only so importance ranking has a magnitude.  It is not proceeds and no
     caller may present it as one.
+
+    ``splits`` is the same map ``detect_exits`` walks its own trade exits with,
+    and it is not optional in practice: this function reads the prior book, so
+    a caller that omits it gets raw as-transacted quantities while the trade
+    lane beside it is split-adjusted, and ``detect_exits`` returns one list on
+    two bases — the exact defect #550 is named after, one level down (#558
+    follow-up).  The basis is the absence's own date, matching the trade lane:
+    ``shares_sold`` is the count the position actually stood at when it left,
+    and ``revisit_id`` therefore does not churn when a later split arrives.
     """
     rows = lg.position_absences(events)
     if not rows:
@@ -202,7 +211,7 @@ def absence_exits(events):
         # the day it left. Cache on both, so one batch still costs one read.
         key = (deriving_before[row["index"]], row["date"])
         if key not in cache:
-            cache[key] = lg.holdings_as_of(events[:row["index"]], row["date"])
+            cache[key] = lg.holdings_as_of(events[:row["index"]], row["date"], splits=splits)
         prior = cache[key].get(row["ticker"]) or {}
         try:
             shares = round(float(prior.get("shares")), 4)
