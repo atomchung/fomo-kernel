@@ -8033,7 +8033,14 @@ def test_all_json_schemas_parse():
              # cmd_consider itself -- see answer-provenance.schema.json's own
              # description for why this stayed a new file rather than an edit
              # to trade-evaluation.schema.json's old, narrower claim $defs.
-             "answer-provenance.schema.json"}
+             "answer-provenance.schema.json",
+             # #479 Wave B cut 2: the `challenge` block cmd_consider emits
+             # beside the stored row -- what this answer owes the user.
+             # Emitted, never stored, so it is deliberately NOT $ref-ed from
+             # trade-evaluation.schema.json the way `context` and `agent_case`
+             # above are: a row carrying it would be a derived duplicate of
+             # fields that row already freezes.
+             "evaluation-challenge.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
