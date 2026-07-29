@@ -13,6 +13,9 @@ prevents the expensive reruns. It complements, and never repeats:
 - [decision-fomo-kernel-shape.md](decision-fomo-kernel-shape.md) — product
   shape and the engine/model boundary (Layers 1–3)
 - [eval-design.md](eval-design.md) — evaluation methodology
+- [issue-lifecycle.md](issue-lifecycle.md) — what an open issue must state
+  about itself, when to close versus preserve a record, and the context-loading
+  order that keeps `is:open` from being read as the execution queue
 
 Update bar: a pattern earns a place here only after it shipped a real mistake,
 and it arrives with its receipts (issue/PR numbers). Prefer tightening an

@@ -13,6 +13,8 @@ contract preflight, not a substitute for that QA route. Its report deliberately
 contains no presentation receipt or owner verdict, so it may never be described
 as a user-experience pass.
 
+**Changing this repository is a third route.** If the task is maintenance rather than a review or a QA walk, follow [docs/issue-lifecycle.md](docs/issue-lifecycle.md) before loading context. Its one non-negotiable: an open issue is not by that fact active work. Load latest `main` and the current contract, the roadmap guard, the context index, then only the owning implementation and acceptance issues and what they directly reference — never every open issue. Read an issue's `Status` header before acting on its title or body.
+
 ## Workflow
 
 1. Read `skills/fomo-kernel/SKILL.md` completely.
