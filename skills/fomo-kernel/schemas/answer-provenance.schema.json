@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/answer-provenance.schema.json",
   "title": "Fomo Kernel Answer Provenance (issue #414, Wave A)",
-  "description": "The semantically-richer --agent-case claim envelope engine/answer_provenance.py::validate_agent_case checks (the readable contract; the module holds the enforcement, the same 'no jsonschema dependency' posture every other schema file in this directory already states about its own hand-rolled checker). This is deliberately a NEW, standalone schema, not an edit to pre-trade-consultation.schema.json's own $defs.claim: that shape is additionalProperties:false and has no room for the anchor/source/as_of/worsens fields a provenance-checkable claim needs. Reconciling the two -- whether pre-trade-consultation.schema.json's claim $defs is widened to this shape, versioned, or left as a stricter subset -- is Wave B's integration decision (issue #414's Wave allocation comment), not this module's. Every field a claim carries beyond 'claim' and 'provenance' depends on which provenance it declares; see the three $defs below.",
+  "description": "The semantically-richer --agent-case claim envelope engine/answer_provenance.py::validate_agent_case checks (the readable contract; the module holds the enforcement, the same 'no jsonschema dependency' posture every other schema file in this directory already states about its own hand-rolled checker). This is deliberately a NEW, standalone schema, not an edit to trade-evaluation.schema.json's own $defs.claim: that shape is additionalProperties:false and has no room for the anchor/source/as_of/worsens fields a provenance-checkable claim needs. Reconciling the two -- whether trade-evaluation.schema.json's claim $defs is widened to this shape, versioned, or left as a stricter subset -- is Wave B's integration decision (issue #414's Wave allocation comment), not this module's. Every field a claim carries beyond 'claim' and 'provenance' depends on which provenance it declares; see the three $defs below.",
   "type": "object",
   "additionalProperties": false,
   "required": ["for", "against"],
@@ -40,7 +40,7 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^(basis|consequence|rule_collisions)\\.",
-          "description": "Dot-separated path into the frozen {basis, consequence, rule_collisions} bundle a consultation freezes (schemas/pre-trade-consultation.schema.json's own basis/consequence/rule_collisions properties). rule_collisions is addressed by rule_id, e.g. 'rule_collisions.rule-1.worsens', not by list position. Must resolve to exactly one scalar fact -- a path naming a container (an object or array) does not resolve."
+          "description": "Dot-separated path into the frozen {basis, consequence, rule_collisions} bundle an evaluation freezes (schemas/trade-evaluation.schema.json's own basis/consequence/rule_collisions properties). rule_collisions is addressed by rule_id, e.g. 'rule_collisions.rule-1.worsens', not by list position. Must resolve to exactly one scalar fact -- a path naming a container (an object or array) does not resolve."
         },
         "worsens": {
           "type": "boolean",

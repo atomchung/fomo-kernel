@@ -5,12 +5,12 @@
 `consider` wires engine/consequence.py's three public functions
 (validate_premise / consequence / rule_collision -- already covered end to end
 by tests/test_consequence.py) into the review.py CLI, with a new persisted
-record (<root>/pre_trade_consultations.jsonl,
-schemas/pre-trade-consultation.schema.json). This file settles the parts
+record (<root>/trade_evaluations.jsonl,
+schemas/trade-evaluation.schema.json). This file settles the parts
 consequence.py's own suite cannot: data-source resolution (CSV vs a
-ledger-reconstructed book), the frozen consultation row, --resolve's
+ledger-reconstructed book), the frozen evaluation row, --resolve's
 append-only fold, the CLI's own fail-closed and validation surfaces, and
-(section K) that _consultation_id changes whenever anything that changes the
+(section K) that _evaluation_id changes whenever anything that changes the
 frozen consequence changes -- not only when the arguments the id used to name
 by hand happened to differ (external review BLOCK finding).
 
@@ -61,12 +61,12 @@ def _fails(run, fragment):
     return payload
 
 
-def _consultation_path(root):
-    return os.path.join(root, "pre_trade_consultations.jsonl")
+def _evaluation_path(root):
+    return os.path.join(root, "trade_evaluations.jsonl")
 
 
-def _read_consultations(root):
-    path = _consultation_path(root)
+def _read_evaluations(root):
+    path = _evaluation_path(root)
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
@@ -106,24 +106,24 @@ def _schema(name):
         return json.load(f)
 
 
-CONSULTATION_SCHEMA = _schema("pre-trade-consultation.schema.json")
+EVALUATION_SCHEMA = _schema("trade-evaluation.schema.json")
 PREMISE_SCHEMA = _schema("trade-premise.schema.json")
 PLAN_SCHEMA = _schema("review-plan.schema.json")
 
 
-def _check_consultation_shape(row):
-    """Spot-check the row against pre-trade-consultation.schema.json, the
+def _check_evaluation_shape(row):
+    """Spot-check the row against trade-evaluation.schema.json, the
     same "no jsonschema dependency, pin the vocabulary" idiom
     test_consequence.py already uses for trade-premise.schema.json."""
-    required = set(CONSULTATION_SCHEMA["required"])
+    required = set(EVALUATION_SCHEMA["required"])
     assert required <= set(row), f"missing required fields: {required - set(row)}"
-    allowed = set(CONSULTATION_SCHEMA["properties"])
+    allowed = set(EVALUATION_SCHEMA["properties"])
     assert set(row) <= allowed, f"row carries undeclared fields: {set(row) - allowed}"
 
-    assert row["decision"] in CONSULTATION_SCHEMA["properties"]["decision"]["enum"]
+    assert row["decision"] in EVALUATION_SCHEMA["properties"]["decision"]["enum"]
     assert row["decided_on"] is None or isinstance(row["decided_on"], str)
 
-    basis_schema = CONSULTATION_SCHEMA["properties"]["basis"]
+    basis_schema = EVALUATION_SCHEMA["properties"]["basis"]
     assert set(basis_schema["required"]) <= set(row["basis"])
     assert row["basis"]["source"] in basis_schema["properties"]["source"]["enum"]
     assert isinstance(row["basis"]["stale_days"], int) and row["basis"]["stale_days"] >= 0
@@ -134,13 +134,13 @@ def _check_consultation_shape(row):
         assert coverage["scope"] in coverage_schema["properties"]["scope"]["enum"]
         assert coverage["currencies"] == sorted(coverage["currencies"])
 
-    consequence_schema = CONSULTATION_SCHEMA["properties"]["consequence"]
+    consequence_schema = EVALUATION_SCHEMA["properties"]["consequence"]
     assert set(consequence_schema["required"]) <= set(row["consequence"])
     allowed_disclosures = set(consequence_schema["properties"]["disclosures"]["items"]["enum"])
     assert set(row["consequence"]["disclosures"]) <= allowed_disclosures
 
     collision_states = set(
-        CONSULTATION_SCHEMA["properties"]["rule_collisions"]["items"]["properties"]["state"]["enum"])
+        EVALUATION_SCHEMA["properties"]["rule_collisions"]["items"]["properties"]["state"]["enum"])
     for collision in row["rule_collisions"]:
         assert collision["state"] in collision_states
         assert collision["worsens"] in (True, False, None)
@@ -157,30 +157,30 @@ def _check_consultation_shape(row):
     assert premise["side"] in ("buy", "sell")
 
     if "agent_case" in row:
-        case_schema = CONSULTATION_SCHEMA["properties"]["agent_case"]
+        case_schema = EVALUATION_SCHEMA["properties"]["agent_case"]
         assert set(case_schema["required"]) <= set(row["agent_case"])
-        provenances = set(CONSULTATION_SCHEMA["$defs"]["claim"]["properties"]["provenance"]["enum"])
+        provenances = set(EVALUATION_SCHEMA["$defs"]["claim"]["properties"]["provenance"]["enum"])
         for side in ("for", "against"):
             for claim in row["agent_case"][side]:
                 assert set(claim) == {"claim", "provenance"}
                 assert claim["provenance"] in provenances
 
 
-# ──────────────── consultation_reconciliation fixtures (section J) ────────────────
+# ──────────────── evaluation_reconciliation fixtures (section J) ────────────────
 #
-# review._consultation_reconciliation reads pre_trade_consultations.jsonl and a
+# review._evaluation_reconciliation reads trade_evaluations.jsonl and a
 # list of trade_recap-shaped rows directly, so these tests build both by hand
 # rather than routing every case through a real `consider` call (which stamps
 # `created` as wall-clock today -- unusable for pinning date-boundary cases).
 
-def _open_consultation(consultation_id, created, ticker, side, qty=10, price=100.0, date=None):
-    """A minimal, schema-shaped open consultation row. Only consultation_id,
-    created, premise, and decision are read by _consultation_reconciliation;
-    the rest are placeholders satisfying pre-trade-consultation.schema.json's
+def _open_evaluation(evaluation_id, created, ticker, side, qty=10, price=100.0, date=None):
+    """A minimal, schema-shaped open evaluation row. Only evaluation_id,
+    created, premise, and decision are read by _evaluation_reconciliation;
+    the rest are placeholders satisfying trade-evaluation.schema.json's
     required fields -- the same posture _snapshot_event/_trade_event already
     take toward ledger.jsonl fixtures in this file."""
     return {
-        "consultation_id": consultation_id,
+        "evaluation_id": evaluation_id,
         "created": created,
         "premise": {"ticker": ticker, "side": side, "qty": qty, "price": price,
                     "date": date or created, "currency": "USD"},
@@ -195,8 +195,8 @@ def _open_consultation(consultation_id, created, ticker, side, qty=10, price=100
     }
 
 
-def _write_consultations(root, rows):
-    path = _consultation_path(root)
+def _write_evaluations(root, rows):
+    path = _evaluation_path(root)
     with open(path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
@@ -211,10 +211,10 @@ def _tr_row(ticker, side, qty, price, date):
 
 
 def _check_reconciliation_shape(payload):
-    """Spot-check consultation_reconciliation against review-plan.schema.json
-    -- the same manual-pin idiom _check_consultation_shape uses for the
+    """Spot-check evaluation_reconciliation against review-plan.schema.json
+    -- the same manual-pin idiom _check_evaluation_shape uses for the
     sibling schema (offline suite carries no jsonschema dependency)."""
-    schema = PLAN_SCHEMA["properties"]["consultation_reconciliation"]
+    schema = PLAN_SCHEMA["properties"]["evaluation_reconciliation"]
     required = set(schema["required"])
     assert required <= set(payload), f"missing required fields: {required - set(payload)}"
     allowed = set(schema["properties"])
@@ -246,8 +246,8 @@ def _minimal_prepare_artifacts(tmp, date_end):
     """The smallest --card-json/--state-json pair `prepare` accepts (the same
     idiom test_review_v2.py's own _artifacts() uses), parameterized on
     date_end so date-boundary fixtures can pin it precisely instead of riding
-    wall-clock "today". consultation_reconciliation reads only the ledger and
-    consultations file plus state.date_end, so holdings/metrics content here
+    wall-clock "today". evaluation_reconciliation reads only the ledger and
+    evaluations file plus state.date_end, so holdings/metrics content here
     is irrelevant to it -- this only has to be valid enough for `prepare` to
     complete."""
     state = {
@@ -300,22 +300,22 @@ def _prepare_plan(tmp, root, date_end):
     payload = _ok(run)
     session_id = payload["review_plan"]["session_id"]
     plan = session_engine.load_pending(str(root), session_id)["plan"]
-    assert "consultation_reconciliation" in payload["review_plan"], \
-        "the agent-facing projection must not drop consultation_reconciliation"
+    assert "evaluation_reconciliation" in payload["review_plan"], \
+        "the agent-facing projection must not drop evaluation_reconciliation"
     return plan
 
 
 # ─────────────────── A. data-source resolution ───────────────────
 
-def test_csv_path_produces_a_consultation_with_transactions_basis():
+def test_csv_path_produces_an_evaluation_with_transactions_basis():
     with tempfile.TemporaryDirectory() as tmp:
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         payload = _ok(run)
-        row = payload["consultation"]
+        row = payload["evaluation"]
         assert row["basis"]["source"] == "transactions"
-        _check_consultation_shape(row)
-        assert _read_consultations(tmp) == [row]
+        _check_evaluation_shape(row)
+        assert _read_evaluations(tmp) == [row]
 
 
 def test_ledger_path_consumes_and_discloses_the_canonical_portfolio_basis():
@@ -328,7 +328,7 @@ def test_ledger_path_consumes_and_discloses_the_canonical_portfolio_basis():
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 150.0, "qty": 10}')
         payload = _ok(run)
-        row = payload["consultation"]
+        row = payload["evaluation"]
         assert row["basis"]["source"] == "snapshot_anchor"
         assert row["basis"]["as_of"] == "2026-02-01"   # the ledger's own latest row, not today
         assert row["basis"]["completeness"] == "declared_complete"
@@ -339,7 +339,7 @@ def test_ledger_path_consumes_and_discloses_the_canonical_portfolio_basis():
         assert row["basis"]["valuation_coverage"]["scope"] == "full_current_book"
         assert row["basis"]["valuation_coverage"]["cost_fallback"] == ["NVDA"]
         assert row["basis"]["valuation_coverage"]["currencies"] == ["USD"]
-        _check_consultation_shape(row)
+        _check_evaluation_shape(row)
 
 
 def test_csv_paths_take_precedence_over_a_present_ledger_file():
@@ -353,8 +353,8 @@ def test_csv_paths_take_precedence_over_a_present_ledger_file():
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         payload = _ok(run)
-        assert payload["consultation"]["basis"]["source"] == "transactions"
-        assert "AAPL" not in payload["consultation"]["consequence"]["before"]["held"]
+        assert payload["evaluation"]["basis"]["source"] == "transactions"
+        assert "AAPL" not in payload["evaluation"]["consequence"]["before"]["held"]
 
 
 def test_ledger_reconstruction_matches_derive_holdings_for_the_same_events():
@@ -410,7 +410,7 @@ def test_consider_uses_portfolio_basis_cost_for_multi_lot_partial_sell():
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
         row = _ok(_run("consider", "--root", tmp,
-                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 160.0, "qty": 1}'))["consultation"]
+                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 160.0, "qty": 1}'))["evaluation"]
         held = row["consequence"]["before"]["held"]["NVDA"]
         assert held["shares"] == expected["shares"] == 150.0
         assert abs(held["cost"] - expected["cost_total"]) < 1e-6
@@ -454,7 +454,7 @@ def test_consider_succeeds_on_a_declared_partial_or_unverified_current_book():
         with tempfile.TemporaryDirectory() as tmp:
             _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
             row = _ok(_run("consider", "--root", tmp,
-                           "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}'))["consultation"]
+                           "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 1}'))["evaluation"]
             assert row["basis"]["completeness"] == expected_completeness
             held = row["consequence"]["before"]["held"]["NVDA"]
             assert held["shares"] == expected_holding["shares"] == 10.0
@@ -462,8 +462,8 @@ def test_consider_succeeds_on_a_declared_partial_or_unverified_current_book():
             weight = row["consequence"]["before"]["weights"]["NVDA"]
             assert weight == projection.values["NVDA"]["weight"] == 1.0
             assert row["basis"]["state_version"] == basis.state_version
-            _check_consultation_shape(row)
-            assert os.path.exists(_consultation_path(tmp))
+            _check_evaluation_shape(row)
+            assert os.path.exists(_evaluation_path(tmp))
 
 
 def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
@@ -500,7 +500,7 @@ def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
 
         row = _ok(_run("consider", "--root", tmp,
                        "--premise", '{"ticker": "NVDA", "side": "buy", "qty": 5, '
-                                    '"price": 130.0, "currency": "USD"}'))["consultation"]
+                                    '"price": 130.0, "currency": "USD"}'))["evaluation"]
         assert row["basis"]["source"] == "transaction_replay"
         assert row["basis"]["completeness"] == "unverified"
         held = row["consequence"]["before"]["held"]["NVDA"]
@@ -509,15 +509,15 @@ def test_consider_succeeds_end_to_end_after_prepare_ingests_a_trades_csv():
         weight = row["consequence"]["before"]["weights"]["NVDA"]
         assert weight == projection.values["NVDA"]["weight"]
         assert row["basis"]["state_version"] == basis.state_version
-        _check_consultation_shape(row)
-        assert os.path.exists(_consultation_path(tmp))
+        _check_evaluation_shape(row)
+        assert os.path.exists(_evaluation_path(tmp))
 
 
 def test_an_unusable_holding_is_excluded_and_named_instead_of_refusing_everything():
     """#515's own acceptance sentence, run end to end.
 
     Six positions, one with no declared cost, and the user asks about a
-    seventh. Before this leaf the whole consultation was refused -- which
+    seventh. Before this leaf the whole evaluation was refused -- which
     gives the user nothing and is indistinguishable from a broken product.
     The ruling: compute over the part that can be used and name what was
     left out.
@@ -536,7 +536,7 @@ def test_an_unusable_holding_is_excluded_and_named_instead_of_refusing_everythin
         ])
         row = _ok(_run("consider", "--root", tmp,
                        "--premise", '{"ticker": "NEWCO", "side": "buy", "qty": 5, '
-                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+                                    '"price": 100.0, "currency": "USD"}'))["evaluation"]
         result = row["consequence"]
         assert "partial_book" in result["disclosures"]
         assert result["excluded_holdings"] == [{"ticker": "DARK", "reason": "unavailable_cost"}], (
@@ -550,7 +550,7 @@ def test_an_unusable_holding_is_excluded_and_named_instead_of_refusing_everythin
         assert abs(sum(result["before"]["weights"].values()) - 1.0) < 1e-9, (
             "the weights the user is shown must sum over the priced part")
         assert result["after"]["weights"]["NEWCO"] > 0, "the question was actually answered"
-        _check_consultation_shape(row)
+        _check_evaluation_shape(row)
 
 
 def test_a_book_where_nothing_can_be_valued_still_refuses():
@@ -567,7 +567,7 @@ def test_a_book_where_nothing_can_be_valued_still_refuses():
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         _fails(run, "no holding that can be valued: NVDA")
-        assert not os.path.exists(_consultation_path(tmp))
+        assert not os.path.exists(_evaluation_path(tmp))
 
 
 def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
@@ -583,7 +583,7 @@ def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "USD", "side": "buy", "price": 15.0, "qty": 1}')
         _fails(run, "no usable current-book sizing projection")
-        assert not os.path.exists(_consultation_path(tmp))
+        assert not os.path.exists(_evaluation_path(tmp))
 
 
 def test_same_day_ledger_mutation_changes_the_frozen_basis_version():
@@ -593,8 +593,8 @@ def test_same_day_ledger_mutation_changes_the_frozen_basis_version():
         _write_ledger(os.path.join(one, "ledger.jsonl"), [anchor])
         _write_ledger(os.path.join(two, "ledger.jsonl"), [anchor, _trade_event("2026-01-01", "NVDA", "buy", 1, 110)])
         premise = '{"ticker": "NVDA", "side": "buy", "price": 120.0, "qty": 1}'
-        first = _ok(_run("consider", "--root", one, "--premise", premise))["consultation"]
-        second = _ok(_run("consider", "--root", two, "--premise", premise))["consultation"]
+        first = _ok(_run("consider", "--root", one, "--premise", premise))["evaluation"]
+        second = _ok(_run("consider", "--root", two, "--premise", premise))["evaluation"]
         assert first["consequence"]["before"]["held"] == second["consequence"]["before"]["held"]
         assert first["basis"]["state_version"] != second["basis"]["state_version"]
 
@@ -630,7 +630,7 @@ def test_stale_days_is_computed_and_nonzero_for_an_old_record():
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         payload = _ok(run)
-        basis = payload["consultation"]["basis"]
+        basis = payload["evaluation"]["basis"]
         expected = (dt.date.today() - dt.date.fromisoformat(old_date)).days
         assert basis["stale_days"] == expected
         assert basis["stale_days"] > 0
@@ -644,7 +644,7 @@ def test_absent_ledger_fails_closed_rather_than_answering():
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         _fails(run, "no usable trade or snapshot history")
-        assert not os.path.exists(_consultation_path(tmp)), "a failed call must not write a row"
+        assert not os.path.exists(_evaluation_path(tmp)), "a failed call must not write a row"
 
 
 def test_empty_ledger_file_fails_closed():
@@ -673,7 +673,7 @@ def test_corrupt_ledger_fails_closed_rather_than_reconstructing_a_partial_book()
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         _fails(run, "unreadable row(s)")
-        assert not os.path.exists(_consultation_path(tmp)), "a failed call must not write a row"
+        assert not os.path.exists(_evaluation_path(tmp)), "a failed call must not write a row"
 
 
 def test_csv_with_no_trade_rows_fails_closed():
@@ -709,7 +709,7 @@ def test_a_declared_market_value_never_becomes_an_undisclosed_cost_fallback():
         ])
         row = _ok(_run("consider", "--root", tmp,
                        "--premise", '{"ticker": "SOLID", "side": "buy", "qty": 1, '
-                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+                                    '"price": 100.0, "currency": "USD"}'))["evaluation"]
         result = row["consequence"]
         assert result["excluded_holdings"] == [{"ticker": "NVDA", "reason": "unavailable_cost"}]
         assert "NVDA" not in result["before"]["held"], (
@@ -752,7 +752,7 @@ def test_a_priced_holding_with_no_cost_refuses_with_two_working_paths():
         # Path two from that message, verified rather than merely promised.
         row = _ok(_run("consider", "--root", tmp,
                        "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
-                                    '"price": 100.0, "currency": "USD"}'))["consultation"]
+                                    '"price": 100.0, "currency": "USD"}'))["evaluation"]
         assert row["consequence"]["excluded_holdings"] == [
             {"ticker": "DARK", "reason": "unavailable_cost"}]
 
@@ -779,7 +779,7 @@ def test_a_rule_judged_against_a_partial_book_says_so():
         payload = _ok(_run("consider", "--root", tmp,
                            "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, '
                                         '"price": 100.0, "currency": "USD"}'))
-        collisions = payload["consultation"]["rule_collisions"]
+        collisions = payload["evaluation"]["rule_collisions"]
         assert collisions, "the tracked rule must still be evaluated, not suppressed"
         assert all(row.get("partial_book") is True for row in collisions), (
             "every collision judged on the bounded book must carry the marker")
@@ -809,7 +809,7 @@ def test_premise_accepts_a_file_path_as_well_as_inline_json():
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", premise_path)
         payload = _ok(run)
-        assert payload["consultation"]["premise"]["ticker"] == "AMD"
+        assert payload["evaluation"]["premise"]["ticker"] == "AMD"
 
 
 def test_consider_requires_premise_or_resolve():
@@ -824,19 +824,19 @@ def test_resolve_appends_a_new_row_rather_than_rewriting():
     with tempfile.TemporaryDirectory() as tmp:
         created = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'))
-        consultation_id = created["consultation"]["consultation_id"]
+        evaluation_id = created["evaluation"]["evaluation_id"]
 
-        resolved = _ok(_run("consider", "--root", tmp, "--resolve", consultation_id,
+        resolved = _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
                             "--decision", "acted"))
-        assert resolved["consultation"]["decision"] == "acted"
-        assert resolved["consultation"]["decided_on"] == dt.date.today().isoformat()
+        assert resolved["evaluation"]["decision"] == "acted"
+        assert resolved["evaluation"]["decided_on"] == dt.date.today().isoformat()
 
-        on_disk = _read_consultations(tmp)
+        on_disk = _read_evaluations(tmp)
         assert len(on_disk) == 2, "resolve must append, never rewrite the original row"
         assert on_disk[0]["decision"] == "open"
-        assert on_disk[0]["consultation_id"] == consultation_id
+        assert on_disk[0]["evaluation_id"] == evaluation_id
         assert on_disk[1]["decision"] == "acted"
-        assert on_disk[1]["consultation_id"] == consultation_id
+        assert on_disk[1]["evaluation_id"] == evaluation_id
         # every other frozen field survives the resolution unchanged
         assert on_disk[0]["consequence"] == on_disk[1]["consequence"]
         assert on_disk[0]["premise"] == on_disk[1]["premise"]
@@ -846,21 +846,21 @@ def test_fold_returns_the_latest_decision():
     with tempfile.TemporaryDirectory() as tmp:
         created = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'))
-        consultation_id = created["consultation"]["consultation_id"]
-        _ok(_run("consider", "--root", tmp, "--resolve", consultation_id, "--decision", "modified"))
-        _ok(_run("consider", "--root", tmp, "--resolve", consultation_id, "--decision", "acted"))
+        evaluation_id = created["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id, "--decision", "modified"))
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id, "--decision", "acted"))
 
-        on_disk = _read_consultations(tmp)
+        on_disk = _read_evaluations(tmp)
         assert len(on_disk) == 3
-        latest = review_engine._fold_consultations(on_disk)
-        assert latest[consultation_id]["decision"] == "acted"
+        latest = review_engine._fold_evaluations(on_disk)
+        assert latest[evaluation_id]["decision"] == "acted"
 
 
-def test_resolve_of_unknown_consultation_id_fails_closed():
+def test_resolve_of_unknown_evaluation_id_fails_closed():
     with tempfile.TemporaryDirectory() as tmp:
-        run = _run("consider", "--root", tmp, "--resolve", "consult-doesnotexist",
+        run = _run("consider", "--root", tmp, "--resolve", "eval-doesnotexist",
                    "--decision", "acted")
-        _fails(run, "no consultation matching")
+        _fails(run, "no evaluation matching")
 
 
 def test_decision_flag_requires_resolve():
@@ -873,7 +873,7 @@ def test_decision_flag_requires_resolve():
 
 def test_resolve_forbids_combining_with_premise():
     with tempfile.TemporaryDirectory() as tmp:
-        run = _run("consider", "--root", tmp, "--resolve", "consult-x", "--decision", "acted",
+        run = _run("consider", "--root", tmp, "--resolve", "eval-x", "--decision", "acted",
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
         _fails(run, "--resolve takes no premise")
 
@@ -882,7 +882,7 @@ def test_resolve_rejects_a_decision_of_open():
     """`open` is a row's starting state, never something --resolve records to
     -- argparse's own choices= is the gate, not a hand-written check."""
     with tempfile.TemporaryDirectory() as tmp:
-        run = _run("consider", "--root", tmp, "--resolve", "consult-x", "--decision", "open")
+        run = _run("consider", "--root", tmp, "--resolve", "eval-x", "--decision", "open")
         assert run.returncode != 0
         assert "invalid choice" in run.stderr.lower()
 
@@ -893,7 +893,7 @@ def test_created_row_round_trips_against_the_schema():
     with tempfile.TemporaryDirectory() as tmp:
         payload = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'))
-        _check_consultation_shape(payload["consultation"])
+        _check_evaluation_shape(payload["evaluation"])
 
 
 def test_resolved_row_round_trips_against_the_schema():
@@ -901,8 +901,8 @@ def test_resolved_row_round_trips_against_the_schema():
         created = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'))
         resolved = _ok(_run("consider", "--root", tmp, "--resolve",
-                            created["consultation"]["consultation_id"], "--decision", "declined"))
-        _check_consultation_shape(resolved["consultation"])
+                            created["evaluation"]["evaluation_id"], "--decision", "declined"))
+        _check_evaluation_shape(resolved["evaluation"])
 
 
 def test_consider_decisions_constant_matches_the_schemas_decision_enum():
@@ -911,21 +911,21 @@ def test_consider_decisions_constant_matches_the_schemas_decision_enum():
     starting state and never something --resolve records to. A second
     person adding a decision value in one place and not the other is exactly
     the "two readers, one fact" shape (development-guide.md section 7)."""
-    schema_enum = set(CONSULTATION_SCHEMA["properties"]["decision"]["enum"])
+    schema_enum = set(EVALUATION_SCHEMA["properties"]["decision"]["enum"])
     assert schema_enum == set(review_engine.CONSIDER_DECISIONS) | {"open"}
 
 
 def test_collision_states_constant_is_exactly_what_the_schema_declares():
     import consequence as cq  # noqa: E402  (engine dir already on sys.path)
     schema_states = set(
-        CONSULTATION_SCHEMA["properties"]["rule_collisions"]["items"]["properties"]["state"]["enum"])
+        EVALUATION_SCHEMA["properties"]["rule_collisions"]["items"]["properties"]["state"]["enum"])
     assert schema_states == set(cq.COLLISION_STATES)
 
 
 def test_disclosures_constant_is_exactly_what_the_schema_declares():
     import consequence as cq  # noqa: E402
     schema_disclosures = set(
-        CONSULTATION_SCHEMA["properties"]["consequence"]["properties"]["disclosures"]["items"]["enum"])
+        EVALUATION_SCHEMA["properties"]["consequence"]["properties"]["disclosures"]["items"]["enum"])
     assert schema_disclosures == set(cq.DISCLOSURES)
 
 
@@ -940,7 +940,7 @@ def test_rule_collision_is_reported_and_a_muted_rule_is_excluded():
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 20}')
         payload = _ok(run)
-        collisions = payload["consultation"]["rule_collisions"]
+        collisions = payload["evaluation"]["rule_collisions"]
         assert len(collisions) == 1
         assert collisions[0]["rule_id"] == "rule-1"
         assert collisions[0]["state"] == "already_over"
@@ -950,7 +950,7 @@ def test_rule_collision_is_reported_and_a_muted_rule_is_excluded():
             json.dump({"muted_rules": ["rule-1"]}, f)
         payload = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 20}'))
-        assert payload["consultation"]["rule_collisions"] == []
+        assert payload["evaluation"]["rule_collisions"] == []
 
 
 # ───────────────────────── H. agent_case ─────────────────────────
@@ -987,13 +987,13 @@ def test_agent_case_is_stored_when_supplied_and_absent_when_not():
         with_case = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                              "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
                              "--agent-case", case_path))
-        assert "agent_case" in with_case["consultation"]
-        _check_consultation_shape(with_case["consultation"])
+        assert "agent_case" in with_case["evaluation"]
+        _check_evaluation_shape(with_case["evaluation"])
 
         without_case = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                                 "--premise",
                                 '{"ticker": "NVDA", "side": "buy", "price": 131.0, "qty": 5}'))
-        assert "agent_case" not in without_case["consultation"]
+        assert "agent_case" not in without_case["evaluation"]
 
 
 # ───────────────────────── I. read-only w.r.t. review state ─────────────────────────
@@ -1008,12 +1008,12 @@ def test_consider_never_writes_rules_or_creates_session_scaffolding():
         assert not os.path.exists(os.path.join(tmp, ".pending"))
         assert not os.path.exists(os.path.join(tmp, "log.jsonl"))
         # the one file consider is allowed to create
-        assert os.path.exists(_consultation_path(tmp))
+        assert os.path.exists(_evaluation_path(tmp))
 
 
-def test_pre_trade_consultations_is_registered_in_coach_data_files():
+def test_trade_evaluations_is_registered_in_coach_data_files():
     text = COACH_PY.read_text(encoding="utf-8")
-    assert '"pre_trade_consultations.jsonl"' in text
+    assert '"trade_evaluations.jsonl"' in text
     # exercised for real, not just grepped: data-status/-export/-reset must see it
     with tempfile.TemporaryDirectory() as tmp:
         _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
@@ -1022,37 +1022,37 @@ def test_pre_trade_consultations_is_registered_in_coach_data_files():
                                 cwd=ROOT, capture_output=True, text=True, timeout=30)
         assert status.returncode == 0, status.stdout + status.stderr
         names = {entry["name"] for entry in json.loads(status.stdout)["files"]}
-        assert "pre_trade_consultations.jsonl" in names
+        assert "trade_evaluations.jsonl" in names
         entry = next(e for e in json.loads(status.stdout)["files"]
-                     if e["name"] == "pre_trade_consultations.jsonl")
+                     if e["name"] == "trade_evaluations.jsonl")
         assert entry["exists"] is True and entry["lines"] == 1
 
         reset = subprocess.run([sys.executable, str(COACH_PY), "data-reset", "--confirm", "--root", tmp],
                                cwd=ROOT, capture_output=True, text=True, timeout=30)
         assert reset.returncode == 0, reset.stdout + reset.stderr
-        assert not os.path.exists(_consultation_path(tmp)), "data-reset must remove the file"
+        assert not os.path.exists(_evaluation_path(tmp)), "data-reset must remove the file"
 
 
-# ─────────────────── J. consultation_reconciliation (prepare) ───────────────────
+# ─────────────────── J. evaluation_reconciliation (prepare) ───────────────────
 
-def test_matched_consultation_reports_the_trades_date_and_qty():
+def test_matched_evaluation_reports_the_trades_date_and_qty():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         rows = [_tr_row("NVDA", "buy", 20, 135.0, "2026-07-14")]
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         _check_reconciliation_shape(result)
         assert len(result["items"]) == 1
         item = result["items"][0]
-        assert item["consultation_id"] == "consult-1"
+        assert item["evaluation_id"] == "eval-1"
         assert item["status"] == "matched"
         assert item["matched_trade"] == {"date": "2026-07-14", "qty": 20}
         assert result["summary"] == {"open_total": 1, "shown": 1, "beyond_cap": 0}
 
 
-def test_unmatched_consultation_when_no_trade_exists():
+def test_unmatched_evaluation_when_no_trade_exists():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
-        result = review_engine._consultation_reconciliation(tmp, [], "2026-07-20")
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
+        result = review_engine._evaluation_reconciliation(tmp, [], "2026-07-20")
         _check_reconciliation_shape(result)
         assert result["items"][0]["status"] == "unmatched"
         assert result["items"][0]["matched_trade"] is None
@@ -1060,133 +1060,133 @@ def test_unmatched_consultation_when_no_trade_exists():
 
 def test_opposite_side_trade_does_not_match():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         rows = [_tr_row("NVDA", "sell", 20, 135.0, "2026-07-14")]
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         assert result["items"][0]["status"] == "unmatched", \
-            "a sell must never satisfy a consultation that asked about a buy"
+            "a sell must never satisfy an evaluation that asked about a buy"
 
 
 def test_different_ticker_trade_does_not_match():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         rows = [_tr_row("AMD", "buy", 20, 135.0, "2026-07-14")]
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         assert result["items"][0]["status"] == "unmatched"
 
 
-def test_trade_dated_before_the_consultation_does_not_match():
+def test_trade_dated_before_the_evaluation_does_not_match():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         rows = [_tr_row("NVDA", "buy", 20, 135.0, "2026-07-10")]  # before created
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         assert result["items"][0]["status"] == "unmatched", \
-            "a trade that predates the consultation cannot be its answer"
+            "a trade that predates the evaluation cannot be its answer"
 
 
 def test_trade_dated_after_date_end_does_not_match():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         rows = [_tr_row("NVDA", "buy", 20, 135.0, "2026-07-25")]  # after this review's date_end
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         assert result["items"][0]["status"] == "unmatched", \
             "a trade outside this review's window belongs to a later reconciliation, not this one"
 
 
 def test_boundary_dates_are_inclusive():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-12", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")])
         on_created = [_tr_row("NVDA", "buy", 5, 100.0, "2026-07-12")]
-        assert review_engine._consultation_reconciliation(
+        assert review_engine._evaluation_reconciliation(
             tmp, on_created, "2026-07-20")["items"][0]["status"] == "matched"
         on_date_end = [_tr_row("NVDA", "buy", 5, 100.0, "2026-07-20")]
-        assert review_engine._consultation_reconciliation(
+        assert review_engine._evaluation_reconciliation(
             tmp, on_date_end, "2026-07-20")["items"][0]["status"] == "matched"
 
 
 def test_earliest_qualifying_trade_is_reported_when_several_match():
     with tempfile.TemporaryDirectory() as tmp:
-        _write_consultations(tmp, [_open_consultation("consult-1", "2026-07-01", "NVDA", "buy")])
+        _write_evaluations(tmp, [_open_evaluation("eval-1", "2026-07-01", "NVDA", "buy")])
         rows = [_tr_row("NVDA", "buy", 30, 140.0, "2026-07-15"),
                 _tr_row("NVDA", "buy", 12, 128.0, "2026-07-05")]
-        result = review_engine._consultation_reconciliation(tmp, rows, "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, rows, "2026-07-20")
         assert result["items"][0]["matched_trade"] == {"date": "2026-07-05", "qty": 12}
 
 
-def test_resolved_consultation_does_not_appear():
+def test_resolved_evaluation_does_not_appear():
     with tempfile.TemporaryDirectory() as tmp:
-        open_row = _open_consultation("consult-1", "2026-07-12", "NVDA", "buy")
+        open_row = _open_evaluation("eval-1", "2026-07-12", "NVDA", "buy")
         resolved_row = {**open_row, "decision": "acted", "decided_on": "2026-07-15"}
-        _write_consultations(tmp, [open_row, resolved_row])
-        result = review_engine._consultation_reconciliation(tmp, [], "2026-07-20")
+        _write_evaluations(tmp, [open_row, resolved_row])
+        result = review_engine._evaluation_reconciliation(tmp, [], "2026-07-20")
         assert result["items"] == []
         assert result["summary"] == {"open_total": 0, "shown": 0, "beyond_cap": 0}
 
 
-def test_reconciliation_is_empty_and_harmless_with_no_consultations_file():
+def test_reconciliation_is_empty_and_harmless_with_no_evaluations_file():
     """The overwhelmingly common case (a root that has never called
-    `consider`): a missing file must read as zero open consultations, never
+    `consider`): a missing file must read as zero open evaluations, never
     an error."""
     with tempfile.TemporaryDirectory() as tmp:
-        result = review_engine._consultation_reconciliation(tmp, [], "2026-07-20")
+        result = review_engine._evaluation_reconciliation(tmp, [], "2026-07-20")
         assert result == {"items": [], "summary": {"open_total": 0, "shown": 0, "beyond_cap": 0}}
 
 
 def test_cap_holds_and_discloses_what_it_held_back():
     with tempfile.TemporaryDirectory() as tmp:
-        rows = [_open_consultation(f"consult-{i}", f"2026-07-{i:02d}", "NVDA", "buy")
+        rows = [_open_evaluation(f"eval-{i}", f"2026-07-{i:02d}", "NVDA", "buy")
                 for i in range(1, 12)]
-        _write_consultations(tmp, rows)
-        result = review_engine._consultation_reconciliation(tmp, [], "2026-07-20")
+        _write_evaluations(tmp, rows)
+        result = review_engine._evaluation_reconciliation(tmp, [], "2026-07-20")
         _check_reconciliation_shape(result)
-        assert review_engine.CONSULTATION_RECONCILE_CAP == 8
+        assert review_engine.EVALUATION_RECONCILE_CAP == 8
         assert len(result["items"]) == 8
         assert result["summary"] == {"open_total": 11, "shown": 8, "beyond_cap": 3}
-        assert [item["consultation_id"] for item in result["items"]] == \
-            [f"consult-{i}" for i in range(1, 9)], \
+        assert [item["evaluation_id"] for item in result["items"]] == \
+            [f"eval-{i}" for i in range(1, 9)], \
             "oldest created first; a capped list must not skip around"
 
 
-def test_prepare_wires_reconciliation_and_never_mutates_the_consultation_file():
+def test_prepare_wires_reconciliation_and_never_mutates_the_evaluation_file():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
-        _write_consultations(root, [
-            _open_consultation("consult-matched", "2026-07-01", "NVDA", "buy", qty=20, price=130.0),
-            _open_consultation("consult-unmatched", "2026-07-01", "AMD", "sell", qty=5, price=90.0),
+        _write_evaluations(root, [
+            _open_evaluation("eval-matched", "2026-07-01", "NVDA", "buy", qty=20, price=130.0),
+            _open_evaluation("eval-unmatched", "2026-07-01", "AMD", "sell", qty=5, price=90.0),
         ])
         _write_ledger(os.path.join(root, "ledger.jsonl"), [
             _trade_event("2026-07-05", "NVDA", "buy", 20, 135.0),
         ])
-        before = pathlib.Path(_consultation_path(root)).read_bytes()
+        before = pathlib.Path(_evaluation_path(root)).read_bytes()
 
         plan = _prepare_plan(tmp, root, "2026-07-20")
-        recon = plan["consultation_reconciliation"]
+        recon = plan["evaluation_reconciliation"]
         _check_reconciliation_shape(recon)
-        by_id = {item["consultation_id"]: item for item in recon["items"]}
-        assert by_id["consult-matched"]["status"] == "matched"
-        assert by_id["consult-matched"]["matched_trade"] == {"date": "2026-07-05", "qty": 20.0}
-        assert by_id["consult-unmatched"]["status"] == "unmatched"
-        assert by_id["consult-unmatched"]["matched_trade"] is None
+        by_id = {item["evaluation_id"]: item for item in recon["items"]}
+        assert by_id["eval-matched"]["status"] == "matched"
+        assert by_id["eval-matched"]["matched_trade"] == {"date": "2026-07-05", "qty": 20.0}
+        assert by_id["eval-unmatched"]["status"] == "unmatched"
+        assert by_id["eval-unmatched"]["matched_trade"] is None
         assert recon["summary"] == {"open_total": 2, "shown": 2, "beyond_cap": 0}
 
-        after = pathlib.Path(_consultation_path(root)).read_bytes()
-        assert before == after, ("prepare must never rewrite pre_trade_consultations.jsonl -- "
+        after = pathlib.Path(_evaluation_path(root)).read_bytes()
+        assert before == after, ("prepare must never rewrite trade_evaluations.jsonl -- "
                                  "decision moves only through consider --resolve")
 
 
-def test_prepare_reconciliation_is_empty_and_harmless_with_no_consultations_file():
+def test_prepare_reconciliation_is_empty_and_harmless_with_no_evaluations_file():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         plan = _prepare_plan(tmp, root, "2026-07-20")
-        assert plan["consultation_reconciliation"] == {
+        assert plan["evaluation_reconciliation"] == {
             "items": [], "summary": {"open_total": 0, "shown": 0, "beyond_cap": 0}}
-        assert not os.path.exists(_consultation_path(root)), \
-            "prepare must never create a consultations file that did not exist"
+        assert not os.path.exists(_evaluation_path(root)), \
+            "prepare must never create an evaluations file that did not exist"
 
 
-def test_prepare_fails_closed_on_a_corrupt_ledger_before_consultation_reconciliation():
+def test_prepare_fails_closed_on_a_corrupt_ledger_before_evaluation_reconciliation():
     """#462: _build_plan's own ledger.load_ledger call (distinct from
     _ingest_trades' and _prepare_exit_capture's -- both bypassed here via
     --test-drive and omitting a CSV path, isolating this one) feeds
-    consultation_reconciliation. A corrupt row must block prepare rather than
+    evaluation_reconciliation. A corrupt row must block prepare rather than
     let a matched/unmatched verdict be computed from a silently shortened
     ledger -- this is the "every route computes this" read the review.py
     comment above ledger.load_ledger describes, exercised on the route with
@@ -1203,18 +1203,18 @@ def test_prepare_fails_closed_on_a_corrupt_ledger_before_consultation_reconcilia
         _fails(run, "unreadable row(s)")
 
 
-# ───────────────── K. consultation_id — content-addressed identity ─────────────────
+# ───────────────── K. evaluation_id — content-addressed identity ─────────────────
 # External review BLOCK finding: the id must change whenever anything that
 # changed the frozen consequence changed, not only when premise/basis/created
-# do. review._consultation_id seeds on the frozen consequence and
+# do. review._evaluation_id seeds on the frozen consequence and
 # rule_collisions themselves (not an enumerated list of inputs), which closes
 # the whole class at once -- --cash is the reviewer's own reproduction, but
 # the same mechanism covers --prices, --driver-map, --instrument-map, and the
 # position cap override without naming any of them individually.
 
-def test_identical_inputs_produce_the_identical_consultation_id():
+def test_identical_inputs_produce_the_identical_evaluation_id():
     """Two consider calls with byte-identical arguments, the same day, must
-    converge on the same id -- and _append_consultation_row's content-based
+    converge on the same id -- and _append_evaluation_row's content-based
     idempotency then makes the second call a no-op, not a second row."""
     with tempfile.TemporaryDirectory() as tmp:
         args = ["consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
@@ -1222,18 +1222,18 @@ def test_identical_inputs_produce_the_identical_consultation_id():
                "--cash", '{"as_of": "2026-07-26", "amount": 1000, "currency": "USD"}']
         first = _ok(_run(*args))
         second = _ok(_run(*args))
-        assert first["consultation"]["consultation_id"] == second["consultation"]["consultation_id"]
-        rows = _read_consultations(tmp)
+        assert first["evaluation"]["evaluation_id"] == second["evaluation"]["evaluation_id"]
+        rows = _read_evaluations(tmp)
         assert len(rows) == 1, f"a byte-identical repeat must not append a second row: {rows}"
 
 
-def test_a_different_cash_anchor_the_same_day_produces_a_different_consultation_id():
+def test_a_different_cash_anchor_the_same_day_produces_a_different_evaluation_id():
     """External review BLOCK, reproduced verbatim: the same ledger, the same
     premise, the same day, but --cash amount 0 on the first call and 1000 on
     the second. Before the fix the id was seeded on premise/basis/created
     alone -- none of which differ here -- so both calls produced the SAME
-    consultation_id despite freezing materially different consequences, and
-    _fold_consultations' latest-wins semantics silently treated the second as
+    evaluation_id despite freezing materially different consequences, and
+    _fold_evaluations' latest-wins semantics silently treated the second as
     superseding the first: a later --resolve naming that id would land on
     whichever row happened to be folded last, not necessarily the one the
     user meant. The anchor's as_of (2026-07-26) postdates every row in
@@ -1249,16 +1249,16 @@ def test_a_different_cash_anchor_the_same_day_produces_a_different_consultation_
                           "--premise", premise,
                           "--cash", '{"as_of": "2026-07-26", "amount": 1000, "currency": "USD"}'))
 
-        assert first["consultation"]["consequence"]["after"]["cash"]["balance"] == 0.0
-        assert second["consultation"]["consequence"]["after"]["cash"]["balance"] == 1000.0
-        id_1 = first["consultation"]["consultation_id"]
-        id_2 = second["consultation"]["consultation_id"]
+        assert first["evaluation"]["consequence"]["after"]["cash"]["balance"] == 0.0
+        assert second["evaluation"]["consequence"]["after"]["cash"]["balance"] == 1000.0
+        id_1 = first["evaluation"]["evaluation_id"]
+        id_2 = second["evaluation"]["evaluation_id"]
         assert id_1 != id_2, \
-            "two materially different frozen consequences must not collide on one consultation_id"
+            "two materially different frozen consequences must not collide on one evaluation_id"
 
-        rows = _read_consultations(tmp)
-        assert len(rows) == 2, f"both consultations must be preserved, not folded into one: {rows}"
-        assert {row["consultation_id"] for row in rows} == {id_1, id_2}
+        rows = _read_evaluations(tmp)
+        assert len(rows) == 2, f"both evaluations must be preserved, not folded into one: {rows}"
+        assert {row["evaluation_id"] for row in rows} == {id_1, id_2}
 
 
 # ─────────────────────────────── runner ───────────────────────────────

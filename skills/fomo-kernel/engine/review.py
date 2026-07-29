@@ -93,7 +93,7 @@ CONDITION_CROSSING_EVENT_CHOICES = {"yes", "no", "skip"}
 CONDITION_BASIS_CHOICES = {"revise_threshold", "revise_metric", "keep", "skip"}
 # `consider`'s own vocabulary (Layer 2, docs/decision-fomo-kernel-shape.md §3-4).
 # CONSIDER_DECISIONS is what --resolve may record; "open" (schemas/pre-trade-
-# consultation.schema.json's default) is a row's starting state, never something
+# evaluation.schema.json's default) is a row's starting state, never something
 # a caller resolves *to*. Kept as one tuple so the argparse choices and the
 # schema enum cannot silently drift apart (tests/test_consider.py checks it).
 CONSIDER_DECISIONS = ("acted", "declined", "modified")
@@ -103,14 +103,14 @@ CONSIDER_DECISIONS = ("acted", "declined", "modified")
 # name that reads correctly next to consequence.py's own output; public_fact
 # and agent_judgment are the doc's own words.
 AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
-# #429's rule one layer up: a consultation nobody reconciles is the same dead-
+# #429's rule one layer up: an evaluation nobody reconciles is the same dead-
 # store shape that issue names for a question nobody reads. The bound is the
 # same discipline CONDITION_LOOKUP_CAP states just above -- the Review Plan is
 # re-sent as agent context on every later turn, so a user who never resolves
-# old consultations must not grow it without limit. Oldest `created` first;
-# _consultation_reconciliation's summary discloses whatever the cap holds
+# old evaluations must not grow it without limit. Oldest `created` first;
+# _evaluation_reconciliation's summary discloses whatever the cap holds
 # back, the same "a bounded surface must say what it dropped" rule.
-CONSULTATION_RECONCILE_CAP = 8
+EVALUATION_RECONCILE_CAP = 8
 
 
 class ReviewError(ValueError):
@@ -3095,7 +3095,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     condition_due, condition_summary, thesis_links, condition_retired = (
         ([], None, {}, []) if route == "snapshot_review"
         else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
-    # #317/#429: reconcile any `consider` consultation still open against what
+    # #317/#429: reconcile any `consider` evaluation still open against what
     # the local ledger actually shows happened. `_ledger_trade_events` reads
     # only real, dated trade events — never `_rows_from_ledger`'s synthesized
     # anchor rows, which exist for FIFO/cost-basis pricing `consider` needs
@@ -3106,14 +3106,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     # thesis cycle, only the ledger and date_end, both of which every route
     # already has.
     # #462: a corrupt row here must not let the trade-event extraction below
-    # silently run over a shortened ledger — a matched/unmatched consultation
+    # silently run over a shortened ledger — a matched/unmatched evaluation
     # verdict computed from an incomplete read is a wrong verdict, not a
     # missing one.
     try:
         ledger_events, _skipped_ledger_lines = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
     except ledger.LedgerIntegrityError as exc:
         raise ReviewError(str(exc)) from exc
-    consultation_reconciliation = _consultation_reconciliation(
+    evaluation_reconciliation = _evaluation_reconciliation(
         root, _ledger_trade_events(ledger_events), state.get("date_end"))
     condition_checks, condition_questions, condition_deferred = [], [], []
     if route != "snapshot_review" and submitted_condition_checks:
@@ -3209,7 +3209,7 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         # question (issue #440 parks card layout; issue #453 puts the
         # judgment of whether this earns a turn on the agent, not the
         # engine). See schemas/review-plan.schema.json for the declared shape.
-        "consultation_reconciliation": consultation_reconciliation,
+        "evaluation_reconciliation": evaluation_reconciliation,
         "engine_card": card,
         "engine_state": state,
     }
@@ -4805,8 +4805,8 @@ def cmd_mute_rule(args):
            "rule_line_id": line_id, "rule_id": rule.get("rule_id"), "text": rule.get("text")})
 
 
-def _consultation_path(root):
-    return os.path.join(root, "pre_trade_consultations.jsonl")
+def _evaluation_path(root):
+    return os.path.join(root, "trade_evaluations.jsonl")
 
 
 def _anchor_position_row(position, anchor_date):
@@ -5087,7 +5087,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None):
         raise ReviewError(str(exc)) from exc
     # Freeze only the portable fact identity/disclosure envelope.  The full
     # current_book remains the canonical ledger query, not a copied second
-    # persisted book inside every consultation.
+    # persisted book inside every evaluation.
     projection = portfolio_basis.sizing_projection(basis)
     if projection is None:
         raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
@@ -5125,7 +5125,7 @@ def _load_json_arg(value, label):
 
 def _validate_agent_case(payload):
     """Fail-closed structural check for ``--agent-case``, hand-rolled to
-    mirror ``schemas/pre-trade-consultation.schema.json#/properties/agent_case``
+    mirror ``schemas/trade-evaluation.schema.json#/properties/agent_case``
     — the same "no jsonschema dependency" posture consequence.py,
     conditions.py, and price_feed.py already keep for their own envelopes.
     Both ``for`` and ``against`` are required once ``agent_case`` is sent at
@@ -5167,7 +5167,7 @@ def _json_safe_premise(normalized):
     return premise
 
 
-def _consultation_id(premise, basis, created, consequence_frozen, rule_collisions):
+def _evaluation_id(premise, basis, created, consequence_frozen, rule_collisions):
     """Engine-assigned, content-addressed identity — the same convention
     session.py uses for ``snapshot_id``/``adjustment_id``/``reconciliation_id``.
 
@@ -5179,7 +5179,7 @@ def _consultation_id(premise, basis, created, consequence_frozen, rule_collision
     still leave the next such input open the same way (external review: a
     same-day, same-premise call with a different ``--cash`` anchor produced
     the *same* id for two materially different frozen answers, and
-    ``_fold_consultations``' latest-wins semantics silently treated the
+    ``_fold_evaluations``' latest-wins semantics silently treated the
     second as superseding the first — a ``--resolve`` naming that id then
     targets whichever one happened to be folded last). Seeding on the frozen
     result instead closes the whole class at once: any input that changes
@@ -5187,40 +5187,40 @@ def _consultation_id(premise, basis, created, consequence_frozen, rule_collision
     having to enumerate that input by name.
 
     Two byte-identical inputs still produce a byte-identical seed and
-    therefore the same id — ``_append_consultation_row`` relies on this for
+    therefore the same id — ``_append_evaluation_row`` relies on this for
     its no-op-repeat idempotency — and ``created`` stays in the seed so an
     unchanged premise asked again on a different day mints a fresh
-    consultation rather than silently reusing yesterday's answer."""
+    evaluation rather than silently reusing yesterday's answer."""
     seed = session.canonical({"premise": premise, "basis": basis, "created": created,
                               "consequence": consequence_frozen, "rule_collisions": rule_collisions})
-    return "consult-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+    return "eval-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
-def _fold_consultations(rows):
-    """Latest row per ``consultation_id``. File order decides ties — the same
+def _fold_evaluations(rows):
+    """Latest row per ``evaluation_id``. File order decides ties — the same
     supersede-by-append convention ``conditions.fold_slots`` documents: a
     resolution is a new row carrying the same id, never a rewrite of the old
     one, and the last one written is the current fact."""
     latest = {}
     for row in rows:
-        if isinstance(row, dict) and row.get("consultation_id"):
-            latest[row["consultation_id"]] = row
+        if isinstance(row, dict) and row.get("evaluation_id"):
+            latest[row["evaluation_id"]] = row
     return latest
 
 
-def _consultation_reconciliation(root, rows, date_end):
-    """Reconcile every unsettled ``consider`` consultation against the
+def _evaluation_reconciliation(root, rows, date_end):
+    """Reconcile every unsettled ``consider`` evaluation against the
     transaction record, for ``_build_plan`` (#317; #429's rule one layer up —
     a stored answer nothing reads is a defect, and until this, nothing
-    outside ``consider`` itself ever read ``pre_trade_consultations.jsonl``).
+    outside ``consider`` itself ever read ``trade_evaluations.jsonl``).
 
-    For each folded consultation still at ``decision: "open"`` (a resolved
-    one never reaches here — ``_fold_consultations`` already picked the
+    For each folded evaluation still at ``decision: "open"`` (a resolved
+    one never reaches here — ``_fold_evaluations`` already picked the
     latest row per id), search ``rows`` — trade_recap-shaped dicts carrying
     ``ticker``/``side``/``qty``/``price``/``date`` as a real ``datetime.date``,
     the same shape ``_ledger_trade_events``, ``_rows_from_ledger``, and
     ``trade_recap.load`` all produce — for a trade of the identical ticker and
-    side, dated on or after the consultation's own ``created`` day and on or
+    side, dated on or after the evaluation's own ``created`` day and on or
     before ``date_end``. The earliest such trade, when more than one
     qualifies, is what gets reported. The caller decides which loader feeds
     ``rows``; this function only ever searches what it is given, and a
@@ -5230,24 +5230,24 @@ def _consultation_reconciliation(root, rows, date_end):
     This states a fact, never a cause. A ``matched`` result means a
     qualifying trade exists in the record inside that window — it is not,
     and must never be read as, evidence the user traded *because of* this
-    consultation. The same boundary schemas/condition-check.schema.json draws
+    evaluation. The same boundary schemas/condition-check.schema.json draws
     around ``user_response`` (an engine-computed verdict is never substituted
     for the user's own word) applies here: this function only ever reads
     ``decision``, never writes it — that field moves through
     ``consider --resolve`` alone.
 
     Returns ``{"items": [...], "summary": {...}}``. ``items`` is capped at
-    ``CONSULTATION_RECONCILE_CAP``, oldest ``created`` first — the bounded-
+    ``EVALUATION_RECONCILE_CAP``, oldest ``created`` first — the bounded-
     plan-surface shape ``_condition_due`` uses, and for the same reason
     (the comment on ``CONDITION_LOOKUP_CAP``): the plan is re-sent as agent
     context on every later turn, so a user who never resolves old
-    consultations must not grow it without limit. ``summary`` states the
+    evaluations must not grow it without limit. ``summary`` states the
     total still open, how many are shown, and how many were held back, so a
     capped list can never be mistaken for the complete record.
     """
-    consultations = _fold_consultations(thesis.read_jsonl(_consultation_path(root)))
-    open_rows = [row for row in consultations.values() if row.get("decision") == "open"]
-    open_rows.sort(key=lambda row: (str(row.get("created") or ""), str(row.get("consultation_id") or "")))
+    evaluations = _fold_evaluations(thesis.read_jsonl(_evaluation_path(root)))
+    open_rows = [row for row in evaluations.values() if row.get("decision") == "open"]
+    open_rows.sort(key=lambda row: (str(row.get("created") or ""), str(row.get("evaluation_id") or "")))
 
     try:
         end = dt.date.fromisoformat(str(date_end)) if date_end else None
@@ -5274,7 +5274,7 @@ def _consultation_reconciliation(root, rows, date_end):
                 nearest = candidates[0]
                 match = {"date": nearest["date"].isoformat(), "qty": nearest["qty"]}
         items.append({
-            "consultation_id": row.get("consultation_id"),
+            "evaluation_id": row.get("evaluation_id"),
             "created": created,
             "premise": premise,
             "status": "matched" if match else "unmatched",
@@ -5282,18 +5282,18 @@ def _consultation_reconciliation(root, rows, date_end):
         })
 
     total = len(items)
-    shown = items[:CONSULTATION_RECONCILE_CAP]
+    shown = items[:EVALUATION_RECONCILE_CAP]
     return {"items": shown,
             "summary": {"open_total": total, "shown": len(shown),
                         "beyond_cap": max(0, total - len(shown))}}
 
 
-def _append_consultation_row(root, row):
-    """Append-only writer for ``pre_trade_consultations.jsonl``.
+def _append_evaluation_row(root, row):
+    """Append-only writer for ``trade_evaluations.jsonl``.
 
     Neither of this repo's existing append helpers fits. ``session.
-    _append_session_rows``' idempotency key is a session_id, and a
-    consultation has none — ``consider`` is explicitly session-less (see
+    _append_session_rows``' idempotency key is a session_id, and an
+    evaluation has none — ``consider`` is explicitly session-less (see
     ``cmd_consider``'s docstring). ``ledger.append_events`` stamps every row
     with ``ledger.SCHEMA_V``, which names *ledger.jsonl's* own shape;
     borrowing it would tie an unrelated file's rows to a version number that
@@ -5307,13 +5307,13 @@ def _append_consultation_row(root, row):
     the same trailing-newline guard ``_append_session_rows`` uses against a
     prior crash leaving the file without one. Idempotency is content-based
     rather than session-keyed: if the current latest row for this
-    ``consultation_id`` is already byte-identical to ``row``, appending is
+    ``evaluation_id`` is already byte-identical to ``row``, appending is
     skipped — a retried ``consider`` or ``--resolve`` call is a no-op, not a
     duplicate line.
     """
-    path = _consultation_path(root)
+    path = _evaluation_path(root)
     existing = thesis.read_jsonl(path)
-    current = _fold_consultations(existing).get(row.get("consultation_id"))
+    current = _fold_evaluations(existing).get(row.get("evaluation_id"))
     if current is not None and session.canonical(current) == session.canonical(row):
         return {"path": path, "appended": 0, "status": "no-op"}
     os.makedirs(root, exist_ok=True)
@@ -5328,23 +5328,23 @@ def _append_consultation_row(root, row):
     return {"path": path, "appended": 1, "status": "appended"}
 
 
-def _cmd_consider_resolve(root, consultation_id, decision, language):
+def _cmd_consider_resolve(root, evaluation_id, decision, language):
     """``--resolve``: append a new row recording what the user did, never
     rewrite the old one (this repo decides supersession by chain, never by
     mutating history — ``conditions.fold_slots``, conditions.py:401)."""
-    path = _consultation_path(root)
-    current = _fold_consultations(thesis.read_jsonl(path)).get(consultation_id)
+    path = _evaluation_path(root)
+    current = _fold_evaluations(thesis.read_jsonl(path)).get(evaluation_id)
     if current is None:
         raise ReviewError(
-            f"no consultation matching {consultation_id!r} in {path} — --resolve only applies "
-            "to a consultation_id `consider` itself returned")
+            f"no evaluation matching {evaluation_id!r} in {path} — --resolve only applies "
+            "to an evaluation_id `consider` itself returned")
     updated = dict(current)
     updated["decision"] = decision
     updated["decided_on"] = dt.date.today().isoformat()
-    report = _append_consultation_row(root, updated)
+    report = _append_evaluation_row(root, updated)
     _emit({"status": "resolved", "root": root, "language": language,
-           "consultation_id": consultation_id, "decision": decision,
-           "consultation": updated, "append": report})
+           "evaluation_id": evaluation_id, "decision": decision,
+           "evaluation": updated, "append": report})
 
 
 def cmd_consider(args):
@@ -5355,16 +5355,16 @@ def cmd_consider(args):
     subcommand, matching the CLI whitelist's single ``consider`` entry
     (AGENTS.md, SKILL.md, references/agent-boundaries.md):
 
-      --premise <path-or-inline-JSON>    compute and record a new consultation
-      --resolve <consultation_id> --decision {acted,declined,modified}
+      --premise <path-or-inline-JSON>    compute and record a new evaluation
+      --resolve <evaluation_id> --decision {acted,declined,modified}
                                           record what the user did with one
 
     Read-only with respect to review state: unlike every other mutating
     command in this file, ``consider`` never writes rules.jsonl, never calls
     problems.check_rules, and never creates or touches a session. The one
     thing it persists is its own append-only
-    ``<root>/pre_trade_consultations.jsonl``
-    (schemas/pre-trade-consultation.schema.json), registered in coach.py's
+    ``<root>/trade_evaluations.jsonl``
+    (schemas/trade-evaluation.schema.json), registered in coach.py's
     DATA_FILES so data-export and data-reset see it like every other stored
     file (#452 is exactly the bug that shipped when a file skipped that step).
 
@@ -5474,8 +5474,8 @@ def cmd_consider(args):
                           "excluded_holdings": result["excluded_holdings"]}
 
     row = {
-        "consultation_id": _consultation_id(premise_stored, basis, created,
-                                            consequence_stored, collisions),
+        "evaluation_id": _evaluation_id(premise_stored, basis, created,
+                                        consequence_stored, collisions),
         "created": created,
         "premise": premise_stored,
         "basis": basis,
@@ -5487,9 +5487,9 @@ def cmd_consider(args):
     if agent_case is not None:
         row["agent_case"] = agent_case
 
-    report = _append_consultation_row(root, row)
+    report = _append_evaluation_row(root, row)
     _emit({"status": "considered", "root": root, "language": language,
-           "consultation": row, "append": report})
+           "evaluation": row, "append": report})
 
 
 def cmd_refresh(args):
@@ -5678,8 +5678,8 @@ def build_parser():
     consider.add_argument("--premise",
                           help="the hypothetical trade: a path to a JSON file, or an inline JSON "
                                "object (schemas/trade-premise.schema.json)")
-    consider.add_argument("--resolve", metavar="CONSULTATION_ID",
-                          help="record what the user did with a prior consultation; takes no "
+    consider.add_argument("--resolve", metavar="EVALUATION_ID",
+                          help="record what the user did with a prior evaluation; takes no "
                                "premise")
     consider.add_argument("--decision", choices=CONSIDER_DECISIONS,
                           help="required together with --resolve")

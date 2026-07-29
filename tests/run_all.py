@@ -23,7 +23,7 @@ SUITES = [
     ("Same-day fetch cache (#235)", "tests/test_fetch_cache.py"),
     ("Condition slots (#412)", "tests/test_conditions.py"),
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
-    ("Pre-trade consultation CLI (Layer 2 entry point)", "tests/test_consider.py"),
+    ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py"),
     ("Answer provenance gate (#414, Wave A)", "tests/test_answer_provenance.py"),
     ("Behavior verdicts (#446)", "tests/test_verdicts.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),

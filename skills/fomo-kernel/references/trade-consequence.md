@@ -111,13 +111,13 @@ Structured claims only, never a free prose blob. If you send it, both `for` and 
 Every call is recorded in a local, append-only log — nothing about it is presented back automatically, and nothing about it is required. Once the user has decided, tell the engine with `--resolve`:
 
 ```bash
-python3 engine/review.py consider --resolve <consultation_id> --decision acted
+python3 engine/review.py consider --resolve <evaluation_id> --decision acted
 ```
 
-`--decision` is one of `acted`, `declined`, or `modified`. `--resolve` takes no premise and no other consideration flags — the consultation it names already carries all of that, frozen from when it was asked. A resolution never rewrites the original record; it appends a new entry that supersedes the old by id, so what the engine actually said at the time is never lost.
+`--decision` is one of `acted`, `declined`, or `modified`. `--resolve` takes no premise and no other consideration flags — the evaluation it names already carries all of that, frozen from when it was asked. A resolution never rewrites the original record; it appends a new entry that supersedes the old by id, so what the engine actually said at the time is never lost.
 
 There is no obligation to call `--resolve`, and no review step depends on it. Do it when it is natural in the conversation, not as a checklist item.
 
 ## What a later review does with an unresolved one
 
-A consultation left at `decision: "open"` does not go silent. The next `prepare` reconciles it against the transaction record and carries the result in the Review Plan's `consultation_reconciliation` — a `matched` entry names the date and quantity of a trade found for that ticker and side between the consultation's `created` day and the review's own close; `unmatched` means none was found. This is a fact about the record, never a claim about cause: `matched` is evidence a qualifying trade happened, not evidence the user made it *because of* the consultation, and a review never writes `decision` — that stays the user's own word, set only through `--resolve` above. Raise a surfaced consultation the same way any other supplied fact earns a turn: judge whether it is the relevant thing to say in this scene, not an automatic prompt.
+An evaluation left at `decision: "open"` does not go silent. The next `prepare` reconciles it against the transaction record and carries the result in the Review Plan's `evaluation_reconciliation` — a `matched` entry names the date and quantity of a trade found for that ticker and side between the evaluation's `created` day and the review's own close; `unmatched` means none was found. This is a fact about the record, never a claim about cause: `matched` is evidence a qualifying trade happened, not evidence the user made it *because of* the evaluation, and a review never writes `decision` — that stays the user's own word, set only through `--resolve` above. Raise a surfaced evaluation the same way any other supplied fact earns a turn: judge whether it is the relevant thing to say in this scene, not an automatic prompt.

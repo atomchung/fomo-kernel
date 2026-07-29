@@ -36,7 +36,7 @@ import review as review_engine  # noqa: E402
 #
 # A minimal, realistic frozen trio shaped exactly like cmd_consider's own
 # output (row["basis"], row["consequence"], row["rule_collisions"] --
-# schemas/pre-trade-consultation.schema.json): a book already over its own
+# schemas/trade-evaluation.schema.json): a book already over its own
 # 25% NVDA cap, growing further, on a five-day-stale ledger-backed basis
 # with one open disclosure. Every fixture function returns a fresh literal
 # so no test can mutate another test's data by sharing a dict.
@@ -335,7 +335,7 @@ def test_valid_case_matches_the_new_schemas_declared_shape():
     """Spot-check a validator-accepted payload against
     schemas/answer-provenance.schema.json -- the same "no jsonschema
     dependency, hand-pin the vocabulary" idiom test_consider.py's own
-    _check_consultation_shape already uses for the sibling schema."""
+    _check_evaluation_shape already uses for the sibling schema."""
     schema = _schema("answer-provenance.schema.json")
     case = _valid_case()
     for side in ("for", "against"):
