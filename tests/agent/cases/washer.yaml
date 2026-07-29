@@ -8,17 +8,26 @@ persona: washer                    # 腳本見 tests/agent/personas.md
 # (EVALS.md 2026-07-04 回歸紀錄實測)。B-1 的「該問有沒有問」主路徑要互動驗。
 run_mode: interactive
 
+# #542:洗白標的 + 允許/禁止標籤集合(check_card.check_ticker_diagnosis 讀這三欄
+# 實作 B-1;run_case.sh --headless 把它們轉成 --ticker/--forbidden-tags/
+# --allowed-tags 餵給 check_card.py)。標籤是 copy/<locale>.json instrument_tags
+# 的 code(card_renderer.localized_instrument_tag 解析的同一份目錄的 key),不是
+# 卡面上會印出的字面詞——「逢低」只是這條斷言原本的口語別名,卡面實際印的是
+# suspected_dca 那句模板(疑似定投/likely DCA)。
+subject_ticker: INTC
+subject_forbidden_tags: suspected_dca
+subject_allowed_tags: suspected_averaging_down_losing,suspected_averaging_down_recovered,adds_pending_confirmation
+
 # 現在可機檢(run_case.sh --check 對產出的卡/狀態跑):
 card:
-  invariants: all                  # A-2/A-3/A-6/A-12/A-13/B-7/B-9 一律不得踩(check_card)
+  invariants: all                  # A-2/A-3/A-6/A-12/A-13/B-7/B-9 一律不得踩(check_card);
+                                    # B-9 現含 #542 section-scope 升級,見 check_card.py 檔頭
+  ticker_diagnosis: subject_*      # B-1(check_card.check_ticker_diagnosis,讀上面三欄;#542)
 state:
   check: all                       # S-1..S-4(check_state)
 
-# 待擴充(check_card 目前只做卡層 invariants;下列需 section 定位 / 互動 trajectory):
+# 待擴充(trajectory 斷言,headless 測不到互動主路徑——見檔頭 run_mode 說明):
 pending:
-  - id: B-1
-    assert: INTC 標籤 ∈ {凹單, 待確認} 且 ∉ {逢低};headline 洞仍在
-    why: 需定位 ticker_diagnosis 區塊 + 知道洗白標的;現靠人判 / judge
   - id: C-2
     assert: Step 2 問句是二選一帶真實 INTC 數字,不是照抄模板;沒被草草帶過
     why: trajectory 斷言,需 stream-json tool-call(互動主路徑)

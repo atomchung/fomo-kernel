@@ -17,15 +17,21 @@
 #
 # checker 本身的驗活(斷言是活的)走 tests/test_checkers_offline.py(進 run_all.py);
 # 這支只負責「產卡 → 餵 checker」的編排,不重造斷言。
+#
+# #542:B-1(check_ticker_diagnosis)需要 case 宣告洗白標的 + 標籤集合,是 case 資料
+# 不是這支腳本的常數,所以只在 --headless 分支(手上有 case.yaml 可讀)才轉成
+# check_card.py 的 --ticker/--forbidden-tags/--allowed-tags;--check 分支只拿到
+# 一張卡 + 一個 state_dir、沒有 case 可查,行為不變。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 
-run_checkers() {                       # $1=card 檔  $2=state_dir
+run_checkers() {                       # $1=card 檔  $2=state_dir  其餘($3+)=check_card.py 額外參數(可空,#542 B-1 用)
   local card="$1" state_dir="$2" rc=0
+  shift 2
   echo "── check_card: $card ──"
-  python3 "$HERE/check_card.py" "$card" || rc=1
+  python3 "$HERE/check_card.py" "$card" "$@" || rc=1
   echo "── check_state: $state_dir ──"
   python3 "$HERE/check_state.py" "$state_dir" || rc=1
   return $rc
@@ -49,6 +55,13 @@ case "${1:-}" in
     CSV="$(grep -E '^csv:' "$CASE" | head -1 | sed -E 's/^csv:[[:space:]]*//')"
     NAME="$(grep -E '^name:' "$CASE" | head -1 | sed -E 's/^name:[[:space:]]*//')"
     [ -n "$CSV" ] || { echo "case.yaml 缺 csv: 欄位" >&2; exit 2; }
+    # #542:B-1 的洗白標的 + 標籤集合,同款極簡取值——空值合法(不是每個 case 都要
+    # 宣告)。每條都補 `|| true`:CSV/NAME 從不缺欄所以從沒踩過,但這三個選填欄在
+    # 大多數 case(如 clean.yaml)本來就沒有,grep 找不到會以 exit 1 收尾,`set -e
+    # -o pipefail` 下會讓整支腳本在還沒印出任何東西前就當掉。
+    SUBJECT_TICKER="$(grep -E '^subject_ticker:' "$CASE" | head -1 | sed -E 's/^subject_ticker:[[:space:]]*//' || true)"
+    SUBJECT_FORBIDDEN="$(grep -E '^subject_forbidden_tags:' "$CASE" | head -1 | sed -E 's/^subject_forbidden_tags:[[:space:]]*//' || true)"
+    SUBJECT_ALLOWED="$(grep -E '^subject_allowed_tags:' "$CASE" | head -1 | sed -E 's/^subject_allowed_tags:[[:space:]]*//' || true)"
 
     HOME_TMP="$(mktemp -d)"             # 隔離 HOME:受測 session 的 ~/.trade-coach 不碰真資料(§8 反模式 3)
     trap 'rm -rf "$HOME_TMP"' EXIT
@@ -64,7 +77,13 @@ case "${1:-}" in
     STATE_DIR="$HOME_TMP/.trade-coach"
     CARD="$(ls -t "$STATE_DIR"/cards/*.md 2>/dev/null | head -1 || true)"
     [ -n "$CARD" ] || { echo "沒找到產出的卡(cards/*.md);skill 可能沒跑到收尾。" >&2; exit 1; }
-    run_checkers "$CARD" "$STATE_DIR"
+    EXTRA_ARGS=()
+    if [ -n "$SUBJECT_TICKER" ]; then
+      EXTRA_ARGS=(--ticker "$SUBJECT_TICKER")
+      [ -n "$SUBJECT_FORBIDDEN" ] && EXTRA_ARGS+=(--forbidden-tags "$SUBJECT_FORBIDDEN")
+      [ -n "$SUBJECT_ALLOWED" ] && EXTRA_ARGS+=(--allowed-tags "$SUBJECT_ALLOWED")
+    fi
+    run_checkers "$CARD" "$STATE_DIR" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
     ;;
 
   *)
