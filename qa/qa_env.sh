@@ -19,6 +19,22 @@
 #     dogfood root (backup first, then the product's coach.py data-reset --root).
 #     The real ~/.trade-coach is reset only by the dedicated reset-fomo-coach.sh;
 #     this script never touches it.
+#   - TRADE_COACH_HOME routes a WRITER. It cannot bound a READER, and the reader
+#     is a model with a shell: given a throwaway root it judged empty, one
+#     composed the hardcoded default $HOME/.trade-coach on its own initiative
+#     and read the account's real ledger (#557). So `isolate` additionally
+#     replaces HOME for the run, which makes that default composition name
+#     nothing, and every other command here REFUSES until it took effect.
+#
+# Whose HOME is whose (get this backwards and the harness quietly stops
+# isolating anything):
+#   - the AGENT-facing HOME is the throwaway one `isolate` prints. Under it,
+#     ~/.trade-coach and ~/.trade-coach-dogfood both name nothing.
+#   - THIS SCRIPT is the harness, not the agent. Its own paths -- the repo, the
+#     dogfood worktree, the receipt archive, git's own configuration -- really do
+#     live under the account's home, so it reads that home from the password
+#     database (which $HOME cannot forge) and restores it for its own work. The
+#     caller's HOME is kept only to hand to the isolation check.
 #
 # HARD ISOLATION (fail closed):
 #   - only ever operates on a worktree whose path contains "dogfood", so a
@@ -30,6 +46,11 @@
 #   - never reads or writes ~/Side_project/investment_note.
 #
 # Usage:
+#   eval "$(./qa_env.sh isolate)"
+#                           # FIRST, in every shell of the run: print the export
+#                           # block that puts this shell under a throwaway HOME
+#                           # with the isolated coach root already routed. Every
+#                           # other command below refuses until it has been run.
 #   ./qa_env.sh status      # read-only: fetch, report main sha, worktree + dogfood state
 #   ./qa_env.sh up          # create/refresh the dogfood worktree to latest origin/main
 #   ./qa_env.sh path        # print the dogfood worktree path (for a later cd)
@@ -57,11 +78,27 @@
 #     export FOMO_DOGFOOD_WT="$HOME/Side_project/kol_collector/fomo-kernel-dogfood-<tag>"
 #     export FOMO_DOGFOOD_COACH="$HOME/.trade-coach-dogfood-<tag>"
 #     export FOMO_DOGFOOD_BACKUPS="$HOME/.trade-coach-dogfood-backups-<tag>"
-#   FOMO_QA_RECEIPTS can stay shared — archive-receipt's run_id already carries
-#   a second-precision timestamp, the tested commit sha, and the session id,
-#   so concurrent archives don't collide on a filename.
+#   Export those BEFORE `isolate`, while $HOME is still the account's own: after
+#   the eval, $HOME is the throwaway one and a $HOME-relative value written then
+#   would land inside it. FOMO_QA_HOME picks a per-session throwaway home the
+#   same way. FOMO_QA_RECEIPTS can stay shared — archive-receipt's run_id
+#   already carries a second-precision timestamp, the tested commit sha, and the
+#   session id, so concurrent archives don't collide on a filename.
 
 set -euo pipefail
+
+# The HOME this script was CALLED with is evidence, not configuration: it is the
+# environment the run's own commands will execute in, and the isolation check
+# below is a statement about it. Keep it, then work under the account's real
+# home, which $HOME cannot forge because it comes from the password database.
+CALLER_HOME="${HOME-}"
+REAL_HOME="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)' 2>/dev/null || true)"
+if [ -z "$REAL_HOME" ] || [ ! -d "$REAL_HOME" ]; then
+  echo "REFUSING: cannot read this account's home from the password database," >&2
+  echo "so the harness cannot tell its own paths apart from the isolated ones." >&2
+  exit 1
+fi
+export HOME="$REAL_HOME"
 
 REPO="${FOMO_REPO:-$HOME/Side_project/kol_collector/fomo-kernel}"
 DOGFOOD_WT="${FOMO_DOGFOOD_WT:-$HOME/Side_project/kol_collector/fomo-kernel-dogfood}"
@@ -77,7 +114,77 @@ DOGFOOD_COACH_ROOT="${FOMO_DOGFOOD_COACH:-$HOME/.trade-coach-dogfood}"
 # guard umbrella as the other dogfood paths.
 DOGFOOD_BACKUP_DIR="${FOMO_DOGFOOD_BACKUPS:-$HOME/.trade-coach-dogfood-backups}"
 RECEIPT_DIR="${FOMO_QA_RECEIPTS:-$HOME/.fomo-qa-receipts}"
+# The throwaway HOME the run executes under. Its only job is that
+# "$QA_HOME/.trade-coach" — the path every reader of this product composes by
+# default, including a model improvising a shell command — names nothing.
+QA_HOME="${FOMO_QA_HOME:-$HOME/.fomo-qa-home}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve the physical directory containing THIS running script. Normal
+# install is a directory symlink (~/.claude/skills/fomo-qa -> <repo>/qa; the
+# script FILE itself usually isn't a symlink, only its parent directory is),
+# and macOS `readlink` has no `-f` to resolve that in one call. Walk any
+# symlink on the file itself first (rare), then let `cd -P` resolve a
+# symlinked directory anywhere in what's left of the path (the normal case).
+_self_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  local target
+  while [ -L "$src" ]; do
+    target="$(readlink "$src")"
+    case "$target" in
+      /*) src="$target" ;;
+      *)  src="$(cd -P "$(dirname "$src")" && pwd)/$target" ;;
+    esac
+  done
+  (cd -P "$(dirname "$src")" && pwd)
+}
+
+# --- Runbook gate 2: isolation is verified, never assumed (#557) -------------
+# The check lives in the product's own tool because `docs/qa-runbook.md` is the
+# cross-client contract and a maintainer on Codex or Cursor has no copy of this
+# script. Prefer the checkout this script physically belongs to — it is the one
+# guaranteed to be beside us — and fall back to $REPO's copy.
+_qa_preflight_tool() {
+  local here candidate
+  here="$(_self_script_dir 2>/dev/null || true)"
+  for candidate in "${here:-/nonexistent}/../skills/fomo-kernel/tools/qa_preflight.py" \
+                   "$REPO/skills/fomo-kernel/tools/qa_preflight.py"; do
+    if [ -f "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Refuse every command until the caller's own environment has the account's
+# coach root out of reach. The failure this gates is an agent not following an
+# instruction it was never given, so an instruction cannot be the fix.
+_require_isolation() {
+  local tool reasons
+  if ! tool="$(_qa_preflight_tool)"; then
+    echo "REFUSING: qa_preflight.py not found, so run isolation cannot be verified (#557)." >&2
+    exit 1
+  fi
+  # stdout (the JSON report) is discarded; stderr carries one line per failure.
+  if reasons="$(HOME="$CALLER_HOME" python3 "$tool" isolate-check 2>&1 >/dev/null)"; then
+    return 0
+  fi
+  echo "REFUSING: this shell is not isolated from the account's own coach root (#557)." >&2
+  if [ -n "$reasons" ]; then
+    echo "$reasons" >&2
+  fi
+  echo "" >&2
+  echo "Establish isolation in THIS shell, then re-run the command:" >&2
+  echo "  eval \"\$($0 isolate)\"" >&2
+  exit 1
+}
+
+case "${1:-status}" in
+  # `isolate` is the command that establishes isolation, so it cannot require it.
+  isolate) : ;;
+  *) _require_isolation ;;
+esac
 
 # --- Isolation guards (fail closed) -----------------------------------------
 # 1. The dogfood worktree path MUST contain "dogfood". `up` runs
@@ -138,27 +245,17 @@ if [ ! -e "$REPO/.git" ] || [ ! -f "$REPO/skills/fomo-kernel/engine/review.py" ]
   exit 1
 fi
 
+# Now that the guards have vouched for it, route this script's OWN children at
+# the dogfood root as well. Every one of them already passes an explicit
+# --root/--state-root, so this changes nothing today; it exists so that a child
+# added later without one lands in the throwaway root instead of the account's.
+# Deliberately after the isolation gate, never before: setting it earlier would
+# hand the check a value the caller never declared, and `state_root_undeclared`
+# would become unreachable.
+export TRADE_COACH_HOME="$DOGFOOD_COACH_ROOT"
+
 _origin_main_sha() { git -C "$REPO" rev-parse --short origin/main; }
 _origin_main_line() { git -C "$REPO" log -1 --format='%h %s' origin/main; }
-
-# Resolve the physical directory containing THIS running script. Normal
-# install is a directory symlink (~/.claude/skills/fomo-qa -> <repo>/qa; the
-# script FILE itself usually isn't a symlink, only its parent directory is),
-# and macOS `readlink` has no `-f` to resolve that in one call. Walk any
-# symlink on the file itself first (rare), then let `cd -P` resolve a
-# symlinked directory anywhere in what's left of the path (the normal case).
-_self_script_dir() {
-  local src="${BASH_SOURCE[0]}"
-  local target
-  while [ -L "$src" ]; do
-    target="$(readlink "$src")"
-    case "$target" in
-      /*) src="$target" ;;
-      *)  src="$(cd -P "$(dirname "$src")" && pwd)/$target" ;;
-    esac
-  done
-  (cd -P "$(dirname "$src")" && pwd)
-}
 
 # Report whether the checkout THIS script actually runs from — not $REPO and
 # not the dogfood worktree; the installed skill can be symlinked from a
@@ -207,6 +304,76 @@ _report_skill_freshness() {
   return 0
 }
 
+cmd_isolate() {
+  # Print the export block that puts the CALLER's shell under a throwaway HOME.
+  # Everything printed here is an absolute value resolved against the account's
+  # real home BEFORE the override, which is the whole trick: the harness's own
+  # paths must not move when the agent's ~ does.
+  if [ "$QA_HOME" = "$HOME" ] || [ "$QA_HOME" = "/" ] || [ -z "$QA_HOME" ]; then
+    echo "REFUSING: the QA home must not be the account's own home or the filesystem root." >&2
+    echo "Fix FOMO_QA_HOME." >&2
+    exit 1
+  fi
+  case "$QA_HOME" in
+    *investment_note*|*investment-note*)
+      echo "REFUSING: QA home '$QA_HOME' overlaps real investment records." >&2
+      exit 1 ;;
+  esac
+  if [ -e "$QA_HOME/.trade-coach" ]; then
+    # The single fact this whole lane buys is that this path names nothing.
+    echo "REFUSING: '$QA_HOME/.trade-coach' exists, so the default coach root would" >&2
+    echo "still resolve under the isolated HOME. Remove or rename it." >&2
+    exit 1
+  fi
+  mkdir -p "$QA_HOME"
+  if [ ! -f "$QA_HOME/README.txt" ]; then
+    cat > "$QA_HOME/README.txt" <<EOF
+This directory is the HOME a fomo-kernel dogfood QA run executes under (issue #557).
+
+It is deliberately not the account's own home. It exists so that ~/.trade-coach --
+the path review.py, coach.py, tools/ux_receipt.py and any agent improvising a shell
+command all compose by default -- names nothing at all here.
+
+This run's state lives at \$TRADE_COACH_HOME ($DOGFOOD_COACH_ROOT). Read and write
+that, and nothing outside it.
+
+An unfamiliar, nearly empty home is the design, not a fault. Do not go looking for a
+more familiar one.
+EOF
+  fi
+
+  local user_base user_site gitconfig gh_config
+  user_base="$(python3 -c 'import site; print(site.getuserbase())' 2>/dev/null || true)"
+  user_site="$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || true)"
+  gitconfig="$HOME/.gitconfig"
+  gh_config="$HOME/.config/gh"
+
+  echo "# fomo-kernel dogfood isolation (#557). eval this in every shell of the run."
+  echo "# The account's own ~/.trade-coach stops being reachable by the default path;"
+  echo "# an absolute path typed on purpose still is -- see docs/qa-runbook.md."
+  printf 'export TRADE_COACH_HOME=%q\n' "$DOGFOOD_COACH_ROOT"
+  # A replaced HOME also replaces Python's user-site directory, which is where a
+  # managed runtime keeps user-installed dependencies (yfinance, for one). Pin
+  # them, or "isolated" would silently also mean "half the optional code paths
+  # stopped being importable" and the run would test something else.
+  if [ -n "$user_base" ]; then
+    printf 'export PYTHONUSERBASE=%q\n' "$user_base"
+  fi
+  if [ -d "$user_site" ]; then
+    printf 'export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH}\n' "$user_site"
+  fi
+  # Same reasoning for the two configs a QA run legitimately needs to reach out
+  # with: git identity and the GitHub CLI's credentials. They are pinned rather
+  # than relocated, so `gh issue list` in step 5 still works.
+  if [ -f "$gitconfig" ]; then
+    printf 'export GIT_CONFIG_GLOBAL=%q\n' "$gitconfig"
+  fi
+  if [ -d "$gh_config" ]; then
+    printf 'export GH_CONFIG_DIR=%q\n' "$gh_config"
+  fi
+  printf 'export HOME=%q\n' "$QA_HOME"
+}
+
 cmd_status() {
   echo "== fomo-kernel QA environment =="
   echo "repo:          $REPO"
@@ -248,8 +415,9 @@ print('state files: ', (', '.join(present) if present else 'NONE -> fresh new-us
     echo "(coach.py not found at $coach)"
   fi
   echo ""
-  echo "-- route the review lifecycle into this isolated root before walking Step 4: --"
-  echo "   export TRADE_COACH_HOME=$DOGFOOD_COACH_ROOT"
+  echo "-- isolation (#557): this shell already passed the gate. Re-establish it in --"
+  echo "-- every later shell of the run, before any engine or receipt command:      --"
+  echo "   eval \"\$($0 isolate)\""
 }
 
 cmd_up() {
@@ -508,6 +676,7 @@ cmd_slice_csv() {
 }
 
 case "${1:-status}" in
+  isolate)         cmd_isolate ;;
   status)          cmd_status ;;
   up)              cmd_up ;;
   path)            cmd_path ;;
@@ -518,6 +687,6 @@ case "${1:-status}" in
   report)          cmd_report ;;
   slice-csv)       cmd_slice_csv "${2:-}" "${3:-}" "${4:-}" ;;
   *)
-    echo "usage: $0 {status|up|path|coach-root|reset|down|archive-receipt <path> <data-source> <human> --agent-model <label> --effort <setting> --campaign <id> --case-id <id> --state-mode fresh|continued [--parent-run-id <id>]|report|slice-csv <src.csv> <until> <dst.csv>}" >&2
+    echo "usage: $0 {isolate|status|up|path|coach-root|reset|down|archive-receipt <path> <data-source> <human> --agent-model <label> --effort <setting> --campaign <id> --case-id <id> --state-mode fresh|continued [--parent-run-id <id>]|report|slice-csv <src.csv> <until> <dst.csv>}" >&2
     exit 2 ;;
 esac

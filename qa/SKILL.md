@@ -36,7 +36,7 @@ This round verifies **L1: environment consistency + engine CLI contract + agent 
 ## Hard isolation guardrails (read first, non-negotiable)
 
 1. **Never touch the real records**: `~/Side_project/investment_note/` holds ting's real investment records. Only the "real trades" data source reads **one** CSV there, read-only; nothing else is read or written.
-2. **Coach state is isolated to a dogfood-only root**: dogfood always uses a separate `~/.trade-coach-dogfood`, fully apart from the `~/.trade-coach` you use with the real product. Clear it with `qa_env.sh reset` (which backs up first and fail-closed refuses to touch the real root or investment_note). The real `~/.trade-coach` is managed only by `reset-fomo-coach.sh`; the dogfood procedure never touches it. Never hand-write an `rm` against any coach root.
+2. **Coach state is isolated to a dogfood-only root, and the real one is not reachable**: dogfood always uses a separate `~/.trade-coach-dogfood`, fully apart from the `~/.trade-coach` you use with the real product. Clear it with `qa_env.sh reset` (which backs up first and fail-closed refuses to touch the real root or investment_note). The real `~/.trade-coach` is managed only by `reset-fomo-coach.sh`; the dogfood procedure never touches it. Never hand-write an `rm` against any coach root. **`TRADE_COACH_HOME` routes writers only** — it never stopped anything reading the real root, and in #557 an agent that judged the isolated root unfamiliar and empty read the real ledger on its own initiative. Step 0's `isolate` closes that path by replacing `HOME`, and is a gate rather than a request. A dogfood root that looks empty is a fresh dogfood root; never go looking for a fuller one, and never compose an absolute path to the real one — that is the one hole this lane cannot close.
 3. **Work only in the dogfood worktree**: every engine command runs inside the detached worktree created by `qa_env.sh up`. `qa_env.sh` is itself fail-closed and only operates on a worktree whose path contains `dogfood`, so a slip cannot discard another session's uncommitted work.
 4. **Do not change product code**: QA reads, it does not edit. If the walkthrough finds a bug, write it down and open an issue; do not fix it in the dogfood worktree (it is detached and exists to be tested, not developed).
 5. **Public text passes the privacy lint first (bought by the #274 incident)**: the repository is public, and real tickers, specific amounts, or `TICKER#date#seq` position ids **must never** appear in an issue, PR, comment or commit message — text channels count, not just files. If this QA session used real trade data, run every draft destined for GitHub through the lint first (from `skills/fomo-kernel/` inside the dogfood worktree):
@@ -57,7 +57,17 @@ This round verifies **L1: environment consistency + engine CLI contract + agent 
 
 ## The fixed procedure
 
-### Step 0 — Version gate (read-only; look at the whole picture first)
+### Step 0 — Isolate this shell, then the version gate (read-only)
+
+`qa_env.sh` **refuses every command** until the shell it runs in has the account's own coach root out of reach (#557), so this line comes before everything else — including `status` — and has to be repeated in every later shell of the campaign:
+
+```bash
+eval "$(~/.claude/skills/fomo-qa/qa_env.sh isolate)"
+```
+
+It exports the dogfood `TRADE_COACH_HOME` **and** replaces `HOME` with a throwaway directory, so that `~/.trade-coach` — the path `review.py`, `coach.py`, `tools/ux_receipt.py` and any improvised shell command all compose by default — names nothing. Every value in the block is resolved against the account's real home *before* the override, which is why the repo, the dogfood worktree, the receipt archive, `git`'s configuration and Python's user-installed packages keep working after it. Export any `FOMO_DOGFOOD_*` overrides for a concurrent session **before** this line, while `$HOME` is still the account's own.
+
+It is a bounded guarantee, and reporting it as more than that is the failure it was written against: an absolute path typed on purpose still reaches the real root, and only running the campaign in a container would change that. Do not type one.
 
 ```bash
 ~/.claude/skills/fomo-qa/qa_env.sh status
@@ -93,10 +103,10 @@ Three identities that are deliberately not one-to-one (#544):
 
 **Never merge route runs into one receipt.** A `first_review` owes two cards and a cash anchor, a `refresh` owes a card-free change surface and no cards at all — one mixed trace could satisfy neither verifier. The reusable unit is the campaign, not the receipt.
 
-**First route the whole toolchain into the dogfood-only coach root** (isolated from the real `~/.trade-coach`; `review.py`, `coach.py` and `tools/ux_receipt.py` **all three** honor `TRADE_COACH_HOME` — ux_receipt since the #269 fix, merged in PR #275 — so one export keeps `prepare`/`preview`/`finalize`/`data-status` and the receipt consistent throughout):
+**Step 0's `isolate` already routed the whole toolchain into the dogfood-only coach root** — `review.py`, `coach.py` and `tools/ux_receipt.py` **all three** honor `TRADE_COACH_HOME` (ux_receipt since the #269 fix, merged in PR #275), so that one export keeps `prepare`/`preview`/`finalize`/`data-status` and the receipt consistent throughout. If this is a new shell, re-run it before anything else:
 
 ```bash
-export TRADE_COACH_HOME="$(~/.claude/skills/fomo-qa/qa_env.sh coach-root)"
+eval "$(~/.claude/skills/fomo-qa/qa_env.sh isolate)"
 ```
 
 - **Simulate a brand-new user** (the default; runs first-review):
@@ -109,7 +119,7 @@ export TRADE_COACH_HOME="$(~/.claude/skills/fomo-qa/qa_env.sh coach-root)"
 
 Confirm with the user which one to simulate; default to "brand-new user" when unsure. This is a **campaign-level** choice, made once. It is not re-asked before each route run: a campaign that opened fresh and then finalized a `first_review` **is** a returning user for everything that follows, without a reset and without leaving the conversation. That is the cheapest way to reach the returning-user routes, and since #544 it is the documented one.
 
-**This `export` must survive into every later shell** — if commands each start a new shell, re-run this line in every one, for every route run in the campaign.
+**This isolation must survive into every later shell** — if commands each start a new shell, re-run the `isolate` line in every one, for every route run in the campaign. `qa_env.sh` refuses when it has not been; the engine and receipt commands do not, because they are product commands a real user runs against their own root, so a shell that quietly lost it writes the dogfood run into the real book. Establish it first, every time.
 
 ### Step 3 — Choose a data source (one of three, standardized)
 

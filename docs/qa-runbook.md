@@ -55,10 +55,16 @@ once and they hold for every run that follows in the same conversation.
    sha was recorded before starting. Testing a stale worktree measures a past
    slice of the product and the result cannot be attributed afterwards.
 2. **Isolated state root** — `TRADE_COACH_HOME` pointed at a dedicated
-   dogfood root for the entire session. The real `~/.trade-coach` and the
-   maintainer's private records directory are never read or written. All
-   lifecycle tools honor `TRADE_COACH_HOME` (`review.py`, `coach.py`,
-   `tools/ux_receipt.py` — the last one since #269).
+   dogfood root for the entire session, **and** the run's `HOME` was replaced
+   so that `~/.trade-coach` — the path every reader of this product composes
+   by default — names nothing at all (#557). All lifecycle tools honor
+   `TRADE_COACH_HOME` (`review.py`, `coach.py`, `tools/ux_receipt.py` — the
+   last one since #269), but that variable routes a *writer*; it cannot bound
+   a *reader*, and the reader is an agent with a shell. Verify it rather than
+   declare it: `qa_preflight.py isolate-check` exits non-zero while the
+   account's own root is still reachable, and the owner's `qa_env.sh` refuses
+   every command until it passes. See "What the isolation lane does and does
+   not buy" below for the part it cannot close.
 3. **Presentation receipt** — every user-visible step was recorded through
    `tools/ux_receipt.py` (`start` with an honest `--client`, resolved adapter,
    and capability declaration, then events after each user-visible action). A run without a
@@ -104,7 +110,7 @@ machine-enforced versus procedural:
 | Gate | Machine-enforced by | Procedural part |
 |---|---|---|
 | 1. Version | — | record the sha yourself before starting (the owner's `/fomo-qa` skill automates this) |
-| 2. Isolation | engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | exporting it, and not overriding it per-command |
+| 2. Isolation | `qa_preflight.py isolate-check` exits non-zero while `~/.trade-coach` resolves to anything, while `TRADE_COACH_HOME` is undeclared, or while it points into the account's own root — it reads the account's home from the password database, so a replaced `$HOME` cannot testify on its own behalf; `qa_env.sh` runs it before every command and refuses (#557). Engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | establishing the isolated environment in each new shell, and not overriding either variable per-command. On a client without `qa_env.sh`, running `isolate-check` yourself |
 | 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, a missing weekly opener, or a missing/duplicated/misordered `cash_anchor_checked` on a `first_review`/`weekly_review` trace (#357 — the check is tier-blind by design: a light-tier session writes no receipt at all, per the scope rule in `references/interaction-delivery.md`); it machine-reports timing plausibility separately. What a trace owes is read from its declared route, so the card-free `refresh` route (#523) is held to a **change surface** instead — and, symmetrically, `verify` refuses a refresh trace recording any card event, and refuses `change_presented` on a card-producing route | recording every event honestly, right after the user sees it |
 | 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence. Which axes must be affirmative is the route's own contract: `card=pass` on a card route, `memory=pass` additionally on `weekly_review`, and on the card-free `refresh` route `change=pass` with `card=not_applicable` — a verdict that judges the change surface the user actually saw rather than a card nobody rendered | running both flags on human-graded runs; auditing or re-running suspect timing |
 | 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt, and refuses a run that names no campaign/`case_id`/state mode, or claims to continue a `parent_run_id` with no archived manifest behind it (#520) | on other clients, writing the manifest fields by hand; on every client, that the `case_id` is the one the run actually walked |
@@ -126,11 +132,15 @@ agent-run flow with only a final owner verdict is `agent_with_owner_verdict`.
 
 - **Real trade CSVs are read-only, always.** Nothing in a QA run ever writes
   to the maintainer's private records.
-- **Never point any tool at the real `~/.trade-coach`.** One
+- **Never point any tool at the real `~/.trade-coach`, and never read it.** One
   `export TRADE_COACH_HOME=<dogfood-root>` at the start of the session routes
   `prepare`/`preview`/`finalize`/`resume`, `coach.py`, and `ux_receipt.py`
   consistently. Do not pass per-command `--root`/`--state-root` overrides that
-  disagree with it.
+  disagree with it. The reading half is not covered by that export at all —
+  step 1's `HOME` replacement is what makes the default path name nothing, and
+  it is enforced rather than requested (#557). If the isolated root looks
+  unfamiliar or empty, that is what a fresh dogfood root looks like; do not go
+  looking for a more familiar one.
 - **QA worktrees are read-only for product code.** If you find a bug, record
   it and open an issue; do not patch the checkout you are testing.
 - **Public text passes the privacy lint.** This repository is public. Real
@@ -165,15 +175,57 @@ SHA by hand.
 
 ### 1. Isolate
 
+Two things, not one: route the writers at a dedicated dogfood root, and put the
+shell under a `HOME` where the default root names nothing.
+
 ```bash
+# Owner's machine (the /fomo-qa skill): one command does both, and every other
+# qa_env.sh command refuses until it has been run in this shell.
+eval "$(qa_env.sh isolate)"
+
+# Any other client, by hand — pick a throwaway home that has no .trade-coach in it:
 export TRADE_COACH_HOME="$HOME/.trade-coach-dogfood"   # dedicated dogfood root
+export HOME="<a throwaway directory>"                  # ~/.trade-coach now names nothing
+
+# Either way, prove it before starting. Non-zero here means this is not a QA run.
+python3 skills/fomo-kernel/tools/qa_preflight.py isolate-check
 ```
 
-Keep this export alive for every later command in the session (re-export in
-each new shell). To simulate a brand-new user, clear the dogfood root through
-`coach.py data-reset --root "$TRADE_COACH_HOME" --confirm` (backup first via
-`data-export` if the prior state matters); to simulate a returning user, keep
-the previous state. Never run reset-style commands against the real root.
+Resolve every path the harness itself owns — the repository, the dogfood
+worktree, the receipt archive, the dogfood root — **before** replacing `HOME`,
+or export them as absolute values. They genuinely live under the account's home,
+and a `HOME` override that relocates them leaves the harness unable to find
+anything, which gets the override dropped rather than fixed. `qa_env.sh` does
+this by reading the account's home from the password database, which `$HOME`
+cannot forge; a hand-rolled setup on another client has to do the same by hand,
+including `PYTHONUSERBASE`/`PYTHONPATH` if the runtime keeps user-installed
+dependencies under the home directory.
+
+Keep both exports alive for every later command in the session (re-establish
+them in each new shell). To simulate a brand-new user, clear the dogfood root
+through `coach.py data-reset --root "$TRADE_COACH_HOME" --confirm` (backup first
+via `data-export` if the prior state matters); to simulate a returning user,
+keep the previous state. Never run reset-style commands against the real root.
+
+#### What the isolation lane does and does not buy
+
+State this accurately when reporting a run; it is a bounded guarantee, not a
+sandbox.
+
+- **Closed**: the hardcoded default. `~/.trade-coach`, `$HOME/.trade-coach` and
+  `os.path.expanduser("~/.trade-coach")` all resolve through `HOME`, so under
+  the replacement they name nothing. That is the exact composition an agent
+  reached for in #557 after judging the isolated root unfamiliar and empty.
+- **Not closed**: an absolute path typed on purpose. Nothing here removes the
+  account's real root from the filesystem, and the account's home appears in
+  the run's own environment anyway, because the repository and the dogfood
+  worktree really are under it. An agent that decides to compose that path
+  still reaches it. Only running the campaign in a container or ephemeral
+  runner with no such path makes it unreachable, and that lane is not built.
+- **Out of scope by design**: the real-trades data source. That lane hands the
+  run an absolute, read-only path into the maintainer's private records on
+  purpose (step 2), so `HOME` isolation says nothing about it. Gate 6 and the
+  read-only guardrail are what govern there.
 
 ### 2. Choose a data source
 
@@ -344,7 +396,10 @@ be inferred from an absent event.
   version gate, dogfood worktree, isolated root, and receipt archiving. The
   skill is the convenience wrapper; *this runbook is the contract it wraps.*
 - **Codex, Antigravity, Cursor, others** — no dogfood-lifecycle wrapper exists:
-  follow the flow above manually. An optional local preflight tool (see
+  follow the flow above manually, including step 1's `HOME` replacement, and
+  run `qa_preflight.py isolate-check` yourself in each shell before the first
+  engine command — nothing else on these clients will refuse for you. An
+  optional local preflight tool (see
   "Choose the evidence lane deliberately" above) may offer the same
   version-gate and setup conveniences, but it cannot turn an automated result
   into host UX evidence — set `--client` truthfully in the receipt so

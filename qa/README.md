@@ -16,8 +16,9 @@ under `skills/` would imply there are two things to install, and there is exactl
 | `slice_csv.py` | Cuts a fixture CSV down to a date window, for staging a second review period. |
 | `tests/test_receipts.py` | Unit tests for `receipts.py`, including the campaign/case/state-lineage rules an archived run must satisfy. |
 | `tests/test_skill_commands.py` | Drift gate: every `ux_receipt.py` command in `SKILL.md` must parse against the real CLI, and the documented event order must replay into a trace that verifies (#520). |
+| `tests/test_isolation_gate.py` | Refusal gate: `qa_env.sh` must stop every command while the account's own `~/.trade-coach` is still reachable, and what `isolate` prints must satisfy the check that refused (#557). |
 
-Both test files run inside `tests/run_all.py`, the repository's actual commit gate.
+All three test files run inside `tests/run_all.py`, the repository's actual commit gate.
 Maintainer tooling is not product code, but a gate that lives outside the runner is
 enforced by whoever remembers — which is how `SKILL.md` accumulated commands that
 could not be executed as written.

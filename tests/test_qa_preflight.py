@@ -190,6 +190,121 @@ def test_repo_root_validator_accepts_a_checkout_and_rejects_a_bare_directory():
         assert raised, "a directory with no .git and no tests/run_all.py must be rejected"
 
 
+# --- runbook gate 2: isolation is verified, not asserted (#557) -------------
+
+
+def _isolated_layout(tmp):
+    """A synthetic account home, a throwaway home, and a dogfood root.
+
+    Nothing here touches the real account: the check takes ``account_home`` as
+    an argument precisely so its tests never have to name, stat, or create
+    anything under the maintainer's own home.
+    """
+    root = pathlib.Path(tmp)
+    account = root / "account-home"
+    isolated = root / "qa-home"
+    dogfood = root / "state" / "coach-dogfood"
+    for path in (account, isolated, dogfood):
+        path.mkdir(parents=True)
+    return account, isolated, dogfood
+
+
+def test_isolation_passes_only_when_the_default_root_names_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        account, isolated, dogfood = _isolated_layout(tmp)
+        (account / ".trade-coach").mkdir()
+        env = {"HOME": str(isolated), "TRADE_COACH_HOME": str(dogfood)}
+
+        report = qa_preflight.isolation_report(env, account_home=account)
+        assert report["isolated"] is True, report
+        assert report["observations"]["account_root_present"] is True
+        assert report["observations"]["default_root_present"] is False
+
+        # The one fact this lane buys, taken away again.
+        (isolated / ".trade-coach").mkdir()
+        report = qa_preflight.isolation_report(env, account_home=account)
+        assert report["isolated"] is False
+        assert [failure["check"] for failure in report["failures"]] == ["default_root_reachable"]
+
+
+def test_isolation_fails_when_home_cannot_redirect_the_default_composition():
+    with tempfile.TemporaryDirectory() as tmp:
+        account, _, dogfood = _isolated_layout(tmp)
+        state = {"TRADE_COACH_HOME": str(dogfood)}
+        for env, expected in (
+            ({**state}, "home_undeclared"),
+            ({**state, "HOME": ""}, "home_undeclared"),
+            ({**state, "HOME": str(account / "missing")}, "home_not_a_directory"),
+        ):
+            report = qa_preflight.isolation_report(env, account_home=account)
+            assert report["isolated"] is False, env
+            assert expected in [failure["check"] for failure in report["failures"]], env
+
+
+def test_isolation_fails_when_the_state_root_is_undeclared_or_the_real_one():
+    with tempfile.TemporaryDirectory() as tmp:
+        account, isolated, _ = _isolated_layout(tmp)
+        account_root = account / ".trade-coach"
+        account_root.mkdir()
+
+        report = qa_preflight.isolation_report({"HOME": str(isolated)}, account_home=account)
+        assert "state_root_undeclared" in [failure["check"] for failure in report["failures"]]
+
+        # An isolated HOME with the account's own root handed back explicitly is
+        # the same leak wearing an export.
+        for value in (str(account_root), str(account_root / "sessions")):
+            report = qa_preflight.isolation_report(
+                {"HOME": str(isolated), "TRADE_COACH_HOME": value}, account_home=account)
+            assert report["isolated"] is False, value
+            assert "state_root_is_the_account_root" in [
+                failure["check"] for failure in report["failures"]], value
+
+
+def test_the_account_home_is_read_from_the_password_database_not_from_home():
+    """The check would be vacuous if it learned the account home from ``$HOME``.
+
+    That is the whole failure mode: the run replaces ``$HOME``, so anything
+    reading it back is describing the replacement rather than judging it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        with mock.patch.dict(qa_preflight.os.environ, {"HOME": tmp}):
+            assert str(qa_preflight._account_home()) != tmp
+
+
+def test_the_isolation_report_states_relationships_and_never_a_path():
+    """Its output is meant to be pasteable into a public issue as-is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        account, isolated, dogfood = _isolated_layout(tmp)
+        (isolated / ".trade-coach").mkdir()
+        report = qa_preflight.isolation_report(
+            {"HOME": str(isolated), "TRADE_COACH_HOME": str(dogfood)}, account_home=account)
+        serialized = json.dumps(report)
+    assert tmp not in serialized
+    assert report["isolated"] is False
+
+
+def test_isolate_check_cli_exits_non_zero_exactly_when_it_is_not_isolated():
+    with tempfile.TemporaryDirectory() as tmp:
+        account, isolated, dogfood = _isolated_layout(tmp)
+        del account
+        base = dict(qa_preflight.os.environ)
+        base.update({"HOME": str(isolated), "TRADE_COACH_HOME": str(dogfood)})
+
+        green = subprocess.run(
+            [sys.executable, str(TOOL), "isolate-check"],
+            capture_output=True, text=True, env=base)
+        assert green.returncode == 0, green.stderr
+        assert json.loads(green.stdout)["isolated"] is True
+
+        (isolated / ".trade-coach").mkdir()
+        red = subprocess.run(
+            [sys.executable, str(TOOL), "isolate-check"],
+            capture_output=True, text=True, env=base)
+        assert red.returncode == 1, red.stdout
+        assert json.loads(red.stdout)["isolated"] is False
+        assert "default_root_reachable" in red.stderr
+
+
 def test_report_path_writes_the_same_json_emitted_to_stdout():
     report = {"status": "ready"}
     with tempfile.TemporaryDirectory() as tmp:
