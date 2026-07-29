@@ -239,8 +239,12 @@ names what actually holds it; where nothing does, the row says so.
   Repetition there is a delivery contract, not redundancy; find the enforcing
   test before cleaning it up. Partly gated:
   `test_review_py_is_a_non_negotiable_boundary` derives the CLI whitelist live
-  from `review.py`, but it is the only rule wired this way, so a second
-  must-always-land rule forgotten in one entry point is caught by nothing.
+  from `review.py`. `test_freeform_answer_shape_is_a_boundary_in_both_entry_points`
+  (#543) is a second instance, weaker in kind: it checks a shared literal
+  phrase rather than a list derived from source, because there is no engine
+  artifact to derive a freeform-answer-shape rule from. Two rules are now
+  wired this way; a third must-always-land rule forgotten in one entry point
+  is still caught by nothing.
 - Do not trust pattern counts of prohibitions ("N occurrences of *never*").
   Most hits describe engine behavior the agent relies on to do *less* work;
   deleting them creates work. Read and classify before concluding.

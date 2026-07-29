@@ -18,6 +18,7 @@ The product's value is continuity: this review reconciles against the last one, 
 5. **Trade data stays local.** The source CSV, session bundles, and the ledger never enter cloud memory. The review card is private to the user: show `card-private.*` by default per `references/card-delivery.md`. Local files, terminal output, and private-by-default in-client rendering are all fine; publishing, posting, or sending it to a third party is not. `card-public.md` is the one share-safe artifact, and only if the user asks.
 6. **Transcribe snapshots, do not analyze them.** For a position table or screenshot, copy only broker-declared facts into the JSON envelope and keep that file outside the repository, such as under `/tmp`. Do not derive weights, P&L, cycle IDs, metrics, or ETF classifications, and do not use a cloud OCR service — there is no engine OCR or upload path.
 7. **`sessions/<session_id>/bundle.json` is the completed result.** Projections are rebuilt from it.
+8. **A freeform informational question gets a quick, direct answer.** Outside the review card and its artifacts, an ad hoc question — including a `consider` call — is answered briefly, in text: no chart, no rendered artifact, no multi-tool production, unless the user explicitly asks for more. A chart is never composed on the spot; the small pre-defined set it may come from lives in `references/freeform-answers.md`, and it names none today.
 
 ## Canonical entry point
 
@@ -55,6 +56,7 @@ Then read the shared rules:
 
 - `references/agent-boundaries.md`
 - `references/interaction-delivery.md`
+- `references/freeform-answers.md`
 - `references/card-delivery.md`
 - `references/thesis-policy.md`
 - `references/data-contract.md`
