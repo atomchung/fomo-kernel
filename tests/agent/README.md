@@ -10,7 +10,7 @@ Implementation authority is [docs/eval-design.md](../../docs/eval-design.md). Th
 
 ## Files
 
-- `check_card.py`: deterministic card invariants from the card specification and eval design.
+- `check_card.py`: deterministic card invariants from the card specification and eval design. `check_ticker_diagnosis()` (B-1, #542) is a separate, case-driven function: it takes a subject ticker plus forbidden/allowed instrument-tag codes as arguments rather than reading them from a constant, because that identity is case data — see `cases/washer.yaml`'s `subject_ticker`/`subject_forbidden_tags`/`subject_allowed_tags` and how `run_case.sh --headless` forwards them as `--ticker`/`--forbidden-tags`/`--allowed-tags`.
 - `check_state.py`: finalization and trajectory artifacts not already owned by `coach.py` or JSON contract tests.
 - `../../skills/fomo-kernel/tools/ux_receipt.py`: local presentation trace — host capability plus generated-versus-presented card evidence, stored in the protected state dir (`~/.trade-coach/ux/`).
 - `../test_checkers_offline.py`: mutation probes that prove known-good artifacts pass and intentionally broken artifacts fail.
@@ -34,6 +34,10 @@ export ANTHROPIC_API_KEY=...
 python3 tests/agent/run_judge_eval.py
 python3 tests/agent/run_judge_eval.py --history   # recorded runs, no API call
 tests/agent/run_case.sh --headless tests/agent/cases/washer.yaml
+
+# B-1 (#542): case-declared subject ticker + tag codes, checked directly
+python3 tests/agent/check_card.py my_card.md \
+    --ticker INTC --forbidden-tags suspected_dca --allowed-tags suspected_averaging_down_losing
 ```
 
 ## Headless limitation

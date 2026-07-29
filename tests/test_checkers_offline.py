@@ -25,7 +25,7 @@ FIXTURES = AGENT_DIR / "fixtures"
 COACH = str(ROOT / "skills" / "fomo-kernel" / "engine" / "coach.py")
 
 sys.path.insert(0, str(AGENT_DIR))
-from check_card import check_card                       # noqa: E402
+from check_card import check_card, check_ticker_diagnosis  # noqa: E402
 from check_state import check_state, differential, append_only  # noqa: E402
 
 _fails = []
@@ -169,6 +169,8 @@ _COPY = json.loads((ROOT / "skills" / "fomo-kernel" / "copy" / "zh-TW.json")
                    .read_text(encoding="utf-8"))
 _BLOCKS = _COPY["blocks"]
 _MISSING = _COPY["block_missing"]
+_TAGS = _COPY["instrument_tags"]
+_SECTIONS = _COPY["sections"]
 
 
 def _v2_card(titles=None, block1=None, block2=None, block3=None, summary=None, tail=""):
@@ -318,10 +320,172 @@ def test_card_structure_series_alive():
        "S-2 抓 gated 期出了 gap note(§3:整段直接不出)")
 
 
+# ─────────── #542:B-9 section-scope 升級 + B-1(check_ticker_diagnosis)驗活 ───────────
+
+def _zh_row(ticker, amount, tag_code, **params):
+    """Block 2 一檔逐檔列,card_renderer 'rows' kind 的確切形狀
+    ('- TICKER amount（tag）'),標籤文字從真的 zh-TW instrument_tags 模板
+    format 出來,而不是在測試裡手打一份第二版字面詞。"""
+    return f"- {ticker} {amount}（{_TAGS[tag_code].format(**params)}）"
+
+
+def test_card_b1_and_b9_section_scoped_alive():
+    """#542:B-9 的 section-scope 升級,和全新的 B-1(check_ticker_diagnosis),各自
+    驗活。
+
+    B-9 的關鍵反例是「biggest-hole 段落本身空泛,但卡別處(Block 2 的逐檔列)有
+    數字」——這正是舊 whole-card proxy 會誤放行、issue #542 點名要擋的形狀,所以
+    這裡特別做成一組「只改 hole 段落文字、其餘不動」的最小對照,而不是隨手換一張
+    壞卡(那樣測不出是不是真的在管 section 範圍)。
+
+    B-1 的四種紅各自獨立驗證:標籤命中禁止集合 / 命中了但不在允許集合裡 /
+    headline 洞沒上卡 / 卡上根本找不到這檔的診斷列——四條缺一都要能各自觸發,
+    不是隨便哪個字串改了就一起紅、一起綠。
+    """
+    forbidden_row = _zh_row("INTC", "-$1,240", "suspected_dca", n_adds=3)
+    allowed_row = _zh_row("INTC", "-$1,240", "suspected_averaging_down_losing",
+                          n_adds=3, cur_pct="38%", price_note="")
+    neutral_row = _zh_row("INTC", "-$1,240", "roughly_neutral")
+    hole_grounded = f"[X] {_SECTIONS['hole']}：INTC 虧 $1,240 仍加碼"
+    hole_vague = f"[X] {_SECTIONS['hole']}：紀律不佳、風險偏高、需要注意"
+    allowed_codes = ["suspected_averaging_down_losing", "suspected_averaging_down_recovered",
+                     "adds_pending_confirmation"]
+
+    # ── B-9:hole 段落本身要有 ticker + 數字,不能靠卡片別處的數字矇混過關 ──
+    grounded_hole = _v2_card(block2=[allowed_row], block3=[hole_grounded])
+    ok("B-9" not in _card_fail_ids(grounded_hole),
+       "B-9 過:biggest-hole 段落本身就含 ticker(INTC)+ 數字($1,240)")
+
+    vague_hole_numbers_elsewhere = _v2_card(block2=[allowed_row], block3=[hole_vague])
+    ok("B-9" in _card_fail_ids(vague_hole_numbers_elsewhere),
+       "B-9 抓到:hole 段落本身無 ticker/數字,即使 Block 2 別處有數字"
+       "(舊 proxy 會誤放行的形狀,#542)", str(_card_fail_ids(vague_hole_numbers_elsewhere)))
+
+    no_ticker_pool = _v2_card(block3=[hole_vague])   # block2 用預設(無逐檔列;缺價降級的形狀)
+    ok("B-9" not in _card_fail_ids(no_ticker_pool),
+       "B-9 沒有已知 ticker 池(Block 2 無逐檔列)時退回舊 proxy,不誤殺",
+       str(_card_fail_ids(no_ticker_pool)))
+
+    # ── B-1:洗白標的的標籤 + headline 洞 ──────────────────────────────────
+    good = check_ticker_diagnosis(_v2_card(block2=[allowed_row], block3=[hole_grounded]),
+                                  "INTC", forbidden_tags=["suspected_dca"],
+                                  allowed_tags=allowed_codes)
+    ok(good.passed, "B-1 過:允許標籤命中、禁止標籤未命中、headline 洞仍在", good.evidence)
+
+    whitewashed = check_ticker_diagnosis(
+        _v2_card(block2=[forbidden_row], block3=[hole_grounded]),
+        "INTC", forbidden_tags=["suspected_dca"], allowed_tags=allowed_codes)
+    ok(not whitewashed.passed and "suspected_dca" in whitewashed.evidence,
+       "B-1 抓到:INTC 命中禁止標籤(疑似定投/洗白)", whitewashed.evidence)
+
+    neither = check_ticker_diagnosis(
+        _v2_card(block2=[neutral_row], block3=[hole_grounded]),
+        "INTC", forbidden_tags=["suspected_dca"], allowed_tags=allowed_codes)
+    ok(not neither.passed,
+       "B-1 抓到:標籤既非禁止也非任一允許集合(roughly_neutral)", neither.evidence)
+
+    hole_missing = check_ticker_diagnosis(
+        _v2_card(block2=[allowed_row], block3=[]),
+        "INTC", forbidden_tags=["suspected_dca"], allowed_tags=allowed_codes)
+    ok(not hole_missing.passed and "headline" in hole_missing.evidence,
+       "B-1 抓到:headline 洞沒上卡(risks 區沒有 [X] panel)", hole_missing.evidence)
+
+    row_missing = check_ticker_diagnosis(
+        _v2_card(block2=[_MISSING["trades"]], block3=[hole_grounded]),
+        "INTC", forbidden_tags=["suspected_dca"])
+    ok(not row_missing.passed and "找不到" in row_missing.evidence,
+       "B-1 抓到:卡上根本沒有 INTC 的逐檔診斷列", row_missing.evidence)
+
+
+def test_card_b9_context_aware_ticker_gate_alive():
+    """#542 continued: the first cut of the B-9 section-scope upgrade passed
+    every test above (all text-only or hand-built context) and still broke
+    108 of 468 real rendered cards when run against tests/persona_sweep.py's
+    full persona x locale x route corpus. Three more real shapes had to be
+    found and fixed before the sweep went green again; each is pinned here
+    so a regression is caught locally without needing the full sweep:
+
+    - some hole dimensions (exit_discipline, diversification) never carry a
+      ticker fact at all -- the ticker bar must come from *this hole's own*
+      raw data (top_holes[0].raw), not from tickers priced anywhere else on
+      the card (Block 2's rows are a completely independent derivation --
+      only priced/nonzero-impact tickers, while a hole's tickers come from
+      raw trade history regardless of current price).
+    - a few hole_lines templates (holding_same_day, holding_no_data) render
+      with zero digits by construction (no {placeholder} in the template at
+      all) -- the number bar must not punish those.
+    - Taiwan tickers (2330.TW) start with a digit, not a letter -- the
+      ticker-shape regex must recognize them too, in both the hole-citation
+      check and Block 2's row scan.
+    """
+    # ── (1) ticker not required when the hole's own raw data carries none ──
+    exit_hole = f"[X] {_SECTIONS['hole']}：winners held 120 days / losers held 378 days (disposition gap +258)"
+    exit_ctx = {"top_holes": [{"raw": {"dim": "出場紀律", "n_rt": 2, "hold_win": 120,
+                                       "hold_lose": 378, "disp_gap": 258}}]}
+    exit_card = _v2_card(block3=[exit_hole])
+    ok(not any(f.assertion == "B-9" and not f.passed for f in check_card(exit_card, exit_ctx)),
+       "B-9 過(context 版):exit_discipline 洞本身無 ticker 事實,只要求數字",
+       str({f.assertion: f.evidence for f in check_card(exit_card, exit_ctx) if not f.passed}))
+
+    exit_hole_no_num = f"[X] {_SECTIONS['hole']}：winners were held far longer than losers, a clear disposition gap"
+    exit_card_no_num = _v2_card(block3=[exit_hole_no_num])
+    ok(any(f.assertion == "B-9" and not f.passed for f in check_card(exit_card_no_num, exit_ctx)),
+       "B-9 抓到(context 版):exit_discipline 免 ticker 不代表也免數字")
+
+    # ── (2) ticker IS required when the hole's own raw data carries one ────
+    avgdown_ctx = {"top_holes": [{"raw": {"dim": "加碼攤平", "count": 6, "breach": 2,
+                                          "tickers": ["INTC"]}}]}
+    uncited_hole = f"[X] {_SECTIONS['hole']}：你有 6 次在虧損倉往下加碼，其中 2 次加碼當下佔成本 >25%"
+    uncited_card = _v2_card(block3=[uncited_hole])
+    ok(any(f.assertion == "B-9" and not f.passed for f in check_card(uncited_card, avgdown_ctx)),
+       "B-9 抓到(context 版):這個洞的 raw 資料明明有 ticker(INTC),句子卻沒點名",
+       str({f.assertion: f.evidence for f in check_card(uncited_card, avgdown_ctx) if not f.passed}))
+
+    cited_hole = f"[X] {_SECTIONS['hole']}：你有 6 次在虧損倉往下加碼(INTC)，其中 2 次加碼當下佔成本 >25%"
+    cited_card = _v2_card(block3=[cited_hole])
+    ok(not any(f.assertion == "B-9" and not f.passed for f in check_card(cited_card, avgdown_ctx)),
+       "B-9 過(context 版):ticker 事實存在,句子也確實點名")
+
+    # ── (3) a placeholder-free hole_lines template needs no digit ──────────
+    # 同款 context 需求(見上面 exit_ctx 的註解):沒有 context/ticker 池時,這張
+    # 手工卡的 Block 1 預設內容自帶 "$300",會被全卡層降級 proxy 撿到而誤判通過,
+    # 測不出 _hole_number_optional 本身有沒有在做事。holding_period 天生無
+    # ticker,借用 exit_ctx(同樣是空 ticker 需求)即可,不必另造一個。
+    static_hole = f"[X] {_SECTIONS['hole']}：{_COPY['hole_lines']['holding_same_day']}"
+    static_card = _v2_card(block3=[static_hole])
+    ok(not any(f.assertion == "B-9" and not f.passed for f in check_card(static_card, exit_ctx)),
+       "B-9 過:holding_same_day 是零 placeholder 模板,天生沒有數字也算數",
+       str({f.assertion: f.evidence for f in check_card(static_card, exit_ctx) if not f.passed}))
+
+    # exit_ctx(空 ticker 需求)當 context,逼精準版走到底只剩數字門檻要判——不然
+    # 這張手工卡的 Block 1 預設內容自帶 "$300",沒有 context 時會整卡層降級 proxy
+    # 撿到那個數字,誤判成通過(這條斷言原本就是這樣寫壞過一次,見上面 exit_ctx
+    # 案例的姊妹版)。
+    vague_lookalike = f"[X] {_SECTIONS['hole']}：紀律不太好,要多注意"
+    vague_card = _v2_card(block3=[vague_lookalike])
+    ok(any(f.assertion == "B-9" and not f.passed for f in check_card(vague_card, exit_ctx)),
+       "B-9 抓到:沒有數字、也不比對任何已知零 placeholder 模板的空泛句仍算違規")
+
+    # ── (4) Taiwan tickers (digit-first) are recognized as ticker-shaped ───
+    tw_row = "- 2330.TW -TWD 90,000（roughly neutral）"
+    tw_hole_cited = (f"[X] {_SECTIONS['hole']}：your largest single position 2330.TW was 87%, "
+                     f"against a 3% average across the rest")
+    tw_card_cited = _v2_card(block2=[tw_row], block3=[tw_hole_cited])
+    ok("B-9" not in _card_fail_ids(tw_card_cited),
+       "B-9 過:2330.TW 這種數字開頭的台股代碼也算得出 ticker(無 context,Block 2 proxy 池)")
+
+    tw_hole_uncited = f"[X] {_SECTIONS['hole']}：your largest single position was 87%, against a 3% average"
+    tw_card_uncited = _v2_card(block2=[tw_row], block3=[tw_hole_uncited])
+    ok("B-9" in _card_fail_ids(tw_card_uncited),
+       "B-9 抓到:2330.TW 在 Block 2 池裡,但 hole 段落沒點名任何標的")
+
+
 def main():
     test_card_fixtures()
     test_card_each_assertion_alive()
     test_card_structure_series_alive()
+    test_card_b1_and_b9_section_scoped_alive()
+    test_card_b9_context_aware_ticker_gate_alive()
     test_state_oracle_good()
     test_state_each_assertion_alive()
     test_state_differential_and_append()
