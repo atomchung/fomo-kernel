@@ -122,6 +122,56 @@ def test_snapshot_only():
     assert p["shares"] == 30
 
 
+def test_a_stamped_cycle_start_beats_the_anchor_date_and_survives_an_add():
+    """#531: an appearing position whose start the user answered for.
+
+    ``since`` on an anchor row is a bookkeeping default -- the day the position
+    entered the record -- and that is exactly what made every holding-period
+    reading rest on an artifact. A stamped row states the start the user gave,
+    and a later buy adds to that cycle rather than reopening one.
+    """
+    out = lg.derive_holdings([
+        _snap("2026-07-01", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
+                              "since": "2025-01-15", "since_basis": "user_estimate"}]),
+        _tr("2026-07-03", "NVDA", "buy", 10, 171.0),
+    ])
+    n = out["holdings"]["NVDA"]
+    assert n["since"] == "2025-01-15" and n["cycle_id"] == "NVDA#2025-01-15#1"
+    assert n["decision_cursor"] == "NVDA#2025-01-15#1#add#1"
+    assert not out["integrity"]
+
+
+def test_an_unknown_start_becomes_the_cycle_id_the_engine_already_has():
+    """"I don't know" is not re-implemented: it lands on the two-segment
+    ``ticker#unknown`` that ``horizon._cycle_start`` already resolves to None.
+    ``since`` stays a real date -- it is still the day the position entered the
+    book -- so every reader that requires one keeps getting one."""
+    out = lg.derive_holdings([_snap("2026-07-01", [
+        {"ticker": "PLTR", "shares": 30, "avg_cost": 20.0, "since_basis": "unknown"}])])
+    p = out["holdings"]["PLTR"]
+    assert p["cycle_id"] == "PLTR#unknown" and p["since"] == "2026-07-01"
+    assert not out["integrity"]
+
+
+def test_a_cycle_start_with_no_stamp_is_ignored_and_reported():
+    """A hand-edited ledger can put anything in the file. A date with no
+    ``since_basis`` beside it is precisely the false precision the pairing rule
+    exists to stop, so it is dropped rather than trusted -- and the drop is
+    visible, the same contract ``bad_avg_cost`` and ``oversell`` already keep."""
+    for position, issue in (
+            ({"ticker": "NVDA", "shares": 40, "avg_cost": 1.0,
+              "since": "2019-01-01"}, "unstamped_since"),
+            ({"ticker": "NVDA", "shares": 40, "avg_cost": 1.0,
+              "since": "2029-01-01", "since_basis": "user_estimate"}, "bad_since"),
+            ({"ticker": "NVDA", "shares": 40, "avg_cost": 1.0,
+              "since": "not-a-date", "since_basis": "user_estimate"}, "bad_since"),
+            ({"ticker": "NVDA", "shares": 40, "avg_cost": 1.0,
+              "since_basis": "roughly"}, "bad_since_basis")):
+        out = lg.derive_holdings([_snap("2026-07-01", [position])])
+        assert out["holdings"]["NVDA"]["cycle_id"] == "NVDA#2026-07-01#1", position
+        assert [row["issue"] for row in out["integrity"]] == [issue], (position, out["integrity"])
+
+
 def test_same_day_trade_not_stacked():
     """snapshot = as_of 收盤後狀態:date == as_of 不疊加,> 才疊加(PRD §1.3 釘死的時點語意)。"""
     out = lg.derive_holdings([

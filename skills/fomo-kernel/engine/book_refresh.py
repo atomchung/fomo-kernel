@@ -19,7 +19,7 @@ Two phases, and the boundary between them is the point:
     lock, refuse if anything moved (``refresh_id`` is content-addressed over
     exactly what the user was shown), then adopt.
 
-Two confirmation kinds, per the owner ruling recorded on #485:
+Three confirmation kinds, per the owner rulings recorded on #485 and #531:
 
   disappearance — the record holds a position the new view does not. The engine
     cannot tell "you sold it" from "the screenshot missed it", and those two
@@ -28,12 +28,32 @@ Two confirmation kinds, per the owner ruling recorded on #485:
     merges — the position is carried into the new anchor with ``carried: true``.
     A sale the ledger already contains never reaches here: it is not a
     difference, so there is nothing to ask (the question stays rare).
+  appearance — the new view holds a position the record does not (#531). It
+    destroys nothing, which is why this lane once adopted it silently, but it
+    arrives with **no provenance** and the engine has no way to recover it
+    later: a position bought last week and one transferred in after six years
+    produce byte-identical ledger state, and the difference can only be asked
+    about at the moment it appears. So the user is asked for a rough duration in
+    months — not a date, and not a provenance label, because two months and
+    thirty-six months already say which is which — plus an average cost when the
+    declared envelope carries none (the input class that makes ``consider``
+    refuse, #528, closed at entry instead of at refusal). "I don't know" is an
+    ordinary answer and keeps its existing representation: no date is invented,
+    the cycle becomes ``ticker#unknown``, and ``horizon._cycle_start`` drops that
+    holding from holding-period diagnostics.
   large_change — shares moved a lot on a position that is a large part of the
     book. Confirm, or re-supply the view. Thresholds are engine constants below.
 
-Everything else is adopted and disclosed with no ceremony. Directions are not
-symmetric: a disappearance is destructive (it removes recorded history) so it is
-confirmed; an appearance is additive and is accepted silently.
+Everything else — small changes, cash differences, market/currency differences —
+is adopted and disclosed with no ceremony. All three kinds go into ONE question
+(``flows/book-refresh.md`` step 2); eight appearances are eight list items, never
+eight turns.
+
+The month count is converted here, never by the agent (``SKILL.md``
+non-negotiable rule 1: numbers come from engine artifacts). The agent transcribes
+what the user said; ``_months_before`` derives the cycle start, and it is stored
+paired with a ``since_basis`` stamp so no reader can pick up the date without
+also picking up "this is an estimate".
 
 No answer memory in v1 (owner: 每次都問). A recurring "not captured" is friction
 that correctly pushes the user to record the position properly.
@@ -64,18 +84,31 @@ SCHEMA_V = 1
 REFRESH_MAJOR_DELTA = 0.05   # |Δvalue| / book
 REFRESH_CORE_WEIGHT = 0.10   # the position's own weight in the recorded book
 
-CONFIRMATION_KINDS = ("disappearance", "large_change")
+CONFIRMATION_KINDS = ("disappearance", "appearance", "large_change")
 # The classifications a user's answer may carry. `review.CONSIDER_DECISIONS`'s
 # precedent: one tuple, locked to the schema enum by a drift test, so the CLI,
 # the schema and the flow document cannot disagree about what an answer is.
 REFRESH_CLASSIFICATIONS = ("sold", "not_captured", "confirmed", "resupply")
 # Which answers each kind accepts. A disappearance is never "confirmed": saying
 # the position is gone *is* `sold`, and collapsing the two would let a
-# capture gap silently close a live cycle.
+# capture gap silently close a live cycle. An appearance takes `confirmed` for
+# the mirror-image reason — saying the position really is held *is* confirming
+# it — and carries its detail (how long, and at what cost) as answer fields
+# rather than as extra classifications: `bought` versus `carried_in` labelled
+# where a position came from without producing the number the engine needs
+# (owner ruling on #531, superseding that split).
 CLASSIFICATIONS_BY_KIND = {
     "disappearance": ("sold", "not_captured", "resupply"),
+    "appearance": ("confirmed", "resupply"),
     "large_change": ("confirmed", "resupply"),
 }
+# The rough holding duration an appearance answer may state, in months. `None`
+# is the legal "I don't know". Month granularity is sufficient and that is
+# load-bearing: horizon.py puts every holding-period judgment on four day
+# boundaries (21, 60, 90, 180), and a month is at worst ±15 days, which clears
+# all four. Asking for an exact date would manufacture precision the user does
+# not have. The cap is a sanity bound, not a product rule.
+HELD_MONTHS_MAX = 1200
 
 NO_ANCHOR = (
     "this coach root has no recorded book yet; run "
@@ -186,6 +219,20 @@ def _pending_confirmations(diff, derived, declared, partition, units):
                 "derived_shares": fact.get("shares"),
                 "options": list(CLASSIFICATIONS_BY_KIND["disappearance"]),
             })
+    for row in diff.get("positions") or []:
+        ticker = row.get("ticker")
+        if row.get("kind") != "only_declared":
+            continue
+        claim = declared.get(ticker) or {}
+        pending.append({
+            "kind": "appearance", "ticker": ticker,
+            "declared_shares": _finite_positive(row.get("declared")),
+            # The engine states which detail this row still needs. A cost the
+            # view already carries is never re-asked, and answering with a
+            # second one is refused rather than silently preferred.
+            "needs_avg_cost": claim.get("avg_cost") is None,
+            "options": list(CLASSIFICATIONS_BY_KIND["appearance"]),
+        })
     denominator = partition.get("denominator")
     if not _finite_positive(denominator):
         return pending
@@ -290,8 +337,49 @@ def snapshot_payload_of(anchor):
 
 # ───────────────────────── phase 2: adopt ─────────────────────────
 
+def _held_months(value, ticker):
+    """The user's rough holding duration in months, or ``None`` for "I don't know".
+
+    The key must be present: a missing one is an unasked question, not a shrug,
+    and the two must never collapse. Fractions are refused rather than rounded
+    — a rounded number is one the engine invented.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RefreshError(
+            f"{ticker}: held_months must be a whole number of months, or null "
+            "if the user does not know")
+    number = float(value)
+    if not math.isfinite(number) or number != int(number):
+        raise RefreshError(f"{ticker}: held_months must be a whole number of months")
+    months = int(number)
+    if months < 0 or months > HELD_MONTHS_MAX:
+        raise RefreshError(
+            f"{ticker}: held_months must be between 0 and {HELD_MONTHS_MAX}")
+    return months
+
+
+def _answer_avg_cost(value, ticker):
+    """The average cost the user stated for an appearing position, or ``None``.
+
+    ``None`` stays legal: a user who genuinely does not know their cost must not
+    be pushed into inventing one, and the position simply stays value-only —
+    the same state it would have reached silently before this question existed,
+    now reached with the user having been asked.
+    """
+    if value is None:
+        return None
+    cost = _finite_positive(value)
+    if cost is None or isinstance(value, bool):
+        raise RefreshError(
+            f"{ticker}: avg_cost must be a positive number, or null if the user "
+            "does not know it")
+    return cost
+
+
 def _validated_answers(pending, answers):
-    """Map ticker -> classification, or fail closed.
+    """Map ticker -> answer record, or fail closed.
 
     Accepts an answer only for an item the frozen plan actually raised (the
     ``condition-check.schema.json`` ``user_response`` pattern: the engine
@@ -299,6 +387,13 @@ def _validated_answers(pending, answers):
     by name rather than ignored), and refuses to adopt while any raised item is
     unanswered. An unanswered destructive change adopted "by default" is the
     silent data loss this whole lane exists to prevent.
+
+    The same rule runs one level down, over the detail an answer may carry: a
+    confirmed appearance MUST state ``held_months`` (``null`` being the legal
+    "I don't know") and MUST state ``avg_cost`` exactly when the raised item
+    said the declared view carries none. A field nobody asked for is refused by
+    name, so a cost cannot arrive through a side channel and quietly beat the
+    one the user actually declared.
     """
     if not isinstance(answers, list):
         raise RefreshError("answers must be a list of {ticker, classification} objects")
@@ -314,16 +409,105 @@ def _validated_answers(pending, answers):
                 "answerable: " + ", ".join(sorted(by_ticker)))
         if ticker in seen:
             raise RefreshError(f"answers repeat {ticker}")
+        raised = by_ticker[ticker]
         classification = row.get("classification")
-        allowed = CLASSIFICATIONS_BY_KIND[by_ticker[ticker]["kind"]]
+        allowed = CLASSIFICATIONS_BY_KIND[raised["kind"]]
         if classification not in allowed:
             raise RefreshError(
                 f"{ticker}: {classification!r} is not one of " + ", ".join(allowed))
-        seen[ticker] = classification
+        wants_detail = raised["kind"] == "appearance" and classification == "confirmed"
+        expected = ({"held_months"} | ({"avg_cost"} if raised.get("needs_avg_cost") else set())
+                    if wants_detail else set())
+        supplied = set(row) & {"held_months", "avg_cost"}
+        for extra in sorted(supplied - expected):
+            raise RefreshError(f"{ticker}: this refresh did not ask for {extra}")
+        for absent in sorted(expected - supplied):
+            raise RefreshError(f"{ticker}: {absent} is required to adopt this appearance")
+        seen[ticker] = {
+            "classification": classification,
+            "held_months": _held_months(row.get("held_months"), ticker) if wants_detail else None,
+            "avg_cost": (_answer_avg_cost(row.get("avg_cost"), ticker)
+                         if wants_detail and raised.get("needs_avg_cost") else None),
+        }
     missing = sorted(set(by_ticker) - set(seen))
     if missing:
         raise RefreshError("unanswered confirmations: " + ", ".join(missing))
     return seen
+
+
+def _months_before(day, months):
+    """``day`` minus ``months`` calendar months, clamped to a real calendar day.
+
+    Calendar arithmetic rather than a 30.44-day average, because the user's
+    answer is calendar-shaped: "about six months" means the same day six months
+    back, not 183 days back. The day-of-month clamp is the ordinary end-of-month
+    case (March 31 minus one month is February 28 or 29, never March 3).
+    """
+    total = (day.year * 12 + day.month - 1) - int(months)
+    year, month = divmod(total, 12)
+    month += 1
+    if month == 2:
+        last = 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
+    elif month in (4, 6, 9, 11):
+        last = 30
+    else:
+        last = 31
+    return dt.date(year, month, min(day.day, last))
+
+
+def _appearance_stamp(row, answer, as_of):
+    """One appearing position's envelope row, with the engine's own derivation.
+
+    The agent transcribed a month count; this is where it becomes a date, and
+    the date is never emitted without ``since_basis`` beside it (the pairing is
+    enforced again in ``snapshot_adapter``). "I don't know" produces no date at
+    all — ``since_basis: "unknown"`` — which ``ledger.derive_holdings`` turns
+    into a ``ticker#unknown`` cycle, the representation that already exists for
+    a holding whose open cannot be dated.
+    """
+    row = dict(row)
+    months = answer.get("held_months")
+    if months is None:
+        row["since_basis"] = "unknown"
+    else:
+        row["since_basis"] = "user_estimate"
+        row["since"] = _months_before(dt.date.fromisoformat(as_of), months).isoformat()
+    if answer.get("avg_cost") is not None:
+        # Only reachable when the raised item said the view carried none;
+        # `_validated_answers` refuses a second cost for a row that had one.
+        row["avg_cost"] = answer["avg_cost"]
+    return row
+
+
+def _carry_forward_provenance(row, recorded, derived):
+    """Keep an already-answered cycle start attached across later refreshes.
+
+    Without this the stamp survives exactly one refresh: the next declaration is
+    an ordinary envelope with no provenance on it, so the position's start would
+    snap back to the new anchor's date and the user's answer would have bought
+    exactly one review. The user is not asked again, and should not be — the
+    position is not appearing, it is simply still held.
+
+    Two gates, and both are about not carrying a stamp onto a different cycle.
+    The stamp is read from the recorded anchor's own row (the only place that
+    says a start was answered rather than assumed). And it is applied only while
+    the record still traces the position back to that anchor
+    (``origin == "snapshot"``): a position sold and bought back reads
+    ``origin == "trades"``, and its real recorded open date must win over a
+    stamp describing the cycle before it.
+    """
+    ticker = row.get("ticker")
+    stamp = (recorded.get(ticker) or {}).get("since_basis")
+    if stamp not in lg.SINCE_BASES:
+        return row
+    if (derived.get(ticker) or {}).get("origin") != "snapshot":
+        return row
+    row = dict(row)
+    row["since_basis"] = stamp
+    row.pop("since", None)
+    if stamp == "user_estimate":
+        row["since"] = recorded[ticker].get("since")
+    return row
 
 
 def _carried_row(ticker, fact):
@@ -351,36 +535,54 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
     here is recomputed against the *adopted* anchor, not the supplied one: with
     carried rows merged back in, the difference the ledger records must be the
     difference that actually happened.
+
+    This is also the only place ``allow_engine_provenance`` is turned on. The
+    envelope assembled here is not a caller's file: every ``since`` in it was
+    computed a few lines above by ``_appearance_stamp`` or copied off the
+    recorded anchor by ``_carry_forward_provenance``.
     """
     classifications = _validated_answers(receipt.get("pending_confirmations") or [], answers)
-    resupply = sorted(ticker for ticker, value in classifications.items() if value == "resupply")
+    resupply = sorted(ticker for ticker, value in classifications.items()
+                      if value["classification"] == "resupply")
     if resupply:
         return {"status": "resupply", "refresh_id": receipt.get("refresh_id"),
                 "tickers": resupply}
 
     derived = lg.holdings_as_of(events, snapshot["as_of"])
+    recorded = _declared_map(lg.latest_anchor(events) or {})
     by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
-    carried, sold = [], []
-    for ticker, classification in sorted(classifications.items()):
-        if by_ticker[ticker]["kind"] != "disappearance":
+    carried, sold, appeared = [], [], {}
+    for ticker, answer in sorted(classifications.items()):
+        kind = by_ticker[ticker]["kind"]
+        if kind == "appearance":
+            appeared[ticker] = answer
             continue
-        if classification == "not_captured":
+        if kind != "disappearance":
+            continue
+        if answer["classification"] == "not_captured":
             fact = derived.get(ticker)
             if not fact:
                 raise RefreshError(f"{ticker} is no longer in the recorded book to carry forward")
-            carried.append(_carried_row(ticker, fact))
-        elif classification == "sold":
+            carried.append(_carry_forward_provenance(
+                _carried_row(ticker, fact), recorded, derived))
+        elif answer["classification"] == "sold":
             sold.append(ticker)
 
-    envelope = {"as_of": snapshot["as_of"],
-                "positions": [_supplied_row(row) for row in anchor.get("positions") or []] + carried}
+    supplied = []
+    for row in anchor.get("positions") or []:
+        row = _supplied_row(row)
+        answer = appeared.get(row.get("ticker"))
+        supplied.append(_appearance_stamp(row, answer, snapshot["as_of"]) if answer
+                        else _carry_forward_provenance(row, recorded, derived))
+    envelope = {"as_of": snapshot["as_of"], "positions": supplied + carried}
     if snapshot.get("cash") is not None:
         envelope["cash"] = snapshot["cash"]
     if snapshot.get("fx"):
         envelope["fx"] = snapshot["fx"]
     try:
         _adopted_snapshot, adopted_anchor = snapshot_adapter.normalize_book(
-            envelope, today=today or dt.date.fromisoformat(snapshot["as_of"]))
+            envelope, today=today or dt.date.fromisoformat(snapshot["as_of"]),
+            allow_engine_provenance=True)
     except snapshot_adapter.SnapshotError as exc:
         raise RefreshError(f"the adopted book failed validation: {exc}") from exc
 
@@ -409,7 +611,8 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None):
     return {"status": "adopt", "refresh_id": receipt.get("refresh_id"),
             "anchor": adopted_anchor, "reconciliation": reconciliation,
             "absences": absences,
-            "carried": [row["ticker"] for row in carried], "sold": sold}
+            "carried": [row["ticker"] for row in carried], "sold": sold,
+            "appeared": sorted(appeared)}
 
 
 def _supplied_row(position):

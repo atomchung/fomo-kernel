@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/book-refresh.schema.json",
   "title": "Fomo Kernel Book Refresh",
-  "description": "The independent book-refresh lane (#485 Slice C, owner ruling 2026-07-28): updating the recorded book from a newer holdings view is its own conversation, decoupled from post-trade review and from pre-trade consultation. `receipt` is what `review.py refresh --snapshot-json ...` emits and writes nothing; `input` is the agent-facing answers envelope `--answers` accepts. The readable contract; skills/fomo-kernel/engine/book_refresh.py holds the enforcement, because the offline suite carries no jsonschema dependency. Nothing here is stored under the coach root: the durable record of a refresh is the ledger rows it appends ([adjustment?, position_absence*, snapshot]), which ride the already-registered ledger.jsonl.",
+  "description": "The independent book-refresh lane (#485 Slice C, owner ruling 2026-07-28): updating the recorded book from a newer holdings view is its own conversation, decoupled from post-trade review and from pre-trade consultation. `receipt` is what `review.py refresh --snapshot-json ...` emits and writes nothing; `input` is the agent-facing answers envelope `--answers` accepts. The readable contract; skills/fomo-kernel/engine/book_refresh.py holds the enforcement, because the offline suite carries no jsonschema dependency. Nothing here is stored under the coach root: the durable record of a refresh is the ledger rows it appends ([adjustment?, position_absence*, snapshot]), which ride the already-registered ledger.jsonl. An appearance's answer is recorded inside that snapshot row, as `since` plus `since_basis` on the position (ledger.SNAPSHOT_POSITION_KEYS): they are one fact validated as a pair, so a reconstructed start date can never be read without the stamp saying it was reconstructed. Making that stamp visible and actionable to the user is #532's job, not this lane's.",
   "type": "object",
   "$defs": {
     "classification": {
       "type": "string",
       "enum": ["sold", "not_captured", "confirmed", "resupply"],
-      "description": "What the user says about one raised confirmation. Locked to book_refresh.REFRESH_CLASSIFICATIONS by a drift test (review.CONSIDER_DECISIONS' precedent). `sold`: the position left the book -- it is removed and a fill-free position_absence is recorded, never a manufactured trade. `not_captured`: the supplied view simply missed it -- the position is carried forward with carried:true. `confirmed`: a large change is real, adopt it. `resupply`: the supplied view is wrong -- the whole refresh aborts and nothing is written. Which values are legal depends on the raised item's kind: a disappearance accepts sold/not_captured/resupply, a large_change accepts confirmed/resupply. A disappearance is never `confirmed`, because saying the position is gone is exactly what `sold` means."
+      "description": "What the user says about one raised confirmation. Locked to book_refresh.REFRESH_CLASSIFICATIONS by a drift test (review.CONSIDER_DECISIONS' precedent). `sold`: the position left the book -- it is removed and a fill-free position_absence is recorded, never a manufactured trade. `not_captured`: the supplied view simply missed it -- the position is carried forward with carried:true. `confirmed`: a large change, or an appearance, is real -- adopt it. `resupply`: the supplied view is wrong -- the whole refresh aborts and nothing is written. Which values are legal depends on the raised item's kind: a disappearance accepts sold/not_captured/resupply, an appearance and a large_change each accept confirmed/resupply. A disappearance is never `confirmed`, because saying the position is gone is exactly what `sold` means; an appearance is `confirmed` for the mirror-image reason, and carries how long the position has been held (and its cost, when the view has none) as answer fields rather than as further classifications."
     },
     "pending_confirmation": {
       "type": "object",
@@ -17,8 +17,8 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["disappearance", "large_change"],
-          "description": "`disappearance`: the record holds a position the supplied view does not, and the ledger does not already explain it. The engine cannot tell a sale from a capture gap and the two answers lead to different states, so it always asks (owner: 每次都問). `large_change`: shares moved by at least book_refresh.REFRESH_MAJOR_DELTA of the whole book on a position holding at least REFRESH_CORE_WEIGHT of it."
+          "enum": ["disappearance", "appearance", "large_change"],
+          "description": "`disappearance`: the record holds a position the supplied view does not, and the ledger does not already explain it. The engine cannot tell a sale from a capture gap and the two answers lead to different states, so it always asks (owner: 每次都問). `appearance` (#531): the supplied view holds a position the record does not. It destroys nothing, which is why this lane once adopted it silently, but it arrives with no provenance and the engine cannot recover it later -- a position bought last week and one transferred in years ago produce byte-identical ledger state. So the user is asked how long they have held it, in rough months, plus a cost when the view carries none. `large_change`: shares moved by at least book_refresh.REFRESH_MAJOR_DELTA of the whole book on a position holding at least REFRESH_CORE_WEIGHT of it."
         },
         "ticker": {"type": "string", "minLength": 1},
         "cycle_id": {
@@ -26,7 +26,11 @@
           "description": "disappearance only: the recorded cycle that would close. Engine-derived from the ledger, never supplied."
         },
         "derived_shares": {"type": ["number", "null"], "description": "What the record holds."},
-        "declared_shares": {"type": ["number", "null"], "description": "large_change only: what the supplied view states."},
+        "declared_shares": {"type": ["number", "null"], "description": "appearance and large_change: what the supplied view states."},
+        "needs_avg_cost": {
+          "type": "boolean",
+          "description": "appearance only: the declared row carries no avg_cost, so the answer must state one (null being a legal 'I don't know'). This is #528's input class closed at the point of entry instead of at the point of refusal. When false, answering with a cost is refused rather than silently preferred over the one the view already declared."
+        },
         "weight": {"type": ["number", "null"], "description": "large_change only: the position's share of the recorded book, on the receipt's own bounded valuation basis."},
         "delta_weight": {"type": ["number", "null"], "description": "large_change only: |change in value| as a share of the whole recorded book."},
         "options": {
@@ -57,7 +61,7 @@
         "status": {
           "type": "string",
           "enum": ["pending_confirmation", "ready"],
-          "description": "`ready` means the difference can be adopted with no question. It does not mean there is no difference -- an appearance, a small change, or a cash difference is adopted and disclosed without ceremony, because an additive change removes nothing."
+          "description": "`ready` means the difference can be adopted with no question. It does not mean there is no difference -- a small change, a cash difference, or a market/currency difference is adopted and disclosed without ceremony. The friction is bounded to the two existence questions: a position that left the record, and one that entered it."
         },
         "diff": {
           "type": "object",
@@ -94,13 +98,24 @@
             "properties": {
               "ticker": {"type": "string", "minLength": 1},
               "classification": {"$ref": "#/$defs/classification"},
+              "held_months": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "maximum": 1200,
+                "description": "Required on a `confirmed` appearance, refused anywhere else. Roughly how many months the user has held the position, transcribed from what they said and never converted by the agent: book_refresh._months_before derives the cycle start, per SKILL.md non-negotiable rule 1. Months are enough and that is load-bearing -- horizon.py puts every holding-period judgment on four day boundaries (21, 60, 90, 180) and a month is at worst plus or minus fifteen days. `null` is the ordinary 'I don't know': no date is invented, the position's cycle becomes ticker#unknown, and horizon._cycle_start drops it from holding-period diagnostics. A missing key is not a shrug -- it is an unasked question, and it is refused."
+              },
+              "avg_cost": {
+                "type": ["number", "null"],
+                "exclusiveMinimum": 0,
+                "description": "Required on a `confirmed` appearance whose raised item said needs_avg_cost, refused otherwise. `null` stays legal: a user who does not know their cost must not be pushed into inventing one, and the position stays value-only -- the same state it reached silently before this question existed, now reached with the user having been asked."
+              },
               "note": {
                 "type": ["string", "null"],
                 "description": "Optional free text the user gave. Never parsed, never adjudicated."
               }
             }
           },
-          "description": "Exactly one answer per raised confirmation. An answer for anything the receipt did not raise is refused by name (condition-check.schema.json's user_response pattern: the engine declares what may be answered), and any raised item left unanswered fails the whole refresh closed. Adopting an unanswered destructive change 'by default' is the silent data loss this lane exists to prevent."
+          "description": "Exactly one answer per raised confirmation. An answer for anything the receipt did not raise is refused by name (condition-check.schema.json's user_response pattern: the engine declares what may be answered), and any raised item left unanswered fails the whole refresh closed. Adopting an unanswered destructive change 'by default' is the silent data loss this lane exists to prevent. The same rule runs one level down over held_months and avg_cost: each is refused when it was not asked for, and refused as missing when it was."
         }
       }
     }

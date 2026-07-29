@@ -45,6 +45,8 @@ class SnapshotError(ValueError):
 
 ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx", "is_complete"}
 POSITION_KEYS = set(ledger.SNAPSHOT_POSITION_KEYS)   # single declaration: ledger.py
+# Engine-assigned, never agent-supplied. Also declared once, in ledger.py.
+ENGINE_ASSIGNED_KEYS = set(ledger.ENGINE_ASSIGNED_POSITION_KEYS)
 SUPPORTED_MARKETS = {"US", "TW"}
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^_-]{0,31}$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -117,7 +119,41 @@ def _currency(value, label):
     return currency
 
 
-def _normalize_position(raw, index):
+def _normalize_provenance(raw, index, row):
+    """Attach the engine-assigned cycle-start stamp, or fail closed (#531).
+
+    The two keys are one fact and are validated as a pair, deliberately: a
+    ``since`` that could travel without ``since_basis`` would be a date with no
+    statement that it was reconstructed from "about six months", and every
+    downstream reader would be free to print it as an exact day. Enforcing the
+    pair here is what makes "a derived start date is never rendered as an exact
+    date" true at the storage layer rather than a habit each renderer must keep.
+    """
+    basis = raw.get("since_basis")
+    since = raw.get("since")
+    if basis is None:
+        if since is not None:
+            raise SnapshotError(
+                f"positions[{index}].since requires since_basis; a reconstructed "
+                "start date may not travel without the stamp saying it is one")
+        return
+    if basis not in ledger.SINCE_BASES:
+        allowed = ", ".join(ledger.SINCE_BASES)
+        raise SnapshotError(f"positions[{index}].since_basis must be one of: {allowed}")
+    if basis == "unknown":
+        if since is not None:
+            raise SnapshotError(
+                f"positions[{index}].since_basis is 'unknown' but a since was supplied")
+        row["since_basis"] = "unknown"
+        return
+    if since is None:
+        raise SnapshotError(
+            f"positions[{index}].since_basis is 'user_estimate' but no since was derived")
+    row["since"] = _strict_date(since, f"positions[{index}].since").isoformat()
+    row["since_basis"] = "user_estimate"
+
+
+def _normalize_position(raw, index, *, allow_engine_provenance=False):
     if not isinstance(raw, dict):
         raise SnapshotError(f"positions[{index}] must be an object")
     extra = set(raw) - POSITION_KEYS
@@ -125,6 +161,14 @@ def _normalize_position(raw, index):
         raise SnapshotError(
             f"positions[{index}] has unknown fields: " + ", ".join(sorted(extra))
         )
+    if not allow_engine_provenance:
+        assigned = sorted(set(raw) & ENGINE_ASSIGNED_KEYS)
+        if assigned:
+            raise SnapshotError(
+                f"positions[{index}] carries engine-assigned fields: "
+                + ", ".join(assigned)
+                + "; a cycle start is derived by the engine from what the user "
+                  "said, never transcribed by the caller")
     missing = {"ticker", "shares", "market", "currency"} - set(raw)
     if missing:
         raise SnapshotError(
@@ -155,6 +199,7 @@ def _normalize_position(raw, index):
             raise SnapshotError(f"positions[{index}].carried must be a boolean")
         if raw["carried"]:
             row["carried"] = True
+    _normalize_provenance(raw, index, row)
     return row
 
 
@@ -202,6 +247,14 @@ def _merge_positions(rows):
         # actually-observed row means the position is on the supplied view.
         if not row.get("carried"):
             current.pop("carried", None)
+        # Same all-or-nothing rule for the cycle-start stamp, for a stronger
+        # reason: two rows disagreeing about when a position was opened is not
+        # a number to average, so the stamp is dropped and the merged row falls
+        # back to the anchor date rather than picking a winner.
+        if (row.get("since"), row.get("since_basis")) != (current.get("since"),
+                                                          current.get("since_basis")):
+            current.pop("since", None)
+            current.pop("since_basis", None)
         counts[ticker] += 1
     return [grouped[ticker] for ticker in sorted(grouped)], sum(counts.values()) - len(grouped)
 
@@ -237,7 +290,7 @@ def _normalize_fx(raw):
     return dict(sorted(out.items()))
 
 
-def normalize_envelope(raw, today):
+def normalize_envelope(raw, today, *, allow_engine_provenance=False):
     """Validate one supplied position envelope into normalized facts.
 
     Split out of ``_load`` so the book-refresh lane (``book_refresh.py``) runs
@@ -246,6 +299,10 @@ def normalize_envelope(raw, today):
     exactly. ``prepare`` below stays the review lane's entry point and does far
     more on top (valuation, policy lookups, dimensions), none of which a
     data-maintenance conversation needs.
+
+    ``allow_engine_provenance`` is off for every agent-facing entry point. Only
+    ``book_refresh.build_adoption`` turns it on, and only for the envelope it
+    assembled itself out of answers the engine converted (#531).
     """
     if not isinstance(raw, dict):
         raise SnapshotError("normalized snapshot must be a JSON object")
@@ -262,8 +319,13 @@ def normalize_envelope(raw, today):
     if not isinstance(positions_raw, list) or not positions_raw:
         raise SnapshotError("positions must be a non-empty array")
     positions, merged_rows = _merge_positions(
-        [_normalize_position(row, index) for index, row in enumerate(positions_raw)]
+        [_normalize_position(row, index, allow_engine_provenance=allow_engine_provenance)
+         for index, row in enumerate(positions_raw)]
     )
+    for position in positions:
+        if position.get("since") and _strict_date(position["since"], "since") > as_of:
+            raise SnapshotError(
+                f"{position['ticker']} states a cycle start after the book's as_of")
     is_complete = raw.get("is_complete", True)
     if not isinstance(is_complete, bool):
         raise SnapshotError("is_complete must be a boolean")
@@ -287,7 +349,7 @@ def _load(path, today):
     return normalize_envelope(raw, today)
 
 
-def normalize_book(source, today=None):
+def normalize_book(source, today=None, *, allow_engine_provenance=False):
     """Return ``(snapshot, anchor)`` for one supplied book, with no valuation.
 
     ``source`` is a path to the normalized snapshot JSON or an already-parsed
@@ -297,7 +359,8 @@ def normalize_book(source, today=None):
     """
     day = _today(today)
     if isinstance(source, dict):
-        snapshot = normalize_envelope(source, day)
+        snapshot = normalize_envelope(source, day,
+                                      allow_engine_provenance=allow_engine_provenance)
     else:
         snapshot = _load(os.path.abspath(os.path.expanduser(source)), day)
     return snapshot, _anchor(snapshot)
@@ -390,6 +453,14 @@ def _anchor(snapshot):
             # Identity honesty: the adopted book states which rows came from the
             # existing record rather than from the view the user just supplied.
             position["carried"] = True
+        if row.get("since_basis"):
+            # #531: the cycle start the user was asked for, and the stamp saying
+            # it is an estimate. `since` is absent when they said they did not
+            # know, which ledger.derive_holdings turns into a ticker#unknown
+            # cycle rather than a manufactured date.
+            position["since_basis"] = row["since_basis"]
+            if row.get("since"):
+                position["since"] = row["since"]
         positions.append(position)
     event = {
         "type": "snapshot",

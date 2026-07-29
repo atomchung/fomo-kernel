@@ -466,12 +466,15 @@ def _refuse_if_the_book_must_catch_up(root, snapshot_path):
 
     *Which* differences make that true is deliberately not decided here.  This
     asks ``book_refresh``, the lane that owns the question, and refuses exactly
-    when it would raise one — a vanished position, or a large move on a large
-    holding.  Two reasons that is the criterion rather than "the declaration
-    does not reconcile clean".  It is the only set that can lose information: a
-    position in the record and absent from the view leaves the book with no exit
-    record, no closed cycle and no revisit, while every other difference merely
-    replaces one number with another and the next reconciliation still sees the
+    when it would raise one — today a vanished position, an appeared one, or a
+    large move on a large holding, and whatever that lane adds next without a
+    line changing here.  Two reasons that is the criterion rather than "the
+    declaration does not reconcile clean".  It is the only set that can lose
+    information: a position in the record and absent from the view leaves the
+    book with no exit record, no closed cycle and no revisit, and a position in
+    the view and absent from the record can only be given a provenance at the
+    moment it appears (#531), while every other difference merely replaces one
+    number with another and the next reconciliation still sees the
     truth.  And ``avg_cost`` differs for legitimate reasons on almost every real
     book — ``derive_holdings`` keeps a moving average while brokers may use FIFO
     or amortize fees, past a half-cent tolerance — so refusing on the status
@@ -5550,7 +5553,7 @@ def cmd_refresh(args):
            "as_of": adoption["anchor"]["as_of"],
            "reconciliation": adoption["reconciliation"]["status"],
            "carried_forward": adoption["carried"], "recorded_absent": adoption["sold"],
-           "ledger": report})
+           "recorded_new": adoption["appeared"], "ledger": report})
 
 
 def cmd_doctor(args):
