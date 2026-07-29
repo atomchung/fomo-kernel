@@ -88,6 +88,9 @@ FINAL_CARD = ("card_presented", {"stage": "final"})
 WEEKLY_OPENER = ("memory_presented", {})
 QUESTION = ("question_presented", {})
 RULE_CHOICE = ("rule_choice_presented", {})
+CHANGE_DIFF = ("change_presented", {"change_kind": "diff"})
+CHANGE_RESULT = ("change_presented", {"change_kind": "result"})
+VERDICT = ("owner_verdict", {})
 
 
 def locate(rows, anchor):
@@ -149,6 +152,25 @@ def owner_rows():
                                   grounding_expected=False, grounding_verbatim=True))
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="not_applicable"))
     return rows
+
+
+def refresh_rows():
+    """A book refresh walked honestly: what differed, what was asked, what was
+    recorded, and a verdict on the surface the user actually saw.
+
+    No card and no preview/final staging appear anywhere in it, because the
+    flow renders none (`flows/book-refresh.md`).
+    """
+    return [
+        declaration(route="refresh"),
+        row("change_presented", change_kind="diff"),
+        row("question_presented", mode="plain_text"),
+        row("answers_received"),
+        row("change_presented", change_kind="result"),
+        row("findings_recorded", findings=[]),
+        row("owner_verdict", controls="pass", card="not_applicable",
+            memory="not_applicable", change="pass"),
+    ]
 
 
 def stamp(rows, timestamps):
@@ -794,6 +816,262 @@ def test_cli_cash_anchor_checked_requires_outcome():
         assert done.returncode == 0, done.stderr
 
 
+# --- The card-free lane: book refresh (#523) ----------------------------------
+#
+# A refresh renders no card by design, so before this route existed the card
+# check could only ever fail it and the only way to pass was to fabricate card
+# events — the exact dishonesty this tool exists to prevent. What each route
+# owes now lives in one table (ux_receipt.ROUTE_CONTRACTS), and these probes
+# cover both directions of it: the card-free lane must prove what it *did*
+# show, and the card-producing routes must not have been quietly exempted along
+# the way.
+
+def test_a_refresh_trace_verifies_without_any_card():
+    assert ux_receipt.verify_rows(refresh_rows()) == []
+    assert ux_receipt.verify_rows(refresh_rows(), require_owner_verdict=True,
+                                  require_findings=True) == []
+
+
+def test_a_quiet_refresh_that_raised_nothing_still_has_a_change_surface():
+    # Not every refresh raises a confirmation: an additive change is adopted
+    # without ceremony. The diff and the result are still shown, and the
+    # controls verdict must then say `not_applicable` rather than judge a
+    # control nobody saw.
+    rows = drop(drop(refresh_rows(), QUESTION), ("answers_received", {}))
+    at(rows, VERDICT)["controls"] = "not_applicable"
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True,
+                                  require_findings=True) == []
+
+
+def test_a_refresh_claiming_a_card_fails():
+    """The exemption forbids, it does not merely stop requiring.
+
+    A route that only stopped *demanding* cards would accept a receipt claiming
+    a delivery that structurally cannot have happened — the same fabricated
+    evidence, volunteered instead of forced.
+    """
+    for claim in (row("artifact_generated", stage="final", artifact_path="/tmp/card.md"),
+                  row("card_presented", stage="final", mode="markdown_inline"),
+                  row("widget_attempt_failed", stage="preview"),
+                  row("rule_choice_presented", mode="plain_text",
+                      grounding_expected=False, grounding_verbatim=True)):
+        rows = refresh_rows()
+        before(rows, VERDICT, claim)
+        assert_has(ux_receipt.verify_rows(rows), "record a card delivery that cannot have happened")
+
+
+def test_a_refresh_with_no_visible_change_surface_fails():
+    """A start row and a verdict prove nothing about the lane they claim."""
+    bare = refresh_rows()
+    for anchor in (CHANGE_DIFF, CHANGE_RESULT, QUESTION, ("answers_received", {})):
+        drop(bare, anchor)
+    at(bare, VERDICT)["controls"] = "not_applicable"
+    assert_has(ux_receipt.verify_rows(bare), "must show at least one visible change surface")
+    # Any one of the three surfaces is enough, per #523's stated contract: the
+    # narrated diff, the recorded result, or the confirmation question. (The
+    # question also brings a control back, so it brings its verdict with it.)
+    for restored, controls in (
+            (row("change_presented", change_kind="diff"), "not_applicable"),
+            (row("change_presented", change_kind="result"), "not_applicable"),
+            (row("question_presented", mode="plain_text"), "pass")):
+        one = before([dict(value) for value in bare], VERDICT, restored)
+        at(one, VERDICT)["controls"] = controls
+        assert ux_receipt.verify_rows(one) == [], restored
+
+
+def test_change_presented_is_content_free_and_typed():
+    rows = refresh_rows()
+    at(rows, CHANGE_DIFF)["change_kind"] = "guessed_a_cause"
+    assert_has(ux_receipt.verify_rows(rows), "unsupported change kind")
+    rows = refresh_rows()
+    at(rows, CHANGE_DIFF)["disappeared"] = "ACME 120 shares"
+    assert_has(ux_receipt.verify_rows(rows),
+               "change_presented contains unsupported fields: disappeared")
+
+
+def test_a_card_route_may_not_borrow_the_change_surface():
+    # Symmetry with the rule above: `change_presented` on a route that renders
+    # cards would let a review skip proving its card by pointing at something
+    # else it showed.
+    rows = good_markdown_rows()
+    before(rows, PREVIEW_ARTIFACT, row("change_presented", change_kind="diff"))
+    assert_has(ux_receipt.verify_rows(rows), "change_presented does not belong on this route")
+
+
+def test_the_refresh_verdict_judges_the_change_and_not_a_card():
+    rows = refresh_rows()
+    at(rows, VERDICT)["card"] = "pass"
+    assert_has(ux_receipt.verify_rows(rows), "owner card verdict must be not_applicable")
+
+    rows = refresh_rows()
+    del at(rows, VERDICT)["change"]
+    assert_has(ux_receipt.verify_rows(rows), "owner change verdict must be pass or fail")
+
+    rows = refresh_rows()
+    at(rows, VERDICT)["change"] = "fail"
+    assert_has(ux_receipt.verify_rows(rows, require_owner_verdict=True), "requires change=pass")
+
+    # And the axis does not exist on a route that renders a card.
+    rows = good_markdown_rows()
+    rows.append(row("owner_verdict", controls="pass", card="pass",
+                    memory="not_applicable", change="pass"))
+    assert_has(ux_receipt.verify_rows(rows), "owner change verdict does not apply")
+
+
+def test_the_controls_verdict_follows_what_the_refresh_actually_asked():
+    # Both directions, because both are fabrications: judging a control that
+    # never appeared, and waving away one that did.
+    rows = refresh_rows()
+    at(rows, VERDICT)["controls"] = "not_applicable"
+    assert_has(ux_receipt.verify_rows(rows), "owner controls verdict must be pass or fail")
+
+    rows = drop(drop(refresh_rows(), QUESTION), ("answers_received", {}))
+    assert_has(ux_receipt.verify_rows(rows), "owner controls verdict must be not_applicable")
+
+
+def test_a_refresh_verdict_recorded_before_the_change_surface_fails():
+    # The same anti-backfill rule the final card carries: the verdict is the
+    # last act, so one recorded before the surface it judges judged nothing.
+    # Only the result moves, so the findings-ordering rule stays satisfied and
+    # this probe fails for exactly one reason.
+    rows = refresh_rows()
+    result = at(rows, CHANGE_RESULT)
+    drop(rows, CHANGE_RESULT)
+    rows.append(result)
+    assert_has(ux_receipt.verify_rows(rows), "must follow the change surface it judges")
+
+
+def test_a_refresh_trace_can_reach_credible_timing_integrity():
+    """Without this, `--require-timing-integrity` would refuse the lane forever.
+
+    `qa_env.sh` archives human-graded runs with that flag, so a route whose
+    structural completeness is unreachable is a route that cannot be archived
+    at all — which is what #486's refresh rows were blocked on.
+    """
+    # Structural completeness for this lane is its change surface, not a card
+    # walk it can never have.
+    surfaceless = [value for value in refresh_rows()
+                   if value.get("event") not in ("change_presented", "question_presented")]
+    incomplete = ux_receipt.timing_integrity(surfaceless)
+    assert incomplete["status"] == "not_assessed"
+    assert "change surface" in incomplete["reason"], incomplete
+
+    # Unstamped but complete stays compatible, exactly like a legacy receipt.
+    stale = ux_receipt.timing_integrity(refresh_rows())
+    assert stale["status"] == "not_assessed"
+    assert "legacy receipt remains compatible" in stale["reason"], stale
+
+    integrity = ux_receipt.timing_integrity(stamp(refresh_rows(), [
+        "2026-07-28T09:15:00Z",
+        "2026-07-28T09:15:08Z",
+        "2026-07-28T09:15:20Z",
+        "2026-07-28T09:16:04Z",
+        "2026-07-28T09:16:11Z",
+        "2026-07-28T09:16:30Z",
+        "2026-07-28T09:16:44Z",
+    ]))
+    assert integrity["status"] == "credible", integrity
+    assert integrity["owner_live_eligible"] is True
+    assert integrity["span_seconds"] == 104
+
+
+def test_cli_archive_gates_accept_a_refresh_receipt_end_to_end():
+    """The gate set `qa/qa_env.sh` applies at archive time, run for real."""
+    with tempfile.TemporaryDirectory() as tmp:
+        receipt = pathlib.Path(tmp) / "ux" / "refresh-9f2c.jsonl"
+        receipt.parent.mkdir(parents=True)
+        rows = stamp(refresh_rows(), [
+            "2026-07-28T09:15:00Z", "2026-07-28T09:15:08Z", "2026-07-28T09:15:20Z",
+            "2026-07-28T09:16:04Z", "2026-07-28T09:16:11Z", "2026-07-28T09:16:30Z",
+            "2026-07-28T09:16:44Z",
+        ])
+        for value in rows:
+            value["session_id"] = "refresh-9f2c"
+        receipt.write_text("".join(json.dumps(value) + "\n" for value in rows), encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "verify", "--session-id", "refresh-9f2c",
+             "--state-root", tmp, "--require-owner-verdict", "--require-timing-integrity",
+             "--require-findings"],
+            capture_output=True, text=True,
+        )
+        assert done.returncode == 0, done.stderr
+        assert json.loads(done.stdout)["timing_integrity"]["status"] == "credible"
+
+
+def test_cli_writes_and_verifies_a_refresh_trace():
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "refresh-cli", "--state-root", tmp]
+        start = subprocess.run(
+            [sys.executable, str(TOOL), "start", *common, "--client", "codex-desktop",
+             "--route", "refresh"],
+            capture_output=True, text=True)
+        assert start.returncode == 0, start.stderr
+        missing = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "change_presented"],
+            capture_output=True, text=True)
+        assert missing.returncode == 2 and "requires --change-kind" in missing.stderr
+        for kind in ux_receipt.CHANGE_KINDS:
+            done = subprocess.run(
+                [sys.executable, str(TOOL), "event", *common, "--event", "change_presented",
+                 "--change-kind", kind],
+                capture_output=True, text=True)
+            assert done.returncode == 0, done.stderr
+        verdict = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "owner_verdict",
+             "--controls", "not_applicable", "--card", "not_applicable",
+             "--memory", "not_applicable", "--change", "pass"],
+            capture_output=True, text=True)
+        assert verdict.returncode == 0, verdict.stderr
+        verified = subprocess.run(
+            [sys.executable, str(TOOL), "verify", *common, "--require-owner-verdict"],
+            capture_output=True, text=True)
+        assert verified.returncode == 0, verified.stderr
+
+
+def test_card_routes_still_owe_their_cards_after_the_refresh_exemption():
+    """The regression guard: the exemption must not have leaked one route over.
+
+    This is why the refresh lane could not reuse `snapshot_review` — exempting
+    that route from the card check would have disabled it for genuine snapshot
+    reviews, which do present cards (#523 owner ruling). So every route the
+    table says renders cards must still fail without them.
+    """
+    carded = sorted(route for route, contract in ux_receipt.ROUTE_CONTRACTS.items()
+                    if contract["cards"])
+    assert carded == ["first_review", "snapshot_review", "test_drive", "weekly_review"]
+    for route in carded:
+        rows = redeclare(good_markdown_rows(), route=route)
+        if route == "weekly_review":
+            after(rows, DECLARATION, row("memory_presented", memory_kind="prior_commitment"))
+        assert ux_receipt.verify_rows(rows) == [], route
+        stripped = [value for value in rows
+                    if value.get("event") not in ("artifact_generated", "card_presented")]
+        errors = ux_receipt.verify_rows(stripped)
+        for stage in ux_receipt.STAGES:
+            assert_has(errors, f"{stage} card_presented must appear exactly once")
+            assert_has(errors, f"{stage} artifact_generated must appear exactly once")
+
+
+def test_every_route_declares_a_complete_contract():
+    """`ROUTES` is derived from the table, so a route cannot exist without one.
+
+    A route added with a missing key would raise a KeyError deep inside
+    verification instead of failing here, and a verdict axis with no scale would
+    silently accept anything.
+    """
+    assert ux_receipt.ROUTES == tuple(ux_receipt.ROUTE_CONTRACTS)
+    for route, contract in ux_receipt.ROUTE_CONTRACTS.items():
+        assert set(contract) == {"cards", "cash_anchor", "opener", "change",
+                                 "verdict", "must_pass"}, route
+        assert set(contract["verdict"]) <= set(ux_receipt.VERDICT_AXES), route
+        assert set(contract["must_pass"]) <= set(contract["verdict"]), route
+        for axis, scale in contract["verdict"].items():
+            assert scale and set(scale) <= {"pass", "fail", "not_applicable"}, (route, axis)
+        # A route must render something the user can be shown, or it has no
+        # evidence to carry at all.
+        assert contract["cards"] or contract["change"], route
+
+
 # --- Declaration integrity ---------------------------------------------------
 
 def test_session_id_must_be_consistent():
@@ -1006,11 +1284,14 @@ def test_dynamic_surface_manual_verdict_requires_specificity_and_answer_fit():
 
 
 def test_manual_weekly_requires_memory_verdict():
+    # The obligation now comes from ROUTE_CONTRACTS["weekly_review"]["must_pass"]
+    # rather than a `route == "weekly_review"` branch inside the owner gate, so
+    # the message names the route and the axis it wanted.
     rows = weekly_rows()
     rows.append(row("owner_verdict", controls="pass", card="pass", memory="fail"))
     assert_has(
         ux_receipt.verify_rows(rows, require_owner_verdict=True),
-        "requires a passing memory verdict",
+        "weekly_review trace requires memory=pass",
     )
     rows[-1]["memory"] = "pass"
     assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
@@ -1231,6 +1512,11 @@ def test_documented_receipt_commands_actually_run():
     starts = [c for c in commands if c and c[0] == "start"]
     events = [c for c in commands if c and c[0] == "event"]
     assert starts and events, "expected both start and event examples"
+    # The base trace every documented event is replayed against. Chosen by what
+    # it declares, not by where it sits: `starts[-1]` meant "the widest
+    # capability" only for as long as the widest example happened to be last,
+    # and #523 added a second route with its own `start`.
+    base = next((c for c in reversed(starts) if "validated_widget" in c), starts[-1])
 
     def resolve(argv, root, scratch):
         out = []
@@ -1253,7 +1539,7 @@ def test_documented_receipt_commands_actually_run():
             if command[0] == "event":
                 # Declare the widest capability so widget/native examples are
                 # legal, then run the documented event against that trace.
-                subprocess.run(resolve(starts[-1][:], root, scratch),
+                subprocess.run(resolve(base[:], root, scratch),
                                capture_output=True, text=True)
             argv = resolve(command[:], root, scratch)
             if "--grounding-check-file" in argv:

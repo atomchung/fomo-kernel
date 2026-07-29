@@ -1,6 +1,6 @@
 # Presentation trace (ux_receipt)
 
-How to record that questions and cards actually reached the user. The behavior being recorded is defined in [`interaction-delivery.md`](interaction-delivery.md); this file is the command reference. Full-tier reviews only — a light-tier capture presents nothing, so it writes no trace at all.
+How to record that questions and cards actually reached the user. The behavior being recorded is defined in [`interaction-delivery.md`](interaction-delivery.md); this file is the command reference. Full-tier reviews, plus the card-free book-refresh lane described below — a light-tier capture presents nothing, so it writes no trace at all.
 
 The trace lives in the protected state directory (`~/.trade-coach/ux/<session_id>.jsonl`), the same trust boundary as the canonical ledger. It is never committed and never published. Question events are mechanically restricted to mode, surface source, and an opaque digest: they cannot carry the stem, options, ticker, thesis, user statement, or interpretation. Tests and inspection redirect it with `--state-root`.
 
@@ -79,13 +79,48 @@ python3 tools/ux_receipt.py event --session-id <id> --event rule_choice_presente
 
 Delete the check file afterward like any other scratch file. The tool performs the containment comparison itself and persists only `grounding_expected`, `grounding_verbatim`, and `grounding_hash` — never the raw grounding or presented text. `verify` fails closed when this evidence is absent or `grounding_verbatim` is not `true`, with no legacy exemption. It cannot detect a candidate that had no grounding but was presented with a fabricated one; the check proves fidelity only where the engine supplied something to be faithful to.
 
+## A card-free route: the book refresh
+
+`flows/book-refresh.md` renders no card, so the sequence above has nothing to record there. It is still a real user-visible step, and it has its own route rather than borrowing another one — exempting `snapshot_review` from the card check would disable that check for genuine snapshot reviews, which do present cards.
+
+What a `refresh` trace owes instead of a card is a **change surface**: the engine's difference as you narrated it, the report of what was recorded, or the confirmation question when one was raised. Use the engine's own `refresh_id` as the session id, so the trace names the plan it walked.
+
+```bash
+python3 tools/ux_receipt.py start \
+  --session-id <session_id> --client <client> --route refresh --adapter plain_text
+
+# step 1: the engine's difference, as narrated to the user
+python3 tools/ux_receipt.py event --session-id <id> --event change_presented --change-kind diff
+
+# step 2, only when the refresh raised something: the one confirmation question
+python3 tools/ux_receipt.py event --session-id <id> --event question_presented --mode plain_text
+
+# step 3: what was recorded — or that nothing was — as reported back
+python3 tools/ux_receipt.py event --session-id <id> --event change_presented --change-kind result
+```
+
+`change_presented` states that a surface appeared and nothing about what it said; the trace rejects any other field, because the difference it narrates holds tickers and share counts.
+
+The owner verdict still judges what the user actually saw:
+
+```bash
+python3 tools/ux_receipt.py event --session-id <id> --event owner_verdict \
+  --controls pass --card not_applicable --memory not_applicable --change pass
+```
+
+- `--change` is the load-bearing axis here: did what the receipt showed match what actually happened to the book.
+- `--card not_applicable` is required rather than optional. Saying "no card was owed" is a claim the gate can check; leaving the axis free would let a lane with no card record a passing card verdict.
+- `--controls` follows the trace. A refresh that raised a confirmation must judge it (`pass`/`fail`); a refresh that raised nothing must record `not_applicable`, because there was no control to judge. `verify` refuses either mismatch.
+
+`verify` refuses a `refresh` trace that records any card event — a delivery that cannot have happened — and refuses one with no change surface at all, since a receipt holding only a start row and a verdict has proven nothing. Card-producing routes are unaffected: they still owe both cards, and `change_presented` does not belong on them.
+
 ## Verify
 
 ```bash
 python3 tools/ux_receipt.py verify --session-id <id>
 ```
 
-`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget degraded to Markdown with no recorded failure, or when a weekly opening memory did not precede the first card. It does not re-check answered questions or the commitment — the engine owns those.
+`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget degraded to Markdown with no recorded failure, or when a weekly opening memory did not precede the first card. Which of those a trace owes is decided by its declared route — cards, cash anchor, opening memory, change surface, and verdict axes are declared once per route inside the tool, so a route either carries an obligation or it does not, and none of them can be skipped by wording. It does not re-check answered questions or the commitment — the engine owns those.
 
 Timing plausibility is a separate signal. Verification stays compatible with legacy receipts and exits successfully with a `WARN` and `timing_integrity.status=suspect` when stamped rows reverse or an entire owner-verdict trace was recorded in a sub-three-second burst. A suspect result sets `owner_live_eligible=false` and cannot be cited as owner-live UX ground truth; audit contemporaneous evidence or re-run the walkthrough. Legacy receipts without `ts` pass ordinary verification but are `not_assessed` rather than fresh evidence.
 
