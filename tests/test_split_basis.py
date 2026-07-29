@@ -22,6 +22,7 @@ fails that one.
 Run:
   python3 tests/test_split_basis.py
 """
+import ast
 import os
 import sys
 
@@ -230,6 +231,89 @@ def test_an_unpriced_exit_stays_unpriced():
     not a missing quote and must not become a number."""
     assert rv.rebased_exit_price(
         {"ticker": "NVDA", "exit_date": "2024-05-20", "exit_price": None}, SPLITS) is None
+
+
+# ─────────────── every reader of the book is told about splits ───────────────
+
+# Where `splits` sits in each signature, so a positional call counts as passing
+# it and only a genuinely split-blind call is reported.
+_BOOK_READERS = {"derive_holdings": 1, "holdings_as_of": 2}
+
+# (module, enclosing function) -> why this reader legitimately has no map.
+# Keyed by name rather than line so it survives edits above it, and every entry
+# is checked to still match a real call below: an exemption that outlives its
+# call site is how an allowlist quietly becomes a licence.
+_NO_MAP_NEEDED = {
+    ("snapshot_adapter.py", "_state_positions"):
+        "derives from a one-element list holding a single anchor row. There are "
+        "no trades to replay, so no quantity is ever on two bases.",
+    ("ledger.py", "main"):
+        "the standalone diagnostic CLI. It has no review to read a stamped map "
+        "from, which is why it has none, and SKILL.md rules 2 and 7 forbid an "
+        "agent calling it — the stale basis reaches a maintainer, never a user.",
+}
+
+
+def _book_reader_calls():
+    """Yield (module, enclosing function, lineno, callee, passes_splits)."""
+    for mod in sorted(os.listdir(ENGINE)):
+        if not mod.endswith(".py") or mod.startswith("test_"):
+            continue
+        path = os.path.join(ENGINE, mod)
+        tree = ast.parse(open(path, encoding="utf-8").read(), path)
+        parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in _BOOK_READERS:
+                continue
+            passes = (any(k.arg == "splits" for k in node.keywords)
+                      or len(node.args) > _BOOK_READERS[name])
+            enclosing, cur = "<module>", node
+            while cur in parents:
+                cur = parents[cur]
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    enclosing = cur.name
+                    break
+            yield mod, enclosing, node.lineno, name, passes
+
+
+def test_every_reader_of_the_book_is_told_what_a_split_did_to_it():
+    """A caller that omits `splits` gets raw as-transacted quantities and no
+    integrity issue — the failure is silent by construction, so nothing but a
+    check like this one notices a reader that forgot. `absence_exits` was the
+    first to forget and it took a hand audit of all fourteen call sites to
+    find; this is what makes the second one cost nothing.
+
+    Scope is honest about what it buys. It sees a *direct* call missing the
+    argument, so it catches a reader that never asks for the map. It does not
+    catch a caller that holds a map and fails to forward it to a helper whose
+    own read is correctly parameterised — the other half of the `absence_exits`
+    defect — because that call site looks identical either way. The behavioural
+    test above is what covers that half; this is the net for the class.
+    """
+    missing = [f"{mod}:{line} {enclosing}() calls {callee}() with no split map"
+               for mod, enclosing, line, callee, passes in _book_reader_calls()
+               if not passes and (mod, enclosing) not in _NO_MAP_NEEDED]
+    assert not missing, (
+        "these read the recorded book without being told what a split did to it;\n"
+        "pass `splits`, or add a reasoned entry to _NO_MAP_NEEDED:\n  "
+        + "\n  ".join(missing))
+
+
+def test_no_split_map_exemption_outlives_its_call_site():
+    """An entry in _NO_MAP_NEEDED that matches nothing is an exemption still
+    granting permission to a caller that has moved, been renamed, or started
+    passing the map. Then the next reader to appear under that name inherits a
+    licence nobody decided to give it."""
+    live = {(mod, enclosing)
+            for mod, enclosing, _, _, passes in _book_reader_calls() if not passes}
+    stale = sorted(set(_NO_MAP_NEEDED) - live)
+    assert not stale, (
+        "these exemptions no longer match a split-blind call and must be removed: "
+        + ", ".join(f"{m}:{f}()" for m, f in stale))
 
 
 def _main():
