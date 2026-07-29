@@ -45,6 +45,28 @@ NON_NEGOTIABLE_SECTIONS = {
     Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
     Path("skills/fomo-kernel/references/agent-boundaries.md"): "The agent may not:",
 }
+# #543: same two guaranteed-delivery entry points as NON_NEGOTIABLE_SECTIONS
+# (docs/development-guide.md section 6), checked for a different rule -- the
+# freeform-answer-shape default. Kept as its own mapping rather than folded
+# into NON_NEGOTIABLE_SECTIONS because that dict's one existing consumer,
+# test_review_py_is_a_non_negotiable_boundary, asserts the review.py CLI
+# boundary specifically; reusing it here would force every section in it to
+# also restate the freeform rule, or vice versa.
+FREEFORM_ANSWER_SECTIONS = {
+    Path("AGENTS.md"): "## Non-negotiable boundaries",
+    Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
+}
+FREEFORM_ANSWER_REQUIRED_PHRASES = (
+    "no chart, no rendered artifact, no multi-tool production",
+    "`references/freeform-answers.md`",
+    # The effort ceiling must not read as licence to drop a disclosure the
+    # surface already owes. #479's visible two-sided challenge is delivered
+    # through `consider`, which this rule names -- an entry point carrying
+    # "answered briefly" without this clause invites compressing that away.
+    "Brevity bounds what an answer produces, never which facts it owes",
+)
+
+
 def _cli_review_commands():
     """Derive the boundary whitelist from build_parser() itself, so a new
     review.py subcommand that is missing from any non-negotiable section
@@ -666,6 +688,45 @@ def test_review_py_is_a_non_negotiable_boundary():
             assert f"`{command}`" in section, f"{rel}: boundary omits {command}"
 
 
+def test_freeform_answer_shape_is_a_boundary_in_both_entry_points():
+    """#543: an ad hoc informational question -- including a `consider`
+    call -- must default to a quick, direct, textual answer with no chart,
+    artifact, or multi-tool production, and a chart may only ever come from
+    a small pre-defined set. This is a must-always-land rule per
+    docs/development-guide.md section 6, so it belongs in both
+    guaranteed-delivery entry points, not only in the soft-routed reference
+    (`references/freeform-answers.md`) that carries the full rationale and
+    the named set. Checking for the same literal phrase in both files is
+    what stops a future edit from silently dropping the rule out of one of
+    them while leaving it in the other -- the exact gap that section names
+    as uncaught for a second such rule.
+    """
+    for rel, heading in FREEFORM_ANSWER_SECTIONS.items():
+        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
+        for phrase in FREEFORM_ANSWER_REQUIRED_PHRASES:
+            assert phrase in section, f"{rel}: missing freeform-answer-shape phrase {phrase!r}"
+
+
+def test_freeform_answer_shape_mutations_are_caught():
+    """Mutation proof for the check above. Drives the same markdown_section
+    + literal-phrase logic against the real, committed entry-point text with
+    one required phrase removed, rather than a synthetic stand-in -- so this
+    proves dropping the rule from a real file is caught, not just that the
+    `in` operator works on a hand-written fixture.
+    """
+    for rel, heading in FREEFORM_ANSWER_SECTIONS.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for phrase in FREEFORM_ANSWER_REQUIRED_PHRASES:
+            assert phrase in text, (
+                f"fixture assumption broken: {rel} no longer contains {phrase!r}"
+            )
+            mutated_text = text.replace(phrase, "", 1)
+            mutated_section = markdown_section(mutated_text, heading)
+            assert phrase not in mutated_section, (
+                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
+            )
+
+
 def test_agent_runtime_surface_scope_is_bounded():
     paths = {rel for rel, _ in agent_runtime_files()}
     required = {
@@ -791,6 +852,8 @@ def main():
         test_demo_card_numbers_match_across_all_surfaces,
         test_readme_heading_structure_matches_across_languages,
         test_review_py_is_a_non_negotiable_boundary,
+        test_freeform_answer_shape_is_a_boundary_in_both_entry_points,
+        test_freeform_answer_shape_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,
         test_json_ref_contract_links_are_discoverable,
         test_agent_runtime_surfaces_only_invoke_review_py,

@@ -4,6 +4,8 @@ A user mid-decision asks something like *"I'm thinking of buying NVDA — what d
 
 This is Layer 2 (docs/decision-fomo-kernel-shape.md §3-4): deterministic arithmetic over a hypothetical trade. The engine computes the consequence; it never recommends. Owner ruling 2026-07-27: build the case for and against from `consider`'s output, and take no position yourself.
 
+`consider`'s answer is plain conversation, not a card — which means it is a freeform surface and `freeform-answers.md`'s default applies: a quick, direct, textual answer, with no chart or multi-tool production unless the user asks for more.
+
 ## When this applies
 
 Any pre-trade question about a single hypothetical trade against the user's current book — "should I buy this," "am I chasing," "should I add here," "does this break my own rule." Not for a review (use `prepare`), and not for a question about several trades at once or a portfolio redesign — `consider` prices exactly one hypothetical trade.
