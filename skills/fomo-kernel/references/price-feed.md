@@ -63,7 +63,7 @@ Field rules:
 - `source` is the feed-level provenance shown on the card. A per-row `source` overrides it for that instrument.
 - Each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency`. One row per instrument.
 - `history` is optional: `[date, close]` pairs. When present it must agree with `close` on the shared date.
-- `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it only when the source shows it; omitted means no split adjustment is applied.
+- `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it whenever the source shows one inside the trade history, and check for one on any position the user has held for years. Omitting it is not cosmetic: the ledger records every trade at the share count that actually executed, so a sale placed after a split cannot be subtracted from buys placed before it. Without the split, a routine trim of a long-held position reads as a full liquidation — which closes that position's thesis and states on the saved card that the user exited something they still hold (#550).
 - `fx` is optional and only matters for a mixed-currency portfolio. Rates are USD per one unit of the currency. Omit a rate you cannot find.
 
 ## Coverage tiers

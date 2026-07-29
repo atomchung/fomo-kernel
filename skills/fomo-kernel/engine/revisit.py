@@ -33,7 +33,7 @@ revisit.py — 出場後 30/60/90 追蹤 + swap 機會成本(#32/#33;#129 PR-3,�
 餵 `--prices`),缺價 → 對比欄位 None + needs_prices 誠實列出,不猜。
 
 CLI(JSON stdout / 訊息 stderr,同 ledger 慣例):
-  python3 revisit.py enqueue-from-ledger [--ledger P] [--queue Q] [--today D]  # 掃出場→排入(去重,蓋 enqueued_at)
+  python3 revisit.py enqueue-from-ledger [--ledger P] [--queue Q] [--today D] [--splits J]  # 掃出場→排入(去重,蓋 enqueued_at)
   python3 revisit.py scan [--queue Q] [--today D] [--prices J]        # due + recent_exits + backlog(#170)
   python3 revisit.py resolve ID CHECKPOINT STATUS [--note N] [--queue Q]
 """
@@ -46,6 +46,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ledger as lg  # noqa: E402  # 同目錄,共用 load/append 與錨點語意
+import splits as split_policy  # noqa: E402  # #550 分割規則單一實作(純標準庫,不連網)
 
 DEFAULT_QUEUE = os.path.expanduser("~/.trade-coach/revisit.jsonl")
 REDUCE_TH = 0.5            # 單筆賣出 ≥ 賣前持倉 50% = 大減倉,也排入(#32)
@@ -57,15 +58,42 @@ STATUSES = ("still_valid", "modified", "falsified")
 
 # ─────────────────────────── 出場偵測 ───────────────────────────
 
-def detect_exits(events):
+def detect_exits(events, splits=None):
     """從 ledger 事件流偵測出場(錨點語意與 ledger.derive_holdings 一致:
     只看最近 snapshot 之後的交易;錨點持倉當初始 shares)。
     回 [{ticker, cycle_id, exit_date, exit_price, shares_sold, kind}]。
-    kind: full=清倉 / reduce=單筆賣 ≥50% 賣前持倉。同一天清倉多筆只記最後一筆(合併語意)。"""
+    kind: full=清倉 / reduce=單筆賣 ≥50% 賣前持倉。同一天清倉多筆只記最後一筆(合併語意)。
+
+    ``splits`` (#550) — this ticker's split events, in ``splits.normalize``'s
+    accepted shapes. The ledger stores quantities exactly as transacted, which
+    is correct and must stay that way; but a running balance accumulated across
+    a split is then comparing two different share bases, and 90 bought before a
+    ten-for-one split minus 100 sold after it reads as zero. That is a ~10% trim
+    reported as a full liquidation — which closes the thesis permanently and
+    prints "fully exited" on a saved card.
+
+    The scaling is applied to the *running position*, at the date each split
+    happened, so every comparison below is between two quantities in the same
+    basis: the basis of the day the sale actually took place. That is also the
+    basis the user's own broker statement for that sale is in, so ``shares_sold``
+    (and therefore ``revisit_id``) stays exactly what it is today and a future
+    split never re-bases an exit that is already recorded.
+
+    This function never retrieves anything. The caller supplies the map that
+    the review already fetched (``review._prepare_exit_capture`` passes the one
+    frozen into ``state``), keeping this module standard-library and offline.
+    Absent split data leaves the pre-existing unadjusted answer rather than a
+    guessed one.
+    """
+    split_events = split_policy.normalize(splits)
     anchor = lg.latest_anchor(events)
     shares = {}
     since = {}
     seq = {}
+    # Per-ticker date the running balance is currently stated in the basis of;
+    # None = nothing held yet, so a split older than the first trade multiplies
+    # zero shares and cannot move anything.
+    basis_at = {}
     anchor_date = None
     if anchor is not None:
         anchor_date = dt.date.fromisoformat(str(anchor["as_of"]))
@@ -79,6 +107,9 @@ def detect_exits(events):
                 shares[t] = sh
                 since[t] = anchor_date.isoformat()
                 seq[t] = 1
+                # A declared position states the share count as of the anchor
+                # day, so a split after it still has to be carried forward.
+                basis_at[t] = anchor_date
     trades = []
     for ev in events:
         if ev.get("type") != "trade":
@@ -96,6 +127,12 @@ def detect_exits(events):
     exits = []
     for d, t, act, qty, px, market, currency in trades:
         cur = shares.get(t, 0.0)
+        if split_events.get(t):
+            factor = split_policy.factor_between(split_events[t], basis_at.get(t), d)
+            if abs(factor - 1.0) > 1e-9:
+                cur *= factor
+                shares[t] = cur
+        basis_at[t] = d
         if act == "buy":
             if cur <= lg.EPS:
                 seq[t] = seq.get(t, 0) + 1
@@ -264,12 +301,13 @@ def load_queue(path):
     return revisits, resolutions, skipped
 
 
-def enqueue_from_ledger(ledger_path, queue_path, today=None):
+def enqueue_from_ledger(ledger_path, queue_path, today=None, splits=None):
     """掃 ledger 出場 → 排入 queue(以 revisit_id 去重,重跑安全)。回 (new_items, skipped_dup)。
     new_items = 本次新排入的完整 revisit 事件——這是 SKILL 賣出理由 capture(#136)的訊號源:
     「為什麼賣」只有出場當週問得到,已在佇列的出場不重報,所以 new 非空 = 本週有新出場要問。
     #170:每筆蓋 enqueued_at(= 開始追蹤這筆的日期,預設今天;today 供測試注入)——scan 用它區分
-    「啟用後才到期的 due」與「啟用前就過期的歷史存量(→ backlog,不催)」。"""
+    「啟用後才到期的 due」與「啟用前就過期的歷史存量(→ backlog,不催)」。
+    #550:``splits`` 原樣傳給 detect_exits;呼叫端供給,本函式不取回任何東西。"""
     enqueued_at = (today or dt.date.today()).isoformat()
     events, _ = lg.load_ledger(ledger_path)
     revisits, _, _ = load_queue(queue_path)
@@ -278,7 +316,7 @@ def enqueue_from_ledger(ledger_path, queue_path, today=None):
     seen_ids = {_canonical_id(it) for it in revisits.values()}
     new = []
     dup = 0
-    for x in detect_exits(events):
+    for x in detect_exits(events, splits=splits):
         rid = _revisit_id(x)
         if rid in seen_ids:
             dup += 1
@@ -486,6 +524,16 @@ def _emit(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def _load_json_arg(value):
+    """CLI JSON argument: a path if one exists, otherwise the literal payload."""
+    if not value:
+        return None
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as f:
+            return json.load(f)
+    return json.loads(value)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="fomo-kernel 出場 30/60/90 追蹤 + swap(#32/#33)")
     ap.add_argument("--queue", default=DEFAULT_QUEUE)
@@ -494,6 +542,9 @@ def main(argv=None):
     p_eq = sub.add_parser("enqueue-from-ledger", help="掃 ledger 出場排入 queue(去重,重跑安全)")
     p_eq.add_argument("--ledger", default=lg.DEFAULT_LEDGER)
     p_eq.add_argument("--today", default=None, help="YYYY-MM-DD 排入日(蓋 enqueued_at;預設今天;測試用)")
+    p_eq.add_argument("--splits", default=None,
+                      help='分割事件 JSON 檔或字串 {"NVDA": [["2024-06-10", 10]]}(#550;'
+                           '不給 = 不調整,沿用名目股數)')
 
     p_sc = sub.add_parser("scan", help="到期的 revisit + swap 對比(JSON)")
     p_sc.add_argument("--today", default=None, help="YYYY-MM-DD(預設今天;測試用)")
@@ -510,7 +561,18 @@ def main(argv=None):
 
     if a.cmd == "enqueue-from-ledger":
         today = dt.date.fromisoformat(a.today) if a.today else None
-        new, _ = enqueue_from_ledger(a.ledger, a.queue, today=today)
+        try:
+            supplied_splits = _load_json_arg(a.splits)
+        except (OSError, ValueError) as exc:
+            print(f"❌ 分割事件檔讀不了:{exc}", file=sys.stderr)
+            return 1
+        try:
+            new, _ = enqueue_from_ledger(a.ledger, a.queue, today=today,
+                                         splits=supplied_splits)
+        except split_policy.SplitDataError as exc:
+            # 分割比率是股數的乘數:壞值靜默丟掉 = 端出一個自信的錯數字,正是 #550 的病。
+            print(f"❌ 分割事件不合格:{exc}", file=sys.stderr)
+            return 1
         print(f"enqueued {len(new)} revisit(s)", file=sys.stderr)
         _emit({"enqueued": len(new), "new": new})
         return 0
@@ -521,13 +583,7 @@ def main(argv=None):
 
     if a.cmd == "scan":
         today = dt.date.fromisoformat(a.today) if a.today else dt.date.today()
-        prices = {}
-        if a.prices:
-            if os.path.exists(a.prices):
-                with open(a.prices, encoding="utf-8") as f:
-                    prices = json.load(f)
-            else:
-                prices = json.loads(a.prices)
+        prices = _load_json_arg(a.prices) or {}
         due = scan_due(revisits, resolutions, today)
         for d in due:
             d["compare"] = compare(d["item"], prices)

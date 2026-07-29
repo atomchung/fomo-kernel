@@ -2616,6 +2616,106 @@ def test_prepare_exit_capture_fails_closed_on_a_corrupt_ledger():
             "a failed exit capture must not have written a partial queue"
 
 
+def _cross_split_ledger(root):
+    """The #550 repro: two pre-split buys, a pre-split trim, then a ~10% post-split trim.
+
+    Raw quantities: 90 + 30 - 20 - 100 == 0, which is why the last sale reads as
+    a full liquidation. In post-split terms it is 100 of 1000 shares.
+    """
+    (root / "ledger.jsonl").write_text("".join(
+        json.dumps(row) + "\n" for row in [
+            {"type": "trade", "date": "2023-01-10", "ticker": "NVDA",
+             "action": "buy", "qty": 90, "price": 150.0},
+            {"type": "trade", "date": "2023-11-15", "ticker": "NVDA",
+             "action": "buy", "qty": 30, "price": 480.0},
+            {"type": "trade", "date": "2024-05-20", "ticker": "NVDA",
+             "action": "sell", "qty": 20, "price": 950.0},
+            {"type": "trade", "date": "2026-07-28", "ticker": "NVDA",
+             "action": "sell", "qty": 100, "price": 197.0},
+        ]), encoding="utf-8")
+
+
+def test_exit_capture_reads_the_split_history_this_review_already_applied():
+    """#550: the ledger stores as-transacted quantities, so exit capture has to be
+    told what the splits were or it subtracts two different share bases.
+
+    The map is not fetched here — it is the one the engine already applied to
+    its own analytics and froze into ``state``, so the two readers of "how many
+    shares" cannot disagree about what a split did. Without it this trim reads
+    as ``kind: "full"``, which permanently closes the thesis (thesis.py) and
+    prints "fully exited" on the saved card.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "unadjusted"
+        root.mkdir()
+        _cross_split_ledger(root)
+        recent, _due, _backlog, _meta = review_engine._prepare_exit_capture(
+            str(root), {"date_end": "2026-07-28"}, True)
+        assert [row["kind"] for row in recent] == ["full"], \
+            f"control: with no split history the shipped defect still reproduces {recent}"
+
+        adjusted_root = pathlib.Path(tmp) / "adjusted"
+        adjusted_root.mkdir()
+        _cross_split_ledger(adjusted_root)
+        state = {"date_end": "2026-07-28", "splits": {"NVDA": [["2024-06-10", 10]]}}
+        recent, due, backlog, _meta = review_engine._prepare_exit_capture(
+            str(adjusted_root), state, True)
+        assert recent == [] and due == [] and backlog is None, \
+            f"100 of 1000 shares is a 10% trim, not an exit of any kind: {recent}"
+        assert not (adjusted_root / "revisit.jsonl").exists(), \
+            "nothing was an exit, so nothing may enter the 30/60/90 queue"
+
+
+def test_exit_capture_fails_closed_on_unreadable_split_history():
+    """A split ratio is a multiplier on a share count. Dropping a bad one silently
+    would hand back a confident wrong number, which is the defect, not the fix."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir()
+        _cross_split_ledger(root)
+        state = {"date_end": "2026-07-28", "splits": {"NVDA": [["2024-06-10", 0]]}}
+        try:
+            review_engine._prepare_exit_capture(str(root), state, True)
+            raise AssertionError("an unusable split ratio must not be quietly ignored")
+        except review_engine.ReviewError as exc:
+            assert "split history" in str(exc), str(exc)
+        assert not (root / "revisit.jsonl").exists(), \
+            "a refused exit capture must not have written a partial queue"
+
+
+def test_prepare_carries_state_splits_into_the_exit_question():
+    """End to end through the CLI: the frozen map has to survive the plan boundary.
+
+    The delivery surface is the exit-revisit question the agent reads to the
+    user verbatim, so this asserts on the question text rather than on an
+    internal value.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = pathlib.Path(tmp) / "cross-split.csv"
+        csv_path.write_text("\n".join([
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency",
+            "NVDA,BUY,90,150,2023-01-10,Trade,US,USD",
+            "NVDA,BUY,30,480,2023-11-15,Trade,US,USD",
+            "NVDA,SELL,20,950,2024-05-20,Trade,US,USD",
+            "NVDA,SELL,100,197,2026-07-28,Trade,US,USD",
+        ]) + "\n", encoding="utf-8")
+        card, state_path = _artifacts(tmp)
+        state = json.loads(pathlib.Path(state_path).read_text(encoding="utf-8"))
+        state["date_end"] = "2026-07-28"
+        state["splits"] = {"NVDA": [["2024-06-10", 10]]}
+        pathlib.Path(state_path).write_text(json.dumps(state, ensure_ascii=False),
+                                            encoding="utf-8")
+        root = pathlib.Path(tmp) / "coach"
+        run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                   "--card-json", card, "--state-json", state_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        exits = [q for q in plan["question_queue"] if q["kind"] in ("revisit", "due_revisit")]
+        assert exits == [], f"a 10% trim must not surface as an exit to answer for: {exits}"
+        assert "exited" not in json.dumps(plan["question_queue"], ensure_ascii=False), \
+            "no question may describe this position as exited"
+
+
 def test_persistent_review_commit_cannot_appear_inside_snapshot_check_and_commit():
     """A non-snapshot canonical commit that wins the lock blocks onboarding."""
     with tempfile.TemporaryDirectory() as root:
