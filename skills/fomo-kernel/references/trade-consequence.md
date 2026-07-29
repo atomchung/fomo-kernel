@@ -103,6 +103,50 @@ For every rule currently in the user's rotation (a muted rule is excluded, match
 
 The CSV/FIFO path a review uses and the ledger reconstruction `consider` falls back to can legitimately disagree about a position's weight — they are answering different questions from different completeness requirements. Say which basis was used rather than presenting either as the only number.
 
+### Stock splits
+
+Both books add up share counts, and a quantity recorded before a split is not comparable to one recorded after it. Ninety shares bought before a ten-for-one, minus a hundred sold after it, is zero — so a position the user still holds can be missing from the book this answer reasons about, with nothing said about it.
+
+`consider` never fetches split data. It reads, in order:
+
+1. the `splits` field on a `--prices` row ([price-feed.md](price-feed.md)) — supply it whenever you supply prices for a ticker the user has held across one;
+2. otherwise, the map the last review in this coach root froze.
+
+A root that has never been reviewed and a `--prices` envelope that says nothing about splits leave the answer on as-transacted quantities. That is the pre-existing behaviour and it is silent, which is the reason to fill in the envelope rather than rely on the fallback.
+
+## What the answer owes
+
+Every `consider` response carries a `challenge` block beside the evaluation: the engine's own statement of what *this* answer has to put in front of *this* user. It exists because the obligations used to live only in this file, to be re-derived by hand on every call from a payload with roughly forty fields in it — and because `consider`'s answer is plain conversation, so nothing between the frozen result and a user told half of it.
+
+Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rule says a freeform answer is brief, and in the same breath that brevity bounds what an answer *produces*, never which facts it *owes*. This block is the second clause made computable. A short answer carrying every entry is exactly what rule 8 asks for; a long one that drops a rule collision still fails.
+
+| Key | What it is |
+|---|---|
+| `must_state` | Ordered owed facts, each `{topic, value}` plus `anchor` when the fact is addressable. |
+| `quote_verbatim` | The user's own words, to be reproduced rather than summarized. Empty when no `--decision-context` was supplied. |
+| `unchecked` | What the engine did not look at on this call. |
+| `case_required` | The floor for a two-sided case: at least one claim on each side. |
+| `required_coverage` | The mechanically enforced subset — what an `--agent-case` submission is *refused* for leaving out. |
+
+`must_state` entries are facts, not sentences. Several belong in one sentence: the `basis` entries are one clause — *"computed on your recorded book as of the 20th, nine days old, and never reconciled against a broker view"* — not a bullet each. The order is the order the facts depend on each other (the basis first because every number after it is measured against that book, the disclosures last because they qualify what precedes them), not a script to read aloud. `basis.state_version` is the exception worth naming: it is the book's exact identity, present so a QA run can compare what the user saw against the frozen payload mechanically. Carry it, but do not recite a hash at someone mid-decision — *"this is your book as of the 20th"* is the same fact in the register the rest of the answer is in.
+
+`anchor` is present on most entries and absent on a few. A dot-separated path cannot address a ticker that itself contains a dot, so `2330.TW`'s own weight arrives with its value and no `anchor`: the fact is still owed and still stated, it simply cannot be cited by path. Every anchor that *is* offered has already been resolved against the frozen record, so an anchor from this block is always one the case validator accepts.
+
+`unchecked` names risks the engine never went near — distinct from `disclosures`, which are gaps in numbers it did compute. Silence about a risk nobody checked reads as a clean bill of health the engine never gave.
+
+| Key | What it means |
+|---|---|
+| `liquidity` | Nothing here measures whether the position can be exited at these prices. |
+| `valuation` | No view is taken on whether the price is reasonable. |
+| `tax` | Tax consequences of the trade are not computed. |
+| `position_fit` | Whether the position still suits this person is outside what the engine measures. |
+| `evidence_delta` | Present when a decision context was supplied. Whether the stated why-now is genuinely new information or a price move that feels like one is a call the engine cannot make; label your own read of it as judgment. |
+| `evidence_refs_unverified` | Present when the user cited something. The engine did not fetch, date or believe any reference; it recorded that one was cited. |
+
+`required_coverage` is deliberately a subset of `must_state`. It names every disclosure, the basis whenever it is stale or not a declared-complete book, and every rule this trade `would_breach` or is `already_over` on. It does **not** include `unjudged`/`unmapped` collisions: those must be *named in the answer* — an unevaluated rule presented as no issue tells the user something the engine never checked — but a book with eight behavioral rules would otherwise need eight claims saying nothing was measured, and an answer padded to satisfy a checker is worse than a short honest one. Its `path` is matched by prefix, so `basis` accepts any `basis.*` citation and `rule_collisions.<id>` accepts either `.state` or `.worsens`.
+
+The block is emitted, never stored: it is a pure function of the premise, basis, consequence, collisions and context the evaluation row already freezes, and it takes no part in the `evaluation_id`. A `--resolve` call carries none, because nothing new is being answered there.
+
 ## The case for and against
 
 The engine states the consequence and the rule collisions; it never recommends. Build the case for and against directly from that output, and take no position on which side wins — that call belongs to the user.
@@ -135,7 +179,7 @@ Structured claims only, never a free prose blob. If you send it, both `for` and 
 - `public_fact` must carry `source` (the named external source) and `as_of` (an ISO date). It must never restate what the user themselves said through `--decision-context`'s `reason`/`why_now` — copying the user's own words and relabelling them as an outside fact is refused, not stored.
 - `agent_judgment` carries nothing beyond `claim` and `provenance`.
 
-**Every disclosure this call owes must be covered, or the whole case is refused.** For each key in the frozen `consequence.disclosures`, at least one `engine_fact` claim must anchor into it (`consequence.disclosures.<index>`) — silently dropping a disclosure the evaluation was given is exactly the gap this check exists to close. Likewise, whenever the basis is stale (`stale_days > 0`) or not a declared-complete snapshot, at least one `engine_fact` claim must anchor somewhere under `basis`. This is why the example above anchors `consequence.disclosures.0` and `basis.stale_days` even though neither reads as dramatic on its own — leaving either out is refused the same as a wrong number.
+**Everything on `required_coverage` must be covered, or the whole case is refused.** That list arrives in the same response ([What the answer owes](#what-the-answer-owes) above) — you do not have to derive it. For each entry, at least one `engine_fact` claim must anchor at or under its `path`: every key in the frozen `consequence.disclosures`, the `basis` whenever it is stale (`stale_days > 0`) or not a declared-complete snapshot, and every rule this trade `would_breach` or is `already_over` on. This is why the example above anchors `consequence.disclosures.0` and `basis.stale_days` even though neither reads as dramatic on its own — leaving one out is refused the same as a wrong number, and silence about a rule the trade breaks reads to the user as a rule that held.
 
 A rejected case is refused before it is stored or shown: the caller gets the validator's own error, naming the exact claim and the exact rule it failed, and `consider` persists and returns nothing for that attempt. Fix the claim and resend, or drop `--agent-case` and present the case in plain prose instead.
 

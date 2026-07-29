@@ -1048,12 +1048,18 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
 
 
 def query_current_book_from_ledger(path: str, *, valuation_manifest: Optional[Mapping[str, Any]] = None,
-                                   reference_as_of: Optional[str] = None) -> Optional[PortfolioBasis]:
+                                   reference_as_of: Optional[str] = None,
+                                   splits: Optional[Mapping[str, Any]] = None) -> Optional[PortfolioBasis]:
     """Read the canonical ledger through its strict corruption gate, then query it.
 
     This is the production-shaped convenience entry point.  It purposefully
     converts a corrupt JSONL source into ``None`` rather than falling back to
     diagnostic ``strict=False`` rows and deriving a potentially wrong book.
+
+    ``splits`` is passed straight through and is never retrieved here, matching
+    :func:`query_current_book`: a caller with no map degrades to as-transacted
+    quantities, and one that has frozen a map must hand over the same one it
+    gives every other reader of the book (#558).
     """
     try:
         events, skipped_lines = ledger.load_ledger(path)
@@ -1061,4 +1067,4 @@ def query_current_book_from_ledger(path: str, *, valuation_manifest: Optional[Ma
         return None
     return query_current_book(events, valuation_manifest=valuation_manifest,
                               reference_as_of=reference_as_of,
-                              skipped_lines=skipped_lines)
+                              skipped_lines=skipped_lines, splits=splits)

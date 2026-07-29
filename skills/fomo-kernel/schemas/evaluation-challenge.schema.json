@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/evaluation-challenge.schema.json",
+  "title": "Fomo Kernel Evaluation Challenge (issue #479, Wave B cut 2)",
+  "description": "The `challenge` block engine/review.py's cmd_consider emits beside the trade-evaluation row it stores: what THIS specific answer must put in front of THIS specific user -- which facts, in the user's own words which sentences, which of their own rules this trade collides with, which limitations the numbers carry, and what the engine did not look at. The readable contract; skills/fomo-kernel/engine/evaluation_challenge.py::build_challenge holds the enforcement, the same 'no jsonschema dependency' posture every other schema file in this directory already states about its own hand-rolled producer. Computed, never stored: cmd_consider returns this block alongside the stored row (`{\"evaluation\": row, \"challenge\": challenge, ...}`) but never writes it onto a trade-evaluation.schema.json row in trade_evaluations.jsonl, and never folds it into review.py's _evaluation_id seed. Two reasons, both already paid for elsewhere in this codebase. It is a pure function of premise/basis/consequence/rule_collisions/context, every one of which the row already freezes -- storing it would be a derived duplicate able to disagree with its own inputs, and no reader needs a historical version (`--resolve` copies frozen fields forward without consulting it, and reconciliation reads dates and quantities; writing a field nothing reads back is issue #429's own failure mode). And the evaluation_id seed identifies the subject being evaluated -- this trade, this book, this stated reason -- not a presentation obligation about it; because this block is derived entirely from already-seeded inputs, adding it would not even change which calls converge to the same id, it would only move every existing one. See evaluation_challenge.py's own module docstring, section 'Emitted, not stored', for the complete reasoning.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["must_state", "quote_verbatim", "unchecked", "case_required", "required_coverage"],
+  "properties": {
+    "must_state": {
+      "type": "array",
+      "description": "Ordered owed facts this answer must put in front of the user -- a floor on content, never a script for wording (SKILL.md rule 8: 'Brevity bounds what an answer produces, never which facts it owes'). Facts, not sentences: several entries commonly belong in one clause of prose (the basis entries read as one clause -- 'computed on your recorded book as of the 20th, nine days old' -- not four bullet points). Presentation order mirrors evaluation_challenge.TOPICS: basis first, because every number that follows is measured against that book, then position, concentration, cash, rule_collision, disclosure, and excluded_holding, the trailing topics qualifying the numbers stated earlier. Deliberately a SUPERSET of required_coverage, and the gap is intentional rather than an oversight: position, concentration, cash, and excluded_holding facts are always owed here in prose but never required to be cited by an anchored claim in --agent-case; and within rule_collision, this array also names a collision whose state is unjudged or unmapped -- silently omitting a rule the engine could not evaluate would read as a clean rule, so it must be named -- while required_coverage excludes exactly those two states, because a case claim can only truthfully cite a fact the engine actually judged, and forcing one for every unmeasurable rule would pad the case to satisfy a checker rather than to inform the user (the 'eval must not pin current wording' failure mode this repository has already shipped once).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic", "value"],
+        "description": "One owed fact.",
+        "properties": {
+          "topic": {
+            "enum": ["basis", "position", "concentration", "cash", "rule_collision", "disclosure", "excluded_holding"],
+            "description": "Which family of fact this is. basis: which book answered, how current it was, and its exact identity -- unconditional, because a weight quoted without the book it was measured on is a number about an unknown denominator. position: what this trade does to the position the user actually asked about; its before-weight entry appears only when the ticker is already held, since a weight of zero for a name the user does not own is arithmetic rather than a fact worth a sentence. concentration: book concentration and driver overlap after the trade; ai_pct/max_sector_pct are omitted rather than stated as a false zero on a book with no sector/AI classification at all -- the separate unmapped_driver disclosure covers that case -- and the two boolean triggers are stated only when true, never as an explicit false. cash: what the trade leaves in cash; whether that balance can be trusted rides the disclosure topic instead of being folded in here. rule_collision: every one of the user's own rules this trade would_breach or leaves already_over, plus every rule that could not be judged at all (unjudged/unmapped) -- clear is the only state that may pass in silence. disclosure: every limitation the engine attached to these numbers, addressed by the same index a required_coverage disclosure entry and an --agent-case anchor would use. excluded_holding: which held positions sat outside the denominator every percentage above was measured against (#515) -- partial_book (a disclosure entry) says THAT something was excluded; this says WHAT."
+          },
+          "value": {
+            "type": ["string", "number", "boolean"],
+            "description": "The fact itself, typed according to topic: an identity or date string for most of basis, or an integer day count for basis.stale_days; a weight or dollar number for position, cash, and most of concentration; a rule-state string (would_breach/already_over/unjudged/unmapped) for rule_collision; a disclosure-key string for disclosure; a ticker string for excluded_holding. A boolean appears only for the two concentration triggers (oversize_triggered/concentration_triggered), and only when true -- a false trigger is the absence of a fact and is never emitted as an explicit false."
+          },
+          "anchor": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(basis|consequence|rule_collisions)\\.",
+            "description": "Optional: a dot-separated path into the frozen {basis, consequence, rule_collisions} bundle (answer_provenance.build_record) that a --agent-case engine_fact claim may cite to reproduce this exact value. Present only when it actually resolves -- every anchor this module emits has already been walked against the frozen record with answer_provenance.resolve_anchor before being offered, so an anchor the challenge hands out is always one validate_agent_case will accept; the surface that tells the agent how to cite a fact and the gate that judges the citation agree by construction, not by two authors keeping the same rule in mind. Absent whenever a well-formed path does not resolve, not only when a fact is unaddressable in principle: some real tickers contain a dot (2330.TW), so a path such as consequence.after.weights.2330.TW walks as weights -> '2330' -> 'TW' and resolves to nothing, and a rule_collision row with no rule_id (the schema allows this defensively; problems.py never produces one in practice) cannot be addressed by anchor either, since rule_collisions is re-keyed by rule_id. In both cases the fact is still owed and still stated in `value`; it simply cannot be cited by path, which is why anchor is optional on an entry rather than the entry itself being dropped when its path does not resolve."
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional: topic-specific payload riding alongside a rule_collision or excluded_holding entry only; no other topic populates this key. A rule_collision entry carries rule_id/text/worsens -- the rule's own text rides along verbatim so the answer can quote what the user wrote rather than paraphrase it, and worsens rides along because an already_over line that this trade actually improves reads identically without it. An excluded_holding entry carries reason, why that holding could not be valued and folded into the denominator.",
+            "properties": {
+              "rule_id": {
+                "type": ["string", "null"],
+                "description": "The colliding rule's own identity, mirroring trade-evaluation.schema.json's rule_collisions[].rule_id. null on the defensively-allowed rule row with no id -- the same row whose must_state entry above carries no anchor."
+              },
+              "text": {
+                "type": ["string", "null"],
+                "description": "The rule's own text, verbatim, as stored on rules.jsonl -- present so the answer can quote it exactly rather than paraphrase it."
+              },
+              "worsens": {
+                "type": ["boolean", "null"],
+                "description": "Set only when the frozen state is already_over: whether this trade moves the relevant reading in the bad direction. null everywhere else -- a boolean that means nothing outside that one state is worse than an absent one."
+              },
+              "reason": {
+                "enum": ["unusable_shares", "unavailable_cost"],
+                "description": "Why this excluded holding could not be valued, mirroring trade-evaluation.schema.json's consequence.excluded_holdings[].reason exactly. Engine-assigned; never a user or agent claim."
+              }
+            }
+          }
+        }
+      }
+    },
+    "quote_verbatim": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The user's own words, to be reproduced in the answer rather than summarized or reworded -- the one part of this answer that may not be paraphrased. Their text is already frozen on the evaluation row's context (decision-context.schema.json); what this block adds is that it is owed BACK to the user inside the answer. Silently rewording the stated reason into the agent's own phrasing would present the agent's reading of the decision as the user's own -- the same substitution answer_provenance.validate_agent_case's case 8 refuses in the other direction, where a public_fact claim may not restate what the user said as if it were an external fact. Empty on a context-free consider call, which captured no prose to quote; the other four keys are still populated in full.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "text"],
+        "description": "One sentence the user is on record as having said, and where it came from.",
+        "properties": {
+          "field": {
+            "type": "string",
+            "pattern": "^(reason|why_now|evidence_refs\\[[0-9]+\\])$",
+            "description": "Which decision-context field this text came from: 'reason', 'why_now', or 'evidence_refs[<index>]' for the index-th cited evidence reference, in the order the caller supplied them on --decision-context."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The exact string as the user supplied it, unmodified -- not summarized, not translated, not corrected."
+          }
+        }
+      }
+    },
+    "unchecked": {
+      "type": "array",
+      "minItems": 4,
+      "uniqueItems": true,
+      "description": "What this call did not look at, named rather than left silent. Deliberately disjoint from must_state's disclosure topic: a disclosure is a gap in a number the engine DID compute, while an unchecked item is a risk it never went near at all -- folding the two together would let 'the weights are on cost' and 'nobody looked at liquidity' read as the same kind of caveat, and the second is the one silence turns into a false clean bill of health. liquidity, valuation, tax, and position_fit are unconditional and always present (hence this array's minimum length of four), lifted verbatim from references/trade-consequence.md's own sentence: 'Liquidity, valuation, tax consequences, and whether the position still fits this person are all real risks the engine does not measure.' evidence_delta is present only when a decision context was supplied on this call: the engine cannot mechanically tell new information apart from a price move that only feels like new information, so it names that judgment call as unsettled rather than leaving the agent's read of it unlabelled. evidence_refs_unverified is present only when the user actually cited an evidence reference: the engine records that a reference was cited, but it does not fetch, date, or believe it.",
+      "items": {
+        "enum": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta", "evidence_refs_unverified"]
+      }
+    },
+    "case_required": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for", "against"],
+      "description": "The floor a two-sided --agent-case submission must clear, restated here so this block is self-contained for a reader holding only this payload -- the same number said where the agent is reading, mirroring evaluation_challenge.CASE_REQUIRED. This block only names the floor; the refusal of a submission that does not clear it is enforced by answer_provenance.validate_agent_case (which rejects a present-but-empty side) and by answer-provenance.schema.json's own minItems:1 on `for`/`against`, not by this schema. Currently one claim minimum on each side.",
+      "properties": {
+        "for": {"type": "integer", "minimum": 1, "description": "Minimum number of claims the case FOR the trade must carry."},
+        "against": {"type": "integer", "minimum": 1, "description": "Minimum number of claims the case AGAINST the trade must carry."}
+      }
+    },
+    "required_coverage": {
+      "type": "array",
+      "description": "The mechanically enforced SUBSET of must_state: exactly what a --agent-case submission is refused for leaving uncited. Imported from answer_provenance.required_coverage, the same function validate_agent_case calls internally before a row is ever written, so the facts this block tells the agent it owes and the facts the gate actually refuses on are one list, read twice, and cannot drift apart. Only three of must_state's seven topics ever contribute an entry here -- basis (at most one entry, covering whichever of stale_days/completeness triggered it), rule_collision (only the would_breach/already_over states, never unjudged/unmapped -- see must_state's own description for why those two are named but not required), and disclosure (every disclosure that was stated is also required, the one topic where the two arrays name exactly the same facts). position, concentration, cash, and excluded_holding facts are always owed in must_state's prose but never appear here: requiring an --agent-case claim for every cash balance or every excluded ticker would inflate the case to satisfy a checker rather than to inform the user (the 'eval must not pin current wording' failure mode this repository has already shipped once). Empty when nothing on this evaluation must be covered -- a fresh, non-stale, fully declared book with no rule_collision in a covered state and no disclosures at all.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "owes", "key"],
+        "description": "One obligation an --agent-case submission must cover with at least one anchored engine_fact claim.",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Matched by PREFIX, not by exact equality alone: covered when some engine_fact claim's own anchor equals this path, or sits under it (anchor == path, or anchor starts with path + '.'). For owes:basis (path is always the bare string 'basis') and owes:rule_collision (path is 'rule_collisions.<rule_id>'), this path names a container that never itself resolves through answer_provenance.resolve_anchor -- the sub-fact an engine_fact claim actually anchors at sits one level further in, at basis.stale_days or basis.completeness, or at rule_collisions.<rule_id>.state or .worsens, so only the startswith branch of the match can ever satisfy these two. For owes:disclosure the path (consequence.disclosures.<index>) already IS the exact resolvable anchor the matching must_state entry carries -- one scalar fact with nothing beneath it to prefix-match against, so only the exact-equality branch can satisfy it."
+          },
+          "owes": {
+            "enum": ["disclosure", "basis", "rule_collision"],
+            "description": "Which family of obligation this is, mirroring must_state's topic vocabulary but never its full width. disclosure: one of consequence.disclosures must be cited by anchor. basis: the book's own staleness or incompleteness must be cited by some basis.* anchor, once, regardless of which basis field the citing claim names. rule_collision: a rule this trade would_breach or leaves already_over must be cited by a rule_collisions.<id>.state or .worsens anchor -- never an unjudged or unmapped one, which must_state still names in prose but which required_coverage deliberately excludes."
+          },
+          "key": {
+            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx", "partial_book",
+                     "stale", "unverified", "stale_and_unverified",
+                     "would_breach", "already_over"],
+            "description": "Which specific instance within the owes family. Mirrors consequence.DISCLOSURES exactly when owes is disclosure; one of answer_provenance.py's own three literals when owes is basis (stale: only stale_days > 0; unverified: only basis.completeness != declared_complete; stale_and_unverified: both at once -- and a basis entry never fires for any other reason, so exactly one of these three appears whenever owes is basis); the colliding rule_collisions[].state when owes is rule_collision, which by construction is always would_breach or already_over here."
+          }
+        }
+      }
+    }
+  }
+}

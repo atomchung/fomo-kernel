@@ -25,6 +25,7 @@ SUITES = [
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
     ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py"),
     ("Answer provenance gate (#414, Wave A)", "tests/test_answer_provenance.py"),
+    ("Visible evaluation challenge (#479 Wave B)", "tests/test_evaluation_challenge.py"),
     ("Behavior verdicts (#446)", "tests/test_verdicts.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("PortfolioBasis current-book contract (#484)", "tests/test_portfolio_basis.py"),

@@ -223,13 +223,13 @@ def test_empty_against_side_is_rejected():
 def test_agent_case_that_drops_a_given_disclosure_is_rejected():
     case = _valid_case()
     case["against"] = [c for c in case["against"] if c.get("anchor") != "consequence.disclosures.0"]
-    _rejects("drops an engine disclosure", case)
+    _rejects("disclosure cash_unreliable", case)
 
 
 def test_agent_case_that_drops_the_staleness_disclosure_is_rejected():
     case = _valid_case()
     case["against"] = [c for c in case["against"] if c.get("anchor") != "basis.stale_days"]
-    _rejects("drops the basis/staleness disclosure", case)
+    _rejects("basis stale", case)
 
 
 def test_agent_case_over_a_declared_incomplete_basis_without_a_basis_claim_is_rejected():
@@ -237,7 +237,7 @@ def test_agent_case_over_a_declared_incomplete_basis_without_a_basis_claim_is_re
     incomplete/unverified book is the other, even at stale_days == 0."""
     case = _valid_case()
     case["against"] = [c for c in case["against"] if c.get("anchor") != "basis.stale_days"]
-    _rejects("drops the basis/staleness disclosure", case,
+    _rejects("basis unverified", case,
              basis=_basis(stale_days=0, completeness="unverified"))
 
 

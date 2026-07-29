@@ -121,3 +121,12 @@ enforced as the review card's `honesty_ledger` is a separate, open question
 made honest by being short. Read `trade-consequence.md`'s disclosure table
 for what a `consider` answer already owes on that axis; this file does not
 change it.
+
+One surface has since been closed on that axis and the rest have not.
+`consider` now returns a `challenge` block computing what its own answer
+owes — the facts, the user's exact words, the rules the trade collides
+with, and what nobody checked (`trade-consequence.md`, "What the answer
+owes"). That is the `honesty_ledger` treatment applied to one freeform
+route, not to freeform answers in general: every other ad hoc question in
+this file's opening paragraph still has no equivalent, which is precisely
+what #525 remains open about.
