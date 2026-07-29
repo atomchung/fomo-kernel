@@ -71,9 +71,23 @@ EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation", "position_ab
 # 全套件是綠的。維護端防線要 agent-free:共用程式碼 > 測試鎖 > 文件。
 # carried 是來源註記(這一列是從既有紀錄帶過來的,不是這次供給的畫面上讀到的),
 # 不影響帳本內容,所以它進得了白名單、但不進 _normalized_anchor 的身分計算。
+# since / since_basis(#531)同理:一檔在新宣告裡「冒出來」的持倉沒有來歷,使用者
+# 被問了大約持有幾個月,引擎(不是 agent)把月數換算成開倉日並蓋章。兩個鍵成對出現,
+# 由 snapshot_adapter 強制:since 一定伴隨 since_basis="user_estimate",所以讀得到日期
+# 的人一定同時讀得到「這是估的」——「推算出來的開倉日不得被當成精確日期呈現」在儲存層
+# 就成立,不必靠每個 renderer 自律。since_basis="unknown"(使用者說不知道)不帶 since,
+# derive_holdings 下面把它變成既有的 ticker#unknown cycle。
 SNAPSHOT_POSITION_KEYS = frozenset({
     "ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried",
+    "since", "since_basis",
 })
+# 引擎指派、永遠不收 agent 供給的持倉欄位(SKILL.md 不可協商規則 1:數字來自引擎產物)。
+# snapshot_adapter.normalize_envelope 預設拒收它們;只有 book_refresh 採納自己剛問到的
+# 答案時才開鎖,而那一條路上的值是引擎自己算出來的。
+ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis"})
+# since_basis 的合法值。"user_estimate" = 從使用者給的月數換算(近似,±半個月);
+# "unknown" = 使用者說不知道,不編日期。
+SINCE_BASES = ("user_estimate", "unknown")
 
 ABSENCE_IDENTITY_KEYS = ("type", "date", "ticker", "cycle_id")
 ABSENCE_KEYS = frozenset(ABSENCE_IDENTITY_KEYS) | {"absence_id", "session_id", "v", "recorded_at"}
@@ -317,6 +331,42 @@ def _norm_trade(ev):
     return d, t, act, qty, px
 
 
+def _anchored_cycle_start(position, anchor_date, ticker, integrity):
+    """一列錨點持倉的 cycle 起點,回 (since_iso, cycle_unknown)。
+
+    預設仍是錨點日 —— 一筆宣告出來的持倉,帳本只知道它「至少從這天起在帳上」。
+    #531 之後,refresh 問過「大約抱多久」的持倉會帶 since/since_basis 蓋章:
+    ``user_estimate`` 用蓋章的日期,``unknown`` 保持錨點日但把 cycle 標成 unknown。
+
+    本函式對壞值一律降級回錨點日並記 integrity,不 raise:ledger.jsonl 是可被手改的
+    append-only 檔案,而 derive_holdings 對壞資料的既有契約是「照走、但看得見」
+    (bad_avg_cost / oversell 前例),不是整本拒讀。
+    """
+    default = anchor_date.isoformat()
+    basis = position.get("since_basis")
+    if basis is None:
+        if position.get("since") is not None:
+            # 有日期沒蓋章 = 成對不變式被繞過(手改或某條沒走 snapshot_adapter 的路)。
+            # 忽略它:一個沒有「這是估的」旁證的日期,正是規則 2 要擋的假精確。
+            integrity.append({"issue": "unstamped_since", "ticker": ticker})
+        return default, False
+    if basis not in SINCE_BASES:
+        integrity.append({"issue": "bad_since_basis", "ticker": ticker})
+        return default, False
+    if basis == "unknown":
+        return default, True
+    raw = position.get("since")
+    try:
+        stated = dt.date.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        integrity.append({"issue": "bad_since", "ticker": ticker})
+        return default, False
+    if stated > anchor_date:
+        integrity.append({"issue": "bad_since", "ticker": ticker})
+        return default, False
+    return stated.isoformat(), False
+
+
 def derive_holdings(events):
     """錨點推導當前持倉。回傳 {anchor, holdings, integrity, counts}。
 
@@ -351,10 +401,11 @@ def derive_holdings(events):
             except (TypeError, ValueError):
                 cost_total = None
                 integrity.append({"issue": "bad_avg_cost", "ticker": t})
+            since, cycle_unknown = _anchored_cycle_start(p, anchor_date, t, integrity)
             pos[t] = {"shares": sh, "cost_total": cost_total,
                       "currency": p.get("currency", "USD"), "market": p.get("market", "US"),
-                      "origin": "snapshot", "since": anchor_date.isoformat(),
-                      "add_count": 0}
+                      "origin": "snapshot", "since": since,
+                      "cycle_unknown": cycle_unknown, "add_count": 0}
             seq_base[t] = 1                # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)
 
     trades = []
@@ -407,7 +458,11 @@ def derive_holdings(events):
         if round(p["shares"], 4) <= 0:     # 微量殘股 round 後歸零 → 不列(避免 shares=0.0 的幽靈持倉)
             continue
         ac = (p["cost_total"] / p["shares"]) if (p["cost_total"] is not None and p["shares"] > EPS) else None
-        cycle_id = f"{t}#{p['since']}#{seq_base[t]}"
+        # 使用者說不知道抱多久 → 沿用既有的兩段式 ticker#unknown,horizon._cycle_start
+        # 會解成 None,那檔就退出持有期診斷,而不是被編一個日期進去(#531 owner ruling)。
+        # `since` 仍留錨點日:它本來就是「這檔何時進到帳本」的記帳事實,而 cycle_id 才是
+        # 持有期的量測基準,所以下游每個讀 since 的人拿到的仍是合法日期。
+        cycle_id = f"{t}#unknown" if p.get("cycle_unknown") else f"{t}#{p['since']}#{seq_base[t]}"
         add_count = p.get("add_count", 0)
         holdings[t] = {"shares": round(p["shares"], 4),
                        "avg_cost": round(ac, 4) if ac is not None else None,

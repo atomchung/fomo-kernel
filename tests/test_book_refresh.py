@@ -37,9 +37,12 @@ ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 SCHEMA = os.path.join(ROOT, "skills", "fomo-kernel", "schemas", "book-refresh.schema.json")
 sys.path.insert(0, ENGINE)
 import book_refresh as br  # noqa: E402
+import horizon  # noqa: E402
 import ledger as lg  # noqa: E402
 import revisit as rv  # noqa: E402
 import snapshot_adapter  # noqa: E402
+
+FLOW = os.path.join(ROOT, "skills", "fomo-kernel", "flows", "book-refresh.md")
 
 SEED = {"type": "snapshot", "as_of": "2026-06-30", "source": "user_declared",
         "is_complete": True, "snapshot_id": "snapshot-seed0000000000",
@@ -105,18 +108,265 @@ def test_an_unexplained_disappearance_always_asks():
             "a disappearance is never 'confirmed' -- saying it is gone is 'sold'")
 
 
-def test_an_appearance_is_adopted_without_a_question():
-    """Owner ruling: the directions are not symmetric. A disappearance removes
-    recorded history and is confirmed; an appearance removes nothing."""
+def test_an_appearance_asks_how_long_and_at_what_cost():
+    """Owner ruling 2026-07-29 (#531), superseding the original asymmetry.
+
+    An appearance destroys nothing, which is why this lane once adopted it in
+    silence. What that missed is that it arrives with **no provenance** and the
+    engine has no way to recover it later: a position bought last week and one
+    transferred in after six years produce byte-identical ledger state. The
+    question can only be asked at the moment the difference appears.
+
+    The item states which detail it still needs. NEWCO declares a cost, so only
+    the duration is open; DARKCO declares none, so the cost is asked at the
+    point of entry rather than left to make `consider` refuse later (#528).
+    """
     with tempfile.TemporaryDirectory() as tmp:
         positions = list(KEPT) + [
             {"ticker": "ACME", "shares": 100, "avg_cost": 12.0, "market": "US", "currency": "USD"},
-            {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0, "market": "US", "currency": "USD"}]
+            {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0, "market": "US", "currency": "USD"},
+            {"ticker": "DARKCO", "shares": 4, "market": "US", "currency": "USD"}]
         receipt = _cli(_root(tmp), _snapshot(tmp, positions))
-        assert receipt["pending_confirmations"] == []
-        assert receipt["status"] == "ready"
-        assert receipt["summary"]["only_declared"] == ["NEWCO"], (
-            "the appearance is still disclosed, it just costs no question")
+        assert receipt["status"] == "pending_confirmation"
+        assert receipt["pending_confirmations"] == [
+            {"kind": "appearance", "ticker": "DARKCO", "declared_shares": 4.0,
+             "needs_avg_cost": True, "options": ["confirmed", "resupply"]},
+            {"kind": "appearance", "ticker": "NEWCO", "declared_shares": 10.0,
+             "needs_avg_cost": False, "options": ["confirmed", "resupply"]}]
+        assert receipt["summary"]["only_declared"] == ["DARKCO", "NEWCO"]
+
+
+def test_a_confirmed_appearance_dates_its_cycle_from_the_months_the_user_gave():
+    """The engine converts the month count, never the agent (SKILL.md rule 1).
+
+    Eighteen months before the 2026-07-15 declaration is 2025-01-15, and that
+    date — not the declaration's — is what the position's cycle is measured
+    from. Before this, both a fresh buy and a six-year holding entered the book
+    dated today, and every holding-period reading was computed against a
+    bookkeeping artifact.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        positions = list(KEPT) + [
+            {"ticker": "ACME", "shares": 100, "avg_cost": 12.0, "market": "US", "currency": "USD"},
+            {"ticker": "NEWCO", "shares": 10, "market": "US", "currency": "USD"}]
+        snapshot = _snapshot(tmp, positions)
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "confirmed",
+             "held_months": 18, "avg_cost": 41.5}]})
+        assert out["status"] == "adopted" and out["recorded_new"] == ["NEWCO"]
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "NEWCO"][0]
+        assert row["since"] == "2025-01-15" and row["since_basis"] == "user_estimate", (
+            "the date is stored paired with the stamp saying it is an estimate; "
+            "neither travels alone")
+        assert row["avg_cost"] == 41.5, "the cost asked for at entry is what enters the book"
+        holding = lg.derive_holdings(events)["holdings"]["NEWCO"]
+        assert holding["since"] == "2025-01-15"
+        assert holding["cycle_id"] == "NEWCO#2025-01-15#1"
+        assert not lg.derive_holdings(events)["integrity"]
+
+
+def test_i_dont_know_records_the_position_without_inventing_a_date():
+    """The accepted answer, and it keeps the representation that already exists.
+
+    `horizon._cycle_start` resolves a two-segment `ticker#unknown` to None, so
+    the holding drops out of holding-period diagnostics instead of carrying a
+    manufactured start. Nothing about that path is re-implemented here.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        positions = list(KEPT) + [
+            {"ticker": "ACME", "shares": 100, "avg_cost": 12.0, "market": "US", "currency": "USD"},
+            {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0, "market": "US", "currency": "USD"}]
+        snapshot = _snapshot(tmp, positions)
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "confirmed", "held_months": None}]})
+        assert out["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "NEWCO"][0]
+        assert row["since_basis"] == "unknown" and "since" not in row, (
+            "no date is invented for a start the user does not know")
+        holding = lg.derive_holdings(events)["holdings"]["NEWCO"]
+        assert holding["cycle_id"] == "NEWCO#unknown"
+        assert horizon._cycle_start(holding["cycle_id"]) is None
+        assert horizon.scan([{"cycle_id": holding["cycle_id"], "horizon": "weeks",
+                              "ticker": "NEWCO"}], "2026-12-31") == [], (
+            "a holding with no known start is dropped from the diagnostic, not "
+            "measured from a date nobody supplied")
+        assert holding["since"] == "2026-07-15", (
+            "`since` stays the bookkeeping fact it has always been -- the day "
+            "the position entered the book -- so every existing reader still "
+            "gets a real date; cycle_id is what carries the unknown")
+
+
+def test_a_stamped_start_survives_the_next_refresh():
+    """Otherwise the answer buys exactly one review.
+
+    The next declaration is an ordinary envelope with no provenance on it, so
+    without this the position's start snaps back to the new anchor's date and
+    the question has to be asked again -- except it never is, because the
+    position is no longer appearing. The user is not re-asked here; the stamp
+    is copied off the recorded anchor.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        newco = {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                 "market": "US", "currency": "USD"}
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        first = _snapshot(tmp, list(KEPT) + [acme, newco], as_of="2026-07-15")
+        receipt = _cli(root, first)
+        _cli(root, first, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "confirmed", "held_months": 18}]})
+        # A later, ordinary view: NEWCO is simply held now, and moves a little.
+        moved = dict(newco, shares=12)
+        second = os.path.join(tmp, "second.json")
+        with open(second, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-07-25", "positions": list(KEPT) + [acme, moved]}, handle)
+        again = _cli(root, second)
+        assert again["pending_confirmations"] == [], (
+            "a held position is not an appearance and must not be asked about twice")
+        out = _cli(root, second, {"refresh_id": again["refresh_id"], "answers": []})
+        assert out["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        holding = lg.derive_holdings(events)["holdings"]["NEWCO"]
+        assert holding["shares"] == 12.0, "the new view's numbers are adopted"
+        assert holding["cycle_id"] == "NEWCO#2025-01-15#1", (
+            "the answered start survives; snapping back to 2026-07-25 would "
+            "silently spend the user's answer on one review")
+
+
+def test_a_stamp_never_survives_onto_a_different_cycle():
+    """The carry-forward's own limit, and it is not a hypothetical.
+
+    A position sold and bought back is the same ticker and a different cycle.
+    Carrying the stamp on ticker identity alone would report a position opened
+    days ago as an eighteen-month holding — a number the user never said, in
+    the field this issue exists to make honest. The record's own `origin`
+    settles it: `trades` means the ledger has the real open date.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        newco = {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                 "market": "US", "currency": "USD"}
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        first = _snapshot(tmp, list(KEPT) + [acme, newco], as_of="2026-07-15")
+        receipt = _cli(root, first)
+        _cli(root, first, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "confirmed", "held_months": 18}]})
+        with open(os.path.join(root, "ledger.jsonl"), "a", encoding="utf-8") as handle:
+            for row in ({"type": "trade", "date": "2026-07-18", "ticker": "NEWCO",
+                         "action": "sell", "qty": 10, "price": 6.0},
+                        {"type": "trade", "date": "2026-07-20", "ticker": "NEWCO",
+                         "action": "buy", "qty": 6, "price": 7.0}):
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        assert lg.derive_holdings(events)["holdings"]["NEWCO"]["origin"] == "trades"
+        second = os.path.join(tmp, "second.json")
+        with open(second, "w", encoding="utf-8") as handle:
+            # WIDGET also moves, below both thresholds, so the adopted book
+            # really differs from the record and a new anchor is written --
+            # without that the refresh reconciles clean, keeps the old anchor,
+            # and this check would read the stamp it was meant to test for.
+            json.dump({"as_of": "2026-07-25",
+                       "positions": [dict(KEPT[0], shares=48), KEPT[1],
+                                     acme, dict(newco, shares=6, avg_cost=7.0)]},
+                      handle)
+        again = _cli(root, second)
+        assert again["pending_confirmations"] == []
+        out = _cli(root, second, {"refresh_id": again["refresh_id"], "answers": []})
+        assert out["status"] == "adopted", out
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "NEWCO"][0]
+        assert "since" not in row and "since_basis" not in row, (
+            "the estimate described the cycle that was sold; it must not be "
+            "reattached to the one the ledger can date itself")
+        assert lg.derive_holdings(events)["holdings"]["NEWCO"]["cycle_id"] != "NEWCO#2025-01-15#1"
+
+
+def test_an_appearance_now_routes_the_review_lane_here_too():
+    """#530's refusal is a call into this lane, so widening what refresh asks
+    widens the refusal with no rework over there. Before #531 this declaration
+    reviewed straight through and NEWCO entered the book dated today, with
+    nobody ever asked where it came from."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        before = _ledger_rows(root)
+        positions = list(KEPT) + [
+            {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+             "market": "US", "currency": "USD"}]
+        out = subprocess.run(
+            [sys.executable, os.path.join(ENGINE, "review.py"), "prepare",
+             "--route", "snapshot_review", "--root", root, "--language", "en",
+             "--snapshot-json", _snapshot(tmp, positions)],
+            capture_output=True, text=True, check=False)
+        assert out.returncode == 2, out.stdout + out.stderr
+        assert "refresh --snapshot-json" in json.loads(out.stdout)["error"], out.stdout
+        assert _ledger_rows(root) == before, "the refusal happens before any append"
+
+
+def test_a_supplied_view_may_not_hand_the_engine_a_cycle_start():
+    """SKILL.md non-negotiable rule 1, enforced rather than documented.
+
+    The agent transcribes a month count and the engine derives the date. An
+    envelope that arrives with the date already in it is refused by name -- so
+    the derivation cannot be quietly relocated into whatever composed the file.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        forged = [dict(row) for row in KEPT]
+        forged[0] = dict(forged[0], since="2019-01-01", since_basis="user_estimate")
+        out = _cli(_root(tmp), _snapshot(tmp, forged))
+        assert out["status"] == "error", out
+        assert "engine-assigned fields: since, since_basis" in out["error"], out
+
+
+def test_the_two_provenance_fields_are_one_fact_and_travel_together():
+    """A date with no stamp is the false precision rule 2 forbids, so the pair
+    is validated as a pair at the only door into the book. This is what makes
+    "never rendered as an exact date" true at the storage layer instead of a
+    habit each renderer has to keep."""
+    base = {"ticker": "ACME", "shares": 10, "market": "US", "currency": "USD"}
+    cases = [
+        (dict(base, since="2025-01-15"), "requires since_basis"),
+        (dict(base, since_basis="user_estimate"), "no since was derived"),
+        (dict(base, since_basis="unknown", since="2025-01-15"), "but a since was supplied"),
+        (dict(base, since_basis="approximately"), "must be one of"),
+        (dict(base, since="2026-09-01", since_basis="user_estimate"), "after the book's as_of"),
+    ]
+    for position, expected in cases:
+        try:
+            snapshot_adapter.normalize_book(
+                {"as_of": "2026-07-15", "positions": [position]},
+                today="2026-07-20", allow_engine_provenance=True)
+        except snapshot_adapter.SnapshotError as exc:
+            assert expected in str(exc), (position, exc)
+            continue
+        raise AssertionError(f"{position} must fail closed")
+
+
+def test_only_the_refresh_lane_may_write_engine_assigned_provenance():
+    """One privileged call site, and a mechanical count rather than a comment.
+
+    `allow_engine_provenance` is a bypass of rule 1's gate. It is safe only
+    while exactly one caller uses it -- the one that assembled the envelope out
+    of answers the engine itself converted -- so the count is the check.
+    """
+    engine_files = sorted(name for name in os.listdir(ENGINE) if name.endswith(".py"))
+    users = {}
+    for name in engine_files:
+        with open(os.path.join(ENGINE, name), encoding="utf-8") as handle:
+            hits = handle.read().count("allow_engine_provenance=True")
+        if hits:
+            users[name] = hits
+    assert users == {"book_refresh.py": 1}, (
+        "a second writer of an engine-assigned cycle start is a second place "
+        "the month count could be converted; put it behind build_adoption", users)
 
 
 def test_a_large_change_on_a_core_position_asks_and_a_small_one_does_not():
@@ -293,6 +543,85 @@ def test_resupply_aborts_the_whole_refresh():
         assert _ledger_rows(root) == [SEED], "nothing may be written on a resupply"
 
 
+def test_a_confirmed_appearance_must_state_what_the_item_asked_for():
+    """The gate that runs one level below the classification.
+
+    A missing `held_months` is an unasked question, not a shrug — the shrug has
+    its own spelling, `null`, and collapsing the two would let the flow skip the
+    question and still adopt. In the other direction, a cost for a row that
+    already declared one is refused rather than silently preferred: that is the
+    prohibition `test_a_declared_market_value_never_becomes_an_undisclosed_cost_fallback`
+    holds in `consider`, applied at the door instead.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        priced = {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                  "market": "US", "currency": "USD"}
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        snapshot = _snapshot(tmp, list(KEPT) + [acme, priced])
+        receipt = _cli(root, snapshot)
+        cases = [
+            ({"ticker": "NEWCO", "classification": "confirmed"},
+             "held_months is required"),
+            ({"ticker": "NEWCO", "classification": "confirmed",
+              "held_months": 6, "avg_cost": 9.0}, "did not ask for avg_cost"),
+            ({"ticker": "NEWCO", "classification": "confirmed", "held_months": 1.5},
+             "whole number of months"),
+            ({"ticker": "NEWCO", "classification": "confirmed", "held_months": -3},
+             "must be between 0 and"),
+            ({"ticker": "NEWCO", "classification": "confirmed", "held_months": "18"},
+             "whole number of months"),
+        ]
+        for answer, expected in cases:
+            out = _cli(root, snapshot,
+                       {"refresh_id": receipt["refresh_id"], "answers": [answer]})
+            assert out["status"] == "error" and expected in out["error"], (answer, out)
+        assert _ledger_rows(root) == [SEED], "every refusal writes nothing"
+
+
+def test_an_appearance_with_no_declared_cost_must_be_answered_with_one():
+    """#528's input class, closed at entry. `null` stays legal — a user who does
+    not know their cost must not be pushed into inventing one — but the flow
+    cannot reach adoption without having put the question to them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        snapshot = _snapshot(tmp, list(KEPT) + [
+            acme, {"ticker": "DARKCO", "shares": 4, "market": "US", "currency": "USD"}])
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "DARKCO", "classification": "confirmed", "held_months": 3}]})
+        assert out["status"] == "error" and "avg_cost is required" in out["error"], out
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "DARKCO", "classification": "confirmed",
+             "held_months": 3, "avg_cost": None}]})
+        assert out["status"] == "adopted", out
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "DARKCO"][0]
+        assert "avg_cost" not in row, "a cost the user does not know is not manufactured"
+        assert row["since"] == "2026-04-15"
+
+
+def test_resupply_on_an_appearance_aborts_and_carries_no_detail():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        snapshot = _snapshot(tmp, list(KEPT) + [
+            acme, {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                   "market": "US", "currency": "USD"}])
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "resupply", "held_months": 6}]})
+        assert out["status"] == "error" and "did not ask for held_months" in out["error"], out
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "resupply"}]})
+        assert out["status"] == "resupply_requested" and out["tickers"] == ["NEWCO"]
+        assert _ledger_rows(root) == [SEED]
+
+
 # ─────────────── C. the two branches reach different states ───────────────
 
 def test_sold_removes_the_position_and_records_a_fill_free_absence():
@@ -386,6 +715,58 @@ def test_a_carried_position_keeps_the_canonical_current_book_usable():
         assert projection is not None and projection.applicable
 
 
+def test_a_stamped_position_keeps_the_canonical_current_book_usable():
+    """The cross-lane oracle `carried` taught this repo to write (#485 Slice C).
+
+    `since`/`since_basis` are new fields on an anchor position, and a new field
+    on a shared artifact reaches every reader of that artifact, not only the
+    writer's own. `portfolio_basis` validates anchor positions and holdings
+    against exact key sets and requires `since` to be a real date — miss any of
+    that and `query_current_book` returns None, which takes `consider` down
+    with it while every refresh test stays green.
+
+    Also pinned: where the stamp stops. `_normalized_anchor` drops it, so a
+    `current_book.anchor` position still carries only the book-affecting facts,
+    exactly as it drops `carried`. It does *not* stop at the holdings, and that
+    difference is the point rather than an oversight — `carried` says how a row
+    was obtained, while a cycle start says when the position opened, and the
+    derived `cycle_id` that every holding-period reading measures from is
+    supposed to move when the user answers.
+    """
+    import portfolio_basis
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        acme = {"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                "market": "US", "currency": "USD"}
+        supplied = list(KEPT) + [
+            acme,
+            {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "OLDCO", "shares": 8, "avg_cost": 3.0,
+             "market": "US", "currency": "USD"}]
+        snapshot = _snapshot(tmp, supplied)
+        receipt = _cli(root, snapshot)
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "NEWCO", "classification": "confirmed", "held_months": 30},
+            {"ticker": "OLDCO", "classification": "confirmed", "held_months": None}]})
+        assert out["status"] == "adopted", out
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        basis = portfolio_basis.query_current_book(events, reference_as_of="2026-07-20")
+        assert basis is not None, (
+            "a stamped position must not make the canonical current book "
+            "unreadable -- that is what `consider` reads")
+        assert basis.current_book["holdings"]["OLDCO"]["cycle_id"] == "OLDCO#unknown"
+        projection = portfolio_basis.sizing_projection(basis)
+        assert projection is not None and projection.applicable
+        stamped = [row for row in lg.latest_anchor(events)["positions"]
+                   if row.get("since_basis")]
+        assert {row["ticker"] for row in stamped} == {"NEWCO", "OLDCO"}
+        for row in basis.current_book["anchor"]["positions"]:
+            assert not {"since", "since_basis"} & set(row), (
+                "the anchor projection carries book-affecting facts only; "
+                "provenance is dropped there the way `carried` is")
+
+
 def test_one_declaration_owns_which_fields_a_supplied_position_may_carry():
     """The fix for the above is a single declaration, not a third mirror.
 
@@ -467,7 +848,91 @@ def test_a_same_day_refresh_wins_over_the_earlier_declaration():
         assert lg.latest_anchor(events)["projection_sequence"] == 1
 
 
-# ─────────────── D. contract synchronization ───────────────
+# ─────────────── D. one question, whatever it covers ───────────────
+
+def test_every_kind_at_once_is_one_receipt_settled_by_one_answers_call():
+    """The one-question rule, proven at the only layer the engine controls.
+
+    `flows/book-refresh.md` step 2 is prose an agent obeys, but what makes it
+    obeyable is structural: the engine emits ONE receipt with ONE flat
+    `pending_confirmations` list, and ONE `--answers` call settles all of it.
+    There is no per-ticker question object, no queue, and no protocol that
+    forces a second turn — so eight appearances cannot become eight questions
+    without the agent inventing the extra turns itself.
+
+    Nine raised items across all three kinds, which before #531 would have been
+    six: the three appearances are the ones this issue added, and they must not
+    have added a single round trip.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        seed = dict(SEED, positions=[
+            {"ticker": "BIGCO", "shares": 200.0, "avg_cost": 40.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "GONE1", "shares": 10.0, "avg_cost": 4.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "GONE2", "shares": 10.0, "avg_cost": 4.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "GONE3", "shares": 10.0, "avg_cost": 4.0,
+             "market": "US", "currency": "USD"}])
+        root = _root(tmp, (seed,))
+        supplied = [{"ticker": "BIGCO", "shares": 80, "avg_cost": 40.0,
+                     "market": "US", "currency": "USD"},
+                    {"ticker": "NEW1", "shares": 5, "avg_cost": 2.0,
+                     "market": "US", "currency": "USD"},
+                    {"ticker": "NEW2", "shares": 5, "market": "US", "currency": "USD"},
+                    {"ticker": "NEW3", "shares": 5, "avg_cost": 2.0,
+                     "market": "US", "currency": "USD"}]
+        snapshot = _snapshot(tmp, supplied)
+        receipt = _cli(root, snapshot)
+        raised = [(row["kind"], row["ticker"]) for row in receipt["pending_confirmations"]]
+        assert raised == [
+            ("disappearance", "GONE1"), ("disappearance", "GONE2"),
+            ("disappearance", "GONE3"),
+            ("appearance", "NEW1"), ("appearance", "NEW2"), ("appearance", "NEW3"),
+            ("large_change", "BIGCO")], raised
+        assert set(receipt) == {"schema_version", "refresh_id", "as_of", "against",
+                                "status", "diff", "pending_confirmations", "summary"}, (
+            "the receipt has exactly one place a question can come from; a "
+            "second question-bearing field is how one turn becomes many")
+        out = _cli(root, snapshot, {"refresh_id": receipt["refresh_id"], "answers": [
+            {"ticker": "GONE1", "classification": "sold"},
+            {"ticker": "GONE2", "classification": "sold"},
+            {"ticker": "GONE3", "classification": "not_captured"},
+            {"ticker": "NEW1", "classification": "confirmed", "held_months": 2},
+            {"ticker": "NEW2", "classification": "confirmed",
+             "held_months": None, "avg_cost": 1.5},
+            {"ticker": "NEW3", "classification": "confirmed", "held_months": 36},
+            {"ticker": "BIGCO", "classification": "confirmed"}]})
+        assert out["status"] == "adopted", out
+        assert out["recorded_absent"] == ["GONE1", "GONE2"]
+        assert out["carried_forward"] == ["GONE3"]
+        assert out["recorded_new"] == ["NEW1", "NEW2", "NEW3"]
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        holdings = lg.derive_holdings(events)["holdings"]
+        assert holdings["NEW1"]["cycle_id"] == "NEW1#2026-05-15#1"
+        assert holdings["NEW2"]["cycle_id"] == "NEW2#unknown"
+        assert holdings["NEW3"]["cycle_id"] == "NEW3#2023-07-15#1", (
+            "two months and thirty-six months are what say which was bought and "
+            "which was carried in; the provenance label the body proposed is "
+            "deleted, not stored elsewhere")
+
+
+def test_step_2_offers_every_kind_the_engine_can_raise():
+    """The prose and the enum, locked together.
+
+    A kind the engine raises and the flow never mentions is a question the
+    agent has no wording for and no legal answers to offer -- so it improvises,
+    which is the one thing step 2 forbids.
+    """
+    with open(FLOW, encoding="utf-8") as handle:
+        step_2 = handle.read().split("## Step 2")[1].split("\n## ")[0]
+    for kind in br.CONFIRMATION_KINDS:
+        assert f'`kind: "{kind}"`' in step_2, f"step 2 never tells the agent how to ask {kind}"
+        for option in br.CLASSIFICATIONS_BY_KIND[kind]:
+            assert f"`{option}`" in step_2, f"{kind}'s option {option} is unwritten"
+
+
+# ─────────────── E. contract synchronization ───────────────
 
 def test_the_classification_enum_matches_the_engine_constant():
     """`review.CONSIDER_DECISIONS`' precedent: one tuple, locked to the schema,
@@ -483,6 +948,11 @@ def test_the_classification_enum_matches_the_engine_constant():
     for kind, allowed in br.CLASSIFICATIONS_BY_KIND.items():
         unknown = set(allowed) - set(br.REFRESH_CLASSIFICATIONS)
         assert not unknown, f"{kind} allows an undeclared classification: {sorted(unknown)}"
+    answer = (schema["$defs"]["input"]["properties"]["answers"]["items"]["properties"])
+    assert answer["held_months"]["maximum"] == br.HELD_MONTHS_MAX
+    assert set(lg.SINCE_BASES) == {"user_estimate", "unknown"}
+    assert lg.ENGINE_ASSIGNED_POSITION_KEYS <= lg.SNAPSHOT_POSITION_KEYS, (
+        "an engine-assigned field still has to be a field a position may carry")
 
 
 def test_the_refresh_lane_never_reads_is_complete():
