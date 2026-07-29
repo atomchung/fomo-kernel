@@ -73,6 +73,64 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
     # it, the same one-sided-drop shape the phrase above already guards.
     "bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for",
 )
+# #549: PR #562 made every accepted source record the book at the time it
+# arrives and took `is_complete` out of the anchor decision entirely. Both
+# guaranteed-delivery entry points went on teaching the retired rule, and so
+# did three surfaces #549's own scope did not list -- `flows/snapshot-review.md`
+# went furthest and instructed the agent to "ask for the complete account
+# view", the one question that ruling forbids outright, behind an engine
+# rejection that no longer exists. Sections differ per file because each entry
+# point already states this where it discusses the book; adding a ninth
+# non-negotiable rule so the headings could match would grow the entry-point
+# prompt CLAUDE.md deliberately keeps thin.
+RECORDED_BOOK_SECTIONS = {
+    Path("AGENTS.md"): "## Non-negotiable boundaries",
+    Path("skills/fomo-kernel/SKILL.md"): "## Agent artifact contract",
+}
+RECORDED_BOOK_REQUIRED_PHRASES = (
+    # The positive rule that replaced the eligibility gate.
+    "records the book at the time it arrives",
+    # The question the retired rule made a host ask. It is forbidden, not
+    # merely unnecessary: it asks about an external account this product does
+    # not model, so an entry point that only stopped requiring it would still
+    # leave a host free to ask and then act on the answer.
+    "covers the user's whole account",
+    # Where a newer holdings view goes instead. Without this an entry point
+    # could drop the eligibility gate and leave the agent no route at all.
+    "the recorded book",
+)
+# The retired rule, rejected across every live agent-routed surface rather
+# than only the two entry points -- scoping it to those is precisely how
+# three runtime files kept the old semantics while the entry points read
+# correctly. `accounting anchor` is deliberately absent: it is still a live
+# concept (`flows/snapshot-review.md` routes on whether a root has one), and
+# what #562 retired is completeness deciding eligibility, not the anchor.
+# Historical records (BACKLOG.md, docs/release-*.md, the dated statements in
+# docs/requirements.md) sit outside agent_runtime_files() and stay as written:
+# they date what was true then rather than instruct a host now.
+RECORDED_BOOK_RETIRED_PHRASES = (
+    "incomplete snapshot",
+    "is_complete",
+    "complete account view",
+    "complete initial snapshot",
+)
+
+
+def _retired_completeness_violations(sources):
+    """Flag any ``(rel, text)`` teaching the completeness rule #562 retired.
+
+    Takes its texts as an argument rather than reading the tree itself, so
+    the mutation test below can drive this exact logic against real committed
+    text with the retired sentence put back -- proving the scan catches a
+    revival, not merely that ``in`` works on a hand-written fixture.
+    """
+    violations = []
+    for rel, text in sources:
+        for line_number, line in enumerate(text.splitlines(), 1):
+            for phrase in RECORDED_BOOK_RETIRED_PHRASES:
+                if phrase in line:
+                    violations.append(f"{rel}:{line_number}: {phrase!r} in {line.strip()[:110]}")
+    return violations
 
 
 def _cli_review_commands():
@@ -735,6 +793,70 @@ def test_freeform_answer_shape_mutations_are_caught():
             )
 
 
+def test_recorded_book_rule_is_stated_in_both_entry_points():
+    """#549: every accepted source records the book at the time it arrives,
+    which kind of source it was never decides eligibility, and a newer
+    holdings view reaches the recorded book through `refresh`. This is the
+    rule PR #562 shipped in the engine; a host reading a stale entry point can
+    refuse a valid refresh or describe the recorded book falsely while every
+    engine test stays green, and Claude and Codex can diverge on the same
+    engine. Same guaranteed-delivery pair as FREEFORM_ANSWER_SECTIONS
+    (docs/development-guide.md section 6), checked for this rule.
+    """
+    for rel, heading in RECORDED_BOOK_SECTIONS.items():
+        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
+        for phrase in RECORDED_BOOK_REQUIRED_PHRASES:
+            assert phrase in section, f"{rel}: missing recorded-book phrase {phrase!r}"
+
+
+def test_no_agent_runtime_surface_teaches_the_retired_completeness_rule():
+    """The counterweight to the check above: stating the new rule in the two
+    entry points does not help if a routed flow or reference still teaches the
+    old one, which is exactly what #549 found on `main@b035d15`. Scoped to
+    agent_runtime_files() -- everything a host actually reads at runtime.
+    """
+    sources = [(rel, path.read_text(encoding="utf-8")) for rel, path in agent_runtime_files()]
+    violations = _retired_completeness_violations(sources)
+    assert not violations, (
+        "retired incomplete-snapshot semantics (#549) in agent-routed surfaces:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_recorded_book_rule_mutations_are_caught():
+    """Mutation proof for both checks above, driven against the real committed
+    text rather than a synthetic stand-in: one required phrase removed from a
+    real entry point must leave its section, and the retired sentence put back
+    into a real runtime file must be flagged.
+    """
+    for rel, heading in RECORDED_BOOK_SECTIONS.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        section = markdown_section(text, heading)
+        for phrase in RECORDED_BOOK_REQUIRED_PHRASES:
+            assert phrase in section, (
+                f"fixture assumption broken: {rel}'s {heading} no longer contains {phrase!r}"
+            )
+            # Mutate inside the section, because the check is section-scoped:
+            # a file-wide "remove the first occurrence" deletes an unrelated
+            # sentence elsewhere and leaves the section intact, which is a
+            # green mutation reporting a gate that was never exercised.
+            # ("the recorded book" also appears in SKILL.md's entry-point
+            # section, and that is exactly how this went red first.)
+            mutated = text.replace(section, section.replace(phrase, "", 1), 1)
+            mutated_section = markdown_section(mutated, heading)
+            assert phrase not in mutated_section, (
+                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
+            )
+
+    revived = ("An incomplete snapshot may produce a bounded review, but it is not an "
+               "accounting anchor; ask for the complete account view.")
+    for rel, path in agent_runtime_files():
+        text = path.read_text(encoding="utf-8")
+        assert _retired_completeness_violations([(rel, text + "\n" + revived)]), (
+            f"{rel}: a revived retired rule was not flagged -- the scan would stay green"
+        )
+
+
 def test_agent_runtime_surface_scope_is_bounded():
     paths = {rel for rel, _ in agent_runtime_files()}
     required = {
@@ -862,6 +984,9 @@ def main():
         test_review_py_is_a_non_negotiable_boundary,
         test_freeform_answer_shape_is_a_boundary_in_both_entry_points,
         test_freeform_answer_shape_mutations_are_caught,
+        test_recorded_book_rule_is_stated_in_both_entry_points,
+        test_no_agent_runtime_surface_teaches_the_retired_completeness_rule,
+        test_recorded_book_rule_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,
         test_json_ref_contract_links_are_discoverable,
         test_agent_runtime_surfaces_only_invoke_review_py,

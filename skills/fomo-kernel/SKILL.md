@@ -102,7 +102,7 @@ The engine validates completeness, provenance, identity, and gates at `preview`;
 - **Evidence**: a confirmed evidence delta means "the user confirmed this was part of the decision," not that the claim is externally true. Do not invent `observed_at`.
 - **Instruments**: use a local `--instrument-map` for uncommon instruments; unknown instruments get no allocation exemption.
 
-A snapshot review is an opening portfolio check, not a transaction-history diagnosis. Discuss engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. Averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, and historical motives need transaction history — invite the user to add it later. Ledger-derived current holdings stay canonical until an explicit snapshot reconciliation succeeds, so an incomplete snapshot can produce a bounded review but never becomes an accounting anchor.
+A snapshot review is an opening portfolio check, not a transaction-history diagnosis. Discuss engine-owned cost or value weights, single-position risk, driver concentration, ETF structure, and data integrity. Averaging-down counts, exit discipline, holding behavior, win rate, payoff ratio, alpha, and historical motives need transaction history — invite the user to add it later. A holdings view records the book at the time it arrives whatever it covers, so never ask whether it covers the user's whole account; ledger-derived current holdings stay canonical, and a newer holdings view reaches the recorded book through `refresh` rather than replacing it silently.
 
 If a new observation could overturn the top behavioral leak, add it to `observations` and rerun preview rather than editing the engine artifact.
 

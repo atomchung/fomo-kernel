@@ -10,7 +10,7 @@ Status: core ledger, multi-market foundations, initial snapshot onboarding, and 
 4. Support due post-exit checks.
 5. Measure swap opportunity cost when one sale funds another purchase.
 
-The core model is: a complete initial declared position snapshot may become the accounting anchor; an incomplete snapshot may produce a bounded review but is not an anchor. Later transactions update the ledger and may unlock supported history-dependent diagnosis. Ledger-derived current holdings remain canonical, and a newer broker view is considered reconciled only after the repeated-snapshot contract below compares it explicitly.
+The core model is: every accepted source records the book at the time it arrives — a declared position snapshot records it as a declaration, a transaction file records the book its own replay derives (#549) — and which kind of source it was never decides whether it may anchor or be analyzed. Later transactions update the ledger and may unlock supported history-dependent diagnosis. Ledger-derived current holdings remain canonical, and a newer broker view is considered reconciled only after the repeated-snapshot contract below compares it explicitly.
 
 ## Event model
 
