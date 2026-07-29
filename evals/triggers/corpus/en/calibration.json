@@ -260,7 +260,7 @@
       "id": "en-cal-adj-03",
       "class": "adjacent_negative",
       "text": "Is now a good time to get into the market in general?",
-      "note": "Market-timing opinion with no specific security or portfolio reference — closer to a forecast request than a pre-trade consultation about a real position.",
+      "note": "Market-timing opinion with no specific security or portfolio reference — closer to a forecast request than a pre-trade evaluation about a real position.",
       "near_miss_of": "pre_trade_positive"
     },
     {

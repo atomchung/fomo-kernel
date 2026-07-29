@@ -267,7 +267,7 @@
       "id": "en-hold-adj-04",
       "class": "adjacent_negative",
       "text": "What do you think of Tesla's current valuation?",
-      "note": "Valuation opinion question with no purchase intent or book reference — equity research, not a pre-trade consultation.",
+      "note": "Valuation opinion question with no purchase intent or book reference — equity research, not a pre-trade evaluation.",
       "near_miss_of": "pre_trade_positive"
     },
     {

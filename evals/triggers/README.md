@@ -5,7 +5,7 @@ Code, Codex, or Antigravity, and either the skill triggers or the host
 answers as a generic assistant with no idea the capability exists. Nothing in
 the repository measured that before #458. This directory is the instrument
 that decides it, per host x locale, for the two capabilities that matter --
-review and the pre-trade consultation M1 adds -- while proving that a plainly
+review and the pre-trade evaluation M1 adds -- while proving that a plainly
 adjacent, off-topic request does not fire the skill by accident.
 
 **Scope of this directory (Wave A, per #458's frozen-parity comment):**
@@ -276,7 +276,7 @@ Stated plainly, so a green `validate`/`dry-run` is never over-trusted:
 - **A `pass` on this matrix is not a claim about answer quality.** This
   measures only whether the correct *capability* engaged (review vs.
   pre-trade vs. neither) -- never whether the resulting review or
-  consultation was any good once it did.
+  evaluation was any good once it did.
 
 ## Extending the corpus
 
