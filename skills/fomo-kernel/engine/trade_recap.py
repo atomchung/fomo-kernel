@@ -15,6 +15,7 @@ import instruments as instrument_policy
 import market_context as market_context_engine
 import price_feed
 import portfolio_basis
+import splits as split_policy
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
 
@@ -765,21 +766,11 @@ def adjust_for_splits(rows, splits):
     """把每筆成交換算到『分割後(今日)』基礎,與 yfinance auto_adjust 的價格對齊。
     因子 = 成交日『之後』發生的所有分割比率連乘;股數×因子、價格÷因子 → 成交金額不變。
     這同時修好三件事:① 跨分割 round-trip 的 ret/fwd ② 持倉市值(股數×今日價) ③ 分割造成的假 orphan。
-    splits={} (離線/抓不到) → 原地不動,沿用名目價(現狀行為)。回傳實際調整的成交筆數。"""
-    n = 0
-    for r in rows:
-        evs = splits.get(r["ticker"])
-        if not evs:
-            continue
-        factor = 1.0
-        for d, ratio in evs:
-            if d > r["date"]:                 # 只有成交日之後的分割才影響這筆
-                factor *= ratio
-        if abs(factor - 1.0) > 1e-9:
-            r["qty"] = r["qty"] * factor
-            r["price"] = r["price"] / factor
-            n += 1
-    return n
+    splits={} (離線/抓不到) → 原地不動,沿用名目價(現狀行為)。回傳實際調整的成交筆數。
+
+    #550:算式本身已搬進 splits.py —— 帳本那條路徑(revisit.detect_exits)也要同一條規則,
+    而「分割對已記錄股數做了什麼」只准有一個實作。這裡保留名字與行為,只是不再自己算。"""
+    return split_policy.rebase_rows(rows, splits)
 
 def adaptive_n_fwd(rows):
     """賣出後觀察窗隨資料長度自適應:資料短就用短窗,讓半年資料的近端賣出也算得到 winner_early。"""
@@ -1931,7 +1922,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
                 max_pos_override=None, price_provenance=None, price_request=None,
-                prices=None, valuation_frame=None):
+                prices=None, valuation_frame=None, splits=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -2055,6 +2046,11 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
         "price_snapshot": price_snapshot,                   # #191 PR B:review-time prices for deterministic exit/swap comparison; frozen in the session plan
+        # #550:這次實際套用的分割事件。帳本存的是「當時成交的股數」(正確,不該改),
+        # 所以任何跨分割累加股數的讀者都必須拿到同一份分割表,否則 90 股(分割前)減
+        # 100 股(分割後)會等於 0——10% 減碼被讀成清倉。凍在 state 裡是為了讓
+        # review._prepare_exit_capture 消費「這次復盤真的用過的那一份」,而不是各自再抓一次。
+        "splits": split_policy.to_json(splits),
         "valuation_frame": valuation_frame,                 # #500 private canonical native-price/FX receipt; never card JSON
         "price_provenance": price_provenance,               # #289:價格來源與覆蓋率(engine_fetch / agent_feed / unavailable),degraded 模式必須可觀測
         "price_request": price_request,                     # #289:還缺哪些價的機讀清單,agent 據此去公認資料源補檔再重跑 prepare
@@ -2654,7 +2650,7 @@ def main():
                             price_snapshot=price_snapshot, market_context=review_market,
                             max_pos_override=max_pos_override,
                             price_provenance=price_provenance, price_request=price_request,
-                            prices=px, valuation_frame=frame)
+                            prices=px, valuation_frame=frame, splits=splits)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

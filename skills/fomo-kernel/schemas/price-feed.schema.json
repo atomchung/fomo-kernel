@@ -84,7 +84,7 @@
           "splits": {
             "type": "array",
             "maxItems": 2000,
-            "description": "Optional split events the source shows, as [date, ratio] (a 10-for-1 split is 10). Omitted means no adjustment is applied.",
+            "description": "Optional split events the source shows, as [date, ratio] (a 10-for-1 split is 10). Omitted means no adjustment is applied, which is not cosmetic: the ledger records each trade at the share count that actually executed, so a sale after an undeclared split is subtracted from pre-split buys and a routine trim reads as a full exit (#550).",
             "items": {
               "oneOf": [
                 {

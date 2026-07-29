@@ -13,6 +13,8 @@
   3. swap 配對 = 賣後 14 天內、不同 ticker 的買入;無 → idle_cash。
   4. swap framing(#33):swap_net = 換入加權報酬 − 原標的繼續持有報酬;缺價 → None + needs_prices。
   5. resolution append-only:答過的 checkpoint 不再 due;30 未答不跳 60。
+  6. 分割(#550):跨分割的股數累加必須在同一基準上,否則減碼被判成清倉;分割表由呼叫端
+     供給(本模組不連網),壞值 fail closed,已記錄的出場身分不因後續分割而改寫。
 
 跑法:
   python3 tests/test_revisit.py
@@ -30,6 +32,7 @@ ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
 import ledger as lg  # noqa: E402
 import revisit as rv  # noqa: E402
+import splits as sp  # noqa: E402
 
 
 def _tr(date, ticker, action, qty, price):
@@ -80,6 +83,139 @@ def test_detect_respects_snapshot_anchor():
 def test_oversell_not_enqueued():
     exits = rv.detect_exits([_tr("2026-06-01", "MSTR", "sell", 5, 300.0)])
     assert exits == [], "無倉賣(ledger integrity 已記)不進 revisit"
+
+
+# ─────────────── A2. 分割:一個籃子裡只准有一種股數基準(#550)───────────────
+#
+# The ledger stores what was transacted, which is right and must stay that way.
+# It is also why a running balance walked across a split is subtracting two
+# different share bases from each other. Everything here injects the split map;
+# no test in this file may reach a network, and detect_exits never retrieves.
+
+def _cross_split_book():
+    """Two pre-split buys, a pre-split trim, then a ~10% post-split trim."""
+    return [
+        _tr("2023-01-10", "NVDA", "buy", 90, 150.0),      # 900 in post-split terms
+        _tr("2023-11-15", "NVDA", "buy", 30, 480.0),      # 300 in post-split terms
+        _tr("2024-05-20", "NVDA", "sell", 20, 950.0),     # 16.7% of 120 → no exit
+        _tr("2026-07-28", "NVDA", "sell", 100, 197.0),    # 10% of 1000 → no exit
+    ]
+
+
+NVDA_SPLIT = {"NVDA": [["2024-06-10", 10]]}
+
+
+def test_a_post_split_trim_is_not_read_as_a_full_exit():
+    """#550 的原症:90+30−20−100 = 0 → 減碼 10% 被判成清倉。
+
+    後果不是文案問題:exit_kind=="full" 會把 thesis 永久設成 closed
+    (thesis.py),並在存檔的卡片上印「清倉」。
+    """
+    events = _cross_split_book()
+    unadjusted = rv.detect_exits(events)
+    assert [x["kind"] for x in unadjusted] == ["full"], \
+        f"沒有分割資料時仍是既有(錯的)答案,這條是對照組:{unadjusted}"
+    adjusted = rv.detect_exits(events, splits=NVDA_SPLIT)
+    assert adjusted == [], f"賣 100/1000 股 = 10%,不到 reduce 門檻,不該是任何出場:{adjusted}"
+
+
+def test_split_adjustment_still_reports_a_real_exit_after_the_split():
+    """校正不是「一律不算出場」——真的清倉/大減碼還是要出來,且股數在同一基準上。"""
+    events = [
+        _tr("2023-01-10", "NVDA", "buy", 90, 150.0),      # → 900 post-split
+        _tr("2026-07-28", "NVDA", "sell", 900, 197.0),    # 真的全出
+    ]
+    exits = rv.detect_exits(events, splits=NVDA_SPLIT)
+    assert len(exits) == 1, exits
+    assert exits[0]["kind"] == "full", f"真清倉必須仍是 full:{exits[0]}"
+    assert _approx(exits[0]["shares_before"], 900.0), exits[0]
+    assert _approx(exits[0]["shares_sold"], 900.0), exits[0]
+    reduce_events = [
+        _tr("2023-01-10", "NVDA", "buy", 90, 150.0),
+        _tr("2026-07-28", "NVDA", "sell", 600, 197.0),    # 900 中賣 600 = 67%
+    ]
+    trim = rv.detect_exits(reduce_events, splits=NVDA_SPLIT)
+    assert [x["kind"] for x in trim] == ["reduce"], trim
+    assert _approx(trim[0]["shares_before"], 900.0), trim[0]
+
+
+def test_a_split_after_the_snapshot_anchor_is_carried_onto_the_declared_position():
+    """錨點宣告的是 as_of 當天的股數;之後的分割一樣要帶上去,否則錨點使用者照樣中同一個病。"""
+    events = [
+        _snap("2024-05-01", [{"ticker": "NVDA", "shares": 120, "avg_cost": 200.0}]),
+        _tr("2026-07-28", "NVDA", "sell", 100, 197.0),    # 1200 中賣 100
+    ]
+    assert [x["kind"] for x in rv.detect_exits(events)] == ["reduce"], \
+        "對照組:未校正時 100/120 被讀成 83% 大減倉"
+    assert rv.detect_exits(events, splits=NVDA_SPLIT) == [], "1200 股賣 100 不是出場"
+
+
+def test_a_split_is_applied_once_however_many_trades_follow_it():
+    """每筆成交後都要把「持倉現在是哪個基準」往前推,否則同一次分割會被重複套用。
+
+    只有一筆分割後成交的帳本看不出差別(所以上面那些案例全綠也證明不了這件事);
+    第二筆之後,持倉會被再乘一次 10,減碼看起來越賣越多,方向跟原症相反但一樣假。
+    """
+    events = [
+        _tr("2023-01-10", "NVDA", "buy", 90, 150.0),      # → 900 post-split
+        _tr("2026-07-28", "NVDA", "sell", 100, 197.0),    # 900 → 800
+        _tr("2026-08-04", "NVDA", "sell", 700, 190.0),    # 800 中賣 700 = 87.5% → reduce
+        _tr("2026-08-11", "NVDA", "sell", 100, 185.0),    # 剩 100,全出 → full
+    ]
+    exits = rv.detect_exits(events, splits=NVDA_SPLIT)
+    assert [(x["exit_date"], x["kind"]) for x in exits] == [
+        ("2026-08-04", "reduce"), ("2026-08-11", "full")], exits
+    assert _approx(exits[0]["shares_before"], 800.0), \
+        f"分割只發生一次,持倉不可每筆成交再乘一次:{exits[0]}"
+    assert _approx(exits[1]["shares_before"], 100.0), exits[1]
+
+
+def test_a_split_before_the_first_trade_changes_nothing():
+    """整段歷史都在分割之後 → 沒有跨基準問題,答案必須逐字不變(這是絕大多數真實帳本)。"""
+    events = [
+        _tr("2026-05-01", "NVDA", "buy", 10, 120.0),
+        _tr("2026-06-15", "NVDA", "sell", 10, 120.5),
+    ]
+    assert rv.detect_exits(events, splits=NVDA_SPLIT) == rv.detect_exits(events), \
+        "分割早於全部交易時,校正必須是 no-op"
+
+
+def test_a_recorded_exit_keeps_its_identity_when_the_ticker_splits_again():
+    """身分穩定性:shares_sold 是「當天成交的股數」,基準是出場日自己,不是今天。
+
+    若改成「一律換算到今日基準」,每次新分割都會讓舊出場的 revisit_id 變一次,
+    佇列裡每一筆分割前的出場都會被重排一遍(去重 key 對不上),使用者每次分割
+    後都被重問一輪。這條鎖住那個設計選擇。
+    """
+    events = [
+        _tr("2023-01-10", "NVDA", "buy", 90, 150.0),
+        _tr("2026-07-28", "NVDA", "sell", 900, 197.0),
+    ]
+    before = rv.detect_exits(events, splits=NVDA_SPLIT)
+    later = rv.detect_exits(events, splits={"NVDA": [["2024-06-10", 10], ["2027-03-01", 4]]})
+    assert before == later, "已發生的出場不可因為之後又分割而改寫"
+    assert rv._revisit_id(before[0]) == rv._revisit_id(later[0])
+
+
+def test_split_events_are_fail_closed():
+    """比率是股數的乘數。壞值靜默丟掉 = 端出一個自信的錯數字,正是本 issue 的病。"""
+    events = _cross_split_book()
+    for bad in ({"NVDA": [["not-a-date", 10]]}, {"NVDA": [["2024-06-10", 0]]},
+                {"NVDA": [["2024-06-10", "ten"]]}, {"NVDA": [["2024-06-10"]]},
+                {"NVDA": "2024-06-10"}, {"": [["2024-06-10", 10]]}):
+        try:
+            rv.detect_exits(events, splits=bad)
+        except sp.SplitDataError:
+            continue
+        raise AssertionError(f"壞分割事件必須 fail closed,不可靜默忽略:{bad}")
+
+
+def test_split_map_survives_a_json_round_trip():
+    """review 把分割表凍進 state.json 再讀回來;兩種拼法必須是同一個答案。"""
+    native = {"NVDA": [(dt.date(2024, 6, 10), 10.0)]}
+    assert rv.detect_exits(_cross_split_book(), splits=native) == []
+    assert sp.to_json(native) == {"NVDA": [["2024-06-10", 10.0]]}
+    assert rv.detect_exits(_cross_split_book(), splits=sp.to_json(native)) == []
 
 
 # ─────────────── B. swap 配對 ───────────────

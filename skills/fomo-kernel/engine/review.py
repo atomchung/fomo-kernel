@@ -39,6 +39,7 @@ import question_surface
 import revisit
 import session
 import snapshot_adapter
+import splits
 import thesis
 import trade_recap
 import verdicts
@@ -1339,10 +1340,20 @@ def _prepare_exit_capture(root, state, persist):
     # #462: revisit.enqueue_from_ledger scans for exits with ledger.load_ledger
     # underneath; a corrupt row must block enqueueing rather than let a real
     # exit go undetected and silently never reach the 30/60/90 follow-up.
+    # #550: the exit walk accumulates share counts across a ticker's whole
+    # history, and the ledger stores quantities exactly as transacted. Without
+    # this map a sale after a split is subtracted from pre-split buys, and a
+    # partial trim reads as a full liquidation -- which closes the thesis
+    # permanently and prints "fully exited" on the saved card. The map is the
+    # one this review already applied to its own analytics, frozen into state,
+    # so the two readers cannot disagree about what a split did.
     try:
-        new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of)
+        new, dup = revisit.enqueue_from_ledger(ledger_path, queue_path, today=as_of,
+                                               splits=state.get("splits"))
     except ledger.LedgerIntegrityError as exc:
         raise ReviewError(str(exc)) from exc
+    except splits.SplitDataError as exc:
+        raise ReviewError(f"this review's split history could not be read: {exc}") from exc
     revisits, resolutions, skipped = revisit.load_queue(queue_path)
     narratives = _exit_narrative_index(root)
     raw_prices = ((state.get("price_snapshot") or {}).get("prices") or {})

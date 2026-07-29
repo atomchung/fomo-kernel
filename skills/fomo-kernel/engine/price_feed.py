@@ -207,7 +207,15 @@ def parse(payload):
             "currency": currency,
             "source": _text(row.get("source"), f"{at}.source", required=False) or source,
             "history": [(d.isoformat(), value) for d, value in sorted(merged.items())],
-            "splits": [(d, value) for d, value in splits],
+            # ISO strings, exactly like ``history`` above. A parsed feed is not
+            # a private in-memory value: ``review._fingerprint`` runs the whole
+            # thing through ``session.canonical``, so a ``datetime.date`` left
+            # in here is not serializable and every envelope that declared a
+            # split crashed `prepare` before any work happened (#550). The one
+            # documented way to supply split history on an offline host was
+            # therefore unusable. ``splits_map`` converts back at its boundary,
+            # so its callers still see ``fetch_splits`` shape.
+            "splits": [(d.isoformat(), value) for d, value in splits],
         }
 
     fx_rows = payload.get("fx") or []
@@ -310,7 +318,10 @@ def splits_map(feed, tickers=None):
         if wanted is not None and ticker not in wanted:
             continue
         if row.get("splits"):
-            out[ticker] = list(row["splits"])
+            # The stored envelope keeps ISO strings so a parsed feed stays
+            # JSON-serializable; the engine-side contract is dates.
+            out[ticker] = [(dt.date.fromisoformat(str(day)), ratio)
+                           for day, ratio in row["splits"]]
     return out
 
 

@@ -19,6 +19,7 @@
 """
 import datetime as dt
 import io
+import json
 import os
 import sys
 import tempfile
@@ -528,6 +529,23 @@ def test_build_state_alpha_always_reported_with_uncertainty():
     assert _approx(st["metrics"]["alpha_t"], 0.8), "不確定性(t)一起入狀態,對帳才知道數字多可信"
     assert st["metrics"]["alpha_credible"] is False
     assert st["holdings"]["is_complete"] is False, "CSV 推算不宣稱完整持倉"
+
+
+def test_build_state_freezes_the_split_history_it_applied():
+    """#550:分割表要跟著這次復盤一起凍住,而不是讓下游各自再抓一次。
+
+    ``review._prepare_exit_capture`` 消費的就是這一欄——出場偵測跨分割累加股數,
+    拿不到同一份表就會把減碼讀成清倉。JSON 安全(ISO 字串)是硬要求:state 是
+    寫進磁碟的檔案,留 date 物件會在寫檔那一刻炸掉。
+    """
+    rows = [_R("A", "buy", 10, 100, "2024-01-01"),
+            _R("A", "sell", 10, 120, "2024-02-01")]
+    frozen = _state_from(rows, dict(note="無價格"),
+                         splits={"NVDA": [(dt.date(2024, 6, 10), 10.0)]})["splits"]
+    assert frozen == {"NVDA": [["2024-06-10", 10.0]]}, frozen
+    assert json.dumps(frozen), "state 會被寫成 JSON 檔,分割表必須是 JSON 安全的"
+    assert _state_from(rows, dict(note="無價格"))["splits"] == {}, \
+        "沒有分割資料 = 空表(不調整),不是缺欄位"
 
 
 def test_build_state_insufficient_sample_no_commitment():
@@ -1622,6 +1640,63 @@ def test_fetch_splits_parallel_preserves_serial_semantics():
     assert list(out.keys()) == ["AAPL", "NVDA"], "sorted-ticker order must survive parallelism"
     assert out["NVDA"] == [(dt.date(2024, 6, 10), 10.0), (dt.date(2022, 3, 1), 2.0)]
     assert out["AAPL"] == out["NVDA"]
+
+
+# ─────────────────── splits.py:分割規則的單一實作(#550)───────────────────
+
+def test_adjust_for_splits_is_the_shared_rule_not_a_second_copy():
+    """#550:`trade_recap.adjust_for_splits` 與 `revisit.detect_exits` 必須是同一條規則。
+
+    這條在意的不是「有沒有委派」這個形式,而是行為:同一份分割表、同一筆成交,
+    今日基準的換算結果必須由 splits.py 產出,而不是 trade_recap 自己再算一次
+    (那正是 development-guide §7 的分歧推導形狀)。
+    """
+    import splits as sp
+    rows = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10), "qty": 90.0, "price": 150.0},
+            {"ticker": "NVDA", "date": dt.date(2026, 7, 28), "qty": 100.0, "price": 197.0},
+            {"ticker": "AMD", "date": dt.date(2023, 1, 10), "qty": 5.0, "price": 60.0}]
+    mirror = [dict(row) for row in rows]
+    splits = {"NVDA": [(dt.date(2024, 6, 10), 10.0)]}
+    assert tr.adjust_for_splits(rows, splits) == sp.rebase_rows(mirror, splits) == 1
+    assert rows == mirror
+    assert rows[0]["qty"] == 900.0 and rows[0]["price"] == 15.0, "notional 不變:股數×10、價格÷10"
+    assert rows[1]["qty"] == 100.0, "分割之後的成交本來就在分割後基準,不再乘"
+    assert rows[2]["qty"] == 5.0, "沒有分割事件的標的原地不動"
+    assert tr.adjust_for_splits([dict(r) for r in rows], {}) == 0, "空分割表 = 現狀行為(不調整)"
+
+
+def test_split_factors_agree_on_the_two_bases_they_serve():
+    """兩個讀法、一條規則:`factor_after` 換算到今日,`factor_between` 把持倉往前帶。"""
+    import splits as sp
+    events = [(dt.date(2021, 7, 20), 4.0), (dt.date(2024, 6, 10), 10.0)]
+    assert sp.factor_after(events, dt.date(2023, 1, 10)) == 10.0
+    assert sp.factor_after(events, dt.date(2024, 6, 10)) == 1.0, "除權日當天的成交已是分割後價"
+    assert sp.factor_after(events, dt.date(2020, 1, 1)) == 40.0
+    assert sp.factor_between(events, None, dt.date(2026, 1, 1)) == 40.0, \
+        "沒有歷史起點 → 全數套用(套在 0 股上,所以早於首筆交易的分割自然無害)"
+    assert sp.factor_between(events, dt.date(2023, 1, 10), dt.date(2026, 1, 1)) == 10.0
+    assert sp.factor_between(events, dt.date(2024, 6, 10), dt.date(2026, 1, 1)) == 1.0
+    assert sp.factor_between(events, dt.date(2023, 1, 10), dt.date(2024, 1, 1)) == 1.0, \
+        "還沒走到的分割不可預先套用"
+
+
+def test_normalize_accepts_both_spellings_and_refuses_a_bad_ratio():
+    import splits as sp
+    native = {"NVDA": [(dt.date(2024, 6, 10), 10.0)]}
+    assert sp.normalize(native) == sp.normalize(sp.to_json(native)) == native
+    assert sp.normalize(None) == sp.normalize({}) == {}
+    assert sp.normalize({"NVDA": [["2024-06-10", 10], ["2021-07-20", 4]]})["NVDA"] == [
+        (dt.date(2021, 7, 20), 4.0), (dt.date(2024, 6, 10), 10.0)], "日期序正規化一次"
+    assert sp.normalize({"CHEWY": [["2020-01-02", 0.1]]}) == {
+        "CHEWY": [(dt.date(2020, 1, 2), 0.1)]}, "反向分割(1-for-10)是真的,不可當壞值拒收"
+    for bad in ({"NVDA": [["2024-06-10", -1]]}, {"NVDA": [["2024-06-10", float("nan")]]},
+                {"NVDA": [["2024-06-10", float("inf")]]}, {"NVDA": [[None, 10]]},
+                {"NVDA": 10}, "NVDA"):
+        try:
+            sp.normalize(bad)
+        except sp.SplitDataError:
+            continue
+        raise AssertionError(f"壞分割事件必須 fail closed:{bad}")
 
 
 # ─────────────────── #389:語言 fallback 契約 ───────────────────

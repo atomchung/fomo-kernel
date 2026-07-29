@@ -214,6 +214,17 @@ def test_adapters():
                                         "splits": [["2024-02-15", 10]]}]))
     ok(pf.splits_map(splits) == {"NVDA": [(dt.date(2024, 2, 15), 10.0)]},
        "splits_map 對齊 fetch_splits 形狀", repr(pf.splits_map(splits)))
+    # #550:parse 的產物不是私有記憶體值——review._fingerprint 會把整個 feed 丟進
+    # session.canonical。splits 曾是這裡唯一留著 datetime.date 的欄位(history 早就存
+    # ISO),結果「宣告了分割的 envelope」一律在 prepare 開工前就 TypeError 炸掉,
+    # 離線 host 唯一能供分割史的路徑等於不存在。
+    import session as session_engine
+    try:
+        session_engine.canonical(splits)
+        serializable, why = True, ""
+    except TypeError as exc:
+        serializable, why = False, str(exc)
+    ok(serializable, "宣告分割的 feed 可被 session.canonical 序列化(#550 prepare 入口)", why)
     raises(lambda: pf.parse(envelope(prices=[{"ticker": "NVDA", "close": 130.0, "date": AS_OF,
                                               "currency": "USD",
                                               "splits": [["2024-06-10", 10]]}])),
