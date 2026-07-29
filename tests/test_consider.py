@@ -1860,6 +1860,271 @@ def test_a_malformed_split_in_the_envelope_never_reaches_the_book():
 
 # ─────────────────────────────── runner ───────────────────────────────
 
+# ───────────── M. the visible challenge (#479 Wave B, second cut) ─────────────
+#
+# Wave B's first cut made a fabricated `--agent-case` unstorable; nothing in
+# it reached the user. This section is the other half: `consider` now emits
+# `challenge`, the engine's own statement of what this answer owes -- which
+# facts, whose exact words, which of the user's own rules, which limitations,
+# and what nobody looked at.
+#
+# `tests/test_evaluation_challenge.py` proves the builder in isolation. What
+# is proved *here*, and only here, is that the block survives the real CLI:
+# that it is emitted at all, that its anchors are usable against the frozen
+# row a separate process wrote, and that the gate refuses a case leaving out
+# what the block named. Deleting `"challenge": challenge` from cmd_consider's
+# `_emit` turns this section red -- which is issue #479's own acceptance
+# criterion ("removing the visible TradeEvaluation consumer makes an
+# integration test and #488 receipt fail"); the #488 receipt half is
+# #544 Slice B's formal `consider` route contract, not this file's.
+
+
+CHALLENGE_SCHEMA = _schema("evaluation-challenge.schema.json")
+_CHALLENGE_KEYS = set(CHALLENGE_SCHEMA["required"])
+
+
+def _check_challenge_shape(challenge):
+    """Spot-check a real emitted block against evaluation-challenge.schema.json
+    -- the same manual-pin idiom `_check_evaluation_shape` uses for the
+    sibling schema, because the offline suite carries no jsonschema
+    dependency. A schema nothing validates against is documentation that
+    can quietly stop describing the thing it names."""
+    props = CHALLENGE_SCHEMA["properties"]
+    assert set(challenge) == set(props), f"key set drifted: {sorted(challenge)}"
+
+    entry_props = props["must_state"]["items"]["properties"]
+    topic_enum = set(entry_props["topic"]["enum"])
+    detail_allowed = set(entry_props["detail"]["properties"])
+    for entry in challenge["must_state"]:
+        assert set(entry) <= set(entry_props), f"undeclared entry field: {sorted(entry)}"
+        assert set(props["must_state"]["items"]["required"]) <= set(entry)
+        assert entry["topic"] in topic_enum
+        assert isinstance(entry["value"], (str, int, float, bool))
+        if "anchor" in entry:
+            assert entry["anchor"].split(".")[0] in ("basis", "consequence", "rule_collisions")
+        if "detail" in entry:
+            assert set(entry["detail"]) <= detail_allowed
+
+    quote_props = props["quote_verbatim"]["items"]["properties"]
+    for quoted in challenge["quote_verbatim"]:
+        assert set(quoted) == set(quote_props)
+        assert quoted["field"] in ("reason", "why_now") or quoted["field"].startswith("evidence_refs[")
+        assert isinstance(quoted["text"], str) and quoted["text"]
+
+    unchecked_enum = set(props["unchecked"]["items"]["enum"])
+    assert set(challenge["unchecked"]) <= unchecked_enum
+    assert len(challenge["unchecked"]) >= props["unchecked"]["minItems"]
+    assert len(set(challenge["unchecked"])) == len(challenge["unchecked"])
+
+    assert set(challenge["case_required"]) == set(props["case_required"]["properties"])
+    for side in ("for", "against"):
+        assert challenge["case_required"][side] >= 1
+
+    coverage_props = props["required_coverage"]["items"]["properties"]
+    for required in challenge["required_coverage"]:
+        assert set(required) == set(coverage_props)
+        assert required["owes"] in set(coverage_props["owes"]["enum"])
+        assert required["key"] in set(coverage_props["key"]["enum"])
+        assert required["path"]
+
+
+def _collision_root(tmp, cap_text="Cap any single position at 25%."):
+    """A ledger-backed root holding three equal positions plus one tracked
+    rule, so a further buy in one of them collides with a real rule of the
+    user's own rather than with an empty rotation."""
+    _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+        _snapshot_event("2026-01-01", [
+            {"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+            for t in ("AAA", "BBB", "CCC")])])
+    with open(os.path.join(tmp, "rules.jsonl"), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "type": "rule", "rule_id": "r1", "date": "2026-01-01", "text": cap_text,
+            "metric_key": "max_pos_pct", "problem_key": "oversize",
+            "status": "tracking"}) + "\n")
+    return '{"ticker": "AAA", "side": "buy", "qty": 20, "price": 100.0, "currency": "USD"}'
+
+
+def _claim_citing(entry, collisions):
+    """A minimally-valid engine_fact claim for one must_state entry, built
+    from the entry itself so a case assembled this way is literally 'what
+    the challenge asked for' rather than a hand-written approximation."""
+    value = entry["value"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        text = f"Stating the fact recorded at {entry['anchor']}."
+    elif abs(value) <= 1.0:
+        text = f"That reading is {value * 100:.1f}% of the book."
+    else:
+        text = f"That reading is {value}."
+    claim = {"claim": text, "provenance": "engine_fact", "anchor": entry["anchor"]}
+    parts = entry["anchor"].split(".")
+    if parts[0] == "rule_collisions" and parts[-1] in ("state", "worsens"):
+        row = next((r for r in collisions if r.get("rule_id") == parts[1]), None)
+        if row and row.get("state") == "already_over" and row.get("worsens") is not None:
+            claim["worsens"] = row["worsens"]
+    return claim
+
+
+def _case_from_challenge(challenge, collisions, skip=None):
+    claims = []
+    for required in challenge["required_coverage"]:
+        if skip is not None and required["path"] == skip:
+            continue
+        entry = next((e for e in challenge["must_state"]
+                      if "anchor" in e and (e["anchor"] == required["path"]
+                                            or e["anchor"].startswith(required["path"] + "."))),
+                     None)
+        assert entry is not None, (
+            f"the block requires {required['path']} but states no citable fact under it, "
+            "so no case can be built that clears the gate")
+        claims.append(_claim_citing(entry, collisions))
+    return {"for": [{"claim": "Conviction is intact.", "provenance": "agent_judgment"}],
+            "against": claims}
+
+
+def test_a_considered_trade_puts_the_whole_challenge_in_front_of_the_caller():
+    """The consumer-removal test. `consider`'s answer is plain conversation,
+    so the only thing standing between the engine's frozen result and a user
+    told half of it is this block. Every key must arrive populated."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+
+        assert "challenge" in payload, (
+            "consider computed the consequence and told the user nothing about what "
+            "the answer owes -- the visible half of #479 Wave B is gone")
+        challenge = payload["challenge"]
+        assert set(challenge) == _CHALLENGE_KEYS, (
+            f"challenge key set drifted: {sorted(challenge)}")
+        _check_challenge_shape(challenge)
+
+        topics = {e["topic"] for e in challenge["must_state"]}
+        for owed in ("basis", "position", "concentration", "rule_collision", "disclosure"):
+            assert owed in topics, f"nothing in must_state states the {owed}"
+        assert challenge["unchecked"], "an answer that names no unchecked risk reads as a clean bill"
+        assert challenge["case_required"] == {"for": 1, "against": 1}
+        assert challenge["required_coverage"], (
+            "this book is stale and carries disclosures; the case owes something")
+
+
+def test_the_challenge_names_the_rule_this_trade_collides_with():
+    """The gap this cut actually closes on the user's side. Before it, a
+    collision with a rule the user wrote themselves lived in the payload and
+    nothing said it had to be spoken."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        rows = [e for e in payload["challenge"]["must_state"]
+                if e["topic"] == "rule_collision"]
+        assert rows, "a colliding rule must be named among the owed facts"
+        assert rows[0]["detail"]["text"] == "Cap any single position at 25%.", (
+            "the rule's own words must ride along so the answer can quote rather than paraphrase")
+        assert any(r["owes"] == "rule_collision" for r in payload["challenge"]["required_coverage"])
+
+
+def test_a_case_silent_about_a_collided_rule_is_refused_on_the_production_path():
+    """The same obligation, enforced. A case that covers every disclosure and
+    the stale basis but never mentions the rule this trade is over is refused
+    before anything is stored -- silence about a broken rule reads to the user
+    as a rule that held."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        challenge, collisions = payload["challenge"], payload["evaluation"]["rule_collisions"]
+        rule_path = next(r["path"] for r in challenge["required_coverage"]
+                         if r["owes"] == "rule_collision")
+
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_case_from_challenge(challenge, collisions, skip=rule_path), f)
+        run = _run("consider", "--root", tmp, "--premise", premise, "--agent-case", case_path)
+        _fails(run, rule_path)
+        assert len(_read_evaluations(tmp)) == 1, (
+            "the refused attempt appended a row; the gate must fail closed")
+
+
+def test_a_case_built_from_the_challenge_is_accepted_end_to_end():
+    """The anchor guarantee, across a process boundary. Every anchor the
+    block hands over has to be one the gate accepts against the row a
+    separate `consider` invocation froze -- if the two ever disagreed, the
+    product would be telling the agent to cite paths it then refuses."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        challenge, collisions = payload["challenge"], payload["evaluation"]["rule_collisions"]
+
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_case_from_challenge(challenge, collisions), f)
+        second = _ok(_run("consider", "--root", tmp, "--premise", premise,
+                          "--agent-case", case_path))
+        assert "agent_case" in second["evaluation"]
+        assert second["evaluation"]["evaluation_id"] == payload["evaluation"]["evaluation_id"], (
+            "agent_case is not in the identity seed, so attaching one must converge on "
+            "the same evaluation rather than minting a second")
+
+
+def test_the_users_exact_words_come_back_in_the_challenge():
+    """The one part of the answer that may not be reworded. `quote_verbatim`
+    is what makes 'in their own words' an obligation the answer carries
+    rather than a property of the stored row nobody has to read back."""
+    context = {"reason": "It is still my highest-conviction name.",
+               "why_now": "Their main supplier raised capacity guidance this morning.",
+               "evidence_refs": ["Supplier capacity guidance, this morning"]}
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                           "--premise", '{"ticker": "NVDA", "side": "buy", '
+                                        '"price": 130.0, "qty": 5}',
+                           "--decision-context", json.dumps(context)))
+        _check_challenge_shape(payload["challenge"])
+        quoted = {q["field"]: q["text"] for q in payload["challenge"]["quote_verbatim"]}
+        assert quoted["reason"] == context["reason"]
+        assert quoted["why_now"] == context["why_now"]
+        assert quoted["evidence_refs[0]"] == context["evidence_refs"][0]
+        assert "evidence_refs_unverified" in payload["challenge"]["unchecked"], (
+            "the engine neither fetched nor dated the cited evidence and must say so")
+
+
+def test_a_context_free_call_gets_a_challenge_too_and_stores_none_of_it():
+    """Two invariants at once. A context-free `consider` is a complete use of
+    the surface, so it owes the same disclosures -- and the block is derived
+    from fields the row already freezes, so storing it would be a duplicate
+    able to disagree with its own inputs (#429's written-never-read defect in
+    the other direction)."""
+    premise = '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                           "--premise", premise))
+        _check_challenge_shape(payload["challenge"])
+        assert payload["challenge"]["quote_verbatim"] == []
+        assert payload["challenge"]["required_coverage"], (
+            "a context-free call owes its disclosures exactly the same")
+        row = payload["evaluation"]
+        assert "challenge" not in row, "the block is emitted, never stored"
+        assert _read_evaluations(tmp) == [row]
+        _check_evaluation_shape(row)
+
+        # ... and re-asking converges on the same row rather than duplicating,
+        # which is the property that would break first if the block had
+        # slipped into the identity seed.
+        again = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                         "--premise", premise))
+        assert again["evaluation"]["evaluation_id"] == row["evaluation_id"]
+
+
+def test_the_challenge_is_absent_from_a_resolution():
+    """`--resolve` records what the user did with an evaluation already
+    considered. There is no new answer being composed, so there is nothing
+    owed -- emitting a challenge there would present a fresh obligation for a
+    question that was already answered."""
+    with tempfile.TemporaryDirectory() as tmp:
+        created = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                           "--premise", '{"ticker": "NVDA", "side": "buy", '
+                                        '"price": 130.0, "qty": 5}'))
+        resolved = _ok(_run("consider", "--root", tmp, "--decision", "acted",
+                            "--resolve", created["evaluation"]["evaluation_id"]))
+        assert "challenge" not in resolved
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

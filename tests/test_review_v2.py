@@ -8033,7 +8033,14 @@ def test_all_json_schemas_parse():
              # cmd_consider itself -- see answer-provenance.schema.json's own
              # description for why this stayed a new file rather than an edit
              # to trade-evaluation.schema.json's old, narrower claim $defs.
-             "answer-provenance.schema.json"}
+             "answer-provenance.schema.json",
+             # #479 Wave B cut 2: the `challenge` block cmd_consider emits
+             # beside the stored row -- what this answer owes the user.
+             # Emitted, never stored, so it is deliberately NOT $ref-ed from
+             # trade-evaluation.schema.json the way `context` and `agent_case`
+             # above are: a row carrying it would be a derived duplicate of
+             # fields that row already freezes.
+             "evaluation-challenge.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
@@ -9208,7 +9215,10 @@ def test_virtual_basis_frame_marks_anchor_only_holding_missing_instead_of_forgin
     source_frame = review_engine.portfolio_basis.build_valuation_frame(
         as_of="2026-07-02", positions={"NEW": {"currency": "USD"}}, prices={"NEW": 11},
         aggregate_currency="USD", fx_to_aggregate={}, price_provenance="test", fx_provenance="test").to_dict()
-    virtual_frame, book_as_of = review_engine._virtual_valuation_frame([anchor, candidate], source_frame)
+    # `splits` is required rather than defaulted (#558 follow-up), so a caller
+    # with nothing to supply says so. This book holds no split either way.
+    virtual_frame, book_as_of = review_engine._virtual_valuation_frame(
+        [anchor, candidate], source_frame, splits=None)
     assert virtual_frame["coverage"]["missing_price"] == [{"ticker": "ANCHOR", "currency": "USD"}]
     assert virtual_frame["prices"] == {"NEW": source_frame["prices"]["NEW"]}
     # The book's own effective date is returned so staleness is measured from

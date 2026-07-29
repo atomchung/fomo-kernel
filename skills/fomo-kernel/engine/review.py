@@ -30,6 +30,7 @@ import book_refresh
 import card_renderer
 import conditions
 import consequence
+import evaluation_challenge
 import horizon
 import instruments
 import ledger
@@ -358,11 +359,29 @@ def _basis_reference(frame_as_of, book_as_of):
     return max(value for value in (frame_as_of, book_as_of) if value)
 
 
-def _virtual_valuation_frame(events, source_frame):
+def _virtual_valuation_frame(events, source_frame, *, splits):
     """Restrict the engine frame to the exact frozen virtual current book.
 
     Returns the narrowed frame and the book's own effective date, which the
     caller needs to measure staleness from without inverting the two.
+
+    ``splits`` is the same frozen map the caller hands the canonical query it
+    runs immediately afterwards, and the two must be the same map: this
+    provisional query decides which tickers get a price, and the canonical one
+    then validates that frame against holdings it derived on its own basis.
+    Split-blind here and split-aware there, a position whose raw quantities
+    reach zero across a split is dropped from the frame and does not even
+    appear as ``missing_price`` — so the canonical query raises "prices do not
+    exactly partition holdings" and ``prepare`` refuses the very book
+    ``derive_holdings``, ``refresh`` and ``consider`` read correctly (#558
+    follow-up).
+
+    Required, and keyword-only, deliberately. A default would let the next
+    caller omit it silently, and the reader net in ``tests/test_split_basis.py``
+    could not report that: the net reads *this function's* call to
+    ``query_current_book``, which forwards the map faithfully whatever the
+    caller passed. A caller with genuinely nothing to supply passes ``None``
+    and says so.
     """
     if not isinstance(source_frame, dict):
         raise ReviewError("this review has no usable price basis; rerun prepare")
@@ -371,7 +390,7 @@ def _virtual_valuation_frame(events, source_frame):
         # No reference and no manifest: this query exists only to learn which
         # tickers the virtual book holds, so it must not also adjudicate
         # freshness against a price date it was never measured against.
-        provisional = portfolio_basis.query_current_book(events, skipped_lines=0)
+        provisional = portfolio_basis.query_current_book(events, skipped_lines=0, splits=splits)
     except portfolio_basis.PortfolioBasisError as exc:
         raise ReviewError(f"this review's price basis could not be read: {exc}") from exc
     if provisional is None:
@@ -409,7 +428,8 @@ def _virtual_valuation_frame(events, source_frame):
 def _virtual_review_basis(inputs, batches, state):
     try:
         overlay = ledger.virtualize(inputs["ledger_events"], batches)
-        frame, book_as_of = _virtual_valuation_frame(overlay["events"], state.get("valuation_frame"))
+        frame, book_as_of = _virtual_valuation_frame(overlay["events"], state.get("valuation_frame"),
+                                                     splits=state.get("splits"))
         basis = portfolio_basis.query_current_book(
             overlay["events"], valuation_manifest=frame,
             reference_as_of=_basis_reference(frame.get("as_of"), book_as_of),
@@ -1283,7 +1303,8 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
         try:
             verified_overlay = ledger.virtualize(live_events, verified_batches)
             verified_frame, verified_book_as_of = _virtual_valuation_frame(
-                verified_overlay["events"], state.get("valuation_frame"))
+                verified_overlay["events"], state.get("valuation_frame"),
+                splits=state.get("splits"))
             verified_basis = portfolio_basis.query_current_book(
                 verified_overlay["events"], valuation_manifest=verified_frame,
                 reference_as_of=_basis_reference(frame.get("as_of"), verified_book_as_of),
@@ -5782,9 +5803,29 @@ def cmd_consider(args):
     if agent_case is not None:
         row["agent_case"] = agent_case
 
+    # #479 Wave B cut 2, the visible half. Everything above decides whether
+    # this evaluation may exist and whether a supplied case may be believed;
+    # nothing above says what the *user* has to be told. `build_challenge`
+    # reads the values just frozen and returns that obligation as data —
+    # which facts, whose exact words, which of their own rules, which
+    # limitations, and what the engine never looked at — so a brief answer
+    # (SKILL.md rule 8) is bounded from below by a computed list rather than
+    # by what an agent remembers of references/trade-consequence.md.
+    #
+    # Emitted beside the row, never onto it: it is a pure function of
+    # premise/basis/consequence/rule_collisions/context, all of which the row
+    # already freezes, so storing it would be a derived duplicate able to
+    # disagree with its own inputs, and no reader needs the historical
+    # version (evaluation_challenge.py, "Emitted, not stored"). It is
+    # likewise absent from _evaluation_id's seed above — the seed identifies
+    # the subject evaluated, and a presentation obligation is not part of it.
+    challenge = evaluation_challenge.build_challenge(
+        premise=premise_stored, basis=basis, consequence=consequence_stored,
+        rule_collisions=collisions, context=decision_context)
+
     report = _append_evaluation_row(root, row)
     _emit({"status": "considered", "root": root, "language": language,
-           "evaluation": row, "append": report})
+           "evaluation": row, "challenge": challenge, "append": report})
 
 
 def cmd_refresh(args):
