@@ -30,6 +30,7 @@ import book_refresh
 import card_renderer
 import conditions
 import consequence
+import evaluation_challenge
 import horizon
 import instruments
 import ledger
@@ -5745,9 +5746,29 @@ def cmd_consider(args):
     if agent_case is not None:
         row["agent_case"] = agent_case
 
+    # #479 Wave B cut 2, the visible half. Everything above decides whether
+    # this evaluation may exist and whether a supplied case may be believed;
+    # nothing above says what the *user* has to be told. `build_challenge`
+    # reads the values just frozen and returns that obligation as data —
+    # which facts, whose exact words, which of their own rules, which
+    # limitations, and what the engine never looked at — so a brief answer
+    # (SKILL.md rule 8) is bounded from below by a computed list rather than
+    # by what an agent remembers of references/trade-consequence.md.
+    #
+    # Emitted beside the row, never onto it: it is a pure function of
+    # premise/basis/consequence/rule_collisions/context, all of which the row
+    # already freezes, so storing it would be a derived duplicate able to
+    # disagree with its own inputs, and no reader needs the historical
+    # version (evaluation_challenge.py, "Emitted, not stored"). It is
+    # likewise absent from _evaluation_id's seed above — the seed identifies
+    # the subject evaluated, and a presentation obligation is not part of it.
+    challenge = evaluation_challenge.build_challenge(
+        premise=premise_stored, basis=basis, consequence=consequence_stored,
+        rule_collisions=collisions, context=decision_context)
+
     report = _append_evaluation_row(root, row)
     _emit({"status": "considered", "root": root, "language": language,
-           "evaluation": row, "append": report})
+           "evaluation": row, "challenge": challenge, "append": report})
 
 
 def cmd_refresh(args):

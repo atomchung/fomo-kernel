@@ -25,6 +25,18 @@ issue's Wave allocation comment)::
 
     validate_agent_case(agent_case, *, basis, consequence,
                          rule_collisions=(), user_statements=())
+    required_coverage(basis, consequence, rule_collisions=())
+    build_record(basis, consequence, rule_collisions)
+    resolve_anchor(record, anchor) -> value | UNRESOLVED
+
+``validate_agent_case`` is the gate. The other three are the pieces of it
+``evaluation_challenge`` reads so that the block telling the agent what an
+answer owes, and the check refusing an answer that leaves something out,
+are one implementation seen from two sides (#479 Wave B cut 2). Note what
+this deliberately is *not*: ``validate_agent_case`` derives its own
+requirements by calling ``required_coverage`` internally and takes no
+caller-supplied list of them, so no caller can weaken the gate by handing
+it a short one.
 
 ``agent_case``, ``basis``, ``consequence``, and ``rule_collisions`` are
 exactly ``cmd_consider``'s own frozen shapes — the same dicts that already
@@ -52,7 +64,7 @@ Design decision — the anchor form
 ----------------------------------
 An ``engine_fact`` claim must carry a new ``anchor`` field: a dot-separated
 path into a single frozen bundle assembled from ``basis``, ``consequence``,
-and ``rule_collisions`` (``_build_record``) — e.g.
+and ``rule_collisions`` (``build_record``) — e.g.
 ``"consequence.after.max_pct"``, ``"basis.stale_days"``, or
 ``"rule_collisions.rule-1.worsens"`` (``rule_collisions`` is re-keyed by its
 own ``rule_id`` — the identity the agent already has, from the very JSON
@@ -255,13 +267,17 @@ _PUBLIC_FACT_REQUIRED = frozenset({"claim", "provenance", "source", "as_of"})
 _ENGINE_FACT_ALLOWED = frozenset({"claim", "provenance", "anchor", "worsens"})
 
 # Sentinel distinct from any real frozen value (including None, which this
-# module deliberately treats as "nothing there" -- see _resolve_anchor).
-_UNRESOLVED = object()
+# module deliberately treats as "nothing there" -- see resolve_anchor).
+# Public alongside `resolve_anchor` and `build_record`: evaluation_challenge
+# resolves the anchors it hands the agent through this module's own walk
+# rather than a second one written there, so an anchor the challenge offers
+# is always an anchor this file will accept (#479 Wave B cut 2).
+UNRESOLVED = object()
 
 
 # ─────────────────────────── anchor resolution ───────────────────────────
 
-def _build_record(basis, consequence, rule_collisions):
+def build_record(basis, consequence, rule_collisions):
     """The single bundle an anchor is resolved against. `rule_collisions`
     (a list, in `tracking`'s own order -- see consequence.rule_collision)
     is re-keyed by its own `rule_id` so an anchor addresses a rule by the
@@ -279,30 +295,30 @@ def _build_record(basis, consequence, rule_collisions):
     return {"basis": basis, "consequence": consequence, "rule_collisions": by_rule}
 
 
-def _resolve_anchor(record, anchor):
-    """Walk a dot-separated path into `record`. Returns `_UNRESOLVED` unless
+def resolve_anchor(record, anchor):
+    """Walk a dot-separated path into `record`. Returns `UNRESOLVED` unless
     the path exists end-to-end and bottoms out at one scalar fact (not a
     container, not null) -- see the module docstring's anchor-form design
     note for why a container must not resolve."""
     if not isinstance(anchor, str) or not anchor.strip():
-        return _UNRESOLVED
+        return UNRESOLVED
     parts = anchor.split(".")
     if parts[0] not in _ANCHOR_ROOTS:
-        return _UNRESOLVED
+        return UNRESOLVED
     node = record
     for part in parts:
         if isinstance(node, Mapping):
             if part not in node:
-                return _UNRESOLVED
+                return UNRESOLVED
             node = node[part]
         elif isinstance(node, list):
             if not _INDEX_RE.match(part) or int(part) >= len(node):
-                return _UNRESOLVED
+                return UNRESOLVED
             node = node[int(part)]
         else:
-            return _UNRESOLVED
+            return UNRESOLVED
     if node is None or isinstance(node, (dict, list)):
-        return _UNRESOLVED
+        return UNRESOLVED
     return node
 
 
@@ -345,8 +361,8 @@ def _check_engine_fact_claim(claim, label, record):
     if not isinstance(anchor, str) or not anchor.strip():
         raise AnswerProvenanceError(
             f"{label} is labelled engine_fact but carries no record anchor")
-    resolved = _resolve_anchor(record, anchor)
-    if resolved is _UNRESOLVED:
+    resolved = resolve_anchor(record, anchor)
+    if resolved is UNRESOLVED:
         raise AnswerProvenanceError(
             f"{label}.anchor {anchor!r} does not resolve to the frozen basis, consequence, "
             "or rule_collisions")
@@ -448,27 +464,83 @@ def _check_claim(claim, side, index, record, user_statements):
 
 # ─────────────────────────── cross-claim checks ───────────────────────────
 
-def _check_disclosures_covered(resolved_anchors, basis, consequence):
-    """Case 6: neither a given engine disclosure nor a material basis/
-    staleness fact may be silently dropped from the answer. "Covered" means
-    at least one engine_fact claim anchors into it -- the same bar every
-    other engine_fact claim already has to clear, not a new, softer one."""
-    required = set(consequence.get("disclosures") or [])
-    covered = {value for anchor, value in resolved_anchors
-              if anchor.startswith("consequence.disclosures.")}
-    missing = required - covered
-    if missing:
-        raise AnswerProvenanceError(
-            "agent_case drops an engine disclosure the evaluation was given: "
-            + ", ".join(sorted(missing)))
+# The collision states a case must actually cite. Deliberately not every
+# state `references/trade-consequence.md` requires an *answer* to name:
+# `unjudged`/`unmapped` mean "this rule could not be evaluated", which the
+# answer owes the user in prose (evaluation_challenge's `must_state` carries
+# them for exactly that reason) but which does not belong on either side of a
+# case for or against the trade. A book with eight behavioral rules would
+# otherwise need eight claims saying nothing was measured, and an answer
+# padded to satisfy a checker is the failure mode `docs/eval-design.md`
+# already names. `would_breach` and `already_over` are the two where silence
+# reads as approval, so they are the two that are enforced.
+_COVERED_STATES = ("would_breach", "already_over")
+
+
+def required_coverage(basis, consequence, rule_collisions=()):
+    """Every fact this evaluation's case must cite, as coverage paths.
+
+    The single declaration of the question "what may an answer not leave
+    out". `validate_agent_case` refuses a submission that misses one, and
+    `evaluation_challenge.build_challenge` shows the same list to the agent
+    as part of what the answer owes — one function, read twice, so the
+    surface that states the obligation and the gate that enforces it cannot
+    drift (#479 Wave B cut 2). Deriving it in both places is precisely the
+    hand-mirrored surface CLAUDE.md forbids.
+
+    Each entry is ``{"path", "owes", "key"}``. `path` is matched by prefix:
+    covered when some engine_fact claim's anchor equals it or sits under it,
+    so `basis` accepts any `basis.*` citation and
+    `rule_collisions.<id>` accepts either `.state` or `.worsens`. A path is
+    therefore a coverage target, not necessarily a resolvable anchor of its
+    own -- the containers here deliberately do not resolve.
+    """
+    out = []
+    for index, key in enumerate(consequence.get("disclosures") or ()):
+        out.append({"path": f"consequence.disclosures.{index}",
+                    "owes": "disclosure", "key": key})
 
     stale_days = basis.get("stale_days")
     stale = (isinstance(stale_days, (int, float)) and not isinstance(stale_days, bool)
             and stale_days > 0)
+    # `!=`, not a membership test: `unverified` and the replay-only
+    # `declared_partial` (#549) both mean "not a declared-complete book", and
+    # so would any value a future basis source introduces. Only an
+    # affirmatively complete book is exempt.
     incomplete = basis.get("completeness") != "declared_complete"
-    if (stale or incomplete) and not any(anchor.startswith("basis.") for anchor, _ in resolved_anchors):
+    if stale or incomplete:
+        out.append({"path": "basis", "owes": "basis",
+                    "key": "stale_and_unverified" if (stale and incomplete)
+                           else ("stale" if stale else "unverified")})
+
+    for row in rule_collisions or ():
+        if not isinstance(row, Mapping) or row.get("state") not in _COVERED_STATES:
+            continue
+        # A row with no rule_id is not addressable by anchor at all, so it
+        # cannot be required -- requiring an uncitable fact would make every
+        # case on that book unsubmittable. The challenge still states it.
+        if not row.get("rule_id"):
+            continue
+        out.append({"path": f"rule_collisions.{row['rule_id']}",
+                    "owes": "rule_collision", "key": row["state"]})
+    return tuple(out)
+
+
+def _check_required_coverage(resolved_anchors, required):
+    """Case 6: nothing on `required_coverage`'s list may be silently dropped
+    from the answer. "Covered" means at least one engine_fact claim anchors
+    at or under the path -- the same bar every other engine_fact claim
+    already has to clear, not a new, softer one."""
+    anchors = [anchor for anchor, _ in resolved_anchors]
+    missing = [entry for entry in required
+               if not any(anchor == entry["path"] or anchor.startswith(entry["path"] + ".")
+                          for anchor in anchors)]
+    if missing:
         raise AnswerProvenanceError(
-            "agent_case drops the basis/staleness disclosure the evaluation was given")
+            "agent_case leaves uncovered what this evaluation owes: "
+            + "; ".join(f"{entry['owes']} {entry['key']} "
+                        f"(anchor an engine_fact under {entry['path']})"
+                        for entry in missing))
 
 
 # ─────────────────────────── public entry point ───────────────────────────
@@ -487,7 +559,7 @@ def validate_agent_case(agent_case, *, basis, consequence, rule_collisions=(), u
     if not isinstance(consequence, Mapping):
         raise AnswerProvenanceError("consequence must be an object")
 
-    record = _build_record(basis, consequence, rule_collisions)
+    record = build_record(basis, consequence, rule_collisions)
 
     resolved_anchors = []
     for side in _SIDES:
@@ -502,4 +574,5 @@ def validate_agent_case(agent_case, *, basis, consequence, rule_collisions=(), u
             if resolved is not None:
                 resolved_anchors.append(resolved)
 
-    _check_disclosures_covered(resolved_anchors, basis, consequence)
+    _check_required_coverage(resolved_anchors,
+                             required_coverage(basis, consequence, rule_collisions))

@@ -23,8 +23,11 @@ Run:
   python3 tests/test_split_basis.py
 """
 import ast
+import json
 import os
+import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -314,6 +317,77 @@ def test_no_split_map_exemption_outlives_its_call_site():
     assert not stale, (
         "these exemptions no longer match a split-blind call and must be removed: "
         + ", ".join(f"{m}:{f}()" for m, f in stale))
+
+
+# ─────────── the map has to arrive, not merely be passed ───────────
+#
+# `test_every_reader_of_the_book_is_told_what_a_split_did_to_it` above is an
+# AST check: it proves every reader is *handed* a `splits` argument. It
+# cannot see what that argument is worth. `review._recorded_splits` is the
+# supplier for every lane with no review of its own — `consider`, `refresh`,
+# and the review's own exit capture — and gutting it to `return None` leaves
+# this file, `test_consider.py`, `test_book_refresh.py` and
+# `test_review_v2.py` all green while every split-crossing position in the
+# product silently reverts to raw quantities.
+#
+# That is #558's own defect one level up: an argument proven present, and a
+# value proven by nothing. #558's last acceptance line ("review and
+# context-bearing/context-free `consider` read the same split-adjusted
+# `state_version` and denominator") is what this closes, and it needs the
+# real CLI, because the gap is entirely in the wiring between them.
+
+def _reviewed_root(tmp, splits):
+    """A root holding a position declared before a split, with the map a
+    finished review would have frozen into last_state.json. `splits=None` is
+    the never-reviewed root, which review._recorded_splits documents as
+    degrading to unadjusted."""
+    with open(os.path.join(tmp, "ledger.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(_snapshot("2024-06-01", 10, avg_cost=1000.0)) + "\n")
+    if splits is not None:
+        with open(os.path.join(tmp, "last_state.json"), "w", encoding="utf-8") as f:
+            json.dump({"splits": splits}, f)
+    return tmp
+
+
+def _considered_book(tmp):
+    """`consider`'s own view of the recorded book, through the CLI -- the
+    boundary an agent actually calls (SKILL.md rule 2)."""
+    run = subprocess.run(
+        [sys.executable, os.path.join(ENGINE, "review.py"), "consider", "--root", tmp,
+         "--premise", '{"ticker": "CASHY", "side": "buy", "qty": 1, "price": 1.0, '
+                      '"currency": "USD"}'],
+        capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, f"consider failed: {run.stdout}{run.stderr}"
+    return json.loads(run.stdout)["evaluation"]
+
+
+def test_the_frozen_split_map_actually_reaches_consider():
+    """Ten shares declared before NVDA's ten-for-one, with the map a review
+    froze. The answer must be built on a hundred."""
+    with tempfile.TemporaryDirectory() as tmp:
+        row = _considered_book(_reviewed_root(tmp, {"NVDA": [["2024-06-10", 10.0]]}))
+        held = row["consequence"]["before"]["held"]["NVDA"]
+        assert held["shares"] == 100.0, (
+            f"consider answered on {held['shares']} shares; the review froze a ten-for-one "
+            "and _recorded_splits is what has to carry it into this lane")
+        assert held["cost"] == 10000.0, (
+            "a split is a zero-dollar event: scaling cost alongside shares would move "
+            "avg_cost and every weight derived from it")
+
+
+def test_the_split_map_changes_the_books_own_identity():
+    """The counterweight, and the half #558's acceptance line names. Two
+    roots identical but for the frozen map must not answer under the same
+    `state_version`: a book on a different share basis IS a different book,
+    and an identity that could not tell them apart would let a stale
+    evaluation reconcile against the wrong one."""
+    with tempfile.TemporaryDirectory() as adjusted, tempfile.TemporaryDirectory() as raw:
+        with_map = _considered_book(_reviewed_root(adjusted, {"NVDA": [["2024-06-10", 10.0]]}))
+        without = _considered_book(_reviewed_root(raw, None))
+        assert without["consequence"]["before"]["held"]["NVDA"]["shares"] == 10.0, (
+            "a root that never ran a review carries no map and degrades to unadjusted "
+            "(review._recorded_splits); if this changed, the test above proves nothing")
+        assert with_map["basis"]["state_version"] != without["basis"]["state_version"]
 
 
 def _main():
