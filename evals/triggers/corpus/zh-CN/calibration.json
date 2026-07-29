@@ -1,0 +1,386 @@
+{
+  "locale": "zh-CN",
+  "split": "calibration",
+  "prompts": [
+    {
+      "id": "zh-CN-cal-rev-01",
+      "class": "review_positive",
+      "text": "这是我今年的交易流水，帮我整理一下，看看我下单的习惯到底有什么问题。",
+      "note": "交易流水整体复盘请求。"
+    },
+    {
+      "id": "zh-CN-cal-rev-02",
+      "class": "review_positive",
+      "text": "上周我把英伟达的仓位全部清掉了，我想复盘一下，这次卖出的理由到底站不站得住脚。",
+      "note": "特定已完成交易的事后复盘。"
+    },
+    {
+      "id": "zh-CN-cal-rev-03",
+      "class": "review_positive",
+      "text": "我怀疑自己总是追涨杀跌，能不能把我最近这二十笔交易拉出来，看看是不是真的这样？",
+      "note": "行为模式复盘请求。"
+    },
+    {
+      "id": "zh-CN-cal-rev-04",
+      "class": "review_positive",
+      "text": "附件是我美股账户的交易记录，我想知道自己实际的胜率和盈亏比是多少。",
+      "note": "账户层面的指标，基于真实成交。"
+    },
+    {
+      "id": "zh-CN-cal-rev-05",
+      "class": "review_positive",
+      "text": "周日了，该做每周复盘了，接着上次那份对账单继续看。",
+      "note": "周期性／回头客语气。"
+    },
+    {
+      "id": "zh-CN-cal-rev-06",
+      "class": "review_positive",
+      "text": "我这一年一直在给一只亏损的股票摊薄成本，麻烦看看完整交易记录，老实告诉我这是有计划的分批建仓，还是单纯不甘心割肉。",
+      "note": "摊薄成本模式，回顾性。"
+    },
+    {
+      "id": "zh-CN-cal-rev-07",
+      "class": "review_positive",
+      "text": "上次复盘你提醒我经常拿不住该止损的仓位，这三个月又有新的交易了，我想知道到底有没有改。",
+      "note": "回头客核对此前发现的问题。"
+    },
+    {
+      "id": "zh-CN-cal-rev-08",
+      "class": "review_positive",
+      "text": "这是券商导出的表格，只有股数和成交价，没有金额这一栏，这样还能帮我复盘交易习惯吗？",
+      "note": "数据字段简陋，仍要求行为复盘。"
+    },
+    {
+      "id": "zh-CN-cal-rev-09",
+      "class": "review_positive",
+      "text": "我上个月连续三笔割肉离场，一直跟自己说是大盘不好，能不能对照交易记录看看这个说法站不站得住？",
+      "note": "自我说法对照记录。"
+    },
+    {
+      "id": "zh-CN-cal-rev-10",
+      "class": "review_positive",
+      "text": "我把两个账户的持仓合并导出了，想把它当成一个整体的组合来复盘。",
+      "note": "跨账户合并复盘。"
+    },
+    {
+      "id": "zh-CN-cal-rev-11",
+      "class": "review_positive",
+      "text": "这只股票我在下跌过程中分三次加仓，我想知道每一次加仓到底有没有新的依据，还是纯粹想摊低成本。",
+      "note": "加仓模式，回顾性。"
+    },
+    {
+      "id": "zh-CN-cal-rev-12",
+      "class": "review_positive",
+      "text": "这是我账户的截图，能帮我复盘一下这几个月我实际操作了什么吗？",
+      "note": "以截图为依据的复盘请求。"
+    },
+    {
+      "id": "zh-CN-cal-rev-13",
+      "class": "review_positive",
+      "text": "我想知道自己到底是让盈利的仓位继续跑，还是每次赚一点就急着落袋，麻烦看实际成交记录，别听我自己说。",
+      "note": "盈亏形态复盘，明确要求以记录而非记忆为准。"
+    },
+    {
+      "id": "zh-CN-cal-rev-14",
+      "class": "review_positive",
+      "text": "在做任何新决定之前，我想先针对这个月平仓的两笔交易做一次完整复盘。",
+      "note": "先复盘已平仓交易，再做后续决定。"
+    },
+    {
+      "id": "zh-CN-cal-rev-15",
+      "class": "review_positive",
+      "text": "上次说好单一个股不能超过账户的两成，我想确认这段时间的交易有没有真的守住这条规矩。",
+      "note": "此前承诺的规矩对账。"
+    },
+    {
+      "id": "zh-CN-cal-rev-16",
+      "class": "review_positive",
+      "text": "这次财报季前后我的交易特别多，能不能帮我复盘一下财报前后我是不是容易因为紧张而乱操作？",
+      "note": "财报季特定行为问题。"
+    },
+    {
+      "id": "zh-CN-cal-rev-17",
+      "class": "review_positive",
+      "text": "这是我今年完整的交易记录，我从来没有整体看过，想从头开始了解自己的操作模式。",
+      "note": "首次完整年度复盘。"
+    },
+    {
+      "id": "zh-CN-cal-rev-18",
+      "class": "review_positive",
+      "text": "这只股票我摊平了两次才终于止损，麻烦确认一下第二次加仓的时候，我有没有讲出任何站得住脚的新依据。",
+      "note": "特定摊薄成本序列，回顾性。"
+    },
+    {
+      "id": "zh-CN-cal-rev-19",
+      "class": "review_positive",
+      "text": "距离上次复盘已经一个月了，这段时间账户里有新交易，接着之前继续往下看。",
+      "note": "回头客，接续上次复盘。"
+    },
+    {
+      "id": "zh-CN-cal-rev-20",
+      "class": "review_positive",
+      "text": "我想确认一件事：我平仓的时候，赚钱的仓位和亏钱的仓位，速度是不是差很多，亏钱的是不是经常拖很久？",
+      "note": "平仓速度对称性问题，基于真实成交。"
+    },
+    {
+      "id": "zh-CN-cal-pre-01",
+      "class": "pre_trade_positive",
+      "text": "我手里已经有宁德时代，今天回调了快6%，我现在加仓算不算追高，还是这其实是个合理的加仓点？",
+      "note": "加仓决策，明确既有持仓加追高框架。"
+    },
+    {
+      "id": "zh-CN-cal-pre-02",
+      "class": "pre_trade_positive",
+      "text": "我持有的招商银行已经不少了，今天看到消息想再买一些，这样会不会让我的持仓集中度太高？",
+      "note": "加仓决策，明确要求对组合影响。"
+    },
+    {
+      "id": "zh-CN-cal-pre-03",
+      "class": "pre_trade_positive",
+      "text": "我有条规矩是单一个股不能超过账户的两成，如果我再买五万进去这只已经持有的股票，会不会破了这条规矩？",
+      "note": "拟加仓交易的规矩冲突检查。"
+    },
+    {
+      "id": "zh-CN-cal-pre-04",
+      "class": "pre_trade_positive",
+      "text": "我想开一个新仓位，买一只半导体主题的ETF，以我现在的持仓来看，这会不会让我的行业敞口太集中？",
+      "note": "新仓位决策，对照既有持仓。"
+    },
+    {
+      "id": "zh-CN-cal-pre-05",
+      "class": "pre_trade_positive",
+      "text": "我当初买这只股票的理由是毛利率会持续改善，这个逻辑目前还成立，我在考虑加仓，但想先知道这样对整体持仓有什么影响。",
+      "note": "加仓前的逻辑一致性检查。"
+    },
+    {
+      "id": "zh-CN-cal-pre-06",
+      "class": "pre_trade_positive",
+      "text": "我在考虑把沪深300ETF的仓位减一点，拿去买一只我观察很久的小盘股，这笔交易实际上会对我的组合造成什么影响？",
+      "note": "卖出换买入的交换决策。"
+    },
+    {
+      "id": "zh-CN-cal-pre-07",
+      "class": "pre_trade_positive",
+      "text": "这已经是我第三次在下跌过程中给这只股票加仓了，下单之前我想先确认，这样做跟我自己定的规矩会不会冲突。",
+      "note": "下单前的重复加仓规矩检查。"
+    },
+    {
+      "id": "zh-CN-cal-pre-08",
+      "class": "pre_trade_positive",
+      "text": "我想给一只已经跌了15%的股票摊薄成本，考虑到我现在整体的持仓，这样做真的划算吗？",
+      "note": "摊薄成本决策，考量整体持仓。"
+    },
+    {
+      "id": "zh-CN-cal-pre-09",
+      "class": "pre_trade_positive",
+      "text": "我在考虑买入一只新股票，但我不想事后才发现它跟我现有的持仓高度重合，能不能先帮我确认一下？",
+      "note": "新买入前的重合检查。"
+    },
+    {
+      "id": "zh-CN-cal-pre-10",
+      "class": "pre_trade_positive",
+      "text": "我手里有一笔闲置资金，正在犹豫是加仓现有持仓还是开一个新仓位，这两个选项分别会让我的集中度变成什么样？",
+      "note": "资金部署决策，两个候选交易。"
+    },
+    {
+      "id": "zh-CN-cal-pre-11",
+      "class": "pre_trade_positive",
+      "text": "我的规矩是亏到两成就止损，这只股票现在亏了18%，我还在犹豫要不要先出场，卖掉跟继续拿着各自对我的账户会有什么影响？",
+      "note": "尚未执行的预先止损决策。"
+    },
+    {
+      "id": "zh-CN-cal-pre-12",
+      "class": "pre_trade_positive",
+      "text": "这只股票财报超预期，我想在现有仓位上加仓，这样算是合理加仓赢家，还是我要小心变得太集中？",
+      "note": "赢家加仓决策，集中度顾虑。"
+    },
+    {
+      "id": "zh-CN-cal-pre-13",
+      "class": "pre_trade_positive",
+      "text": "下单之前我想先知道：明天再给这个仓位加仓，会不会让我超过自己定的分散标准？",
+      "note": "下单前的分散度检查。"
+    },
+    {
+      "id": "zh-CN-cal-pre-14",
+      "class": "pre_trade_positive",
+      "text": "我在犹豫是加仓现有持仓，还是开一个相关行业的新仓位，这两个选择对我的重合度和现金水平各会有什么差别？",
+      "note": "两选一的加仓决策。"
+    },
+    {
+      "id": "zh-CN-cal-pre-15",
+      "class": "pre_trade_positive",
+      "text": "股价跌成这样我其实有点怕再加仓，但我还是相信原来的逻辑，能不能帮我算一下如果真的加仓，我的账户会变成什么样？",
+      "note": "情绪化但仍对照持仓的加仓决策。"
+    },
+    {
+      "id": "zh-CN-cal-pre-16",
+      "class": "pre_trade_positive",
+      "text": "我有条规矩是同一只股票加仓两次都没有起色就不能再加了，这次会是第三次加仓，这样会不会违反我自己的规矩？",
+      "note": "明确个人规矩对照拟第三次加仓。"
+    },
+    {
+      "id": "zh-CN-cal-pre-17",
+      "class": "pre_trade_positive",
+      "text": "我想把手里的现金仓位降低，投入一只我已经很有信心的股票，这样做对我的权重和风险实际上会有什么影响？",
+      "note": "现金转股票决策。"
+    },
+    {
+      "id": "zh-CN-cal-pre-18",
+      "class": "pre_trade_positive",
+      "text": "我当初买入的理由是新产品周期，现在产品也如期上市了，我在考虑要不要加仓，想先看看仓位的数字再决定。",
+      "note": "逻辑触发的加仓决策，要求先看数字。"
+    },
+    {
+      "id": "zh-CN-cal-pre-19",
+      "class": "pre_trade_positive",
+      "text": "我在考虑卖掉一部分盈利的仓位，去买一家我觉得被低估的公司，这个换仓动作实际上会怎么影响我的组合？",
+      "note": "赢家减仓换新买入。"
+    },
+    {
+      "id": "zh-CN-cal-pre-20",
+      "class": "pre_trade_positive",
+      "text": "我手里已经有两只存储芯片股，现在在考虑买第三只，加仓之前我想知道这样会让我的组合相关性变多高。",
+      "note": "同主题第三只前的相关性检查。"
+    },
+    {
+      "id": "zh-CN-cal-adj-01",
+      "class": "adjacent_negative",
+      "text": "贵州茅台现在是不是值得买入？",
+      "note": "听起来像买入判断，但其实是不涉及用户持仓或进行中交易的一般性评价／时机意见——与issue的'is NVDA a good company'例子同型，只是换成了买入判断。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-02",
+      "class": "adjacent_negative",
+      "text": "如果手里现在有五十万闲钱，你会放在哪里？",
+      "note": "不特定对象的假设性横财，没有标的也没有既有持仓——一般性资产配置建议，不是用户在权衡实际仓位。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-03",
+      "class": "adjacent_negative",
+      "text": "现在整体来说是不是建仓的好时机？",
+      "note": "纯粹的大盘时机意见，没有对应到特定标的或用户的持仓。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-04",
+      "class": "adjacent_negative",
+      "text": "如果想开始买美股，用哪个券商比较方便？",
+      "note": "关于怎么交易的券商／流程问题，不是对既有持仓的实际交易决策。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-05",
+      "class": "adjacent_negative",
+      "text": "长期投资者是不是只要大盘跌一成就应该抄底加仓？",
+      "note": "针对'长期投资者'这个群体的一般投资哲学问题，不是用户自己在考虑的交易。",
+      "near_miss_of": "pre_trade_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-06",
+      "class": "adjacent_negative",
+      "text": "什么叫摊薄成本，大家为什么要这样做？",
+      "note": "使用复盘相关词汇的定义／教育性问题，没有对应到用户自己做过的任何交易。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-07",
+      "class": "adjacent_negative",
+      "text": "专业操盘手是怎么训练自己不追涨的？",
+      "note": "与复盘能力用词重叠的行为问题，但问的是操盘手这个群体，不是要求复盘用户自己的交易记录。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-08",
+      "class": "adjacent_negative",
+      "text": "新手投资者第一年最容易犯哪些错误？",
+      "note": "关于投资者这个类别的一般清单式问题，不是要求复盘用户自己的交易。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-09",
+      "class": "adjacent_negative",
+      "text": "做波段一般来说胜率要多高才算健康？",
+      "note": "要求一般性的基准数字，不是对用户自己已平仓交易的评估。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-10",
+      "class": "adjacent_negative",
+      "text": "投资者心理上为什么会舍不得止损，一直拿着亏损的仓位？",
+      "note": "一般化的交易心理问题，不是要求查看用户自己的历史记录。",
+      "near_miss_of": "review_positive"
+    },
+    {
+      "id": "zh-CN-cal-adj-11",
+      "class": "adjacent_negative",
+      "text": "今天大盘表现怎么样？",
+      "note": "纯粹的市场数据查询，是issue『what's the S&P doing』例子的在地版本。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-12",
+      "class": "adjacent_negative",
+      "text": "贵州茅台是一家好公司吗？",
+      "note": "没有任何买入或组合框架的公司品质意见，是issue『is NVDA a good company』例子的在地版本。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-13",
+      "class": "adjacent_negative",
+      "text": "能帮我整理一下今天的市场新闻要点吗？",
+      "note": "新闻摘要请求，没有交易或复盘框架。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-14",
+      "class": "adjacent_negative",
+      "text": "MACD指标到底是在看什么？",
+      "note": "纯粹的技术指标词汇问题。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-15",
+      "class": "adjacent_negative",
+      "text": "除权除息之后股价会怎么变化？",
+      "note": "市场机制教育问题，没有个人交易脉络。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-16",
+      "class": "adjacent_negative",
+      "text": "能不能解释一下期权的Delta是什么意思？",
+      "note": "期权教育请求，没有连结任何仓位或交易。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-17",
+      "class": "adjacent_negative",
+      "text": "加息通常会怎么影响成长股的估值？",
+      "note": "宏观／估值理论问题，没有个人仓位。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-18",
+      "class": "adjacent_negative",
+      "text": "能介绍一下宁德时代的电池业务现状吗？",
+      "note": "公司／业务研究问题，没有决策框架。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-19",
+      "class": "adjacent_negative",
+      "text": "2022年那轮熊市是什么原因造成的？",
+      "note": "历史市场事件研究问题。",
+      "near_miss_of": "general"
+    },
+    {
+      "id": "zh-CN-cal-adj-20",
+      "class": "adjacent_negative",
+      "text": "牛市和熊市实际上差在哪里？",
+      "note": "基础术语／教育性问题。",
+      "near_miss_of": "general"
+    }
+  ]
+}

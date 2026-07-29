@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/trigger-attempt.schema.json",
+  "title": "Fomo Kernel trigger-matrix attempt record (#458)",
+  "description": "One line of a result file: the JSONL append-only log evals/triggers/run_triggers.py's `record` subcommand writes to and `score` folds and scores. The readable contract; run_triggers.py's read_result_file()/build_attempt() hold the enforcement, because the offline suite carries no jsonschema dependency (same posture as evals/episodes/episode.schema.json). Every field here is exactly what #458 asks a runner to record per attempt, plus ts and schema_version for the log's own bookkeeping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "ts", "host", "host_version", "model",
+    "installed_skill_population", "locale", "split", "prompt_id", "class",
+    "expected_route", "actual_route", "raw_outcome"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "ts": {
+      "type": "string",
+      "description": "UTC ISO-8601 seconds, auto-stamped by `record` at write time (e.g. 2026-07-29T13:46:02Z). Informational only -- file order, not ts, is the ordering authority when folding repeated attempts for the same key (mirrors skills/fomo-kernel/tools/ux_receipt.py's stated precedent for its own append-only trace)."
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form host id (e.g. claude_code, codex, antigravity). Not a closed enum on this record: HOSTS in run_triggers.py is only the default matrix `dry-run`/`score` report against, so a future host or an owner-approved second thin entry point can be recorded without editing the tool -- the same choice skills/fomo-kernel/tools/ux_receipt.py made for its own --client."
+    },
+    "host_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The host/CLI/app version string actually exercised."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The underlying model the host resolved to for this attempt, in the operator's own words (e.g. \"Claude Opus 5\", \"GPT-5.6 Codex\")."
+    },
+    "installed_skill_population": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Skill/capability ids visible to the host at invocation time (per #273/#458: which skills could plausibly have competed for this trigger). May be an empty list on a host with no enumerable skill registry -- absence of a registry is not the same claim as an empty population, and the raw_outcome field is where that distinction should be spelled out if it matters to a specific attempt."
+    },
+    "locale": { "enum": ["en", "zh-TW", "zh-CN"] },
+    "split": { "enum": ["calibration", "holdout"] },
+    "prompt_id": {
+      "type": "string",
+      "description": "Must resolve against evals/triggers/corpus/<locale>/<split>.json. `record` looks this up itself; the caller never supplies expected_route or class directly, so an operator cannot record a self-contradictory expectation by mistyping a flag."
+    },
+    "class": {
+      "enum": ["review_positive", "pre_trade_positive", "adjacent_negative"],
+      "description": "Derived from prompt_id via the corpus, not operator-supplied."
+    },
+    "expected_route": {
+      "enum": ["review", "pre_trade", "no_trigger"],
+      "description": "Derived from class via EXPECTED_ROUTE_BY_CLASS, not operator-supplied: review_positive->review, pre_trade_positive->pre_trade, adjacent_negative->no_trigger."
+    },
+    "actual_route": {
+      "enum": ["review", "pre_trade", "no_trigger"],
+      "description": "What actually happened, as the operator observed it. \"no_trigger\" also covers a host error, refusal, or otherwise broken response: from the user's perspective the fomo-kernel capability was not delivered either way, and the specifics belong in raw_outcome rather than a fourth ambiguous enum value."
+    },
+    "raw_outcome": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-text account of what the host actually did, in the operator's own words. Never empty -- the whole point of a per-attempt record is that a verdict is traceable to a description, not just a route label."
+    }
+  }
+}
