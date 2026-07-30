@@ -558,8 +558,8 @@ def test_surface_is_private_and_committed_with_manifest():
         narrative_path = pathlib.Path(tmp) / "narrative-surface.json"
         answer_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(v2._narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
-                     "--answers", answer_path, "--narrative", narrative_path)
+        final = v2._run_finalize("--root", root, "--session-id", plan["session_id"],
+                                 "--answers", answer_path, "--narrative", narrative_path)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
         session_dir = pathlib.Path(result["path"])

@@ -107,7 +107,11 @@ def load_pending(root, session_id):
     if not os.path.isdir(base):
         raise SessionError(f"pending session not found: {session_id}")
     out = {"session_id": session_id, "path": base}
-    for name in ("plan", "answers", "narrative", "question-surfaces", "question-presentations"):
+    # `preview-receipt` (#628) is the record that this session's preview really
+    # rendered the card being committed; it lives beside the artifacts it
+    # describes so an interrupted session keeps it across a `resume`.
+    for name in ("plan", "answers", "narrative", "question-surfaces",
+                 "question-presentations", "preview-receipt"):
         path = os.path.join(base, name + ".json")
         if os.path.exists(path):
             out[name.replace("-", "_")] = read_json(path)

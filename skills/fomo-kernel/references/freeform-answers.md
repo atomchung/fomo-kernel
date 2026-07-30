@@ -62,33 +62,37 @@ card in freeform conversation does not loosen that default, and only
 `card-public.md` is share-safe, on request.
 
 **Positions view.** Trigger: the user asks, in freeform conversation, to see
-their current holdings or positions. Shape, chosen once: a plain table, one
-row per held ticker, columns `Ticker | Shares | Avg cost | Weight of book`,
-sorted by weight descending (largest position first). No bars, no color
-coding, no sparkline, no second panel — being in this named set never
-requires a picture, and the honest shape here is a compact text table and
-nothing else. Cash and any other disclosure (a stale price, an unreliable
-cash balance, a partial book) still ride Rule 1's existing disclosure
-boundary rather than a rule this entry restates.
+their current holdings or positions. Shape, revised by owner ruling
+2026-07-30 (#561) from the original four-column table into the richer,
+already-demoed one: one row per held ticker — ticker, shares, avg cost,
+current value, $ P&L, and the sizing / averaging-down / exit-discipline /
+hold-consistency diagnosis tags — sorted by size (largest |$ P&L impact|
+first), exactly the "Per-position diagnosis" section README.md's "What it
+looks like" demonstrates. A ticker held below the meaningful-position floor
+(#172's residual filter — dust too small to diagnose, such as a dividend
+odd lot) is still named with its shares/cost/value, just without a
+diagnosis, matching the demo's own "small lots not nitpicked" framing —
+never silently dropped from the book. No bars, no color coding, no
+sparkline, no second panel — being in this named set never requires a
+picture, and the honest shape here is a compact text table and nothing
+else. Cash and any other disclosure (a stale price, an unreliable cash
+balance, a partial book) still ride Rule 1's existing disclosure boundary
+rather than a rule this entry restates.
 
 Every field in the Positions view must come from an engine-computed
 current-book snapshot obtained through `engine/review.py` — the same
 numbers-from-engine and CLI-only boundary (SKILL.md rules 1 and 2; AGENTS.md
 boundaries 1 and 7) every other number in this product already obeys, never
 a value the agent recomputes from a CSV, and never one read by importing an
-engine module directly. No dedicated read-only
-`engine/review.py` outlet returns that snapshot on its own today: `consider`
-computes the equivalent snapshot as `before` context for a hypothetical
-trade, but only together with a real premise, and every call durably records
-a `trade_evaluations.jsonl` row (`trade-consequence.md`) — a passive lookup
-dressed as a considered trade would be a misuse of that surface, not a
-shortcut through it. `refresh`'s read-only mode computes a comparable
-snapshot too, but only as one side of a diff against a newly supplied broker
-view, not as a way to reprint the book already recorded. Until a dedicated
-outlet exists, say that plainly instead of forcing the Positions view
-through either path — the same fail-closed posture SKILL.md rule 4 already
-takes for a missing price. Naming the shape now is what lets a future outlet
-fill it in without a shape invented inline at that point either.
+engine module directly. The dedicated read-only outlet is
+`engine/review.py positions` (#561): no CSV, no premise, no supplied
+snapshot — it reconstructs the book from `<root>/ledger.jsonl` alone, asks
+no question, creates no session, and appends nothing to
+`trade_evaluations.jsonl` or any other durable file, unlike a `consider`
+call answering the same question would. Read its JSON output (`positions`,
+`residual_positions`, and their `tags`/`impact` fields) rather than
+re-deriving any of it, the same discipline this file already applies to
+every other engine number.
 
 Adding a third entry means writing its name, its trigger, and its exact
 shape into this section — the same "chosen once, reused" discipline above —

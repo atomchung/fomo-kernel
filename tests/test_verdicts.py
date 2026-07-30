@@ -407,13 +407,13 @@ def test_a_repeated_finalize_appends_one_verdict_row_and_a_changed_one_fails_clo
         n_path = pathlib.Path(tmp) / "narrative_retry.json"
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path.write_text(json.dumps(v2._narrative("en"), ensure_ascii=False), encoding="utf-8")
-        args = ("finalize", "--session-id", plan2["session_id"], "--root", root,
+        args = ("--session-id", plan2["session_id"], "--root", root,
                 "--answers", a_path, "--narrative", n_path)
 
-        first = v2._run(*args)
+        first = v2._run_finalize(*args)
         assert first.returncode == 0, first.stdout + first.stderr
         assert len(_verdict_rows(root)) == 1
-        retry = v2._run(*args)                        # documented-safe retry
+        retry = v2._run_finalize(*args)               # documented-safe retry
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert len(_verdict_rows(root)) == 1, "an identical retry must not append a second row"
 

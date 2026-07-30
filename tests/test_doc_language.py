@@ -60,6 +60,31 @@ NON_NEGOTIABLE_SECTIONS = {
 # test_review_py_is_a_non_negotiable_boundary, asserts the review.py CLI
 # boundary specifically; reusing it here would force every section in it to
 # also restate the freeform rule, or vice versa.
+# #623: the card's unlock invitation follows #617's rule rather than a second
+# one invented for this surface -- two surfaces disagreeing about what an
+# invitation owes would be its own defect, which is the whole reason #623 routes
+# here instead of restating. The gate is a presence check on the card policy's
+# own statement, the same mechanism #617 accepted for a surface no validator can
+# reach: what is locked is that the rule is stated, names its owner, and keeps
+# both halves (the invitation, and the disclosure that is not one).
+CARD_INVITATION_POLICY = Path("skills/fomo-kernel/references/card-policy.md")
+CARD_INVITATION_HEADING = "## A card never names a reward with no way to claim it"
+CARD_INVITATION_REQUIRED_PHRASES = (
+    # The owning statement. Without this the card grows a parallel rule.
+    "[`decision-framing.md`](decision-framing.md)",
+    # What an invitation is, and the bound on how many.
+    "names the question the evidence would answer, never the data being requested",
+    "at most one",
+    # The half a presence-only rule always loses: an invitation nobody needs is
+    # as much a fabrication as a disclosure nobody needs.
+    "absent entirely when nothing further is needed",
+    # The shape that cost this repository the defect in the first place.
+    "checklist shape",
+    # The other class on this surface: a limitation with no user action is a
+    # disclosure, and must not be dressed up as an invitation.
+    "never dressed up as an invitation",
+)
+
 FREEFORM_ANSWER_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
     Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
@@ -924,6 +949,30 @@ def test_freeform_answer_shape_is_a_boundary_in_both_entry_points():
             assert phrase in section, f"{rel}: missing freeform-answer-shape phrase {phrase!r}"
 
 
+def test_the_card_invitation_rule_is_stated_and_routed_to_its_owner():
+    """#623/#617: the card surface must carry the invitation rule *and* name
+    `decision-framing.md` as the file that owns it. A card policy that merely
+    restated the rule in its own words would be the second, drifting copy this
+    issue exists to prevent."""
+    section = markdown_section(
+        (ROOT / CARD_INVITATION_POLICY).read_text(encoding="utf-8"), CARD_INVITATION_HEADING)
+    for phrase in CARD_INVITATION_REQUIRED_PHRASES:
+        assert phrase in section, \
+            f"{CARD_INVITATION_POLICY}: missing card-invitation phrase {phrase!r}"
+
+
+def test_card_invitation_rule_mutations_are_caught():
+    """Mutation proof, per phrase rather than for the gate as a whole. A gate
+    that fires when one phrase is dropped proves the gate exists, not that it
+    covers the rule -- the distinction #617's own gate recorded."""
+    text = (ROOT / CARD_INVITATION_POLICY).read_text(encoding="utf-8")
+    for phrase in CARD_INVITATION_REQUIRED_PHRASES:
+        mutated = markdown_section(text.replace(phrase, "", 1), CARD_INVITATION_HEADING)
+        assert phrase not in mutated, f"mutation for {phrase!r} did not remove it"
+        assert not all(other in mutated for other in CARD_INVITATION_REQUIRED_PHRASES), \
+            f"dropping {phrase!r} left the gate green"
+
+
 def test_freeform_answer_shape_mutations_are_caught():
     """Mutation proof for the check above. Drives the same markdown_section
     + literal-phrase logic against the real, committed entry-point text with
@@ -1442,6 +1491,8 @@ def main():
         test_readme_heading_structure_matches_across_languages,
         test_review_py_is_a_non_negotiable_boundary,
         test_freeform_answer_shape_is_a_boundary_in_both_entry_points,
+        test_the_card_invitation_rule_is_stated_and_routed_to_its_owner,
+        test_card_invitation_rule_mutations_are_caught,
         test_freeform_answer_shape_mutations_are_caught,
         test_recorded_book_rule_is_stated_in_both_entry_points,
         test_no_agent_runtime_surface_teaches_the_retired_completeness_rule,

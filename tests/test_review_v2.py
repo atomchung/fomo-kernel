@@ -112,6 +112,30 @@ def _run(*args, env=None):
                           capture_output=True, text=True, timeout=60, env=env)
 
 
+def _run_finalize(*args, env=None):
+    """Drive the two-step commit the product actually requires (#628).
+
+    `finalize` refuses to commit artifacts this session's own `preview` never
+    rendered, so every finalize in this suite runs that preview first, against
+    the same answers and narrative it is about to commit. This is the real
+    lifecycle rather than a way around the gate: `preview` takes the identical
+    flags, and the `commitment` these answers may already carry is the one
+    field the receipt key ignores — which is why one answers file serves both
+    calls, exactly as `SKILL.md`'s lifecycle describes.
+
+    The preview's own result is deliberately not asserted, for two reasons that
+    both matter. Several tests here drive `finalize` with artifacts it must
+    reject on its own, and *that rejection is the assertion* — a preview
+    failing for the same reason must not replace it with a complaint about the
+    preview, and `finalize` still performs its complete independent validation
+    either way. Second, an idempotent finalize retry runs after the pending
+    directory is gone, so its preview cannot succeed and does not need to: the
+    already-committed session skips the gate by design.
+    """
+    _run("preview", *args, env=env)
+    return _run("finalize", *args, env=env)
+
+
 def _pending_plan(root, stdout):
     """Read the full persisted plan from the pending bundle on disk.
 
@@ -598,12 +622,16 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
         ],
         "fx": {"USD": 1, "TWD": 0.0307},
     }
+    # The unlock marker is the catalog entry itself, not a fragment of its
+    # wording (#623). This test asserts which branch rendered and how often --
+    # a wording pin here made a copy edit look like a branching regression, and
+    # `tests/copy_corpus.py`'s golden is the surface that owns wording.
     markers = {
         "en": ("are out of scope for this position-snapshot review",
-               "unlocks behavior diagnostics",
+               card_renderer.load_copy("en")["block_missing"]["snapshot_unlock"],
                "Import transaction history later"),
         "zh-TW": ("不在這次持倉快照的評分範圍內",
-                  "匯入交易歷史 CSV 可解鎖行為診斷",
+                  card_renderer.load_copy("zh-TW")["block_missing"]["snapshot_unlock"],
                   "之後匯入交易紀錄即可解鎖"),
     }
     with tempfile.TemporaryDirectory() as tmp:
@@ -694,7 +722,7 @@ def test_a_view_covering_part_of_an_account_records_the_book_like_any_other():
         narrative = pathlib.Path(tmp) / "narrative-incomplete.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -737,8 +765,8 @@ def test_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
         opening_narrative.write_text(
             json.dumps(_snapshot_narrative(opening), ensure_ascii=False), encoding="utf-8"
         )
-        committed = _run(
-            "finalize", "--root", root, "--session-id", opening["session_id"],
+        committed = _run_finalize(
+            "--root", root, "--session-id", opening["session_id"],
             "--answers", opening_answers, "--narrative", opening_narrative,
         )
         assert committed.returncode == 0, committed.stdout + committed.stderr
@@ -810,8 +838,8 @@ def test_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
         narrative_path = pathlib.Path(tmp) / "later-narrative.json"
         answers_path.write_text(json.dumps(later_answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        finalized = _run(
-            "finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize(
+            "--root", root, "--session-id", plan["session_id"],
             "--answers", answers_path, "--narrative", narrative_path,
         )
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
@@ -990,7 +1018,11 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         # block names the concrete unlock payoff exactly once — regardless of
         # the "skip commitment" answer this scenario exercises.
         assert private.count("cannot score transaction history yet") == 1
-        assert private.count("unlocks behavior diagnostics") == 1
+        # The catalog entry, not a fragment of its wording (#623): this asserts
+        # the at-most-one invitation rule, and copy_corpus's golden owns the
+        # sentence.
+        assert private.count(
+            card_renderer.load_copy("en")["block_missing"]["snapshot_unlock"]) == 1
         assert "Total P&L" not in private and "Best:" not in private and "Worst:" not in private
         assert "opening portfolio check" in public.lower()
         assert "behavioral pressure" not in public and "highlighted behavior" not in public
@@ -999,7 +1031,7 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
             assert secret not in public, secret
         assert not (root / "ledger.jsonl").exists(), "preview cannot project accounting facts"
 
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -1010,7 +1042,7 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         assert [row["type"] for row in rows] == ["snapshot"]
         assert rows[0]["snapshot_id"].startswith("snapshot-")
 
-        repeated = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        repeated = _run_finalize("--root", root, "--session-id", plan["session_id"],
                         "--answers", answers, "--narrative", narrative)
         assert repeated.returncode == 0, repeated.stdout + repeated.stderr
         rows2 = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
@@ -1051,7 +1083,7 @@ def _finalize_snapshot_session(tmp, root, plan, tag):
     narrative = pathlib.Path(tmp) / f"narrative-{tag}.json"
     answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
     narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers, "--narrative", narrative)
 
 
@@ -1455,7 +1487,7 @@ def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         anchor_before = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()][0]
@@ -1564,7 +1596,7 @@ def test_snapshot_full_history_keeps_stable_thesis_and_current_surfaces():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         initial = json.loads((root / "sessions" / plan["session_id"] / "bundle.json").read_text())
@@ -1684,7 +1716,7 @@ def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
 
@@ -1772,6 +1804,413 @@ def test_prepare_with_cash_anchor_opens_a_new_session_not_a_silent_resume():
             "the same cash anchor rerun stays idempotent at its own fingerprint"
 
 
+# --- The cash anchor is a stated gap, and answerable after the card (#357) ----
+#
+# Five recurrences, three of them on real data, all of the same shape: nothing
+# in the Review Plan said the anchor was missing. The engine demanded a
+# disclosure when the balance was *present* (`acct_perf_basis`) and demanded
+# nothing when it was absent, so the one condition the agent had to notice
+# unprompted was the only one the plan never mentioned.
+#
+# The owner ruled out making `prepare` refuse: compute the first card, then ask
+# a directly answerable question, then re-render. So the gap is stated, the ask
+# lands at the card beat, and `add-cash` is what makes answering cheap enough to
+# be worth asking for.
+
+_OFFLINE_MOCK = ROOT / "skills" / "fomo-kernel" / "mock" / "mock_trades.csv"
+
+
+def _offline_env(tmp):
+    """A prepare that cannot reach a price source, so the run is deterministic."""
+    stub_dir = pathlib.Path(tmp) / "stubs"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n', encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+    return env
+
+
+def _prepared_without_an_anchor(tmp, root):
+    env = _offline_env(tmp)
+    run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return env, json.loads(run.stdout)["review_plan"]
+
+
+def test_a_review_with_no_cash_anchor_says_so_in_its_own_plan():
+    """The signal that did not exist. It also has to carry enough to ask a
+    specific question -- which currency, and what answering buys -- because a
+    blind "give me a number, trust me" is what the #357 owner note singled out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _env, plan = _prepared_without_an_anchor(tmp, pathlib.Path(tmp) / "coach")
+        anchor = plan["input"]["cash_anchor"]
+        assert anchor["status"] == "absent", anchor
+        assert anchor["unanchored_currencies"] == ["USD"], anchor
+        assert set(anchor["unlocks"]) == {"account_level_return", "annualized_return",
+                                          "cash_drag"}, anchor
+        # The one field that separates this gap from the price gap beside it:
+        # a price request is recovered before the user sees anything, this is
+        # asked after they have seen the card (owner ruling 2026-07-30).
+        assert anchor["ask_after"] == "card_presented", anchor
+        assert "add-cash" in anchor["next_action"], anchor["next_action"]
+
+
+def test_a_route_that_never_asks_for_cash_says_that_too():
+    """`not_applicable` is a positive claim with a reason, never an absent key
+    -- the same discipline as `--card not_applicable` on a card-free receipt
+    route. A light week that merely had no entry would be indistinguishable
+    from one the engine forgot to classify, which is how #358's light-tier gap
+    shipped: the flow asked before a tier check three lines below it."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        first = _prepare_dated(tmp, root, "2026-07-14", "cashw1")
+        _finalize(tmp, root, first, _answer_queue(first, _week1_choices, "skip"), "cashw1")
+        light = _prepare_dated(tmp, root, "2026-07-17", "cashw2")
+        assert light["state_snapshot"]["cadence"]["tier"] == "light"
+        assert light["input"]["cash_anchor"] == {
+            "status": "not_applicable", "reason": "light_tier"}, light["input"]["cash_anchor"]
+
+
+def test_add_cash_recomputes_the_same_review_without_re_asking_anything():
+    """The owner's "re-render when they answer", with the part that makes it
+    safe. Everything the user already did carries over untouched, and the
+    engine's own artifacts move only where a cash anchor is allowed to move
+    them -- so the recomputed card is the same review with one more pillar,
+    not a second review the user never saw the first version of."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        (pending / "answers.json").write_text('{"marker": "already answered"}', encoding="utf-8")
+        (pending / "narrative.json").write_text('{"marker": "already written"}', encoding="utf-8")
+        # Read the pre-recompute plan now: the superseded pending directory is
+        # gone by the time the assertions below compare against it.
+        full_before = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        out = json.loads(run.stdout)
+        assert out["status"] == "anchored"
+        assert out["session_id"] != plan["session_id"], \
+            "the id is content-addressed from engine state and the anchor is part of it"
+        assert out["superseded_session_id"] == plan["session_id"]
+        assert sorted(out["carried_forward"]) == ["answers", "narrative"]
+
+        after = session_engine.load_pending(str(root), out["session_id"])
+        assert after["answers"] == {"marker": "already answered"}
+        assert after["narrative"] == {"marker": "already written"}
+        assert not pending.exists(), (
+            "the superseded pending session must not survive as a second, cash-less "
+            "review that preview/finalize would happily commit")
+
+        recomputed = after["plan"]
+        assert recomputed["input"]["cash_anchor"] == {"status": "anchored",
+                                                      "source": "anchored"}
+        assert recomputed["engine_state"]["cash"]["source"] == "anchored"
+        # Nothing the user acted on moved. This is the acceptance line, asserted
+        # rather than argued.
+        for key in ("question_queue", "missing_thesis_positions"):
+            assert recomputed[key] == full_before[key], key
+        assert (recomputed["card_plan"]["candidate_rules"]
+                == full_before["card_plan"]["candidate_rules"])
+
+
+def test_add_cash_refuses_when_more_than_the_anchor_moved():
+    """The gate that makes "reuses this session's frozen prices" true rather
+    than hoped for. `market_data`'s same-day cache is what normally makes the
+    recompute a zero-request replay of the identical bundle; when it is not --
+    a day boundary crossed, an edited input file, a ledger that moved -- the
+    difference has to be a refusal, because the user answered against the card
+    the first set of numbers rendered.
+
+    Simulated here by moving one frozen close, which is exactly what a second
+    live resolution would do."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        frozen = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+        frozen["engine_state"]["price_snapshot"]["prices"]["MOVED"] = 1.23
+        (pending / "plan.json").write_text(json.dumps(frozen), encoding="utf-8")
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode != 0, run.stdout
+        error = json.loads(run.stdout)["error"]
+        assert "changed more than the anchor" in error and "engine_state" in error, error
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
+            "a refused recompute must leave no anchored, finalizable session behind"
+
+
+def test_add_cash_carries_a_declared_price_dead_end_forward():
+    """The seam between #357's recompute and #623's gate. `add-cash` re-enters
+    prepare, so a declaration it dropped would come back as `attempted: false`
+    and the draft gate would then refuse a review the agent had already
+    declared honestly — a refusal caused entirely by supplying a cash balance."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert added.returncode == 0, added.stdout + added.stderr
+        recovery = (json.loads(added.stdout)["review_plan"]["input"]["price_feed"]["recovery"])
+        assert recovery["outcome"] == "declared_unavailable", recovery
+        assert "reachable from this host" in recovery["checked"], recovery
+
+
+def test_add_cash_refuses_a_session_that_never_takes_an_anchor():
+    """A snapshot states cash inline in its own envelope, so there is no second
+    place to supply one -- and the plan already says `not_applicable`. The
+    command reads that claim rather than re-deriving the condition."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        snapshot = pathlib.Path(tmp) / "positions.json"
+        snapshot.write_text(json.dumps({
+            "as_of": "2026-07-14",
+            "positions": [{"ticker": "SPY", "shares": 10, "avg_cost": 100,
+                           "market": "US", "currency": "USD"}]}), encoding="utf-8")
+        env = _offline_env(tmp)
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", snapshot,
+                   "--root", root, "--language", "en", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["input"]["cash_anchor"] == {"status": "not_applicable",
+                                                "reason": "snapshot_envelope"}
+        refused = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                       "--cash", '{"currency":"USD","amount":1,"as_of":"2026-07-14"}', env=env)
+        assert refused.returncode != 0, refused.stdout
+        assert "does not take a cash anchor" in json.loads(refused.stdout)["error"]
+
+
+# The catalogue phrasings #623 retired, in every locale. A presence test on the
+# new wording would go green the moment someone appended a feature list back
+# onto it; what has to stay dead is the shape, so the retired fragments are what
+# this pins -- the `RECORDED_BOOK_RETIRED_PHRASES` idiom, one surface over.
+_RETIRED_INVITATION_CATALOGUES = {
+    "en": ("unlocks behavior diagnostics", "and more",
+           "unlocks the full behavioral review"),
+    "zh-TW": ("解鎖行為診斷", "等）", "解鎖出場紀律"),
+    "zh-CN": ("解锁行为诊断", "等）", "解锁出场纪律"),
+}
+
+
+def test_a_card_invitation_never_regrows_a_feature_checklist():
+    """#623/#617: an invitation names the one answer this user's book cannot
+    reach, not a catalogue of features. Both retired strings enumerated three
+    or more diagnostics, which is the shape the rule forbids and the shape a
+    future edit is most likely to reintroduce."""
+    for language, retired in _RETIRED_INVITATION_CATALOGUES.items():
+        missing = card_renderer.load_copy(language)["block_missing"]
+        for key in ("snapshot_unlock", "rule_structural"):
+            for fragment in retired:
+                assert fragment not in missing[key], (language, key, fragment)
+            assert missing[key].strip(), (language, key, "an invitation may be absent by "
+                                          "branch, never blank when its branch fires")
+
+
+# --- A degraded price card is a stated dead end, never a skipped step (#623) ---
+#
+# `flows/first-review.md` step 0 requires the agent to recover the requested
+# closes and rerun `prepare --prices` BEFORE delivering a degraded card. Two
+# very different runs rendered the identical sentence — "current prices could
+# not be retrieved" — and nothing could tell them apart: the sources publish
+# nothing, or nobody looked. The second is not a disclosure the user can act
+# on; it is a review whose every weight came from cost basis when it did not
+# have to. Same structural shape as #357's cash gap: the engine went quiet
+# about something it already knew.
+
+
+def _degraded_price_session(tmp, root):
+    """A real offline prepare whose card will carry the price-blocked note."""
+    env = _offline_env(tmp)
+    run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = json.loads(run.stdout)["review_plan"]
+    assert plan["input"]["price_feed"]["request"], "fixture must actually be price-degraded"
+    return env, plan
+
+
+def _answers_for_plan(plan):
+    """Answer this plan's own queue and its own uncovered cycles.
+
+    `_answers` carries a hardcoded PLTR thesis row for the `--card-json`
+    fixture; a real mock-CSV plan has different cycles, and an unknown
+    `cycle_id` fails closed before any of the gates under test are reached.
+    """
+    return {
+        "session_id": plan["session_id"],
+        "answers": [{"question_id": q["id"], "choice": "skip"}
+                    for q in plan["question_queue"]],
+        "thesis_updates": [{"cycle_id": row["cycle_id"],
+                            "why": "Held while the entry reason is confirmed",
+                            "exit_trigger": "The reason for holding stops being true",
+                            "horizon": "quarters"}
+                           for row in plan.get("missing_thesis_positions") or []],
+        "observations": [],
+        "commitment": {"choice": "skip"},
+    }
+
+
+def _narrative_for_plan(plan):
+    payload = _narrative("en")
+    payload["honesty"] = {
+        key: "This limitation stays stated on the card rather than treated as a zero."
+        for key in plan["card_plan"]["required_honesty_keys"]}
+    return payload
+
+
+def test_a_price_degraded_run_records_whether_recovery_was_ever_attempted():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, plan = _degraded_price_session(tmp, pathlib.Path(tmp) / "coach")
+        assert plan["input"]["price_feed"]["recovery"] == {
+            "attempted": False, "outcome": "not_attempted"}
+
+        declared = _run("prepare", _OFFLINE_MOCK, "--root", pathlib.Path(tmp) / "coach",
+                        "--language", "en", "--prices-unavailable",
+                        "the exchange's own market-data site publishes no close for these",
+                        env=env)
+        assert declared.returncode == 0, declared.stdout + declared.stderr
+        recovery = json.loads(declared.stdout)["review_plan"]["input"]["price_feed"]["recovery"]
+        assert recovery["attempted"] is True and recovery["outcome"] == "declared_unavailable"
+        assert "market-data site" in recovery["checked"]
+
+
+def test_the_declaration_is_not_swallowed_by_the_undeclared_pending_session():
+    """The #289/#369 class, a fourth time. The declaration necessarily arrives
+    on a *second* prepare, after the first reported the gap. Without it in the
+    fingerprint that rerun resumes the undeclared pending session, returns its
+    stale plan, and the only thing separating a skipped step from an honest
+    dead end is silently discarded — leaving the gate still refusing a run that
+    did in fact declare.
+
+    The session id legitimately does not move: it is content-addressed from
+    engine state, and a declaration about the outside world changes no number.
+    The plan on disk is what must carry it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _degraded_price_session(tmp, root)
+        declared = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                        "--prices-unavailable", "checked the listing venue's own site", env=env)
+        out = json.loads(declared.stdout)
+        assert out["status"] != "resumed", \
+            "prepare --prices-unavailable must not resume the undeclared session unchanged"
+        stored = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        assert stored["input"]["price_feed"]["recovery"]["attempted"] is True, \
+            "the declaration has to reach the plan the draft gate reads, not just stdout"
+        again = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                     "--prices-unavailable", "checked the listing venue's own site", env=env)
+        assert json.loads(again.stdout)["status"] == "resumed", \
+            "the same declaration rerun stays idempotent at its own fingerprint"
+        assert plan["session_id"] == out["session_id"], \
+            "a declaration about the outside world moves no engine number, so no new id"
+
+
+def test_a_card_built_on_a_skipped_price_recovery_is_refused():
+    """The gate, on the shared draft path so `finalize` called directly cannot
+    walk around `preview`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _degraded_price_session(tmp, root)
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        for command in ("preview", "finalize"):
+            run = _run(command, "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers, "--narrative", narrative, env=env)
+            assert run.returncode != 0, (command, run.stdout)
+            error = json.loads(run.stdout)["error"]
+            assert "no price recovery was ever attempted" in error, (command, error)
+            assert "--prices-unavailable" in error, \
+                f"{command}: the refusal must name both ways out, not only the envelope"
+
+
+def test_a_declared_dead_end_delivers_the_degraded_card():
+    """The counterweight, and what keeps this from being the hard block #357
+    ruled out: a host that genuinely cannot look anything up says so once and
+    the review completes. The user is never asked for anything."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers, "--narrative", narrative, env=env)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+
+
+def test_an_already_committed_price_degraded_session_still_replays():
+    """The gate lives on the pending branch only. A session committed before
+    this rule existed carries no `recovery` key at all, and refusing its
+    idempotent finalize replay would break the documented no-op — punishing a
+    card that reached the user long before there was anything to prevent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        # The first commit is an ordinary review and takes the ordinary two-step
+        # lifecycle (#628). The replay deliberately does not: it runs after the
+        # pending directory is gone, which is precisely the already-committed
+        # branch both gates exempt, and calling it directly is what proves that.
+        first = _run_finalize("--root", root, "--session-id", plan["session_id"],
+                              "--answers", answers, "--narrative", narrative, env=env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        replay = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                      "--answers", answers, "--narrative", narrative, env=env)
+        assert replay.returncode == 0, replay.stdout + replay.stderr
+
+        # The predicate itself is fail-closed on an absent `recovery` key, which
+        # is exactly the shape of a plan written before #623. That is correct on
+        # the pending path and wrong on the committed one, and the placement is
+        # what separates them — a committed bundle cannot be forged into this
+        # shape here (its manifest hash refuses), so the predicate's own
+        # posture is asserted directly and the call sites carry the reason.
+        legacy = {"input": {"price_feed": {
+            "request": {"tickers": ["ACME"]},
+            "provenance": {"mode": "unavailable"}}},
+            "engine_card": {"price_provenance": {"mode": "unavailable"}}}
+        try:
+            review_engine._refuse_a_card_built_on_a_skipped_price_recovery(legacy)
+        except review_engine.ReviewError:
+            pass
+        else:
+            raise AssertionError("an absent recovery key must read as not attempted")
+
+
+def test_the_gate_is_silent_when_prices_were_not_the_problem():
+    """A fully priced review must never meet this refusal. Without the
+    `request` and `price_retrieval_blocked` conditions the gate would fire on
+    every ordinary review that happens to be missing one benchmark."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        run = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        review_engine._refuse_a_card_built_on_a_skipped_price_recovery(plan)
+
+
 def test_stdout_plan_is_projected_for_the_agent_but_full_on_disk():
     """#234: the agent re-sends the emitted plan as context on every later turn,
     so prepare/resume stdout must carry only the fields the flow contract reads.
@@ -1846,7 +2285,7 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         result = json.loads(final.stdout)
         private = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
@@ -2006,11 +2445,21 @@ def test_structural_card_next_step_names_the_unlock_path():
                              "review_tier": {"tier": tier}, "metrics": {},
                              "holdings": {"positions": {}}},
         }
-    unlock = "unlocks the full behavioral review"
+    # The catalog entry itself, not a fragment of its wording (#623): this test
+    # asserts which branch fired, and `tests/copy_corpus.py`'s golden owns what
+    # the sentence says.
+    unlock = card_renderer.load_copy("en")["block_missing"]["rule_structural"]
     assert unlock in card_renderer.render_private(_bundle("structural", 2))
     # behavioral (14 round trips) with a short-span insufficient flag must not be
     # framed as an opening structural check.
     assert unlock not in card_renderer.render_private(_bundle("behavioral", 14))
+    # #623/#617's other half, and the one a presence-only test cannot see: an
+    # invitation is absent when nothing further is needed. A complete
+    # behavioral review names no unreachable answer at all, because a
+    # manufactured invitation is the same defect as a manufactured disclosure.
+    behavioral = card_renderer.render_private(_bundle("behavioral", 14))
+    for key in ("rule_structural", "snapshot_unlock"):
+        assert card_renderer.load_copy("en")["block_missing"][key] not in behavioral, key
 
 
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
@@ -2805,6 +3254,13 @@ def test_concurrent_identical_finalize_cli_is_controlled_and_projects_once():
         )
         narrative_path.write_text(
             json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        # #628: both racing processes finalize the same pending session, so the
+        # preview receipt has to exist before either starts. It is written once
+        # here rather than through `_run_finalize` because what this test races
+        # is two *finalize* processes, not two lifecycles.
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers_path, "--narrative", narrative_path)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
 
         # The wrapper still executes review.py's full parser/command path in a
         # separate OS process.  One process pauses after observing pending/ but
@@ -3132,7 +3588,7 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
 
         answers_path.write_text(json.dumps(_answers(plan, commitment="candidate_0"), ensure_ascii=False),
                                 encoding="utf-8")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         result = json.loads(finalized.stdout)
         assert finalized.returncode == 0 and result["status"] == "committed" and not result["projection_error"]
@@ -3167,13 +3623,13 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         assert rule_rows and rule_rows[0]["text"] == candidate["rule"]
         assert all("grounding" not in row and "PLTR" not in row["text"] for row in rule_rows), \
             "rules.jsonl must keep the canonical rule text free of period tickers"
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] == "no-op"
         conflicting = _answers(plan, commitment="candidate_0")
         conflicting["observations"].append("different retry payload")
         answers_path.write_text(json.dumps(conflicting, ensure_ascii=False), encoding="utf-8")
-        rejected = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        rejected = _run_finalize("--root", root, "--session-id", plan["session_id"],
                         "--answers", answers_path, "--narrative", narrative_path)
         rejected_payload = json.loads(rejected.stdout)
         assert rejected.returncode == 2 and rejected_payload["status"] == "error"
@@ -3218,7 +3674,7 @@ def test_public_card_never_reuses_user_authored_rule_text():
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -3255,7 +3711,7 @@ def test_user_may_commit_to_a_neutral_observable_outside_the_diagnostic_dimensio
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert final.returncode == 0, \
             "a commitment on a neutral observable must finalize, not fail closed:\n" + final.stdout + final.stderr
@@ -3286,7 +3742,7 @@ def _finalize_with(tmp, root, commitment, language="en"):
     narrative_path = pathlib.Path(tmp) / "narrative.json"
     answers_path.write_text(json.dumps(answers), encoding="utf-8")
     narrative_path.write_text(json.dumps(_narrative(language)), encoding="utf-8")
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
 
@@ -3392,21 +3848,21 @@ def test_a_repeated_finalize_appends_one_condition_row_and_a_changed_one_fails_c
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
-        args = ("finalize", "--root", root, "--session-id", plan["session_id"],
+        args = ("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
         def rows():
             text = (root / "conditions.jsonl").read_text(encoding="utf-8")
             return [json.loads(line) for line in text.splitlines() if line.strip()]
 
-        assert _run(*args).returncode == 0
+        assert _run_finalize(*args).returncode == 0
         assert len(rows()) == 1
-        _run(*args)                                   # documented-safe retry
+        _run_finalize(*args)                          # documented-safe retry
         assert len(rows()) == 1, "an identical retry must not append a second row"
 
         answers["commitment"]["condition"] = dict(_CONDITION, criterion="sell if margin drops")
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
-        changed = _run(*args)
+        changed = _run_finalize(*args)
         assert changed.returncode != 0, "a different condition under a committed session id " \
                                         "must fail closed, not overwrite the record"
         assert len(rows()) == 1 and rows()[0]["criterion"] == _CONDITION["criterion"]
@@ -3502,7 +3958,7 @@ def _prepare_with_checks(tmp, root, checks, language="en"):
 def _finalize_plan(tmp, root, plan, answers, language="en"):
     answers_path = _write_json(tmp, "answers.json", answers)
     narrative_path = _write_json(tmp, "narrative.json", _narrative(language))
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
 
@@ -3637,16 +4093,16 @@ def test_a_repeated_finalize_appends_one_check_row_and_a_changed_one_fails_close
             {"slot_id": "slot-seed-0", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}]
         answers_path = _write_json(tmp, "answers.json", answers)
         narrative_path = _write_json(tmp, "narrative.json", _narrative("en"))
-        args = ("finalize", "--root", root, "--session-id", plan["session_id"],
+        args = ("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
-        assert _run(*args).returncode == 0
+        assert _run_finalize(*args).returncode == 0
         assert len(_check_rows(root)) == 1
-        _run(*args)
+        _run_finalize(*args)
         assert len(_check_rows(root)) == 1, "an identical retry must not append a second reading"
 
         answers["condition_checks"][0]["check"]["observation"]["value"] = 12.0
         _write_json(tmp, "answers.json", answers)
-        changed = _run(*args)
+        changed = _run_finalize(*args)
         assert changed.returncode != 0, \
             "a different reading under a committed session id must fail closed"
         rows = _check_rows(root)
@@ -4781,7 +5237,7 @@ def _relink_scenario(tmp, root):
     answers = _write_json(tmp, "relink-open-answers.json",
                           _snapshot_answers(opening, commitment="skip"))
     narrative = _write_json(tmp, "relink-open-narrative.json", _snapshot_narrative(opening))
-    done = _run("finalize", "--root", root, "--session-id", opening["session_id"],
+    done = _run_finalize("--root", root, "--session-id", opening["session_id"],
                 "--answers", answers, "--narrative", narrative)
     assert done.returncode == 0, done.stdout + done.stderr
     prior = json.loads((root / "sessions" / opening["session_id"] / "bundle.json")
@@ -5321,7 +5777,7 @@ def test_a_mute_survives_the_documented_projection_repair():
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        assert _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        assert _run_finalize("--root", root, "--session-id", plan["session_id"],
                     "--answers", answers_path, "--narrative", narrative_path).returncode == 0
         committed = [json.loads(line) for line
                      in (root / "rules.jsonl").read_text(encoding="utf-8").splitlines() if line]
@@ -5704,7 +6160,7 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         for private_fragment in ("BIG", "Risk limit", "2026-08-01"):
             assert private_fragment not in preview_payload["public_card"]
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         result = json.loads(finalized.stdout)
         assert finalized.returncode == 0 and not result["projection_error"], finalized.stdout + finalized.stderr
@@ -6100,7 +6556,7 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
         narrative = pathlib.Path(tmp) / "cursor-narrative.json"
         answers.write_text(json.dumps(_answers(first_plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative()), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", first_plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", first_plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json").read_text())
@@ -6214,7 +6670,7 @@ def test_english_is_same_contract_with_localized_questions_and_card():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         result = json.loads(final.stdout)
         assert final.returncode == 0
@@ -7048,7 +7504,7 @@ def test_headline_motive_choice_changes_private_card_and_persists_canonically():
         assert "動機記為：" not in json.loads(skipped.stdout)["private_card"], \
             "skip must not fabricate a motive classification"
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", deliberate_a, "--narrative", narrative)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         session_dir = pathlib.Path(json.loads(finalized.stdout)["path"])
@@ -7062,7 +7518,7 @@ def test_headline_motive_choice_changes_private_card_and_persists_canonically():
         assert event["context"]["headline_dimension"]["id"] == "加碼攤平"
         assert event["event_id"].startswith("headline-motive-")
 
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", deliberate_a, "--narrative", narrative)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7093,13 +7549,13 @@ def test_headline_motive_skip_keeps_bundle_key_absent_for_replay_compat():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         plan = _prepare_headline_motive(tmp, root, "skipcompat")
         skipped_a, narrative = _write_headline_interaction(tmp, plan, "skip", "skipcompat")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", skipped_a, "--narrative", narrative)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
         before_retry = bundle_path.read_text(encoding="utf-8")
         assert "headline_motive_events" not in json.loads(before_retry)
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", skipped_a, "--narrative", narrative)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7219,7 +7675,7 @@ def test_exit_consistency_question_is_answerable_and_persists_canonically():
         for secret in ("exit_consistency", "賣完還漲", "TSLA 3/4"):
             assert secret not in payload["public_card"], "private motive facts never go public"
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
@@ -7251,13 +7707,13 @@ def test_exit_consistency_skip_keeps_bundle_key_absent_for_replay_compat():
         answers_path.write_text(json.dumps(_exit_consistency_answers(plan, "skip"),
                                            ensure_ascii=False), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
         before_retry = bundle_path.read_text(encoding="utf-8")
         assert "exit_consistency_events" not in json.loads(before_retry)
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7323,7 +7779,7 @@ def _finalize(tmp, root, plan, answers, tag):
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
     n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
     n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-    run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+    run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                "--answers", a_path, "--narrative", n_path)
     assert run.returncode == 0, run.stdout + run.stderr
     return json.loads(run.stdout)
@@ -7612,7 +8068,7 @@ def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path = pathlib.Path(tmp) / "narrative_conflict.json"
         n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan2["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         assert run.returncode == 0, run.stdout + run.stderr
         payload = json.loads(run.stdout)
@@ -7650,8 +8106,15 @@ def _run_real_review(tmp, root, csv_path, env, tag):
     has no open position and no ETF, but it runs the engine offline (the
     _offline_engine_env stub blocks yfinance), so #289 makes `price_source`
     (unavailable) a required honesty key: author one digit-free sentence per
-    key the plan actually requires, exactly as a real degraded review must."""
+    key the plan actually requires, exactly as a real degraded review must.
+
+    `--prices-unavailable` is what a genuinely priceless host does (#623): this
+    fixture's host has no market data at all, so recovery is declared as
+    attempted-and-empty rather than skipped. Without it the draft path refuses,
+    which is the point — a degraded card is a dead end that was stated, never a
+    step nobody took."""
     run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+               "--prices-unavailable", "no market-data source reachable from this host",
                "--session-nonce", tag, env=env)
     assert run.returncode == 0, run.stdout + run.stderr
     plan = _pending_plan(root, run.stdout)
@@ -7672,7 +8135,7 @@ def _run_real_review(tmp, root, csv_path, env, tag):
         narrative["honesty"] = honesty
     n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
     n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
-    final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                  "--answers", a_path, "--narrative", n_path, env=env)
     assert final.returncode == 0, final.stdout + final.stderr
     return plan["engine_state"], json.loads(final.stdout)
@@ -7771,7 +8234,7 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path = pathlib.Path(tmp) / "narrative_vocab.json"
         n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "invalid emotion" in payload["error"]
@@ -7779,7 +8242,7 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
 
         answers["thesis_updates"] = [_base_thesis_update({"horizon": "季"})]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "invalid horizon" in payload["error"]
@@ -7880,7 +8343,7 @@ def test_thesis_update_delta_fills_skeleton_and_rejects_ticker_mismatch():
         def reject(update, needle):
             answers["thesis_updates"] = [update]
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-            run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+            run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                        "--answers", a_path, "--narrative", n_path)
             payload = json.loads(run.stdout)
             assert payload["status"] == "error" and needle in payload["error"], payload
@@ -7937,14 +8400,14 @@ def test_snapshot_delta_inherits_candidate_provenance_and_stays_locked():
         answers["thesis_updates"] = [dict(deltas[0], maturity="testable")] + \
             [dict(row) for row in deltas[1:]]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "must remain inferred" in payload["error"]
 
         answers["thesis_updates"] = [dict(row) for row in deltas]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                    "--answers", a_path, "--narrative", n_path)
         assert run.returncode == 0, run.stdout + run.stderr
         bundle = json.loads((root / "sessions" / plan["session_id"] / "bundle.json")
@@ -8323,8 +8786,14 @@ def test_capture_serializes_with_finalize_on_the_shared_projection_lock():
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
             n_path = pathlib.Path(tmp) / "narrative_caplockw3.json"
             n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-            review_engine.cmd_finalize(_Args(session_id=plan3["session_id"], root=root,
-                                             answers=str(a_path), narrative=str(n_path)))
+            cli = _Args(session_id=plan3["session_id"], root=root,
+                        answers=str(a_path), narrative=str(n_path))
+            # #628: in-process for the same reason the rest of this test is —
+            # a subprocess would not see the monkeypatch. `preview` renders and
+            # saves the pending bundle; it touches no projection writer, so it
+            # cannot interfere with the lock this test is about.
+            review_engine.cmd_preview(cli)
+            review_engine.cmd_finalize(cli)
 
         try:
             capture_future = pool.submit(_run_capture)
@@ -8368,7 +8837,7 @@ def test_thesis_update_rejects_forged_engine_owned_identity():
         def reject(update, needle):
             answers["thesis_updates"] = [update]
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-            run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+            run = _run_finalize("--session-id", plan2["session_id"], "--root", root,
                        "--answers", a_path, "--narrative", n_path)
             payload = json.loads(run.stdout)
             assert payload["status"] == "error" and needle in payload["error"], payload
@@ -8473,7 +8942,7 @@ def _vs_finalize(root, plan, a_path, n_path, commitment="candidate_0"):
     answers = json.loads(a_path.read_text(encoding="utf-8"))
     answers["commitment"] = {"choice": commitment}
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-    run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                "--answers", a_path, "--narrative", n_path)
     assert run.returncode == 0, run.stdout + run.stderr
     return json.loads(run.stdout)
@@ -8772,7 +9241,7 @@ def test_first_review_high_information_queue_is_bounded_and_durable():
         n_path = pathlib.Path(tmp) / "hi-narrative.json"
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path.write_text(json.dumps(_narrative("en"), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", a_path, "--narrative", n_path)
         assert final.returncode == 0, final.stdout + final.stderr
         bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json")
@@ -8875,7 +9344,7 @@ def test_initial_thesis_consumption_maturity_gate_and_idempotency():
                                   _thesis_update("BBB", maturity="inferred")]
         good_path = pathlib.Path(tmp) / "c-good.json"
         good_path.write_text(json.dumps(good, ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", good_path, "--narrative", n_path)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -8888,7 +9357,7 @@ def test_initial_thesis_consumption_maturity_gate_and_idempotency():
         assert {r["ticker"] for r in projected} == {"AAA", "BBB"}, "the classification projects to its own log"
 
         # Idempotent finalize retry writes nothing new.
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", good_path, "--narrative", n_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] in ("committed", "no-op")
         again = [json.loads(line) for line in
@@ -9464,9 +9933,19 @@ _ONE_TICKER_WEEK = (
 
 
 def _book_review(tmp, root, csv_path, env, tag, route, extra=()):
-    """One real prepare+finalize over `csv_path`, every question skipped."""
+    """One real prepare+finalize over `csv_path`, every question skipped.
+
+    These reviews run offline, so no close is retrievable and #623 refuses a
+    card that reports unretrievable prices when recovery was never attempted.
+    Declaring the dead end is the sanctioned clearance (same as
+    `tests/test_preview_gate.py`) and keeps the subject of these tests the book
+    the figures were measured over, not the price. Weights fall back to cost
+    basis either way, which is what these assertions read.
+    """
     run = _run("prepare", csv_path, "--root", root, "--route", route, "--language", "en",
-               "--session-nonce", tag, *extra, env=env)
+               "--session-nonce", tag,
+               "--prices-unavailable", "offline test fixture: no provider is reachable",
+               *extra, env=env)
     assert run.returncode == 0, run.stdout + run.stderr
     plan = _pending_plan(root, run.stdout)
     answers = {
@@ -9494,6 +9973,12 @@ def _book_review(tmp, root, csv_path, env, tag, route, extra=()):
             for key in keys}
     narrative_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
     narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+    # #628: finalize refuses a session with no preview receipt, because a card
+    # the user never saw cannot be committed. These reviews only exist to seed
+    # and inspect a book, but they go through the real lifecycle to do it.
+    previewed = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers_path, "--narrative", narrative_path, env=env)
+    assert previewed.returncode == 0, previewed.stdout + previewed.stderr
     final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
                  "--answers", answers_path, "--narrative", narrative_path, env=env)
     assert final.returncode == 0, final.stdout + final.stderr
@@ -9624,6 +10109,80 @@ def test_a_weekly_file_that_does_cover_the_book_still_computes_concentration():
         assert not ((plan["engine_card"].get("data_integrity") or {})
                     .get("accounting_reconciliation") or {}).get("mismatches"), \
             "a cumulative file must not be gated as if it disagreed with the book"
+
+
+def test_the_recorded_book_reconciliation_is_idempotent_across_a_re_entrant_prepare():
+    """#630: the reconciliation may not read state this command itself writes.
+
+    `prepare` appends the CSV to `ledger.jsonl` and records the book it derived.
+    A predicate over the *pre-import* ledger therefore answers differently on the
+    two runs — false on a fresh root's first review, true on every later run of
+    the identical file — so the same input reconciled on one pass and not the
+    other, and the second pass came back with a different book: `cost`/`avg_cost`
+    moved (`derive_holdings` keeps a moving average where the card's own
+    accumulation is FIFO) and `origin`/`market`/`currency` appeared.
+
+    That is not a cosmetic difference. The session id is content-addressed from
+    engine state, so it moved too, and `add-cash` — which re-enters this exact
+    pipeline to add an anchor to a session the user has *already answered
+    against*, and refuses when anything but the anchor moved — could never
+    succeed on a trades-only root. #624's tests caught it; this one names the
+    property, so a future change to the reconciliation reddens something that
+    says why.
+
+    Two halves are required and this asserts both: the predicate reads the
+    post-import book, and on the derived lane a reconciliation that *agrees*
+    adopts nothing.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_engine_env(tmp)
+
+        def prepare_once():
+            run = _run("prepare", _BOOK_FIXTURE, "--root", root, "--language", "en", env=env)
+            assert run.returncode == 0, run.stdout + run.stderr
+            return _pending_plan(root, run.stdout)
+
+        first = prepare_once()
+        # Drop the pending bundle so the second call recomputes rather than
+        # resuming by fingerprint — the same thing `add-cash` does with an
+        # anchor added, minus the anchor.
+        shutil.rmtree(root / ".pending", ignore_errors=True)
+        second = prepare_once()
+
+        assert (first["engine_state"].get("holdings") or {}).get("positions"), \
+            "this fixture must actually leave open positions, or nothing is being compared"
+        assert first["session_id"] == second["session_id"], (
+            "the id is content-addressed from engine state, so a book that moved "
+            "between two runs of the identical file shows up here first")
+        assert first["engine_state"] == second["engine_state"], \
+            "re-preparing the identical file may not produce a different book"
+        for key in ("question_queue", "missing_thesis_positions"):
+            assert first[key] == second[key], key
+        assert (((first["input"].get("ledger_ingest") or {}).get("holdings_reconciliation"))
+                == ((second["input"].get("ledger_ingest") or {}).get("holdings_reconciliation"))), (
+            "the reconciliation must report the same thing on both passes, or the "
+            "predicate is still reading the ledger this command writes")
+
+        # The other half, named separately because either one alone hides the
+        # defect: a file that covers the book keeps the card's own cost basis.
+        # `derive_holdings` keeps a moving average and the card's accumulation is
+        # FIFO, so adopting a book the reconciliation *agrees with* would move
+        # `cost`/`avg_cost` for every ordinary review — a methodology change with
+        # no defect behind it. This fixture's PLTR has a partial sell, which is
+        # where the two methods diverge (11200 FIFO against 11786.67).
+        positions = first["engine_state"]["holdings"]["positions"]
+        events, _ = ledger_engine.load_ledger(os.path.join(root, "ledger.jsonl"))
+        canonical = ledger_engine.derive_holdings(events)["holdings"]
+        divergent = [t for t in positions
+                     if abs(float(positions[t]["cost"])
+                            - float(canonical[t]["cost_total"])) > 0.05]
+        assert divergent, (
+            "this fixture must actually contain a position where FIFO and the "
+            "ledger's moving average disagree, or the assertion below is vacuous")
+        assert first["engine_state"]["holdings"]["derived_from"] == "trades_csv", (
+            "a review whose file covers the book keeps its own book; adopting the "
+            "ledger's restatement here silently changes every user's avg_cost")
 
 
 def test_a_non_us_book_is_not_read_as_misclassified_by_the_derived_lane():

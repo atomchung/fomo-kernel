@@ -524,10 +524,21 @@ _BOOK_READERS_INTERNAL = frozenset({
 })
 
 # Routes driven below. Each name is a `cmd_<name>` in review.py.
-_DRIVEN_ROUTES = ("consider", "prepare", "refresh")
+_DRIVEN_ROUTES = ("consider", "prepare", "refresh", "positions")
 
 # A route may sit here only with a reason naming who owns it instead.
-_ROUTES_NOT_DRIVEN = {}
+_ROUTES_NOT_DRIVEN = {
+    # `add-cash` (#357) performs no book read of its own: it re-enters
+    # `_prepare_session` — the `prepare` route driven above — with one extra
+    # input, and then refuses unless the recomputed `engine_state` (holdings,
+    # splits, valuation frame: everything but `cash`) is byte-identical to the
+    # session it is amending. Whatever `prepare` establishes about the split
+    # basis, this route reproduces exactly or does not answer at all, so there
+    # is no second basis for it to get wrong. This is a mechanism, not a
+    # call-graph argument: it is pinned by
+    # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved.
+    "add-cash": "delegates to prepare and refuses any engine_state drift outside cash",
+}
 
 
 def _routes_that_read_the_book():
@@ -662,6 +673,26 @@ def test_consider_answers_on_the_split_adjusted_book_on_both_of_its_routes():
             assert held["cost"] == 10000.0, (label, "a split is a zero-dollar event", held)
 
 
+def test_positions_answers_on_the_split_adjusted_book():
+    """`positions`'s (#561) honest observable is the share count itself.
+    `positions` reads shares/cost/weight through the same canonical
+    `portfolio_basis.query_current_book` reader `consider`'s ledger route
+    uses (owner ruling 2026-07-30, after this PR's FIFO-reconstruction cut
+    was found to disagree with `consider` on a multi-lot partial sell) --
+    driven separately here because it is still a distinct CLI route with
+    its own path to that reader in review.py's call graph, not a wrapper
+    around an existing driven route, and the split map has to reach it
+    through this call site specifically."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _crossing_root(tmp)
+        code, payload = _route(tmp, "positions")
+        assert code == 0, payload
+        rows = {row["ticker"]: row for row in payload["positions"]}
+        assert rows["NVDA"]["shares"] == 100.0, rows["NVDA"]
+        assert rows["NVDA"]["cost_total"] == 10000.0, (
+            "a split is a zero-dollar event", rows["NVDA"])
+
+
 def test_a_review_can_start_at_all_on_a_split_crossing_book():
     """The compounding failure, and the reason a route-level check is worth
     having. `prepare` reads the same book through `plan_refresh`, so a
@@ -678,7 +709,7 @@ def test_a_review_can_start_at_all_on_a_split_crossing_book():
 def test_without_the_map_every_route_degrades_together():
     """The counterweight. Each assertion above must be failing for the split
     basis and not for some unrelated reason the fixture happens to satisfy,
-    so the same book with no frozen map has to break all three in the ways
+    so the same book with no frozen map has to break all four in the ways
     named — otherwise these tests prove nothing about splits."""
     with tempfile.TemporaryDirectory() as tmp:
         snapshot = _crossing_root(tmp, with_map=False)
@@ -694,6 +725,11 @@ def test_without_the_map_every_route_degrades_together():
 
         code, _prepared = _route(tmp, "prepare", "--snapshot-json", snapshot)
         assert code != 0, "split-blind, the catch-up gate must be refusing the review"
+
+        _code, positions = _route(tmp, "positions")
+        rows = {row["ticker"]: row for row in positions["positions"]}
+        assert rows["NVDA"]["shares"] == 10.0, (
+            "split-blind, positions must be reporting the pre-split count", rows["NVDA"])
 
 
 # ───────── the other operand: what basis the price is on (#583) ─────────
