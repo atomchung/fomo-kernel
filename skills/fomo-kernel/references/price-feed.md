@@ -18,6 +18,22 @@ Only act on this when `request` is present. Unpriced instruments in `request.tic
 
 Attempt recovery yourself first; the degraded card is the fallback for when recovery genuinely fails, not the default. A degraded review still completes, so never stall the review waiting for a price you cannot find — if the source does not publish it, omit that instrument and deliver the degraded card rather than blocking.
 
+## A dead end is declared, never assumed (#623)
+
+`recovery` sits beside `request` and records which of the two happened, because the card said the same sentence either way and nothing could tell them apart:
+
+- `attempted: true`, `outcome: "supplied"` — an envelope arrived, whatever coverage it reached.
+- `attempted: true`, `outcome: "declared_unavailable"` — you looked and the sources publish nothing; `checked` carries the sources you named.
+- `attempted: false` — nothing was ever handed back.
+
+The last one is not a disclosure. The user can do nothing about a price *you* were asked to look up, and a card built on no prices at all states every weight from cost basis when it did not have to — so `preview` and `finalize` refuse it. Clear the refusal by doing the step, or, when the dead end is real, by stating it:
+
+```bash
+python3 engine/review.py prepare <CSV...> --prices-unavailable "the exchange's own market-data site publishes no close for these"
+```
+
+Name the sources you actually checked. It asks the user for nothing and costs one command, which is why the refusal is a gate on a step rather than a stall — and why the honest dead end still delivers its card.
+
 ## Sources
 
 Use a recognized market-data source that publishes closing prices for the listing venue: the exchange itself, the exchange's official market-data site, or an established financial-data provider. Record the one you actually read in `source`. A search-result snippet is not a source; open the page that publishes the price.

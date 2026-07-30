@@ -44,11 +44,11 @@
     "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\"",
     "rule_skip": "You chose not to set a new commitment; the same baseline remains available next time.",
     "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
-    "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. A later file with complete buy-and-sell history unlocks the full behavioral review — exit discipline, holding period, and win/loss.",
+    "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. Too few closed trades here to say yet whether your selling costs you more than your buying; a file carrying the matching sells would settle that one question.",
     "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
-    "snapshot_unlock": "Importing your transaction-history CSV unlocks behavior diagnostics (win rate, payoff ratio, averaging-down discipline, and more).",
+    "snapshot_unlock": "This check can see what you hold, not how you got here. Your transaction history would answer the one question it cannot: whether your selling costs you more than your buying.",
     "annualized_short_series": "Annualized return is not computable this period: the price series covers fewer than two days, so there is no change to measure.",
-    "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists."
+    "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled."
   },
   "account_gate": {
     "default": "Complete the cash anchor, and you'll see the account-level return with cash included.",
