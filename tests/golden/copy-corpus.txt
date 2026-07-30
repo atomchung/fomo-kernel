@@ -7028,7 +7028,7 @@ Mirror.
 ## 這期的績效
 
 - 本期算不出帳面損益：缺交易或估值基礎。
-- 本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。
+- 本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。把你目前的持倉畫面給我，這個差異就能對清楚。
 - 本期無法比對大盤：缺可用的基準序列。
 
 ## 關鍵交易 · 按金額排序
@@ -7053,7 +7053,7 @@ Headline.
 Mirror.
 這期的績效
 本期算不出帳面損益：缺交易或估值基礎。
-本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。
+本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。把你目前的持倉畫面給我，這個差異就能對清楚。
 本期無法比對大盤：缺可用的基準序列。
 關鍵交易 · 按金額排序
 本期沒有可排序的標的層診斷。
@@ -7094,7 +7094,7 @@ Mirror.
 ## Performance
 
 - Absolute P&L is not computable this period: no trades or valuation basis.
-- Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists.
+- Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled.
 - Benchmark comparison is not computable this period: no resolvable benchmark series.
 
 ## Key trades · ranked by money impact
@@ -7119,7 +7119,7 @@ Review card; stored locally only
 Mirror.
 Performance
 Absolute P&L is not computable this period: no trades or valuation basis.
-Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists.
+Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled.
 Benchmark comparison is not computable this period: no resolvable benchmark series.
 Key trades · ranked by money impact
 No ranked instrument diagnosis this period.

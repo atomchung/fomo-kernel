@@ -211,7 +211,7 @@ def _jsonl(path):
 
 
 def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None,
-                 condition_checks=None):
+                 condition_checks=None, prices_unavailable=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -241,6 +241,14 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
         # would resume the check-less pending session, and the crossing question
         # the lookups just earned would never be asked.
         h.update(b"condition_checks\0" + session.canonical(condition_checks).encode())
+    if prices_unavailable:
+        # Same #289 class once more (#623). The declaration that recovery was
+        # attempted and the sources publish nothing arrives on a *second*
+        # prepare, after the first one reported the gap. Without this the rerun
+        # would resume the undeclared pending session and the declaration —
+        # the only thing separating a skipped step from an honest dead end —
+        # would be silently dropped.
+        h.update(b"prices_unavailable\0" + str(prices_unavailable).encode())
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -3336,13 +3344,25 @@ def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
     return card
 
 
-def _price_feed_status(card):
+def _price_feed_status(card, *, supplied=None, unavailable_declared=None):
     """Agent-visible price availability for this run (#289).
 
     ``provenance`` records where the prices came from; ``request`` is the
     machine-readable manifest of what is still unpriced, present only when
     coverage is incomplete. A degraded run stays visible instead of quietly
     dropping the portfolio-level return.
+
+    ``recovery`` (#623) records what happened about that manifest, because the
+    two states behind an identical degraded card were previously
+    indistinguishable: the agent looked and the sources publish nothing, or the
+    agent never looked. `flows/first-review.md` step 0 requires recovery
+    *before* a degraded card is delivered, so the second one is not a
+    disclosure — it is evidence a required step was skipped, and the card said
+    the same sentence either way. ``attempted`` comes from whether an envelope
+    or an explicit "nothing published" declaration actually arrived, never
+    inferred from ``provenance.mode``: an envelope too broken to frame anything
+    still leaves that mode ``unavailable``, and reading the attempt off it would
+    call a real attempt a skipped one.
     """
     provenance = (card or {}).get("price_provenance")
     request = (card or {}).get("price_request")
@@ -3351,6 +3371,14 @@ def _price_feed_status(card):
     status = {"provenance": provenance}
     if request:
         status["request"] = request
+        if unavailable_declared:
+            recovery = {"attempted": True, "outcome": "declared_unavailable",
+                        "checked": str(unavailable_declared)}
+        elif supplied is not None:
+            recovery = {"attempted": True, "outcome": "supplied"}
+        else:
+            recovery = {"attempted": False, "outcome": "not_attempted"}
+        status["recovery"] = recovery
         # Held instruments and benchmarks fail differently: unpriced holdings
         # remove P&L itself, unpriced benchmarks only remove the vs-market
         # segment. Saying which one is missing keeps the agent from treating an
@@ -3441,7 +3469,8 @@ def _cash_anchor_status(state, route, cadence):
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None,
-                submitted_condition_checks=None):
+                submitted_condition_checks=None, supplied_prices=None,
+                prices_unavailable=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
     session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
@@ -3561,7 +3590,9 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "kind": "positions_snapshot" if route == "snapshot_review" else "trades_csv",
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
                   "ledger_ingest": ledger_ingest,
-                  "price_feed": _price_feed_status(card),
+                  "price_feed": _price_feed_status(
+                      card, supplied=supplied_prices,
+                      unavailable_declared=prices_unavailable),
                   # #357: the other input gap, with the opposite timing contract
                   # — see _cash_anchor_status. Always present, including as an
                   # explicit not_applicable, so "this route never asks" is a
@@ -3727,6 +3758,18 @@ def _prepare_session(args):
             supplied_prices = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
             raise ReviewError(f"price feed rejected: {exc}") from exc
+    declared_unavailable = (getattr(args, "prices_unavailable", None) or "").strip()
+    if declared_unavailable:
+        # #623: the escape hatch is a *declaration*, so it has to say something.
+        # An empty or one-character value would let "I looked" be asserted
+        # without naming what was looked at, which is the shape of the miss this
+        # gate exists to make visible.
+        if len(declared_unavailable) < 3:
+            raise ReviewError("--prices-unavailable must name the market-data sources you "
+                              "checked, so a dead end is a stated fact rather than a claim")
+        args.prices_unavailable = declared_unavailable
+    else:
+        args.prices_unavailable = None
     # #412: the results of this period's condition lookups, submitted the same
     # way prices are — the plan publishes what is due, the agent runs each
     # frozen query, and this second pass is what lets a crossing be posed as a
@@ -3793,7 +3836,8 @@ def _prepare_session(args):
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
                                nonce=args.session_nonce or "", prices=supplied_prices,
                                cash=getattr(args, "cash", None),
-                               condition_checks=submitted_checks)
+                               condition_checks=submitted_checks,
+                               prices_unavailable=getattr(args, "prices_unavailable", None))
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
         return {"status": "resumed", "session_id": existing["session_id"],
@@ -3853,7 +3897,9 @@ def _prepare_session(args):
                        recent_exits=recent_exits, ledger_ingest=ledger_ingest,
                        due_revisits=due_revisits,
                        exit_backlog=exit_backlog, problem_stats=problem_stats,
-                       submitted_condition_checks=submitted_checks)
+                       submitted_condition_checks=submitted_checks,
+                       supplied_prices=supplied_prices,
+                       prices_unavailable=getattr(args, "prices_unavailable", None))
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
         return {"status": "already_committed", "session_id": plan["session_id"], "path": committed}
@@ -4709,6 +4755,51 @@ def _resolve_commitment(plan, answers):
     return chosen
 
 
+def _refuse_a_card_built_on_a_skipped_price_recovery(plan):
+    """#623 class 2: the degraded price card is not a disclosure by default.
+
+    `flows/first-review.md` step 0 requires the agent to look the requested
+    closes up and rerun `prepare --prices` **before** delivering a degraded
+    card. Two different runs produced the identical sentence on the card —
+    "current prices could not be retrieved" — and nothing could tell them
+    apart: the sources genuinely publish nothing, or the step was skipped. The
+    second is not something to disclose to the user, who can do nothing about
+    it; it is a review whose every weight came from cost basis when it did not
+    have to.
+
+    So the refusal fires exactly where the harm is: the card is about to be
+    built, `price_retrieval_blocked` says it will carry that sentence, and
+    nothing was ever handed back. It is cleared by doing the step, or by
+    declaring in one flag that it was done and found nothing — never by
+    proceeding silently. That is why this is not the hard block #357 ruled out:
+    the user is not asked for anything and nothing waits on them.
+
+    Called from both commands that build a card from a *pending* session, so
+    `finalize` invoked directly cannot walk around `preview`. Deliberately not
+    inside `_draft_bundle`: that function also runs on `finalize`'s
+    already-committed branch, where the card was delivered long ago and there
+    is nothing left to prevent — gating there would turn the documented
+    "retrying the same session with identical content is a no-op" into a
+    refusal for every price-degraded session committed before this rule
+    existed.
+    """
+    price_feed_status = ((plan.get("input") or {}).get("price_feed") or {})
+    if not price_feed_status.get("request"):
+        return
+    if not card_renderer.price_retrieval_blocked(plan.get("engine_card") or {}):
+        return
+    if (price_feed_status.get("recovery") or {}).get("attempted"):
+        return
+    raise ReviewError(
+        "this card would tell the user their prices could not be retrieved, and no price "
+        "recovery was ever attempted — every weight on it came from cost basis when it did "
+        "not have to. Look the closes in input.price_feed.request up in a recognized "
+        "market-data source, transcribe them into the envelope in references/price-feed.md, "
+        "and rerun prepare --prices <path>. If those sources genuinely publish nothing for "
+        "these instruments, rerun prepare --prices-unavailable '<the sources you checked>' "
+        "and the degraded card is delivered as an honest dead end. Never invent a price")
+
+
 def _draft_bundle(plan, answers, narrative, require_commitment,
                   question_surfaces=None, question_presentations=None):
     if answers.get("session_id") != plan.get("session_id"):
@@ -4955,6 +5046,7 @@ def cmd_preview(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     pending = session.load_pending(root, args.session_id)
     plan = pending.get("plan")
+    _refuse_a_card_built_on_a_skipped_price_recovery(plan)
     answers, narrative = _load_interaction(args, pending)
     bundle = _draft_bundle(
         plan, answers, narrative, require_commitment=False,
@@ -4990,6 +5082,11 @@ def cmd_finalize(args):
         else:
             pending = session.load_pending(root, args.session_id)
             plan = pending.get("plan")
+            # Only on the pending branch: an already-committed session's card
+            # reached the user long ago, and refusing its idempotent replay
+            # would break "retrying the same session with identical content is
+            # a no-op" for every review committed before this gate existed.
+            _refuse_a_card_built_on_a_skipped_price_recovery(plan)
         answers, narrative = _load_interaction(args, pending)
         bundle = _draft_bundle(
             plan, answers, narrative, require_commitment=True,
@@ -5165,11 +5262,19 @@ def cmd_add_cash(args):
         raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
     if not isinstance(anchor, (dict, list)) or not anchor:
         raise ReviewError("--cash takes one {currency,amount,as_of} anchor, or a list of them")
+    # #623: a declared price dead end is an input of this session, recoverable
+    # from its own plan rather than re-typed. Dropping it would leave the
+    # recomputed session reading as a skipped recovery, and the draft gate would
+    # then refuse a review the agent had already declared honestly.
+    recovery = (((plan.get("input") or {}).get("price_feed") or {}).get("recovery") or {})
+    declared_unavailable = (recovery.get("checked")
+                            if recovery.get("outcome") == "declared_unavailable" else None)
     rerun = argparse.Namespace(
         root=root, language=plan.get("language") or "en", route=plan.get("route") or "auto",
         test_drive=False, session_nonce="", paths=list((plan.get("input") or {}).get("paths") or []),
         cash=args.cash, prices=args.prices, driver_map=args.driver_map,
         instrument_map=args.instrument_map, condition_checks=args.condition_checks,
+        prices_unavailable=declared_unavailable,
         snapshot_json=None, card_json=None, state_json=None, timeout=args.timeout)
     result = _prepare_session(rerun)
     if result["status"] == "already_committed":
@@ -6542,6 +6647,12 @@ def build_parser():
     prepare.add_argument("--prices",
                          help="agent-supplied price envelope (references/price-feed.md); "
                               "use when the host cannot retrieve prices itself")
+    prepare.add_argument("--prices-unavailable", dest="prices_unavailable",
+                         metavar="SOURCES_CHECKED",
+                         help="declare that price recovery was attempted and the sources "
+                              "publish nothing for the requested instruments; name the "
+                              "sources you checked. Without it, a card built on no prices "
+                              "at all is refused as a skipped recovery step (#623)")
     prepare.add_argument("--condition-checks", dest="condition_checks",
                          help="this period's results for state_snapshot.condition_slots_due "
                               "(references/condition-slots.md); rerun prepare with it so a "

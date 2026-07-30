@@ -6,6 +6,8 @@ Use when the Review Plan has `route=first_review`.
 
 **0. Recover prices first.** If `review_plan.input.price_feed.request` is present, the host could not retrieve prices. Look the requested closes up yourself from a recognized market-data source, transcribe them into the envelope, and rerun `prepare --prices <path>` — before you mention the gap to the user or deliver a degraded card (`references/price-feed.md`). Deliver a degraded card only if recovery genuinely fails, and never stall the review over it.
 
+This step is now gated rather than trusted (#623). `preview` and `finalize` refuse a card that would tell the user their prices could not be retrieved when `input.price_feed.recovery.attempted` is false, because that card is not a disclosure — it is a review whose every weight came from cost basis when it did not have to, and the user can do nothing about it. If the sources genuinely publish nothing for these instruments, that is a real outcome: rerun `prepare --prices-unavailable "<the sources you checked>"` and the degraded card is delivered as a stated dead end. Declaring is one command and asks the user for nothing, so this is a gate on a step you were told to take, not a stall.
+
 **1. Set expectations briefly.** One or two sentences: the engine computed these numbers locally, and the review needs the user's motive before it can reach a conclusion.
 
 **2. Ask every required question in `question_queue`, in order, once.** Follow `references/interaction-delivery.md` for presentation. A first review carries three to five highest-information items, possibly including an `initial_thesis` capture asking, for an un-thesised holding, whether the entry followed a plan, chased momentum, came from an external recommendation, or had no clear thesis.
