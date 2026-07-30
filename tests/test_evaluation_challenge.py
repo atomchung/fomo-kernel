@@ -383,6 +383,56 @@ def test_every_topic_appears_and_in_the_declared_order():
     assert positions == sorted(positions), f"topics out of declared order: {seen}"
 
 
+def test_an_unclassified_book_states_no_driver_concentration():
+    """The zero that means "nobody looked".
+
+    `dim_diversify` returns `max_sector: None` when nothing is classified,
+    and in that same branch `max_sector_pct` falls out of a `.get(None, 0)`
+    default while `ai_pct` sums to 0.0 over zero AI weights. Both are 0
+    rather than null, so a null check lets them through and the answer owes
+    the user "your AI exposure is 0% and your largest sector is 0%" on a
+    book where sector attribution does not exist. That is an unknown
+    presented as a fact — shipped in the first cut of #479 Wave B, found by
+    reading a real payload rather than by any test.
+    """
+    consequence = _consequence()
+    consequence["after"].update({"ai_pct": 0.0, "max_sector_pct": 0, "max_sector": None})
+    consequence["disclosures"] = ["unmapped_driver"]
+    challenge = _build(consequence=consequence)
+    stated = {e["anchor"] for e in _anchored(challenge, "concentration")}
+    assert "consequence.after.top3" in stated, (
+        "top3 is pure weight and needs no classification; it is still owed")
+    assert "consequence.after.ai_pct" not in stated
+    assert "consequence.after.max_sector_pct" not in stated
+    # ... and the disclosure that explains the absence is still required.
+    assert any(r["key"] == "unmapped_driver" for r in challenge["required_coverage"])
+
+
+def test_a_real_zero_beside_a_classified_sector_is_still_stated():
+    """The counterweight, and the reason this reads a sibling field rather
+    than the value. A book with real sectors and no AI names really is 0% AI,
+    and suppressing that would hide a measurement the user is entitled to."""
+    consequence = _consequence()
+    consequence["after"].update({"ai_pct": 0.0, "max_sector_pct": 0.45,
+                                 "max_sector": "Industrials"})
+    stated = {e["anchor"] for e in _anchored(_build(consequence=consequence), "concentration")}
+    assert "consequence.after.ai_pct" in stated, (
+        "0% AI on a classified book is a measurement, not an absence")
+    assert "consequence.after.max_sector_pct" in stated
+
+
+def test_an_ai_reading_survives_a_book_with_no_classified_sector():
+    """A driver map may flag AI on a position whose sector it leaves
+    unclassified. `max_sector` is None there, but the AI weight was really
+    measured, and a rule keyed only on `max_sector` would drop the one real
+    reading on the book."""
+    consequence = _consequence()
+    consequence["after"].update({"ai_pct": 0.52, "max_sector_pct": 0, "max_sector": None})
+    stated = {e["anchor"] for e in _anchored(_build(consequence=consequence), "concentration")}
+    assert "consequence.after.ai_pct" in stated
+    assert "consequence.after.max_sector_pct" not in stated
+
+
 def test_a_false_trigger_is_not_stated_as_a_fact():
     """A flag that is false is the absence of a fact. Listing it would pad
     the floor with non-events, which is how a floor stops being read."""

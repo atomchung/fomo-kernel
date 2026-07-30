@@ -218,19 +218,46 @@ def _position_entries(record, premise, consequence):
     return out
 
 
+def _measured(field, after):
+    """Whether a concentration reading is a measurement at all.
+
+    `top3` always is: it is pure weight and needs no classification.
+
+    The two driver readings are the trap. On a book where nothing is
+    classified, `trade_recap.dim_diversify` builds `classified_sec` empty,
+    so `max_sector` comes back None — but `max_sector_pct` falls out of a
+    `.get(None, 0)` default and `ai_pct` sums to `0.0` over zero AI weights.
+    Both are **0, not null**. A zero there means "nobody looked", and an
+    answer that states it as an owed fact tells the user their book has no
+    AI exposure and no sector concentration, which the engine never
+    measured. That is the same thing `unjudged` exists to prevent one
+    surface over, and the reason this function reads a sibling field
+    instead of the value's own type.
+
+    `max_sector` being present is the signal that at least one position
+    carries a real sector, so a zero beside it is a real zero. A non-zero
+    `ai_pct` is self-evidently measured and stands on its own — a driver map
+    that flags AI on a position it leaves sector-unclassified would
+    otherwise have its one real reading suppressed.
+    """
+    value = after.get(field)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    if field == "top3":
+        return True
+    if field == "max_sector_pct":
+        return after.get("max_sector") is not None
+    return bool(value) or after.get("max_sector") is not None
+
+
 def _concentration_entries(record, consequence):
-    """Concentration and driver overlap after the trade. `top3` is always
-    computable and always said; `ai_pct`/`max_sector_pct` are null on a book
-    with no classification at all, and a null is nothing to state — the
-    `unmapped_driver` disclosure is what covers that case. The two triggers
-    are stated only when they are on: a flag that is false is the absence of
-    a fact, and listing it would pad the floor with non-events."""
+    """Concentration and driver overlap after the trade — every reading that
+    is actually a measurement (see `_measured`). The two triggers are stated
+    only when they are on: a flag that is false is the absence of a fact, and
+    listing it would pad the floor with non-events."""
     after = consequence.get("after") or {}
-    out = []
-    for field in ("top3", "ai_pct", "max_sector_pct"):
-        value = after.get(field)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            out.append(_entry(record, "concentration", f"consequence.after.{field}", value))
+    out = [_entry(record, "concentration", f"consequence.after.{field}", after[field])
+           for field in ("top3", "ai_pct", "max_sector_pct") if _measured(field, after)]
     for field in ("oversize_triggered", "concentration_triggered"):
         if after.get(field) is True:
             out.append(_entry(record, "concentration", f"consequence.after.{field}", True))
