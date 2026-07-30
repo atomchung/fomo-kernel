@@ -17,6 +17,13 @@ A reviewer catches it only if the diff hunk happens to include that line, and
 the marker's whole nature is to sit in a region nobody re-reads. That is the
 development-guide §7 argument for a mechanical observer rather than a rule.
 
+A second member joined for the same reason (#637): CI's own trigger
+configuration in `.github/workflows/tests.yml` is itself unreached by any
+behavioural suite, and a regression there -- an unfiltered `on.push`, or
+yfinance reinstalled into the blocking job -- changes no engine behaviour and
+raises nothing either. It is read here as text, not executed, because this
+suite is offline and does not run GitHub Actions.
+
 Run:
   python3 tests/test_repo_hygiene.py
 """
@@ -203,6 +210,240 @@ def test_every_suite_that_drives_a_priced_route_declares_its_market_posture():
         "these suites drive a priced route without declaring a market posture, so running "
         f"them directly reaches the network and running them via run_all.py does not: {missing}. "
         "Add `offline_posture.apply()` beside the imports; see tests/offline_posture.py.")
+
+
+WORKFLOW_REL_PATH = os.path.join(".github", "workflows", "tests.yml")
+
+
+def _nested_block(lines, key):
+    """Lines nested one level under a `key:` mapping entry, the key line
+    itself excluded, ending at the first sibling back at the same indent
+    (or shallower) that `lines` itself starts at.
+
+    This is not a YAML parser -- it is exactly as much indentation tracking
+    as a hand-authored GitHub Actions workflow needs (block mappings and
+    block sequences only: no flow style, no anchors, no multi-document) and
+    no more. A real parser is a dependency this offline, stdlib-only suite
+    does not carry; the tradeoff is that this scanner would mis-read a
+    general YAML document, but `.github/workflows/tests.yml` is small,
+    authored by this repository, and its shape is exactly what
+    `test_the_workflow_block_scanner_reads_only_its_own_nesting_level`
+    below exercises against a fixture built to fool a naive substring
+    search. Returns `None` if `key:` is not found at `lines`' own indent,
+    and `[]` if it is found but nothing is nested under it -- the two are
+    different findings (a removed trigger vs. one that lost its filter) and
+    a caller that conflated them would misreport which one regressed.
+    """
+    top_indent = None
+    for line in lines:
+        if line.strip() != "":
+            top_indent = len(line) - len(line.lstrip(" "))
+            break
+    if top_indent is None:
+        return None
+    start = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "":
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent < top_indent:
+            break
+        if indent == top_indent and line.strip() == f"{key}:":
+            start = idx + 1
+            break
+    if start is None:
+        return None
+    end = start
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() == "":
+            end += 1
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= top_indent:
+            break
+        end += 1
+    return lines[start:end]
+
+
+def _sequence_items(lines):
+    """Values of a YAML block sequence (`- item`) among already-nested lines."""
+    return [line.strip()[2:].strip() for line in lines if line.strip().startswith("- ")]
+
+
+def _installs_yfinance(job_lines):
+    """Whether a job's own lines contain a real `pip install ... yfinance`,
+    never a bare substring match. The `test` job's own comment explains, in
+    prose, why yfinance is deliberately *not* installed there -- and that
+    sentence contains the word "yfinance" -- so a naive `"yfinance" in line`
+    scan reports the job as violating the posture its own comment is
+    documenting. This is the type-1 fake-green shape once removed: not
+    "asserts structure, not content" but its mirror, "matched text, not
+    what the text means."
+    """
+    return any(
+        "pip install" in line and "yfinance" in line and not line.strip().startswith("#")
+        for line in job_lines
+    )
+
+
+def test_the_workflow_block_scanner_reads_only_its_own_nesting_level():
+    """`_nested_block`'s own oracle (development-guide.md #2: a checker with
+    no failing-mutation proof is not evidence). The fixture plants the two
+    things that would fool a scanner that degraded to substring search: a
+    coincidental `jobs:`/`test:` line sitting deep inside another job's
+    `run:` block, and a bare `push:` key with nothing nested under it. A
+    scanner not tracking indentation would truncate the real `test` job
+    early or bleed the sibling job's content across the boundary, and still
+    pass today's file -- this fixture is what would catch it.
+    """
+    fixture = """\
+name: demo
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "1 2 3 4 5"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: |
+          echo "jobs:"
+          echo "test:"
+  network-smoke:
+    if: something
+    steps:
+      - name: b
+        run: pip install yfinance
+""".splitlines()
+
+    on_block = _nested_block(fixture, "on")
+    assert on_block == [
+        "  push:", "  pull_request:", "  schedule:", '    - cron: "1 2 3 4 5"',
+    ], on_block
+
+    # Found, empty -- distinct from not-found, because a push trigger that
+    # lost its branch filter (found, empty) is the #637 regression itself,
+    # while a push trigger removed outright is a different failure.
+    assert _nested_block(on_block, "push") == []
+    assert _nested_block(on_block, "no-such-key") is None
+    assert _sequence_items(_nested_block(on_block, "schedule")) == ['cron: "1 2 3 4 5"']
+
+    jobs_block = _nested_block(fixture, "jobs")
+    test_block = _nested_block(jobs_block, "test")
+    assert any('echo "jobs:"' in line for line in test_block), test_block
+    assert any('echo "test:"' in line for line in test_block), test_block
+    assert not _installs_yfinance(test_block), (
+        "the test job's own block must not include the sibling "
+        "network-smoke job's content")
+
+    network_block = _nested_block(jobs_block, "network-smoke")
+    assert _installs_yfinance(network_block), network_block
+
+
+def test_ci_cannot_run_the_offline_suite_twice_on_one_ref():
+    """#637: `tests/test_market_data.py` is offline and deterministic -- its
+    docstring was always true -- but CI ran it once for `push` and once for
+    `pull_request` on the same PR branch, and the two triggers checked out
+    two different trees (a plain push vs. `actions/checkout`'s ephemeral
+    merge commit) that both reported against the same `headSha`. A
+    maintainer reading one red and one green square for "the same commit"
+    cannot tell that one of them describes code that will never exist on
+    `main`.
+
+    Restricting `on.push` to `main` closes it: a PR branch then gets
+    exactly one CI run -- `pull_request`, over the merge result, which is
+    the signal this repository actually needs, since independently-green
+    PRs going red in combination has happened here -- and `main` keeps its
+    own post-merge signal from `push`, since `main` has silently gone red
+    before with nobody noticing. Checked mechanically because the failure
+    is silent: reopening `on.push` to another branch is a one-line diff
+    that changes no Python, so nothing else in this suite would notice.
+    """
+    on_block = _nested_block(_lines(WORKFLOW_REL_PATH), "on")
+    assert on_block is not None, "tests.yml has no top-level `on:` trigger mapping"
+    push_block = _nested_block(on_block, "push")
+    assert push_block, (
+        "on.push has no nested `branches:` filter -- an unfiltered `push:` "
+        "triggers on every branch, which reopens the #637 double run the "
+        "moment a PR branch's own push and its pull_request run both fire "
+        "on the same commit")
+    branches_block = _nested_block(push_block, "branches")
+    assert branches_block, (
+        "on.push does not filter by `branches:` -- it still triggers on "
+        "every branch push, reopening #637")
+    branches = _sequence_items(branches_block)
+    assert branches == ["main"], (
+        f"on.push must trigger on exactly ['main'], found {branches!r} -- "
+        "main is the only ref that needs push's post-merge signal; any "
+        "other branch still races its own pull_request run on one commit")
+
+
+def test_the_blocking_test_job_never_installs_yfinance():
+    """The suite every PR and every push to `main` blocks on must stay
+    offline by construction, per #620/#625's rule that a suite's answer may
+    not depend on how it was launched -- #637's root cause was exactly this
+    posture missing on one of the two launch paths CI itself uses.
+    `market_data.resolve` only reaches its recorded-response fake when no
+    real provider is importable; installing yfinance in the blocking job
+    would let it silently start resolving live closes, reintroducing the
+    flake and the network dependency #625 removed and this job's own
+    comment already promises against.
+    """
+    jobs_block = _nested_block(_lines(WORKFLOW_REL_PATH), "jobs")
+    assert jobs_block is not None, "tests.yml has no top-level `jobs:` mapping"
+    test_job = _nested_block(jobs_block, "test")
+    assert test_job, "tests.yml has no `test:` job -- the blocking suite has no home"
+    assert not _installs_yfinance(test_job), (
+        "the blocking `test` job installs yfinance -- every PR and every "
+        "push to main blocks on this suite staying offline by construction "
+        "(#620, #625, #637); yfinance belongs only in network-smoke")
+
+    # Sanity check on the scan's own scope, against the real file rather
+    # than only the synthetic fixture above: network-smoke installs
+    # yfinance on purpose (#62). If this goes false, the boundary above may
+    # be scanning the wrong block, not proving the invariant it claims to.
+    network_smoke = _nested_block(jobs_block, "network-smoke")
+    assert network_smoke and _installs_yfinance(network_smoke), (
+        "network-smoke is supposed to install yfinance on purpose -- if it "
+        "no longer does, the scope check above needs re-reading, not trust")
+
+
+def test_a_failing_run_can_be_attributed_to_the_tree_it_tested():
+    """#637: two CI triggers on one branch reported against the same
+    `headSha` while actually testing two different trees, and nothing in
+    either run's own output said so -- a maintainer had to open both runs
+    and reconstruct which checkout produced which answer. The blocking job
+    must print its own trigger and the commit it actually resolved before
+    the suite that might fail, or a red run still hides the one fact that
+    would have explained it: a step placed after a failed step does not run
+    by default, so attribution after the suite step is attribution nobody
+    ever sees on the run that needed it.
+    """
+    jobs_block = _nested_block(_lines(WORKFLOW_REL_PATH), "jobs")
+    test_job = _nested_block(jobs_block, "test") or []
+    joined = "\n".join(test_job)
+    assert "git rev-parse HEAD" in joined, (
+        "the blocking `test` job never resolves and prints `git rev-parse "
+        "HEAD` -- a failing run cannot be attributed to the tree it "
+        "actually checked out (a plain push vs. a PR's ephemeral merge "
+        "commit), which is what made the #637 double run unreadable")
+    assert "github.event_name" in joined, (
+        "the blocking `test` job never prints its own trigger event -- "
+        "attribution needs both which tree and which trigger produced it")
+
+    attribution_at = next(
+        (i for i, line in enumerate(test_job) if "git rev-parse HEAD" in line), None)
+    suite_at = next(
+        (i for i, line in enumerate(test_job) if "run_all.py" in line), None)
+    assert attribution_at is not None and suite_at is not None
+    assert attribution_at < suite_at, (
+        "the tree-attribution step must run before `tests/run_all.py` -- "
+        "a failing suite step aborts the job before a later step runs, so "
+        "attribution placed after it never shows up on the run it was "
+        "meant to explain")
 
 
 def main():
