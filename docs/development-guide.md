@@ -263,6 +263,7 @@ the disagreement ships silently. **Receipts.** Third recurrence in one cut
 | Which line a row belongs to | Reconciliation compared `check.slot_id` against `{prior.slot_id, prior.line_id}` rather than routing both sides through one identity function; a `slot_id` names its line's live head, so a second revision matched neither and the then/now comparison went silent with the most history behind it | `conditions.slot_line_id` is the only reader; `review.py` stamps `line_id` on every due entry and on `prior_commitment.condition`, and the renderer compares only stamped values (#437/#438) |
 | Whether a row is still open | The card's summary count and its per-condition lines decided independently until round 2 unified them onto `_condition_outcomes` — then round 3 found the same disease inside it, where `_condition_outcome` folded a crossing axis and a basis axis into one value through an if/elif chain, so whichever matched first dropped the other from both surfaces | Return both axes and render each independently (#438, review rounds 2–3) |
 | Which thesis cycles are live | Both the plan and the card context routed through the single derivation `_thesis_cycle_index` — and still split, because the two call sites assembled its *input* differently: the plan joined thesis rows with the session's cycle relinks, finalize re-read root history without them, so a condition live only via a relink and beyond the lookup cap fell out of both rosters. Each half had a test; the defect lived only in their intersection | `cycle_relinks` became a required argument — a call site that omits it does not run — and `_plan_thesis_cycles` is the only finalize-side accessor (#444, review rounds 3–4) |
+| Which holdings define a frozen valuation frame | The final `PortfolioBasis` was split-aware, but `_virtual_valuation_frame` first discovered tickers from a split-blind provisional book. A split-crossing position that raw arithmetic erased was therefore removed from price coverage before the correct reader ran; the final validation refused because the restored holding had neither a price nor a declared gap | Provisional discovery and final basis receive the same frozen split map; the production-path test removes that argument and must fail (#558 post-merge review) |
 
 **Rules** — no gate detects a second derivation.
 
@@ -280,3 +281,8 @@ the disagreement ships silently. **Receipts.** Third recurrence in one cut
   places: the composition feeding the derivation must be single too. Make a
   missing ingredient unrepresentable — a required parameter with no default —
   rather than remembered at every call site (#444 round 3).
+- A selector, preflight, or coverage builder that narrows the input to a
+  canonical reader is part of that reader's truth path. A direct-call AST gate
+  can prove that a reader accepts an argument while missing that an upstream
+  helper filtered the world on a different basis; pair it with one
+  production-path mutation that crosses the helper boundary (#558/#570).
