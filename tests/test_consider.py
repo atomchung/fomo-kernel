@@ -2481,6 +2481,11 @@ def _fake_download(symbols, start, end=None):
 
 import market_data
 market_data._download = _fake_download
+# The other half of the provider seam. Without it `_from_yahoo` answers
+# `provider_missing` above the fake and never calls it, which is what every CI
+# runner does -- they install no yfinance on purpose (#621). Safe to assign
+# outright here, unlike in-process: this runs in a throwaway subprocess.
+market_data._provider_available = lambda: True
 '''
 
 

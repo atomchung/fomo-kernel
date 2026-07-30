@@ -496,13 +496,40 @@ def network_allowed(env=None):
     return str(value).strip().lower() not in {"1", "true", "yes", "on"}
 
 
+def _provider_available():
+    """Whether :func:`_download` below could run at all — the other half of the
+    provider seam, and module-level for exactly the same two reasons.
+
+    This answer used to be an inline ``import yfinance`` probe inside
+    ``_from_yahoo``, which put a second short-circuit *above* ``_download`` that
+    no fake provider replaced. CI installs no yfinance on purpose, so every
+    stubbed test returned ``provider_missing`` before reaching the fake: three of
+    them reported "the route made no provider request at all" on every CI run
+    for a release, while passing on any developer machine that happened to have
+    yfinance installed (#621). A seam that only one half of can be replaced is
+    not a seam — replacing the call without replacing the availability answer
+    produces a fake that never runs.
+
+    Kept here rather than folded into ``_download`` because ``_from_yahoo``'s
+    order is load-bearing (#235): this must stay *above* the cache read, so an
+    offline or provider-less run degrades before a stale entry is reachable.
+    Moving it into ``_download`` would put it below that read.
+    """
+    try:
+        import yfinance  # noqa: F401  # probe only; _download does the work
+    except ImportError:
+        return False
+    return True
+
+
 def _download(symbols, start, end=None):
     """The one provider call in this repository.
 
     Isolated behind a module-level name for two reasons: the contract suite
     replaces it with a fake and counts invocations (the mechanical half of "one
     request per distinct symbol, never twice"), and it keeps the ``yfinance``
-    import — the thing every guard greps for — at exactly one site.
+    import — the thing every guard greps for — inside this provider seam, which
+    is this function and :func:`_provider_available` above it and nowhere else.
 
     ``actions=True`` is what makes closes and split observations come from one
     response; ``auto_adjust=True`` matches the basis every existing reader
@@ -555,9 +582,7 @@ def _from_yahoo(request, root=None, today=None, env=None):
         return _unavailable(request, [_gap(
             "network_disabled",
             f"{OFFLINE_ENV} is set; no market data was retrieved")])
-    try:
-        import yfinance  # noqa: F401  # probe only; _download does the work
-    except ImportError:
+    if not _provider_available():
         return _unavailable(request, [_gap(
             "provider_missing", "yfinance is not installed")])
 

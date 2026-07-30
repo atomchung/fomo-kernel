@@ -122,6 +122,14 @@ class provider:
     def __enter__(self):
         self._real = market_data._download
         market_data._download = self.fake
+        # Both halves of the provider seam, or this fake never runs on a machine
+        # without yfinance -- which is every CI runner, by deliberate choice
+        # (#621). Patched here rather than by injecting a dummy into
+        # sys.modules: that table is process-global, this suite runs its tests
+        # sequentially in one process, and an entry left behind would make every
+        # later test believe yfinance is installed.
+        self._real_available = market_data._provider_available
+        market_data._provider_available = lambda: True
         market_data.reset_memo()
         self._tmp = tempfile.TemporaryDirectory()
         self.root = self._tmp.name
@@ -129,6 +137,7 @@ class provider:
 
     def __exit__(self, *exc):
         market_data._download = self._real
+        market_data._provider_available = self._real_available
         market_data.reset_memo()
         self._tmp.cleanup()
         return False
@@ -323,6 +332,96 @@ def test_d_offline_degrades_exactly_as_a_missing_provider_does():
         f"suite stops being an oracle for it: {bundle.to_json()}")
     assert [g["code"] for g in bundle.gaps] == ["network_disabled"]
     assert not bundle.usable
+
+
+class _NoYFinance:
+    """Make ``import yfinance`` genuinely fail for a block, then restore the
+    import system exactly — a CI runner, reproduced inside a developer process.
+
+    Every runner installs no yfinance on purpose (`.github/workflows/tests.yml`),
+    so this is the only way a machine that *has* it can observe what CI observes.
+    Nothing here injects a dummy: `sys.modules` is process-global, this suite runs
+    sequentially in one process, and a leftover entry would make every later test
+    believe yfinance is installed.
+    """
+
+    class _Finder:
+        def find_spec(self, name, path=None, target=None):
+            if name == "yfinance" or name.startswith("yfinance."):
+                raise ModuleNotFoundError("simulated: no yfinance on this machine")
+            return None
+
+    def __enter__(self):
+        self._saved = sys.modules.pop("yfinance", None)
+        self._finder = self._Finder()
+        sys.meta_path.insert(0, self._finder)
+        return self
+
+    def __exit__(self, *exc):
+        sys.meta_path.remove(self._finder)
+        sys.modules.pop("yfinance", None)
+        if self._saved is not None:
+            sys.modules["yfinance"] = self._saved
+        return False
+
+
+def test_d_a_missing_provider_is_its_own_gap_and_never_reaches_the_call():
+    """The oracle section D's own docstring claims and the suite never had (#621).
+
+    `test_d_offline_degrades_exactly_as_a_missing_provider_does` above names this
+    case in its title and does not test it: it sets TR_OFFLINE and asserts
+    `network_disabled`. Those are two different codes on two different branches,
+    and only one of them was ever covered — so the branch that fires on every CI
+    runner had no oracle at all.
+
+    Only `_download` is faked here. The availability answer is left real, which
+    is the whole point: with yfinance genuinely unimportable it must refuse
+    *above* the call.
+    """
+    fake = FakeProvider()
+    real = market_data._download
+    market_data._download = fake
+    market_data.reset_memo()
+    try:
+        with _NoYFinance(), tempfile.TemporaryDirectory() as root:
+            bundle = market_data.resolve(_request(), root=root, today=DAY, env=ONLINE)
+    finally:
+        market_data._download = real
+        market_data.reset_memo()
+
+    assert not fake.calls, (
+        "a missing provider must be answered above the call, never by attempting it and "
+        f"catching the failure — that would report transport_failed: {fake.calls}")
+    assert bundle.source == "unavailable"
+    assert [g["code"] for g in bundle.gaps] == ["provider_missing"], bundle.to_json()
+    assert bundle.frame is None and not bundle.usable
+
+
+def test_d_the_fake_provider_seam_survives_a_machine_with_no_yfinance():
+    """The gate for #621 itself: this suite's fake must not depend on the
+    developer's environment.
+
+    A `provider()` block that replaces only `_download` short-circuits at the
+    availability answer above it and never calls the fake. That is what shipped:
+    three tests reported a product failure ("the route made no provider request
+    at all") that was really an environment fact, on every CI run for a release,
+    invisible on any machine with yfinance installed.
+
+    Nothing below asserts anything about yfinance. It asserts that the seam is
+    replaced in both halves — remove either patch from `provider()` and this
+    fails, which is the mutation this test exists for.
+    """
+    with _NoYFinance():
+        assert not market_data._provider_available(), (
+            "the blocker must really make the import fail, or this test proves nothing")
+        with provider() as p:
+            bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+            assert p.calls, (
+                "the fake was never called on a machine without yfinance — the seam is only "
+                "half-replaced, which is #621 exactly")
+    assert bundle.frame is not None and bundle.usable, bundle.to_json()
+    assert market_data._provider_available.__module__ == "market_data", (
+        "the real availability answer must be restored when the block exits")
 
 
 def test_d_every_provider_failure_is_a_stable_code_and_never_a_number():
