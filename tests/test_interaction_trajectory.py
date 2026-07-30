@@ -1440,6 +1440,84 @@ def test_challenge_fidelity_hash_is_canonical():
     assert fidelity_of(smaller)["challenge_hash"] != first
 
 
+def test_challenge_fidelity_refuses_a_hollow_challenge():
+    """Emptied lists are refused, not measured against: the engine's block
+    always owes basis facts, always names its four unconditional unchecked
+    risks, and always states the two-sided case floor. A payload below any
+    floor cannot have come from the consider call this event claims."""
+    for hollow in ({"must_state": []},
+                   {"unchecked": ["liquidity", "valuation", "tax"]},
+                   {"case_required": {}},
+                   {"case_required": {"for": 1, "against": 0}}):
+        payload = challenge_check_payload()
+        payload["challenge"].update(hollow)
+        try:
+            fidelity_of(payload)
+        except ux_receipt.ReceiptError:
+            continue
+        raise AssertionError(f"a hollowed challenge was accepted: {hollow}")
+
+
+def test_a_bare_zero_token_does_not_state_a_nonzero_fact():
+    # Every fraction below one half rounds to a bare "0", so that token
+    # carries no information about the value.
+    challenge = {**challenge_check_payload()["challenge"],
+                 "must_state": [{"topic": "position", "value": 0.343,
+                                 "anchor": "consequence.after.weights.SYNTH"}],
+                 "quote_verbatim": []}
+    zero_only = "the trade leaves 0 room under your cap"
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    assert evidence["facts_missing"] == 1, evidence
+    # A frozen zero is still stated by "0".
+    challenge["must_state"] = [{"topic": "cash", "value": 0.0,
+                                "anchor": "consequence.after.cash.balance"}]
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    assert evidence["facts_missing"] == 0, evidence
+
+
+def test_a_dollar_value_does_not_match_its_percent_form():
+    # cash is dollar-shaped: a fifty-cent balance is not stated by "50%" —
+    # while the same number as a position weight legitimately is.
+    base = challenge_check_payload()["challenge"]
+    text = "this leaves 50% of the book in one name"
+    cash = {**base, "must_state": [{"topic": "cash", "value": 0.5,
+                                    "anchor": "consequence.after.cash.balance"}],
+            "quote_verbatim": []}
+    assert fidelity_of({"challenge": cash, "presented_text": text})["facts_missing"] == 1
+    weight = {**base, "must_state": [{"topic": "position", "value": 0.5,
+                                      "anchor": "consequence.after.weights.SYNTH"}],
+              "quote_verbatim": []}
+    assert fidelity_of({"challenge": weight, "presented_text": text})["facts_missing"] == 0
+
+
+def test_evaluation_evidence_must_be_internally_consistent():
+    """These counts describe one engine challenge, whose shape has floors —
+    a row below them was written by hand, not by _challenge_fidelity."""
+    for impossible, fragment in (
+            ({"must_state_total": 0}, "claims an empty must_state"),
+            ({"unchecked_total": 0}, "fewer than the four unconditional"),
+            ({"unchecked_total": 3}, "fewer than the four unconditional"),
+            ({"facts_checked": 12, "must_state_total": 9},
+             "checked more facts than the challenge stated")):
+        rows = consider_rows()
+        at(rows, EVALUATION).update(impossible)
+        assert_has(ux_receipt.verify_rows(rows), fragment)
+
+
+def test_owner_verdict_is_judgments_only():
+    # The one remaining free-text channel into an archived trace: every other
+    # content-restricted row already rejects unknown fields.
+    rows = consider_rows()
+    at(rows, VERDICT)["presented_text"] = "BUY SYNTH because the user said so"
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner_verdict contains unsupported fields: presented_text")
+    rows = good_markdown_rows()
+    rows.append(row("owner_verdict", controls="pass", card="pass",
+                    memory="not_applicable", note="looked fine to me"))
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner_verdict contains unsupported fields: note")
+
+
 def test_challenge_fidelity_refuses_a_truncated_challenge():
     payload = challenge_check_payload()
     del payload["challenge"]["required_coverage"]

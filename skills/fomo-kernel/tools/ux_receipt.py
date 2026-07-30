@@ -502,22 +502,28 @@ NUMERIC_FACT_TOPICS = ("position", "concentration", "cash")
 NUMBER_TOKEN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 
 
-def _number_present(text, value):
+def _number_present(text, value, percent_form=True):
     """Whether `value` appears in `text` as digits, at any display precision.
 
-    A fraction-shaped value additionally matches its ×100 percent form, and a
-    token matches when the value rounds to it at the token's own precision —
+    A fraction-shaped value additionally matches its ×100 percent form — but
+    only when the topic is fraction-shaped (`percent_form`): a fifty-cent cash
+    balance is not stated by "50%" (external review, 2026-07-30). A token
+    matches when the value rounds to it at the token's own precision —
     "34.3%", "34%", and "0.343" all state the frozen 0.34344…, and "34.4%"
     does not (the same half-a-display-unit rule answer_provenance applies to
-    an --agent-case claim's prose). Signs are the sentence's job — "a $39,200
-    overdraft" carries no minus — so magnitudes are compared.
+    an --agent-case claim's prose). A bare `0` token never states a nonzero
+    fact: every fraction below half rounds to it, so it carries no
+    information about the value (same review). Signs are the sentence's job —
+    "a $39,200 overdraft" carries no minus — so magnitudes are compared.
     """
     magnitude = abs(Decimal(str(value)))
     targets = [magnitude]
-    if magnitude <= 1:
+    if percent_form and magnitude <= 1:
         targets.append(magnitude * 100)
     for token in NUMBER_TOKEN.findall(text):
         token_value = Decimal(token.replace(",", ""))
+        if token_value == 0 and magnitude != 0:
+            continue
         quantum = Decimal(1).scaleb(token_value.as_tuple().exponent)
         if any(target.quantize(quantum, rounding=ROUND_HALF_UP) == token_value
                for target in targets):
@@ -586,11 +592,34 @@ def _challenge_fidelity(path: str | None) -> dict:
             "the consider call's own output")
     must_state = challenge["must_state"]
     quote_verbatim = challenge["quote_verbatim"]
+    unchecked = challenge["unchecked"]
+    case_required = challenge["case_required"]
     if not isinstance(must_state, list) or not isinstance(quote_verbatim, list) \
-            or not isinstance(challenge["unchecked"], list):
+            or not isinstance(unchecked, list):
         raise ReceiptError(
             "--challenge-check-file challenge must_state, quote_verbatim and "
             "unchecked must be lists")
+    # A hollowed-out challenge is refused, not measured against (external
+    # review, 2026-07-30): the engine's block always owes at least the basis
+    # facts, always names its four unconditional unchecked risks
+    # (evaluation-challenge.schema.json minItems: 4), and always states the
+    # two-sided case floor — a payload below any of those floors cannot have
+    # come from the consider call this event claims to record.
+    if not must_state:
+        raise ReceiptError(
+            "--challenge-check-file challenge must_state is empty — the engine "
+            "always owes at least the basis facts; paste the complete block from "
+            "the consider call's own output")
+    if len(unchecked) < 4:
+        raise ReceiptError(
+            "--challenge-check-file challenge unchecked names fewer than the four "
+            "unconditional risks the engine always lists; paste the complete block")
+    if not isinstance(case_required, dict) or not all(
+            isinstance(case_required.get(side), int) and case_required[side] >= 1
+            for side in ("for", "against")):
+        raise ReceiptError(
+            "--challenge-check-file challenge case_required must state the "
+            "two-sided floor (for/against, each at least 1)")
     presented_text = payload.get("presented_text")
     if not isinstance(presented_text, str) or not presented_text.strip():
         raise ReceiptError("--challenge-check-file presented_text must be a non-empty string")
@@ -614,7 +643,10 @@ def _challenge_fidelity(path: str | None) -> dict:
         if topic in NUMERIC_FACT_TOPICS and isinstance(value, (int, float)) \
                 and not isinstance(value, bool):
             checked += 1
-            if not _number_present(presented_text, value):
+            # cash is dollar-shaped, never fraction-shaped: a fifty-cent
+            # balance is not stated by "50%".
+            if not _number_present(presented_text, value,
+                                   percent_form=(topic != "cash")):
                 missing_count += 1
         elif topic == "excluded_holding" and isinstance(value, str):
             checked += 1
@@ -1101,6 +1133,28 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                     f"row {index} evaluation_presented shows {counts['facts_missing']} "
                     "machine-checkable fact(s) the presented answer did not carry"
                 )
+            # Internal consistency (external review, 2026-07-30): these counts
+            # describe one engine challenge, whose shape has floors —
+            # must_state is never empty, unchecked never lists fewer than its
+            # four unconditional risks, and the machine can only have checked
+            # facts the challenge stated. `_challenge_fidelity` cannot emit a
+            # row below these floors, so one on disk was written by hand.
+            if isinstance(counts["must_state_total"], int) and counts["must_state_total"] < 1:
+                errors.append(
+                    f"row {index} evaluation_presented claims an empty must_state — "
+                    "no engine challenge has one"
+                )
+            if isinstance(counts["unchecked_total"], int) and 0 <= counts["unchecked_total"] < 4:
+                errors.append(
+                    f"row {index} evaluation_presented claims fewer than the four "
+                    "unconditional unchecked risks every engine challenge names"
+                )
+            if all(isinstance(counts[key], int) for key in ("facts_checked", "must_state_total")) \
+                    and counts["facts_checked"] > counts["must_state_total"]:
+                errors.append(
+                    f"row {index} evaluation_presented checked more facts than the "
+                    "challenge stated"
+                )
         if event == "resolution_presented":
             extra = sorted(set(row) - {"version", "event", "session_id", "ts", "workflow_state"})
             if extra:
@@ -1111,6 +1165,20 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
             if row.get("workflow_state") not in WORKFLOW_STATES:
                 errors.append(
                     f"row {index} has unsupported workflow state {row.get('workflow_state')!r}"
+                )
+        if event == "owner_verdict":
+            # The verdict is judgments only. Every other content-restricted row
+            # already rejects unknown fields; this one predates that discipline
+            # and was the remaining free-text channel into an archived trace
+            # (external review, 2026-07-30). Everything the CLI has ever
+            # written here is covered by the axes plus the question pair.
+            allowed = {"version", "event", "session_id", "ts",
+                       *VERDICT_AXES, "question_specificity", "answer_fit"}
+            extra = sorted(set(row) - allowed)
+            if extra:
+                errors.append(
+                    f"row {index} owner_verdict contains unsupported fields: "
+                    f"{', '.join(extra)}"
                 )
         if event == "cash_anchor_checked" and row.get("cash_outcome") not in CASH_OUTCOMES:
             errors.append(f"row {index} has unsupported cash outcome {row.get('cash_outcome')!r}")

@@ -140,14 +140,12 @@ python3 tools/ux_receipt.py event --session-id <id> --event resolution_presented
 
 ```json
 {
-  "challenge": {"must_state": ["... the emitted block, verbatim ..."],
-                "quote_verbatim": [], "unchecked": [],
-                "case_required": {}, "required_coverage": []},
+  "challenge": {"...": "the emitted block, verbatim — all five keys, uncut"},
   "presented_text": "the exact answer text you showed the user"
 }
 ```
 
-The challenge is emitted beside the evaluation row and never stored, so it must be captured when the command returns — there is no copy on disk to read back, and a truncated paste is refused rather than read as a smaller obligation. It stays auditable afterwards: the block is a pure function of the persisted row, so the recorded `challenge_hash` (sha256 of the block serialized with sorted keys, compact separators) can be recomputed by anyone holding the root.
+The challenge is emitted beside the evaluation row and never stored, so it must be captured when the command returns — there is no copy on disk to read back, and a truncated or hollowed paste is refused rather than read as a smaller obligation: the block always owes basis facts, always names at least its four unconditional unchecked risks, and always states the two-sided case floor, so a payload below any of those floors cannot have come from the call this event records. It stays auditable afterwards: the block is a pure function of the persisted row, so the recorded `challenge_hash` (sha256 of the block serialized with sorted keys, compact separators) can be recomputed by anyone holding the root.
 
 The tool machine-checks what containment and digits can honestly decide, and persists only booleans, counts and that hash: the user's `quote_verbatim` sentences must appear verbatim (`quotes_verbatim`), every rule collision's own `detail.text` must appear verbatim, every excluded holding's ticker must appear, and every position/concentration/cash number must appear **as digits** at some display precision — `34.3%`, `34%` and `0.343` all state a frozen `0.34344…`, and a disagreeing number counts as missing (`facts_missing`). An engine-vocabulary string (`cost_basis`, `unverified`), a boolean trigger, or an `unchecked` key reaches the user as prose in the conversation's own language, which no offline comparison can judge — that half belongs to the owner's `comprehension` verdict below, and `must_state_total`/`unchecked_total` are persisted so that judgment is made against a stated obligation size rather than from memory. Like the grounding check, the fidelity result is recorded as computed and judged at `verify`: evidence that is absent, malformed, or failing fails the trace with no legacy exemption, and the trace being append-only means a failed delivery voids the run rather than being patched over.
 
