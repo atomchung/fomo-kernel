@@ -23,6 +23,7 @@ Run:
   python3 tests/test_split_basis.py
 """
 import ast
+import csv
 import json
 import os
 import subprocess
@@ -484,6 +485,205 @@ def test_the_split_map_changes_the_books_own_identity():
             "a root that never ran a review carries no map and degrades to unadjusted "
             "(review._recorded_splits); if this changed, the test above proves nothing")
         assert with_map["basis"]["state_version"] != without["basis"]["state_version"]
+
+
+# ───────── every route that reads the book, on one crossing book ─────────
+#
+# Owner ruling 2026-07-30, after three sessions each escaped
+# `test_every_reader_of_the_book_is_told_what_a_split_did_to_it` for a
+# different structural reason (#572: a caller one level above a watched
+# callee; #577: a route that calls no watched callee at all, summing raw
+# `trade_recap.load()` rows itself; #576: a supplier that returns nothing).
+# The common shape is that the check audits the *call graph*, and all three
+# escapes were things a call graph does not model.
+#
+# So this section audits *routes* instead. One book, one split, no trading
+# since — the commonest shape in the wild — driven through every subcommand
+# that reads the recorded book, asserting each route's own honest observable.
+#
+# The route list is derived from `review.py` itself, not hand-written, which
+# is the part that makes this durable: a new subcommand that reads the book
+# and is not classified here fails the suite. A hand list would have exactly
+# the weakness that let three escapes through.
+
+_BOOK_READERS_INTERNAL = frozenset({
+    "derive_holdings", "holdings_as_of", "query_current_book",
+    "query_current_book_from_ledger", "_rows_from_ledger", "_consider_rows",
+    "load_ledger", "detect_exits", "plan_refresh", "_virtual_review_basis",
+    "_virtual_valuation_frame", "build_derived_book",
+})
+
+# Routes driven below. Each name is a `cmd_<name>` in review.py.
+_DRIVEN_ROUTES = ("consider", "prepare", "refresh")
+
+# A route may sit here only with a reason naming who owns it instead.
+_ROUTES_NOT_DRIVEN = {}
+
+
+def _routes_that_read_the_book():
+    """Which `cmd_*` entry points reach a book reader, from review.py's own
+    call graph. Shallow-recursive through review's module-level helpers,
+    which is how `cmd_prepare` reaches `derive_holdings` several frames
+    down."""
+    tree = ast.parse(open(os.path.join(ENGINE, "review.py"), encoding="utf-8").read())
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+    def reaches(name, seen, depth):
+        if name in seen or depth > 3 or name not in funcs:
+            return False
+        seen.add(name)
+        for node in ast.walk(funcs[name]):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            callee = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if callee in _BOOK_READERS_INTERNAL:
+                return True
+            if callee in funcs and reaches(callee, seen, depth + 1):
+                return True
+        return False
+
+    return {name[len("cmd_"):].replace("_", "-") for name in funcs
+            if name.startswith("cmd_") and reaches(name, set(), 0)}
+
+
+def test_every_route_that_reads_the_book_is_classified():
+    """The durable half. `render`, `preview`, `set-cap` and the rest touch no
+    book and owe nothing; the three that do are named above. A new
+    subcommand that reads the book arrives here as a failure rather than as
+    an untested route."""
+    found = _routes_that_read_the_book()
+    classified = set(_DRIVEN_ROUTES) | set(_ROUTES_NOT_DRIVEN)
+    assert found <= classified, (
+        "these review.py routes read the recorded book and no split-basis route test "
+        f"covers them: {sorted(found - classified)}. Drive it below, or add a reasoned "
+        "entry to _ROUTES_NOT_DRIVEN naming who does.")
+    assert classified <= found | {"consider"}, (
+        f"classified routes that no longer read the book: {sorted(classified - found)}")
+
+
+# One position declared before NVDA's real ten-for-one and untouched since,
+# plus the map a finished review froze. The broker now shows the post-split
+# count, which is the same position — not a purchase.
+_CROSSING_LEDGER = {"type": "snapshot", "as_of": "2024-06-01", "source": "declared_book",
+                    "positions": [{"ticker": "NVDA", "shares": 10, "avg_cost": 1000.0,
+                                   "market": "US", "currency": "USD"}]}
+_BROKER_VIEW = {"as_of": "2026-07-29",
+                "positions": [{"ticker": "NVDA", "shares": 100, "avg_cost": 100.0,
+                               "market": "US", "currency": "USD"}]}
+
+
+def _crossing_root(tmp, with_map=True):
+    with open(os.path.join(tmp, "ledger.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(_CROSSING_LEDGER) + "\n")
+    if with_map:
+        with open(os.path.join(tmp, "last_state.json"), "w", encoding="utf-8") as f:
+            json.dump({"splits": {"NVDA": [["2024-06-10", 10.0]]}}, f)
+    snapshot = os.path.join(tmp, "broker.json")
+    with open(snapshot, "w", encoding="utf-8") as f:
+        json.dump(_BROKER_VIEW, f)
+    return snapshot
+
+
+def _crossing_csv(tmp):
+    """The same position as `_CROSSING_LEDGER`, handed over as transactions
+    instead — the other book `consider` knows how to build."""
+    path = os.path.join(tmp, "transactions.csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+        writer.writerow(["NVDA", 10, 1000.0, "BUY", "2024-06-01", "Trade"])
+    return path
+
+
+def _route(tmp, *args):
+    env = dict(os.environ, TRADE_COACH_HOME=tmp)
+    run = subprocess.run([sys.executable, os.path.join(ENGINE, "review.py"), *args,
+                          "--root", tmp],
+                         capture_output=True, text=True, env=env, timeout=180)
+    return run.returncode, json.loads(run.stdout) if run.stdout.strip() else {}
+
+
+def test_refresh_does_not_invent_a_change_a_split_explains():
+    """`refresh`'s honest observable is not a share count — it is whether the
+    book reconciles. Ten pre-split shares and a broker showing a hundred are
+    the same position, so nothing changed and nothing needs confirming.
+
+    Split-blind, this route tells the user their holding went from 10 to 100
+    and their average cost from 1,000 to 100, and **raises a confirmation**:
+    it spends a turn of their attention asking them to settle a ninety-share
+    purchase that never happened."""
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = _crossing_root(tmp)
+        code, payload = _route(tmp, "refresh", "--snapshot-json", snapshot)
+        assert code == 0, payload
+        assert payload["summary"]["status"] == "reconciled", payload["summary"]
+        assert payload["diff"]["positions"] == [], payload["diff"]["positions"]
+        assert payload["pending_confirmations"] == [], (
+            "a split with no trading since must raise nothing to confirm")
+
+
+_PREMISE = ('{"ticker": "NVDA", "side": "buy", "qty": 1, "price": 100.0, '
+            '"currency": "USD"}')
+
+
+def test_consider_answers_on_the_split_adjusted_book_on_both_of_its_routes():
+    """`consider`'s observable is the share count itself, and it has two ways
+    of building a book: the recorded ledger, and a CSV handed over on the
+    spot. Both are asserted, because they are different implementations that
+    happen to owe the same answer — the CSV route summed raw
+    `trade_recap.load()` rows and was split-blind until #577, and a route
+    test that covered only the ledger side is exactly how that survived
+    #550, #558 and #572.
+
+    The two are built differently on purpose (the ledger route carries the
+    running position across each split inside the canonical book; the CSV
+    route rebases the rows themselves onto today, because `last_px` is a
+    current quote). Same book, same split, same count."""
+    for label, extra in (("ledger", ()), ("csv", None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            _crossing_root(tmp)
+            if extra is None:
+                extra = (_crossing_csv(tmp),)
+            code, payload = _route(tmp, "consider", *extra, "--premise", _PREMISE)
+            assert code == 0, (label, payload)
+            held = payload["evaluation"]["consequence"]["before"]["held"]["NVDA"]
+            assert held["shares"] == 100.0, (label, held)
+            assert held["cost"] == 10000.0, (label, "a split is a zero-dollar event", held)
+
+
+def test_a_review_can_start_at_all_on_a_split_crossing_book():
+    """The compounding failure, and the reason a route-level check is worth
+    having. `prepare` reads the same book through `plan_refresh`, so a
+    phantom change does not merely produce a wrong number — #530's
+    catch-up gate refuses the review outright and sends the user to settle a
+    difference that does not exist. Split-aware, the review just runs."""
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = _crossing_root(tmp)
+        code, payload = _route(tmp, "prepare", "--snapshot-json", snapshot)
+        assert code == 0, payload
+        assert "review_plan" in payload, sorted(payload)
+
+
+def test_without_the_map_every_route_degrades_together():
+    """The counterweight. Each assertion above must be failing for the split
+    basis and not for some unrelated reason the fixture happens to satisfy,
+    so the same book with no frozen map has to break all three in the ways
+    named — otherwise these tests prove nothing about splits."""
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = _crossing_root(tmp, with_map=False)
+        _code, refresh = _route(tmp, "refresh", "--snapshot-json", snapshot)
+        assert refresh["summary"]["status"] != "reconciled"
+        assert [row for row in refresh["diff"]["positions"] if row["kind"] == "shares"], (
+            "split-blind, refresh must be reporting the phantom share change")
+
+        _code, considered = _route(
+            tmp, "consider", "--premise",
+            '{"ticker": "NVDA", "side": "buy", "qty": 1, "price": 100.0, "currency": "USD"}')
+        assert considered["evaluation"]["consequence"]["before"]["held"]["NVDA"]["shares"] == 10.0
+
+        code, _prepared = _route(tmp, "prepare", "--snapshot-json", snapshot)
+        assert code != 0, "split-blind, the catch-up gate must be refusing the review"
 
 
 def _main():
