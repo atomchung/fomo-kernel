@@ -25,6 +25,7 @@ SUITES = [
     ("Condition slots (#412)", "tests/test_conditions.py"),
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
     ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py"),
+    ("Read-only current-book outlet (#561)", "tests/test_positions.py"),
     ("Answer provenance gate (#414, Wave A)", "tests/test_answer_provenance.py"),
     ("Visible evaluation challenge (#479 Wave B)", "tests/test_evaluation_challenge.py"),
     ("Behavior verdicts (#446)", "tests/test_verdicts.py"),

@@ -6118,6 +6118,205 @@ def cmd_consider(args):
            "evaluation": row, "challenge": challenge, "append": report})
 
 
+def _positions_diagnosis(rows, max_pos_override, last_px, fx):
+    """The per-position diagnosis README's "What it looks like" demonstrates
+    (#561), computed once here so ``cmd_positions`` stays a thin CLI facade.
+
+    Mirrors ``trade_recap.py``'s own review pipeline call order exactly
+    (``round_trips`` -> ``fifo_held`` -> ``classify_adds`` -> ``dim_size`` ->
+    ``ticker_diagnosis``) rather than reimplementing any part of it --
+    ``trade_recap.py:2447-2550`` runs the identical five calls on
+    CSV-sourced rows to build the same card section.
+
+    Deliberately *not* the canonical average-cost book
+    (``portfolio_basis.query_current_book``) that ``consider``'s ledger
+    route now uses: ``fifo_held``'s own note (#162) is that realized P&L is
+    FIFO-matched and the *remaining* cost must be on the same basis, because
+    ``ticker_diagnosis`` sums the two into one ``impact`` figure and mixing
+    a FIFO-realized amount with an average-cost remaining balance misstates
+    that sum whenever a ticker was built from more than one lot and then
+    partially sold -- the exact scenario ``rows_from_portfolio_basis`` was
+    written to get right for sizing, one layer up from what this function
+    computes. For a ticker with one continuous lot history the two bases
+    agree exactly (tests/test_consider.py's
+    ``test_ledger_reconstruction_matches_derive_holdings_for_the_same_events``);
+    they can differ on `shares`/`avg_cost` only in the rarer
+    multi-lot-partial-sell case, the same CSV-vs-ledger basis distinction
+    issue #456 already documents for `consider`.
+
+    Returns ``(diagnosed, residual, weights, mixed_currency)``. ``diagnosed``
+    covers every currently-held, non-residual ticker (``meaningful_tickers``
+    -- #172's floor), each looked up in ``ticker_diagnosis``'s own output
+    rather than iterated from it, so a real holding whose impact rounds
+    under that function's own $1 floor still gets a row (with ``impact:
+    None, tags: []``) instead of silently vanishing from the book. A fully
+    exited ticker ``ticker_diagnosis`` also scores is dropped here -- this
+    reports current positions, not full trading history. ``residual``
+    covers every other currently-held ticker (below the meaningful-position
+    floor): shares/cost/value/weight only, no diagnosis, matching the
+    product's own "small lots not nitpicked" framing.
+    """
+    rts, open_lots = trade_recap.round_trips(rows)
+    held = trade_recap.fifo_held(open_lots)
+    if not held:
+        raise ReviewError("the recorded book has no open position to report")
+
+    cur_map, currencies, _conflicts = trade_recap.currency_map(rows)
+    mixed_currency = len(currencies) > 1
+    if mixed_currency:
+        rts_u, held_u, lastpx_u = trade_recap.usd_view(rts, held, last_px, cur_map, fx or {"USD": 1.0})
+    else:
+        rts_u, held_u, lastpx_u = rts, held, (last_px or {})
+
+    keep_dx = trade_recap.meaningful_tickers(held_u, lastpx_u)
+    held_dx = {t: v for t, v in held_u.items() if t in keep_dx}
+
+    d_size = trade_recap.dim_size(rows, held_u, lastpx_u, max_pos_override)
+    weights = d_size.get("weights") or {}
+    adds_class = trade_recap.classify_adds(rows)
+    # top_n: this is a lookup, not a card with a real-estate budget, so ask
+    # for every candidate ticker_diagnosis could possibly emit rather than
+    # its card-tuned default of 7 -- truncating here would silently drop a
+    # real holding from the answer to "what do I currently hold".
+    tdiag_by_ticker = {
+        row["ticker"]: row
+        for row in trade_recap.ticker_diagnosis(
+            rts_u, adds_class, held_dx, lastpx_u,
+            max_pos_override=max_pos_override,
+            top_n=len(held_u) + len(rts_u) + 1,
+            sizing_weights=weights)
+    }
+
+    def _row(ticker, shares, cost_total, diag):
+        price = lastpx_u.get(ticker)
+        return {
+            "ticker": ticker,
+            "shares": shares,
+            "avg_cost": (cost_total / shares) if shares else None,
+            "cost_total": cost_total,
+            "value": (shares * price) if price else None,
+            "weight": weights.get(ticker),
+            "impact": diag["impact"] if diag else None,
+            "tags": diag["tags"] if diag else [],
+        }
+
+    diagnosed = [
+        _row(ticker, shares, cost_total, tdiag_by_ticker.get(ticker))
+        for ticker, (shares, cost_total) in held_dx.items()
+    ]
+    diagnosed.sort(key=lambda row: abs(row["impact"]) if row["impact"] is not None else -1,
+                   reverse=True)
+
+    residual = [
+        {"ticker": ticker, "shares": shares,
+         "avg_cost": (cost_total / shares) if shares else None,
+         "cost_total": cost_total,
+         "value": (shares * lastpx_u[ticker]) if lastpx_u.get(ticker) else None,
+         "weight": weights.get(ticker)}
+        for ticker, (shares, cost_total) in held_u.items() if ticker not in held_dx
+    ]
+    residual.sort(key=lambda row: row["weight"] or 0, reverse=True)
+    return diagnosed, residual, weights, mixed_currency
+
+
+def cmd_positions(args):
+    """Read-only current-book outlet (#561): "what do I currently hold,"
+    asked away from any review, `consider` premise, or `refresh` snapshot.
+
+    Sources the book from ``<root>/ledger.jsonl`` alone -- no CSV, no
+    premise, no supplied holdings view -- through ``_rows_from_ledger``,
+    the tested-but-until-now-production-unused reconstruction
+    ``tests/test_consider.py`` already proves agrees with
+    ``ledger.derive_holdings`` for the common case (see
+    ``_positions_diagnosis`` for the one basis it deliberately does not
+    share with the canonical ledger book, and why).
+
+    Genuinely read-only: unlike every mutating command in this file, this
+    creates no session, appends no row to any ``*.jsonl`` the coach root
+    tracks, and asks no question. The only disk activity is the same-day
+    market-data acquisition cache every price-resolving route already
+    shares (``coach.py``'s registered ``cache`` entry) -- resolving current
+    prices is what this command does, the same as ``consider`` with no
+    ``--prices``.
+
+    Cash, and the disclosure set a stale price / an unreliable cash balance
+    / a partial book name, are deliberately not computed here: they stay on
+    Rule 1's existing freeform-answer disclosure boundary rather than a
+    second computation this entry restates (`references/freeform-answers.md`).
+    ``price_snapshot`` below carries just enough (``as_of`` and each
+    ticker's own observed date) for the agent to judge staleness itself,
+    the same raw material every other freeform answer already has.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    if args.driver_map:
+        trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
+    if args.instrument_map:
+        instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
+
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    try:
+        events, _skipped = ledger.load_ledger(ledger_path)
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
+    if not events:
+        raise ReviewError(
+            f"no recorded book in {ledger_path}; run `prepare` or `refresh` first "
+            "before asking for current positions")
+    rows = _rows_from_ledger(events)
+    if not rows:
+        raise ReviewError("the ledger carries no usable trade or snapshot position; nothing to report")
+
+    feed = None
+    if args.prices:
+        try:
+            feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
+        except price_feed.PriceFeedError as exc:
+            raise ReviewError(f"price feed rejected: {exc}") from exc
+    else:
+        # Same live-resolution lane `consider` uses with no `--prices` (#605
+        # section E): one resolved bundle, reused through the identical
+        # supplied-price path rather than a second one.
+        feed, _bundle = _resolve_consider_prices(args, root)
+
+    last_px, fx, supplied_splits = None, None, None
+    if feed is not None:
+        last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
+        fx = price_feed.fx_rates(feed)
+        supplied_splits = price_feed.splits_map(feed) or None
+
+    splits = _effective_splits(root, supplied_splits)
+    try:
+        trade_recap.adjust_for_splits(rows, splits)
+    except split_policy.SplitDataError as exc:
+        raise ReviewError(f"split data rejected: {exc}") from exc
+
+    max_pos_override = _position_cap_override(root)
+    diagnosed, residual, weights, mixed_currency = _positions_diagnosis(
+        rows, max_pos_override, last_px, fx)
+
+    price_snapshot = None
+    if feed is not None:
+        price_snapshot = {
+            "as_of": feed["as_of"],
+            "observed": {ticker: row.get("observed_date")
+                        for ticker, row in sorted(feed["prices"].items())},
+        }
+    unpriced = sorted(row["ticker"] for row in (diagnosed + residual)
+                      if row["value"] is None)
+
+    _emit({
+        "status": "ok",
+        "root": root,
+        "basis": "priced" if last_px else "cost",
+        "mixed_currency": mixed_currency,
+        "n_holdings": len(diagnosed) + len(residual),
+        "positions": diagnosed,
+        "residual_positions": residual,
+        "unpriced": unpriced,
+        "price_snapshot": price_snapshot,
+    })
+
+
 def cmd_refresh(args):
     """Update the recorded book from a newer holdings view (#485 Slice C).
 
@@ -6411,6 +6610,21 @@ def build_parser():
                               "(schemas/book-refresh.schema.json). Omit for the "
                               "read-only difference and its pending confirmations.")
     refresh.set_defaults(func=cmd_refresh)
+    positions = sub.add_parser(
+        "positions",
+        help="read-only per-position diagnosis of the recorded current book; no "
+             "premise, no session, no durable write (#561)")
+    positions.add_argument("--root")
+    positions.add_argument("--prices",
+                           help="agent-supplied price envelope (references/price-feed.md); "
+                                "omit to resolve current prices live, as consider does")
+    positions.add_argument("--driver-map")
+    positions.add_argument("--instrument-map")
+    # No CSV route: unlike consider, this command always reads the recorded
+    # book from <root>/ledger.jsonl. `paths` still needs to exist and be
+    # falsy so the consider-price-resolution helpers this reuses take their
+    # ledger branch rather than raising on a missing attribute.
+    positions.set_defaults(func=cmd_positions, paths=None)
     resolve_md = sub.add_parser(
         "resolve-market-data",
         help="resolve current market facts into a price-feed envelope for inspection "
