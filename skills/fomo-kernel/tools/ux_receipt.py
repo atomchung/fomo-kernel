@@ -47,6 +47,17 @@ shown to the user verbatim. The comparison is computed once from a transient
 `--grounding-check-file` (raw candidate groundings plus the exact presented
 text) and only the boolean result and a sha256 hash of the grounding text are
 persisted; the raw strings never reach the trace. See `_grounding_fidelity`.
+
+The pre-trade lane (`review.py consider`, #544 Slice B) is the second
+card-free route. Its product surface is one inline textual answer carrying
+the engine-declared challenge (#479) plus one resolution invitation, so its
+trace owes `evaluation_presented` — with challenge-delivery fidelity computed
+the same transient-file way from `--challenge-check-file`; see
+`_challenge_fidelity` for exactly which halves are machine-decidable — and
+one `resolution_presented` after it, whose `workflow_state` records the
+user's word and never a broker execution. `consider` creates no session, so
+the trace is keyed by the engine's own `evaluation_id`, the way a refresh
+trace is keyed by its `refresh_id`.
 """
 
 from __future__ import annotations
@@ -60,6 +71,7 @@ import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 
 VERSION = 2
@@ -98,12 +110,21 @@ CASH_OUTCOMES = ("found_in_source", "asked_user", "skipped")
 # then reports what it recorded; those are the surfaces this trace can prove
 # reached a human, in place of a card it never renders.
 CHANGE_KINDS = ("diff", "result")
+# What a `consider` resolution invitation left the evaluation as (#544 Slice B).
+# The vocabulary is the engine's own: "open" plus review.CONSIDER_DECISIONS.
+# `acted` is the user's word for what they did, recorded through
+# `consider --resolve` — never broker-execution proof, which is why no value
+# shaped like "executed"/"filled" exists here. The receipt states which
+# workflow state the invitation ended on, nothing about any real-world fill.
+WORKFLOW_STATES = ("open", "acted", "declined", "modified")
 EVENT_KINDS = (
     "question_presented",
     "answers_received",
     "artifact_generated",
     "card_presented",
     "change_presented",
+    "evaluation_presented",
+    "resolution_presented",
     "rule_choice_presented",
     "memory_presented",
     "widget_attempt_failed",
@@ -127,7 +148,15 @@ ONLY_NOT_APPLICABLE = ("not_applicable",)
 # Ordered for message stability; `question_specificity`/`answer_fit` are not
 # here because they are gated by what the trace shows (a validated dynamic
 # surface), not by which route it declared.
-VERDICT_AXES = ("controls", "card", "memory", "change")
+#
+# The last four are #544 Slice B's `consider` axes, the user-observable M1
+# questions a card judgment cannot stand in for on a surface with no card:
+# comprehension (was the engine's challenge understood as presented),
+# usefulness (specific to this book, versus generic chat advice), friction
+# (low enough to use again), and resolution (the invitation was understood as
+# recording the user's word, not as executing anything).
+VERDICT_AXES = ("controls", "card", "memory", "change",
+                "comprehension", "usefulness", "friction", "resolution")
 
 # --- What each route owes -----------------------------------------------------
 #
@@ -165,6 +194,16 @@ VERDICT_AXES = ("controls", "card", "memory", "change")
 #                       evidence.
 #               False — `change_presented` must be absent, for the same reason
 #                       `cards: False` forbids rather than exempts.
+#   evaluation  True  — exactly one `evaluation_presented` (the inline
+#                       TradeEvaluation challenge delivery, with its
+#                       machine-computed fidelity evidence) and exactly one
+#                       `resolution_presented` after it. JSON on disk is not
+#                       delivery; this pair is what proves the engine's
+#                       obligations and the resolution invitation reached a
+#                       human (#544 Slice B).
+#               False — both events must be ABSENT, the same #523 rule the
+#                       other booleans follow: a route that never presents an
+#                       evaluation must not be able to claim one.
 #   verdict     legal values per owner-verdict axis. An axis this map omits
 #               must not appear on the route's verdict at all — a card route
 #               claiming a `change` judgment, or a refresh claiming a card one,
@@ -174,11 +213,13 @@ VERDICT_AXES = ("controls", "card", "memory", "change")
 ROUTE_CONTRACTS = {
     "first_review": {
         "cards": True, "cash_anchor": True, "opener": (), "change": False,
+        "evaluation": False,
         "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
         "must_pass": ("controls", "card"),
     },
     "weekly_review": {
         "cards": True, "cash_anchor": True, "opener": WEEKLY_OPENERS, "change": False,
+        "evaluation": False,
         "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
         # memory continuity is the entire reason this route exists, so it may
         # not be waived as inapplicable the way a first review legitimately can.
@@ -186,11 +227,13 @@ ROUTE_CONTRACTS = {
     },
     "snapshot_review": {
         "cards": True, "cash_anchor": False, "opener": (), "change": False,
+        "evaluation": False,
         "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
         "must_pass": ("controls", "card"),
     },
     "test_drive": {
         "cards": True, "cash_anchor": False, "opener": (), "change": False,
+        "evaluation": False,
         "verdict": {"controls": PASS_FAIL, "card": PASS_FAIL, "memory": PASS_FAIL_OR_NA},
         "must_pass": ("controls", "card"),
     },
@@ -213,9 +256,50 @@ ROUTE_CONTRACTS = {
     #             already visible through `change` and is not gated twice.
     "refresh": {
         "cards": False, "cash_anchor": False, "opener": (), "change": True,
+        "evaluation": False,
         "verdict": {"controls": PASS_FAIL_OR_NA, "card": ONLY_NOT_APPLICABLE,
                     "memory": PASS_FAIL_OR_NA, "change": PASS_FAIL},
         "must_pass": ("controls", "card", "change"),
+    },
+    # The pre-trade evaluation lane (#544 Slice B, on #479's TradeEvaluation
+    # contract). `review.py consider` creates no session and renders no card;
+    # its whole product surface is one inline textual answer that must carry
+    # the engine-declared challenge, and one resolution invitation that
+    # records the user's word without claiming execution. The trace is keyed
+    # by the engine's own `evaluation_id`, the way `refresh` uses its
+    # `refresh_id`.
+    #   evaluation — the load-bearing pair: the challenge delivery with its
+    #             `--challenge-check-file` fidelity evidence, then the
+    #             resolution invitation. A receipt with neither has proven
+    #             only that JSON existed, which is exactly what #544 forbids
+    #             citing as delivery.
+    #   change  — False and therefore forbidden: `consider` never mutates the
+    #             book, so a change surface here would claim a recording that
+    #             cannot have happened.
+    #   card    — pinned to `not_applicable`, the same positive no-card claim
+    #             the refresh row makes, and in `must_pass` for the same
+    #             reason.
+    #   controls — narrowed by the trace (`_verdict_scales`): bounded context
+    #             questions may precede the evaluation, and a run that asked
+    #             none has no control to judge.
+    #   memory  — left open, as on refresh: the basis the challenge states is
+    #             already the "did it read my book" judgment, made through
+    #             comprehension rather than gated twice.
+    #   comprehension / usefulness / friction / resolution — the four
+    #             route-specific owner judgments (#544): understood as
+    #             presented, specific versus generic advice, cheap enough to
+    #             use again, and the resolution boundary understood as
+    #             non-execution. All four must be affirmative before
+    #             `--require-owner-verdict` accepts the run.
+    "consider": {
+        "cards": False, "cash_anchor": False, "opener": (), "change": False,
+        "evaluation": True,
+        "verdict": {"controls": PASS_FAIL_OR_NA, "card": ONLY_NOT_APPLICABLE,
+                    "memory": PASS_FAIL_OR_NA,
+                    "comprehension": PASS_FAIL, "usefulness": PASS_FAIL,
+                    "friction": PASS_FAIL, "resolution": PASS_FAIL},
+        "must_pass": ("controls", "card", "comprehension", "usefulness",
+                      "friction", "resolution"),
     },
 }
 ROUTES = tuple(ROUTE_CONTRACTS)
@@ -406,6 +490,155 @@ def _grounding_fidelity(path: str | None) -> dict:
     return {"grounding_expected": True, "grounding_hash": digest, "grounding_verbatim": verbatim}
 
 
+# must_state topics whose numeric values are the answer's own load-bearing
+# numbers — weights, concentration readings, cash. These must appear as digits
+# in the presented answer (the same display discipline answer_provenance holds
+# an --agent-case to), which is what makes the check language-independent.
+# `basis` numbers are deliberately NOT here: `stale_days` is contractually
+# presentable in words ("nine days old" is references/trade-consequence.md's
+# own example sentence), so failing a worded form would put this gate at war
+# with the reference it enforces.
+NUMERIC_FACT_TOPICS = ("position", "concentration", "cash")
+NUMBER_TOKEN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
+
+
+def _number_present(text, value):
+    """Whether `value` appears in `text` as digits, at any display precision.
+
+    A fraction-shaped value additionally matches its ×100 percent form, and a
+    token matches when the value rounds to it at the token's own precision —
+    "34.3%", "34%", and "0.343" all state the frozen 0.34344…, and "34.4%"
+    does not (the same half-a-display-unit rule answer_provenance applies to
+    an --agent-case claim's prose). Signs are the sentence's job — "a $39,200
+    overdraft" carries no minus — so magnitudes are compared.
+    """
+    magnitude = abs(Decimal(str(value)))
+    targets = [magnitude]
+    if magnitude <= 1:
+        targets.append(magnitude * 100)
+    for token in NUMBER_TOKEN.findall(text):
+        token_value = Decimal(token.replace(",", ""))
+        quantum = Decimal(1).scaleb(token_value.as_tuple().exponent)
+        if any(target.quantize(quantum, rounding=ROUND_HALF_UP) == token_value
+               for target in targets):
+            return True
+    return False
+
+
+def _challenge_fidelity(path: str | None) -> dict:
+    """Compute privacy-safe challenge-delivery evidence for `evaluation_presented`.
+
+    `path` points at a transient, never-persisted JSON file (the same nature
+    as `--grounding-check-file`) pairing the engine-declared challenge with
+    the exact answer shown::
+
+        {"challenge": {<the `challenge` block, verbatim from the stdout of
+                        the `consider` call this trace records>},
+         "presented_text": "<the exact answer text shown to the user>"}
+
+    The challenge is emitted by `cmd_consider` and never stored, so the block
+    here must be captured from that call's own stdout — there is no copy on
+    disk to read back, and a verifier that recomputed one would be checking
+    its own arithmetic rather than what was presented. It remains auditable
+    after the fact: the challenge is a pure function of the persisted
+    evaluation row, so `challenge_hash` (sha256 of the block serialized with
+    sorted keys, compact separators, ensure_ascii=False) can be recomputed
+    from `trade_evaluations.jsonl` by anyone holding the root.
+
+    What is machine-checked, and what is not (#293's split, restated for this
+    surface): the user's `quote_verbatim` sentences and every rule collision's
+    own `detail.text` are owed verbatim, so containment decides them; the
+    load-bearing numbers (NUMERIC_FACT_TOPICS) and excluded-holding tickers
+    are language-independent, so digit/containment scans decide those. An
+    engine-vocabulary string (`cost_basis`, `unverified`), a boolean trigger,
+    or an `unchecked` key reaches a human as prose in the conversation's own
+    language, which no offline containment can judge — that half is the owner
+    `comprehension` axis's job, and `must_state_total`/`unchecked_total` are
+    persisted so the verdict is given against a stated obligation size rather
+    than from memory. Only booleans, counts and one hash are returned; the
+    raw challenge and the raw presented text are read once and discarded.
+    """
+    if not path:
+        raise ReceiptError("evaluation_presented requires --challenge-check-file")
+    try:
+        raw = pathlib.Path(os.path.expanduser(path)).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReceiptError(f"cannot read --challenge-check-file: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(f"--challenge-check-file is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReceiptError("--challenge-check-file must contain a JSON object")
+    challenge = payload.get("challenge")
+    if not isinstance(challenge, dict):
+        raise ReceiptError("--challenge-check-file challenge must be an object")
+    # A truncated challenge is not a smaller obligation; it is a different
+    # one. Refuse anything that does not carry the full five-key contract, so
+    # "paste less of the stdout" can never shrink what the answer owes.
+    missing = [key for key in ("must_state", "quote_verbatim", "unchecked",
+                               "case_required", "required_coverage")
+               if key not in challenge]
+    if missing:
+        raise ReceiptError(
+            "--challenge-check-file challenge is missing "
+            f"{', '.join(missing)}; paste the complete challenge block from "
+            "the consider call's own output")
+    must_state = challenge["must_state"]
+    quote_verbatim = challenge["quote_verbatim"]
+    if not isinstance(must_state, list) or not isinstance(quote_verbatim, list) \
+            or not isinstance(challenge["unchecked"], list):
+        raise ReceiptError(
+            "--challenge-check-file challenge must_state, quote_verbatim and "
+            "unchecked must be lists")
+    presented_text = payload.get("presented_text")
+    if not isinstance(presented_text, str) or not presented_text.strip():
+        raise ReceiptError("--challenge-check-file presented_text must be a non-empty string")
+
+    quotes = []
+    for entry in quote_verbatim:
+        if not isinstance(entry, dict) or not isinstance(entry.get("text"), str) \
+                or not entry["text"].strip():
+            raise ReceiptError(
+                "--challenge-check-file quote_verbatim entries must carry the "
+                "user's text")
+        quotes.append(entry["text"])
+
+    checked = missing_count = 0
+    for entry in must_state:
+        if not isinstance(entry, dict) or "topic" not in entry or "value" not in entry:
+            raise ReceiptError(
+                "--challenge-check-file must_state entries must carry topic and value")
+        topic, value = entry["topic"], entry["value"]
+        detail = entry.get("detail") or {}
+        if topic in NUMERIC_FACT_TOPICS and isinstance(value, (int, float)) \
+                and not isinstance(value, bool):
+            checked += 1
+            if not _number_present(presented_text, value):
+                missing_count += 1
+        elif topic == "excluded_holding" and isinstance(value, str):
+            checked += 1
+            if value not in presented_text:
+                missing_count += 1
+        elif topic == "rule_collision" and isinstance(detail.get("text"), str) \
+                and detail["text"].strip():
+            checked += 1
+            if detail["text"] not in presented_text:
+                missing_count += 1
+
+    canonical = json.dumps(challenge, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"))
+    return {
+        "challenge_hash": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "quotes_expected": bool(quotes),
+        "quotes_verbatim": all(quote in presented_text for quote in quotes),
+        "facts_checked": checked,
+        "facts_missing": missing_count,
+        "must_state_total": len(must_state),
+        "unchecked_total": len(challenge["unchecked"]),
+    }
+
+
 def _episode_bank() -> "set[str] | None":
     """Episode ids in this checkout, or None when the bank is not reachable.
 
@@ -546,6 +779,13 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         if args.change_kind not in CHANGE_KINDS:
             raise ReceiptError(f"change_presented requires --change-kind in {CHANGE_KINDS}")
         row["change_kind"] = args.change_kind
+    if args.event == "evaluation_presented":
+        row.update(_challenge_fidelity(args.challenge_check_file))
+    if args.event == "resolution_presented":
+        if args.workflow_state not in WORKFLOW_STATES:
+            raise ReceiptError(
+                f"resolution_presented requires --workflow-state in {WORKFLOW_STATES}")
+        row["workflow_state"] = args.workflow_state
     if args.event == "memory_presented":
         if not args.memory_kind:
             raise ReceiptError("memory_presented requires --memory-kind")
@@ -569,6 +809,10 @@ def _event_row(args: argparse.Namespace, declaration: dict) -> dict:
         # is how the two would eventually disagree.
         if args.change is not None:
             row["change"] = args.change
+        for axis in ("comprehension", "usefulness", "friction", "resolution"):
+            value = getattr(args, axis)
+            if value is not None:
+                row[axis] = value
         question_verdicts = {
             "question_specificity": args.question_specificity,
             "answer_fit": args.answer_fit,
@@ -626,6 +870,7 @@ def _first_surface(rows: list[dict]) -> int:
     return min(_positions(rows, "question_presented")
                + _positions(rows, "card_presented")
                + _positions(rows, "change_presented")
+               + _positions(rows, "evaluation_presented")
                or [len(rows)])
 
 
@@ -687,6 +932,11 @@ def timing_integrity(rows: list[dict]) -> dict:
         )
         complete = all(len(positions) == 1 for positions in anchors)
         reason = "complete owner-verdict multi-stage trace required"
+    elif contract["evaluation"]:
+        complete = bool(_positions(rows, "evaluation_presented")) \
+            and bool(_positions(rows, "resolution_presented"))
+        reason = ("owner-verdict trace with the evaluation presentation and "
+                  "resolution invitation required")
     else:
         complete = bool(_change_surfaces(rows))
         reason = "owner-verdict trace with a visible change surface required"
@@ -809,6 +1059,59 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 )
             if row.get("change_kind") not in CHANGE_KINDS:
                 errors.append(f"row {index} has unsupported change kind {row.get('change_kind')!r}")
+        if event == "evaluation_presented":
+            allowed = {
+                "version", "event", "session_id", "ts",
+                "challenge_hash", "quotes_expected", "quotes_verbatim",
+                "facts_checked", "facts_missing", "must_state_total", "unchecked_total",
+            }
+            extra = sorted(set(row) - allowed)
+            if extra:
+                errors.append(
+                    f"row {index} evaluation_presented contains unsupported fields: "
+                    f"{', '.join(extra)}"
+                )
+            # #544: like #293's grounding evidence, there is no grandfathered
+            # legacy state — the route and the event were born together, so
+            # absent or false evidence both fail closed.
+            digest = row.get("challenge_hash")
+            if not isinstance(digest, str) or not SURFACE_DIGEST.fullmatch(digest):
+                errors.append(
+                    f"row {index} evaluation_presented has an invalid or missing challenge_hash"
+                )
+            if not isinstance(row.get("quotes_expected"), bool):
+                errors.append(
+                    f"row {index} evaluation_presented is missing quote-fidelity evidence "
+                    "(quotes_expected must be recorded as true or false)"
+                )
+            if row.get("quotes_verbatim") is not True:
+                errors.append(
+                    f"row {index} evaluation_presented did not prove the user's own words "
+                    "were reproduced verbatim (quotes_verbatim must be true)"
+                )
+            counts = {key: row.get(key) for key in
+                      ("facts_checked", "facts_missing", "must_state_total", "unchecked_total")}
+            for key, value in counts.items():
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    errors.append(
+                        f"row {index} evaluation_presented {key} must be a non-negative integer"
+                    )
+            if isinstance(counts["facts_missing"], int) and counts["facts_missing"] != 0:
+                errors.append(
+                    f"row {index} evaluation_presented shows {counts['facts_missing']} "
+                    "machine-checkable fact(s) the presented answer did not carry"
+                )
+        if event == "resolution_presented":
+            extra = sorted(set(row) - {"version", "event", "session_id", "ts", "workflow_state"})
+            if extra:
+                errors.append(
+                    f"row {index} resolution_presented contains unsupported fields: "
+                    f"{', '.join(extra)}"
+                )
+            if row.get("workflow_state") not in WORKFLOW_STATES:
+                errors.append(
+                    f"row {index} has unsupported workflow state {row.get('workflow_state')!r}"
+                )
         if event == "cash_anchor_checked" and row.get("cash_outcome") not in CASH_OUTCOMES:
             errors.append(f"row {index} has unsupported cash outcome {row.get('cash_outcome')!r}")
         if event == "question_presented":
@@ -942,8 +1245,30 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 "diff or recorded result (change_presented), or the confirmation "
                 "question when one was raised")
     elif _positions(rows, "change_presented"):
-        errors.append(f"{route} presents cards, not a change surface; change_presented "
+        errors.append(f"{route} declares no change surface; change_presented "
                       "does not belong on this route")
+
+    # The pre-trade lane's own delivery pair (#544). A stored evaluation row
+    # is not delivery: what this route has instead of cards is one recorded
+    # challenge presentation — carrying its machine-computed fidelity
+    # evidence — and one resolution invitation after it.
+    evaluations = _positions(rows, "evaluation_presented")
+    resolutions = _positions(rows, "resolution_presented")
+    if contract["evaluation"]:
+        if len(evaluations) != 1:
+            errors.append(f"{route} must record exactly one evaluation_presented event — "
+                          "the inline challenge delivery is the surface this route exists "
+                          "to prove")
+        if len(resolutions) != 1:
+            errors.append(f"{route} must record exactly one resolution_presented event — "
+                          "the invitation is shown once and its workflow state recorded")
+        if evaluations and resolutions and resolutions[0] <= evaluations[0]:
+            errors.append("the resolution invitation must follow the evaluation "
+                          "presentation it resolves")
+    elif evaluations or resolutions:
+        claimed = sorted(index + 1 for index in evaluations + resolutions)
+        errors.append(f"{route} presents no trade evaluation, so rows {claimed} record "
+                      "a delivery that cannot have happened")
 
     # #357: the cash anchor is resolved before the first surface (first_review:
     # before `prepare` runs; weekly_review: after the cadence-tier gate, and a
@@ -1016,6 +1341,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
             errors.append("owner_verdict must follow the final card presentation")
         if change_surfaces and verdicts[0] <= max(change_surfaces):
             errors.append("owner_verdict must follow the change surface it judges")
+        if (evaluations or resolutions) and verdicts[0] <= max(evaluations + resolutions):
+            errors.append("owner_verdict must follow the evaluation surface it judges")
         # Both documents say findings are recorded before the verdict, and the
         # first cut enforced no ordering at all — the docs described a discipline
         # the tool did not hold anyone to (external review, 2026-07-27). The
@@ -1109,6 +1436,17 @@ def build_parser() -> argparse.ArgumentParser:
              "presented candidate's engine grounding with the exact presented text "
              "(never persisted; see _grounding_fidelity)",
     )
+    event.add_argument(
+        "--challenge-check-file",
+        help="evaluation_presented only: path to a transient JSON file pairing the "
+             "consider call's own emitted challenge block with the exact answer text "
+             "shown to the user (never persisted; see _challenge_fidelity)",
+    )
+    event.add_argument(
+        "--workflow-state", choices=WORKFLOW_STATES,
+        help="resolution_presented only: what the invitation left the evaluation as — "
+             "the user's word via consider --resolve, never broker-execution proof",
+    )
     event.add_argument("--surface-source", choices=SURFACE_SOURCES)
     event.add_argument("--surface-digest")
     event.add_argument("--stage", choices=STAGES)
@@ -1124,6 +1462,18 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--change", choices=PASS_FAIL,
                        help="owner_verdict on a card-free route: did what the "
                             "receipt showed match what happened to the book")
+    event.add_argument("--comprehension", choices=PASS_FAIL,
+                       help="owner_verdict on a consider trace: was the engine's "
+                            "challenge understood as presented")
+    event.add_argument("--usefulness", choices=PASS_FAIL,
+                       help="owner_verdict on a consider trace: specific to this "
+                            "book, versus generic chat advice")
+    event.add_argument("--friction", choices=PASS_FAIL,
+                       help="owner_verdict on a consider trace: cheap enough to "
+                            "reach for again")
+    event.add_argument("--resolution", choices=PASS_FAIL,
+                       help="owner_verdict on a consider trace: the invitation was "
+                            "understood as recording the user's word, not as execution")
     event.add_argument("--question-specificity", choices=("pass", "fail"))
     event.add_argument("--answer-fit", choices=("pass", "fail"))
     event.add_argument("--finding", action="append", default=[],
