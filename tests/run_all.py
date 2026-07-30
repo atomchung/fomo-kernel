@@ -58,6 +58,11 @@ SUITES = [
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
     ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
     ("Validated private question surfaces", "tests/test_question_surfaces.py"),
+    # #628: the preview precondition on finalize. It lives in its own suite
+    # because every other suite here reaches finalize as a means to something
+    # else, and a gate whose only coverage is incidental is one nobody notices
+    # going quiet.
+    ("Preview precondition on finalize (#628)", "tests/test_preview_gate.py"),
     ("Card HTML and delivery contract", "tests/test_card_html.py"),
     ("Design-bundle generator gate (#442)", "tests/test_design_bundle.py"),
     ("Cross-client interaction trajectory", "tests/test_interaction_trajectory.py"),

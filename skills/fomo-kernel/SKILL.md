@@ -70,6 +70,8 @@ Then read the shared rules:
 4. **One beat:** in a single message, show the complete card inline, ask the user to choose a candidate rule, write their own, or skip, and — when `input.cash_anchor.status` is `absent` or `partial` — ask for the account's cash balance. Generating an artifact is not showing it. The card sits above the choices, so the user still commits to a rule only after seeing the real card. If they give the balance, `add-cash` recomputes on this session's frozen prices and everything already answered carries over; then rerun `preview` on the session it returns.
 5. `finalize` — validate the commitment, atomically commit the canonical bundle, rebuild projections.
 
+Step 3 is a precondition, not advice: `finalize` refuses to commit answers and a narrative this session's own `preview` never rendered, so a card the user never saw cannot become a standing rule. The commitment is the one field that may be added afterwards — that is what step 4 is for. If the refusal appears, rerun `preview` with the artifacts you are about to commit, show the card, and finalize; the pending session is untouched and nothing is lost.
+
 ```bash
 python3 engine/review.py preview \
   --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
