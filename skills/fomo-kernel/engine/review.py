@@ -3454,8 +3454,41 @@ def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
     return card
 
 
-def _price_feed_status(card, *, supplied=None, unavailable_declared=None):
+def _declared_prices_unavailable(args):
+    """The one reader of ``--prices-unavailable`` (#623, extended to ``consider``
+    by #629).
+
+    The escape hatch is a *declaration*, so it has to say something: an empty or
+    one-character value would let "I looked" be asserted without naming what was
+    looked at, which is the shape of the miss this gate exists to make visible.
+    Two commands accept the flag and they must agree on what counts as a
+    declaration — a second copy of this rule would let one of them accept a
+    claim the other refuses.
+
+    Returns the trimmed declaration, or ``None`` when the flag was not sent.
+    """
+    declared = (getattr(args, "prices_unavailable", None) or "").strip()
+    if not declared:
+        return None
+    if len(declared) < 3:
+        raise ReviewError("--prices-unavailable must name the market-data sources you "
+                          "checked, so a dead end is a stated fact rather than a claim")
+    return declared
+
+
+def _price_feed_status(source, *, supplied=None, unavailable_declared=None,
+                       command="prepare", request_path="input.price_feed.request"):
     """Agent-visible price availability for this run (#289).
+
+    ``source`` is any mapping carrying ``price_provenance`` / ``price_request``
+    — the engine card on the review lane, and the pair
+    :func:`_consider_price_feed_status` assembles on the ``consider`` lane
+    (#629). One builder, two routes: the manifest, the ``recovery`` block and
+    the instruction below are stated once, so a route cannot grow its own
+    slightly different wording for the same gap. Only two things genuinely
+    differ between the routes — which subcommand takes the envelope back, and
+    where the caller finds the manifest in the payload it is holding — and both
+    are parameters rather than a second sentence.
 
     ``provenance`` records where the prices came from; ``request`` is the
     machine-readable manifest of what is still unpriced, present only when
@@ -3474,8 +3507,8 @@ def _price_feed_status(card, *, supplied=None, unavailable_declared=None):
     still leaves that mode ``unavailable``, and reading the attempt off it would
     call a real attempt a skipped one.
     """
-    provenance = (card or {}).get("price_provenance")
-    request = (card or {}).get("price_request")
+    provenance = (source or {}).get("price_provenance")
+    request = (source or {}).get("price_request")
     if not provenance and not request:
         return None
     status = {"provenance": provenance}
@@ -3494,16 +3527,69 @@ def _price_feed_status(card, *, supplied=None, unavailable_declared=None):
         # segment. Saying which one is missing keeps the agent from treating an
         # optional enrichment as a blocker, or the reverse.
         blocking = bool(request.get("tickers"))
-        scope = ("the instruments in input.price_feed.request.tickers — without them there is no "
+        scope = (f"the instruments in {request_path}.tickers — without them there is no "
                  "unrealized P&L or portfolio-level return" if blocking else
-                 "the benchmark symbols in input.price_feed.request.benchmarks — holdings are "
+                 f"the benchmark symbols in {request_path}.benchmarks — holdings are "
                  "priced, but the benchmark comparison stays unavailable without them")
         status["next_action"] = (
             f"price coverage is incomplete for {scope}. Look those closes up in a recognized "
             "market-data source, transcribe them into the envelope documented in "
-            "references/price-feed.md, and rerun prepare with --prices <path>. Never invent a "
+            f"references/price-feed.md, and rerun {command} with --prices <path>. Never invent a "
             "price, and never read a missing price as a delisting or as a zero return")
     return status
+
+
+def _consider_price_feed_status(*, requested, last_px, currencies, fx,
+                                supplied, unavailable_declared, bundle):
+    """The same recovery kit, for the ``consider`` lane (#629).
+
+    ``prepare`` has always reported a complete manifest when it could not price
+    the book — which instruments are missing, which envelope takes them back,
+    and what to rerun. ``consider`` in the identical condition reported one enum
+    value, ``basis.valuation_basis: "unpriced"``, and named nothing: no missing
+    instrument, no envelope pointer, no instruction, while ``consider --prices``
+    already existed. So the agent had no way to know that recovery was the move,
+    and the answer it relayed weighted a forward-looking decision on cost.
+
+    Deliberately not a second builder. ``price_feed.provenance`` and
+    ``price_feed.build_request`` are the existing producers of the two halves,
+    and :func:`_price_feed_status` is the existing assembler of the kit around
+    them; this function only supplies this route's own inputs. A hand-written
+    second manifest is the mirrored surface docs/maintainer-guide.md forbids,
+    and the wording would drift on the first edit to either.
+
+    ``requested`` is what *this answer* needed priced — the book's own held
+    instruments plus the premise ticker — rather than a review's wider universe
+    of benchmarks and history: naming a benchmark here would send the agent
+    after closes no consequence figure uses.
+    """
+    priced = {ticker for ticker in (last_px or {}) if ticker in set(requested)}
+    unresolved_fx = [code for code in sorted(currencies or ())
+                     if str(code).upper() != "USD" and code not in (fx or {})]
+    provenance = price_feed.provenance(
+        mode=("agent_feed" if supplied else ("engine_fetch" if priced else "unavailable")),
+        feed=supplied,
+        # The bundle's own stated degradations, classified into the stable
+        # reason code price_feed.classify_error owns. The raw text never enters
+        # a record: `provenance` is emitted beside a content-addressed row and a
+        # volatile string there would make two same-cause runs look different.
+        error="; ".join(
+            filter(None, (f"{gap['code']}: {gap.get('detail') or ''}"
+                          for gap in (getattr(bundle, "gaps", None) or ())))) or None,
+        requested=requested, priced=priced,
+        fx_mode=("not_needed" if not unresolved_fx and len(set(
+            str(c).upper() for c in (currencies or ()))) <= 1 else
+            ("feed" if supplied else ("engine_fetch" if not unresolved_fx else "missing"))),
+        as_of=(supplied or {}).get("as_of"))
+    status_source = {"price_provenance": provenance}
+    if provenance["coverage"]["missing"] or unresolved_fx:
+        status_source["price_request"] = price_feed.build_request(
+            tickers=requested, currencies=unresolved_fx,
+            missing=provenance["coverage"]["missing"],
+            reason=provenance["error"])
+    return _price_feed_status(status_source, supplied=supplied,
+                              unavailable_declared=unavailable_declared,
+                              command="consider", request_path="price_feed.request")
 
 
 # What answering the cash question buys, in engine vocabulary rather than
@@ -3872,18 +3958,8 @@ def _prepare_session(args):
             supplied_prices = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
             raise ReviewError(f"price feed rejected: {exc}") from exc
-    declared_unavailable = (getattr(args, "prices_unavailable", None) or "").strip()
-    if declared_unavailable:
-        # #623: the escape hatch is a *declaration*, so it has to say something.
-        # An empty or one-character value would let "I looked" be asserted
-        # without naming what was looked at, which is the shape of the miss this
-        # gate exists to make visible.
-        if len(declared_unavailable) < 3:
-            raise ReviewError("--prices-unavailable must name the market-data sources you "
-                              "checked, so a dead end is a stated fact rather than a claim")
-        args.prices_unavailable = declared_unavailable
-    else:
-        args.prices_unavailable = None
+    declared_unavailable = _declared_prices_unavailable(args)
+    args.prices_unavailable = declared_unavailable
     # #412: the results of this period's condition lookups, submitted the same
     # way prices are — the plan publishes what is due, the agent runs each
     # frozen query, and this second pass is what lets a crossing be posed as a
@@ -6424,7 +6500,9 @@ def cmd_consider(args):
     if args.resolve:
         conflicting = [name for name, value in (
             ("--premise", args.premise), ("CSV paths", args.paths),
-            ("--prices", args.prices), ("--driver-map", args.driver_map),
+            ("--prices", args.prices),
+            ("--prices-unavailable", getattr(args, "prices_unavailable", None)),
+            ("--driver-map", args.driver_map),
             ("--instrument-map", args.instrument_map), ("--cash", args.cash),
             ("--agent-case", args.agent_case),
             ("--decision-context", args.decision_context),
@@ -6461,6 +6539,11 @@ def cmd_consider(args):
         trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
     if args.instrument_map:
         instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
+
+    # #629: the same declaration `prepare` already accepts, read through the same
+    # single validator. Here it does the opposite of what it does there — see the
+    # refusal below.
+    declared_unavailable = _declared_prices_unavailable(args)
 
     last_px, fx, supplied_splits, market_bundle = None, None, None, None
     feed = None
@@ -6555,6 +6638,55 @@ def cmd_consider(args):
                                          excluded_holdings=excluded_holdings)
     except consequence.ConsequenceError as exc:
         raise ReviewError(str(exc)) from exc
+
+    # #629. Built from the positions this answer actually reasons about — the
+    # held book plus whatever it could not value plus the premise's own ticker —
+    # rather than from every ticker in the transaction file. A closed position
+    # needs no current close, and a manifest naming nine instruments for a
+    # three-position book sends the agent after six lookups no number here uses.
+    # Read twice below: once as the emitted recovery kit, once as the single
+    # statement of whether recovery was ever attempted.
+    premise_ticker = str(premise_payload.get("ticker") or "").strip()
+    priced_universe = (set(result["before"].get("held") or {})
+                       | {row["ticker"] for row in result.get("excluded_holdings") or ()
+                          if isinstance(row, dict) and row.get("ticker")}
+                       | ({premise_ticker} if premise_ticker else set()))
+    price_status = _consider_price_feed_status(
+        requested=sorted(priced_universe), last_px=last_px,
+        currencies={row.get("currency") or "USD" for row in rows
+                    if row["ticker"] in priced_universe},
+        fx=fx, supplied=feed, unavailable_declared=declared_unavailable,
+        bundle=market_bundle)
+    # #629, the refusal. Scoped to the one state that produces the harm: nothing
+    # current reached this book at all, so every weight above would be a share
+    # of *cost*. A retrospective card's cost weights describe what the user
+    # actually paid and are delivered degraded (references/price-feed.md); a
+    # forward concentration decision computed on cost describes a book that no
+    # longer exists, and on this repository's own momentum fixture it inverts
+    # the second and third position by size while moving the largest one by more
+    # than thirteen points. Two lanes, two rules, on purpose.
+    #
+    # Gated on `recovery.attempted` rather than on the flag directly, so this
+    # reads #623's own single statement of "was recovery ever tried" instead of
+    # deciding it a second time. Untried recovery is not this refusal: that run
+    # still gets the kit above, which is the thing that tells the agent to go and
+    # look. This fires only once looking has happened and produced nothing.
+    #
+    # Placed after the arithmetic and before anything is stored or emitted: the
+    # condition is a property of the computed basis, and a refused question must
+    # leave no row behind.
+    if (basis.get("valuation_basis") == "unpriced"
+            and ((price_status or {}).get("recovery") or {}).get("attempted")):
+        raise ReviewError(
+            "price recovery was attempted and no current price reached this book, so every "
+            "weight in this answer would be a share of cost rather than of market value. A "
+            "trade the user has not placed yet is a forward-looking decision, and cost weights "
+            "describe a book that no longer exists — the largest position and the ranking "
+            "beneath it can both come out differently — so this question is refused rather "
+            "than answered on cost basis. Supply whatever closes you did find with "
+            "--prices <path>: partial coverage is accepted and names what it could not value. "
+            "A review card is the other lane and still delivers degraded "
+            "(references/price-feed.md)")
 
     muted_ids = _muted_rule_ids(root)
     rules_report = problems.load_rules_report(os.path.join(root, "rules.jsonl"), muted_ids)
@@ -6657,8 +6789,26 @@ def cmd_consider(args):
         rule_collisions=collisions, context=decision_context)
 
     report = _append_evaluation_row(root, row)
-    _emit({"status": "considered", "root": root, "language": language,
-           "evaluation": row, "challenge": challenge, "append": report})
+    payload = {"status": "considered", "root": root, "language": language,
+               "evaluation": row, "challenge": challenge, "append": report}
+    if price_status:
+        # #629. Beside the row, never on it — the same place and for the same
+        # reason as `challenge`: the row is content-addressed and this is a
+        # statement about the retrieval that produced it, not about the trade
+        # being evaluated. Always present when there is any provenance to state,
+        # so "this answer is fully priced" is a claim rather than a silence.
+        payload["price_feed"] = price_status
+        if price_status.get("next_action"):
+            # The route-specific tail, composed at the call site exactly as
+            # `cmd_prepare` composes its own — the shared builder states the gap
+            # and the envelope; only this lane's consequence for skipping it
+            # belongs here.
+            price_status["next_action"] += (
+                ". This is completing the input, not producing an artifact: the answer stays "
+                "a brief, direct one. If those sources genuinely publish nothing for these "
+                "instruments, rerun consider --prices-unavailable '<the sources you checked>' "
+                "and the question is refused rather than answered on cost basis")
+    _emit(payload)
 
 
 def _lifetime_cash_flows(rows):
@@ -7246,6 +7396,12 @@ def build_parser():
                           help="required together with --resolve")
     consider.add_argument("--prices",
                           help="agent-supplied price envelope (references/price-feed.md)")
+    consider.add_argument("--prices-unavailable", dest="prices_unavailable",
+                          metavar="SOURCES_CHECKED",
+                          help="declare that price recovery was attempted and the sources "
+                               "publish nothing for these instruments; name the sources you "
+                               "checked. A forward-looking decision is then refused rather "
+                               "than answered on cost basis (#629)")
     consider.add_argument("--driver-map")
     consider.add_argument("--instrument-map")
     consider.add_argument("--cash", help="TR_CASH-shaped JSON string: a single "

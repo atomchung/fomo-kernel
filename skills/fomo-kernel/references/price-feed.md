@@ -34,6 +34,22 @@ python3 engine/review.py prepare <CSV...> --prices-unavailable "the exchange's o
 
 Name the sources you actually checked. It asks the user for nothing and costs one command, which is why the refusal is a gate on a step rather than a stall — and why the honest dead end still delivers its card.
 
+## Two lanes, two opposite rules (#629)
+
+The same declaration means opposite things on the two routes, and both are correct. This is stated here, beside the rules themselves, so nobody later reads the difference as an inconsistency and "fixes" one of them.
+
+| | Review card (`prepare` → `preview` → `finalize`) | A trade the user is deciding on (`consider`) |
+|---|---|---|
+| Recovery never attempted | Refused — the card would state every weight from cost when it did not have to | Not refused; the answer carries a `price_feed` recovery kit naming what to look up |
+| Recovery attempted, sources publish nothing (`--prices-unavailable`) | **The degraded card is delivered.** Never stall a review over a price nobody publishes | **The question is refused**, never answered on cost basis |
+
+The asymmetry is the difference between the two questions, not an oversight:
+
+- A retrospective card's cost weights describe **what the user actually paid**. That is a true, useful fact about a period that has already happened, and the card discloses that prices were unavailable. Withholding the whole review over it would cost the user a real answer.
+- A forward concentration decision computed on cost describes **a book that no longer exists**. It is not a weaker answer to "what does this trade do to my concentration" — it is a different book's answer, and on this repository's own momentum fixture the largest position moves by more than thirteen points and the second and third positions by size swap places. A user holding a "no single position over half the book" rule is told they are already in breach when they are not.
+
+So `consider` degrades to a refusal where a card degrades to a disclosure. `references/freeform-answers.md` carries the agent-facing half — the bound on the recovery itself, and why looking a price up is not the "multi-tool production" `SKILL.md` rule 8 otherwise forbids.
+
 ## Sources
 
 Use a recognized market-data source that publishes closing prices for the listing venue: the exchange itself, the exchange's official market-data site, or an established financial-data provider. Record the one you actually read in `source`. A search-result snippet is not a source; open the page that publishes the price.

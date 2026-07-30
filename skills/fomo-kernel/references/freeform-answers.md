@@ -35,6 +35,55 @@ This covers any ad hoc question, and explicitly a `consider` call:
 so it is a freeform surface like any other, not a card-lifecycle exemption
 from this rule.
 
+### The one exception: recovering a price is completing the input
+
+Owner ruling, 2026-07-30 (#629). The engine keeps one retrieval source. When
+it fails, **the agent recovers the prices** — a search may find the
+publisher's page, the close is read off that page and never off a
+search-result snippet — and hands them back through the existing `--prices`
+envelope. That is a second tool used on an ad hoc question, so this rule has
+to say plainly that it is allowed: **recovering a price the engine could not
+retrieve is completing the input, not production.** Nothing else about the
+answer changes; it is still brief, still text.
+
+It is not a general loosening. It licenses no chart, artifact, or other
+multi-tool work, on this call or any other, and it applies only when
+`consider` actually returned a `price_feed` recovery kit naming unpriced
+instruments.
+
+**Why the carve-out is worth its cost.** `consider` exists to answer what a
+trade does to the user's concentration. Computed without current prices, every
+weight is a share of *cost*: on this repository's own momentum fixture the
+largest position reads more than thirteen points higher on cost than at
+market, and the second and third positions by size swap places. The user is
+not lied to — the answer discloses `cost_basis` — but knowing the basis is not
+knowing that the ranking flipped. A forward-looking decision measured on cost
+describes a book that no longer exists.
+
+**The bound.** The task is **transcription, not analysis**: the output is an
+envelope, and the result is mechanically checked downstream, so this is
+bounded work rather than judgment.
+
+- **Count ceiling:** the instruments `price_feed.request.tickers` names and
+  nothing else — no benchmark, no index, no instrument the book does not hold.
+  **At most twenty instruments**, one attempt each. The engine already scopes
+  that manifest to the held book plus the premise's own ticker.
+- **Timeout:** an instrument whose publisher page does not resolve is left out
+  rather than retried. Supply whatever you found — partial coverage is
+  accepted, and the answer names what it could not value.
+- **Delegation:** the work is bounded and parallelizable and **may be
+  delegated to whatever faster tier the host has**. Which tier, and whether the
+  host has one at all, is the host's own configuration and never this
+  product's.
+- **Degradation:** when the sources genuinely publish nothing, say so with
+  `consider --prices-unavailable '<the sources you checked>'`. The question is
+  then **refused rather than answered on cost basis**. Never invent, never
+  interpolate, never fall back to the cost-basis figure.
+
+That refusal is the opposite of what the review-card lane does with the same
+declaration, and both are right. [price-feed.md](price-feed.md), "Two lanes,
+two opposite rules", is the one statement of why.
+
 ## Rule 2 — a chart is named in advance, never improvised
 
 The expensive part was never "a picture exists." It is inventing a new
