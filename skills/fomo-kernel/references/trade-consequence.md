@@ -158,6 +158,71 @@ The block is emitted, never stored: it is a pure function of the premise, basis,
 
 Under maintainer QA, delivery of these obligations is proven rather than assumed. The receipt tool's card-free `consider` route ([ux-receipt.md](ux-receipt.md)) captures the challenge emitted on the call's own stdout into a transient comparison file, paired with the exact answer text shown to the user. The tool computes the coverage and verbatim fidelity itself rather than trusting a self-report, and persists only booleans, counts, and a hash — never the challenge or the presented text. The same trace also records one resolution invitation after it, whose recorded workflow state is the user's own word on what happened next, never proof that a trade was executed.
 
+## The decision-first answer
+
+The challenge block is the floor — what must be present. This section is the shape — what leads, and what attaches to what. On a representative book the block carries roughly seventeen owed facts and half a dozen unchecked items; stated as equal-weight bullets they are complete and communicate no judgment. Before writing the visible answer, make five bounded decisions, privately — this is a drafting discipline, not an engine object, a schema, or anything persisted:
+
+1. choose one **lead** — the single most decision-relevant tension;
+2. choose the smallest set of engine facts that supports it;
+3. state the strongest genuine counter-case;
+4. attach each limitation to the claim it qualifies, compressed;
+5. close by inviting the existing resolution without implying execution.
+
+### What leads
+
+Unless a truth-critical disclosure changes how an earlier item can be understood, salience runs:
+
+1. **A user-authored rule collision** — `would_breach`, or `already_over` with `worsens: true`. The user wrote that line themselves; this trade crossing it outranks everything else.
+2. **The largest non-obvious portfolio consequence** — weight, concentration or driver overlap, cash. *Non-obvious* is load-bearing: the user already knows they hold the position and that the price fell. What they cannot see from where they sit is what the trade does to the whole book's shape.
+3. **The decision-context read** — whether `why_now` looks like a real evidence delta or a price move wearing one, labelled as your judgment. [market-lookup.md](market-lookup.md) governs verifying it.
+4. **Routine basis and unchecked boundaries** — present, compressed, attached to what they qualify; they displace the decision only when they materially undermine it.
+
+Special cases: `already_over` with `worsens: false` is an improvement to an already-broken line, never framed as a new breach. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence, not in a footer. A stale or cost-basis book attaches to the conclusion it weakens, and leads only when it makes the apparent consequence unreliable enough to change the decision. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name what stays unchecked — never convert "not measured" into "no risk".
+
+### The visible shape
+
+Default to two compact paragraphs plus one resolution sentence — a shape, not a template; more or fewer sentences are allowed when the challenge requires them, and there is no word-count target.
+
+- **Paragraph 1 — answer first:** the lead, its key engine support, and any qualifier that changes how it reads.
+- **Paragraph 2 — the real trade-off:** the strongest case the other way, the user's exact `reason` / `why_now` where owed, and one grouped limitation clause.
+- **Resolution sentence:** keep it open, decline it, or modify it — the user's call, and never imply a broker action occurred.
+
+### Compression
+
+- Every owed fact appears once, not once per section.
+- Basis metadata is one clause; group unchecked items by the claim they qualify — no standalone disclaimer list by default, and no generic financial-advice warnings the challenge does not carry.
+- A caveat that can overturn the lead sits beside the lead, not at the end.
+- The counter-case must be a genuine rebuttal: at least one claim in it engages the lead's strongest support directly. A softened restatement — or a parallel list of unrelated facts that never touches the lead — does not count as the second side.
+
+### Self-check before sending
+
+Four questions, the same four the owner-live acceptance applies (#488; opt-in semantic evaluation is #590 — there is no runtime judge):
+
+1. Cover the limitation sentences — does the answer still stand on its own?
+2. Does it say at least one thing the user did not already know, or knew but had not connected?
+3. Does the counter-case directly engage the lead's strongest support?
+4. Is the user's next step more concrete than before reading?
+
+### One payload, two renderings
+
+A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Seventeen owed facts, five unchecked items, no rule collision on file. Both renderings below are complete against that challenge. They are witnesses to the shape, not reference answers or test oracles.
+
+**Complete but flat — every fact true and anchored, no judgment:**
+
+> The engine computed the following for buying 100 NVDA at $127.50. Basis: transactions as of 2026-06-15, 45 days stale, completeness unverified. NVDA weight before: 30.0%; after: 37.9%. Top-3 concentration after: 64.5%. AI exposure after: 64.5%. Max sector (semiconductors) after: 64.5%. Oversize triggered: true. Concentration triggered: true. Cash balance after: −$112,750. Disclosures: cost basis; cash unreliable; unclassified book (JNJ, PG, KO). Your reason: "NVDA is still my highest-conviction name in the book." Your why-now: "It dropped hard this week and the discount feels too good to pass up." For: you already hold NVDA and it dropped this week. Against: the record is stale; weights are on cost; cash is unreliable; part of the book is unclassified. Not checked: liquidity, valuation, tax, position fit, evidence delta. The decision is yours.
+
+Every number is anchored and every owed fact is present, and it fails all four self-checks: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off.
+
+**Decision-first — same payload, same floor:**
+
+> What this buy mainly changes is not your NVDA entry price — it is the size of a bet that is already past its limit. On your recorded book (cost-priced, June 15, 45 days old, never reconciled), NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65%; the position-size line was already triggered before this trade, so this widens an existing breach rather than creating one. The recorded cash line would read −$112,750, but that balance is an unanchored running sum — read it as "no deposit has ever been recorded here", not as a real overdraft.
+>
+> The strongest case the other way attacks the lead's own numbers: those weights are cost weights on a stale, unverified record — if this week's drop hit your semiconductor names hardest, market-value concentration is lower than the record shows — and your largest position being your highest-conviction name is a choice, not an accident. Against that, your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new evidence, and whether anything about the business actually changed is exactly what nothing here checked (nor liquidity, valuation, tax, or fit; JNJ, PG and KO carry no classification, so the 65% is measured against less than the whole book).
+>
+> Your call: keep this open, decline it, or modify the size — nothing has been executed.
+
+The floor is identical — same numbers, same disclosures, same verbatim quotes, same unchecked list. What changed: one lead was chosen (the second salience tier, since no user rule is on file), the basis caveat sits beside the number it weakens, the counter-case's first claim directly attacks the lead's supporting numbers, the user's own words are read against the evidence-delta question and labelled as judgment, and the cash oddity is interpreted instead of recited.
+
 ## The case for and against
 
 The engine states the consequence and the rule collisions; it never recommends. Build the case for and against directly from that output, and take no position on which side wins — that call belongs to the user.
