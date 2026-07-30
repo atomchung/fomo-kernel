@@ -2720,6 +2720,180 @@ def test_n_resolve_market_data_writes_no_state_of_its_own():
             f"resolve-market-data must write no lifecycle state, found: {left}")
 
 
+# ───── O. price recovery on a forward-looking decision (#629) ─────
+#
+# When the provider is unavailable, `prepare` has always returned a complete
+# recovery kit and `consider` returned one enum value -- `valuation_basis:
+# "unpriced"` -- naming nothing, while `consider --prices` already existed.
+# The cost of that silence is measured below: on the momentum fixture the
+# largest position reads 59.8% of the book on cost and 45.9% at market, and the
+# second and third positions by size swap places. Concentration is what
+# `consider` exists to answer, so on this book it answered the decision question
+# backwards.
+#
+# Everything here is offline and deterministic. `_MOMENTUM_CLOSES` is a fixture,
+# not a live quote: the point is that the same book answers differently once
+# *any* current prices reach it, and pinning the numbers is what makes the
+# difference assertable at all.
+
+_MOMENTUM_CLOSES = {"NVDA": 193.925, "AMD": 487.875, "MRVL": 182.14}
+_MOMENTUM_PREMISE = '{"ticker": "NVDA", "side": "buy", "price": 196.6, "qty": 50}'
+
+
+def _momentum_envelope(path, as_of="2026-07-30"):
+    """The `--prices` envelope a completed recovery hands back."""
+    payload = {"as_of": as_of, "source": "fixture closes for a deterministic test",
+               "prices": [{"ticker": ticker, "close": close, "date": as_of,
+                           "currency": "USD"}
+                          for ticker, close in sorted(_MOMENTUM_CLOSES.items())]}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    return path
+
+
+def _momentum_consider(tmp, *extra):
+    return _ok(_run_env(_offline_env(), "consider", str(MOCK / "sample_momentum.csv"),
+                        "--root", tmp, "--premise", _MOMENTUM_PREMISE, *extra))
+
+
+def test_o_an_unpriced_consider_emits_the_recovery_kit_naming_what_is_missing():
+    """The gap this closes. Before it there was nothing to assert: the answer
+    carried `valuation_basis: "unpriced"` and no missing-instrument list, no
+    envelope pointer and no instruction, so a host had no way to learn that
+    recovery was the move rather than relaying a cost-weighted answer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _momentum_consider(tmp)
+    assert payload["evaluation"]["basis"]["valuation_basis"] == "unpriced"
+    kit = payload["price_feed"]
+    assert kit["provenance"]["mode"] == "unavailable", kit["provenance"]
+    assert kit["request"]["tickers"] == ["AMD", "MRVL", "NVDA"], (
+        "the manifest must name the instruments this answer needs priced -- the held book "
+        f"plus the premise ticker -- not every ticker in the file: {kit['request']}")
+    assert kit["request"]["envelope"] == "references/price-feed.md"
+    assert kit["recovery"] == {"attempted": False, "outcome": "not_attempted"}
+    assert "consider with --prices <path>" in kit["next_action"], kit["next_action"]
+    assert "--prices-unavailable" in kit["next_action"], (
+        "the kit must also name the honest dead end, or a host that looked and found nothing "
+        "has no stated move except the cost-basis answer this issue removes")
+
+
+def test_o_the_recovery_kit_is_the_prepare_builder_rather_than_a_second_one():
+    """Anti-fork gate, and the reason this is worth a test of its own: a
+    hand-written second manifest is the mirrored surface
+    docs/maintainer-guide.md forbids, and two copies of an instruction drift on
+    the first edit to either. `prepare`'s wording was already correct, so
+    `consider`'s must be that same string with only the two things that
+    genuinely differ substituted -- which subcommand takes the envelope back,
+    and where the caller finds the manifest in the payload it is holding.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        plan = _ok(_run_env(_offline_env(), "prepare", str(MOCK / "sample_momentum.csv"),
+                            "--root", tmp, "--language", "en"))
+        prepared = plan["review_plan"]["input"]["price_feed"]["next_action"]
+    with tempfile.TemporaryDirectory() as tmp:
+        considered = _momentum_consider(tmp)["price_feed"]["next_action"]
+    rewritten = (prepared.replace("input.price_feed.request", "price_feed.request")
+                 .replace("rerun prepare with", "rerun consider with"))
+    assert considered.startswith(rewritten), (
+        "the consider recovery kit is no longer the prepare builder's own sentence:\n"
+        f"  prepare (rewritten): {rewritten!r}\n  consider:            {considered!r}")
+
+
+def test_o_the_envelope_round_trip_prices_the_book_and_moves_the_answer():
+    """The measured stake, as a fixture. Same book, same premise, the only
+    difference being whether current prices reached the computation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        on_cost = _momentum_consider(tmp)["evaluation"]
+    with tempfile.TemporaryDirectory() as tmp:
+        envelope = _momentum_envelope(os.path.join(tmp, "prices.json"))
+        at_market = _momentum_consider(tmp, "--prices", envelope)["evaluation"]
+
+    assert on_cost["basis"]["valuation_basis"] == "unpriced"
+    assert at_market["basis"]["valuation_basis"] == "priced"
+
+    cost_weights = on_cost["consequence"]["before"]["weights"]
+    market_weights = at_market["consequence"]["before"]["weights"]
+    assert set(cost_weights) == set(market_weights) == {"NVDA", "AMD", "MRVL"}
+
+    # 1. The largest position moves far enough to cross an ordinary "no single
+    #    position over half the book" rule in the wrong direction.
+    assert on_cost["consequence"]["before"]["max_ticker"] == "NVDA"
+    assert at_market["consequence"]["before"]["max_ticker"] == "NVDA"
+    assert cost_weights["NVDA"] > 0.55, cost_weights
+    assert market_weights["NVDA"] < 0.50, market_weights
+    assert cost_weights["NVDA"] - market_weights["NVDA"] > 0.10, (
+        "the fixture no longer reproduces the divergence this issue exists for: "
+        f"cost {cost_weights['NVDA']} vs market {market_weights['NVDA']}")
+
+    # 2. And the ranking beneath it inverts, which no disclosure about the basis
+    #    would tell the user.
+    assert cost_weights["MRVL"] > cost_weights["AMD"], cost_weights
+    assert market_weights["AMD"] > market_weights["MRVL"], market_weights
+
+    # A fully covered envelope leaves nothing outstanding: no manifest, no
+    # recovery block, no instruction to act on.
+    assert "cost_basis" in on_cost["consequence"]["disclosures"]
+    assert "cost_basis" not in at_market["consequence"]["disclosures"]
+
+
+def test_o_a_priced_answer_states_its_provenance_and_asks_for_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        envelope = _momentum_envelope(os.path.join(tmp, "prices.json"))
+        kit = _momentum_consider(tmp, "--prices", envelope)["price_feed"]
+    assert kit["provenance"]["mode"] == "agent_feed", kit["provenance"]
+    assert kit["provenance"]["coverage"]["missing"] == []
+    assert "request" not in kit and "recovery" not in kit and "next_action" not in kit, (
+        f"a fully priced answer has nothing outstanding to state: {kit}")
+
+
+def test_o_a_declared_dead_end_refuses_rather_than_answering_on_cost_basis():
+    """The owner ruling this issue closed on (2026-07-31): recovery genuinely
+    failing degrades to a refusal, never to a cost-basis answer. Deliberately
+    the opposite of the review-card lane, where the identical declaration
+    unlocks delivery of the degraded card -- a retrospective card's cost weights
+    describe what the user actually paid, a forward concentration decision
+    computed on cost describes a book that no longer exists.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        run = _run_env(_offline_env(), "consider", str(MOCK / "sample_momentum.csv"),
+                       "--root", tmp, "--premise", _MOMENTUM_PREMISE,
+                       "--prices-unavailable",
+                       "the exchange's own market-data site publishes no close for these")
+        payload = _fails(run, "refused rather than answered on cost basis")
+        assert "consequence" not in json.dumps(payload), payload
+        assert not os.path.exists(_evaluation_path(tmp)), (
+            "a refused question must leave no evaluation row behind")
+
+
+def test_o_a_declared_dead_end_over_a_priced_book_still_answers():
+    """The refusal is scoped to the harm, not to the flag. A declaration made
+    beside prices that did arrive has nothing to refuse."""
+    with tempfile.TemporaryDirectory() as tmp:
+        envelope = _momentum_envelope(os.path.join(tmp, "prices.json"))
+        payload = _momentum_consider(tmp, "--prices", envelope,
+                                     "--prices-unavailable", "checked, then found them anyway")
+    assert payload["evaluation"]["basis"]["valuation_basis"] == "priced"
+
+
+def test_o_a_dead_end_declaration_must_name_the_sources_checked():
+    """The same single validator `prepare` uses (#623): the escape hatch is a
+    declaration, so it has to say something. Two commands accept the flag and a
+    second copy of this rule would let one accept a claim the other refuses."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _fails(_run_env(_offline_env(), "consider", str(MOCK / "sample_momentum.csv"),
+                        "--root", tmp, "--premise", _MOMENTUM_PREMISE,
+                        "--prices-unavailable", "x"),
+               "must name the market-data sources you checked")
+
+
+def test_o_resolve_takes_no_dead_end_declaration():
+    with tempfile.TemporaryDirectory() as tmp:
+        _fails(_run_env(_offline_env(), "consider", "--root", tmp,
+                        "--resolve", "ev_whatever", "--decision", "acted",
+                        "--prices-unavailable", "the exchange's own market-data site"),
+               "--prices-unavailable")
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

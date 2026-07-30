@@ -112,6 +112,21 @@ For every rule currently in the user's rotation (a muted rule is excluded, match
 
 The CSV/FIFO path a review uses and the ledger reconstruction `consider` falls back to can legitimately disagree about a position's weight — they are answering different questions from different completeness requirements. Say which basis was used rather than presenting either as the only number.
 
+### When the engine could not price the book (#629)
+
+`valuation_basis` says whether current prices reached this answer. `"priced"` needs nothing from you. `"unpriced"` means every weight above is a share of *cost*, not of market value — and for a trade the user has not placed yet, that is a different book's answer, not a rougher version of this one.
+
+So the response also carries a `price_feed` block beside the evaluation, built by the same engine helper `prepare` uses:
+
+- `provenance` — where the prices came from, and the stable reason code for why retrieval failed.
+- `request` — present only when coverage is incomplete: exactly which instruments still need a close. Scoped to the held book plus the premise's own ticker, so it never sends you after a closed position or a benchmark.
+- `recovery` — whether recovery was attempted at all, on the same three states [price-feed.md](price-feed.md) documents.
+- `next_action` — what to do, ending in `consider --prices <path>`.
+
+Recover the prices before you answer. That lookup is the one carve-out from `SKILL.md` rule 8's ban on multi-tool production — it is completing the input, not producing anything — and [freeform-answers.md](freeform-answers.md) states its bound: transcription only, a count ceiling, and what happens when a source does not resolve.
+
+If the sources genuinely publish nothing, run `consider --prices-unavailable '<the sources you checked>'`. The call then **refuses** instead of returning a cost-basis answer. That is the opposite of what the same declaration does on the review-card lane, on purpose; [price-feed.md](price-feed.md), "Two lanes, two opposite rules", is the single statement of why.
+
 ### Stock splits
 
 Both books add up share counts, and a quantity recorded before a split is not comparable to one recorded after it. Ninety shares bought before a ten-for-one, minus a hundred sold after it, is zero — so a position the user still holds can be missing from the book this answer reasons about, with nothing said about it.

@@ -105,6 +105,34 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
     # "no chart, full stop" in one entry point while the other still permits
     # it, the same one-sided-drop shape the phrase above already guards.
     "bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for",
+    # #629 (owner ruling 2026-07-30): the one carve-out. Price recovery IS
+    # multi-tool production by the letter of the rule above, so an entry point
+    # carrying only that rule tells a host not to do the thing the ruling
+    # requires -- and the failure is silent, because the host then relays a
+    # concentration answer weighted on cost. Same one-sided-drop shape as the
+    # two phrases above: the exception dropped from one entry point while the
+    # other keeps it makes Claude and Codex behave differently on the identical
+    # engine. Every phrase below is a half that fails on its own.
+    #
+    # The exception itself, stated as narrowly as the ruling states it.
+    "recovering a price the engine could not retrieve is completing the input, not production",
+    # Without this the carve-out reads as a general loosening of rule 8 -- the
+    # 34-turn failure `references/freeform-answers.md` exists to prevent, now
+    # with a citable licence.
+    "It licenses no chart, artifact, or other multi-tool work",
+    # The bound the ruling required in the contract rather than in a maintainer's
+    # client configuration: what kind of task it is, how many instruments, and
+    # who may run it. The delegation clause deliberately names no model, tier, or
+    # subagent mechanism (owner ruling 2026-07-26) -- a Claude model named in a
+    # cross-host public skill is dead text on one client and a wrong instruction
+    # on another -- so it states the outcome and lets the host decide how.
+    "transcription, not analysis",
+    "at most twenty instruments",
+    "delegated to whatever faster tier the host has",
+    # What it degrades to, and the half a reader is most likely to "simplify"
+    # away as inconsistent with the review-card lane's never-stall rule. Both
+    # lanes are right; `references/price-feed.md` carries the reason.
+    "refused rather than answered on cost basis",
 )
 # #597 lane 1a: a decision the user brings with no recorded book is framed
 # rather than refused. Same guaranteed-delivery pair, because the two halves
