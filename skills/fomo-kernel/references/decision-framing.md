@@ -80,11 +80,23 @@ Three rules follow, and the third is the one that keeps the first two honest:
 
 ## Earning the next piece of evidence
 
-The closing invitation names the specific answer the evidence would buy:
+The invitation names the question the evidence would answer, never the data being requested. It is generic because it is keyed on the small closed set of answers a book can buy that no book can, not on which question the user answered.
+
+1. **What fraction this actually becomes.** Replaces a declared size with a computed weight.
+2. **Whether this is a bet already held.** Driver overlap against the existing positions — the one most users cannot answer from memory.
+3. **Whether it can be paid for.** The cash consequence.
+4. **Whether it breaks a rule already set.** Collision with the user's own recorded rules.
+5. **What happened the last time this reason was given.** The only one a positions snapshot cannot buy — it needs transaction history.
+
+At most one per answer, chosen by salience — whichever of the five the user's own answers made central to this decision. Two invitations in one answer is the disclosure-dump failure the shape rules above already forbid. When none of the five is decision-central, the honest move is to say nothing; a manufactured invitation is the same defect as a manufactured disclosure.
+
+Placement governs a second, distinct question — not which, but where and how many: **one invitation per answer, and it goes last.** It is the closing move of the answer — appended once the framing is complete, never interleaved with the case for and against, and never attached to an individual claim. One round of the conversation, one question answered, at most one invitation, appended at the end. A useful answer is never withheld until data arrives, and an invitation placed mid-answer reads as exactly that precondition on the sentence it interrupts; placed last, after the answer is already complete, it cannot read that way.
+
+A holdings view buys the first four; transaction history alone buys the fifth, and nothing else does — name the evidence that would settle the question, never data in general. The wording is illustrative, not a template:
 
 > You said you want this to be a core holding. Hand me a holdings screenshot and I can tell you what it actually becomes — and whether your top three are already the same bet.
 
-Not "provide your portfolio for a more accurate analysis". And never as leverage: a useful answer is not withheld until data arrives.
+Not "provide your portfolio for a more accurate analysis".
 
 ## Red lines, unchanged and hardest to hold here
 

@@ -110,6 +110,38 @@ NO_BOOK_FRAMING_REQUIRED_PHRASES = (
     # naming what that evidence buys, rather than withholding an answer.
     "naming the specific answer the next piece of evidence would buy",
 )
+# #598 follow-up (owner ruling 2026-07-30): the closing invitation inside
+# decision-framing.md's own "Earning the next piece of evidence" section is a
+# small closed set of five evidence-buyable questions plus two rules -- which
+# one (salience) and where it goes (placement) -- never a per-branch table.
+# Scoped to the contract file alone, unlike NO_BOOK_FRAMING_SECTIONS above:
+# this mechanism is prose detail that lives entirely in the soft-routed
+# reference, and neither guaranteed-delivery entry point restates it.
+EVIDENCE_INVITATION_SECTIONS = {
+    Path("skills/fomo-kernel/references/decision-framing.md"): "## Earning the next piece of evidence",
+}
+EVIDENCE_INVITATION_REQUIRED_PHRASES = (
+    # The selection rule: at most one invitation, picked by whichever of the
+    # five the user's own answers made central -- never one per branch. A
+    # presence check is what is available for prose; there is no schema or
+    # validator over a host's freeform answer text.
+    "At most one per answer, chosen by salience",
+    # The placement rule the selection rule alone cannot express: one
+    # invitation, appended once the answer is complete, never interleaved
+    # with the case for and against. Dropping this leaves an invitation free
+    # to read as a precondition on the sentence it interrupts -- the
+    # withheld-as-leverage failure the same paragraph forbids.
+    "one invitation per answer, and it goes last",
+    # The fifth item's exclusivity: a holdings view cannot buy it, only
+    # transaction history can. A careless edit widening this to "a holdings
+    # view also buys it" would send a host after evidence the route never
+    # collects.
+    "transaction history alone buys the fifth",
+    # The negative example the mechanism replaced -- naming data in general
+    # instead of the question it would answer. Without this contrast on the
+    # page, a rewrite could silently reintroduce the vague ask.
+    "provide your portfolio for a more accurate analysis",
+)
 # #549: PR #562 made every accepted source record the book at the time it
 # arrives and took `is_complete` out of the anchor decision entirely. Both
 # guaranteed-delivery entry points went on teaching the retired rule, and so
@@ -1026,6 +1058,42 @@ def test_no_book_framing_mutations_are_caught():
         )
 
 
+def test_evidence_invitation_mechanism_is_stated_in_the_contract():
+    """#598 follow-up: decision-framing.md's closing invitation names the
+    question a piece of evidence would answer, drawn from a small closed set
+    of five, with a salience rule choosing which one and a placement rule
+    saying it is appended once, last. Section-scoped to the contract's own
+    "Earning the next piece of evidence" heading -- unlike
+    NO_BOOK_FRAMING_SECTIONS this mechanism is not restated in either
+    guaranteed-delivery entry point, so there is nothing to check there.
+    """
+    for rel, heading in EVIDENCE_INVITATION_SECTIONS.items():
+        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
+        for phrase in EVIDENCE_INVITATION_REQUIRED_PHRASES:
+            assert phrase in section, f"{rel}: missing evidence-invitation phrase {phrase!r}"
+
+
+def test_evidence_invitation_mutations_are_caught():
+    """Mutation proof for the check above, against the real committed text.
+    Section-scoped like the no-book-framing proof, for the same reason: a
+    phrase here could plausibly recur elsewhere on the page, so a file-wide
+    replace could delete an unrelated line and leave the guarded section
+    intact -- a green mutation reporting a gate that never fired.
+    """
+    for rel, heading in EVIDENCE_INVITATION_SECTIONS.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        section = markdown_section(text, heading)
+        for phrase in EVIDENCE_INVITATION_REQUIRED_PHRASES:
+            assert phrase in section, (
+                f"fixture assumption broken: {rel}'s {heading} no longer contains {phrase!r}"
+            )
+            mutated = text.replace(section, section.replace(phrase, "", 1), 1)
+            mutated_section = markdown_section(mutated, heading)
+            assert phrase not in mutated_section, (
+                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
+            )
+
+
 def test_agent_runtime_surface_scope_is_bounded():
     paths = {rel for rel, _ in agent_runtime_files()}
     required = {
@@ -1381,6 +1449,8 @@ def main():
         test_no_book_framing_rule_is_stated_in_both_entry_points,
         test_no_book_framing_contract_is_a_routed_runtime_surface,
         test_no_book_framing_mutations_are_caught,
+        test_evidence_invitation_mechanism_is_stated_in_the_contract,
+        test_evidence_invitation_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,
         test_claude_md_is_a_host_adapter_over_the_shared_floor,
         test_agents_md_is_the_shared_always_on_floor,
