@@ -1186,7 +1186,38 @@ def dim_exit(rts, fwds, n_fwd=N_FWD):
                 n_rt=len(rts), n_scored=len(scored), n_trunc=n_trunc, n_fwd=n_fwd,
                 n_winners=n_winners, low_conf=low_conf)
 
-def current_book_projection(held, last_px):
+# #630: what book a current-book measurement was actually taken over. A
+# projection knows its own *valuation* coverage — which holdings it could put a
+# number on — but not whether those holdings were the account's recorded book.
+# Only a caller holding both can say that, so the claim is stated rather than
+# assumed, and the value that assumes nothing is the default.
+BOOK_BASIS_RECORDED = "recorded_book"      # these holdings are the recorded book
+BOOK_BASIS_SUPPLIED = "supplied_rows"      # whatever holdings the caller handed over
+
+
+def book_scope(book_basis, has_unavailable):
+    """The single derivation of a current-book ``coverage.scope``.
+
+    ``full_current_book`` is a claim about the *book*, so it takes both halves:
+    every holding valued, **and** those holdings known to be the recorded book.
+    Either one missing is ``bounded_valued_subset`` — which is what the
+    measurement then is, a bounded subset that was valued — and ``book_basis``
+    beside it says which of the two bounded it, so the two causes stay
+    distinguishable without a fourth word.
+
+    Deliberately not a new enum value: ``test_current_book_projection_
+    vocabulary_locked_to_portfolio_basis`` locks this vocabulary to
+    ``portfolio_basis._COVERAGE_SCOPES``, which is mirrored into
+    ``schemas/trade-evaluation.schema.json``. ``portfolio_basis`` always
+    measures the recorded book, so a word only this shell can produce would be
+    a permanently unreachable value in that stored enum.
+    """
+    if book_basis != BOOK_BASIS_RECORDED or has_unavailable:
+        return "bounded_valued_subset"
+    return "full_current_book"
+
+
+def current_book_projection(held, last_px, *, book_basis=BOOK_BASIS_SUPPLIED):
     """Canonical current-book value/weight partition, shared by ``dim_size``
     and ``ticker_diagnosis`` (#477).
 
@@ -1223,7 +1254,16 @@ def current_book_projection(held, last_px):
     # has been closed (or the supplied values cannot form a positive book).
     # ``0%`` is a measurement in a real book, not a synonym for "there is no
     # book to measure".
-    coverage = {"scope": "full_current_book" if not part["unavailable"] else "bounded_valued_subset",
+    # #630: ``scope`` used to be decided by valuation coverage alone, so it said
+    # ``full_current_book`` over whatever holdings it was handed — and a weekly
+    # review handed one period's trades declared a whole-book measurement over a
+    # single ticker. This function cannot know: it receives ``held`` and no book
+    # to compare it with. So it states only what it can support, and the caller
+    # that does know says so by stamping ``book_basis`` (``review.py``'s
+    # ``_stamp_recorded_book_basis``, the single decider, after the recorded book
+    # and this derivation have actually been reconciled).
+    coverage = {"scope": book_scope(book_basis, bool(part["unavailable"])),
+                "book_basis": book_basis,
                 "total_holdings": len(held),
                 "valued_holdings": len(part["priced"]) + len(part["cost_fallback"]),
                 "priced": sorted(part["priced"]),
@@ -1234,13 +1274,13 @@ def current_book_projection(held, last_px):
             "reason": part["reason"]}
 
 
-def dim_size(rows, held, last_px, max_pos_override=None):
+def dim_size(rows, held, last_px, max_pos_override=None, *, book_basis=BOOK_BASIS_SUPPLIED):
     # rows 參數保留簽名相容(entry-size 序列已移除:從未進輸出,且混幣下 cum 會跨幣別
     # 亂加 —— 兩輪 review 均判 dead code,2026-07-06 刪)。
     # #477:權重/分母改讀 current_book_projection() 這唯一算式,不再就地算
     # vals[t]=sh*px if px else cost——那份邏輯後來被 ticker_diagnosis 獨立重算成
     # 「只認有價格的檔」,同一張卡兩個權重(參見該函式 #477 註解)。
-    projection = current_book_projection(held, last_px)
+    projection = current_book_projection(held, last_px, book_basis=book_basis)
     # Keep the dimension-shaped payload for compatibility, but make
     # applicability explicit so every downstream consumer can centrally
     # exclude it (see current_book_projection's own docstring for why).

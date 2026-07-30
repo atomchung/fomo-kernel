@@ -1278,8 +1278,37 @@ def _gate_current_view(card, state, detail):
     card["honesty_ledger"] = honesty
 
 
-def _overlay_ledger_holdings(card, state, derived):
-    """Make ledger holdings/cycles canonical and gate divergent card surfaces."""
+def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
+    """Make ledger holdings/cycles canonical and gate divergent card surfaces.
+
+    ``declared_anchor`` says whether this root's book was declared by the user
+    (a holdings view) or is the engine's own restatement of the trades it has
+    been given (#549's ``trades_derived`` row). Both are recorded books and
+    both are canonical for *which positions are held*, so both reconcile —
+    but the derived lane compares strictly less, because on that lane the two
+    sides are two readings of the same trade rows and only some of their
+    fields can disagree for a real reason:
+
+    - **Position coverage and share counts** are pure arithmetic over those
+      rows and agree in both lanes. A file covering part of the book differs
+      in exactly these, and that difference is #630. Compared always.
+    - **Cost basis** is computed by two different, both-legitimate methods:
+      ``ledger.derive_holdings`` keeps a moving average while the card's own
+      accumulation is FIFO. On a history with partial sells they disagree by
+      construction (NVDA in ``mock/sample_ai_holder.csv``: 24900 FIFO against
+      23250 moving-average), so comparing them would gate every *cumulative*
+      weekly review on a methodology difference that is not an error.
+    - **Market and currency** are not on the raw side at all —
+      ``trade_recap.build_state`` writes neither onto a holding — so the
+      comparison below reads the US/USD default for every position and would
+      report every non-US holding as misclassified.
+
+    Both of those last two are meaningful against a *declared* holdings view,
+    which states cost, market, and currency in its own right and can genuinely
+    contradict the trades. They are meaningless against the engine's own
+    restatement of those trades, which is why they are skipped there rather
+    than loosened for everyone.
+    """
     raw_positions = dict(((state.get("holdings") or {}).get("positions") or {}))
     canonical = dict(derived.get("holdings") or {})
     raw_tickers, canonical_tickers = set(raw_positions), set(canonical)
@@ -1294,6 +1323,13 @@ def _overlay_ledger_holdings(card, state, derived):
         if (raw_shares is None or canonical_shares is None
                 or abs(raw_shares - canonical_shares) > ledger.SHARES_TOL):
             mismatches.append({"ticker": ticker, "kind": "shares"})
+            continue
+        if not declared_anchor:
+            # Both sides of the derived lane were built from the same trade rows,
+            # and `trade_recap.build_state` writes no market/currency onto a
+            # holding at all — so the raw side is *always* the US/USD default
+            # below, and every non-US position would read as misclassified. The
+            # `tw_mixed` persona's second review is exactly that false positive.
             continue
         # Transaction artifacts historically omit these fields for the default
         # US/USD case.  Default the raw side accordingly; falling back to the
@@ -1313,13 +1349,35 @@ def _overlay_ledger_holdings(card, state, derived):
     # Current prices can verify today's market value, but they cannot repair a
     # divergent or unknown cost basis.  Unrealized and total P&L still depend
     # on that basis, so compare it even when every ticker has a live price.
-    if not mismatches and canonical:
+    if declared_anchor and not mismatches and canonical:
         for ticker, fact in sorted(canonical.items()):
             raw_cost = card_renderer._finite_number((raw_positions.get(ticker) or {}).get("cost"))
             canonical_cost = card_renderer._finite_number(fact.get("cost_total"))
             if (raw_cost is None or canonical_cost is None
                     or not math.isclose(raw_cost, canonical_cost, rel_tol=1e-6, abs_tol=0.05)):
                 mismatches.append({"ticker": ticker, "kind": "valuation"})
+
+    if not declared_anchor and not mismatches:
+        # On the derived lane the reconciliation is a **check, not an adoption**.
+        # Both sides are readings of the same trade rows, so where they agree on
+        # what is held there is nothing here the card does not already have, and
+        # adopting anyway is not idempotent: the first review of a fresh root has
+        # no ledger to reconcile against, every later run of the identical file
+        # does, and the second one would come back with a different book —
+        # `derive_holdings` keeps a moving average where the card's own
+        # accumulation is FIFO, so `cost`/`avg_cost` move, and `origin`/`market`/
+        # `currency` appear. `add-cash` re-enters this exact pipeline to add an
+        # anchor to a session the user has already answered against, and refuses
+        # when anything but the anchor moved; that guard is what caught this.
+        #
+        # Disagreement is the other case, and it is still adopted below: there
+        # the supplied file did not cover the book, so the card's own view is not
+        # a second reading of the same rows but a narrower one (#630).
+        return card, state, {"status": "matched",
+                             "raw_positions_n": len(raw_positions),
+                             "canonical_positions_n": len(canonical),
+                             "full_price_coverage": full_price_coverage,
+                             "mismatches": []}
 
     positions = {}
     for ticker, fact in sorted(canonical.items()):
@@ -1349,7 +1407,7 @@ def _overlay_ledger_holdings(card, state, derived):
 
     state["holdings"] = {
         "as_of": state.get("date_end") or (state.get("holdings") or {}).get("as_of"),
-        "derived_from": "snapshot_plus_trades",
+        "derived_from": "snapshot_plus_trades" if declared_anchor else "ledger_trades",
         "positions": positions,
     }
     state["n_held"] = len(positions)
@@ -1373,6 +1431,34 @@ def _overlay_ledger_holdings(card, state, derived):
     if mismatches:
         _gate_current_view(card, state, detail)
     return card, state, detail
+
+
+def _stamp_recorded_book_basis(card, reconciliation):
+    """Say that this card's current-book figures were measured over the book (#630).
+
+    The single decider. ``trade_recap.current_book_projection`` mints
+    ``book_basis: supplied_rows`` because it is handed holdings and no book to
+    check them against; this is the one place that holds both, and it runs only
+    after ``_record_derived_book`` wrote down the book this import produced —
+    which is ``derive_holdings`` over exactly the events the card was built
+    from, so on a first review, and on any later review whose file still covers
+    the whole account, the two are the same book.
+
+    A reconciliation that found mismatches is the case where they are not, and
+    it has already stripped every current-view surface through
+    ``_gate_current_view``; stamping there would relabel figures that no longer
+    exist, so it is refused rather than skipped silently.
+    """
+    if reconciliation is not None and reconciliation.get("mismatches"):
+        return
+    for row in (card.get("dims_raw") or []) + [
+            (hole.get("raw") or {}) for hole in card.get("top_holes") or []]:
+        coverage = row.get("sizing_coverage") if isinstance(row, dict) else None
+        if not isinstance(coverage, dict):
+            continue
+        coverage["book_basis"] = trade_recap.BOOK_BASIS_RECORDED
+        coverage["scope"] = trade_recap.book_scope(
+            trade_recap.BOOK_BASIS_RECORDED, bool(coverage.get("unavailable")))
 
 
 def _record_derived_book(root, ledger_path, events, state):
@@ -1473,6 +1559,17 @@ def _ingest_trades(root, paths, card, state):
         # restatement (#549) is the very derivation being compared, so routing it
         # here would reconcile the book against itself and gate the card on
         # rounding.
+        #
+        # #630's wider reconciliation is deliberately NOT mirrored here, and the
+        # reason is what this lane is: `cmd_prepare` reaches it only when the
+        # caller supplied `--card-json`/`--state-json`, so `state["holdings"]` was
+        # asserted by that caller and is not a derivation of the CSVs beside it.
+        # Comparing the two would not reconcile one book against itself; it would
+        # compare an asserted artifact with an unrelated file. Every review a real
+        # user reaches freezes its inputs and goes through
+        # `_verify_and_ingest_frozen_trades`, which does carry #630's rule —
+        # `tests/test_review_v2.py::test_only_the_adapter_lane_skips_the_recorded_book_reconciliation`
+        # fails if that stops being true.
         if ledger.latest_anchor(existing, declared_only=True) is not None:
             card, state, reconciliation = _overlay_ledger_holdings(
                 card, state, ledger.derive_holdings(virtual, splits=state.get("splits"))
@@ -1539,14 +1636,27 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
                 or verified_overlay != overlay):
             raise ReviewError(BASIS_CHANGED_MESSAGE)
         reconciliation = None
-        if append and ledger.latest_anchor(live_events, declared_only=True) is not None:
+        # See `_ingest_trades`: any recorded book, declared or derived (#630).
+        #
+        # The predicate reads the **post-import** book, never the pre-import
+        # ledger, because this command writes that ledger: `latest_anchor(
+        # live_events)` is false on a fresh root's first review and true on every
+        # later run of the identical file, so the same input would reconcile on
+        # one pass and not on the other. `declared_anchor` may read `live_events`
+        # — a `trades_derived` row is never declared, so that answer does not
+        # move when this import records one.
+        derived_book = ledger.derive_holdings(verified_overlay["events"],
+                                              splits=state.get("splits"))
+        declared_anchor = ledger.latest_anchor(live_events, declared_only=True) is not None
+        if append and (derived_book.get("holdings") or declared_anchor):
             card, state, reconciliation = _overlay_ledger_holdings(
-                card, state, ledger.derive_holdings(verified_overlay["events"],
-                                                   splits=state.get("splits")))
+                card, state, derived_book, declared_anchor=declared_anchor)
         if append and verified_overlay["fresh"]:
             ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
         recorded_book = (_record_derived_book(root, ledger_path, verified_overlay["events"], state)
                          if append else None)
+        if recorded_book is not None:
+            _stamp_recorded_book_basis(card, reconciliation)
         result = {"path": ledger_path, "appended": len(verified_overlay["fresh"]) if append else 0,
                   "skipped_dup": verified_overlay["skipped_dup"],
                   "skipped_non_trade": skipped_non_trade,

@@ -771,16 +771,25 @@ def test_current_book_projection_full_single_currency_book_shares_one_weight():
     # dim_size 把 NOPX 的成本 3800 算進分母,ticker_diagnosis 舊碼完全不算(mval 恆 0)。
     held = {"BIG": (10.0, 4000.0), "SMALL": (10.0, 500.0), "NOPX": (10.0, 3800.0)}
     last_px = {"BIG": 600.0, "SMALL": 100.0}   # NOPX 缺現價
-    d_size = tr.dim_size([], held, last_px)
+    d_size = tr.dim_size([], held, last_px, book_basis=tr.BOOK_BASIS_RECORDED)
     assert d_size["applicable"] is True
     total = 6000.0 + 1000.0 + 3800.0
     assert _approx(d_size["weights"]["BIG"], 6000.0 / total)
     assert _approx(d_size["weights"]["NOPX"], 3800.0 / total), \
         "NOPX 的成本必須進分母,舊碼的 ticker_diagnosis 端完全看不到這筆"
     assert d_size["sizing_coverage"] == {
-        "scope": "full_current_book", "total_holdings": 3, "valued_holdings": 3,
+        "scope": "full_current_book", "book_basis": "recorded_book",
+        "total_holdings": 3, "valued_holdings": 3,
         "priced": ["BIG", "SMALL"], "cost_fallback": ["NOPX"], "unavailable": [],
     }
+    # #630 counterweight: the whole-book claim is the caller's to make. The same
+    # fully-valued holdings, handed over without one, may not be described as the
+    # account's book — that unconditional claim is what let a weekly review
+    # report one ticker as 100% of a six-position portfolio.
+    unstated = tr.dim_size([], held, last_px)["sizing_coverage"]
+    assert unstated["book_basis"] == "supplied_rows"
+    assert unstated["scope"] == "bounded_valued_subset", \
+        f"an unstated book basis must not claim the whole book: {unstated}"
     # NOPX 沒現價 → unrealized 恆 0,只有「已實現」的過去交易能讓它擠進 ticker_diagnosis
     # 的輸出名單(impact 門檻);用一筆真實 round-trip 給它非零 impact。
     rts = [_RT("NOPX", 100.0, 150.0, qty=5)]   # realized = 5*(150-100) = 250
@@ -956,12 +965,19 @@ def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
     自己的程式碼,這裡鎖住殼的輸出詞彙 == portfolio_basis 的模組常數,防殼層
     改寫時偏離契約詞彙。取樣走遍每條輸出路徑(priced/cost_fallback/unavailable/
     空倉/全不可估值)。"""
+    # #630: every sample states a recorded book basis, because the scope
+    # vocabulary this locks is only reachable at all once the caller has made
+    # that claim — an unstated basis collapses to bounded_valued_subset by
+    # design, and a sample set that never states one would silently stop
+    # covering `full_current_book`.
+    def _projection(held, px):
+        return tr.current_book_projection(held, px, book_basis=tr.BOOK_BASIS_RECORDED)
+
     samples = [
-        tr.current_book_projection({"P": (1.0, 10.0), "C": (1.0, 10.0), "U": (1.0, 0.0)},
-                                   {"P": 5.0}),
-        tr.current_book_projection({"P": (1.0, 10.0)}, {"P": 5.0}),
-        tr.current_book_projection({}, {}),
-        tr.current_book_projection({"U": (1.0, 0.0)}, {}),
+        _projection({"P": (1.0, 10.0), "C": (1.0, 10.0), "U": (1.0, 0.0)}, {"P": 5.0}),
+        _projection({"P": (1.0, 10.0)}, {"P": 5.0}),
+        _projection({}, {}),
+        _projection({"U": (1.0, 0.0)}, {}),
     ]
     sources = {e["source"] for s in samples for e in s["values"].values()}
     assert sources == pb._VALUE_SOURCES, \
@@ -979,8 +995,9 @@ def test_current_book_projection_vocabulary_locked_to_portfolio_basis():
         f"per-ticker reason 應與 portfolio_basis._projection_entry 同拼字: {entry_reasons}"
     # coverage 鍵形狀 = portfolio_basis 的 _exact_keys 集合減 currencies(本函式無幣別
     # 概念,docstring 已記錄這個刻意差異)。
-    assert set(samples[0]["coverage"]) == {"scope", "total_holdings", "valued_holdings",
-                                           "priced", "cost_fallback", "unavailable"}
+    assert set(samples[0]["coverage"]) == {"scope", "book_basis", "total_holdings",
+                                           "valued_holdings", "priced", "cost_fallback",
+                                           "unavailable"}
 
 
 # ─────────────────── K. build_card_data():candidate_rules 從 top_holes 補滿(#87/#95) ───────────────────
