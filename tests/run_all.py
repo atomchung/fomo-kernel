@@ -71,6 +71,11 @@ SUITES = [
     # the suite that watches the refusal rather than the export.
     ("QA run isolation gate (#557)", "qa/tests/test_isolation_gate.py"),
     ("Public-text privacy lint", "tests/test_privacy_lint.py"),
+    # #575: repository integrity that changes no behaviour and therefore no
+    # behavioural suite can see. A lone `<<<<<<< HEAD` lived inside a docstring
+    # in `revisit.py` from #562 until #574 — valid Python, nothing raised, 44
+    # green suites over it on every run.
+    ("Repository hygiene (#575)", "tests/test_repo_hygiene.py"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py"),
     # #402 knife 5: the copy branches no persona reaches, rendered on all three
