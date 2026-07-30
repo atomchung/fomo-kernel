@@ -216,6 +216,29 @@ read by no mechanical consumer, and repeatedly invited misreading.
   reasoning carrying both sides. Weaker than it sounds — a check with no
   exercising episodes prints a `NOTE`, never a failure, so a capability can
   ship uncovered with CI green.
+- **Bundle the minimum regression with the owning change; batch test-system
+  work by class.** A capability or correctness PR carries the focused
+  regression, production-route proof, and contract synchronization needed to
+  prove its user outcome. Test-file splitting, helper extraction, runner
+  timing/parallelization, duplicate-assertion cleanup, and other test-system
+  work wait for one bounded maintenance slice unless the current test can
+  false-pass a milestone gate. Do not open a micro-PR for every small test
+  improvement; collect related work under one owner, use focused tests during
+  implementation, and run the complete offline suite when the bounded change
+  is ready to commit as `CLAUDE.md` requires (#402, #464, #483 owner decision
+  2026-07-30).
+- **Quarantine an edge-case class into one owning track.** When a cross-cutting
+  class such as stock splits, mixed-currency valuation, corruption recovery,
+  or same-day mutation appears, do not widen the current feature PR one
+  symptom at a time. Give the class one issue/PR, a production-route inventory,
+  explicit non-goals, and focused tests across every supported route; keep new
+  findings in that track until its stop condition instead of scattering
+  follow-up patches and tests through unrelated work. It interrupts the
+  current milestone only when it can make a supported route state a wrong
+  fact, corrupt canonical state, leak private data, or make recovery
+  impossible. Otherwise record/defer it and resume the milestone. Split work
+  is the receipt: #550/#558/#583 own that class; #544 must not absorb it, while
+  #583 still blocks M1 because the mismatch can value a book by a split factor.
 
 ## 5. The never-loosen list
 
