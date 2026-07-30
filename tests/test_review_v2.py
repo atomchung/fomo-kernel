@@ -9932,7 +9932,7 @@ _ONE_TICKER_WEEK = (
     "MSFT,5,420.00,BUY,BOUGHT MICROSOFT CORP,2024-11-07,2024-11-11,0,-2100.00,0,0,,Trade\n")
 
 
-def _book_review(tmp, root, csv_path, env, tag, route, extra=()):
+def _book_review(tmp, root, csv_path, env, tag, route, extra=(), prices=None):
     """One real prepare+finalize over `csv_path`, every question skipped.
 
     These reviews run offline, so no close is retrievable and #623 refuses a
@@ -9941,11 +9941,16 @@ def _book_review(tmp, root, csv_path, env, tag, route, extra=()):
     `tests/test_preview_gate.py`) and keeps the subject of these tests the book
     the figures were measured over, not the price. Weights fall back to cost
     basis either way, which is what these assertions read.
+
+    `prices` swaps that declaration for a supplied envelope — the two are
+    contradictory claims about the same run. A mixed-currency book needs one,
+    because #612 refuses an aggregate whose held-currency rate is missing
+    rather than converting it at 1.0.
     """
+    price_argv = (["--prices", str(prices)] if prices else
+                  ["--prices-unavailable", "offline test fixture: no provider is reachable"])
     run = _run("prepare", csv_path, "--root", root, "--route", route, "--language", "en",
-               "--session-nonce", tag,
-               "--prices-unavailable", "offline test fixture: no provider is reachable",
-               *extra, env=env)
+               "--session-nonce", tag, *price_argv, *extra, env=env)
     assert run.returncode == 0, run.stdout + run.stderr
     plan = _pending_plan(root, run.stdout)
     answers = {
@@ -10198,9 +10203,15 @@ def test_a_non_us_book_is_not_read_as_misclassified_by_the_derived_lane():
 
     The persona sweep catches this through `tw_mixed`, four surfaces deep. This
     says it directly, so the reason survives next to the branch it justifies.
+
+    The book is mixed-currency, so it carries the persona's committed FX
+    envelope: without a held-currency rate #612 refuses the aggregate outright
+    and this test would never reach the classification it is about.
     """
-    source = (ROOT / "skills" / "fomo-kernel" / "mock" / "sample_tw_mixed.csv").read_text(
+    mock_dir = ROOT / "skills" / "fomo-kernel" / "mock"
+    source = (mock_dir / "sample_tw_mixed.csv").read_text(
         encoding="utf-8").strip().splitlines()
+    prices = mock_dir / "sample_tw_mixed.prices.json"
     header, body = source[0], source[1:]
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         env = _offline_engine_env(tmp)
@@ -10210,8 +10221,8 @@ def test_a_non_us_book_is_not_read_as_misclassified_by_the_derived_lane():
         whole = pathlib.Path(tmp) / "tw_week2.csv"
         whole.write_text("\n".join(source) + "\n", encoding="utf-8")
 
-        _book_review(tmp, root, first_half, env, "tw1", "first_review")
-        plan = _book_review(tmp, root, whole, env, "tw2", "weekly_review")
+        _book_review(tmp, root, first_half, env, "tw1", "first_review", prices=prices)
+        plan = _book_review(tmp, root, whole, env, "tw2", "weekly_review", prices=prices)
 
         events, _ = ledger_engine.load_ledger(os.path.join(root, "ledger.jsonl"))
         book = ledger_engine.derive_holdings(events)["holdings"]
@@ -10225,6 +10236,146 @@ def test_a_non_us_book_is_not_read_as_misclassified_by_the_derived_lane():
             f"misclassified: {detail.get('mismatches')}")
         sizing = _sizing_dim(plan)
         assert sizing is not None and sizing["sizing_coverage"]["total_holdings"] == len(book)
+
+
+_FX_HEADER = "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency"
+_FX_TWD_ROWS = ["2330.TW,BUY,1000,550.00,2024-01-05,Trade,TW,TWD",
+                "2330.TW,SELL,200,600.00,2024-02-05,Trade,TW,TWD"]
+_FX_USD_ROWS = ["AAPL,BUY,100,155.00,2024-01-08,Trade,US,USD",
+                "AAPL,SELL,20,180.00,2024-02-08,Trade,US,USD",
+                "MSFT,BUY,30,285.00,2024-01-20,Trade,US,USD"]
+_FX_CLOSES = [{"ticker": "2330.TW", "close": 1050.0, "date": "2026-07-30", "currency": "TWD"},
+              {"ticker": "AAPL", "close": 210.0, "date": "2026-07-30", "currency": "USD"},
+              {"ticker": "MSFT", "close": 430.0, "date": "2026-07-30", "currency": "USD"}]
+
+
+def _fx_case(tmp, name, rows, fx=None, prices=_FX_CLOSES):
+    """A fictional book plus the envelope it is reviewed with."""
+    csv_path = pathlib.Path(tmp) / f"{name}.csv"
+    csv_path.write_text("\n".join([_FX_HEADER] + rows) + "\n", encoding="utf-8")
+    envelope = pathlib.Path(tmp) / f"{name}.prices.json"
+    payload = {"schema_version": 1, "as_of": "2026-07-30", "source": "test fixture",
+               "prices": [dict(row) for row in prices]}
+    if fx:
+        payload["fx"] = [{"currency": currency, "usd_per_unit": rate, "date": "2026-07-30"}
+                         for currency, rate in sorted(fx.items())]
+    envelope.write_text(json.dumps(payload), encoding="utf-8")
+    return csv_path, envelope
+
+
+def _fx_plan(root):
+    return json.loads(next(pathlib.Path(root).glob(".pending/*/plan.json")).read_text())
+
+
+def _fx_sizing(plan):
+    return next(dim for dim in plan["engine_card"]["dims_raw"] if "weights" in dim)
+
+
+def test_a_review_refuses_a_held_currency_it_has_no_rate_for_and_converts_when_it_does():
+    """#612, driven through the real CLI rather than through `usd_view`.
+
+    `trade_recap.usd_view` used to resolve a currency absent from `fx` as a
+    factor of 1.0, so a 840,000 TWD position entered a USD denominator at face
+    value. On this fixture that reads as ~97% of the book instead of ~47%, which
+    is not a gap in the numbers — it is a different number, and every aggregate
+    downstream (weights, concentration, the diagnosis order, `what_if`, the
+    persisted metrics) is built on it. #602 already made `consider` refuse this
+    book; the review lane never inherited it.
+
+    Both halves are here on purpose. A refusal test alone stays green when the
+    supply side stops delivering rates at all, which is the decorative shape
+    this repository keeps paying for; the converted counterweight is what makes
+    the pair mean "the rate arrived and was used".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        mixed = _FX_TWD_ROWS + _FX_USD_ROWS
+        csv_path, no_rate = _fx_case(tmp, "mixed_no_rate", mixed)
+        refused_root = pathlib.Path(tmp) / "refused"
+        run = _run("prepare", csv_path, "--root", refused_root, "--language", "en",
+                   "--prices", no_rate, env=env)
+
+        # One controlled CLI error, not a traceback and not a partial artifact.
+        assert run.returncode == 2, run.stdout + run.stderr
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error"
+        assert "TWD" in payload["error"], payload["error"]
+        assert "--prices" in payload["error"] and "fx" in payload["error"], payload["error"]
+        assert "Traceback" not in run.stdout and "Traceback" not in run.stderr
+        # #611's machine-readable cause is quoted rather than provider prose
+        # being parsed for it.
+        assert "fx_unavailable" in payload["error"], payload["error"]
+
+        # Nothing canonical was written: no session, no ledger, no card. The
+        # empty projection lock is the transaction boundary itself, which is
+        # taken before the engine runs and carries no review content.
+        written = {str(path.relative_to(refused_root))
+                   for path in refused_root.rglob("*")} if refused_root.exists() else set()
+        assert not [name for name in written if name.startswith(".pending")], written
+        assert "ledger.jsonl" not in written, written
+        assert not [name for name in written if "card" in name or "session" in name.rstrip("s")
+                    and name.endswith(".json")], written
+
+        # The same book, the same run, with the rate supplied.
+        _csv2, with_rate = _fx_case(tmp, "mixed_rate", mixed, fx={"TWD": 0.0317})
+        priced_root = pathlib.Path(tmp) / "priced"
+        ok = _run("prepare", csv_path, "--root", priced_root, "--language", "en",
+                  "--prices", with_rate, env=env)
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+        plan = _fx_plan(priced_root)
+        sizing = _fx_sizing(plan)
+        # 800 x 1050 TWD is 840,000 face value beside 16,800 and 12,900 USD.
+        # Converted it is ~26,600 USD: the largest holding, but under half the
+        # book rather than nearly all of it.
+        assert sizing["max_ticker"] == "2330.TW"
+        assert 0.45 < sizing["max_pct"] < 0.50, sizing["max_pct"]
+        assert sizing["weights"]["AAPL"] > 0.25, sizing["weights"]
+        assert plan["engine_card"]["currency_meta"]["fx"] == {"TWD": 0.0317}
+        # The disclosure this refusal replaces is gone rather than always empty
+        # (#429, the same removal #600 made on the consider side).
+        assert "fx_gaps" not in (plan["engine_card"].get("data_integrity") or {})
+        assert (priced_root / "ledger.jsonl").exists()
+
+
+def test_single_currency_and_display_only_gaps_are_untouched_by_the_fx_refusal():
+    """#612's two compatibility halves, through the CLI.
+
+    A single-currency book — including a pure non-USD one — aggregates itself
+    self-consistently and never requested a rate. And `TR_DISPLAY_CURRENCY` is a
+    presentation preference, not a held currency: `fx_request_currencies` widens
+    the *request* for rendering, so a missing display rate must stay a rendering
+    degradation. Both would be false positives of a predicate written over the
+    requested currencies instead of the held ones.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        for name, rows, closes in (
+                ("pure_usd", _FX_USD_ROWS, [row for row in _FX_CLOSES if row["currency"] == "USD"]),
+                ("pure_twd", _FX_TWD_ROWS, [row for row in _FX_CLOSES if row["currency"] == "TWD"])):
+            csv_path, envelope = _fx_case(tmp, name, rows, prices=closes)
+            root = pathlib.Path(tmp) / name
+            run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                       "--prices", envelope, env=env)
+            assert run.returncode == 0, name + ": " + run.stdout + run.stderr
+            meta = _fx_plan(root)["engine_card"]["currency_meta"]
+            assert meta["mixed"] is False and meta["fx"] is None, meta
+            assert meta["aggregate_currency"] == ("USD" if name == "pure_usd" else "TWD"), meta
+
+        # zh-CN asks for CNY, which this book neither holds nor supplies. The
+        # held book (TWD + USD) is fully covered, so the review completes and
+        # only the display conversion degrades.
+        csv_path, envelope = _fx_case(tmp, "display_only", _FX_TWD_ROWS + _FX_USD_ROWS,
+                                      fx={"TWD": 0.0317})
+        root = pathlib.Path(tmp) / "display_only"
+        run = _run("prepare", csv_path, "--root", root, "--language", "zh-CN",
+                   "--prices", envelope, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        meta = _fx_plan(root)["engine_card"]["currency_meta"]
+        assert meta["requested_display_currency"] == "CNY", meta
+        assert meta["display_fx_source"] == "unavailable", meta
+        assert _fx_sizing(_fx_plan(root))["max_ticker"] == "2330.TW"
+        assert 0.45 < _fx_sizing(_fx_plan(root))["max_pct"] < 0.50, \
+            "a display-only gap must not disturb the held-currency aggregate"
 
 
 def test_only_the_adapter_lane_skips_the_recorded_book_reconciliation():
