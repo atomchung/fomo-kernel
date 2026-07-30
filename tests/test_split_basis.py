@@ -35,6 +35,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
+
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
 import book_refresh as br  # noqa: E402
 import ledger as lg  # noqa: E402
 import portfolio_basis as pb  # noqa: E402
@@ -520,7 +527,18 @@ _BOOK_READERS_INTERNAL = frozenset({
 _DRIVEN_ROUTES = ("consider", "prepare", "refresh", "positions")
 
 # A route may sit here only with a reason naming who owns it instead.
-_ROUTES_NOT_DRIVEN = {}
+_ROUTES_NOT_DRIVEN = {
+    # `add-cash` (#357) performs no book read of its own: it re-enters
+    # `_prepare_session` — the `prepare` route driven above — with one extra
+    # input, and then refuses unless the recomputed `engine_state` (holdings,
+    # splits, valuation frame: everything but `cash`) is byte-identical to the
+    # session it is amending. Whatever `prepare` establishes about the split
+    # basis, this route reproduces exactly or does not answer at all, so there
+    # is no second basis for it to get wrong. This is a mechanism, not a
+    # call-graph argument: it is pinned by
+    # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved.
+    "add-cash": "delegates to prepare and refuses any engine_state drift outside cash",
+}
 
 
 def _routes_that_read_the_book():

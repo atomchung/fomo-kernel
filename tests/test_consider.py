@@ -34,6 +34,13 @@ MOCK = ROOT / "skills" / "fomo-kernel" / "mock"
 COACH_PY = ENGINE_DIR / "coach.py"
 
 sys.path.insert(0, str(ENGINE_DIR))
+
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
 import price_feed as price_feed_engine  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
 import portfolio_basis as portfolio_basis_engine  # noqa: E402
@@ -2481,6 +2488,11 @@ def _fake_download(symbols, start, end=None):
 
 import market_data
 market_data._download = _fake_download
+# The other half of the provider seam. Without it `_from_yahoo` answers
+# `provider_missing` above the fake and never calls it, which is what every CI
+# runner does -- they install no yfinance on purpose (#621). Safe to assign
+# outright here, unlike in-process: this runs in a throwaway subprocess.
+market_data._provider_available = lambda: True
 '''
 
 

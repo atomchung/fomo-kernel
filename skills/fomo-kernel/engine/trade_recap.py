@@ -14,6 +14,7 @@ import market_context as market_context_engine
 import market_data
 import price_feed
 import portfolio_basis
+import session
 import splits as split_policy
 
 DEFAULT_CSV = os.path.join(os.path.dirname(__file__), "..", "mock", "mock_trades.csv")
@@ -650,6 +651,27 @@ def _ledger_rebase_origin():
         if day:
             candidates.append(day)
     return min(candidates) if candidates else None
+
+
+def _state_root():
+    """The state root this run's market-data cache belongs to (#627).
+
+    `review.py` owns the root — `--root`, or the default when none was given —
+    but this engine runs as a subprocess and cannot see its argv, so the root
+    arrives through `TR_STATE_ROOT`, the same handoff `TR_LEDGER` and
+    `TR_STATE_OUT` already use. Without it, `market_data` fell back to
+    `session.default_root()` and `prepare --root /tmp/x` put its session state in
+    `/tmp/x` and its cache in the account's real `~/.trade-coach` — writing that
+    run's tickers there, and letting one root be answered from another's closes.
+
+    A bare engine run (`python3 trade_recap.py trades.csv`, which several suites
+    do) has no `review.py` above it and no root of its own, so it names the
+    default explicitly. That is the same destination as before; what changed is
+    that it is now a stated choice rather than a cache primitive's fallback.
+    """
+    declared = os.environ.get("TR_STATE_ROOT")
+    return (os.path.abspath(os.path.expanduser(declared)) if declared
+            else session.default_root())
 
 
 def market_request(rows, date_end, prev_end, currencies=(), requested_display=None,
@@ -2433,7 +2455,7 @@ def main():
         market_request(rows, date_end, prev_end, currencies=currencies,
                        requested_display=requested_display,
                        rebase_origin=_ledger_rebase_origin()),
-        feed=feed)
+        feed=feed, root=_state_root())
     splits = fetch_splits({r["ticker"] for r in rows}, bundle=bundle)
     n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
     # #330:供給價的軟性合理性複核——結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住

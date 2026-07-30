@@ -100,6 +100,13 @@ import subprocess
 import sys
 import tempfile
 
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
+
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO = TESTS_DIR.parent
 SKILL_DIR = REPO / "skills" / "fomo-kernel"
@@ -366,7 +373,14 @@ def _prepare(path_arg, locale, root, env):
     finalize silently failed to commit, which should surface as an error here.
     """
     proc = subprocess.run(
-        [sys.executable, "engine/review.py", "prepare", str(path_arg), "--language", locale],
+        [sys.executable, "engine/review.py", "prepare", str(path_arg), "--language", locale,
+         # The sweep runs with no market data at all, which is a genuine dead
+         # end rather than a skipped recovery step -- so it declares one, the
+         # same thing a priceless host does (#623). Without the declaration
+         # every persona's card is refused as an unattempted recovery, which is
+         # the gate working: a degraded card is delivered only when the dead end
+         # was stated.
+         "--prices-unavailable", "persona sweep runs with no market-data source"],
         cwd=SKILL_DIR, capture_output=True, text=True,
         env={**env, "TRADE_COACH_HOME": str(root)})
     plans = list(root.glob(".pending/*/plan.json"))

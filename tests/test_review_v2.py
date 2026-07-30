@@ -21,6 +21,13 @@ REVIEW = ENGINE_DIR / "review.py"
 SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
+
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
 import book_refresh as book_refresh_engine  # noqa: E402
 import card_renderer  # noqa: E402
 import instruments  # noqa: E402
@@ -591,12 +598,16 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
         ],
         "fx": {"USD": 1, "TWD": 0.0307},
     }
+    # The unlock marker is the catalog entry itself, not a fragment of its
+    # wording (#623). This test asserts which branch rendered and how often --
+    # a wording pin here made a copy edit look like a branching regression, and
+    # `tests/copy_corpus.py`'s golden is the surface that owns wording.
     markers = {
         "en": ("are out of scope for this position-snapshot review",
-               "unlocks behavior diagnostics",
+               card_renderer.load_copy("en")["block_missing"]["snapshot_unlock"],
                "Import transaction history later"),
         "zh-TW": ("不在這次持倉快照的評分範圍內",
-                  "匯入交易歷史 CSV 可解鎖行為診斷",
+                  card_renderer.load_copy("zh-TW")["block_missing"]["snapshot_unlock"],
                   "之後匯入交易紀錄即可解鎖"),
     }
     with tempfile.TemporaryDirectory() as tmp:
@@ -983,7 +994,11 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         # block names the concrete unlock payoff exactly once — regardless of
         # the "skip commitment" answer this scenario exercises.
         assert private.count("cannot score transaction history yet") == 1
-        assert private.count("unlocks behavior diagnostics") == 1
+        # The catalog entry, not a fragment of its wording (#623): this asserts
+        # the at-most-one invitation rule, and copy_corpus's golden owns the
+        # sentence.
+        assert private.count(
+            card_renderer.load_copy("en")["block_missing"]["snapshot_unlock"]) == 1
         assert "Total P&L" not in private and "Best:" not in private and "Worst:" not in private
         assert "opening portfolio check" in public.lower()
         assert "behavioral pressure" not in public and "highlighted behavior" not in public
@@ -1765,6 +1780,409 @@ def test_prepare_with_cash_anchor_opens_a_new_session_not_a_silent_resume():
             "the same cash anchor rerun stays idempotent at its own fingerprint"
 
 
+# --- The cash anchor is a stated gap, and answerable after the card (#357) ----
+#
+# Five recurrences, three of them on real data, all of the same shape: nothing
+# in the Review Plan said the anchor was missing. The engine demanded a
+# disclosure when the balance was *present* (`acct_perf_basis`) and demanded
+# nothing when it was absent, so the one condition the agent had to notice
+# unprompted was the only one the plan never mentioned.
+#
+# The owner ruled out making `prepare` refuse: compute the first card, then ask
+# a directly answerable question, then re-render. So the gap is stated, the ask
+# lands at the card beat, and `add-cash` is what makes answering cheap enough to
+# be worth asking for.
+
+_OFFLINE_MOCK = ROOT / "skills" / "fomo-kernel" / "mock" / "mock_trades.csv"
+
+
+def _offline_env(tmp):
+    """A prepare that cannot reach a price source, so the run is deterministic."""
+    stub_dir = pathlib.Path(tmp) / "stubs"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n', encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+    return env
+
+
+def _prepared_without_an_anchor(tmp, root):
+    env = _offline_env(tmp)
+    run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return env, json.loads(run.stdout)["review_plan"]
+
+
+def test_a_review_with_no_cash_anchor_says_so_in_its_own_plan():
+    """The signal that did not exist. It also has to carry enough to ask a
+    specific question -- which currency, and what answering buys -- because a
+    blind "give me a number, trust me" is what the #357 owner note singled out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _env, plan = _prepared_without_an_anchor(tmp, pathlib.Path(tmp) / "coach")
+        anchor = plan["input"]["cash_anchor"]
+        assert anchor["status"] == "absent", anchor
+        assert anchor["unanchored_currencies"] == ["USD"], anchor
+        assert set(anchor["unlocks"]) == {"account_level_return", "annualized_return",
+                                          "cash_drag"}, anchor
+        # The one field that separates this gap from the price gap beside it:
+        # a price request is recovered before the user sees anything, this is
+        # asked after they have seen the card (owner ruling 2026-07-30).
+        assert anchor["ask_after"] == "card_presented", anchor
+        assert "add-cash" in anchor["next_action"], anchor["next_action"]
+
+
+def test_a_route_that_never_asks_for_cash_says_that_too():
+    """`not_applicable` is a positive claim with a reason, never an absent key
+    -- the same discipline as `--card not_applicable` on a card-free receipt
+    route. A light week that merely had no entry would be indistinguishable
+    from one the engine forgot to classify, which is how #358's light-tier gap
+    shipped: the flow asked before a tier check three lines below it."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        first = _prepare_dated(tmp, root, "2026-07-14", "cashw1")
+        _finalize(tmp, root, first, _answer_queue(first, _week1_choices, "skip"), "cashw1")
+        light = _prepare_dated(tmp, root, "2026-07-17", "cashw2")
+        assert light["state_snapshot"]["cadence"]["tier"] == "light"
+        assert light["input"]["cash_anchor"] == {
+            "status": "not_applicable", "reason": "light_tier"}, light["input"]["cash_anchor"]
+
+
+def test_add_cash_recomputes_the_same_review_without_re_asking_anything():
+    """The owner's "re-render when they answer", with the part that makes it
+    safe. Everything the user already did carries over untouched, and the
+    engine's own artifacts move only where a cash anchor is allowed to move
+    them -- so the recomputed card is the same review with one more pillar,
+    not a second review the user never saw the first version of."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        (pending / "answers.json").write_text('{"marker": "already answered"}', encoding="utf-8")
+        (pending / "narrative.json").write_text('{"marker": "already written"}', encoding="utf-8")
+        # Read the pre-recompute plan now: the superseded pending directory is
+        # gone by the time the assertions below compare against it.
+        full_before = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        out = json.loads(run.stdout)
+        assert out["status"] == "anchored"
+        assert out["session_id"] != plan["session_id"], \
+            "the id is content-addressed from engine state and the anchor is part of it"
+        assert out["superseded_session_id"] == plan["session_id"]
+        assert sorted(out["carried_forward"]) == ["answers", "narrative"]
+
+        after = session_engine.load_pending(str(root), out["session_id"])
+        assert after["answers"] == {"marker": "already answered"}
+        assert after["narrative"] == {"marker": "already written"}
+        assert not pending.exists(), (
+            "the superseded pending session must not survive as a second, cash-less "
+            "review that preview/finalize would happily commit")
+
+        recomputed = after["plan"]
+        assert recomputed["input"]["cash_anchor"] == {"status": "anchored",
+                                                      "source": "anchored"}
+        assert recomputed["engine_state"]["cash"]["source"] == "anchored"
+        # Nothing the user acted on moved. This is the acceptance line, asserted
+        # rather than argued.
+        for key in ("question_queue", "missing_thesis_positions"):
+            assert recomputed[key] == full_before[key], key
+        assert (recomputed["card_plan"]["candidate_rules"]
+                == full_before["card_plan"]["candidate_rules"])
+
+
+def test_add_cash_refuses_when_more_than_the_anchor_moved():
+    """The gate that makes "reuses this session's frozen prices" true rather
+    than hoped for. `market_data`'s same-day cache is what normally makes the
+    recompute a zero-request replay of the identical bundle; when it is not --
+    a day boundary crossed, an edited input file, a ledger that moved -- the
+    difference has to be a refusal, because the user answered against the card
+    the first set of numbers rendered.
+
+    Simulated here by moving one frozen close, which is exactly what a second
+    live resolution would do."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        frozen = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+        frozen["engine_state"]["price_snapshot"]["prices"]["MOVED"] = 1.23
+        (pending / "plan.json").write_text(json.dumps(frozen), encoding="utf-8")
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode != 0, run.stdout
+        error = json.loads(run.stdout)["error"]
+        assert "changed more than the anchor" in error and "engine_state" in error, error
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
+            "a refused recompute must leave no anchored, finalizable session behind"
+
+
+def test_add_cash_carries_a_declared_price_dead_end_forward():
+    """The seam between #357's recompute and #623's gate. `add-cash` re-enters
+    prepare, so a declaration it dropped would come back as `attempted: false`
+    and the draft gate would then refuse a review the agent had already
+    declared honestly — a refusal caused entirely by supplying a cash balance."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert added.returncode == 0, added.stdout + added.stderr
+        recovery = (json.loads(added.stdout)["review_plan"]["input"]["price_feed"]["recovery"])
+        assert recovery["outcome"] == "declared_unavailable", recovery
+        assert "reachable from this host" in recovery["checked"], recovery
+
+
+def test_add_cash_refuses_a_session_that_never_takes_an_anchor():
+    """A snapshot states cash inline in its own envelope, so there is no second
+    place to supply one -- and the plan already says `not_applicable`. The
+    command reads that claim rather than re-deriving the condition."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        snapshot = pathlib.Path(tmp) / "positions.json"
+        snapshot.write_text(json.dumps({
+            "as_of": "2026-07-14",
+            "positions": [{"ticker": "SPY", "shares": 10, "avg_cost": 100,
+                           "market": "US", "currency": "USD"}]}), encoding="utf-8")
+        env = _offline_env(tmp)
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", snapshot,
+                   "--root", root, "--language", "en", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["input"]["cash_anchor"] == {"status": "not_applicable",
+                                                "reason": "snapshot_envelope"}
+        refused = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                       "--cash", '{"currency":"USD","amount":1,"as_of":"2026-07-14"}', env=env)
+        assert refused.returncode != 0, refused.stdout
+        assert "does not take a cash anchor" in json.loads(refused.stdout)["error"]
+
+
+# The catalogue phrasings #623 retired, in every locale. A presence test on the
+# new wording would go green the moment someone appended a feature list back
+# onto it; what has to stay dead is the shape, so the retired fragments are what
+# this pins -- the `RECORDED_BOOK_RETIRED_PHRASES` idiom, one surface over.
+_RETIRED_INVITATION_CATALOGUES = {
+    "en": ("unlocks behavior diagnostics", "and more",
+           "unlocks the full behavioral review"),
+    "zh-TW": ("解鎖行為診斷", "等）", "解鎖出場紀律"),
+    "zh-CN": ("解锁行为诊断", "等）", "解锁出场纪律"),
+}
+
+
+def test_a_card_invitation_never_regrows_a_feature_checklist():
+    """#623/#617: an invitation names the one answer this user's book cannot
+    reach, not a catalogue of features. Both retired strings enumerated three
+    or more diagnostics, which is the shape the rule forbids and the shape a
+    future edit is most likely to reintroduce."""
+    for language, retired in _RETIRED_INVITATION_CATALOGUES.items():
+        missing = card_renderer.load_copy(language)["block_missing"]
+        for key in ("snapshot_unlock", "rule_structural"):
+            for fragment in retired:
+                assert fragment not in missing[key], (language, key, fragment)
+            assert missing[key].strip(), (language, key, "an invitation may be absent by "
+                                          "branch, never blank when its branch fires")
+
+
+# --- A degraded price card is a stated dead end, never a skipped step (#623) ---
+#
+# `flows/first-review.md` step 0 requires the agent to recover the requested
+# closes and rerun `prepare --prices` BEFORE delivering a degraded card. Two
+# very different runs rendered the identical sentence — "current prices could
+# not be retrieved" — and nothing could tell them apart: the sources publish
+# nothing, or nobody looked. The second is not a disclosure the user can act
+# on; it is a review whose every weight came from cost basis when it did not
+# have to. Same structural shape as #357's cash gap: the engine went quiet
+# about something it already knew.
+
+
+def _degraded_price_session(tmp, root):
+    """A real offline prepare whose card will carry the price-blocked note."""
+    env = _offline_env(tmp)
+    run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = json.loads(run.stdout)["review_plan"]
+    assert plan["input"]["price_feed"]["request"], "fixture must actually be price-degraded"
+    return env, plan
+
+
+def _answers_for_plan(plan):
+    """Answer this plan's own queue and its own uncovered cycles.
+
+    `_answers` carries a hardcoded PLTR thesis row for the `--card-json`
+    fixture; a real mock-CSV plan has different cycles, and an unknown
+    `cycle_id` fails closed before any of the gates under test are reached.
+    """
+    return {
+        "session_id": plan["session_id"],
+        "answers": [{"question_id": q["id"], "choice": "skip"}
+                    for q in plan["question_queue"]],
+        "thesis_updates": [{"cycle_id": row["cycle_id"],
+                            "why": "Held while the entry reason is confirmed",
+                            "exit_trigger": "The reason for holding stops being true",
+                            "horizon": "quarters"}
+                           for row in plan.get("missing_thesis_positions") or []],
+        "observations": [],
+        "commitment": {"choice": "skip"},
+    }
+
+
+def _narrative_for_plan(plan):
+    payload = _narrative("en")
+    payload["honesty"] = {
+        key: "This limitation stays stated on the card rather than treated as a zero."
+        for key in plan["card_plan"]["required_honesty_keys"]}
+    return payload
+
+
+def test_a_price_degraded_run_records_whether_recovery_was_ever_attempted():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, plan = _degraded_price_session(tmp, pathlib.Path(tmp) / "coach")
+        assert plan["input"]["price_feed"]["recovery"] == {
+            "attempted": False, "outcome": "not_attempted"}
+
+        declared = _run("prepare", _OFFLINE_MOCK, "--root", pathlib.Path(tmp) / "coach",
+                        "--language", "en", "--prices-unavailable",
+                        "the exchange's own market-data site publishes no close for these",
+                        env=env)
+        assert declared.returncode == 0, declared.stdout + declared.stderr
+        recovery = json.loads(declared.stdout)["review_plan"]["input"]["price_feed"]["recovery"]
+        assert recovery["attempted"] is True and recovery["outcome"] == "declared_unavailable"
+        assert "market-data site" in recovery["checked"]
+
+
+def test_the_declaration_is_not_swallowed_by_the_undeclared_pending_session():
+    """The #289/#369 class, a fourth time. The declaration necessarily arrives
+    on a *second* prepare, after the first reported the gap. Without it in the
+    fingerprint that rerun resumes the undeclared pending session, returns its
+    stale plan, and the only thing separating a skipped step from an honest
+    dead end is silently discarded — leaving the gate still refusing a run that
+    did in fact declare.
+
+    The session id legitimately does not move: it is content-addressed from
+    engine state, and a declaration about the outside world changes no number.
+    The plan on disk is what must carry it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _degraded_price_session(tmp, root)
+        declared = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                        "--prices-unavailable", "checked the listing venue's own site", env=env)
+        out = json.loads(declared.stdout)
+        assert out["status"] != "resumed", \
+            "prepare --prices-unavailable must not resume the undeclared session unchanged"
+        stored = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        assert stored["input"]["price_feed"]["recovery"]["attempted"] is True, \
+            "the declaration has to reach the plan the draft gate reads, not just stdout"
+        again = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                     "--prices-unavailable", "checked the listing venue's own site", env=env)
+        assert json.loads(again.stdout)["status"] == "resumed", \
+            "the same declaration rerun stays idempotent at its own fingerprint"
+        assert plan["session_id"] == out["session_id"], \
+            "a declaration about the outside world moves no engine number, so no new id"
+
+
+def test_a_card_built_on_a_skipped_price_recovery_is_refused():
+    """The gate, on the shared draft path so `finalize` called directly cannot
+    walk around `preview`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _degraded_price_session(tmp, root)
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        for command in ("preview", "finalize"):
+            run = _run(command, "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers, "--narrative", narrative, env=env)
+            assert run.returncode != 0, (command, run.stdout)
+            error = json.loads(run.stdout)["error"]
+            assert "no price recovery was ever attempted" in error, (command, error)
+            assert "--prices-unavailable" in error, \
+                f"{command}: the refusal must name both ways out, not only the envelope"
+
+
+def test_a_declared_dead_end_delivers_the_degraded_card():
+    """The counterweight, and what keeps this from being the hard block #357
+    ruled out: a host that genuinely cannot look anything up says so once and
+    the review completes. The user is never asked for anything."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers, "--narrative", narrative, env=env)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+
+
+def test_an_already_committed_price_degraded_session_still_replays():
+    """The gate lives on the pending branch only. A session committed before
+    this rule existed carries no `recovery` key at all, and refusing its
+    idempotent finalize replay would break the documented no-op — punishing a
+    card that reached the user long before there was anything to prevent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+        run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                   "--prices-unavailable", "no market-data source reachable from this host",
+                   env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        answers = pathlib.Path(tmp) / "answers.json"
+        answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+        first = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative, env=env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        replay = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                      "--answers", answers, "--narrative", narrative, env=env)
+        assert replay.returncode == 0, replay.stdout + replay.stderr
+
+        # The predicate itself is fail-closed on an absent `recovery` key, which
+        # is exactly the shape of a plan written before #623. That is correct on
+        # the pending path and wrong on the committed one, and the placement is
+        # what separates them — a committed bundle cannot be forged into this
+        # shape here (its manifest hash refuses), so the predicate's own
+        # posture is asserted directly and the call sites carry the reason.
+        legacy = {"input": {"price_feed": {
+            "request": {"tickers": ["ACME"]},
+            "provenance": {"mode": "unavailable"}}},
+            "engine_card": {"price_provenance": {"mode": "unavailable"}}}
+        try:
+            review_engine._refuse_a_card_built_on_a_skipped_price_recovery(legacy)
+        except review_engine.ReviewError:
+            pass
+        else:
+            raise AssertionError("an absent recovery key must read as not attempted")
+
+
+def test_the_gate_is_silent_when_prices_were_not_the_problem():
+    """A fully priced review must never meet this refusal. Without the
+    `request` and `price_retrieval_blocked` conditions the gate would fire on
+    every ordinary review that happens to be missing one benchmark."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card, state = _artifacts(tmp)
+        run = _run("prepare", "--root", root, "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        review_engine._refuse_a_card_built_on_a_skipped_price_recovery(plan)
+
+
 def test_stdout_plan_is_projected_for_the_agent_but_full_on_disk():
     """#234: the agent re-sends the emitted plan as context on every later turn,
     so prepare/resume stdout must carry only the fields the flow contract reads.
@@ -1999,11 +2417,21 @@ def test_structural_card_next_step_names_the_unlock_path():
                              "review_tier": {"tier": tier}, "metrics": {},
                              "holdings": {"positions": {}}},
         }
-    unlock = "unlocks the full behavioral review"
+    # The catalog entry itself, not a fragment of its wording (#623): this test
+    # asserts which branch fired, and `tests/copy_corpus.py`'s golden owns what
+    # the sentence says.
+    unlock = card_renderer.load_copy("en")["block_missing"]["rule_structural"]
     assert unlock in card_renderer.render_private(_bundle("structural", 2))
     # behavioral (14 round trips) with a short-span insufficient flag must not be
     # framed as an opening structural check.
     assert unlock not in card_renderer.render_private(_bundle("behavioral", 14))
+    # #623/#617's other half, and the one a presence-only test cannot see: an
+    # invitation is absent when nothing further is needed. A complete
+    # behavioral review names no unreachable answer at all, because a
+    # manufactured invitation is the same defect as a manufactured disclosure.
+    behavioral = card_renderer.render_private(_bundle("behavioral", 14))
+    for key in ("rule_structural", "snapshot_unlock"):
+        assert card_renderer.load_copy("en")["block_missing"][key] not in behavioral, key
 
 
 def test_canonical_bundle_fsyncs_artifacts_and_required_directories():
@@ -7643,8 +8071,15 @@ def _run_real_review(tmp, root, csv_path, env, tag):
     has no open position and no ETF, but it runs the engine offline (the
     _offline_engine_env stub blocks yfinance), so #289 makes `price_source`
     (unavailable) a required honesty key: author one digit-free sentence per
-    key the plan actually requires, exactly as a real degraded review must."""
+    key the plan actually requires, exactly as a real degraded review must.
+
+    `--prices-unavailable` is what a genuinely priceless host does (#623): this
+    fixture's host has no market data at all, so recovery is declared as
+    attempted-and-empty rather than skipped. Without it the draft path refuses,
+    which is the point — a degraded card is a dead end that was stated, never a
+    step nobody took."""
     run = _run("prepare", csv_path, "--root", root, "--route", "weekly_review",
+               "--prices-unavailable", "no market-data source reachable from this host",
                "--session-nonce", tag, env=env)
     assert run.returncode == 0, run.stdout + run.stderr
     plan = _pending_plan(root, run.stdout)

@@ -28,6 +28,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE_DIR = ROOT / "skills" / "fomo-kernel" / "engine"
 REVIEW = ENGINE_DIR / "review.py"
 
+# This suite drives a priced route, so it declares its market posture through
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
+
 sys.path.insert(0, str(ENGINE_DIR))
 import ledger as ledger_engine  # noqa: E402
 

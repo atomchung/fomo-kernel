@@ -211,7 +211,7 @@ def _jsonl(path):
 
 
 def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, cash=None,
-                 condition_checks=None):
+                 condition_checks=None, prices_unavailable=None):
     # nonce participates so an explicit --session-nonce starts a genuinely new
     # session instead of being swallowed by same-content pending resume.
     h = hashlib.sha256()
@@ -241,6 +241,14 @@ def _fingerprint(paths, language, route, prepared=None, nonce="", prices=None, c
         # would resume the check-less pending session, and the crossing question
         # the lookups just earned would never be asked.
         h.update(b"condition_checks\0" + session.canonical(condition_checks).encode())
+    if prices_unavailable:
+        # Same #289 class once more (#623). The declaration that recovery was
+        # attempted and the sources publish nothing arrives on a *second*
+        # prepare, after the first one reported the gap. Without this the rerun
+        # would resume the undeclared pending session and the declaration —
+        # the only thing separating a skipped step from an honest dead end —
+        # would be silently dropped.
+        h.update(b"prices_unavailable\0" + str(prices_unavailable).encode())
     for path in paths or []:
         p = os.path.abspath(path)
         h.update(p.encode() + b"\0")
@@ -1710,6 +1718,12 @@ def _run_engine(paths, root, args, *, ledger_path=None):
         state_path = os.path.join(tmp, "state.json")
         env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
                    TR_LEDGER=ledger_path or os.path.join(root, "ledger.jsonl"),
+                   # #627: the engine cannot see `--root`, and its market-data
+                   # cache is state — same-root-as-the-session, not
+                   # same-root-as-the-account. Without this the cache resolved
+                   # its own root and an isolated run wrote the user's tickers
+                   # into the real `~/.trade-coach`.
+                   TR_STATE_ROOT=root,
                    TR_DISPLAY_CURRENCY=card_renderer.default_display_currency(args.language))
         env.pop("TR_PRICES", None)      # only an explicit --prices may inject a price envelope
         if getattr(args, "prices", None):
@@ -3330,13 +3344,25 @@ def _flag_prior_commitment_breach(card, problem_stats, prior_commitment):
     return card
 
 
-def _price_feed_status(card):
+def _price_feed_status(card, *, supplied=None, unavailable_declared=None):
     """Agent-visible price availability for this run (#289).
 
     ``provenance`` records where the prices came from; ``request`` is the
     machine-readable manifest of what is still unpriced, present only when
     coverage is incomplete. A degraded run stays visible instead of quietly
     dropping the portfolio-level return.
+
+    ``recovery`` (#623) records what happened about that manifest, because the
+    two states behind an identical degraded card were previously
+    indistinguishable: the agent looked and the sources publish nothing, or the
+    agent never looked. `flows/first-review.md` step 0 requires recovery
+    *before* a degraded card is delivered, so the second one is not a
+    disclosure — it is evidence a required step was skipped, and the card said
+    the same sentence either way. ``attempted`` comes from whether an envelope
+    or an explicit "nothing published" declaration actually arrived, never
+    inferred from ``provenance.mode``: an envelope too broken to frame anything
+    still leaves that mode ``unavailable``, and reading the attempt off it would
+    call a real attempt a skipped one.
     """
     provenance = (card or {}).get("price_provenance")
     request = (card or {}).get("price_request")
@@ -3345,6 +3371,14 @@ def _price_feed_status(card):
     status = {"provenance": provenance}
     if request:
         status["request"] = request
+        if unavailable_declared:
+            recovery = {"attempted": True, "outcome": "declared_unavailable",
+                        "checked": str(unavailable_declared)}
+        elif supplied is not None:
+            recovery = {"attempted": True, "outcome": "supplied"}
+        else:
+            recovery = {"attempted": False, "outcome": "not_attempted"}
+        status["recovery"] = recovery
         # Held instruments and benchmarks fail differently: unpriced holdings
         # remove P&L itself, unpriced benchmarks only remove the vs-market
         # segment. Saying which one is missing keeps the agent from treating an
@@ -3362,10 +3396,81 @@ def _price_feed_status(card):
     return status
 
 
+# What answering the cash question buys, in engine vocabulary rather than
+# numbers. The agent turns these into one short sentence so the ask is informed
+# rather than blind (#357 owner note, 2026-07-29).
+CASH_ANCHOR_UNLOCKS = ("account_level_return", "annualized_return", "cash_drag")
+
+
+def _cash_anchor_status(state, route, cadence):
+    """Whether this review has an accounting anchor, and what to do when it has none (#357).
+
+    The gap this closes is an asymmetry, not a missing convenience. *With* an
+    anchor the engine demands a disclosure — ``acct_perf_basis`` enters
+    ``card_plan.required_honesty_keys`` — and *without* one it demanded nothing
+    at all, so the single condition the agent had to notice unprompted was the
+    only one the Review Plan never stated. Five recurrences, three of them on
+    real data; the fifth passed every mechanical gate because "the agent decided
+    not to ask" was a legitimate receipt outcome.
+
+    Deliberately **not** symmetric with ``input.price_feed.request`` in timing,
+    which is the neighbouring precedent for "the engine reports what it is
+    missing and how to supply it". A price gap is recovered *before* the user is
+    shown anything, because every price-dependent number on the card is degraded
+    without it. A missing anchor degrades exactly one pillar and changes nothing
+    else — proven by the recompute gate in :func:`cmd_add_cash` — so the ask
+    belongs *after* the card, where the user can see what answering would buy
+    (owner ruling 2026-07-30; #507 design principle 1, "show value before asking
+    for optional work"). ``ask_after`` carries that difference rather than
+    leaving two adjacent gaps looking interchangeable.
+
+    ``not_applicable`` is a positive claim rather than an absent key, the same
+    reason ``ux_receipt``'s card-free routes must record ``card
+    not_applicable``: "no anchor was owed here" is checkable, and a light-tier
+    week that simply had no entry would be indistinguishable from one the engine
+    forgot to classify. It is what keeps the light-tier promise mechanical
+    instead of depending on a flow file asking after a tier check three lines
+    later (#358 post-merge finding 1).
+    """
+    if route == "snapshot_review":
+        return {"status": "not_applicable", "reason": "snapshot_envelope"}
+    if route == "test_drive":
+        return {"status": "not_applicable", "reason": "test_drive"}
+    if (cadence or {}).get("tier") == "light":
+        return {"status": "not_applicable", "reason": "light_tier"}
+    cash = (state or {}).get("cash")
+    if not isinstance(cash, dict):
+        return {"status": "not_applicable", "reason": "no_cash_pipeline"}
+    source = cash.get("source")
+    if source == "anchored":
+        return {"status": "anchored", "source": source}
+    by_currency = cash.get("by_currency") or {}
+    unanchored = sorted(code for code, row in by_currency.items()
+                        if not (row or {}).get("reliable"))
+    return {"status": "partial" if source == "partial" else "absent",
+            "source": source,
+            "unanchored_currencies": unanchored,
+            "unlocks": list(CASH_ANCHOR_UNLOCKS),
+            # The one field that says this gap is not the price gap beside it.
+            "ask_after": "card_presented",
+            "next_action": (
+                "this review has no cash balance to anchor the account on, so account-level "
+                "return, annualized return and cash drag stay unavailable while every other "
+                "number is unaffected. Do not ask for it before the card: show the card, and "
+                "in that same message ask the user for the account's current cash balance in "
+                + (", ".join(unanchored) or "the account's own currency")
+                + " — stating what it unlocks and that skipping keeps the holdings-only view. "
+                "If they answer, run add-cash --session-id <id> --cash '{\"currency\":\"<CUR>\","
+                "\"amount\":<number>,\"as_of\":\"<date>\"}' and continue on the session it "
+                "returns; it reuses this session's frozen prices and refuses if anything but "
+                "the anchor moved. Never guess a balance")}
+
+
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
                 recent_exits=None, ledger_ingest=None,
                 due_revisits=None, exit_backlog=None, problem_stats=None,
-                submitted_condition_checks=None):
+                submitted_condition_checks=None, supplied_prices=None,
+                prices_unavailable=None):
     positions = _active_positions(state)
     cycle_ids = [row.get("cycle_id") for row in positions.values() if row.get("cycle_id")]
     session_id = ledger.session_id_from_state(state, f"{nonce}|{route}|{language}")
@@ -3485,7 +3590,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                   "kind": "positions_snapshot" if route == "snapshot_review" else "trades_csv",
                   "fingerprint": fingerprint, "engine_meta": engine_meta,
                   "ledger_ingest": ledger_ingest,
-                  "price_feed": _price_feed_status(card)},
+                  "price_feed": _price_feed_status(
+                      card, supplied=supplied_prices,
+                      unavailable_declared=prices_unavailable),
+                  # #357: the other input gap, with the opposite timing contract
+                  # — see _cash_anchor_status. Always present, including as an
+                  # explicit not_applicable, so "this route never asks" is a
+                  # claim rather than a silence.
+                  "cash_anchor": _cash_anchor_status(state, route, cadence)},
         "state_snapshot": {"prior_commitment": _with_condition_line(
                                (previous or {}).get("commitment")),
                            # #412/#434: the conditions the engine cannot compute,
@@ -3596,6 +3708,19 @@ def _pending_for_agent(bundle):
 
 
 def cmd_prepare(args):
+    _emit(_prepare_session(args))
+
+
+def _prepare_session(args):
+    """Run one prepare and return exactly what ``cmd_prepare`` emits.
+
+    Split out so ``cmd_add_cash`` can re-enter this same lane with one extra
+    input rather than reimplementing it. A second writer of "run the engine,
+    ingest, build the plan, save the pending session" is precisely the shape
+    docs/development-guide.md §7 exists to prevent: the ingest is idempotent and
+    the exit-capture queue dedupes, but only because *this* function is the one
+    place either happens.
+    """
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     # Resolve once at the boundary (#389): everything downstream — fingerprint,
     # plan, renderer, display currency — sees only a canonical supported locale.
@@ -3633,6 +3758,18 @@ def cmd_prepare(args):
             supplied_prices = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
             raise ReviewError(f"price feed rejected: {exc}") from exc
+    declared_unavailable = (getattr(args, "prices_unavailable", None) or "").strip()
+    if declared_unavailable:
+        # #623: the escape hatch is a *declaration*, so it has to say something.
+        # An empty or one-character value would let "I looked" be asserted
+        # without naming what was looked at, which is the shape of the miss this
+        # gate exists to make visible.
+        if len(declared_unavailable) < 3:
+            raise ReviewError("--prices-unavailable must name the market-data sources you "
+                              "checked, so a dead end is a stated fact rather than a claim")
+        args.prices_unavailable = declared_unavailable
+    else:
+        args.prices_unavailable = None
     # #412: the results of this period's condition lookups, submitted the same
     # way prices are — the plan publishes what is due, the agent runs each
     # frozen query, and this second pass is what lets a crossing be posed as a
@@ -3699,14 +3836,14 @@ def cmd_prepare(args):
     fingerprint = _fingerprint(paths, language, route, prepared=prepared,
                                nonce=args.session_nonce or "", prices=supplied_prices,
                                cash=getattr(args, "cash", None),
-                               condition_checks=submitted_checks)
+                               condition_checks=submitted_checks,
+                               prices_unavailable=getattr(args, "prices_unavailable", None))
     existing = _pending_by_fingerprint(root, fingerprint)
     if existing:
-        _emit({"status": "resumed", "session_id": existing["session_id"],
-               "review_plan": _plan_for_agent(existing),
-               "next_action": ("run resume --session-id to reuse any validated question surface; "
-                               "then ask question_queue and run preview")})
-        return
+        return {"status": "resumed", "session_id": existing["session_id"],
+                "review_plan": _plan_for_agent(existing),
+                "next_action": ("run resume --session-id to reuse any validated question surface; "
+                                "then ask question_queue and run preview")}
     if freeze_candidates:
         frozen_tmp = tempfile.TemporaryDirectory(prefix="fomo-review-input-")
     try:
@@ -3760,11 +3897,12 @@ def cmd_prepare(args):
                        recent_exits=recent_exits, ledger_ingest=ledger_ingest,
                        due_revisits=due_revisits,
                        exit_backlog=exit_backlog, problem_stats=problem_stats,
-                       submitted_condition_checks=submitted_checks)
+                       submitted_condition_checks=submitted_checks,
+                       supplied_prices=supplied_prices,
+                       prices_unavailable=getattr(args, "prices_unavailable", None))
     committed = session.session_dir(root, plan["session_id"])
     if os.path.isdir(committed):
-        _emit({"status": "already_committed", "session_id": plan["session_id"], "path": committed})
-        return
+        return {"status": "already_committed", "session_id": plan["session_id"], "path": committed}
     session.save_pending(root, plan["session_id"], plan=plan)
     next_action = ("for question_opportunity rows, author a private surface and bind it with "
                    "resume --question-surfaces, or keep the engine question/options fallback; "
@@ -3793,9 +3931,9 @@ def cmd_prepare(args):
         # #289: a host that cannot retrieve prices is a recoverable input gap,
         # not a dead end. Say so at the point the agent decides what to do next.
         next_action = (price_status["next_action"] + "; otherwise continue: " + next_action)
-    _emit({"status": "prepared", "session_id": plan["session_id"],
-           "review_plan": _plan_for_agent(plan),
-           "next_action": next_action})
+    return {"status": "prepared", "session_id": plan["session_id"],
+            "review_plan": _plan_for_agent(plan),
+            "next_action": next_action}
 
 
 def _apply_thesis_skeletons(plan, updates):
@@ -4617,6 +4755,51 @@ def _resolve_commitment(plan, answers):
     return chosen
 
 
+def _refuse_a_card_built_on_a_skipped_price_recovery(plan):
+    """#623 class 2: the degraded price card is not a disclosure by default.
+
+    `flows/first-review.md` step 0 requires the agent to look the requested
+    closes up and rerun `prepare --prices` **before** delivering a degraded
+    card. Two different runs produced the identical sentence on the card —
+    "current prices could not be retrieved" — and nothing could tell them
+    apart: the sources genuinely publish nothing, or the step was skipped. The
+    second is not something to disclose to the user, who can do nothing about
+    it; it is a review whose every weight came from cost basis when it did not
+    have to.
+
+    So the refusal fires exactly where the harm is: the card is about to be
+    built, `price_retrieval_blocked` says it will carry that sentence, and
+    nothing was ever handed back. It is cleared by doing the step, or by
+    declaring in one flag that it was done and found nothing — never by
+    proceeding silently. That is why this is not the hard block #357 ruled out:
+    the user is not asked for anything and nothing waits on them.
+
+    Called from both commands that build a card from a *pending* session, so
+    `finalize` invoked directly cannot walk around `preview`. Deliberately not
+    inside `_draft_bundle`: that function also runs on `finalize`'s
+    already-committed branch, where the card was delivered long ago and there
+    is nothing left to prevent — gating there would turn the documented
+    "retrying the same session with identical content is a no-op" into a
+    refusal for every price-degraded session committed before this rule
+    existed.
+    """
+    price_feed_status = ((plan.get("input") or {}).get("price_feed") or {})
+    if not price_feed_status.get("request"):
+        return
+    if not card_renderer.price_retrieval_blocked(plan.get("engine_card") or {}):
+        return
+    if (price_feed_status.get("recovery") or {}).get("attempted"):
+        return
+    raise ReviewError(
+        "this card would tell the user their prices could not be retrieved, and no price "
+        "recovery was ever attempted — every weight on it came from cost basis when it did "
+        "not have to. Look the closes in input.price_feed.request up in a recognized "
+        "market-data source, transcribe them into the envelope in references/price-feed.md, "
+        "and rerun prepare --prices <path>. If those sources genuinely publish nothing for "
+        "these instruments, rerun prepare --prices-unavailable '<the sources you checked>' "
+        "and the degraded card is delivered as an honest dead end. Never invent a price")
+
+
 def _draft_bundle(plan, answers, narrative, require_commitment,
                   question_surfaces=None, question_presentations=None):
     if answers.get("session_id") != plan.get("session_id"):
@@ -4863,6 +5046,7 @@ def cmd_preview(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     pending = session.load_pending(root, args.session_id)
     plan = pending.get("plan")
+    _refuse_a_card_built_on_a_skipped_price_recovery(plan)
     answers, narrative = _load_interaction(args, pending)
     bundle = _draft_bundle(
         plan, answers, narrative, require_commitment=False,
@@ -4898,6 +5082,11 @@ def cmd_finalize(args):
         else:
             pending = session.load_pending(root, args.session_id)
             plan = pending.get("plan")
+            # Only on the pending branch: an already-committed session's card
+            # reached the user long ago, and refusing its idempotent replay
+            # would break "retrying the same session with identical content is
+            # a no-op" for every review committed before this gate existed.
+            _refuse_a_card_built_on_a_skipped_price_recovery(plan)
         answers, narrative = _load_interaction(args, pending)
         bundle = _draft_bundle(
             plan, answers, narrative, require_commitment=True,
@@ -4976,6 +5165,154 @@ def cmd_resume(args):
         x for x in os.listdir(base) if os.path.isdir(os.path.join(base, x)))
     _emit({"status": "pending" if pending else "idle", "pending_sessions": pending,
            "next_action": "run resume with --session-id" if pending else "run prepare"})
+
+
+# What supplying a cash anchor is allowed to move, and nothing else may. These
+# are exactly the keys a with/without-`--cash` pair differs in on the same book
+# (measured, not assumed: `engine_state` differs only in `cash`; `engine_card`
+# only in `cash`, `acct_perf`, and `honesty_ledger`). Anything outside them
+# moving means the second run was not the same review — a re-priced book, an
+# edited CSV, a changed ledger — and the user's answers would be silently
+# re-based onto numbers nobody saw.
+CASH_RECOMPUTE_STATE_KEYS = ("cash",)
+CASH_RECOMPUTE_CARD_KEYS = ("cash", "acct_perf", "honesty_ledger")
+# Artifacts the recomputed session inherits verbatim. `answers`/`narrative` are
+# what the user already answered; `question-surfaces`/`question-presentations`
+# are the exact question bytes they were asked, frozen so an interrupted session
+# never re-asks something subtly different. The preview cards are deliberately
+# not here: they render the pre-anchor card and must be rebuilt by `preview`.
+CASH_RECOMPUTE_CARRIED = ("answers", "narrative",
+                          "question-surfaces", "question-presentations")
+
+
+def _without(mapping, keys):
+    return {key: value for key, value in (mapping or {}).items() if key not in keys}
+
+
+def _cash_recompute_drift(before, after):
+    """Everything the recompute moved that a cash anchor may not move.
+
+    Returns a list of human-readable labels, empty when the two plans describe
+    the same review. The comparison is over the engine's own artifacts *and*
+    over the three agent-facing surfaces the user has already acted on, because
+    "nothing the user answered or chose was invalidated" is the claim this gate
+    exists to make true rather than assert.
+    """
+    checks = (
+        ("engine_state", lambda plan: _without(plan.get("engine_state"),
+                                               CASH_RECOMPUTE_STATE_KEYS)),
+        ("engine_card", lambda plan: _without(plan.get("engine_card"),
+                                              CASH_RECOMPUTE_CARD_KEYS)),
+        ("state_snapshot", lambda plan: plan.get("state_snapshot")),
+        ("question_queue", lambda plan: plan.get("question_queue")),
+        ("missing_thesis_positions", lambda plan: plan.get("missing_thesis_positions")),
+        ("card_plan.candidate_rules",
+         lambda plan: (plan.get("card_plan") or {}).get("candidate_rules")),
+        ("card_plan.candidate_comparison",
+         lambda plan: (plan.get("card_plan") or {}).get("candidate_comparison")),
+    )
+    return [label for label, read in checks
+            if session.canonical(read(before)) != session.canonical(read(after))]
+
+
+def cmd_add_cash(args):
+    """Add a cash anchor to a prepared session and recompute it (#357, #507).
+
+    The owner ruled out refusing `prepare` when no anchor was supplied: compute
+    the first card, then put a directly answerable question in front of the user
+    and re-render if they answer. That question lands at the card beat, so by
+    the time an anchor arrives the user has already answered every required
+    question and seen a card — which is the whole reason this is a subcommand
+    rather than the documented `prepare --cash` rerun.
+
+    `prepare --cash` is a full second review: it re-resolves market data (a
+    later instant, therefore different closes) and mints a session with none of
+    the first one's frozen work. This command re-enters the same lane with the
+    anchor added and then **proves** it was the same review: every engine
+    artifact outside the cash keys must come back byte-identical, and so must
+    the question queue, the candidate rules and the missing-thesis list the user
+    has already acted on. In practice `market_data`'s same-day cache makes the
+    recompute a zero-request replay of the identical bundle, which is what makes
+    that gate pass rather than a coincidence; when it does not — a day boundary
+    crossed, an edited CSV, a ledger that moved — the command refuses and names
+    what drifted instead of re-basing the user's answers onto numbers nobody
+    saw. SKILL.md's "refetching live data would silently change the facts the
+    user already answered against" is the rule; this is its enforcement.
+
+    A new session id is unavoidable and correct: the id is content-addressed
+    from engine state and the anchor is part of that state. What must not change
+    is the user's work, so the pending session's answers, narrative and frozen
+    question surfaces are carried over, and the superseded pending directory is
+    removed rather than left behind as a second, finalizable, cash-less session.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    pending = session.load_pending(root, args.session_id)
+    plan = pending.get("plan") or {}
+    status = ((plan.get("input") or {}).get("cash_anchor") or {})
+    if status.get("status") == "anchored":
+        raise ReviewError("this session already carries a cash anchor; there is nothing to add")
+    if status.get("status") not in ("absent", "partial"):
+        raise ReviewError(
+            f"this session does not take a cash anchor "
+            f"(input.cash_anchor.status={status.get('status')!r}, "
+            f"reason={status.get('reason')!r}); see references/data-contract.md")
+    try:
+        anchor = json.loads(args.cash)
+    except (TypeError, ValueError) as exc:
+        raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
+    if not isinstance(anchor, (dict, list)) or not anchor:
+        raise ReviewError("--cash takes one {currency,amount,as_of} anchor, or a list of them")
+    # #623: a declared price dead end is an input of this session, recoverable
+    # from its own plan rather than re-typed. Dropping it would leave the
+    # recomputed session reading as a skipped recovery, and the draft gate would
+    # then refuse a review the agent had already declared honestly.
+    recovery = (((plan.get("input") or {}).get("price_feed") or {}).get("recovery") or {})
+    declared_unavailable = (recovery.get("checked")
+                            if recovery.get("outcome") == "declared_unavailable" else None)
+    rerun = argparse.Namespace(
+        root=root, language=plan.get("language") or "en", route=plan.get("route") or "auto",
+        test_drive=False, session_nonce="", paths=list((plan.get("input") or {}).get("paths") or []),
+        cash=args.cash, prices=args.prices, driver_map=args.driver_map,
+        instrument_map=args.instrument_map, condition_checks=args.condition_checks,
+        prices_unavailable=declared_unavailable,
+        snapshot_json=None, card_json=None, state_json=None, timeout=args.timeout)
+    result = _prepare_session(rerun)
+    if result["status"] == "already_committed":
+        raise ReviewError("the anchored review is already committed as session "
+                          f"{result['session_id']}; there is nothing pending to recompute")
+    recomputed = session.load_pending(root, result["session_id"])
+    drift = _cash_recompute_drift(plan, recomputed.get("plan") or {})
+    if drift:
+        if result["status"] == "prepared" and result["session_id"] != args.session_id:
+            # The refused recompute must leave nothing finalizable behind: a
+            # pending session carrying an anchor and a card nobody saw is worse
+            # than no recompute at all.
+            shutil.rmtree(session.pending_dir(root, result["session_id"]), ignore_errors=True)
+        raise ReviewError(
+            "adding the cash anchor changed more than the anchor; these no longer match the "
+            "session you are amending: " + ", ".join(drift)
+            + ". The answers already given were made against different facts, which is what a "
+              "re-priced book, an edited input file, or a ledger that moved in between looks "
+              "like. Pass the same --prices/--driver-map/--instrument-map this session was "
+              "prepared with; otherwise start a fresh review with prepare --cash rather than "
+              "re-basing answers onto numbers the user never saw")
+    carried = {name: pending.get(name.replace("-", "_")) for name in CASH_RECOMPUTE_CARRIED}
+    session.save_pending(root, result["session_id"], **carried)
+    if result["session_id"] != args.session_id:
+        # Reconstructible by prepare, and everything the user authored has just
+        # been carried forward. Leaving it would leave a cash-less session that
+        # `preview`/`finalize` would happily commit.
+        shutil.rmtree(session.pending_dir(root, args.session_id), ignore_errors=True)
+    recomputed_plan = (session.load_pending(root, result["session_id"]).get("plan") or {})
+    _emit({"status": "anchored", "session_id": result["session_id"],
+           "superseded_session_id": args.session_id,
+           "review_plan": _plan_for_agent(recomputed_plan),
+           "carried_forward": sorted(name for name, value in carried.items() if value is not None),
+           "next_action": (
+               "the account pillar is now computed. Every required answer, thesis and frozen "
+               "question surface carried over unchanged, and card_plan.required_honesty_keys "
+               "gained the account-basis key — write one sentence for it in narrative.honesty, "
+               "then rerun preview and finalize on this session id")})
 
 
 def cmd_render(args):
@@ -6604,6 +6941,12 @@ def build_parser():
     prepare.add_argument("--prices",
                          help="agent-supplied price envelope (references/price-feed.md); "
                               "use when the host cannot retrieve prices itself")
+    prepare.add_argument("--prices-unavailable", dest="prices_unavailable",
+                         metavar="SOURCES_CHECKED",
+                         help="declare that price recovery was attempted and the sources "
+                              "publish nothing for the requested instruments; name the "
+                              "sources you checked. Without it, a card built on no prices "
+                              "at all is refused as a skipped recovery step (#623)")
     prepare.add_argument("--condition-checks", dest="condition_checks",
                          help="this period's results for state_snapshot.condition_slots_due "
                               "(references/condition-slots.md); rerun prepare with it so a "
@@ -6633,6 +6976,27 @@ def build_parser():
     resume.add_argument("--question-surfaces",
                         help="private AI-authored surfaces to validate and freeze before presentation")
     resume.set_defaults(func=cmd_resume)
+    add_cash = sub.add_parser(
+        "add-cash",
+        help="add the cash anchor to a prepared session and recompute it without "
+             "refetching prices or re-asking anything (#357)")
+    add_cash.add_argument("--session-id", required=True)
+    add_cash.add_argument("--root")
+    add_cash.add_argument("--cash", required=True,
+                          help="TR_CASH JSON string: one {currency,amount,as_of} anchor, "
+                               "or a list of them for a multi-currency account")
+    add_cash.add_argument("--prices",
+                          help="the same agent-supplied price envelope this session was "
+                               "prepared with; omit when prepare fetched its own")
+    add_cash.add_argument("--driver-map",
+                          help="the same map this session was prepared with, if any")
+    add_cash.add_argument("--instrument-map",
+                          help="the same map this session was prepared with, if any")
+    add_cash.add_argument("--condition-checks", dest="condition_checks",
+                          help="the same condition-check envelope this session was prepared "
+                               "with, if any")
+    add_cash.add_argument("--timeout", type=int, default=180)
+    add_cash.set_defaults(func=cmd_add_cash)
     render = sub.add_parser("render")
     render.add_argument("--session-id", required=True)
     render.add_argument("--root")

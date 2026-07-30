@@ -37,7 +37,8 @@ python3 tools/ux_receipt.py event --session-id <id> \
 python3 tools/ux_receipt.py event --session-id <id> \
   --event memory_presented --memory-kind prior_commitment
 
-# cash anchor, before the first question or card (first_review, full-tier weekly)
+# cash anchor (first_review, full-tier weekly). found_in_source goes before the
+# first question or card; provided/declined go after the card they were asked at
 python3 tools/ux_receipt.py event --session-id <id> \
   --event cash_anchor_checked --cash-outcome found_in_source
 
@@ -53,7 +54,13 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 
 `native_options` and `plain_text` share the same `surface_digest` and write the same canonical answer. The trace rejects extra question-content fields.
 
-`--cash-outcome` takes exactly one of `found_in_source` (the statement carried a balance row), `asked_user` (none appeared anywhere, so the user was asked once and answered or declined), or `skipped` (the user explicitly declined). Recording it late fails the same way a backfilled weekly opener does, because the event exists to be retrospective evidence rather than a self-report. `snapshot_review` states cash inline in its own envelope and `test_drive` persists no anchor, so neither carries this requirement.
+`--cash-outcome` takes exactly one of `found_in_source` (the statement carried a balance row, so nothing was asked), `provided` (the user was asked at the card beat and gave one), or `declined` (the user was asked and did not). Every value states what the *user's* data or answer decided; there is no value for "the agent decided not to ask". The retired `skipped` was exactly that, and #357's fifth recurrence recorded it correctly and in order while the user was never offered the question — the gate passed and the experience was identical to forgetting. Now a run that never asked can record nothing, and `verify` refuses a trace with no `cash_anchor_checked` on a route that owes one, so "nobody was asked" and "they declined" are different traces.
+
+Position follows the outcome, and `verify` enforces it both ways. `found_in_source` is read before `prepare` runs, so it must precede the first question or card — retrospective evidence rather than a self-report, the same anti-backfill rule as the weekly opener. `provided` and `declined` record a question asked in the same message as the preview card (`data-contract.md`), so they must come *after* the first `card_presented`; a `declined` recorded earlier is refused, because at that point there was no card the question could have been attached to.
+
+When the user provides an anchor, `review.py add-cash` recomputes the review and returns a new session id. **Keep the original session id for the whole trace.** A receipt records one conversation with a user, not one engine session — the same reason a refresh trace is keyed by `refresh_id` and a `consider` trace by `evaluation_id`.
+
+`snapshot_review` states cash inline in its own envelope and `test_drive` persists no anchor, so neither carries this requirement; `input.cash_anchor.status` says `not_applicable` on both, and on a light-tier week.
 
 `answers_received` is a content-free latency marker. It makes the answered-to-card wait measurable from the trace as `card_presented(stage=preview).ts - answers_received.ts`.
 
@@ -65,7 +72,7 @@ python3 tools/ux_receipt.py event --session-id <id> --event widget_attempt_faile
 
 ## Rule choice and grounding fidelity
 
-When the rule choice is shown after the preview card, record it with the mode used. This event also machine-checks that each candidate's engine-authored `grounding` reached the user verbatim, so that fidelity is not left to self-discipline. Write a transient check file pairing each presented candidate's `id` and engine `grounding` (omit the key when the candidate has none) with the exact text shown:
+The rule choice is shown in the same message as the preview card, under it. Record `card_presented` first and `rule_choice_presented` second — append order is what says the card was above the choices — then the cash question's outcome if one was owed. Record it with the mode used. This event also machine-checks that each candidate's engine-authored `grounding` reached the user verbatim, so that fidelity is not left to self-discipline. Write a transient check file pairing each presented candidate's `id` and engine `grounding` (omit the key when the candidate has none) with the exact text shown:
 
 ```bash
 cat > /tmp/fomo-kernel-rule-choice-grounding.json <<'JSON'

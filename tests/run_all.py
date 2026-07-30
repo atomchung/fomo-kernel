@@ -13,6 +13,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SUITES = [
@@ -117,14 +120,14 @@ def main():
     # this, so a suite added to SUITES gets the posture without opting in, which
     # is the difference between a rule in a primitive and a rule at a call site.
     # `TR_TEST_NETWORK=1` is the documented opt-in and must still work.
-    # Assigned, not setdefault: an inherited `TR_OFFLINE=0` would otherwise
-    # survive and let the default suite reach the network without anyone asking
-    # for it (external review, finding 9). `TR_TEST_NETWORK=1` stays the one
-    # documented opt-in, and it clears the posture rather than competing with it.
-    if os.environ.get("TR_TEST_NETWORK") == "1":
-        os.environ.pop("TR_OFFLINE", None)
-    else:
-        os.environ["TR_OFFLINE"] = "1"
+    #
+    # #620 moved the decision itself into `offline_posture`, unchanged, because
+    # setting it *here* covered only suites launched through this runner. A file
+    # run directly — the normal inner loop when iterating on one suite — bypassed
+    # it and resolved live prices, so `python3 tests/test_consider.py` reported
+    # nine failures this command did not. Both entry points now read one
+    # declaration instead of this one owning it.
+    offline_posture.apply()
 
     results = []
     for label, rel in SUITES:
