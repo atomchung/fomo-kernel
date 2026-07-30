@@ -3435,10 +3435,22 @@ def _next_block(bundle, copy, facts, state, snapshot):
         standing = (localized_rule(state.get("rule_dim"), language,
                                    cap=state.get("max_position_pct"))
                     if state.get("rule_dim") else None)
+        # #546: this branch also fires at preview time on a user's very first
+        # review — ``require_commitment=False`` nulls ``bundle["commitment"]``
+        # before the user has ever chosen a rule, and ``state["rule_dim"]`` is
+        # this period's fresh prescription, never a carried-forward answer. "The
+        # standing rule remains" is a continuity claim, true only when a prior
+        # commitment was actually persisted, so it is gated on the same
+        # predicate ``_reconciliation_lines`` already reads for #292: a genuine
+        # first review has nothing to restate and gets the pending-choice line
+        # instead, naming the same recommendation as awaiting the user's choice.
+        prior_commitment = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
+                            .get("prior_commitment") or {})
+        standing_key = "rule_standing" if prior_commitment.get("rule") else "rule_pending"
         text = None
-        if standing and missing.get("rule_standing"):
+        if standing and missing.get(standing_key):
             try:
-                text = missing["rule_standing"].format(rule=standing)
+                text = missing[standing_key].format(rule=standing)
             except (KeyError, IndexError, ValueError):
                 text = None
         if not text:
