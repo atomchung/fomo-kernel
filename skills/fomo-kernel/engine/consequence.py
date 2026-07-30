@@ -486,6 +486,7 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     cash_flows = trade_recap.load_cash_flows([], trade_rows=rows)
     held_mv = sum((sh * lastpx_v[t]) if lastpx_v.get(t) else c for t, (sh, c) in held_v.items())
     cash = trade_recap.cash_position(cash_flows, held_mv, anchor=cash_anchor, fx=fx)
+    unclassified_holdings, undecomposed_etfs = book_legibility(held, size["weights"])
 
     return {
         "held": {t: {"shares": sh, "cost": c} for t, (sh, c) in sorted(held.items())},
@@ -516,13 +517,38 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
         # ever be empty, and a field whose only possible value is "nothing
         # was missing" is the written-never-read shape #429 names.
         "mixed_currency": mixed_currency,
+        # #598/#599, and deliberately here rather than one layer up in
+        # `consequence()`: these name the positions the two readings above were
+        # measured *without*, so they belong in the same dict as the readings.
+        # Any consumer of a state gets both or neither. See book_legibility.
+        "unclassified_holdings": unclassified_holdings,
+        "undecomposed_etfs": undecomposed_etfs,
     }
 
 
-def _legibility(state):
-    """What the concentration figures in `state` could not see (#598/#599).
+def book_legibility(held, weights):
+    """What the concentration figures over this book could not see (#598/#599).
 
-    Two disjoint lists over the same book, each returning `[{ticker, weight,
+    Public and taking its two inputs directly, because the answer belongs
+    beside the numbers it qualifies rather than one layer above them. It is
+    called from `portfolio_state`, so **every** consumer of a state — including
+    a future workflow that calls `portfolio_state` and never touches
+    `consequence()` — gets `ai_pct` and `max_sector_pct` together with the
+    positions those readings were measured without. That was not true when this
+    lived in `consequence()` alone: a probe workflow written the obvious way
+    (read the book, print the weights and `ai_pct`) got the silent version, with
+    the whole suite green. A limitation that only some callers of a number
+    receive is the honesty equivalent of the split map every reader of the book
+    must be handed (#550), and it is placed here for the same reason.
+
+    The one other call site is `review._canonical_consider_before`, which
+    replaces a state's `weights` with the canonical projection's after
+    `portfolio_state` has returned; it recomputes rather than keeping the
+    superseded answer, so a listed weight is always the weight that will be
+    shown. One implementation, two call sites — the rule is a single
+    derivation, not a single caller.
+
+    Two disjoint lists, each returning `[{ticker, weight,
     ...}]` sorted by weight descending. Every entry is a position whose weight
     is real and whose *composition* is not, which is the property `ai_pct` and
     `max_sector_pct` are silently measured around:
@@ -556,9 +582,9 @@ def _legibility(state):
     diagnostic. A required disclosure is a sentence the answer owes; a 0.05%
     dust position does not move a concentration figure and does not earn one.
     """
-    weights = state.get("weights") or {}
+    weights = weights or {}
     unclassified, etfs = [], []
-    for ticker in sorted(state.get("held") or {}):
+    for ticker in sorted(held or {}):
         weight = float(weights.get(ticker) or 0.0)
         if weight < trade_recap.RESIDUAL_POS_TH:
             continue
@@ -627,8 +653,12 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     `excluded_holdings` is to `partial_book`: the key says THAT the book was
     partially legible, these say WHICH positions and at what weight, so an
     answer can state the size of what it could not see rather than only that
-    something was missed. There is no key for a currency this book could not
-    convert — `portfolio_state` refuses that book outright (#600).
+    something was missed. Both are `after`'s own, forwarded rather than
+    recomputed — `portfolio_state` stamps them onto every state it builds
+    (see `book_legibility`), so `before` carries its own pair for its own book
+    and a caller who never reaches this function still gets them. There is no
+    key for a currency this book could not convert — `portfolio_state` refuses
+    that book outright (#600).
 
     `excluded_holdings` is what `rows_from_portfolio_basis` left out, passed
     through by the caller rather than re-derived here — `rows` alone cannot
@@ -660,8 +690,11 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     # the one the premise's own ticker has already joined, so an unclassified
     # or undecomposed name the user is asking to *buy* is disclosed as part of
     # the book it is about to become part of, not only through `unmapped_driver`
-    # above.
-    unclassified_holdings, undecomposed_etfs = _legibility(after)
+    # above. Read, not recomputed: `portfolio_state` already answered this for
+    # the state it built, and asking a second time here is how the state and the
+    # disclosure would come to disagree about the same book.
+    unclassified_holdings = after["unclassified_holdings"]
+    undecomposed_etfs = after["undecomposed_etfs"]
     if unclassified_holdings:
         disclosures.append("unclassified_book")
     if undecomposed_etfs:

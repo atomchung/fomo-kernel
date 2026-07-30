@@ -433,6 +433,48 @@ def test_a_single_currency_book_never_needs_an_fx_rate():
 # #598 / #599. Every assertion below was measured by running the code against
 # these fixtures, not predicted.
 
+def test_a_state_carries_what_its_own_concentration_readings_could_not_read():
+    """The rule this section exists to hold, and the one that was broken when
+    these lists lived in `consequence()` alone.
+
+    A caller who only wants "what does my book look like right now" calls
+    `portfolio_state` and never touches `consequence()`. Probed with a throwaway
+    `cmd_exposure` subcommand written the obvious way — read the book, print the
+    weights and `ai_pct` — that caller got the readings and none of the
+    limitations, with the whole offline suite green. So the answer travels in
+    the same dict as the question: any consumer of a state gets both or neither.
+    """
+    rows = _rows("sample_pyramid.csv")
+    state = cq.portfolio_state(rows)
+    assert "ai_pct" in state and "max_sector_pct" in state
+    # Membership first, so a state that stopped carrying these reports as this
+    # assertion rather than as a KeyError that halts the rest of the file.
+    assert {"unclassified_holdings", "undecomposed_etfs"} <= set(state), (
+        "a state reports concentration readings without the positions they were "
+        f"measured without: {sorted(state)}")
+    assert [row["ticker"] for row in state["unclassified_holdings"]] == ["COST", "UNH"]
+    assert state["undecomposed_etfs"] == []
+    # And a state is self-describing: the named weights are that state's own,
+    # never a denominator some other reader computed.
+    for row in state["unclassified_holdings"]:
+        assert _close(row["weight"], state["weights"][row["ticker"]])
+
+
+def test_consequence_reports_exactly_what_the_after_state_already_answered():
+    """One derivation, not two. `consequence()` reads the lists `after` carries
+    rather than asking again — the second ask is how a state and the disclosure
+    beside it come to describe the same book differently."""
+    rows = _rows("sample_pyramid.csv")
+    premise = {"ticker": "COST", "side": "buy", "price": 500.0, "qty": 5.0}
+    result = cq.consequence(rows, premise)
+    assert result["unclassified_holdings"] == result["after"]["unclassified_holdings"]
+    assert result["undecomposed_etfs"] == result["after"]["undecomposed_etfs"]
+    # `before` answers for its own book, which is a different one — the premise
+    # has not joined it. Both are correct; only `after` qualifies the numbers
+    # this result reports.
+    assert "unclassified_holdings" in result["before"]
+
+
 def test_an_unclassified_held_position_is_named_with_the_weight_it_carries():
     """#598's silent half. `unmapped_driver` above has only ever looked at the
     premise's own ticker, so a book could carry large unclassified positions —
