@@ -784,6 +784,64 @@ def test_a_pre_split_close_cannot_value_post_split_shares_on_either_consider_rou
                 before["weights"])
 
 
+def test_a_recorded_split_survives_an_unrelated_tickers_supplied_one():
+    """#583 post-merge finding: precedence is per ticker, never per call.
+
+    The root has already recorded splits for two tickers. The envelope
+    declares GLYPH's — its close predates it — and legitimately omits PAIR's,
+    because PAIR's close post-dates its split and is already in the
+    compatible basis (references/price-feed.md says exactly that). Whole-map
+    replacement read that omission as "PAIR never split": the recorded 2:1
+    vanished, both consider routes read PAIR at its raw pre-split count, and
+    `basis_conflicts` could not object because the map it checks no longer
+    carried PAIR at all. The share counts below are the whole assertion —
+    GLYPH on its supplied events, PAIR on its recorded ones, on both routes.
+    """
+    book = ({"ticker": "GLYPH", "shares": 10, "avg_cost": 1000.0, "currency": "USD"},
+            {"ticker": "PAIR", "shares": 10, "avg_cost": 100.0, "currency": "USD"})
+    for label in ("ledger", "csv"):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "ledger.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "snapshot", "as_of": "2024-05-01",
+                                    "source": "declared_book",
+                                    "positions": [dict(row) for row in book]}) + "\n")
+            with open(os.path.join(tmp, "last_state.json"), "w", encoding="utf-8") as f:
+                json.dump({"splits": {"GLYPH": [list(_PRICE_SPLIT)],
+                                      "PAIR": [["2024-05-15", 2.0]]}}, f)
+            envelope = os.path.join(tmp, "prices.json")
+            with open(envelope, "w", encoding="utf-8") as f:
+                json.dump({"as_of": "2024-06-10", "source": "Example Exchange official closes",
+                           "prices": [{"ticker": "GLYPH", "close": 100.0, "date": "2024-06-07",
+                                       "currency": "USD", "splits": [list(_PRICE_SPLIT)]},
+                                      {"ticker": "PAIR", "close": 60.0, "date": "2024-06-10",
+                                       "currency": "USD"}]}, f)
+            extra = ()
+            if label == "csv":
+                path = os.path.join(tmp, "transactions.csv")
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Symbol", "Quantity", "Price", "Action",
+                                     "TradeDate", "RecordType"])
+                    for row in book:
+                        writer.writerow([row["ticker"], row["shares"], row["avg_cost"],
+                                         "BUY", "2024-05-01", "Trade"])
+                extra = (path,)
+            code, payload = _route(tmp, "consider", *extra,
+                                   "--premise", _PRICE_PREMISE_PAIR,
+                                   "--prices", envelope)
+            assert code == 0, (label, payload)
+            held = payload["evaluation"]["consequence"]["before"]["held"]
+            assert held["GLYPH"]["shares"] == 100.0, (
+                label, "the supplied split must still govern its own ticker", held)
+            assert held["PAIR"]["shares"] == 20.0, (
+                label, "an unrelated ticker's supplied split must not erase "
+                       "PAIR's recorded one", held)
+
+
+_PRICE_PREMISE_PAIR = ('{"ticker": "PAIR", "side": "buy", "qty": 1, "price": 60.0, '
+                       '"currency": "USD"}')
+
+
 def test_a_review_records_its_derived_book_on_a_split_crossing_history():
     """Found by driving the real CLI rather than by reading it. `prepare` writes
     down the book a transaction import derived (#549), and that writer passes its

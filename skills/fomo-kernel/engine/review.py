@@ -654,10 +654,19 @@ def _recorded_splits(root):
 def _effective_splits(root, supplied):
     """The one split map ``consider`` reasons over (#558 precedence, #583).
 
-    An agent envelope's own splits win — they arrived with the quotes, on one
-    basis at one instant, and a CSV-route caller may have no review in this root
-    to have frozen anything. Otherwise the map the last review froze. Neither is
-    fetched.
+    Per ticker, never per call (#583 post-merge finding). The recorded map is
+    the floor, and a ticker with supplied events is overridden by them — they
+    arrived with the quotes, on one basis at one instant, and a CSV-route
+    caller may have no review in this root to have frozen anything. What a
+    supplied envelope must not do is *remove* another ticker's already-recorded
+    split: an envelope legitimately omits ``splits`` for a ticker whose close
+    already post-dates its split (references/price-feed.md calls that the
+    compatible basis), and whole-map replacement read that omission as "no
+    split ever existed" — the book was then valued at that ticker's raw
+    pre-split count, wrong by the split factor, under a valid
+    ``state_version``. Dropping the recorded event also disarmed
+    ``basis_conflicts`` for exactly that ticker, since the check only sees
+    tickers the map carries. Neither side is fetched.
 
     Two callers need this answer for the same call, which is why it is a
     function rather than an expression: ``_consider_rows`` uses it to carry the
@@ -666,7 +675,12 @@ def _effective_splits(root, supplied):
     basis. Resolving it twice by hand is how a check ends up validating a
     different map from the one the arithmetic used.
     """
-    return supplied if supplied is not None else _recorded_splits(root)
+    recorded = _recorded_splits(root)
+    if supplied is None:
+        return recorded
+    merged = dict(recorded or {})
+    merged.update(supplied)
+    return merged
 
 
 def _profile_path(root):
