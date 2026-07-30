@@ -1202,6 +1202,12 @@ def test_held_currency_fx_gaps_leaves_single_currency_and_display_only_books_alo
     assert tr.fx_request_currencies(["EUR", "USD"], "TWD") == ["EUR", "TWD", "USD"]
     assert tr.held_currency_fx_gaps({"ASML.AS": "EUR", "AAPL": "USD"},
                                     {"USD": 1.0, "EUR": 1.1}) == []
+    # The predicate reads cur_map's keys verbatim because `usd_view`'s factor
+    # lookup does. A normalizing predicate would call this book covered and the
+    # lookup would then miss, putting the identity factor back through the
+    # guard's own front door — so a dirty code fails closed instead.
+    assert tr.held_currency_fx_gaps({"2330.TW": "twd", "AAPL": "USD"},
+                                    {"USD": 1.0, "TWD": 1 / 30}) == ["twd"]
 
 
 def test_fetch_fx_usd_only_is_offline_noop():

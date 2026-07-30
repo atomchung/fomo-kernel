@@ -557,8 +557,15 @@ def held_currency_fx_gaps(cur_map, fx):
       display currency requested by ``fx_request_currencies`` is not in it, so a
       missing display rate stays a rendering degradation and can never reach
       here.
+
+    The keys are read **verbatim**, never normalized: ``usd_view``'s factor
+    lookup is ``fx.get(cur_map.get(t, "USD"), 1.0)``, so a predicate that
+    case-folded or trimmed them could call a currency covered that the lookup
+    then misses, and the identity factor would be back through the guard's own
+    front door. Agreeing by construction is worth more here than tolerating a
+    dirty currency code, which fails closed and is fixable in the input.
     """
-    held = {str(c).strip().upper() for c in (cur_map or {}).values() if str(c or "").strip()}
+    held = {c for c in (cur_map or {}).values() if c}
     if len(held) < 2:
         return []
     return sorted(c for c in held if c not in (fx or {}))
@@ -643,9 +650,7 @@ def usd_view(rts, held, last_px, cur_map, fx):
     """
     gaps = held_currency_fx_gaps(cur_map, fx)
     if gaps:
-        raise MissingHeldCurrencyRate(sorted({str(c).strip().upper()
-                                              for c in (cur_map or {}).values()
-                                              if str(c or "").strip()}), gaps)
+        raise MissingHeldCurrencyRate(sorted({c for c in (cur_map or {}).values() if c}), gaps)
     f = lambda t: fx.get(cur_map.get(t, "USD"), 1.0)
     rts_u = [dict(r, buy_px=r["buy_px"] * f(r["ticker"]), sell_px=r["sell_px"] * f(r["ticker"]))
              for r in rts]
