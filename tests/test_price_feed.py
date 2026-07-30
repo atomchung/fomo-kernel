@@ -25,6 +25,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.join(HERE, "..", "skills", "fomo-kernel")
 ENGINE = os.path.join(SKILL, "engine")
 sys.path.insert(0, ENGINE)
+
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
 import card_renderer  # noqa: E402
 import price_feed as pf  # noqa: E402
 

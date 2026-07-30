@@ -18,6 +18,13 @@ import subprocess
 import sys
 import tempfile
 
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"

@@ -147,6 +147,64 @@ def test_the_documentation_corpus_is_actually_being_read():
         "the two guaranteed-delivery entry points must be in scope"
 
 
+def _suites_that_drive_a_priced_route():
+    """Every test file that runs `review.py consider|prepare` as a subprocess.
+
+    Derived from the sources rather than hand-listed, so a suite added tomorrow
+    is covered without anyone remembering to add it — the difference this
+    repository keeps paying for between a rule in a primitive and a rule at a
+    call site.
+    """
+    found = []
+    tests_dir = os.path.join(ROOT, "tests")
+    for name in sorted(os.listdir(tests_dir)):
+        if not name.endswith(".py") or name == "offline_posture.py":
+            continue
+        with open(os.path.join(tests_dir, name), encoding="utf-8") as handle:
+            src = handle.read()
+        if "subprocess.run" not in src:
+            continue
+        if '"consider"' in src or '"prepare"' in src:
+            found.append(name)
+    return found
+
+
+def test_every_suite_that_drives_a_priced_route_declares_its_market_posture():
+    """#620: a suite's answer may not depend on how it was launched.
+
+    `run_all.py` set `TR_OFFLINE=1` for the suites it spawned, which covered
+    every run through it and no run around it. `python3 tests/test_consider.py`
+    — the ordinary inner loop when iterating on one file — therefore resolved
+    live closes and reported nine failures that `run_all.py` did not, on the same
+    commit and the same machine. Two more were one market move away in
+    `test_split_basis.py`.
+
+    This is not about an offline product; nobody reviews trades without a
+    network. It is that a test asserting a position is 51% of a book must not
+    take today's price as an input, or a red run stops telling you whether your
+    own change broke something.
+
+    Checked mechanically because the failure is silent: a new suite that omits
+    the declaration is green on the maintainer's machine, green in CI (no
+    yfinance there), and wrong only when someone runs it directly on a machine
+    that has it.
+    """
+    suites = _suites_that_drive_a_priced_route()
+    assert len(suites) >= 7, (
+        f"the scan narrowed to {suites} — an empty or shrunken list passes every "
+        "assertion below, which is the way a check like this dies")
+    missing = []
+    for name in suites:
+        with open(os.path.join(ROOT, "tests", name), encoding="utf-8") as handle:
+            src = handle.read()
+        if "offline_posture.apply()" not in src:
+            missing.append(name)
+    assert not missing, (
+        "these suites drive a priced route without declaring a market posture, so running "
+        f"them directly reaches the network and running them via run_all.py does not: {missing}. "
+        "Add `offline_posture.apply()` beside the imports; see tests/offline_posture.py.")
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:

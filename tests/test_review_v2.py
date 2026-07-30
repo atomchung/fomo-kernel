@@ -21,6 +21,13 @@ REVIEW = ENGINE_DIR / "review.py"
 SCHEMAS = ROOT / "skills" / "fomo-kernel" / "schemas"
 sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ROOT / "tests" / "agent"))
+
+# The market must not be an input to these assertions (#620). Declared in
+# tests/offline_posture.py so a direct `python3 tests/<this file>` run and a
+# `run_all.py` run reach the same answer; TR_TEST_NETWORK=1 still opts in.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import offline_posture  # noqa: E402
+offline_posture.apply()
 import book_refresh as book_refresh_engine  # noqa: E402
 import card_renderer  # noqa: E402
 import instruments  # noqa: E402
