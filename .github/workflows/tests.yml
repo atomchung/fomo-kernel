@@ -36,13 +36,17 @@ jobs:
       - uses: actions/checkout@v4
       # #637: 兩個觸發曾各自結出不同的樹,卻對著同一個 headSha 報告矛盾結果。這步印出
       # 事件名和實際結出的 commit,讓一個紅燈能被歸因,不必再開兩個 run 猜是哪一棵樹。
+      # base/head 取自事件 payload,不是 `git log --pretty=%P`:actions/checkout 預設
+      # fetch-depth: 1,淺 clone 會把 HEAD 的親代改寫成空,那條路在 CI 裡永遠不會觸發
+      # (本機用 --depth 1 實測過)。而且 base 才是 #637 真正缺的那個事實——當初那條分支
+      # 是跟「哪一版 main」合起來測的。
       - name: State which tree and trigger this run actually tested
         run: |
           echo "event: ${{ github.event_name }}"
           echo "resolved commit: $(git rev-parse HEAD)"
-          parents="$(git log -1 --pretty=%P HEAD)"
-          if [ "$(echo "$parents" | wc -w)" -gt 1 ]; then
-            echo "merge commit; parents: $parents"
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "ephemeral merge of head ${{ github.event.pull_request.head.sha }}" \
+                 "into base ${{ github.event.pull_request.base.sha }}"
           fi
       - uses: actions/setup-python@v5
         with:
@@ -64,16 +68,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      # 跟 test job 同一段歸因(#637),原樣複製——workflow 檔沒有共用函式這種機制,
-      # 複製一個 step 比發明一個共用機制便宜。
+      # 跟 test job 同樣的歸因(#637),但少了 PR 那一段:這個 job 的 `if:` 只讓 schedule
+      # 和 workflow_dispatch 進來,兩者都沒有 pull_request payload,寫了也永遠不會印。
       - name: State which tree and trigger this run actually tested
         run: |
           echo "event: ${{ github.event_name }}"
           echo "resolved commit: $(git rev-parse HEAD)"
-          parents="$(git log -1 --pretty=%P HEAD)"
-          if [ "$(echo "$parents" | wc -w)" -gt 1 ]; then
-            echo "merge commit; parents: $parents"
-          fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
