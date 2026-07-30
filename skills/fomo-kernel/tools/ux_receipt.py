@@ -104,7 +104,15 @@ ADAPTER_REQUIREMENTS = {
 STAGES = ("preview", "final")
 MEMORY_KINDS = ("prior_commitment", "prior_skip", "exit_reason", "due_revisit")
 WEEKLY_OPENERS = ("prior_commitment", "prior_skip")
-CASH_OUTCOMES = ("found_in_source", "asked_user", "skipped")
+# What actually happened about the cash anchor (#357). Every value here means
+# the user's own situation decided the outcome: the statement carried a balance,
+# they gave one, or they were asked and declined. There is deliberately **no**
+# value meaning "the agent decided not to ask" — the retired `skipped` was
+# exactly that, and the fifth recurrence of #357 recorded it correctly, in
+# order, and passed every gate while the user was never offered the question at
+# all. A run where nobody was asked can now record nothing, which `verify`
+# refuses, so it is distinguishable from one where they declined.
+CASH_OUTCOMES = ("found_in_source", "provided", "declined")
 # The two moments a card-free lane becomes visible to the user (#523). A book
 # refresh (`flows/book-refresh.md`) narrates the engine's own difference and
 # then reports what it recorded; those are the surfaces this trace can prove
@@ -180,10 +188,12 @@ VERDICT_AXES = ("controls", "card", "memory", "change",
 #                       *demanding* cards would accept a receipt claiming a
 #                       delivery that could not have happened, which is the
 #                       same hole one level down.
-#   cash_anchor the #357 pre-flight, on the routes that read a trade history.
-#               A declared positions snapshot states `cash` inline in its own
-#               envelope, and `test_drive` persists no accounting anchor at
-#               all, so neither owes one.
+#   cash_anchor the #357 check, on the routes that read a trade history. Its
+#               required position depends on the outcome, not on the route:
+#               `found_in_source` before the first surface, `provided`/
+#               `declined` after the first card. A declared positions snapshot
+#               states `cash` inline in its own envelope, and `test_drive`
+#               persists no accounting anchor at all, so neither owes one.
 #   opener      memory kinds, exactly one of which must precede the first
 #               surface. `()` for a route that carries no opening memory.
 #   change      True  — at least one visible change surface: the narrated diff
@@ -1338,17 +1348,39 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
         errors.append(f"{route} presents no trade evaluation, so rows {claimed} record "
                       "a delivery that cannot have happened")
 
-    # #357: the cash anchor is resolved before the first surface (first_review:
-    # before `prepare` runs; weekly_review: after the cadence-tier gate, and a
-    # light-tier session never calls this tool at all), so this event is
-    # retrospective evidence the check happened — it cannot be skipped by
-    # forgetting, the way plain data-contract.md prose could.
+    # #357: the required ordering follows the outcome, because the two halves of
+    # this check happen at opposite ends of the review.
+    #
+    # `found_in_source` is read out of the statement before `prepare` runs, so
+    # the row is retrospective evidence and must precede the first surface — the
+    # anti-backfill rule this check has always carried.
+    #
+    # `provided`/`declined` record a question the user was asked *at the card
+    # beat*, which is where the owner ruled it belongs: the anchor costs the
+    # account pillar and nothing else, so asking before the card spends a turn
+    # on something the user cannot yet see the value of. Requiring the row after
+    # the first card is what makes that ordering evidence rather than intent —
+    # and a `declined` recorded before any card is refused, because at that
+    # moment there was no card the question could have been attached to.
+    #
+    # A light-tier session never calls this tool at all, and its plan says so
+    # (`input.cash_anchor.status == "not_applicable"`, reason `light_tier`).
     if contract["cash_anchor"]:
         checks = _positions(rows, "cash_anchor_checked")
         if len(checks) != 1:
             errors.append(f"{route} must record exactly one cash_anchor_checked event")
-        elif checks[0] >= first_surface:
-            errors.append("cash_anchor_checked was recorded after the first question or card")
+        else:
+            index = checks[0]
+            outcome = rows[index].get("cash_outcome")
+            if outcome == "found_in_source":
+                if index >= first_surface:
+                    errors.append(
+                        "cash_anchor_checked was recorded after the first question or card")
+            elif index < min(_positions(rows, "card_presented") or [len(rows)]):
+                errors.append(
+                    f"cash_anchor_checked recorded {outcome!r} before any card was presented; "
+                    "the balance is asked for at the card beat, so a row placed earlier "
+                    "cannot be evidence the user was shown what answering would buy")
 
     if Counter(row.get("event") for row in rows)["widget_attempt_failed"] and "widget" not in card_modes:
         errors.append("widget failure was recorded without declared widget capability")

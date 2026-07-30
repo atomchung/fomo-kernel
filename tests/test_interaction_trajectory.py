@@ -824,13 +824,22 @@ def test_weekly_opener_after_first_card_fails():
     assert_has(ux_receipt.verify_rows(rows), "after the first question or card")
 
 
-# --- Cash anchor pre-flight (#357) --------------------------------------------
-# The cash anchor is resolved before the first surface (on first_review before
-# `prepare` even runs; on weekly_review after the cadence-tier gate, since a
-# light week is never asked and writes no receipt at all -- #357 owner ruling
-# 2026-07-23), so this event is retrospective evidence the check happened at
-# all -- an agent that forgot to check (the failure mode #357 was filed for)
-# cannot fabricate it after the fact without also getting the ordering wrong.
+# --- Cash anchor (#357) -------------------------------------------------------
+# Two halves at opposite ends of the review, and the outcome says which.
+#
+# `found_in_source` is read out of the statement before `prepare` runs, so the
+# row is retrospective evidence: an agent that forgot to look cannot fabricate
+# it afterwards without also getting the ordering wrong.
+#
+# `provided`/`declined` record a question asked at the card beat, where the
+# owner ruled it belongs -- the anchor costs the account pillar and nothing
+# else, so asking before the card spends a turn on a value the user cannot yet
+# see. Requiring the row after the first card is what makes it evidence.
+#
+# What no longer exists is the escape both halves used to share. `skipped` meant
+# "the agent decided not to ask", and #357's fifth recurrence recorded it
+# correctly and in order while the user was never offered the question -- the
+# gate passed and the experience was identical to forgetting.
 
 def test_cash_anchor_checked_missing_fails_for_first_review():
     rows = good_markdown_rows()
@@ -846,7 +855,7 @@ def test_cash_anchor_checked_missing_fails_for_weekly_review():
 
 def test_cash_anchor_checked_duplicate_fails():
     rows = good_markdown_rows()
-    after(rows, CASH_ANCHOR, row("cash_anchor_checked", cash_outcome="asked_user"))
+    after(rows, CASH_ANCHOR, row("cash_anchor_checked", cash_outcome="provided"))
     assert_has(ux_receipt.verify_rows(rows), "must record exactly one cash_anchor_checked event")
 
 
@@ -865,11 +874,44 @@ def test_cash_anchor_checked_invalid_outcome_fails():
     assert_has(ux_receipt.verify_rows(rows), "unsupported cash outcome")
 
 
-def test_cash_anchor_checked_valid_outcomes_pass():
-    for outcome in ux_receipt.CASH_OUTCOMES:
+def test_cash_anchor_found_in_source_passes_before_the_first_surface():
+    rows = good_markdown_rows()
+    at(rows, CASH_ANCHOR)["cash_outcome"] = "found_in_source"
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_an_answered_cash_question_is_recorded_at_the_card_beat():
+    """The owner's ruling, mechanically. The balance is asked for in the same
+    message as the preview card, so both user-decided outcomes belong after
+    it -- and both are accepted there, because declining is a real answer."""
+    for outcome in ("provided", "declined"):
+        rows = good_markdown_rows()
+        drop(rows, CASH_ANCHOR)
+        after(rows, PREVIEW_CARD, row("cash_anchor_checked", cash_outcome=outcome))
+        assert ux_receipt.verify_rows(rows) == [], outcome
+
+
+def test_an_answered_cash_question_before_any_card_fails():
+    """The half that makes "the user was asked" evidence rather than intent.
+    A `declined` recorded before the card is a claim about a question that had
+    nothing to be attached to -- the shape of #357's fifth recurrence, where a
+    correctly ordered row meant only that the agent had decided for the user."""
+    for outcome in ("provided", "declined"):
         rows = good_markdown_rows()
         at(rows, CASH_ANCHOR)["cash_outcome"] = outcome
-        assert ux_receipt.verify_rows(rows) == []
+        assert_has(ux_receipt.verify_rows(rows), "before any card was presented")
+
+
+def test_no_cash_outcome_means_the_agent_chose_not_to_ask():
+    """The enforcement is the vocabulary, not a gate that refuses the user.
+    Every legal outcome names something the user's data or the user's own
+    answer decided; a run where nobody was asked can record nothing, and a
+    route that owes the event then fails for its absence."""
+    assert set(ux_receipt.CASH_OUTCOMES) == {"found_in_source", "provided", "declined"}
+    for retired in ("skipped", "asked_user"):
+        assert retired not in ux_receipt.CASH_OUTCOMES, (
+            f"{retired!r} let an agent record a legitimate decision not to ask, which is "
+            "indistinguishable from forgetting from the user's chair (#357)")
 
 
 def test_cash_anchor_checked_not_required_outside_trade_history_routes():
@@ -899,9 +941,18 @@ def test_cli_cash_anchor_checked_requires_outcome():
         assert missing.returncode == 2
         assert "requires --cash-outcome" in missing.stderr
 
-        done = subprocess.run(
+        retired = subprocess.run(
             [sys.executable, str(TOOL), "event", *common,
              "--event", "cash_anchor_checked", "--cash-outcome", "skipped"],
+            capture_output=True, text=True,
+        )
+        assert retired.returncode != 0, (
+            "`skipped` was the agent-discretion escape #357 closed; the CLI must refuse it "
+            f"rather than write a row verify would then accept: {retired.stdout}")
+
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common,
+             "--event", "cash_anchor_checked", "--cash-outcome", "declined"],
             capture_output=True, text=True,
         )
         assert done.returncode == 0, done.stderr

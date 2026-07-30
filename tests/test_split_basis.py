@@ -520,7 +520,18 @@ _BOOK_READERS_INTERNAL = frozenset({
 _DRIVEN_ROUTES = ("consider", "prepare", "refresh")
 
 # A route may sit here only with a reason naming who owns it instead.
-_ROUTES_NOT_DRIVEN = {}
+_ROUTES_NOT_DRIVEN = {
+    # `add-cash` (#357) performs no book read of its own: it re-enters
+    # `_prepare_session` — the `prepare` route driven above — with one extra
+    # input, and then refuses unless the recomputed `engine_state` (holdings,
+    # splits, valuation frame: everything but `cash`) is byte-identical to the
+    # session it is amending. Whatever `prepare` establishes about the split
+    # basis, this route reproduces exactly or does not answer at all, so there
+    # is no second basis for it to get wrong. This is a mechanism, not a
+    # call-graph argument: it is pinned by
+    # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved.
+    "add-cash": "delegates to prepare and refuses any engine_state drift outside cash",
+}
 
 
 def _routes_that_read_the_book():

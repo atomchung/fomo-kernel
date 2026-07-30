@@ -50,8 +50,11 @@ next step.
    this structural check as the baseline. When more than one candidate is
    offered and `card_plan.candidate_comparison` is present, present that one
    sentence too — it explains why the others ranked lower on this period's
-   severity ranking, not which rule is objectively right for the user. Write
-   the choice (or `skip`) to `answers.commitment`, then finalize.
+   severity ranking, not which rule is objectively right for the user. The card
+   and everything it asks for are one message, card on top: when
+   `input.cash_anchor.status` is `absent` or `partial`, the cash question goes
+   in it too (`references/data-contract.md`). Write the choice (or `skip`) to
+   `answers.commitment`, then finalize.
 
 **Empty edge (`review_tier.tier == "empty"`):** the file carried no current
 holdings and no closed round trips. Tell the user exactly what to provide —

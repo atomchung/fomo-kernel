@@ -2,7 +2,7 @@
 
 Use when the Review Plan has `route=first_review`.
 
-**Before `prepare`:** resolve the cash anchor per `references/data-contract.md` — read it from the source, ask one short question when it appears nowhere, or accept an explicit skip. Once `prepare` returns a session_id, record `cash_anchor_checked` before the first question or card (`references/ux-receipt.md`). The check happens before `prepare` runs, so the receipt is retrospective evidence it happened at all rather than a claim made afterward.
+**Before `prepare`:** read the cash balance out of the source if it is there and pass it as `--cash` (`references/data-contract.md`); record `cash_anchor_checked --cash-outcome found_in_source` before the first question or card. Do not ask the user for it here. When the source carries none, `prepare` returns `input.cash_anchor.status: "absent"` and the ask belongs to step 6, where the user can see what it would buy.
 
 **0. Recover prices first.** If `review_plan.input.price_feed.request` is present, the host could not retrieve prices. Look the requested closes up yourself from a recognized market-data source, transcribe them into the envelope, and rerun `prepare --prices <path>` — before you mention the gap to the user or deliver a degraded card (`references/price-feed.md`). Deliver a degraded card only if recovery genuinely fails, and never stall the review over it.
 
@@ -28,9 +28,11 @@ The engine prefills `ticker`, `maturity:"inferred"`, and provenance. Never prese
 
 **5. Run `preview`.** If validation fails, fix the artifact the error names rather than working around the gate.
 
-**6. Show the card preview inline** (`references/card-delivery.md`), record the presentation (`references/ux-receipt.md`), and only then ask the user to choose one candidate rule, write their own, or skip.
+**6. One beat: the card, the rule choice, and the cash question if one is owed.** Put all of it in a single message — the complete card inline (`references/card-delivery.md`) first, the choices under it. The user still sees the real card before committing to anything; what they no longer do is wait through a second round for a choice whose candidates the engine had already computed. Record the card presentation, then the rule choice, in that order (`references/ux-receipt.md`).
 
-Present each candidate's engine-authored `grounding` sentence verbatim when the payload carries one — that is what ties a generic rule to this user's real positions — and never invent a grounding for a candidate that has none. When `card_plan.candidate_comparison` is present, show that one sentence once alongside the candidates: it explains why the others ranked lower on this period's severity ranking, not which rule is objectively right for this user, so do not rephrase it into an endorsement.
+Ask the user to choose one candidate rule, write their own, or skip. Present each candidate's engine-authored `grounding` sentence verbatim when the payload carries one — that is what ties a generic rule to this user's real positions — and never invent a grounding for a candidate that has none. When `card_plan.candidate_comparison` is present, show that one sentence once alongside the candidates: it explains why the others ranked lower on this period's severity ranking, not which rule is objectively right for this user, so do not rephrase it into an endorsement.
+
+When `input.cash_anchor.status` is `absent` or `partial`, ask for the account's current cash balance in the same message, in the currencies it names — stating what answering unlocks and that skipping keeps the holdings-only view. Do not settle for pointing at the card's own unlock invitation: that sentence is not an interaction point, and a finished card that names a gap the user cannot act on is the miss this step exists to close. Record `provided` or `declined` (`references/ux-receipt.md`); if they answered, run `add-cash`, rerun `preview` on the session it returns, and show that card before the commitment is written.
 
 If the rule they write names a quantity the engine does not compute, it is stored rather than refused — look the quantity up in that same exchange, show the value back, and send it as a condition slot (`references/condition-slots.md`).
 

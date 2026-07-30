@@ -165,9 +165,13 @@ Below is a **complete, directly copyable `first_review` trace**. The order is a 
 python3 tools/ux_receipt.py start --session-id <ID> --client claude --route first_review \
   --adapter validated_widget --question-mode native_options --card-mode widget
 
-# 1) Cash anchor (#357): exactly once on first_review / weekly_review, and it must come
-#    before the first question and the first card. It happens during prepare, so recording
-#    it later is judged out of order.
+# 1) Cash anchor (#357): exactly once on first_review / weekly_review, and where it goes
+#    follows the outcome. `found_in_source` is read out of the statement during prepare, so
+#    it must come before the first question and the first card — recording it later is
+#    judged out of order. When the source carries no balance the plan says so
+#    (`input.cash_anchor.status: "absent"`) and the question is asked at the card beat
+#    instead; the weekly trace below shows that shape. There is no outcome for "did not
+#    ask": a run where the user was never offered it records nothing, and `verify` fails.
 python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
   --cash-outcome found_in_source
 
@@ -215,7 +219,7 @@ python3 tools/ux_receipt.py event --session-id <ID> --event card_presented \
 
 A candidate with no `grounding` omits the field entirely (like `candidate_1`) — **do not invent a sentence to fill it**. That is precisely the half #293 cannot catch and only a human can hold.
 
-**The `weekly_review` route carries one extra opener, and `verify` enforces it** (the trace above is `first_review`; do not copy the opener into it). When `prepare` selects `weekly_review`, show the user the rule agreed last time **before the first question and the first card**. The complete trace differs from the one above only in `start` and this row; everything else — cash anchor, questions, answers received, both card stages, rule choice — is copied verbatim:
+**The `weekly_review` route carries one extra opener, and `verify` enforces it** (the trace above is `first_review`; do not copy the opener into it). When `prepare` selects `weekly_review`, show the user the rule agreed last time **before the first question and the first card**. Two rows differ from the trace above — that opener, and the cash anchor. This trace deliberately shows the other cash shape: a source with no balance row, so the plan came back `absent`, the balance was asked for in the same message as the preview card, and the outcome row therefore sits **after** that card (`provided` when the user gave one, `declined` when they did not). Everything else — questions, answers received, both card stages, rule choice — is copied verbatim:
 
 ```bash
 # qa-trace: weekly_review
@@ -228,15 +232,21 @@ python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented \
 # If the plan also returned exit_reason / due_revisit, record one row each (same
 # --memory-kind flag; these do not count as the opener):
 #   python3 tools/ux_receipt.py event --session-id <ID> --event memory_presented --memory-kind due_revisit
-python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
-  --cash-outcome asked_user
 python3 tools/ux_receipt.py event --session-id <ID> --event question_presented --mode native_options
 python3 tools/ux_receipt.py event --session-id <ID> --event answers_received
 python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
   --stage preview --artifact-path <preview-card.html>
 python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage preview --mode widget
+# The card, the rule choice and the cash question are ONE message, card on top. These
+# three rows are the order the surfaces appeared in it.
 python3 tools/ux_receipt.py event --session-id <ID> --event rule_choice_presented \
   --mode native_options --grounding-check-file <grounding-check.json>
+# The user answered, so `provided`. If they gave a balance, run
+# `review.py add-cash --session-id <ID> --cash <json>` and rerun preview on the session
+# it returns — but keep THIS session id for the whole trace: a receipt records one
+# conversation, not one engine session.
+python3 tools/ux_receipt.py event --session-id <ID> --event cash_anchor_checked \
+  --cash-outcome provided
 python3 tools/ux_receipt.py event --session-id <ID> --event artifact_generated \
   --stage final --artifact-path <final-card.html>
 python3 tools/ux_receipt.py event --session-id <ID> --event card_presented --stage final --mode widget
