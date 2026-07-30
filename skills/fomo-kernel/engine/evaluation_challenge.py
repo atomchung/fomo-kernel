@@ -117,11 +117,13 @@ import answer_provenance
 
 # Presentation order for `must_state`. The basis comes first because every
 # number after it is measured against that book, and the disclosures come
-# last because they qualify what precedes them. An agent is free to compose
-# these into whatever prose the moment calls for; the order is the order the
-# facts depend on each other, not a script.
-TOPICS = ("basis", "position", "concentration", "cash", "rule_collision",
-          "disclosure", "excluded_holding")
+# last because they qualify what precedes them. `price_basis` sits second for
+# the same dependency reason: which book, then which market session that book
+# was valued at, then every number measured from the two. An agent is free to
+# compose these into whatever prose the moment calls for; the order is the
+# order the facts depend on each other, not a script.
+TOPICS = ("basis", "price_basis", "position", "concentration", "cash",
+          "rule_collision", "disclosure", "excluded_holding")
 
 # What `consider` never looked at. The first four are unconditional and are
 # lifted verbatim out of references/trade-consequence.md's own sentence
@@ -192,6 +194,50 @@ def _basis_entries(record, basis):
     for field in ("source", "as_of", "stale_days", "completeness", "state_version"):
         if field in basis:
             out.append(_entry(record, "basis", f"basis.{field}", basis[field]))
+    return out
+
+
+def _price_basis_entries(record, basis):
+    """Which market session valued this book (#618).
+
+    ``basis.as_of`` is the last row of the *record* — the last trade or the
+    snapshot anchor. It says nothing about when the market was observed, and
+    since #611 every weight below is a share of a current close rather than of
+    cost. Without this the same premise re-asked returns different numbers with
+    no attributable cause, which is the #429-class question that comes back as
+    a dogfood finding.
+
+    Present exactly when the frozen basis carries the observations — an
+    unpriced run has none, and the `cost_basis` disclosure is what speaks for
+    that answer instead. Nothing here manufactures a date.
+
+    The frame summary is stated unconditionally and a per-ticker date is added
+    only where it differs from that summary. This is #583 §2's rule made
+    brief: naming every ticker on a same-day frame would pad the floor with
+    one entry per holding saying the same thing, while a frame date alone lets
+    one fresh instrument stand in for a stale one. The exceptions are exactly
+    the instruments the summary does not describe.
+
+    A ticker whose own name contains a dot (``2330.TW``) keeps its date and
+    loses only its anchor, like every other unaddressable fact here — so its
+    identity rides in `detail`, which is the only place an answer could read
+    it back from once the path is gone.
+    """
+    observations = basis.get("price_observations")
+    if not isinstance(observations, Mapping):
+        return []
+    as_of = observations.get("as_of")
+    if not isinstance(as_of, str) or not as_of:
+        return []
+    out = [_entry(record, "price_basis", "basis.price_observations.as_of", as_of)]
+    by_ticker = observations.get("by_ticker")
+    if isinstance(by_ticker, Mapping):
+        for ticker in sorted(by_ticker):
+            day = by_ticker[ticker]
+            if isinstance(day, str) and day and day != as_of:
+                out.append(_entry(record, "price_basis",
+                                  f"basis.price_observations.by_ticker.{ticker}",
+                                  day, detail={"ticker": ticker}))
     return out
 
 
@@ -392,6 +438,7 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
 
     must_state = []
     must_state.extend(_basis_entries(record, basis))
+    must_state.extend(_price_basis_entries(record, basis))
     must_state.extend(_position_entries(record, premise, consequence))
     must_state.extend(_concentration_entries(record, consequence))
     must_state.extend(_cash_entries(record, consequence))

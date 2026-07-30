@@ -493,7 +493,8 @@ def required_coverage(basis, consequence, rule_collisions=()):
     so `basis` accepts any `basis.*` citation and
     `rule_collisions.<id>` accepts either `.state` or `.worsens`. A path is
     therefore a coverage target, not necessarily a resolvable anchor of its
-    own -- the containers here deliberately do not resolve.
+    own -- the containers here deliberately do not resolve. Where two paths
+    nest, an anchor pays the narrower one only (`_paid_path`).
     """
     out = []
     for index, key in enumerate(consequence.get("disclosures") or ()):
@@ -513,6 +514,23 @@ def required_coverage(basis, consequence, rule_collisions=()):
                     "key": "stale_and_unverified" if (stale and incomplete)
                            else ("stale" if stale else "unverified")})
 
+    # #618. Which market session valued this book. Enforced rather than only
+    # stated, on #479 Wave B's own rule that what the agent is told it owes and
+    # what a case is refused for dropping are one list: since #611 every weight
+    # in the answer is a share of a current close, so an answer that never says
+    # which close leaves the user unable to attribute a number that moved.
+    #
+    # Its own entry rather than a widened `basis` one. The `basis` entry is
+    # satisfiable by any `basis.*` citation, so folding this into it would make
+    # a claim about `basis.source` discharge the price-day obligation, which is
+    # an obligation nothing enforces — the exact failure the two-directional
+    # test exists to catch.
+    observations = basis.get("price_observations")
+    if isinstance(observations, Mapping) and isinstance(observations.get("as_of"), str) \
+            and observations["as_of"]:
+        out.append({"path": "basis.price_observations", "owes": "price_basis",
+                    "key": "price_observed"})
+
     for row in rule_collisions or ():
         if not isinstance(row, Mapping) or row.get("state") not in _COVERED_STATES:
             continue
@@ -526,15 +544,39 @@ def required_coverage(basis, consequence, rule_collisions=()):
     return tuple(out)
 
 
+def _under(anchor, path):
+    return anchor == path or anchor.startswith(path + ".")
+
+
+def _paid_path(anchor, paths):
+    """The *most specific* required path this anchor discharges, or None.
+
+    Prefix matching alone made a nested obligation pay for its own parent as
+    well: `basis` is matched by any `basis.*` anchor, so once
+    `basis.price_observations` became a required path of its own (#618), a
+    single claim citing the price day covered the staleness obligation too and
+    a case that never mentioned staleness was accepted. The whole suite stayed
+    green, because until then no two required paths ever nested.
+
+    One claim pays one debt: the longest matching path wins, and the broader
+    obligation stays open until something cites it that is not already
+    answering a narrower one. Behaviour is unchanged wherever the required
+    paths are disjoint, which is every case that existed before #618 --
+    `consequence.disclosures.<i>` and `rule_collisions.<id>` never nest.
+    """
+    candidates = [path for path in paths if _under(anchor, path)]
+    return max(candidates, key=len) if candidates else None
+
+
 def _check_required_coverage(resolved_anchors, required):
     """Case 6: nothing on `required_coverage`'s list may be silently dropped
     from the answer. "Covered" means at least one engine_fact claim anchors
     at or under the path -- the same bar every other engine_fact claim
-    already has to clear, not a new, softer one."""
-    anchors = [anchor for anchor, _ in resolved_anchors]
-    missing = [entry for entry in required
-               if not any(anchor == entry["path"] or anchor.startswith(entry["path"] + ".")
-                          for anchor in anchors)]
+    already has to clear, not a new, softer one -- and anchors under a
+    narrower required path pay that one instead (see `_paid_path`)."""
+    paths = [entry["path"] for entry in required]
+    paid = {_paid_path(anchor, paths) for anchor, _ in resolved_anchors}
+    missing = [entry for entry in required if entry["path"] not in paid]
     if missing:
         raise AnswerProvenanceError(
             "agent_case leaves uncovered what this evaluation owes: "

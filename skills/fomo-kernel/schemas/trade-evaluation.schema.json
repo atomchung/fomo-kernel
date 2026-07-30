@@ -85,6 +85,25 @@
             "currencies": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{3}$"}}
           },
           "description": "Canonical sizing projection coverage for a ledger-backed current-book evaluation. This makes mixed price/cost fallback visible; absent on the separate CSV compatibility lane."
+        },
+        "price_observations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["as_of", "by_ticker"],
+          "properties": {
+            "as_of": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "description": "The newest per-ticker observation this answer actually used -- max(by_ticker), computed from the map below rather than copied from the price envelope's own declared as_of. The envelope's frame date is an upper bound price_feed.parse enforces on its rows, not an observation: a supplied envelope may declare today while every close in it is yesterday's, and copying it forward would put the summary ahead of every number it summarizes. market_data.to_price_feed_envelope already defines its own as_of as max(row date) for the same reason."
+            },
+            "by_ticker": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+              "description": "Per instrument, the market session its close was observed on -- price_feed.parse's own observed_date, never re-derived. Per ticker rather than one frame date because a frame-level as_of cannot say which session a given instrument's number came from, and one fresh instrument then makes every stale one look same-day (#583 section 2). Scoped to what this answer needed priced -- the held book, whatever it could not value, and the premise's own ticker -- the same universe the price_feed recovery kit is built over, so an envelope carrying closes for instruments no number here uses does not date them."
+            }
+          },
+          "description": "Which market session each number in this answer was valued at (#618). Absent -- never null, never a placeholder, never today's date -- whenever valuation_basis is unpriced, which is the whole point: a run that priced nothing must not grow a date, and the cost_basis disclosure is what speaks for that answer instead. Frozen beside valuation_basis because that is where the was-this-priced fact already lives. Before #611 a consider weight was a share of cost or of whatever the last review froze, so the same premise re-asked returned the same weights; it is now a share of the current close, and without this the user can see that the numbers moved with no way to tell whether the market moved or their own book did."
         }
       }
     },
