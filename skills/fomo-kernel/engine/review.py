@@ -6455,6 +6455,300 @@ def cmd_consider(args):
            "evaluation": row, "challenge": challenge, "append": report})
 
 
+def _lifetime_cash_flows(rows):
+    """Every dollar a ticker's rows have ever put into or taken out of it,
+    in that ticker's own native currency. ``rows`` includes the synthesized
+    anchor row (`_anchor_position_row`), so a declared position's stated
+    cost counts as its lifetime buy cost exactly as a real purchase would --
+    the same convention `_anchor_position_row` already establishes.
+
+    Returns ``(buy_cost, sell_proceeds)``, each ``{ticker: dollars}``. This
+    is the half of a ticker's P&L that needs no lot-matching or
+    cost-averaging convention at all: paired with the ticker's *current*
+    value under whichever basis prices it, ``value + sell_proceeds -
+    buy_cost`` is the ticker's total economic result, and that identity
+    holds regardless of how "remaining cost" is computed, because it never
+    references a remaining-cost figure in the first place (see
+    ``_positions_diagnosis``).
+    """
+    buy_cost, sell_proceeds = {}, {}
+    for row in rows:
+        amount = row["qty"] * row["price"]
+        bucket = buy_cost if row["side"] == "buy" else sell_proceeds
+        bucket[row["ticker"]] = bucket.get(row["ticker"], 0.0) + amount
+    return buy_cost, sell_proceeds
+
+
+def _positions_diagnosis(rows, canonical_held, weights, last_px, max_pos_override):
+    """The per-position diagnosis README's "What it looks like" demonstrates
+    (#561), computed once here so ``cmd_positions`` stays a thin CLI facade.
+
+    ``canonical_held`` (``{ticker: {shares, avg_cost, cost_total,
+    currency, ...}}``) and ``weights`` come from the caller, sourced from
+    ``portfolio_basis.query_current_book`` / ``sizing_projection`` -- the
+    exact canonical reader ``consider``'s ledger route already uses. This
+    function receives them and never derives its own; owner ruling
+    2026-07-30 on this PR overturned an earlier FIFO-reconstruction cut
+    after a reproduced divergence: the same multi-lot-partial-sell book
+    (buy, buy at a different price, partial sell) gave two different
+    weights for the same ticker at the same instant depending on which
+    entry point answered -- 28.6% from the FIFO route this function used to
+    read, 37.5% from `consider`'s canonical one, and weight is the number
+    this product's own rules are built on. `AGENTS.md` boundary 6 --
+    ledger-derived current holdings stay canonical -- settles which one
+    wins, and issue #456 already owns the general tension (a considered
+    trade reasons on a different basis than a review's own CSV/FIFO path);
+    this function no longer relitigates it, it picks the canonical side.
+
+    Per-position *shares*/*avg_cost*/*cost_total*/*weight* below are exactly
+    what `consider`'s `before.held`/`before.weights` would show for the same
+    book at the same instant -- not a second, possibly-disagreeing
+    computation.
+
+    The $ P&L (`impact`) figure cannot simply add `ticker_diagnosis`'s own
+    FIFO-matched `realized` to an average-cost `unreal`: that mixes two
+    conventions' idea of how much cost was assigned to the shares already
+    sold, and misstates the sum whenever a ticker carries both a closed and
+    an open lot (confirmed with a concrete numeric example while
+    diagnosing this). So `impact` is computed here from
+    `_lifetime_cash_flows` instead -- `current_value + lifetime_sell_
+    proceeds - lifetime_buy_cost` -- an identity that needs no lot-matching
+    or cost-averaging convention at all (see that function's docstring),
+    and is therefore correct under *any* basis, including this one.
+
+    Every tag below was individually checked against the basis change:
+    `too_heavy` reads the canonical `weights` passed in (never recomputed);
+    `disciplined_hold`/`deep_underwater` read `cur_ret`/`avg_cost` from the
+    canonical `held` this function now feeds `ticker_diagnosis` -- these
+    were the FIFO-cost-basis versions before, so this is a second latent
+    inconsistency this same fix closes, not a new one; `suspected_dca`/
+    `suspected_averaging_down_*`/`adds_pending_confirmation` read
+    `classify_adds(rows)`, which was already average-cost-consistent
+    internally (its own running `pos` tracker removes sold cost at
+    `cost/shares`, the same formula `ledger.derive_holdings` and
+    `trade_recap.positions` use) and so needed no change at all;
+    `sold_winner_early` reads `win_n`/`win_early` from each FIFO round
+    trip's own `ret`/`fwd` field, self-contained and never combined with
+    `held`'s cost -- a behavioral question about which specific purchase a
+    sale corresponds to, orthogonal to which basis the *current* book's
+    cost/weight uses, so it is left on FIFO round trips deliberately, not
+    left over.
+
+    One narrow, accepted gap: `ticker_diagnosis`'s own `abs(impact) < 1`
+    floor still gates whether a ticker reaches its `tags` output at all,
+    and that internal `impact` is the same FIFO/average-cost mix this
+    function no longer trusts for display. A ticker whose true impact
+    (this function's own computation) is large could in principle be
+    excluded from tagging if that internal, uncorrected figure happens to
+    round under the floor -- this function still reports that ticker's
+    shares/cost/weight/impact correctly, just with `tags: []`, the same
+    shape as any other undiagnosed position.
+
+    Returns ``(diagnosed, residual)``. ``diagnosed`` covers every
+    currently-held ticker at or above the meaningful-position floor
+    (`trade_recap.RESIDUAL_POS_TH`), read directly off the canonical
+    `weights` rather than recomputed in some other currency view.
+    ``residual`` covers every other currently-held ticker: shares/cost/
+    value/weight only, no diagnosis, matching the product's own "small
+    lots not nitpicked" framing. Sorted by ``|impact|`` descending when
+    every held ticker shares one currency (the same ranking
+    ``ticker_diagnosis`` and the README-demoed card use); a mixed-currency
+    book falls back to sorting by the already-comparable canonical
+    ``weight`` instead, because native-currency impacts are not
+    comparable across tickers without a conversion this function does not
+    perform.
+    """
+    if not canonical_held:
+        raise ReviewError("the recorded book has no open position to report")
+
+    currencies = {holding.get("currency", "USD") for holding in canonical_held.values()}
+    mixed_currency = len(currencies) > 1
+
+    rts, _open_lots = trade_recap.round_trips(rows)
+    adds_class = trade_recap.classify_adds(rows)
+    buy_cost, sell_proceeds = _lifetime_cash_flows(rows)
+
+    # ticker_diagnosis needs (shares, cost_total) tuples, and can only price
+    # cur_ret/avg_cost for a ticker with a known cost -- a canonical holding
+    # with none (declared shares, no avg_cost) is excluded here exactly as
+    # dim_size/current_book_projection already exclude such a ticker from
+    # cost-based diagnosis elsewhere, never fabricated.
+    held_tuples = {t: (h["shares"], h["cost_total"]) for t, h in canonical_held.items()
+                  if h.get("cost_total") is not None}
+    floor = trade_recap.RESIDUAL_POS_TH
+    held_dx = {t: v for t, v in held_tuples.items() if (weights.get(t) or 0.0) >= floor}
+    # top_n: this is a lookup, not a card with a real-estate budget, so ask
+    # for every candidate ticker_diagnosis could possibly emit rather than
+    # its card-tuned default of 7 -- truncating here would silently drop a
+    # real holding from the answer to "what do I currently hold".
+    tdiag_by_ticker = {
+        row["ticker"]: row
+        for row in trade_recap.ticker_diagnosis(
+            rts, adds_class, held_dx, last_px or {},
+            max_pos_override=max_pos_override,
+            top_n=len(held_tuples) + len(rts) + 1,
+            sizing_weights=weights)
+    }
+
+    def _impact(ticker, shares):
+        price = (last_px or {}).get(ticker)
+        if price is None:
+            return None
+        return shares * price + sell_proceeds.get(ticker, 0.0) - buy_cost.get(ticker, 0.0)
+
+    def _row(ticker, holding, diag):
+        shares = holding["shares"]
+        price = (last_px or {}).get(ticker)
+        return {
+            "ticker": ticker,
+            "shares": shares,
+            "avg_cost": holding.get("avg_cost"),
+            "cost_total": holding.get("cost_total"),
+            "value": (shares * price) if price is not None else None,
+            "weight": weights.get(ticker),
+            "impact": _impact(ticker, shares),
+            "tags": diag["tags"] if diag else [],
+        }
+
+    diagnosed, residual = [], []
+    for ticker, holding in canonical_held.items():
+        row = _row(ticker, holding, tdiag_by_ticker.get(ticker))
+        if (weights.get(ticker) or 0.0) >= floor:
+            diagnosed.append(row)
+        else:
+            residual.append({k: row[k] for k in ("ticker", "shares", "avg_cost", "cost_total", "value", "weight")})
+
+    if mixed_currency:
+        diagnosed.sort(key=lambda row: row["weight"] or 0, reverse=True)
+    else:
+        diagnosed.sort(key=lambda row: abs(row["impact"]) if row["impact"] is not None else -1,
+                       reverse=True)
+    residual.sort(key=lambda row: row["weight"] or 0, reverse=True)
+    return diagnosed, residual
+
+
+def cmd_positions(args):
+    """Read-only current-book outlet (#561): "what do I currently hold,"
+    asked away from any review, `consider` premise, or `refresh` snapshot.
+
+    Sources the book from ``<root>/ledger.jsonl`` alone -- no CSV, no
+    premise, no supplied holdings view. Shares, average cost, cost total,
+    and weight come from ``portfolio_basis.query_current_book`` /
+    ``sizing_projection`` -- the exact canonical reader ``consider``'s
+    ledger route already calls, never a second one (owner ruling
+    2026-07-30; see ``_positions_diagnosis`` for the reproduced divergence
+    that settled it). ``_rows_from_ledger`` -- the tested-but-until-now-
+    production-unused reconstruction ``tests/test_consider.py`` already
+    proves agrees with ``ledger.derive_holdings`` for the common case --
+    still supplies the round trips and add-pattern history the diagnosis
+    tags need, which the canonical reader does not compute at all.
+
+    Genuinely read-only: unlike every mutating command in this file, this
+    creates no session, appends no row to any ``*.jsonl`` the coach root
+    tracks, and asks no question. The only disk activity is the same-day
+    market-data acquisition cache every price-resolving route already
+    shares (``coach.py``'s registered ``cache`` entry) -- resolving current
+    prices is what this command does, the same as ``consider`` with no
+    ``--prices``.
+
+    Cash, and the disclosure set a stale price / an unreliable cash balance
+    / a partial book name, are deliberately not computed here: they stay on
+    Rule 1's existing freeform-answer disclosure boundary rather than a
+    second computation this entry restates (`references/freeform-answers.md`).
+    ``price_snapshot`` below carries just enough (``as_of`` and each
+    ticker's own observed date) for the agent to judge staleness itself,
+    the same raw material every other freeform answer already has.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    if args.driver_map:
+        trade_recap.load_driver_map(os.path.abspath(os.path.expanduser(args.driver_map)))
+    if args.instrument_map:
+        instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
+
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    try:
+        events, skipped_lines = ledger.load_ledger(ledger_path)
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
+    if not events:
+        raise ReviewError(
+            f"no recorded book in {ledger_path}; run `prepare` or `refresh` first "
+            "before asking for current positions")
+    rows = _rows_from_ledger(events)
+    if not rows:
+        raise ReviewError("the ledger carries no usable trade or snapshot position; nothing to report")
+
+    feed = None
+    if args.prices:
+        try:
+            feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
+        except price_feed.PriceFeedError as exc:
+            raise ReviewError(f"price feed rejected: {exc}") from exc
+    else:
+        # Same live-resolution lane `consider` uses with no `--prices` (#605
+        # section E): one resolved bundle, reused through the identical
+        # supplied-price path rather than a second one.
+        feed, _bundle = _resolve_consider_prices(args, root)
+
+    last_px, supplied_splits = None, None
+    if feed is not None:
+        last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
+        supplied_splits = price_feed.splits_map(feed) or None
+
+    splits = _effective_splits(root, supplied_splits)
+    try:
+        trade_recap.adjust_for_splits(rows, splits)
+    except split_policy.SplitDataError as exc:
+        raise ReviewError(f"split data rejected: {exc}") from exc
+
+    valuation_manifest = None
+    if last_px:
+        valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
+    # The identical canonical-book call `_consider_rows`'s ledger route
+    # makes: one reader, so `positions` and `consider` cannot describe two
+    # different current books for the same root at the same instant.
+    basis = portfolio_basis.query_current_book(
+        events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+        reference_as_of=dt.date.today().isoformat(), splits=splits)
+    if basis is None:
+        raise ReviewError(
+            f"no trustworthy canonical current book in {ledger_path}; the ledger "
+            "may be unreadable or its integrity checks failed")
+    canonical_held = basis.current_book["holdings"]
+    projection = portfolio_basis.sizing_projection(basis)
+    weights = {}
+    if projection is not None:
+        weights = {ticker: entry["weight"] for ticker, entry in projection.to_dict()["values"].items()
+                  if entry["applicable"]}
+
+    max_pos_override = _position_cap_override(root)
+    diagnosed, residual = _positions_diagnosis(
+        rows, canonical_held, weights, last_px, max_pos_override)
+    mixed_currency = len({h.get("currency", "USD") for h in canonical_held.values()}) > 1
+
+    price_snapshot = None
+    if feed is not None:
+        price_snapshot = {
+            "as_of": feed["as_of"],
+            "observed": {ticker: row.get("observed_date")
+                        for ticker, row in sorted(feed["prices"].items())},
+        }
+    unpriced = sorted(row["ticker"] for row in (diagnosed + residual)
+                      if row["value"] is None)
+
+    _emit({
+        "status": "ok",
+        "root": root,
+        "basis": "priced" if last_px else "cost",
+        "mixed_currency": mixed_currency,
+        "n_holdings": len(diagnosed) + len(residual),
+        "positions": diagnosed,
+        "residual_positions": residual,
+        "unpriced": unpriced,
+        "price_snapshot": price_snapshot,
+    })
+
+
 def cmd_refresh(args):
     """Update the recorded book from a newer holdings view (#485 Slice C).
 
@@ -6775,6 +7069,21 @@ def build_parser():
                               "(schemas/book-refresh.schema.json). Omit for the "
                               "read-only difference and its pending confirmations.")
     refresh.set_defaults(func=cmd_refresh)
+    positions = sub.add_parser(
+        "positions",
+        help="read-only per-position diagnosis of the recorded current book; no "
+             "premise, no session, no durable write (#561)")
+    positions.add_argument("--root")
+    positions.add_argument("--prices",
+                           help="agent-supplied price envelope (references/price-feed.md); "
+                                "omit to resolve current prices live, as consider does")
+    positions.add_argument("--driver-map")
+    positions.add_argument("--instrument-map")
+    # No CSV route: unlike consider, this command always reads the recorded
+    # book from <root>/ledger.jsonl. `paths` still needs to exist and be
+    # falsy so the consider-price-resolution helpers this reuses take their
+    # ledger branch rather than raising on a missing attribute.
+    positions.set_defaults(func=cmd_positions, paths=None)
     resolve_md = sub.add_parser(
         "resolve-market-data",
         help="resolve current market facts into a price-feed envelope for inspection "
