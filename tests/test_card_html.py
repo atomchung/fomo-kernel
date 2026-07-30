@@ -110,7 +110,7 @@ def _drive(language):
 
         answers.write_text(json.dumps(v2._answers(plan, commitment="candidate_0"),
                                       ensure_ascii=False), encoding="utf-8")
-        final = v2._run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = v2._run_finalize("--root", root, "--session-id", plan["session_id"],
                         "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -251,7 +251,7 @@ def test_cli_private_markdown_is_the_committed_canonical_card():
                            ensure_ascii=False), encoding="utf-8")
         narrative.write_text(json.dumps(v2._narrative("zh-TW"), ensure_ascii=False),
                              encoding="utf-8")
-        finalized = v2._run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = v2._run_finalize("--root", root, "--session-id", plan["session_id"],
                             "--answers", answers, "--narrative", narrative)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         path = pathlib.Path(json.loads(finalized.stdout)["path"])

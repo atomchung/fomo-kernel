@@ -407,15 +407,21 @@ def _seed_second_review(source, locale, root, env, work):
     narrative_file = work / f"{source.stem}-{locale}.week1.narrative.json"
     answers_file.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
     narrative_file.write_text(json.dumps(narrative_for(plan), ensure_ascii=False), encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, "engine/review.py", "finalize",
-         "--session-id", plan["session_id"],
-         "--answers", str(answers_file), "--narrative", str(narrative_file)],
-        cwd=SKILL_DIR, capture_output=True, text=True,
-        env={**env, "TRADE_COACH_HOME": str(root)})
-    if proc.returncode != 0:
-        tail = proc.stderr.strip().splitlines()[-1:] or [""]
-        return None, None, f"finalize week 1: rc={proc.returncode} {tail[0]}"
+    # #628: the sweep walks the product's own lifecycle, so it renders the card
+    # through `preview` before committing it, exactly as an agent must.
+    def _week1(command):
+        return subprocess.run(
+            [sys.executable, "engine/review.py", command,
+             "--session-id", plan["session_id"],
+             "--answers", str(answers_file), "--narrative", str(narrative_file)],
+            cwd=SKILL_DIR, capture_output=True, text=True,
+            env={**env, "TRADE_COACH_HOME": str(root)})
+
+    for command in ("preview", "finalize"):
+        proc = _week1(command)
+        if proc.returncode != 0:
+            tail = proc.stderr.strip().splitlines()[-1:] or [""]
+            return None, None, f"{command} week 1: rc={proc.returncode} {tail[0]}"
     plan2, error = _prepare(source.relative_to(SKILL_DIR), locale, root, env)
     if error:
         return None, None, f"prepare week 2: {error}"

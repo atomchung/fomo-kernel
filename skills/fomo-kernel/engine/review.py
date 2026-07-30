@@ -3592,6 +3592,10 @@ def _pending_for_agent(bundle):
     # The resolved presentation is the runtime handoff. The authored candidate
     # remains private canonical state and would only duplicate that copy here.
     projection.pop("question_surfaces", None)
+    # #628's receipt is the same kind of private state, and a raw digest answers
+    # no question the agent can act on: the recovery it would hint at is stated
+    # by finalize's own refusal, at the moment it applies.
+    projection.pop("preview_receipt", None)
     return projection
 
 
@@ -4733,6 +4737,81 @@ def _load_interaction(args, pending):
     return answers, narrative
 
 
+# ── the preview precondition (#628) ────────────────────────────────────────────
+# `preview` renders the card the user is shown; `finalize` commits it. Nothing
+# mechanically linked the two, so an agent could go from answers straight to
+# finalize and the user would receive a committed card — carrying a standing
+# rule — that they never saw. #357 recorded five recurrences of an agent
+# skipping an instructed step in this exact lifecycle, so the guarantee is not
+# left to instructions.
+PREVIEW_RECEIPT_ARTIFACT = "preview-receipt"
+
+
+def _preview_receipt_key(plan, answers, narrative,
+                         question_surfaces=None, question_presentations=None):
+    """The identity a preview receipt is keyed on: every input to the card the
+    user was shown, with the one field the lifecycle deliberately defers.
+
+    `commitment` is excluded, and that is a contract statement rather than a
+    convenience. The documented order (`AGENTS.md` step 6) is: show the card,
+    *then* ask the user to choose a candidate rule, supply a custom one, or
+    skip, *then* write that choice to `answers.commitment` and finalize. The
+    choice is made after the card was shown, so requiring it to have been in
+    the previewed answers would make the contract's own sequence unsatisfiable.
+
+    Verified rather than assumed, because the obvious reading of `_draft_bundle`
+    is wrong: `require_commitment=False` does null `bundle["commitment"]`, but
+    `card_renderer` also reads `answers.commitment.choice` directly, so a
+    previewed `skip` really does render a different card from a previewed
+    nothing. What the exclusion means is therefore narrow and exact — a user who
+    saw the card and then chose a rule, or chose to skip, is the flow this
+    contract describes, and only that one field may move between the two calls.
+
+    Everything else is in the key, so a preview that ran against different
+    answers, a different narrative, a re-prepared plan, or different frozen
+    question surfaces does not certify what is being committed.
+    """
+    subject = {
+        "plan": plan,
+        "answers": {key: value for key, value in (answers or {}).items()
+                    if key != "commitment"},
+        "narrative": narrative,
+        "question_surfaces": question_surfaces,
+        "question_presentations": question_presentations,
+    }
+    return hashlib.sha256(session.canonical(subject).encode("utf-8")).hexdigest()
+
+
+def _require_preview(pending, plan, answers, narrative):
+    """Refuse to commit artifacts this session's `preview` never rendered.
+
+    Recoverable by construction: the pending session is untouched and the fix
+    is one local, side-effect-free command. `AGENTS.md` is explicit that an
+    existing canonical session is not data loss, so the message says so rather
+    than reading like a session that has to be rebuilt.
+    """
+    recorded = (pending.get("preview_receipt") or {}).get("key")
+    expected = _preview_receipt_key(plan, answers, narrative,
+                                    pending.get("question_surfaces"),
+                                    pending.get("question_presentations"))
+    if recorded == expected:
+        return
+    session_id = plan.get("session_id")
+    fix = (f"Run `review.py preview --session-id {session_id} "
+           "--answers <answers.json> --narrative <narrative.json>`, show the user the "
+           "review card it renders, then finalize. Nothing was lost: this session is "
+           "still pending and its answers are unchanged.")
+    if recorded is None:
+        raise ReviewError(
+            "finalize refuses: this session has no preview receipt, so the review card "
+            f"has not been rendered for the user yet. {fix}")
+    raise ReviewError(
+        "finalize refuses: this session's preview rendered a different card than the one "
+        "being committed — the answers, narrative, review plan, or frozen question "
+        "surfaces changed since it ran, so the user has not seen what would be "
+        f"committed. {fix}")
+
+
 CAPTURE_INFERENCE_FIELDS = ("source_type", "source_name", "source_confidence",
                            "emotion", "emotion_inferred", "confidence", "confidence_inferred")
 
@@ -4875,7 +4954,14 @@ def cmd_preview(args):
     paths = session.save_pending(root, args.session_id, answers=answers, narrative=narrative,
                                  **{"card-private-preview": private_md,
                                     "card-public-preview": public_md,
-                                    "card-private-preview.html": private_html})
+                                    "card-private-preview.html": private_html,
+                                    # #628: the receipt finalize requires. Written
+                                    # only here, only after the card really rendered.
+                                    PREVIEW_RECEIPT_ARTIFACT: {
+                                        "key": _preview_receipt_key(
+                                            plan, answers, narrative,
+                                            pending.get("question_surfaces"),
+                                            pending.get("question_presentations"))}})
     _emit({"status": "previewed", "session_id": args.session_id,
            "private_card": private_md, "public_card": public_md,
            "private_card_html_path": paths.get("card-private-preview.html"),
@@ -4889,7 +4975,8 @@ def cmd_finalize(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     with session.finalize_transaction(root, args.session_id) as transaction:
         committed_path = session.session_dir(root, args.session_id)
-        if os.path.isdir(committed_path):
+        already_committed = os.path.isdir(committed_path)
+        if already_committed:
             existing = session.load_committed(root, args.session_id)
             plan = existing.get("review_plan")
             pending = {"answers": existing.get("answers"), "narrative": existing.get("narrative"),
@@ -4904,6 +4991,15 @@ def cmd_finalize(args):
             question_surfaces=pending.get("question_surfaces"),
             question_presentations=pending.get("question_presentations"),
         )
+        # #628: a precondition on *committing*, deliberately after the draft
+        # above. finalize stays the complete independent validator the issue
+        # measured — invalid answers still get their own unprompted rejection
+        # here, not a preview complaint — and this only stops the commit.
+        # An already-committed session is exempt because it has no pending
+        # directory left to hold a receipt: it passed this gate on the way in,
+        # and a documented-safe finalize retry must not become data loss.
+        if not already_committed:
+            _require_preview(pending, plan, answers, narrative)
         private_md = card_renderer.render_private(bundle)
         public_md = card_renderer.render_public(bundle)
         private_html = card_renderer.render_html(bundle)

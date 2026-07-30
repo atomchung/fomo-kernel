@@ -112,6 +112,30 @@ def _run(*args, env=None):
                           capture_output=True, text=True, timeout=60, env=env)
 
 
+def _run_finalize(*args, env=None):
+    """Drive the two-step commit the product actually requires (#628).
+
+    `finalize` refuses to commit artifacts this session's own `preview` never
+    rendered, so every finalize in this suite runs that preview first, against
+    the same answers and narrative it is about to commit. This is the real
+    lifecycle rather than a way around the gate: `preview` takes the identical
+    flags, and the `commitment` these answers may already carry is the one
+    field the receipt key ignores — which is why one answers file serves both
+    calls, exactly as `SKILL.md`'s lifecycle describes.
+
+    The preview's own result is deliberately not asserted, for two reasons that
+    both matter. Several tests here drive `finalize` with artifacts it must
+    reject on its own, and *that rejection is the assertion* — a preview
+    failing for the same reason must not replace it with a complaint about the
+    preview, and `finalize` still performs its complete independent validation
+    either way. Second, an idempotent finalize retry runs after the pending
+    directory is gone, so its preview cannot succeed and does not need to: the
+    already-committed session skips the gate by design.
+    """
+    _run("preview", *args, env=env)
+    return _run("finalize", *args, env=env)
+
+
 def _pending_plan(root, stdout):
     """Read the full persisted plan from the pending bundle on disk.
 
@@ -694,7 +718,7 @@ def test_a_view_covering_part_of_an_account_records_the_book_like_any_other():
         narrative = pathlib.Path(tmp) / "narrative-incomplete.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -737,8 +761,8 @@ def test_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
         opening_narrative.write_text(
             json.dumps(_snapshot_narrative(opening), ensure_ascii=False), encoding="utf-8"
         )
-        committed = _run(
-            "finalize", "--root", root, "--session-id", opening["session_id"],
+        committed = _run_finalize(
+            "--root", root, "--session-id", opening["session_id"],
             "--answers", opening_answers, "--narrative", opening_narrative,
         )
         assert committed.returncode == 0, committed.stdout + committed.stderr
@@ -810,8 +834,8 @@ def test_snapshot_thesis_relinks_to_earlier_visible_cycle_and_persists():
         narrative_path = pathlib.Path(tmp) / "later-narrative.json"
         answers_path.write_text(json.dumps(later_answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        finalized = _run(
-            "finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize(
+            "--root", root, "--session-id", plan["session_id"],
             "--answers", answers_path, "--narrative", narrative_path,
         )
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
@@ -999,7 +1023,7 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
             assert secret not in public, secret
         assert not (root / "ledger.jsonl").exists(), "preview cannot project accounting facts"
 
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -1010,7 +1034,7 @@ def test_snapshot_preview_finalize_and_repair_keep_one_private_anchor():
         assert [row["type"] for row in rows] == ["snapshot"]
         assert rows[0]["snapshot_id"].startswith("snapshot-")
 
-        repeated = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        repeated = _run_finalize("--root", root, "--session-id", plan["session_id"],
                         "--answers", answers, "--narrative", narrative)
         assert repeated.returncode == 0, repeated.stdout + repeated.stderr
         rows2 = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()]
@@ -1051,7 +1075,7 @@ def _finalize_snapshot_session(tmp, root, plan, tag):
     narrative = pathlib.Path(tmp) / f"narrative-{tag}.json"
     answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
     narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers, "--narrative", narrative)
 
 
@@ -1455,7 +1479,7 @@ def test_snapshot_then_transactions_unlock_history_without_rewriting_anchor():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         anchor_before = [json.loads(line) for line in (root / "ledger.jsonl").read_text().splitlines()][0]
@@ -1564,7 +1588,7 @@ def test_snapshot_full_history_keeps_stable_thesis_and_current_surfaces():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         initial = json.loads((root / "sessions" / plan["session_id"] / "bundle.json").read_text())
@@ -1684,7 +1708,7 @@ def test_snapshot_full_exit_and_reopen_requires_a_new_thesis_cycle():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
         narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
 
@@ -1846,7 +1870,7 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         result = json.loads(final.stdout)
         private = pathlib.Path(result["private_card"]).read_text(encoding="utf-8")
@@ -2805,6 +2829,13 @@ def test_concurrent_identical_finalize_cli_is_controlled_and_projects_once():
         )
         narrative_path.write_text(
             json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
+        # #628: both racing processes finalize the same pending session, so the
+        # preview receipt has to exist before either starts. It is written once
+        # here rather than through `_run_finalize` because what this test races
+        # is two *finalize* processes, not two lifecycles.
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers_path, "--narrative", narrative_path)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
 
         # The wrapper still executes review.py's full parser/command path in a
         # separate OS process.  One process pauses after observing pending/ but
@@ -3132,7 +3163,7 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
 
         answers_path.write_text(json.dumps(_answers(plan, commitment="candidate_0"), ensure_ascii=False),
                                 encoding="utf-8")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         result = json.loads(finalized.stdout)
         assert finalized.returncode == 0 and result["status"] == "committed" and not result["projection_error"]
@@ -3167,13 +3198,13 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
         assert rule_rows and rule_rows[0]["text"] == candidate["rule"]
         assert all("grounding" not in row and "PLTR" not in row["text"] for row in rule_rows), \
             "rules.jsonl must keep the canonical rule text free of period tickers"
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] == "no-op"
         conflicting = _answers(plan, commitment="candidate_0")
         conflicting["observations"].append("different retry payload")
         answers_path.write_text(json.dumps(conflicting, ensure_ascii=False), encoding="utf-8")
-        rejected = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        rejected = _run_finalize("--root", root, "--session-id", plan["session_id"],
                         "--answers", answers_path, "--narrative", narrative_path)
         rejected_payload = json.loads(rejected.stdout)
         assert rejected.returncode == 2 and rejected_payload["status"] == "error"
@@ -3218,7 +3249,7 @@ def test_public_card_never_reuses_user_authored_rule_text():
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -3255,7 +3286,7 @@ def test_user_may_commit_to_a_neutral_observable_outside_the_diagnostic_dimensio
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert final.returncode == 0, \
             "a commitment on a neutral observable must finalize, not fail closed:\n" + final.stdout + final.stderr
@@ -3286,7 +3317,7 @@ def _finalize_with(tmp, root, commitment, language="en"):
     narrative_path = pathlib.Path(tmp) / "narrative.json"
     answers_path.write_text(json.dumps(answers), encoding="utf-8")
     narrative_path.write_text(json.dumps(_narrative(language)), encoding="utf-8")
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
 
@@ -3392,21 +3423,21 @@ def test_a_repeated_finalize_appends_one_condition_row_and_a_changed_one_fails_c
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
-        args = ("finalize", "--root", root, "--session-id", plan["session_id"],
+        args = ("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
         def rows():
             text = (root / "conditions.jsonl").read_text(encoding="utf-8")
             return [json.loads(line) for line in text.splitlines() if line.strip()]
 
-        assert _run(*args).returncode == 0
+        assert _run_finalize(*args).returncode == 0
         assert len(rows()) == 1
-        _run(*args)                                   # documented-safe retry
+        _run_finalize(*args)                          # documented-safe retry
         assert len(rows()) == 1, "an identical retry must not append a second row"
 
         answers["commitment"]["condition"] = dict(_CONDITION, criterion="sell if margin drops")
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
-        changed = _run(*args)
+        changed = _run_finalize(*args)
         assert changed.returncode != 0, "a different condition under a committed session id " \
                                         "must fail closed, not overwrite the record"
         assert len(rows()) == 1 and rows()[0]["criterion"] == _CONDITION["criterion"]
@@ -3502,7 +3533,7 @@ def _prepare_with_checks(tmp, root, checks, language="en"):
 def _finalize_plan(tmp, root, plan, answers, language="en"):
     answers_path = _write_json(tmp, "answers.json", answers)
     narrative_path = _write_json(tmp, "narrative.json", _narrative(language))
-    return _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    return _run_finalize("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
 
 
@@ -3637,16 +3668,16 @@ def test_a_repeated_finalize_appends_one_check_row_and_a_changed_one_fails_close
             {"slot_id": "slot-seed-0", "check": {"lookup_status": "ok", "observation": dict(_OBS)}}]
         answers_path = _write_json(tmp, "answers.json", answers)
         narrative_path = _write_json(tmp, "narrative.json", _narrative("en"))
-        args = ("finalize", "--root", root, "--session-id", plan["session_id"],
+        args = ("--root", root, "--session-id", plan["session_id"],
                 "--answers", answers_path, "--narrative", narrative_path)
-        assert _run(*args).returncode == 0
+        assert _run_finalize(*args).returncode == 0
         assert len(_check_rows(root)) == 1
-        _run(*args)
+        _run_finalize(*args)
         assert len(_check_rows(root)) == 1, "an identical retry must not append a second reading"
 
         answers["condition_checks"][0]["check"]["observation"]["value"] = 12.0
         _write_json(tmp, "answers.json", answers)
-        changed = _run(*args)
+        changed = _run_finalize(*args)
         assert changed.returncode != 0, \
             "a different reading under a committed session id must fail closed"
         rows = _check_rows(root)
@@ -4781,7 +4812,7 @@ def _relink_scenario(tmp, root):
     answers = _write_json(tmp, "relink-open-answers.json",
                           _snapshot_answers(opening, commitment="skip"))
     narrative = _write_json(tmp, "relink-open-narrative.json", _snapshot_narrative(opening))
-    done = _run("finalize", "--root", root, "--session-id", opening["session_id"],
+    done = _run_finalize("--root", root, "--session-id", opening["session_id"],
                 "--answers", answers, "--narrative", narrative)
     assert done.returncode == 0, done.stdout + done.stderr
     prior = json.loads((root / "sessions" / opening["session_id"] / "bundle.json")
@@ -5321,7 +5352,7 @@ def test_a_mute_survives_the_documented_projection_repair():
         narrative_path = pathlib.Path(tmp) / "narrative.json"
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        assert _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        assert _run_finalize("--root", root, "--session-id", plan["session_id"],
                     "--answers", answers_path, "--narrative", narrative_path).returncode == 0
         committed = [json.loads(line) for line
                      in (root / "rules.jsonl").read_text(encoding="utf-8").splitlines() if line]
@@ -5704,7 +5735,7 @@ def test_recent_exit_capture_is_ranked_bounded_canonical_and_private_only():
         for private_fragment in ("BIG", "Risk limit", "2026-08-01"):
             assert private_fragment not in preview_payload["public_card"]
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         result = json.loads(finalized.stdout)
         assert finalized.returncode == 0 and not result["projection_error"], finalized.stdout + finalized.stderr
@@ -6100,7 +6131,7 @@ def test_add_decision_cursor_is_per_cycle_and_reopens_only_for_a_new_add():
         narrative = pathlib.Path(tmp) / "cursor-narrative.json"
         answers.write_text(json.dumps(_answers(first_plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative()), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", first_plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", first_plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         assert final.returncode == 0, final.stdout + final.stderr
         bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json").read_text())
@@ -6214,7 +6245,7 @@ def test_english_is_same_contract_with_localized_questions_and_card():
         narrative = pathlib.Path(tmp) / "narrative.json"
         answers.write_text(json.dumps(_answers(plan, commitment="candidate_0")), encoding="utf-8")
         narrative.write_text(json.dumps(_narrative("en")), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers, "--narrative", narrative)
         result = json.loads(final.stdout)
         assert final.returncode == 0
@@ -7048,7 +7079,7 @@ def test_headline_motive_choice_changes_private_card_and_persists_canonically():
         assert "動機記為：" not in json.loads(skipped.stdout)["private_card"], \
             "skip must not fabricate a motive classification"
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", deliberate_a, "--narrative", narrative)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         session_dir = pathlib.Path(json.loads(finalized.stdout)["path"])
@@ -7062,7 +7093,7 @@ def test_headline_motive_choice_changes_private_card_and_persists_canonically():
         assert event["context"]["headline_dimension"]["id"] == "加碼攤平"
         assert event["event_id"].startswith("headline-motive-")
 
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", deliberate_a, "--narrative", narrative)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7093,13 +7124,13 @@ def test_headline_motive_skip_keeps_bundle_key_absent_for_replay_compat():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
         plan = _prepare_headline_motive(tmp, root, "skipcompat")
         skipped_a, narrative = _write_headline_interaction(tmp, plan, "skip", "skipcompat")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", skipped_a, "--narrative", narrative)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
         before_retry = bundle_path.read_text(encoding="utf-8")
         assert "headline_motive_events" not in json.loads(before_retry)
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", skipped_a, "--narrative", narrative)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7219,7 +7250,7 @@ def test_exit_consistency_question_is_answerable_and_persists_canonically():
         for secret in ("exit_consistency", "賣完還漲", "TSLA 3/4"):
             assert secret not in payload["public_card"], "private motive facts never go public"
 
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
@@ -7251,13 +7282,13 @@ def test_exit_consistency_skip_keeps_bundle_key_absent_for_replay_compat():
         answers_path.write_text(json.dumps(_exit_consistency_answers(plan, "skip"),
                                            ensure_ascii=False), encoding="utf-8")
         narrative_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        finalized = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        finalized = _run_finalize("--root", root, "--session-id", plan["session_id"],
                          "--answers", answers_path, "--narrative", narrative_path)
         assert finalized.returncode == 0, finalized.stdout + finalized.stderr
         bundle_path = pathlib.Path(json.loads(finalized.stdout)["path"]) / "bundle.json"
         before_retry = bundle_path.read_text(encoding="utf-8")
         assert "exit_consistency_events" not in json.loads(before_retry)
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", answers_path, "--narrative", narrative_path)
         assert retry.returncode == 0, retry.stdout + retry.stderr
         assert json.loads(retry.stdout)["status"] == "no-op"
@@ -7323,7 +7354,7 @@ def _finalize(tmp, root, plan, answers, tag):
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
     n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
     n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-    run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+    run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                "--answers", a_path, "--narrative", n_path)
     assert run.returncode == 0, run.stdout + run.stderr
     return json.loads(run.stdout)
@@ -7612,7 +7643,7 @@ def test_same_week_conflicting_mark_fails_closed_but_commit_survives():
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path = pathlib.Path(tmp) / "narrative_conflict.json"
         n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan2["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         assert run.returncode == 0, run.stdout + run.stderr
         payload = json.loads(run.stdout)
@@ -7672,7 +7703,7 @@ def _run_real_review(tmp, root, csv_path, env, tag):
         narrative["honesty"] = honesty
     n_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
     n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
-    final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                  "--answers", a_path, "--narrative", n_path, env=env)
     assert final.returncode == 0, final.stdout + final.stderr
     return plan["engine_state"], json.loads(final.stdout)
@@ -7771,7 +7802,7 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path = pathlib.Path(tmp) / "narrative_vocab.json"
         n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "invalid emotion" in payload["error"]
@@ -7779,7 +7810,7 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
 
         answers["thesis_updates"] = [_base_thesis_update({"horizon": "季"})]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+        run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "invalid horizon" in payload["error"]
@@ -7880,7 +7911,7 @@ def test_thesis_update_delta_fills_skeleton_and_rejects_ticker_mismatch():
         def reject(update, needle):
             answers["thesis_updates"] = [update]
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-            run = _run("finalize", "--session-id", plan["session_id"], "--root", root,
+            run = _run_finalize("--session-id", plan["session_id"], "--root", root,
                        "--answers", a_path, "--narrative", n_path)
             payload = json.loads(run.stdout)
             assert payload["status"] == "error" and needle in payload["error"], payload
@@ -7937,14 +7968,14 @@ def test_snapshot_delta_inherits_candidate_provenance_and_stays_locked():
         answers["thesis_updates"] = [dict(deltas[0], maturity="testable")] + \
             [dict(row) for row in deltas[1:]]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                    "--answers", a_path, "--narrative", n_path)
         payload = json.loads(run.stdout)
         assert payload["status"] == "error" and "must remain inferred" in payload["error"]
 
         answers["thesis_updates"] = [dict(row) for row in deltas]
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-        run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                    "--answers", a_path, "--narrative", n_path)
         assert run.returncode == 0, run.stdout + run.stderr
         bundle = json.loads((root / "sessions" / plan["session_id"] / "bundle.json")
@@ -8323,8 +8354,14 @@ def test_capture_serializes_with_finalize_on_the_shared_projection_lock():
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
             n_path = pathlib.Path(tmp) / "narrative_caplockw3.json"
             n_path.write_text(json.dumps(_narrative(), ensure_ascii=False), encoding="utf-8")
-            review_engine.cmd_finalize(_Args(session_id=plan3["session_id"], root=root,
-                                             answers=str(a_path), narrative=str(n_path)))
+            cli = _Args(session_id=plan3["session_id"], root=root,
+                        answers=str(a_path), narrative=str(n_path))
+            # #628: in-process for the same reason the rest of this test is —
+            # a subprocess would not see the monkeypatch. `preview` renders and
+            # saves the pending bundle; it touches no projection writer, so it
+            # cannot interfere with the lock this test is about.
+            review_engine.cmd_preview(cli)
+            review_engine.cmd_finalize(cli)
 
         try:
             capture_future = pool.submit(_run_capture)
@@ -8368,7 +8405,7 @@ def test_thesis_update_rejects_forged_engine_owned_identity():
         def reject(update, needle):
             answers["thesis_updates"] = [update]
             a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-            run = _run("finalize", "--session-id", plan2["session_id"], "--root", root,
+            run = _run_finalize("--session-id", plan2["session_id"], "--root", root,
                        "--answers", a_path, "--narrative", n_path)
             payload = json.loads(run.stdout)
             assert payload["status"] == "error" and needle in payload["error"], payload
@@ -8473,7 +8510,7 @@ def _vs_finalize(root, plan, a_path, n_path, commitment="candidate_0"):
     answers = json.loads(a_path.read_text(encoding="utf-8"))
     answers["commitment"] = {"choice": commitment}
     a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
-    run = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+    run = _run_finalize("--root", root, "--session-id", plan["session_id"],
                "--answers", a_path, "--narrative", n_path)
     assert run.returncode == 0, run.stdout + run.stderr
     return json.loads(run.stdout)
@@ -8772,7 +8809,7 @@ def test_first_review_high_information_queue_is_bounded_and_durable():
         n_path = pathlib.Path(tmp) / "hi-narrative.json"
         a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
         n_path.write_text(json.dumps(_narrative("en"), ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", a_path, "--narrative", n_path)
         assert final.returncode == 0, final.stdout + final.stderr
         bundle = json.loads((pathlib.Path(json.loads(final.stdout)["path"]) / "bundle.json")
@@ -8875,7 +8912,7 @@ def test_initial_thesis_consumption_maturity_gate_and_idempotency():
                                   _thesis_update("BBB", maturity="inferred")]
         good_path = pathlib.Path(tmp) / "c-good.json"
         good_path.write_text(json.dumps(good, ensure_ascii=False), encoding="utf-8")
-        final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", good_path, "--narrative", n_path)
         assert final.returncode == 0, final.stdout + final.stderr
         result = json.loads(final.stdout)
@@ -8888,7 +8925,7 @@ def test_initial_thesis_consumption_maturity_gate_and_idempotency():
         assert {r["ticker"] for r in projected} == {"AAA", "BBB"}, "the classification projects to its own log"
 
         # Idempotent finalize retry writes nothing new.
-        retry = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"],
                      "--answers", good_path, "--narrative", n_path)
         assert retry.returncode == 0 and json.loads(retry.stdout)["status"] in ("committed", "no-op")
         again = [json.loads(line) for line in

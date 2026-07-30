@@ -70,6 +70,8 @@ Then read the shared rules:
 4. Show the complete card preview inline, then ask the user to choose a candidate rule, write their own, or skip. Generating an artifact is not showing it.
 5. `finalize` — validate the commitment, atomically commit the canonical bundle, rebuild projections.
 
+Step 3 is a precondition, not advice: `finalize` refuses to commit answers and a narrative this session's own `preview` never rendered, so a card the user never saw cannot become a standing rule. The commitment is the one field that may be added afterwards — that is what step 4 is for. If the refusal appears, rerun `preview` with the artifacts you are about to commit, show the card, and finalize; the pending session is untouched and nothing is lost.
+
 ```bash
 python3 engine/review.py preview \
   --session-id <ID> --answers /tmp/answers.json --narrative /tmp/narrative.json
