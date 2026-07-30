@@ -50,7 +50,7 @@ The premise is the trade. `--decision-context` is optionally the *reason* — wh
 
 Entirely optional. A plain `--premise` call is a complete use of `consider` and behaves exactly as it always has, down to the `evaluation_id` it returns.
 
-- `reason` and `why_now` are the user's exact words, quoted, not your summary of them and never translated. Send them together or not at all: telling new evidence apart from a price move is the question this envelope exists to make askable, and a reason with no why-now is the half that lets it pass unasked. If the user has not said why today, ask them — that question is the product working.
+- `reason` and `why_now` are the user's exact words, quoted, not your summary of them and never translated. Send them together or not at all: telling new evidence apart from a price move is the question this envelope exists to make askable, and a reason with no why-now is the half that lets it pass unasked. If the user has not said why today, ask them — that question is the product working. [market-lookup.md](market-lookup.md) allows one bounded event lookup first, so the question can name what actually happened today instead of being asked cold.
 - `evidence_refs` is what they pointed at: a filing, a release, a headline, a note of their own. Zero to five, and only what actually moved the decision. The engine does not fetch, date or believe any of them; this records what was cited.
 - Anything over a limit is refused with the limit named, never shortened. A truncated reason or a clipped evidence list reads back as something the user said, which they did not.
 
@@ -162,7 +162,7 @@ Under maintainer QA, delivery of these obligations is proven rather than assumed
 
 The engine states the consequence and the rule collisions; it never recommends. Build the case for and against directly from that output, and take no position on which side wins — that call belongs to the user.
 
-Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence.
+Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence. When and how to look something up at all — the standing position packet, the event-lookup triggers, the neutral query, the stop discipline — is [market-lookup.md](market-lookup.md)'s contract.
 
 Name what nobody checked, every time. `consider` measures weight, concentration, driver overlap, cash, and rule collisions — nothing else. Liquidity, valuation, tax consequences, and whether the position still fits this person are all real risks the engine does not measure. Silence about a risk it did not check reads as a clean bill of health it never gave. Record staleness (above) belongs on this list too whenever `stale_days` is more than trivial.
 
