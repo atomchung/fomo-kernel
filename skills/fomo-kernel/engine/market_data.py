@@ -570,7 +570,7 @@ def _field(data, name):
     return out
 
 
-def _from_yahoo(request, root=None, today=None, env=None):
+def _from_yahoo(request, *, root, today=None, env=None):
     """Resolve from Yahoo in one pass, or degrade with a stated reason.
 
     Order is load-bearing and inherited from #235: the cache is consulted only
@@ -703,7 +703,7 @@ def _fx_from_closes(pd, request, closes, gaps):
 
 # ─────────────────────────── cache and memo ───────────────────────────
 
-def _cache_load(request, root=None, today=None):
+def _cache_load(request, *, root, today=None):
     """The newest same-day entry that covers ``request``, or ``None``.
 
     Coverage, not equality: #605's §D exists so a same-day ``prepare`` bundle
@@ -721,7 +721,7 @@ def _cache_load(request, root=None, today=None):
     return None
 
 
-def _cache_store(bundle, root=None, today=None):
+def _cache_store(bundle, *, root, today=None):
     """Freeze one usable bundle for the rest of the day. Never raises."""
     return fetch_cache.store(CACHE_KIND, bundle.request, bundle.to_json(),
                              root=root, today=today)
@@ -735,13 +735,24 @@ def reset_memo():
 
 # ────────────────────────────── the entry ──────────────────────────────
 
-def resolve(request, *, feed=None, root=None, today=None, env=None, memo=True):
+def resolve(request, *, root, feed=None, today=None, env=None, memo=True):
     """Resolve one request into one bundle. The only supported entry point.
 
     Precedence is fixed: a supplied envelope answers for everything it declares
     and no Yahoo request is made at all, because the envelope exists for a host
     that cannot make one. Otherwise the in-process memo, then the same-day disk
     cache, then one provider pass.
+
+    ``root`` is required, and required *here* rather than defaulted deeper down.
+    The disk cache is state: its keys are the user's own tickers, `coach.py`
+    registers it so `data reset` can delete it, and an isolated run's cache
+    belongs to that run. When it defaulted to ``session.default_root()``, the one
+    call site that omitted it — ``trade_recap``, reached by ``prepare`` — wrote
+    the run's tickers into the account's real coach directory and could be
+    answered from a different root's closes, while its session state went where
+    it was told (#627). A caller that genuinely wants the account root names
+    ``session.default_root()``, so the choice appears at the call site instead of
+    being inherited by whoever forgets.
 
     Never raises on a provider problem — the bundle's ``gaps`` and ``coverage``
     carry it, and the caller's own established refusal decides whether the

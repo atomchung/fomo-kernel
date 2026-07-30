@@ -74,7 +74,12 @@ once and they hold for every run that follows in the same conversation.
    `grounding` was shown verbatim (or that none was expected) — see
    `rule_choice_presented` in
    [interaction-delivery.md](../skills/fomo-kernel/references/interaction-delivery.md)
-   (#293).
+   (#293). On a review route it also proves the cash anchor was settled by the
+   user rather than by the agent's discretion: `cash_anchor_checked` carries
+   `found_in_source` before the first surface, or `provided`/`declined` after
+   the card the question was asked at, and no outcome exists for "not asked"
+   (#357). When an anchor arrives mid-run, `add-cash` mints a new session id —
+   keep the original one for the whole trace.
 4. **Verdict and verification** — the session ended with an `owner_verdict`
    event and `tools/ux_receipt.py verify` passing. Human-graded runs use both
    `--require-owner-verdict` and `--require-timing-integrity`; only

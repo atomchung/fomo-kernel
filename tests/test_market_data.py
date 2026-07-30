@@ -1057,6 +1057,39 @@ def test_h_the_offline_posture_has_exactly_one_reader():
         "posture cannot be re-decided per route.")
 
 
+def test_i_the_resolver_never_picks_a_state_root_for_its_caller():
+    """#627: `root` is required, so no call site can inherit someone else's.
+
+    It used to default to `session.default_root()`. Two of the three call sites
+    passed a root; `trade_recap` — the one `prepare` reaches — did not, so an
+    isolated run put its session state under `--root` and its cache in the
+    account's real `~/.trade-coach`, writing that run's own tickers there and
+    letting one root be answered from another's closes.
+
+    The same shape as the posture above, one argument over: a rule that lives at
+    the call site is the one a new caller forgets. Whoever owns the root passes
+    it, and a caller that genuinely wants the account's root says so.
+
+    Asserted on the signature rather than by calling, because a resolve() that
+    reached the provider would be a network call inside a deterministic suite —
+    `tests/test_fetch_cache.py` owns the route-level half, where the file lands.
+    """
+    import inspect
+    parameters = inspect.signature(market_data.resolve).parameters
+    root = parameters.get("root")
+    assert root is not None, "resolve() lost its `root` parameter entirely"
+    assert root.kind is inspect.Parameter.KEYWORD_ONLY, (
+        f"`root` must stay keyword-only so it cannot be passed positionally by accident: {root}")
+    assert root.default is inspect.Parameter.empty, (
+        f"`root` acquired a default ({root.default!r}). A default here is inherited by whichever "
+        "call site forgets it, which is exactly how #627 shipped — the caller owns the root.")
+    for name in ("_from_yahoo", "_cache_load", "_cache_store"):
+        inner = inspect.signature(getattr(market_data, name)).parameters["root"]
+        assert inner.default is inspect.Parameter.empty, (
+            f"{name}() re-introduced a default root; the entry point's requirement is only as "
+            "strong as the internals it hands off to")
+
+
 # ─────────────────── the live shape witness (opt-in only) ───────────────────
 
 def test_network_response_shape_is_still_what_we_recorded():

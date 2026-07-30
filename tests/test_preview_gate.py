@@ -99,7 +99,13 @@ class Session:
 
     def __init__(self, tmp, *, test_drive=False):
         self.tmp = pathlib.Path(tmp)
-        args = ["prepare", MOCK, "--root", self.tmp / "coach-root", "--language", "en"]
+        # This suite runs offline, so no close is retrievable. #623 refuses a
+        # card that reports unretrievable prices when recovery was never
+        # attempted, which would block every preview here before this gate is
+        # ever reached. Declaring the dead end is the sanctioned clearance and
+        # keeps the subject of these tests the preview receipt, not the price.
+        args = ["prepare", MOCK, "--root", self.tmp / "coach-root", "--language", "en",
+                "--prices-unavailable", "offline test fixture: no provider is reachable"]
         if test_drive:
             args.append("--test-drive")
         prepared = _run(*args)

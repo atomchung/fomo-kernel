@@ -56,7 +56,26 @@ Symbols: write the complete yfinance symbol so the engine can price every positi
 
 Prices: the engine retrieves its own prices and no review requires the agent to supply them. When the host blocks that retrieval, `prepare` reports it in `review_plan.input.price_feed` and emits the machine-readable manifest of what is still unpriced. The agent may then look those closes up in a recognized market-data source and hand them back through `prepare --prices` using the envelope in [price-feed.md](price-feed.md) — declared facts only, never an invented, interpolated, or remembered price, and never a missing price read as a delisting or a zero return.
 
-Cash anchor: statements usually carry a cash balance row — read it instead of asking. Pass it to prepare as `--cash '{"currency":"USD","amount":8200,"as_of":"<date>"}'`, or a JSON list with one anchor per account for multi-currency accounts. Ask the user one short question only when no balance appears anywhere. Without an anchor the engine degrades gracefully (`cash.reliable=false`) and the card shows the holdings pillar plus an unlock invitation instead of account-level return — never guess a balance to force the unlock. On `first_review` and full-tier `weekly_review`, record which of the three happened (`cash_anchor_checked`, `references/ux-receipt.md`) before the first question or card; a light-tier week is never asked.
+Cash anchor: statements usually carry a cash balance row — read it instead of asking, and pass it to prepare as `--cash '{"currency":"USD","amount":8200,"as_of":"<date>"}'`, or a JSON list with one anchor per account for multi-currency accounts. Never guess a balance to force the unlock.
+
+When no balance appears anywhere, **the engine says so and the ask waits for the card.** `review_plan.input.cash_anchor` states the situation on every route:
+
+- `anchored` — nothing to do.
+- `absent` / `partial` — this review has no anchor, or only some currencies do. The entry names `unanchored_currencies` (ask about those, by name), `unlocks` (account-level return, annualized return, cash drag — the account pillar, and nothing else on the card), and `ask_after: "card_presented"`.
+- `not_applicable` with a `reason` — `light_tier` (a light week keeps its single-question promise and is never asked), `snapshot_envelope` (a declared snapshot states cash inline), `test_drive` (no accounting anchor is persisted). This is an explicit claim rather than a missing key, so "this route never asks" is something a reader can check.
+
+`ask_after` is the whole point, and it is the opposite of `input.price_feed.request` sitting beside it. A price gap is recovered *before* the user is shown anything, because every price-dependent number is degraded without it. A missing cash anchor degrades one pillar and leaves every other number identical, so asking first buys nothing and spends the user's attention before they have seen anything (#507 principle 1). Ask in the same message as the card, alongside the rule choice: state what answering unlocks and that skipping keeps the holdings-only view, so the ask is informed rather than blind.
+
+If they answer, recompute in place:
+
+```bash
+python3 engine/review.py add-cash --session-id <ID> \
+  --cash '{"currency":"USD","amount":8200,"as_of":"<date>"}'
+```
+
+This re-enters the same review with the anchor added and reuses that session's frozen prices; it refuses outright if anything but the anchor moved, because the user answered against the card those numbers rendered. Answers, narrative, and frozen question surfaces carry over untouched; the returned session id supersedes the one you passed, and `card_plan.required_honesty_keys` gains the account-basis key, which needs one more sentence in `narrative.honesty`. Rerun `preview` on the returned session and show the recomputed card. If they skip, the card keeps its holdings pillar and its unlock invitation exactly as before, and the review finishes normally — skipping is a real answer, not a failure.
+
+On `first_review` and full-tier `weekly_review`, record which of the three happened (`cash_anchor_checked`, `references/ux-receipt.md`): `found_in_source` before the first question or card, `provided` or `declined` after the card the question was attached to. There is no outcome meaning "the agent decided not to ask" — that is what made a run where the user never got the chance look identical to one where they declined (#357, fifth recurrence).
 
 One anchor is enough: the engine reconstructs the account's historical cash balance by rolling that single point backward through each trade's cash footprint, so the user never has to supply a day-by-day record. Two things follow from that, worth knowing because neither is visible in the data:
 
