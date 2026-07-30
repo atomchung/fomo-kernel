@@ -6118,62 +6118,128 @@ def cmd_consider(args):
            "evaluation": row, "challenge": challenge, "append": report})
 
 
-def _positions_diagnosis(rows, max_pos_override, last_px, fx):
+def _lifetime_cash_flows(rows):
+    """Every dollar a ticker's rows have ever put into or taken out of it,
+    in that ticker's own native currency. ``rows`` includes the synthesized
+    anchor row (`_anchor_position_row`), so a declared position's stated
+    cost counts as its lifetime buy cost exactly as a real purchase would --
+    the same convention `_anchor_position_row` already establishes.
+
+    Returns ``(buy_cost, sell_proceeds)``, each ``{ticker: dollars}``. This
+    is the half of a ticker's P&L that needs no lot-matching or
+    cost-averaging convention at all: paired with the ticker's *current*
+    value under whichever basis prices it, ``value + sell_proceeds -
+    buy_cost`` is the ticker's total economic result, and that identity
+    holds regardless of how "remaining cost" is computed, because it never
+    references a remaining-cost figure in the first place (see
+    ``_positions_diagnosis``).
+    """
+    buy_cost, sell_proceeds = {}, {}
+    for row in rows:
+        amount = row["qty"] * row["price"]
+        bucket = buy_cost if row["side"] == "buy" else sell_proceeds
+        bucket[row["ticker"]] = bucket.get(row["ticker"], 0.0) + amount
+    return buy_cost, sell_proceeds
+
+
+def _positions_diagnosis(rows, canonical_held, weights, last_px, max_pos_override):
     """The per-position diagnosis README's "What it looks like" demonstrates
     (#561), computed once here so ``cmd_positions`` stays a thin CLI facade.
 
-    Mirrors ``trade_recap.py``'s own review pipeline call order exactly
-    (``round_trips`` -> ``fifo_held`` -> ``classify_adds`` -> ``dim_size`` ->
-    ``ticker_diagnosis``) rather than reimplementing any part of it --
-    ``trade_recap.py:2447-2550`` runs the identical five calls on
-    CSV-sourced rows to build the same card section.
+    ``canonical_held`` (``{ticker: {shares, avg_cost, cost_total,
+    currency, ...}}``) and ``weights`` come from the caller, sourced from
+    ``portfolio_basis.query_current_book`` / ``sizing_projection`` -- the
+    exact canonical reader ``consider``'s ledger route already uses. This
+    function receives them and never derives its own; owner ruling
+    2026-07-30 on this PR overturned an earlier FIFO-reconstruction cut
+    after a reproduced divergence: the same multi-lot-partial-sell book
+    (buy, buy at a different price, partial sell) gave two different
+    weights for the same ticker at the same instant depending on which
+    entry point answered -- 28.6% from the FIFO route this function used to
+    read, 37.5% from `consider`'s canonical one, and weight is the number
+    this product's own rules are built on. `AGENTS.md` boundary 6 --
+    ledger-derived current holdings stay canonical -- settles which one
+    wins, and issue #456 already owns the general tension (a considered
+    trade reasons on a different basis than a review's own CSV/FIFO path);
+    this function no longer relitigates it, it picks the canonical side.
 
-    Deliberately *not* the canonical average-cost book
-    (``portfolio_basis.query_current_book``) that ``consider``'s ledger
-    route now uses: ``fifo_held``'s own note (#162) is that realized P&L is
-    FIFO-matched and the *remaining* cost must be on the same basis, because
-    ``ticker_diagnosis`` sums the two into one ``impact`` figure and mixing
-    a FIFO-realized amount with an average-cost remaining balance misstates
-    that sum whenever a ticker was built from more than one lot and then
-    partially sold -- the exact scenario ``rows_from_portfolio_basis`` was
-    written to get right for sizing, one layer up from what this function
-    computes. For a ticker with one continuous lot history the two bases
-    agree exactly (tests/test_consider.py's
-    ``test_ledger_reconstruction_matches_derive_holdings_for_the_same_events``);
-    they can differ on `shares`/`avg_cost` only in the rarer
-    multi-lot-partial-sell case, the same CSV-vs-ledger basis distinction
-    issue #456 already documents for `consider`.
+    Per-position *shares*/*avg_cost*/*cost_total*/*weight* below are exactly
+    what `consider`'s `before.held`/`before.weights` would show for the same
+    book at the same instant -- not a second, possibly-disagreeing
+    computation.
 
-    Returns ``(diagnosed, residual, weights, mixed_currency)``. ``diagnosed``
-    covers every currently-held, non-residual ticker (``meaningful_tickers``
-    -- #172's floor), each looked up in ``ticker_diagnosis``'s own output
-    rather than iterated from it, so a real holding whose impact rounds
-    under that function's own $1 floor still gets a row (with ``impact:
-    None, tags: []``) instead of silently vanishing from the book. A fully
-    exited ticker ``ticker_diagnosis`` also scores is dropped here -- this
-    reports current positions, not full trading history. ``residual``
-    covers every other currently-held ticker (below the meaningful-position
-    floor): shares/cost/value/weight only, no diagnosis, matching the
-    product's own "small lots not nitpicked" framing.
+    The $ P&L (`impact`) figure cannot simply add `ticker_diagnosis`'s own
+    FIFO-matched `realized` to an average-cost `unreal`: that mixes two
+    conventions' idea of how much cost was assigned to the shares already
+    sold, and misstates the sum whenever a ticker carries both a closed and
+    an open lot (confirmed with a concrete numeric example while
+    diagnosing this). So `impact` is computed here from
+    `_lifetime_cash_flows` instead -- `current_value + lifetime_sell_
+    proceeds - lifetime_buy_cost` -- an identity that needs no lot-matching
+    or cost-averaging convention at all (see that function's docstring),
+    and is therefore correct under *any* basis, including this one.
+
+    Every tag below was individually checked against the basis change:
+    `too_heavy` reads the canonical `weights` passed in (never recomputed);
+    `disciplined_hold`/`deep_underwater` read `cur_ret`/`avg_cost` from the
+    canonical `held` this function now feeds `ticker_diagnosis` -- these
+    were the FIFO-cost-basis versions before, so this is a second latent
+    inconsistency this same fix closes, not a new one; `suspected_dca`/
+    `suspected_averaging_down_*`/`adds_pending_confirmation` read
+    `classify_adds(rows)`, which was already average-cost-consistent
+    internally (its own running `pos` tracker removes sold cost at
+    `cost/shares`, the same formula `ledger.derive_holdings` and
+    `trade_recap.positions` use) and so needed no change at all;
+    `sold_winner_early` reads `win_n`/`win_early` from each FIFO round
+    trip's own `ret`/`fwd` field, self-contained and never combined with
+    `held`'s cost -- a behavioral question about which specific purchase a
+    sale corresponds to, orthogonal to which basis the *current* book's
+    cost/weight uses, so it is left on FIFO round trips deliberately, not
+    left over.
+
+    One narrow, accepted gap: `ticker_diagnosis`'s own `abs(impact) < 1`
+    floor still gates whether a ticker reaches its `tags` output at all,
+    and that internal `impact` is the same FIFO/average-cost mix this
+    function no longer trusts for display. A ticker whose true impact
+    (this function's own computation) is large could in principle be
+    excluded from tagging if that internal, uncorrected figure happens to
+    round under the floor -- this function still reports that ticker's
+    shares/cost/weight/impact correctly, just with `tags: []`, the same
+    shape as any other undiagnosed position.
+
+    Returns ``(diagnosed, residual)``. ``diagnosed`` covers every
+    currently-held ticker at or above the meaningful-position floor
+    (`trade_recap.RESIDUAL_POS_TH`), read directly off the canonical
+    `weights` rather than recomputed in some other currency view.
+    ``residual`` covers every other currently-held ticker: shares/cost/
+    value/weight only, no diagnosis, matching the product's own "small
+    lots not nitpicked" framing. Sorted by ``|impact|`` descending when
+    every held ticker shares one currency (the same ranking
+    ``ticker_diagnosis`` and the README-demoed card use); a mixed-currency
+    book falls back to sorting by the already-comparable canonical
+    ``weight`` instead, because native-currency impacts are not
+    comparable across tickers without a conversion this function does not
+    perform.
     """
-    rts, open_lots = trade_recap.round_trips(rows)
-    held = trade_recap.fifo_held(open_lots)
-    if not held:
+    if not canonical_held:
         raise ReviewError("the recorded book has no open position to report")
 
-    cur_map, currencies, _conflicts = trade_recap.currency_map(rows)
+    currencies = {holding.get("currency", "USD") for holding in canonical_held.values()}
     mixed_currency = len(currencies) > 1
-    if mixed_currency:
-        rts_u, held_u, lastpx_u = trade_recap.usd_view(rts, held, last_px, cur_map, fx or {"USD": 1.0})
-    else:
-        rts_u, held_u, lastpx_u = rts, held, (last_px or {})
 
-    keep_dx = trade_recap.meaningful_tickers(held_u, lastpx_u)
-    held_dx = {t: v for t, v in held_u.items() if t in keep_dx}
-
-    d_size = trade_recap.dim_size(rows, held_u, lastpx_u, max_pos_override)
-    weights = d_size.get("weights") or {}
+    rts, _open_lots = trade_recap.round_trips(rows)
     adds_class = trade_recap.classify_adds(rows)
+    buy_cost, sell_proceeds = _lifetime_cash_flows(rows)
+
+    # ticker_diagnosis needs (shares, cost_total) tuples, and can only price
+    # cur_ret/avg_cost for a ticker with a known cost -- a canonical holding
+    # with none (declared shares, no avg_cost) is excluded here exactly as
+    # dim_size/current_book_projection already exclude such a ticker from
+    # cost-based diagnosis elsewhere, never fabricated.
+    held_tuples = {t: (h["shares"], h["cost_total"]) for t, h in canonical_held.items()
+                  if h.get("cost_total") is not None}
+    floor = trade_recap.RESIDUAL_POS_TH
+    held_dx = {t: v for t, v in held_tuples.items() if (weights.get(t) or 0.0) >= floor}
     # top_n: this is a lookup, not a card with a real-estate budget, so ask
     # for every candidate ticker_diagnosis could possibly emit rather than
     # its card-tuned default of 7 -- truncating here would silently drop a
@@ -6181,42 +6247,47 @@ def _positions_diagnosis(rows, max_pos_override, last_px, fx):
     tdiag_by_ticker = {
         row["ticker"]: row
         for row in trade_recap.ticker_diagnosis(
-            rts_u, adds_class, held_dx, lastpx_u,
+            rts, adds_class, held_dx, last_px or {},
             max_pos_override=max_pos_override,
-            top_n=len(held_u) + len(rts_u) + 1,
+            top_n=len(held_tuples) + len(rts) + 1,
             sizing_weights=weights)
     }
 
-    def _row(ticker, shares, cost_total, diag):
-        price = lastpx_u.get(ticker)
+    def _impact(ticker, shares):
+        price = (last_px or {}).get(ticker)
+        if price is None:
+            return None
+        return shares * price + sell_proceeds.get(ticker, 0.0) - buy_cost.get(ticker, 0.0)
+
+    def _row(ticker, holding, diag):
+        shares = holding["shares"]
+        price = (last_px or {}).get(ticker)
         return {
             "ticker": ticker,
             "shares": shares,
-            "avg_cost": (cost_total / shares) if shares else None,
-            "cost_total": cost_total,
-            "value": (shares * price) if price else None,
+            "avg_cost": holding.get("avg_cost"),
+            "cost_total": holding.get("cost_total"),
+            "value": (shares * price) if price is not None else None,
             "weight": weights.get(ticker),
-            "impact": diag["impact"] if diag else None,
+            "impact": _impact(ticker, shares),
             "tags": diag["tags"] if diag else [],
         }
 
-    diagnosed = [
-        _row(ticker, shares, cost_total, tdiag_by_ticker.get(ticker))
-        for ticker, (shares, cost_total) in held_dx.items()
-    ]
-    diagnosed.sort(key=lambda row: abs(row["impact"]) if row["impact"] is not None else -1,
-                   reverse=True)
+    diagnosed, residual = [], []
+    for ticker, holding in canonical_held.items():
+        row = _row(ticker, holding, tdiag_by_ticker.get(ticker))
+        if (weights.get(ticker) or 0.0) >= floor:
+            diagnosed.append(row)
+        else:
+            residual.append({k: row[k] for k in ("ticker", "shares", "avg_cost", "cost_total", "value", "weight")})
 
-    residual = [
-        {"ticker": ticker, "shares": shares,
-         "avg_cost": (cost_total / shares) if shares else None,
-         "cost_total": cost_total,
-         "value": (shares * lastpx_u[ticker]) if lastpx_u.get(ticker) else None,
-         "weight": weights.get(ticker)}
-        for ticker, (shares, cost_total) in held_u.items() if ticker not in held_dx
-    ]
+    if mixed_currency:
+        diagnosed.sort(key=lambda row: row["weight"] or 0, reverse=True)
+    else:
+        diagnosed.sort(key=lambda row: abs(row["impact"]) if row["impact"] is not None else -1,
+                       reverse=True)
     residual.sort(key=lambda row: row["weight"] or 0, reverse=True)
-    return diagnosed, residual, weights, mixed_currency
+    return diagnosed, residual
 
 
 def cmd_positions(args):
@@ -6224,12 +6295,16 @@ def cmd_positions(args):
     asked away from any review, `consider` premise, or `refresh` snapshot.
 
     Sources the book from ``<root>/ledger.jsonl`` alone -- no CSV, no
-    premise, no supplied holdings view -- through ``_rows_from_ledger``,
-    the tested-but-until-now-production-unused reconstruction
-    ``tests/test_consider.py`` already proves agrees with
-    ``ledger.derive_holdings`` for the common case (see
-    ``_positions_diagnosis`` for the one basis it deliberately does not
-    share with the canonical ledger book, and why).
+    premise, no supplied holdings view. Shares, average cost, cost total,
+    and weight come from ``portfolio_basis.query_current_book`` /
+    ``sizing_projection`` -- the exact canonical reader ``consider``'s
+    ledger route already calls, never a second one (owner ruling
+    2026-07-30; see ``_positions_diagnosis`` for the reproduced divergence
+    that settled it). ``_rows_from_ledger`` -- the tested-but-until-now-
+    production-unused reconstruction ``tests/test_consider.py`` already
+    proves agrees with ``ledger.derive_holdings`` for the common case --
+    still supplies the round trips and add-pattern history the diagnosis
+    tags need, which the canonical reader does not compute at all.
 
     Genuinely read-only: unlike every mutating command in this file, this
     creates no session, appends no row to any ``*.jsonl`` the coach root
@@ -6255,7 +6330,7 @@ def cmd_positions(args):
 
     ledger_path = os.path.join(root, "ledger.jsonl")
     try:
-        events, _skipped = ledger.load_ledger(ledger_path)
+        events, skipped_lines = ledger.load_ledger(ledger_path)
     except ledger.LedgerIntegrityError as exc:
         raise ReviewError(str(exc)) from exc
     if not events:
@@ -6278,10 +6353,9 @@ def cmd_positions(args):
         # supplied-price path rather than a second one.
         feed, _bundle = _resolve_consider_prices(args, root)
 
-    last_px, fx, supplied_splits = None, None, None
+    last_px, supplied_splits = None, None
     if feed is not None:
         last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
-        fx = price_feed.fx_rates(feed)
         supplied_splits = price_feed.splits_map(feed) or None
 
     splits = _effective_splits(root, supplied_splits)
@@ -6290,9 +6364,30 @@ def cmd_positions(args):
     except split_policy.SplitDataError as exc:
         raise ReviewError(f"split data rejected: {exc}") from exc
 
+    valuation_manifest = None
+    if last_px:
+        valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
+    # The identical canonical-book call `_consider_rows`'s ledger route
+    # makes: one reader, so `positions` and `consider` cannot describe two
+    # different current books for the same root at the same instant.
+    basis = portfolio_basis.query_current_book(
+        events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+        reference_as_of=dt.date.today().isoformat(), splits=splits)
+    if basis is None:
+        raise ReviewError(
+            f"no trustworthy canonical current book in {ledger_path}; the ledger "
+            "may be unreadable or its integrity checks failed")
+    canonical_held = basis.current_book["holdings"]
+    projection = portfolio_basis.sizing_projection(basis)
+    weights = {}
+    if projection is not None:
+        weights = {ticker: entry["weight"] for ticker, entry in projection.to_dict()["values"].items()
+                  if entry["applicable"]}
+
     max_pos_override = _position_cap_override(root)
-    diagnosed, residual, weights, mixed_currency = _positions_diagnosis(
-        rows, max_pos_override, last_px, fx)
+    diagnosed, residual = _positions_diagnosis(
+        rows, canonical_held, weights, last_px, max_pos_override)
+    mixed_currency = len({h.get("currency", "USD") for h in canonical_held.values()}) > 1
 
     price_snapshot = None
     if feed is not None:

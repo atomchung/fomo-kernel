@@ -130,7 +130,10 @@ def test_positions_reports_shares_avg_cost_value_and_weight():
         nvda = rows["NVDA"]
         assert nvda["shares"] == 120.0
         assert nvda["cost_total"] == 12400.0
-        assert abs(nvda["avg_cost"] - 12400.0 / 120.0) < 1e-9
+        # portfolio_basis.derive_holdings rounds avg_cost to 4dp on the way
+        # out (12400/120 has no exact decimal representation), so compare
+        # against that same rounded expectation rather than the raw ratio.
+        assert abs(nvda["avg_cost"] - round(12400.0 / 120.0, 4)) < 1e-6
         assert nvda["value"] == 24000.0
         assert abs(nvda["weight"] - 24000.0 / 28000.0) < 1e-9
         assert abs(nvda["impact"] - 11600.0) < 1e-6, "unrealized only: 120*200 - 12400"
@@ -172,15 +175,99 @@ def test_positions_reports_cost_basis_with_no_price_available():
         assert sorted(payload["unpriced"]) == ["AMD", "NVDA"]
         rows = {row["ticker"]: row for row in payload["positions"]}
         assert rows["NVDA"]["value"] is None
-        # Weight still resolves from cost (dim_size's cost-fallback), so the
-        # book's relative sizing is never simply unavailable for want of a quote.
+        # Weight still resolves from cost (sizing_projection's cost
+        # fallback), so the book's relative sizing is never simply
+        # unavailable for want of a quote.
         assert abs(rows["NVDA"]["weight"] - 12400.0 / (12400.0 + 3200.0)) < 1e-9
-        # AMD's only P&L signal is its realized $100 -- still enough to clear
-        # ticker_diagnosis's $1 floor and be reported, unlike NVDA (no sale,
-        # no price, so no impact can be computed at all).
-        assert rows["AMD"]["impact"] == 100.0
+        # impact needs a current price for every ticker, priced or not:
+        # `current_value + lifetime_proceeds - lifetime_cost` cannot state a
+        # total without knowing current_value, and printing only the
+        # realized slice under the "impact" label would read as the whole
+        # answer when it is not -- the same "do not print a partial number
+        # under the label for a complete one" rule the owner's ruling states
+        # for the mixed-basis case (#561).
+        assert rows["AMD"]["impact"] is None
         assert rows["NVDA"]["impact"] is None
         assert rows["NVDA"]["tags"] == []
+
+
+# Two lots at different prices, then a partial sell -- the exact shape that
+# diverges between a FIFO reconstruction and the ledger's canonical
+# average-cost book (owner reproduction, 2026-07-30, on this PR): FIFO
+# matches the sell against the first lot and leaves the second lot's cost as
+# what remains; average cost removes the sale at the *blended* average and
+# leaves the rest at that same average. Same shares remaining, two different
+# costs, two different weights for the same position at the same instant.
+_MULTI_LOT_BOOK = (
+    _trade_event("2026-01-01", "NVDA", "buy", 100, 10.0),
+    _trade_event("2026-01-15", "NVDA", "buy", 100, 20.0),
+    _trade_event("2026-02-01", "NVDA", "sell", 100, 50.0),
+    _trade_event("2026-01-01", "MSFT", "buy", 100, 10.0),
+)
+_MULTI_LOT_CLOSES = {"NVDA": (30.0, "USD"), "MSFT": (20.0, "USD")}
+
+
+def _consider_before(tmp, prices=None):
+    args = ["consider", "--root", tmp]
+    if prices:
+        args += ["--prices", prices]
+    args += ["--premise", '{"ticker": "MSFT", "side": "buy", "qty": 1, "price": 20.0, "currency": "USD"}']
+    return _ok(_run(*args))["evaluation"]["consequence"]["before"]
+
+
+def test_positions_and_consider_agree_on_weight_for_a_multi_lot_partial_sell():
+    """The mechanical guard for the owner's 2026-07-30 ruling on this PR:
+    `positions` and `consider` must report the identical weight -- the
+    number this product's own rules are built on ("cap any single position
+    at 20%") -- for the same book at the same instant, not two answers that
+    happen to agree on the single-lot fixtures elsewhere in this file.
+    Asserts the agreement directly against a live `consider` call rather
+    than a hand-computed expectation, so this cannot go stale the way a
+    comment claiming "these use the same basis" already has once (#456).
+
+    Two sub-cases, because weight and cost do not diverge on the same
+    signal: priced, weight comes from market value (shares x price, which
+    does not depend on lot-matching) so *cost*/*avg_cost* are what a FIFO
+    reconstruction would get wrong; unpriced, weight itself falls back to
+    cost and is exactly what diverges. Checking only the priced case would
+    let the weight assertion below pass by coincidence rather than by
+    construction -- both must be driven to mean anything."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _MULTI_LOT_BOOK)
+        prices = _fx_envelope(os.path.join(tmp, "prices.json"), _MULTI_LOT_CLOSES)
+
+        positions_payload = _ok(_run("positions", "--root", tmp, "--prices", prices))
+        rows = {row["ticker"]: row for row in positions_payload["positions"]}
+        assert rows["NVDA"]["shares"] == 100.0
+
+        before = _consider_before(tmp, prices)
+        assert before["held"]["NVDA"]["shares"] == rows["NVDA"]["shares"]
+        assert abs(before["held"]["NVDA"]["cost"] - rows["NVDA"]["cost_total"]) < 1e-6, (
+            "positions and consider disagree about NVDA's remaining cost on a "
+            "multi-lot partial sell", before["held"]["NVDA"], rows["NVDA"])
+        assert abs(before["weights"]["NVDA"] - rows["NVDA"]["weight"]) < 1e-9, (
+            "positions and consider disagree about NVDA's weight -- the exact "
+            "divergence the 2026-07-30 ruling closed",
+            before["weights"]["NVDA"], rows["NVDA"]["weight"])
+        # The average-cost answer specifically, not merely "some shared
+        # answer": FIFO would report 2000.0/20.0 here instead.
+        assert rows["NVDA"]["cost_total"] == 1500.0
+        assert rows["NVDA"]["avg_cost"] == 15.0
+
+        # Unpriced: weight itself is the signal that diverges under the
+        # wrong basis (FIFO's cost-fallback weight here is 2000/3000 =
+        # 0.6667; the canonical one is 1500/2500 = 0.6), so this half would
+        # catch a regression the priced half's coincidence could not.
+        env = dict(os.environ, TR_OFFLINE="1")
+        unpriced_positions = _ok(subprocess.run(
+            [sys.executable, str(REVIEW), "positions", "--root", tmp],
+            cwd=ROOT, capture_output=True, text=True, timeout=60, env=env))
+        unpriced_rows = {row["ticker"]: row for row in unpriced_positions["positions"]}
+        unpriced_before = _consider_before(tmp)
+        assert abs(unpriced_before["weights"]["NVDA"] - unpriced_rows["NVDA"]["weight"]) < 1e-9, (
+            "positions and consider disagree about NVDA's cost-fallback weight",
+            unpriced_before["weights"]["NVDA"], unpriced_rows["NVDA"]["weight"])
+        assert abs(unpriced_rows["NVDA"]["weight"] - 1500.0 / 2500.0) < 1e-9
 
 
 def test_positions_separates_a_residual_position_from_diagnosed_ones():

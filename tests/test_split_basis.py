@@ -656,12 +656,15 @@ def test_consider_answers_on_the_split_adjusted_book_on_both_of_its_routes():
 
 
 def test_positions_answers_on_the_split_adjusted_book():
-    """`positions`'s (#561) honest observable is the share count itself, on
-    the ledger-reconstructed book it builds independently of `consider`'s
-    own ledger route (`_rows_from_ledger` versus
-    `portfolio_basis.query_current_book`) -- driven separately because it
-    is a distinct CLI route with its own path to the book in review.py's
-    call graph, not a wrapper around an existing driven route."""
+    """`positions`'s (#561) honest observable is the share count itself.
+    `positions` reads shares/cost/weight through the same canonical
+    `portfolio_basis.query_current_book` reader `consider`'s ledger route
+    uses (owner ruling 2026-07-30, after this PR's FIFO-reconstruction cut
+    was found to disagree with `consider` on a multi-lot partial sell) --
+    driven separately here because it is still a distinct CLI route with
+    its own path to that reader in review.py's call graph, not a wrapper
+    around an existing driven route, and the split map has to reach it
+    through this call site specifically."""
     with tempfile.TemporaryDirectory() as tmp:
         _crossing_root(tmp)
         code, payload = _route(tmp, "positions")
