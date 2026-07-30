@@ -738,6 +738,76 @@ def test_corrupt_ledger_fails_closed_rather_than_reconstructing_a_partial_book()
         assert not os.path.exists(_evaluation_path(tmp)), "a failed call must not write a row"
 
 
+def test_a_readable_ledger_with_no_trustworthy_book_fails_closed():
+    """#613: the fourth ledger-route refusal, and the only one nothing asserted.
+
+    Unlike the corrupt case above, `load_ledger`'s strict scan passes here with
+    nothing skipped -- every row is valid JSON carrying a declared event type.
+    What fails is one level in: `portfolio_basis.query_current_book` cannot
+    state a book it trusts and returns None. This refusal is the only thing
+    between that and a pre-trade answer computed against a book the engine
+    could not read (AGENTS.md boundary 6). Deleted, `basis.to_dict()` is
+    reached on None, and AttributeError is not in `review.main`'s caught tuple
+    -- the fail-closed boundary degrades into a traceback with no error
+    payload at all.
+
+    `query_current_book` has two independent ways to answer None and one
+    fixture per branch is driven, because a single shape would leave the other
+    deletable. Which gate each trips is asserted rather than described: a
+    quantity that is not a number trips *both* (`_norm_trade` rejects it and
+    `derive_holdings` also flags it), so it looks like coverage of the second
+    branch and is not -- the preflight refuses first and the integrity check
+    never runs. Pinning the pair is what keeps that mistake from being
+    re-made here.
+
+    The in-process preconditions are the load-bearing half: without them a
+    change that reroutes either shape to an earlier gate leaves this test
+    green with the refusal it names never exercised.
+    """
+    held = {"ticker": "NVDA", "shares": 10, "avg_cost": 100.0,
+            "market": "US", "currency": "USD"}
+    # label -> (events, preflight_passes, expects_bad_integrity)
+    cases = {
+        # Structurally fine, semantically not a book: shares cannot be negative.
+        # derive_holdings reports *nothing* -- no integrity item, no skipped
+        # line, no other signal anywhere in the system. This refusal is the
+        # only one there is.
+        "semantically_unreadable_snapshot": (
+            [_snapshot_event("2026-01-01", [dict(held, shares=-5)])], False, False),
+        # The other branch, and the only kind that reaches it: `since`/
+        # `since_basis` are engine-assigned provenance (#485 Slice C, #531),
+        # inside SNAPSHOT_POSITION_KEYS so the preflight passes them through
+        # unexamined, and validated one level in by derive_holdings.
+        "bad_position_provenance": (
+            [_snapshot_event("2026-01-01", [
+                dict(held, since="2025-01-01", since_basis="not_a_declared_basis")])], True, True),
+    }
+    for label, (events, preflight_passes, expects_bad_integrity) in cases.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger_path = os.path.join(tmp, "ledger.jsonl")
+            _write_ledger(ledger_path, events)
+
+            loaded, skipped = ledger_engine.load_ledger(ledger_path)
+            assert skipped == 0, (
+                f"{label}: the strict scan must pass, or an earlier gate is doing the refusing")
+            assert portfolio_basis_engine._semantically_known_events(loaded) is preflight_passes, (
+                f"{label}: expected preflight_passes={preflight_passes}; this fixture has "
+                "changed which branch it covers")
+            integrity = ledger_engine.derive_holdings(loaded)["integrity"]
+            assert bool(integrity) is expects_bad_integrity, (
+                f"{label}: expected bad integrity={expects_bad_integrity}, got {integrity}")
+            assert portfolio_basis_engine.query_current_book(
+                loaded, skipped_lines=skipped,
+                reference_as_of=dt.date.today().isoformat()) is None, (
+                f"{label}: this fixture no longer reaches the refusal under test")
+
+            run = _run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
+            _fails(run, "no trustworthy canonical current book")
+            assert not os.path.exists(_evaluation_path(tmp)), (
+                f"{label}: a failed call must not write a row")
+
+
 def test_csv_with_no_trade_rows_fails_closed():
     with tempfile.TemporaryDirectory() as tmp:
         csv_path = os.path.join(tmp, "empty.csv")
