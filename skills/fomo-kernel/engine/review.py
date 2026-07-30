@@ -5192,6 +5192,13 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
         raise ReviewError("canonical PortfolioBasis sizing coverage is incomplete")
     before = dict(before)
     before["weights"] = weights
+    # The legibility lists `portfolio_state` stamped were measured against the
+    # weights this line just replaced, so they are recomputed rather than
+    # carried forward: a listed position's weight must always be the weight the
+    # answer will actually show, and this facade is the one place a state's
+    # denominator changes after it was built (#598/#599).
+    (before["unclassified_holdings"],
+     before["undecomposed_etfs"]) = consequence.book_legibility(before["held"], weights)
     before["max_ticker"] = max(sorted(weights), key=weights.get)
     before["max_pct"] = weights[before["max_ticker"]]
     before["oversize_triggered"] = (
