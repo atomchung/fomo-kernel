@@ -505,21 +505,94 @@ Route the request to the **real command**. Answering it by hand — recomputing 
 | "review it again", "run the weekly one" on a book with a finalized review behind it | `weekly_review` | `continued` |
 | hands over a position table with no trade history, on a fresh root | `snapshot_review` | `fresh` |
 | hands over a transaction CSV, on a fresh root | `first_review` | `fresh` |
-| "what if I add to X", "should I buy Y" | `review.py consider` — see the boundary below | **not archived** |
+| "what if I add to X", "should I buy Y" | `consider` — the pre-trade evaluation, walked below | `continued` |
 
 Every continued run archives with `--state-mode continued --parent-run-id <the preceding accepted run_id>`, and each keeps its **own** receipt under its own route contract. The campaign identity (`--campaign`) stays the same across all of them; the `--case-id` is whichever acceptance case that particular run walks.
 
-### `consider` is reachable, but it is not receipted evidence yet
+### The `consider` route: a receipted pre-trade evaluation
 
-`review.py consider` is a real product command and the campaign should invoke it rather than improvise an answer. But `tools/ux_receipt.py` has **no `consider` route** — `ROUTES` is `first_review`, `refresh`, `snapshot_review`, `test_drive`, `weekly_review`, and a route without a contract cannot exist there by construction (#523). So there is nothing for `verify` to check and nothing legitimate to archive.
+`review.py consider` (#544 Slice B, on #479's TradeEvaluation contract) renders no card and mutates no book. Run the real command against the campaign's own book, so the engine computes the consequence rather than the agent estimating it:
 
-Until #544's Slice B decides what a `consider` answer visibly owes and gives it a route contract:
+```bash
+python3 engine/review.py consider --premise /tmp/fomo-kernel-premise.json \
+  [--decision-context /tmp/fomo-kernel-context.json]
+```
 
-- **do** invoke the real command against the campaign's own book, so the engine computes the consequence;
-- **do** record what you find as findings, issues or episodes like any other observation;
-- **do not** run `archive-receipt` for it, and do not cite it as a `consider` QA pass. #486's `M0-F5` is walked as exploratory evidence for this reason; the formal acceptance of this surface belongs to #488, after the M1 TradeEvaluation contract exists.
+The response's `challenge` block is printed on that call's own stdout and **never stored** — capture it from there, together with the exact answer text you actually showed the user, into a transient check file. The engine states what the answer owes; the receipt proves it was delivered.
 
-Calling an unarchivable run "tested" is the same false pass a green `agent_simulated` run is — see the ledger below.
+```bash
+# qa-trace: consider
+# 0) Session id = the engine's own evaluation_id (shape eval-<16 hex>);
+#    consider creates no session, the way a refresh trace uses its refresh_id.
+python3 tools/ux_receipt.py start --session-id <evaluation_id> --client claude --route consider \
+  --adapter native_options --question-mode native_options
+
+# 1) Only when a bounded context question was actually asked (for example,
+#    the engine asking for a missing why_now). Omit this row entirely on a
+#    run that asked nothing, and read the --controls note below before
+#    recording the verdict.
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event question_presented \
+  --mode native_options
+
+# 2) The moment the user's last context answer arrived. On a run that asked
+#    nothing, omit this row too.
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event answers_received
+
+# 3) The challenge delivery: record immediately after the answer was shown
+#    inline. The tool computes coverage/fidelity itself from your check file —
+#    a failing result is stored as computed and voids the run at verify, so
+#    read the check file before recording. The trace is append-only.
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event evaluation_presented \
+  --challenge-check-file <challenge-check.json>
+
+# 4) The resolution invitation, exactly once, after the evaluation. open = the
+#    invitation was shown and nothing settled; acted/declined/modified only
+#    after the user's word was recorded via `consider --resolve` — never a
+#    claim of broker execution.
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event resolution_presented \
+  --workflow-state open
+
+# 5) Wrap up: findings first, verdict last, then verify.
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event findings_recorded \
+  --finding episode:EP-0NN
+
+python3 tools/ux_receipt.py event --session-id <evaluation_id> --event owner_verdict \
+  --controls pass --card not_applicable --memory not_applicable \
+  --comprehension pass --usefulness pass --friction pass --resolution pass
+
+python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
+  --require-owner-verdict --require-timing-integrity --require-findings
+```
+
+`--challenge-check-file` points at a transient JSON that never enters the trace, the same nature as `--grounding-check-file`. It pairs the `challenge` block **from the `consider` call's own stdout** with the exact answer text shown:
+
+```json
+{
+  "challenge": {
+    "must_state": [
+      {"topic": "basis", "value": "ledger", "anchor": "basis.source"},
+      {"topic": "position", "value": 0.2731, "anchor": "consequence.after.weights.SYNTH"},
+      {"topic": "cash", "value": 8400.0, "anchor": "consequence.after.cash.balance"},
+      {"topic": "rule_collision", "value": "would_breach", "anchor": "rule_collisions.rule-1.state",
+       "detail": {"rule_id": "rule-1", "text": "One name never above a quarter of the book", "worsens": null}},
+      {"topic": "disclosure", "value": "cost_basis", "anchor": "consequence.disclosures.0"}
+    ],
+    "quote_verbatim": [{"field": "reason", "text": "Best setup I have seen this year."}],
+    "unchecked": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta"],
+    "case_required": {"for": 1, "against": 1},
+    "required_coverage": [{"path": "consequence.disclosures.0", "owes": "disclosure", "key": "cost_basis"}]
+  },
+  "presented_text": "On your recorded book this takes SYNTH to 27.3% and leaves 8,400 in cash. It would break your own rule: \"One name never above a quarter of the book\". Weights are on cost, not live prices. You said: \"Best setup I have seen this year.\" Liquidity, valuation, tax, whether the position still fits you, and whether this is genuinely new information were not checked."
+}
+```
+
+Paste the challenge verbatim from stdout — a truncated paste is refused rather than read as a smaller obligation — and the recorded `challenge_hash` stays auditable afterward: the block is a pure function of the persisted evaluation row, so anyone holding the root can recompute it.
+
+What the machine half checks, and what stays with the owner's `comprehension` verdict: load-bearing numbers as digits at any display precision, and rule-collision texts / user quotes / excluded-holding tickers verbatim, are machine-decidable; engine-vocabulary strings, boolean triggers, and `unchecked` keys reach the user only as prose in the conversation's language, which no offline comparison can judge — that half is what `comprehension` is for. See `references/ux-receipt.md` ("The second card-free route") for the complete split.
+
+Archive like any other continued route run in this campaign: `--state-mode continued --parent-run-id <the preceding accepted run_id>`, same `--campaign`. A `consider` receipt is now formal evidence, and the old "exploratory only" caveat is gone — but a run whose trace fails `verify` is still void and has to be walked again with a fresh receipt; the trace is append-only, so there is no repair.
+
+The resolution boundary: `acted` records the user's own word via `consider --resolve`, never a fill. The invitation only ever asks whether the user says they acted, declined, or modified — do not read a recorded `acted` as proof a broker order executed.
 
 ### Ending the campaign
 

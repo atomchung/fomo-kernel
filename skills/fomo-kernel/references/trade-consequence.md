@@ -147,6 +147,8 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 
 The block is emitted, never stored: it is a pure function of the premise, basis, consequence, collisions and context the evaluation row already freezes, and it takes no part in the `evaluation_id`. A `--resolve` call carries none, because nothing new is being answered there.
 
+Under maintainer QA, delivery of these obligations is proven rather than assumed. The receipt tool's card-free `consider` route ([ux-receipt.md](ux-receipt.md)) captures the challenge emitted on the call's own stdout into a transient comparison file, paired with the exact answer text shown to the user. The tool computes the coverage and verbatim fidelity itself rather than trusting a self-report, and persists only booleans, counts, and a hash — never the challenge or the presented text. The same trace also records one resolution invitation after it, whose recorded workflow state is the user's own word on what happened next, never proof that a trade was executed.
+
 ## The case for and against
 
 The engine states the consequence and the rule collisions; it never recommends. Build the case for and against directly from that output, and take no position on which side wins — that call belongs to the user.

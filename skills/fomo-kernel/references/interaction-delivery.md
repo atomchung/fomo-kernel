@@ -6,7 +6,7 @@ The engine already fail-closes on review content at `preview`/`finalize`: a miss
 
 **Scope: full-tier reviews only.** A light-tier capture (`flows/light-capture.md`) renders no card and asks at most one plain-text question, so nothing here applies to it. Neither does it apply to a book refresh (`flows/book-refresh.md`), which is not a review at all: it renders no card and holds no review session. Both flows still owe the user that question as its own visible turn — that rule is about the human, not about the review lifecycle, and each states it in its own file. An ad hoc informational question outside any of these lifecycles — including a `consider` call — follows a different, narrower contract: `freeform-answers.md`.
 
-The presentation *trace* is scoped differently from this contract. A refresh renders no card, but it does show the user something, so [`ux-receipt.md`](ux-receipt.md) carries a card-free `refresh` route whose evidence is that change surface. Recording it is how a refresh can be archived as acceptance evidence at all; nothing in this file's card-delivery rules applies to it.
+The presentation *trace* is scoped differently from this contract. A refresh renders no card, but it does show the user something, so [`ux-receipt.md`](ux-receipt.md) carries a card-free `refresh` route whose evidence is that change surface. Recording it is how a refresh can be archived as acceptance evidence at all; nothing in this file's card-delivery rules applies to it. The pre-trade `consider` lane is the second card-free route: `ux-receipt.md` carries it too, whose evidence is the inline challenge delivery plus the resolution invitation, and nothing in this file's card-delivery rules applies to it either.
 
 ## Capability resolution
 

@@ -114,6 +114,61 @@ python3 tools/ux_receipt.py event --session-id <id> --event owner_verdict \
 
 `verify` refuses a `refresh` trace that records any card event — a delivery that cannot have happened — and refuses one with no change surface at all, since a receipt holding only a start row and a verdict has proven nothing. Card-producing routes are unaffected: they still owe both cards, and `change_presented` does not belong on them.
 
+## The second card-free route: the pre-trade evaluation
+
+`review.py consider` (#544 Slice B) renders no card and mutates no book. Its whole product surface is one inline textual answer that must carry the engine-declared challenge (#479; [`trade-consequence.md`](trade-consequence.md), "What the answer owes"), plus one resolution invitation. What its trace owes instead of a card is that **presentation pair**: `evaluation_presented`, carrying machine-computed challenge-delivery evidence, then `resolution_presented` after it. A stored `trade_evaluations.jsonl` row is not delivery, and `verify` refuses a trace that cannot show the pair.
+
+`consider` creates no session, so use the engine's own `evaluation_id` as the session id, the way a refresh trace uses its `refresh_id`.
+
+```bash
+python3 tools/ux_receipt.py start \
+  --session-id <id> --client <client> --route consider --adapter plain_text
+
+# bounded context questions, when any were asked — each as it is shown
+python3 tools/ux_receipt.py event --session-id <id> --event question_presented --mode plain_text
+
+# the challenge delivery, immediately after the answer is shown to the user
+python3 tools/ux_receipt.py event --session-id <id> --event evaluation_presented \
+  --challenge-check-file <challenge-check.json>
+
+# the resolution invitation, exactly once, after the evaluation
+python3 tools/ux_receipt.py event --session-id <id> --event resolution_presented \
+  --workflow-state open
+```
+
+`--challenge-check-file` points at a transient JSON that never enters the trace, the same nature as the grounding check file. It pairs the `challenge` block **from the `consider` call's own stdout** with the exact answer text shown:
+
+```json
+{
+  "challenge": {"...": "the emitted block, verbatim — all five keys, uncut"},
+  "presented_text": "the exact answer text you showed the user"
+}
+```
+
+The challenge is emitted beside the evaluation row and never stored, so it must be captured when the command returns — there is no copy on disk to read back, and a truncated or hollowed paste is refused rather than read as a smaller obligation: the block always owes basis facts, always names at least its four unconditional unchecked risks, and always states the two-sided case floor, so a payload below any of those floors cannot have come from the call this event records. It stays auditable afterwards: the block is a pure function of the persisted row, so the recorded `challenge_hash` (sha256 of the block serialized with sorted keys, compact separators) can be recomputed by anyone holding the root.
+
+The tool machine-checks what containment and digits can honestly decide, and persists only booleans, counts and that hash: the user's `quote_verbatim` sentences must appear verbatim (`quotes_verbatim`), every rule collision's own `detail.text` must appear verbatim, every excluded holding's ticker must appear, and every position/concentration/cash number must appear **as digits** at some display precision — `34.3%`, `34%` and `0.343` all state a frozen `0.34344…`, and a disagreeing number counts as missing (`facts_missing`). An engine-vocabulary string (`cost_basis`, `unverified`), a boolean trigger, or an `unchecked` key reaches the user as prose in the conversation's own language, which no offline comparison can judge — that half belongs to the owner's `comprehension` verdict below, and `must_state_total`/`unchecked_total` are persisted so that judgment is made against a stated obligation size rather than from memory. Like the grounding check, the fidelity result is recorded as computed and judged at `verify`: evidence that is absent, malformed, or failing fails the trace with no legacy exemption, and the trace being append-only means a failed delivery voids the run rather than being patched over.
+
+`--workflow-state` records what the invitation left the evaluation as, in the engine's own vocabulary: `open` (invitation shown, nothing settled yet), or `acted` / `declined` / `modified` once the user's word was recorded through `consider --resolve`. `acted` is the user's own statement, never broker-execution proof — no value shaped like "executed" exists, and describing the resolution as an execution record is exactly what this event's fixed vocabulary forbids.
+
+The owner verdict carries the four route-specific judgments, and `card` stays pinned:
+
+```bash
+python3 tools/ux_receipt.py event --session-id <id> --event owner_verdict \
+  --controls pass --card not_applicable --memory not_applicable \
+  --comprehension pass --usefulness pass --friction pass --resolution pass
+```
+
+- `--comprehension` — was the engine's challenge understood as presented: the owed facts, the user's own words, and what was never checked actually landed. This is the human half of the fidelity split above.
+- `--usefulness` — specific to this book and this trade, versus generic chat advice.
+- `--friction` — cheap enough that the owner would reach for it again mid-decision.
+- `--resolution` — the invitation was understood as recording the user's word, not as executing anything.
+- `--card not_applicable` is required rather than optional, exactly as on `refresh`: stating "no card was owed" is a positive claim the gate can check.
+- `--controls` follows the trace, as on `refresh`: a run that asked a bounded context question judges it `pass`/`fail`; one that asked nothing records `not_applicable`.
+- `--memory` is left open: whether the right book answered is already visible through the challenge's own `basis` facts, judged under comprehension rather than gated twice.
+
+All four route axes must be `pass` before `verify --require-owner-verdict` accepts the run. `verify` also refuses a `consider` trace that records any card event or any `change_presented` — deliveries this route cannot have made — refuses the pair out of order or duplicated, and refuses these two events on every other route.
+
 ## Verify
 
 ```bash

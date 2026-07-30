@@ -90,6 +90,8 @@ QUESTION = ("question_presented", {})
 RULE_CHOICE = ("rule_choice_presented", {})
 CHANGE_DIFF = ("change_presented", {"change_kind": "diff"})
 CHANGE_RESULT = ("change_presented", {"change_kind": "result"})
+EVALUATION = ("evaluation_presented", {})
+RESOLUTION = ("resolution_presented", {})
 VERDICT = ("owner_verdict", {})
 
 
@@ -170,6 +172,95 @@ def refresh_rows():
         row("findings_recorded", findings=[]),
         row("owner_verdict", controls="pass", card="not_applicable",
             memory="not_applicable", change="pass"),
+    ]
+
+
+# Entirely synthetic, but shaped exactly like a live `consider` emission
+# (topics, value types, a rule collision carrying its own text, a
+# dot-carrying ticker excluded from the denominator, the user's own words).
+# Fields the machine half checks are all represented, so the fidelity tests
+# below exercise every branch of `_challenge_fidelity` against one payload.
+SYNTHETIC_CHALLENGE = {
+    "must_state": [
+        {"topic": "basis", "value": "ledger", "anchor": "basis.source"},
+        {"topic": "basis", "value": 9, "anchor": "basis.stale_days"},
+        {"topic": "position", "value": 0.34344827586206894,
+         "anchor": "consequence.after.weights.SYNTH"},
+        {"topic": "concentration", "value": 1.0, "anchor": "consequence.after.ai_pct"},
+        {"topic": "concentration", "value": True,
+         "anchor": "consequence.after.oversize_triggered"},
+        {"topic": "cash", "value": -39200.0, "anchor": "consequence.after.cash.balance"},
+        {"topic": "rule_collision", "value": "would_breach",
+         "anchor": "rule_collisions.rule-1.state",
+         "detail": {"rule_id": "rule-1",
+                    "text": "Single position must stay under a fifth of the book",
+                    "worsens": None}},
+        {"topic": "disclosure", "value": "cost_basis",
+         "anchor": "consequence.disclosures.0"},
+        {"topic": "excluded_holding", "value": "9999.TT",
+         "detail": {"reason": "unavailable_cost"}},
+    ],
+    "quote_verbatim": [
+        {"field": "reason", "text": "It is still my highest-conviction synthetic name."},
+        {"field": "why_now", "text": "The synthetic supplier raised guidance this morning."},
+    ],
+    "unchecked": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta"],
+    "case_required": {"for": 1, "against": 1},
+    "required_coverage": [
+        {"path": "consequence.disclosures.0", "owes": "disclosure", "key": "cost_basis"},
+    ],
+}
+
+# An answer that carries everything the machine half can check: the weight at
+# display precision, the ×100 percent form, the magnitude of the negative cash
+# balance with a thousands separator, the rule's own text, the dotted ticker,
+# and the user's sentences verbatim.
+SYNTHETIC_ANSWER = (
+    "On your recorded book this takes SYNTH to 34.3% and AI exposure to 100%, "
+    "leaving cash 39,200 overdrawn. It would break your own rule — \"Single "
+    "position must stay under a fifth of the book\". 9999.TT has no usable "
+    "cost and sits outside every percentage here. You said: \"It is still my "
+    "highest-conviction synthetic name.\" and \"The synthetic supplier raised "
+    "guidance this morning.\" Liquidity, valuation, tax, whether the position "
+    "still fits you, and whether that is genuinely new information were not "
+    "checked."
+)
+
+
+def evaluation_row(**overrides):
+    """An `evaluation_presented` row as `_challenge_fidelity` would emit it
+    for SYNTHETIC_CHALLENGE/SYNTHETIC_ANSWER: five machine-checkable facts
+    (two numeric, the cash magnitude, the rule text, the ticker), all found.
+    """
+    value = {
+        "challenge_hash": "b" * 64,
+        "quotes_expected": True,
+        "quotes_verbatim": True,
+        "facts_checked": 5,
+        "facts_missing": 0,
+        "must_state_total": 9,
+        "unchecked_total": 5,
+    }
+    value.update(overrides)
+    return row("evaluation_presented", **value)
+
+
+def consider_rows():
+    """A pre-trade evaluation walked honestly (#544 Slice B): one bounded
+    context question, the inline challenge delivery with its fidelity
+    evidence, the resolution invitation, and the four route-specific owner
+    judgments. No card, no change surface — the route has neither.
+    """
+    return [
+        declaration(route="consider"),
+        row("question_presented", mode="plain_text"),
+        row("answers_received"),
+        evaluation_row(),
+        row("resolution_presented", workflow_state="open"),
+        row("findings_recorded", findings=[]),
+        row("owner_verdict", controls="pass", card="not_applicable",
+            memory="not_applicable", comprehension="pass", usefulness="pass",
+            friction="pass", resolution="pass"),
     ]
 
 
@@ -1052,6 +1143,462 @@ def test_card_routes_still_owe_their_cards_after_the_refresh_exemption():
             assert_has(errors, f"{stage} artifact_generated must appear exactly once")
 
 
+# --- The pre-trade lane: consider (#544 Slice B) -------------------------------
+#
+# `review.py consider` renders no card and mutates no book; its entire product
+# surface is one inline textual answer that must carry the engine-declared
+# challenge (#479), plus one resolution invitation. Before this route existed a
+# successful consider call was exploratory evidence only — a stored JSON row
+# could be mistaken for delivery, and an agent could drop `must_state` or
+# `unchecked` entries after the engine produced them with nothing going red.
+# These probes hold both halves: the trace must prove the presentation pair
+# happened in order with machine-computed fidelity evidence, and every other
+# route must be refused the same events.
+
+def test_a_consider_trace_verifies_without_any_card():
+    assert ux_receipt.verify_rows(consider_rows()) == []
+    assert ux_receipt.verify_rows(consider_rows(), require_owner_verdict=True,
+                                  require_findings=True) == []
+
+
+def test_a_quiet_consider_that_asked_nothing_still_verifies():
+    # Context questions are bounded, not owed: a premise the user stated fully
+    # needs none. The controls verdict must then say `not_applicable` rather
+    # than judge a control nobody saw.
+    rows = drop(drop(consider_rows(), QUESTION), ("answers_received", {}))
+    at(rows, VERDICT)["controls"] = "not_applicable"
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True,
+                                  require_findings=True) == []
+
+
+def test_a_consider_claiming_a_card_fails():
+    """The #523 rule again: a card-free lane forbids, it does not exempt."""
+    for claim in (row("artifact_generated", stage="final", artifact_path="/tmp/card.md"),
+                  row("card_presented", stage="final", mode="markdown_inline"),
+                  row("widget_attempt_failed", stage="preview"),
+                  row("rule_choice_presented", mode="plain_text",
+                      grounding_expected=False, grounding_verbatim=True)):
+        rows = consider_rows()
+        before(rows, VERDICT, claim)
+        assert_has(ux_receipt.verify_rows(rows), "record a card delivery that cannot have happened")
+
+
+def test_a_consider_may_not_borrow_the_change_surface():
+    # `consider` never mutates the book, so a change surface here would claim
+    # a recording that cannot have happened.
+    rows = consider_rows()
+    before(rows, VERDICT, row("change_presented", change_kind="result"))
+    assert_has(ux_receipt.verify_rows(rows), "change_presented does not belong on this route")
+
+
+def test_a_consider_without_its_presentation_pair_fails():
+    """A declaration and a verdict prove nothing about the answer's delivery."""
+    rows = drop(consider_rows(), EVALUATION)
+    assert_has(ux_receipt.verify_rows(rows), "must record exactly one evaluation_presented")
+
+    rows = drop(consider_rows(), RESOLUTION)
+    assert_has(ux_receipt.verify_rows(rows), "must record exactly one resolution_presented")
+
+    doubled = consider_rows()
+    after(doubled, EVALUATION, evaluation_row())
+    assert_has(ux_receipt.verify_rows(doubled), "exactly one evaluation_presented")
+
+
+def test_the_resolution_invitation_must_follow_the_evaluation():
+    rows = swap(consider_rows(), EVALUATION, RESOLUTION)
+    assert_has(ux_receipt.verify_rows(rows),
+               "resolution invitation must follow the evaluation presentation")
+
+
+def test_no_other_route_may_claim_an_evaluation_delivery():
+    # Symmetry: an evaluation claimed on a route that never presents one is
+    # the same fabricated evidence a card claim on a refresh is.
+    rows = good_markdown_rows()
+    before(rows, PREVIEW_ARTIFACT, evaluation_row())
+    assert_has(ux_receipt.verify_rows(rows),
+               "presents no trade evaluation, so rows")
+
+    rows = refresh_rows()
+    before(rows, VERDICT, row("resolution_presented", workflow_state="open"))
+    assert_has(ux_receipt.verify_rows(rows),
+               "presents no trade evaluation, so rows")
+
+
+def test_evaluation_presented_is_fail_closed_on_its_evidence():
+    """No legacy state: the route and the event were born together (#544),
+    so absent, malformed, or failing fidelity evidence all refuse the trace —
+    the same no-grandfathering rule #293's grounding evidence holds."""
+    rows = consider_rows()
+    at(rows, EVALUATION)["presented_answer"] = "the answer text itself"
+    assert_has(ux_receipt.verify_rows(rows),
+               "evaluation_presented contains unsupported fields: presented_answer")
+
+    rows = consider_rows()
+    del at(rows, EVALUATION)["challenge_hash"]
+    assert_has(ux_receipt.verify_rows(rows), "invalid or missing challenge_hash")
+
+    rows = consider_rows()
+    at(rows, EVALUATION)["challenge_hash"] = "not-a-sha"
+    assert_has(ux_receipt.verify_rows(rows), "invalid or missing challenge_hash")
+
+    rows = consider_rows()
+    del at(rows, EVALUATION)["quotes_expected"]
+    assert_has(ux_receipt.verify_rows(rows), "missing quote-fidelity evidence")
+
+    rows = consider_rows()
+    at(rows, EVALUATION)["quotes_verbatim"] = False
+    assert_has(ux_receipt.verify_rows(rows),
+               "did not prove the user's own words were reproduced verbatim")
+
+    rows = consider_rows()
+    at(rows, EVALUATION).update(facts_missing=2)
+    assert_has(ux_receipt.verify_rows(rows),
+               "machine-checkable fact(s) the presented answer did not carry")
+
+    rows = consider_rows()
+    at(rows, EVALUATION)["facts_checked"] = -1
+    assert_has(ux_receipt.verify_rows(rows), "facts_checked must be a non-negative integer")
+
+
+def test_resolution_presented_is_typed_and_content_free():
+    rows = consider_rows()
+    at(rows, RESOLUTION)["workflow_state"] = "executed"
+    assert_has(ux_receipt.verify_rows(rows), "unsupported workflow state")
+
+    rows = consider_rows()
+    at(rows, RESOLUTION)["decision_reason"] = "took profits"
+    assert_has(ux_receipt.verify_rows(rows),
+               "resolution_presented contains unsupported fields: decision_reason")
+
+    for state in ux_receipt.WORKFLOW_STATES:
+        rows = consider_rows()
+        at(rows, RESOLUTION)["workflow_state"] = state
+        assert ux_receipt.verify_rows(rows) == [], state
+
+
+def test_the_consider_verdict_judges_the_evaluation_and_not_a_card():
+    rows = consider_rows()
+    at(rows, VERDICT)["card"] = "pass"
+    assert_has(ux_receipt.verify_rows(rows), "owner card verdict must be not_applicable")
+
+    # Each of the four route-specific axes is owed, and `not_applicable` is
+    # not on their scale — an unjudged axis is an unjudged M1 question.
+    for axis in ("comprehension", "usefulness", "friction", "resolution"):
+        rows = consider_rows()
+        del at(rows, VERDICT)[axis]
+        assert_has(ux_receipt.verify_rows(rows),
+                   f"owner {axis} verdict must be pass or fail")
+
+        rows = consider_rows()
+        at(rows, VERDICT)[axis] = "fail"
+        assert_has(ux_receipt.verify_rows(rows, require_owner_verdict=True),
+                   f"requires {axis}=pass")
+
+    # The change axis does not exist here, and the consider axes do not exist
+    # on a route with a card to judge instead.
+    rows = consider_rows()
+    at(rows, VERDICT)["change"] = "pass"
+    assert_has(ux_receipt.verify_rows(rows), "owner change verdict does not apply")
+
+    rows = good_markdown_rows()
+    rows.append(row("owner_verdict", controls="pass", card="pass",
+                    memory="not_applicable", comprehension="pass"))
+    assert_has(ux_receipt.verify_rows(rows), "owner comprehension verdict does not apply")
+
+
+def test_the_controls_verdict_follows_what_the_consider_actually_asked():
+    rows = consider_rows()
+    at(rows, VERDICT)["controls"] = "not_applicable"
+    assert_has(ux_receipt.verify_rows(rows), "owner controls verdict must be pass or fail")
+
+    rows = drop(drop(consider_rows(), QUESTION), ("answers_received", {}))
+    assert_has(ux_receipt.verify_rows(rows), "owner controls verdict must be not_applicable")
+
+
+def test_a_consider_verdict_recorded_before_its_surfaces_fails():
+    # The verdict is the last act. Only the resolution moves, so the
+    # findings-ordering rule stays satisfied and this fails for one reason.
+    rows = consider_rows()
+    invitation = at(rows, RESOLUTION)
+    drop(rows, RESOLUTION)
+    rows.append(invitation)
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner_verdict must follow the evaluation surface it judges")
+
+
+def test_a_consider_trace_can_reach_credible_timing_integrity():
+    """Same stake as the refresh probe: a lane whose structural completeness
+    is unreachable can never be archived under --require-timing-integrity."""
+    pairless = [value for value in consider_rows()
+                if value.get("event") not in ("evaluation_presented",
+                                              "resolution_presented")]
+    incomplete = ux_receipt.timing_integrity(pairless)
+    assert incomplete["status"] == "not_assessed"
+    assert "evaluation presentation" in incomplete["reason"], incomplete
+
+    stale = ux_receipt.timing_integrity(consider_rows())
+    assert stale["status"] == "not_assessed"
+    assert "legacy receipt remains compatible" in stale["reason"], stale
+
+    integrity = ux_receipt.timing_integrity(stamp(consider_rows(), [
+        "2026-07-30T10:02:00Z",
+        "2026-07-30T10:02:12Z",
+        "2026-07-30T10:02:41Z",
+        "2026-07-30T10:03:05Z",
+        "2026-07-30T10:03:30Z",
+        "2026-07-30T10:03:52Z",
+        "2026-07-30T10:04:06Z",
+    ]))
+    assert integrity["status"] == "credible", integrity
+    assert integrity["owner_live_eligible"] is True
+    assert integrity["span_seconds"] == 126
+
+
+def challenge_check_payload(**overrides):
+    payload = {"challenge": json.loads(json.dumps(SYNTHETIC_CHALLENGE)),
+               "presented_text": SYNTHETIC_ANSWER}
+    payload.update(overrides)
+    return payload
+
+
+def fidelity_of(payload):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                     encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+        path = handle.name
+    try:
+        return ux_receipt._challenge_fidelity(path)
+    finally:
+        os.unlink(path)
+
+
+def test_challenge_fidelity_finds_every_machine_checkable_fact():
+    evidence = fidelity_of(challenge_check_payload())
+    assert evidence["quotes_expected"] is True
+    assert evidence["quotes_verbatim"] is True
+    # Two fraction-shaped numbers, the cash magnitude, the rule's own text,
+    # and the dotted ticker — the boolean trigger, the basis day count and the
+    # engine-vocabulary strings are deliberately not machine-checkable.
+    assert evidence["facts_checked"] == 5
+    assert evidence["facts_missing"] == 0
+    assert evidence["must_state_total"] == 9
+    assert evidence["unchecked_total"] == 5
+    assert ux_receipt.SURFACE_DIGEST.fullmatch(evidence["challenge_hash"])
+
+
+def test_challenge_fidelity_accepts_any_display_precision():
+    # "0.343", "34.3%" and "34%" all state the frozen 0.34344…; so does a
+    # rounded-up percent for a value whose next digit carries.
+    for wording in ("weight becomes 0.343 of the book",
+                    "takes it to 34.3%", "takes it to 34%"):
+        payload = challenge_check_payload(presented_text=SYNTHETIC_ANSWER + " " + wording)
+        assert fidelity_of(payload)["facts_missing"] == 0, wording
+
+
+def test_challenge_fidelity_catches_a_disagreeing_number():
+    payload = challenge_check_payload(
+        presented_text=SYNTHETIC_ANSWER.replace("34.3%", "24.3%"))
+    assert fidelity_of(payload)["facts_missing"] == 1
+
+
+def test_challenge_fidelity_catches_a_dropped_ticker_and_rule_text():
+    payload = challenge_check_payload(
+        presented_text=SYNTHETIC_ANSWER.replace("9999.TT", "an unpriced holding"))
+    assert fidelity_of(payload)["facts_missing"] == 1
+
+    reworded = SYNTHETIC_ANSWER.replace(
+        "Single position must stay under a fifth of the book",
+        "your position-size rule")
+    payload = challenge_check_payload(presented_text=reworded)
+    assert fidelity_of(payload)["facts_missing"] == 1
+
+
+def test_challenge_fidelity_catches_a_paraphrased_quote():
+    reworded = SYNTHETIC_ANSWER.replace(
+        "It is still my highest-conviction synthetic name.",
+        "you still rate it highly")
+    payload = challenge_check_payload(presented_text=reworded)
+    assert fidelity_of(payload)["quotes_verbatim"] is False
+
+
+def test_challenge_fidelity_on_a_context_free_call():
+    challenge = challenge_check_payload()["challenge"]
+    challenge["quote_verbatim"] = []
+    challenge["unchecked"] = ["liquidity", "valuation", "tax", "position_fit"]
+    evidence = fidelity_of({"challenge": challenge, "presented_text": SYNTHETIC_ANSWER})
+    assert evidence["quotes_expected"] is False
+    assert evidence["quotes_verbatim"] is True
+    assert evidence["unchecked_total"] == 4
+
+
+def test_challenge_fidelity_hash_is_canonical():
+    first = fidelity_of(challenge_check_payload())["challenge_hash"]
+    again = fidelity_of(challenge_check_payload())["challenge_hash"]
+    assert first == again
+    smaller = challenge_check_payload()
+    smaller["challenge"]["must_state"] = smaller["challenge"]["must_state"][:-1]
+    assert fidelity_of(smaller)["challenge_hash"] != first
+
+
+def test_challenge_fidelity_refuses_a_hollow_challenge():
+    """Emptied lists are refused, not measured against: the engine's block
+    always owes basis facts, always names its four unconditional unchecked
+    risks, and always states the two-sided case floor. A payload below any
+    floor cannot have come from the consider call this event claims."""
+    for hollow in ({"must_state": []},
+                   {"unchecked": ["liquidity", "valuation", "tax"]},
+                   {"case_required": {}},
+                   {"case_required": {"for": 1, "against": 0}}):
+        payload = challenge_check_payload()
+        payload["challenge"].update(hollow)
+        try:
+            fidelity_of(payload)
+        except ux_receipt.ReceiptError:
+            continue
+        raise AssertionError(f"a hollowed challenge was accepted: {hollow}")
+
+
+def test_a_bare_zero_token_does_not_state_a_nonzero_fact():
+    # Every fraction below one half rounds to a bare "0", so that token
+    # carries no information about the value.
+    challenge = {**challenge_check_payload()["challenge"],
+                 "must_state": [{"topic": "position", "value": 0.343,
+                                 "anchor": "consequence.after.weights.SYNTH"}],
+                 "quote_verbatim": []}
+    zero_only = "the trade leaves 0 room under your cap"
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    assert evidence["facts_missing"] == 1, evidence
+    # A frozen zero is still stated by "0".
+    challenge["must_state"] = [{"topic": "cash", "value": 0.0,
+                                "anchor": "consequence.after.cash.balance"}]
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    assert evidence["facts_missing"] == 0, evidence
+
+
+def test_a_dollar_value_does_not_match_its_percent_form():
+    # cash is dollar-shaped: a fifty-cent balance is not stated by "50%" —
+    # while the same number as a position weight legitimately is.
+    base = challenge_check_payload()["challenge"]
+    text = "this leaves 50% of the book in one name"
+    cash = {**base, "must_state": [{"topic": "cash", "value": 0.5,
+                                    "anchor": "consequence.after.cash.balance"}],
+            "quote_verbatim": []}
+    assert fidelity_of({"challenge": cash, "presented_text": text})["facts_missing"] == 1
+    weight = {**base, "must_state": [{"topic": "position", "value": 0.5,
+                                      "anchor": "consequence.after.weights.SYNTH"}],
+              "quote_verbatim": []}
+    assert fidelity_of({"challenge": weight, "presented_text": text})["facts_missing"] == 0
+
+
+def test_evaluation_evidence_must_be_internally_consistent():
+    """These counts describe one engine challenge, whose shape has floors —
+    a row below them was written by hand, not by _challenge_fidelity."""
+    for impossible, fragment in (
+            ({"must_state_total": 0}, "claims an empty must_state"),
+            ({"unchecked_total": 0}, "fewer than the four unconditional"),
+            ({"unchecked_total": 3}, "fewer than the four unconditional"),
+            ({"facts_checked": 12, "must_state_total": 9},
+             "checked more facts than the challenge stated")):
+        rows = consider_rows()
+        at(rows, EVALUATION).update(impossible)
+        assert_has(ux_receipt.verify_rows(rows), fragment)
+
+
+def test_owner_verdict_is_judgments_only():
+    # The one remaining free-text channel into an archived trace: every other
+    # content-restricted row already rejects unknown fields.
+    rows = consider_rows()
+    at(rows, VERDICT)["presented_text"] = "BUY SYNTH because the user said so"
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner_verdict contains unsupported fields: presented_text")
+    rows = good_markdown_rows()
+    rows.append(row("owner_verdict", controls="pass", card="pass",
+                    memory="not_applicable", note="looked fine to me"))
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner_verdict contains unsupported fields: note")
+
+
+def test_challenge_fidelity_refuses_a_truncated_challenge():
+    payload = challenge_check_payload()
+    del payload["challenge"]["required_coverage"]
+    try:
+        fidelity_of(payload)
+    except ux_receipt.ReceiptError as caught:
+        assert "missing required_coverage" in str(caught)
+    else:
+        raise AssertionError("a challenge missing a contract key was accepted")
+
+    for broken in ({"challenge": "not-an-object", "presented_text": "answer"},
+                   {"challenge": challenge_check_payload()["challenge"],
+                    "presented_text": "  "}):
+        try:
+            fidelity_of(broken)
+        except ux_receipt.ReceiptError:
+            continue
+        raise AssertionError(f"malformed payload was accepted: {broken}")
+
+
+def test_cli_writes_and_verifies_a_consider_trace():
+    with tempfile.TemporaryDirectory() as tmp:
+        common = ["--session-id", "eval-1a2b3c4d5e6f7a8b", "--state-root", tmp]
+        start = subprocess.run(
+            [sys.executable, str(TOOL), "start", *common, "--client", "codex-desktop",
+             "--route", "consider"],
+            capture_output=True, text=True)
+        assert start.returncode == 0, start.stderr
+
+        missing = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "evaluation_presented"],
+            capture_output=True, text=True)
+        assert missing.returncode == 2
+        assert "requires --challenge-check-file" in missing.stderr
+
+        check_file = pathlib.Path(tmp) / "challenge-check.json"
+        check_file.write_text(json.dumps(challenge_check_payload(), ensure_ascii=False),
+                              encoding="utf-8")
+        presented = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "evaluation_presented",
+             "--challenge-check-file", str(check_file)],
+            capture_output=True, text=True)
+        assert presented.returncode == 0, presented.stderr
+
+        stateless = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "resolution_presented"],
+            capture_output=True, text=True)
+        assert stateless.returncode == 2
+        assert "requires --workflow-state" in stateless.stderr
+
+        invited = subprocess.run(
+            [sys.executable, str(TOOL), "event", *common, "--event", "resolution_presented",
+             "--workflow-state", "open"],
+            capture_output=True, text=True)
+        assert invited.returncode == 0, invited.stderr
+
+        for arguments in (
+                ["--event", "findings_recorded", "--no-findings"],
+                ["--event", "owner_verdict", "--controls", "not_applicable",
+                 "--card", "not_applicable", "--memory", "not_applicable",
+                 "--comprehension", "pass", "--usefulness", "pass",
+                 "--friction", "pass", "--resolution", "pass"]):
+            done = subprocess.run(
+                [sys.executable, str(TOOL), "event", *common, *arguments],
+                capture_output=True, text=True)
+            assert done.returncode == 0, done.stderr
+
+        verified = subprocess.run(
+            [sys.executable, str(TOOL), "verify", *common, "--require-owner-verdict",
+             "--require-findings"],
+            capture_output=True, text=True)
+        assert verified.returncode == 0, verified.stderr
+
+        # The trace carries evidence, never content: neither the presented
+        # answer, nor a user sentence, nor the rule's text may reach disk.
+        trace = (pathlib.Path(tmp) / "ux" / "eval-1a2b3c4d5e6f7a8b.jsonl").read_text(
+            encoding="utf-8")
+        for leaked in ("34.3%", "highest-conviction", "fifth of the book", "9999.TT"):
+            assert leaked not in trace, leaked
+
+
 def test_every_route_declares_a_complete_contract():
     """`ROUTES` is derived from the table, so a route cannot exist without one.
 
@@ -1062,14 +1609,14 @@ def test_every_route_declares_a_complete_contract():
     assert ux_receipt.ROUTES == tuple(ux_receipt.ROUTE_CONTRACTS)
     for route, contract in ux_receipt.ROUTE_CONTRACTS.items():
         assert set(contract) == {"cards", "cash_anchor", "opener", "change",
-                                 "verdict", "must_pass"}, route
+                                 "evaluation", "verdict", "must_pass"}, route
         assert set(contract["verdict"]) <= set(ux_receipt.VERDICT_AXES), route
         assert set(contract["must_pass"]) <= set(contract["verdict"]), route
         for axis, scale in contract["verdict"].items():
             assert scale and set(scale) <= {"pass", "fail", "not_applicable"}, (route, axis)
         # A route must render something the user can be shown, or it has no
         # evidence to carry at all.
-        assert contract["cards"] or contract["change"], route
+        assert contract["cards"] or contract["change"] or contract["evaluation"], route
 
 
 # --- Declaration integrity ---------------------------------------------------
@@ -1536,6 +2083,9 @@ def test_documented_receipt_commands_actually_run():
             (scratch / "grounding.json").write_text(
                 json.dumps({"candidates": [{"id": "candidate_0"}],
                             "presented_text": "text"}), encoding="utf-8")
+            (scratch / "challenge.json").write_text(
+                json.dumps(challenge_check_payload(), ensure_ascii=False),
+                encoding="utf-8")
             if command[0] == "event":
                 # Declare the widest capability so widget/native examples are
                 # legal, then run the documented event against that trace.
@@ -1544,6 +2094,8 @@ def test_documented_receipt_commands_actually_run():
             argv = resolve(command[:], root, scratch)
             if "--grounding-check-file" in argv:
                 argv[argv.index("--grounding-check-file") + 1] = str(scratch / "grounding.json")
+            if "--challenge-check-file" in argv:
+                argv[argv.index("--challenge-check-file") + 1] = str(scratch / "challenge.json")
             result = subprocess.run(argv, capture_output=True, text=True)
             if result.returncode != 0:
                 failures.append(f"{' '.join(command)}\n    -> "

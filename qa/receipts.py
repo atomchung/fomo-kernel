@@ -37,11 +37,13 @@ HUMAN_LEVELS = ("owner_live", "agent_with_owner_verdict", "agent_simulated")
 # Every axis an owner verdict can carry. This is what the archived manifest
 # keeps of the verdict, so an axis missing here is an axis the archive silently
 # drops — for a card-free route that would be the only judgment it had (#523:
-# `change` is to a refresh what `card` is to a review). Locked against
-# ux_receipt's own declared axes by a drift test in tests/test_receipts.py;
-# extra keys here are harmless (an older archived receipt simply has none), a
-# missing one is not.
+# `change` is to a refresh what `card` is to a review, and #544's four
+# consider axes are that route's whole user-observable judgment). Locked
+# against ux_receipt's own declared axes by a drift test in
+# tests/test_receipts.py; extra keys here are harmless (an older archived
+# receipt simply has none), a missing one is not.
 VERDICT_KEYS = ("controls", "card", "memory", "change",
+                "comprehension", "usefulness", "friction", "resolution",
                 "question_specificity", "answer_fit")
 TRUST = {
     "owner_live": "REAL UX ground truth",

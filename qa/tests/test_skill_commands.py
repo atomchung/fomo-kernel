@@ -275,6 +275,28 @@ def episode_id():
     raise AssertionError(f"no episode with a declared id under {EPISODE_BANK}")
 
 
+def challenge_check_payload():
+    """Read the transient `--challenge-check-file` fixture verbatim from the doc.
+
+    Identified by carrying both `challenge` and `presented_text` — a shape
+    `grounding_check_payload`'s own identification condition (`candidates` +
+    `presented_text`) cannot match, since this block has no `candidates` key.
+    Unlike the grounding fixture, nothing here is rewritten: the documented
+    payload is self-consistent by construction (every machine-checkable fact
+    in `challenge.must_state` really appears verbatim or as digits in
+    `presented_text`), so if a future edit makes it inconsistent, the replay
+    must go red rather than have this function paper over the drift.
+    """
+    blocks = code_blocks(SKILL_DOC.read_text(encoding="utf-8"), "json")
+    for _, lines in blocks:
+        payload = json.loads("\n".join(lines))
+        if isinstance(payload, dict) and "challenge" in payload and "presented_text" in payload:
+            return payload
+    raise AssertionError(
+        f"{SKILL_DOC} documents --challenge-check-file but has no json block "
+        "declaring challenge and presented_text")
+
+
 def grounding_check_payload():
     """Build the transient `--grounding-check-file` from the doc's own example.
 
@@ -310,20 +332,26 @@ def placeholders(workspace):
     preview = workspace / "preview-card.html"
     final = workspace / "final-card.html"
     grounding = workspace / "grounding-check.json"
+    challenge_check = workspace / "challenge-check.json"
     preview.write_text("<h1>preview</h1>", encoding="utf-8")
     final.write_text("<h1>final</h1>", encoding="utf-8")
     grounding.write_text(json.dumps(grounding_check_payload(), ensure_ascii=False), encoding="utf-8")
+    challenge_check.write_text(json.dumps(challenge_check_payload(), ensure_ascii=False), encoding="utf-8")
     return {
         "<ID>": SESSION_ID,
         "<64-hex-digest>": hashlib.sha256(b"documented question surface").hexdigest(),
         "<preview-card.html>": str(preview),
         "<final-card.html>": str(final),
         "<grounding-check.json>": str(grounding),
+        "<challenge-check.json>": str(challenge_check),
         # A refresh creates no session, so its trace is keyed by the engine's
         # own refresh_id. The doc writes that stand-in under its real name
         # rather than reusing `<ID>`, because reading "session id" on a lane
         # that has no session is how an operator ends up inventing one.
         "<refresh_id>": SESSION_ID,
+        # consider creates no session either, keyed by the engine's own
+        # evaluation_id — the same reasoning as <refresh_id> above.
+        "<evaluation_id>": SESSION_ID,
         "EP-0NN": episode_id(),
         "#NN": "#520",
         # Runbook-only: it documents the route and client as stand-ins where
@@ -946,30 +974,47 @@ class ContinuousCampaignTest(unittest.TestCase):
             "offer a choice between real routes — named in backticks, in table rows. "
             "One route is a leftover, not a router.")
 
-    def test_the_consider_boundary_matches_the_tool(self):
-        """The one claim here that can silently rot.
+    def test_consider_is_a_routed_receipted_run(self):
+        """The successor of `test_the_consider_boundary_matches_the_tool`.
 
-        The section tells the operator to invoke `review.py consider` but never
-        to archive it, because `ux_receipt.py` has no route for it and a route
-        without a contract cannot exist there (#523). That is true today and is
-        precisely what #544 Slice B changes. When Slice B lands, this fails —
-        which is the point: the prohibition has to be lifted in the same change
-        that makes it false, not left standing as a stale warning that the
-        operator learns to ignore.
+        That check pinned the pre-#544-Slice-B state: `review.py consider` was
+        reachable but `ux_receipt.py` had no route for it, so the section could
+        only tell the operator to invoke the command and never archive it. It
+        was written to fail the moment Slice B made that false, on purpose —
+        the prohibition had to be lifted in the same change that made it a lie,
+        not left standing as a stale warning. Slice B is that change, so the
+        old check is retired rather than inverted in place: a check whose job
+        was "notice this claim rotted" has nothing left to notice once the
+        claim is gone, and keeps testing that a boundary no longer stated in
+        the doc, and no longer true of the tool, stays absent — which is not a
+        boundary test any more, it is this one.
+
+        `consider` is now a routed, archivable run like `refresh` or
+        `weekly_review`: `ux_receipt.ROUTES` carries it, the routing table
+        sends the operator to it by name, and the old "not archived" verdict
+        is gone from the section entirely.
         """
         self.assertIn(
-            "consider", self.section,
-            f"{SKILL_DOC}'s {self.SECTION!r} no longer mentions `consider`. A "
-            "pre-trade question is the follow-up most likely to arrive mid-campaign, "
-            "and #543 records what happens when the skill says nothing about it: it "
-            "gets answered by hand, outside any lifecycle, in 34 turns.")
-        self.assertNotIn(
             "consider", self.tool.ROUTES,
-            f"{TOOL} now supports a 'consider' route, so {SKILL_DOC}'s claim that "
-            "one cannot be archived is false. Give the route a `# qa-trace: consider` "
-            "walkthrough, move it into the routing table as an archived run, and "
-            "delete the exploratory-only paragraph — then this check goes away with "
-            "it. (#544 Slice B.)")
+            f"{TOOL} no longer supports a 'consider' route. #544 Slice B added "
+            "one; if it was intentionally removed, this test and its section in "
+            f"{SKILL_DOC} need to be reconsidered together, not left half-updated.")
+        rows = [line for line in self.section.splitlines()
+                if line.lstrip().startswith("|")]
+        self.assertTrue(
+            any("`consider`" in row for row in rows),
+            f"{SKILL_DOC}'s {self.SECTION!r} routing table has no row naming "
+            "`consider`. A pre-trade question is the follow-up most likely to "
+            "arrive mid-campaign, and #543 records what happens when the skill "
+            "routes it nowhere: it gets answered by hand, outside any "
+            "lifecycle, in 34 turns.")
+        self.assertNotIn(
+            "not archived", self.section,
+            f"{SKILL_DOC}'s {self.SECTION!r} still says a route run is 'not "
+            "archived'. #544 Slice B gave `consider` a route contract and a "
+            "walkthrough, so every route this section sends the operator to is "
+            "now an archived run — the exploratory-only caveat belongs to "
+            "history, not to this section.")
 
 
 if __name__ == "__main__":
