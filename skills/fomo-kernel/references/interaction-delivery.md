@@ -71,11 +71,13 @@ Each question needs its own visible turn. Do not leave a required question burie
 
 On `weekly_review`, open with the memory the engine carries: `prior_commitment` when a prior rule exists, otherwise `prior_skip`. Surface `exit_reason` or `due_revisit` context too when the Review Plan carries them. Continuity is the reason this product exists, and it has to be visible before the first new question, not summarized afterward.
 
-On `first_review` and full-tier `weekly_review`, the cash anchor (`data-contract.md`) is resolved before the first surface — read from the source, asked once, or explicitly skipped.
+On `first_review` and full-tier `weekly_review`, the cash anchor is read out of the source before the first surface when it is there. When it is not, the engine says so in `input.cash_anchor` and the ask belongs to the card beat below, not here — a gap that costs the user one pillar and nothing else is not worth a turn before they have seen anything (`data-contract.md`).
 
 ## Artifact generation is not presentation
 
-After a successful `preview`, present the complete card inline following `card-delivery.md`. A file path or attachment without inline card content is not presentation; the user has not seen the card until its content is in the conversation. Ask for the one commitment only after the preview card is visible, and apply the same distinction to the final card.
+After a successful `preview`, present the complete card inline following `card-delivery.md`. A file path or attachment without inline card content is not presentation; the user has not seen the card until its content is in the conversation. The same distinction applies to the final card.
+
+**The card and what it asks for are one beat.** The rule choice — and the cash question when `input.cash_anchor` says one is owed — go in the same message as the preview card, with the card above them. The guarantee is unchanged and still exact: the user sees the real card before committing to a rule, because the card is directly above the choices. What is removed is the second wait, for candidates (`card_plan.candidate_rules`) the engine had already computed and grounded before the preview ran.
 
 When you show the rule choice, present each candidate's engine-authored `grounding` sentence verbatim if the payload carries one — that sentence is what ties a generic rule to this user's actual positions. Never invent a grounding for a candidate that has none.
 

@@ -112,6 +112,63 @@
             "object",
             "null"
           ]
+        },
+        "cash_anchor": {
+          "description": "Whether this review has an accounting anchor, and what to do when it has none (#357). Always present, including as an explicit not_applicable, so a route that never asks says so rather than being silent. Unlike price_feed.request, this gap is answered AFTER the card: ask_after names that difference.",
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "anchored",
+                "partial",
+                "absent",
+                "not_applicable"
+              ]
+            },
+            "reason": {
+              "description": "Present only on not_applicable.",
+              "enum": [
+                "snapshot_envelope",
+                "test_drive",
+                "light_tier",
+                "no_cash_pipeline"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unanchored_currencies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "unlocks": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "account_level_return",
+                  "annualized_return",
+                  "cash_drag"
+                ]
+              }
+            },
+            "ask_after": {
+              "enum": [
+                "card_presented"
+              ]
+            },
+            "next_action": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -1772,6 +1772,169 @@ def test_prepare_with_cash_anchor_opens_a_new_session_not_a_silent_resume():
             "the same cash anchor rerun stays idempotent at its own fingerprint"
 
 
+# --- The cash anchor is a stated gap, and answerable after the card (#357) ----
+#
+# Five recurrences, three of them on real data, all of the same shape: nothing
+# in the Review Plan said the anchor was missing. The engine demanded a
+# disclosure when the balance was *present* (`acct_perf_basis`) and demanded
+# nothing when it was absent, so the one condition the agent had to notice
+# unprompted was the only one the plan never mentioned.
+#
+# The owner ruled out making `prepare` refuse: compute the first card, then ask
+# a directly answerable question, then re-render. So the gap is stated, the ask
+# lands at the card beat, and `add-cash` is what makes answering cheap enough to
+# be worth asking for.
+
+_OFFLINE_MOCK = ROOT / "skills" / "fomo-kernel" / "mock" / "mock_trades.csv"
+
+
+def _offline_env(tmp):
+    """A prepare that cannot reach a price source, so the run is deterministic."""
+    stub_dir = pathlib.Path(tmp) / "stubs"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "yfinance.py").write_text('raise ImportError("offline stub")\n', encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(stub_dir), env.get("PYTHONPATH")) if part)
+    return env
+
+
+def _prepared_without_an_anchor(tmp, root):
+    env = _offline_env(tmp)
+    run = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return env, json.loads(run.stdout)["review_plan"]
+
+
+def test_a_review_with_no_cash_anchor_says_so_in_its_own_plan():
+    """The signal that did not exist. It also has to carry enough to ask a
+    specific question -- which currency, and what answering buys -- because a
+    blind "give me a number, trust me" is what the #357 owner note singled out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _env, plan = _prepared_without_an_anchor(tmp, pathlib.Path(tmp) / "coach")
+        anchor = plan["input"]["cash_anchor"]
+        assert anchor["status"] == "absent", anchor
+        assert anchor["unanchored_currencies"] == ["USD"], anchor
+        assert set(anchor["unlocks"]) == {"account_level_return", "annualized_return",
+                                          "cash_drag"}, anchor
+        # The one field that separates this gap from the price gap beside it:
+        # a price request is recovered before the user sees anything, this is
+        # asked after they have seen the card (owner ruling 2026-07-30).
+        assert anchor["ask_after"] == "card_presented", anchor
+        assert "add-cash" in anchor["next_action"], anchor["next_action"]
+
+
+def test_a_route_that_never_asks_for_cash_says_that_too():
+    """`not_applicable` is a positive claim with a reason, never an absent key
+    -- the same discipline as `--card not_applicable` on a card-free receipt
+    route. A light week that merely had no entry would be indistinguishable
+    from one the engine forgot to classify, which is how #358's light-tier gap
+    shipped: the flow asked before a tier check three lines below it."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        first = _prepare_dated(tmp, root, "2026-07-14", "cashw1")
+        _finalize(tmp, root, first, _answer_queue(first, _week1_choices, "skip"), "cashw1")
+        light = _prepare_dated(tmp, root, "2026-07-17", "cashw2")
+        assert light["state_snapshot"]["cadence"]["tier"] == "light"
+        assert light["input"]["cash_anchor"] == {
+            "status": "not_applicable", "reason": "light_tier"}, light["input"]["cash_anchor"]
+
+
+def test_add_cash_recomputes_the_same_review_without_re_asking_anything():
+    """The owner's "re-render when they answer", with the part that makes it
+    safe. Everything the user already did carries over untouched, and the
+    engine's own artifacts move only where a cash anchor is allowed to move
+    them -- so the recomputed card is the same review with one more pillar,
+    not a second review the user never saw the first version of."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        (pending / "answers.json").write_text('{"marker": "already answered"}', encoding="utf-8")
+        (pending / "narrative.json").write_text('{"marker": "already written"}', encoding="utf-8")
+        # Read the pre-recompute plan now: the superseded pending directory is
+        # gone by the time the assertions below compare against it.
+        full_before = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        out = json.loads(run.stdout)
+        assert out["status"] == "anchored"
+        assert out["session_id"] != plan["session_id"], \
+            "the id is content-addressed from engine state and the anchor is part of it"
+        assert out["superseded_session_id"] == plan["session_id"]
+        assert sorted(out["carried_forward"]) == ["answers", "narrative"]
+
+        after = session_engine.load_pending(str(root), out["session_id"])
+        assert after["answers"] == {"marker": "already answered"}
+        assert after["narrative"] == {"marker": "already written"}
+        assert not pending.exists(), (
+            "the superseded pending session must not survive as a second, cash-less "
+            "review that preview/finalize would happily commit")
+
+        recomputed = after["plan"]
+        assert recomputed["input"]["cash_anchor"] == {"status": "anchored",
+                                                      "source": "anchored"}
+        assert recomputed["engine_state"]["cash"]["source"] == "anchored"
+        # Nothing the user acted on moved. This is the acceptance line, asserted
+        # rather than argued.
+        for key in ("question_queue", "missing_thesis_positions"):
+            assert recomputed[key] == full_before[key], key
+        assert (recomputed["card_plan"]["candidate_rules"]
+                == full_before["card_plan"]["candidate_rules"])
+
+
+def test_add_cash_refuses_when_more_than_the_anchor_moved():
+    """The gate that makes "reuses this session's frozen prices" true rather
+    than hoped for. `market_data`'s same-day cache is what normally makes the
+    recompute a zero-request replay of the identical bundle; when it is not --
+    a day boundary crossed, an edited input file, a ledger that moved -- the
+    difference has to be a refusal, because the user answered against the card
+    the first set of numbers rendered.
+
+    Simulated here by moving one frozen close, which is exactly what a second
+    live resolution would do."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        frozen = json.loads((pending / "plan.json").read_text(encoding="utf-8"))
+        frozen["engine_state"]["price_snapshot"]["prices"]["MOVED"] = 1.23
+        (pending / "plan.json").write_text(json.dumps(frozen), encoding="utf-8")
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode != 0, run.stdout
+        error = json.loads(run.stdout)["error"]
+        assert "changed more than the anchor" in error and "engine_state" in error, error
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
+            "a refused recompute must leave no anchored, finalizable session behind"
+
+
+def test_add_cash_refuses_a_session_that_never_takes_an_anchor():
+    """A snapshot states cash inline in its own envelope, so there is no second
+    place to supply one -- and the plan already says `not_applicable`. The
+    command reads that claim rather than re-deriving the condition."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        snapshot = pathlib.Path(tmp) / "positions.json"
+        snapshot.write_text(json.dumps({
+            "as_of": "2026-07-14",
+            "positions": [{"ticker": "SPY", "shares": 10, "avg_cost": 100,
+                           "market": "US", "currency": "USD"}]}), encoding="utf-8")
+        env = _offline_env(tmp)
+        run = _run("prepare", "--route", "snapshot_review", "--snapshot-json", snapshot,
+                   "--root", root, "--language", "en", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["input"]["cash_anchor"] == {"status": "not_applicable",
+                                                "reason": "snapshot_envelope"}
+        refused = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                       "--cash", '{"currency":"USD","amount":1,"as_of":"2026-07-14"}', env=env)
+        assert refused.returncode != 0, refused.stdout
+        assert "does not take a cash anchor" in json.loads(refused.stdout)["error"]
+
+
 def test_stdout_plan_is_projected_for_the_agent_but_full_on_disk():
     """#234: the agent re-sends the emitted plan as context on every later turn,
     so prepare/resume stdout must carry only the fields the flow contract reads.
