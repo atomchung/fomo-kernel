@@ -1593,54 +1593,60 @@ def test_xirr_degenerate_inputs_none():
     assert pf.xirr([(_D0, -1000.0), (_D0 + dt.timedelta(days=30), 0.0)]) is None  # 零流被濾 → 只剩單筆
 
 
-# ─────────────────── fetch_splits 並行化(#235)───────────────────
+# ─────── 一份較寬的 bundle 投影回每個消費者那一份(#605)───────
 
-def test_fetch_splits_parallel_preserves_serial_semantics():
-    """#235: fetch_splits 執行緒並行後,輸出契約必須與序列版逐檔一致 ——
-    按 ticker 排序、單檔炸掉不連累其他檔、空序列與零比率被濾掉、空輸入回 {}。
-    (yfinance 缺席的離線降級由 test_state_loop 的 import shim 端到端覆蓋。)"""
-    import types
+def test_project_frame_reproduces_the_universe_and_window_a_caller_asked_for():
+    """#605 的請求刻意比任何單一消費者要的更寬(窗口是下界、universe 是 rows 全部
+    ticker),因為分割必須在 universe 算得出來之前就套用。三個投影動作都是必要的,
+    而且每一個對應一個具體的錯:
 
-    class _FakeSeries:
-        def __init__(self, rows):
-            self._rows = rows
-
-        def __len__(self):
-            return len(self._rows)
-
-        def items(self):
-            return iter(self._rows)
-
-    class _FakeTicker:
-        def __init__(self, symbol):
-            self._symbol = symbol
-
-        @property
-        def splits(self):
-            if self._symbol == "BOOM":
-                raise RuntimeError("single-ticker failure must not spread")
-            if self._symbol == "EMPTY":
-                return _FakeSeries([])
-            if self._symbol == "ZERO":
-                return _FakeSeries([(dt.datetime(2024, 6, 10), 0.0)])
-            return _FakeSeries([(dt.datetime(2024, 6, 10), 10.0),
-                                (dt.datetime(2022, 3, 1), 2.0)])
-
-    fake = types.ModuleType("yfinance")
-    fake.Ticker = _FakeTicker
-    saved = sys.modules.get("yfinance")
-    sys.modules["yfinance"] = fake
+    * 多留一欄 → `price_observations` 多一條、`price_snapshot.prices` 多一個鍵;
+    * 多留一天 → β 的觀測數變了;
+    * **投影後整列皆空的日子沒丟掉** → 某個沒被投影到的 symbol 自己的交易日留在
+      index 裡,把 `price_observations` 的 staleness 基準 `data.index[-1]` 往後推,
+      本來新鮮的價全變過期。這一條最不明顯,所以單獨釘住。
+    """
     try:
-        out = tr.fetch_splits({"NVDA", "BOOM", "EMPTY", "ZERO", "AAPL"})
-        assert tr.fetch_splits(set()) == {}
-    finally:
-        if saved is None:
-            sys.modules.pop("yfinance", None)
-        else:
-            sys.modules["yfinance"] = saved
-    assert list(out.keys()) == ["AAPL", "NVDA"], "sorted-ticker order must survive parallelism"
-    assert out["NVDA"] == [(dt.date(2024, 6, 10), 10.0), (dt.date(2022, 3, 1), 2.0)]
-    assert out["AAPL"] == out["NVDA"]
+        import pandas as pd
+    except ImportError:
+        return
+    index = pd.DatetimeIndex([dt.datetime(2026, 7, d) for d in (24, 27, 28, 29)])
+    wide = pd.DataFrame({
+        "AAA": [10.0, 11.0, 12.0, 13.0],
+        "BBB": [1.0, 2.0, 3.0, 4.0],
+        # 只在 07-29 有價的 symbol:如果它留在 index 裡,AAA 的最後觀測日就被它推後
+        "LATE": [float("nan"), float("nan"), float("nan"), 9.0],
+    }, index=index)
+
+    got = tr._project_frame(wide, {"AAA"}, "2026-07-27")
+    assert list(got.columns) == ["AAA"], f"只該留要的欄:{list(got.columns)}"
+    assert [d.date().isoformat() for d in got.index] == ["2026-07-27", "2026-07-28", "2026-07-29"], \
+        f"窗口要裁在 start:{[str(d) for d in got.index]}"
+
+    only_early = tr._project_frame(wide, {"AAA", "BBB"}, None)
+    assert len(only_early.index) == 4, "投影包含每一天有價的欄時,不該丟任何一天"
+
+    dropped = tr._project_frame(wide.drop(columns=["AAA", "BBB"]), {"LATE"}, None)
+    assert [d.date().isoformat() for d in dropped.index] == ["2026-07-29"], (
+        "整列皆空的日子必須丟掉,否則別的 symbol 的交易日會冒充這一檔的價格框末日,"
+        f"把 staleness 基準往後推:{[str(d) for d in dropped.index]}")
+
+    assert tr._project_frame(wide, {"NOPE"}, None) is None, "一欄都投影不到 → None(缺價語意)"
+    assert tr._project_frame(None, {"AAA"}, None) is None
+    assert tr._project_frame(wide, {"AAA"}, "2030-01-01") is None, \
+        "窗口把資料全裁掉 → None,而不是一個空框讓下游對 index[-1] 爆掉"
+
+
+# ─────── fetch_splits 的取得層已退役(#605;規則見 market_data)───────
+# 逐檔 `Ticker(t).splits` + 8 執行緒並行的那份契約(#235)連同實作一起退場:分割觀測
+# 現在與收盤價出自同一次批次回應,`fetch_splits` 只是那份 bundle 的投影。它原本守的
+# 四個性質換了地方,沒有變少 —— 排序決定論與去重在 `market_data.build_request`
+# (test_a_request_is_deterministic…)、單檔失敗不連累其他在
+# test_c_coverage_states_what_was_asked_priced_and_missing、壞比率不被靜默丟掉在
+# test_d_a_malformed_split_observation_is_reported_not_dropped、離線降級仍由
+# test_state_loop 的 import shim 端到端覆蓋。
+
+
 
 
 # ─────────────────── splits.py:分割規則的單一實作(#550)───────────────────

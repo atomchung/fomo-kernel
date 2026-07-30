@@ -31,11 +31,19 @@ So this module owns the rule, once, and both callers read it:
   it does not churn the next time the ticker splits.
 
 Discipline: pure standard library, no network, no engine state. This module
-never *finds* splits — the retrieval policy (``trade_recap.fetch_splits``:
-yfinance, or an agent-supplied envelope via ``price_feed.splits_map``) stays
-where it is, and its result is passed in. A caller with no split data gets the
-unadjusted answer, which is the pre-existing behavior; it does not get a
-guessed one.
+never *finds* splits — retrieval belongs to ``engine/market_data.py``, which
+resolves split **observations** from one provider response or from an
+agent-supplied envelope (#605), and its result is passed in through
+``trade_recap.fetch_splits``'s projection or ``price_feed.splits_map``. A caller
+with no split data gets the unadjusted answer, which is the pre-existing
+behavior; it does not get a guessed one.
+
+One property of that boundary reaches into the arithmetic here, so it is worth
+stating on this side too: a resolved map is complete only from its request's
+window start, and every factor below applies splits strictly *after* some real
+book date (a trade, an anchor, an observation). That is what makes a windowed map
+sufficient, and it is why ``market_data.build_request`` refuses a window that
+cannot cover the origin its caller will rebase from.
 
 A quantity is only half of every number the product states. The other half is
 the price it gets multiplied by, and a price is an observation with a date of

@@ -661,12 +661,11 @@ def test_g_the_cache_writes_under_the_registered_cache_directory():
 #: `consider` move onto the resolver. A module arriving here without that
 #: migration is the drift this gate exists to make loud.
 GRANDFATHERED_PROVIDER_SITES = {
-    # Commit 2 replaces these four fetchers with one resolver request.
-    "trade_recap.py",
     # Not on any supported route: `prepare` builds market context from the shared
     # price frame (`trade_recap.market_context_from_prices`), and this module's
     # own `fetch_series` is reachable only by invoking `engine/market_context.py`
-    # directly, which AGENTS.md boundary 7 forbids.
+    # directly, which AGENTS.md boundary 7 forbids. Left alone deliberately rather
+    # than wrapped in an adapter no supported route reaches (#605 non-goals).
     "market_context.py",
 }
 

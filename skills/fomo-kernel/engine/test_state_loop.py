@@ -45,14 +45,18 @@ def run_engine(csv_paths, state_out, pythonpath=None):
     """跑 engine,設 TR_STATE_OUT 取結構化 state。回傳 state dict。
     pythonpath 給假 yfinance shim 用,強制離線(#64:本機裝了 yfinance 時,舊版會真的連網、隨行情漂)。"""
     env = dict(os.environ, TR_STATE_OUT=state_out, TR_LEDGER=os.devnull)  # #180 隱私:別讀本機真 ledger
+    env.pop("TR_OFFLINE", None)   # #605:這支驗的是自己的 shim,別讓 runner 的姿態代替它
     if pythonpath:
         env["PYTHONPATH"] = pythonpath
     r = subprocess.run([sys.executable, ENGINE, *csv_paths],
                        env=env, capture_output=True, text=True, timeout=180)  # fail-fast:本機裝 yfinance 時別讓網路卡住整套(review)
     assert r.returncode == 0, f"engine 失敗:\n{r.stderr}"
     # 這支跑的是預設 CLI 文字卡模式(未設 TR_JSON)——yfinance 狀態行印在 stdout,JSON 模式才走 stderr;兩邊都查,不綁死是哪一種
-    assert "yfinance 未安裝" in (r.stdout + r.stderr), \
-        f"預期強制離線降級,實際輸出未見『yfinance 未安裝』(shim 沒生效?):{(r.stdout + r.stderr)[:300]}"
+    # #605:斷言「取得層確實缺席」這個穩定事實,不綁定它當下怎麼講。理由同
+    # price_feed.classify_error 的存在理由:訊息文字進不了 state,代碼才進。
+    blob = r.stdout + r.stderr
+    assert ("not installed" in blob or "未安裝" in blob), \
+        f"預期強制離線降級(shim 沒生效?):{blob[:300]}"
     with open(state_out, encoding="utf-8") as f:
         return json.load(f)
 

@@ -1161,6 +1161,93 @@ def test_the_review_hands_the_exit_comparison_the_basis_it_froze():
         "the frozen per-ticker basis did not reach the comparison", got, backlog)
 
 
+# ───── the map must be complete for every origin it will be read from (#605) ─────
+#
+# Retrieval used to be unbounded: `Ticker(t).splits` returns AAPL back to 1987, so
+# whatever a consumer's rebase origin was, the map covered it. One batched request
+# with `actions=True` returns only the splits *inside its window*, which is a
+# strictly cheaper way to be silently wrong — a missing split is a factor of 1.0,
+# and every row above shows what a wrong factor does to a share count.
+#
+# What makes the window sufficient is stated in `market_data`: every consumer
+# applies only splits strictly after a real book date. The dangerous one is the
+# date that is *not* in the CSV — a review freezes the map, and `consider` and
+# `refresh` later read it against the **ledger anchor**, which can predate every
+# trade in the file the review was built from.
+
+def test_the_request_window_covers_the_ledger_anchor_not_only_the_csv():
+    """The cross-route hazard, and the reason `market_request` reads the ledger.
+
+    Scoped to the CSV alone, the frozen map is complete for this review and short
+    a split for the next `consider` on the same root — and neither side looks
+    wrong, because the whole failure is an event that is simply absent.
+    """
+    import trade_recap as tr
+    rows = [{"ticker": "NVDA", "date": dt.date(2026, 7, 1), "qty": 10.0,
+             "price": 100.0, "market": "US", "currency": "USD"}]
+    csv_only = tr.market_request(rows, "2026-07-30", None)
+    widened = tr.market_request(rows, "2026-07-30", None, rebase_origin="2020-03-04")
+    assert widened["window_start"] <= "2020-03-04", (
+        "a rebase origin older than the CSV must widen the window, or the splits between the "
+        f"anchor and the first trade are not in the response at all: {widened}")
+    assert widened["rebase_origin"] <= "2020-03-04"
+    assert csv_only["window_start"] > "2020-03-04", (
+        "the CSV-only request is the narrow one this test exists to contrast with; if it "
+        f"already reached back that far the assertion above proves nothing: {csv_only}")
+    # And the widening is a widening, never a narrowing of the origin: narrowing
+    # is the silent omission `market_data.build_request` refuses outright.
+    import market_data
+    for request in (csv_only, widened):
+        assert request["rebase_origin"] >= request["window_start"], request
+        market_data.build_request(**request)      # must not raise
+
+
+def test_the_review_asks_the_ledger_for_that_origin_rather_than_assuming_one():
+    """`_ledger_rebase_origin` is the supplier. A version that returned None
+    would leave the window CSV-scoped with every gate above still green — the
+    supply-side blind spot that shipped twice in this repository already."""
+    import trade_recap as tr
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "ledger.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "snapshot", "as_of": "2020-03-04", "source": "broker",
+                "positions": [{"ticker": "NVDA", "shares": 10.0, "avg_cost": 5.0,
+                               "currency": "USD", "market": "US"}]}) + "\n")
+        saved = os.environ.get("TR_LEDGER")
+        os.environ["TR_LEDGER"] = path
+        try:
+            got = tr._ledger_rebase_origin()
+        finally:
+            if saved is None:
+                os.environ.pop("TR_LEDGER", None)
+            else:
+                os.environ["TR_LEDGER"] = saved
+    assert got == "2020-03-04", (
+        f"the recorded anchor is the oldest date a later consumer rebases from; got {got!r}")
+
+
+def test_an_unreadable_ledger_widens_nothing_and_refuses_nothing():
+    """It is a window hint, not a gate. A first-ever review, a corrupt line or an
+    unset path must leave `prepare` working exactly as it does with no ledger."""
+    import trade_recap as tr
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "broken.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{not json at all\n")
+        saved = os.environ.get("TR_LEDGER")
+        os.environ["TR_LEDGER"] = path
+        try:
+            assert tr._ledger_rebase_origin() is None
+            os.environ["TR_LEDGER"] = os.path.join(tmp, "does-not-exist.jsonl")
+            assert tr._ledger_rebase_origin() is None
+        finally:
+            if saved is None:
+                os.environ.pop("TR_LEDGER", None)
+            else:
+                os.environ["TR_LEDGER"] = saved
+
+
 def _main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

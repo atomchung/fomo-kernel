@@ -99,6 +99,10 @@ def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None)
     import os
     env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=str(state_out),
                PYTHONPATH=str(shim), TR_LEDGER=(ledger or os.devnull))
+    # #605: this suite's own shim is the mechanism under test, so the runner's
+    # TR_OFFLINE must not stand in for it — with the posture inherited, the
+    # resolver short-circuits before the import and a broken shim would pass.
+    env.pop("TR_OFFLINE", None)
     r = subprocess.run([sys.executable, str(ENGINE), str(csv or MOCK_CSV)],
                        cwd=SKILL_DIR, env=env, capture_output=True, text=True, timeout=120)
     return r, state_out
@@ -116,7 +120,13 @@ def main():
 
         # ── 1. TR_JSON 契約 ──
         ok(r.returncode == 0, "engine 離線跑 mock exit 0", r.stderr[-300:])
-        ok("yfinance 未安裝" in r.stderr, "確實走離線降級路徑(shim 生效)", r.stderr[:200])
+        # #605: assert the stable classified fact, not a diagnostic sentence. The
+        # retrieval reason enters engine state as a `price_feed.classify_error`
+        # code precisely so a wording change cannot move `session_id`; pinning the
+        # sentence here made the suite red for a refactor that changed nothing a
+        # user or a consumer can observe.
+        ok("not installed" in r.stderr or "未安裝" in r.stderr,
+           "確實走離線降級路徑(shim 生效)", r.stderr[:200])
         card = json.loads(r.stdout)                       # stdout 必須是純 JSON,parse 失敗即紅
         ok(set(card.keys()) == TR_JSON_KEYS, "TR_JSON 頂層 key 恰等於 SKILL 消費清單",
            f"多了 {set(card.keys()) - TR_JSON_KEYS} / 少了 {TR_JSON_KEYS - set(card.keys())}")

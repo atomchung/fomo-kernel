@@ -9,10 +9,9 @@ fomo-kernel · trade-recap engine v0.2
 """
 import csv, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor
-import fetch_cache
 import instruments as instrument_policy
 import market_context as market_context_engine
+import market_data
 import price_feed
 import portfolio_basis
 import splits as split_policy
@@ -501,45 +500,32 @@ def currency_map(rows):
     return cur_map, sorted(set(cur_map.values())), sorted(conflicts)
 
 
-def fetch_fx(currencies, feed=None):
-    """非 USD 幣別 → yfinance '{CUR}=X'(1 USD 兌多少 CUR)→ {cur: usd_per_unit};USD 恆 1.0。
-    離線/失敗 → 缺誰記誰,不 crash(呼叫端把缺口寫進 data_integrity,聚合以 1.0 近似並明示)。
-    feed(#289 agent-supplied envelope)在場 → 只讀 feed,不碰網路:餵 feed 的前提就是
-    這台機器抓不到,再試一次只是把 prepare 卡在 DNS timeout 上。"""
+def fetch_fx(currencies, bundle=None, feed=None):
+    """非 USD 幣別 → {cur: usd_per_unit};USD 恆 1.0。缺誰記誰,不 crash
+    (呼叫端把缺口寫進 data_integrity;#602 起混幣缺匯率在 consequence 那側 fail closed)。
+
+    #605:取得層已搬進 ``market_data``——這裡只把一份已解析的 bundle 投影成本函式
+    歷來的回傳形狀。逐幣別 ``Ticker("{CUR}=X").history`` 那條路退役了:它與價格下載
+    打同一個 chart 端點、又在另一個瞬間,故一份 bundle 同時給價、給分割、給匯率。
+    實測批次末筆有效收盤反轉後與舊路徑到最後一位數相同,是替換而非重新近似。
+    """
     fx = {"USD": 1.0}
     todo = sorted(c for c in set(currencies) if c and c != "USD")
     if not todo:
         return fx, None
-    if feed is not None:
-        fx.update({c: r for c, r in price_feed.fx_rates(feed).items() if c in todo})
-        missing = [c for c in todo if c not in fx]
-        return fx, (f"匯率無資料(供給的價格檔未含): {','.join(missing)}" if missing else None)
-    try:
-        import yfinance as yf
-    except ImportError:
-        return fx, "yfinance 未安裝(匯率缺,多幣別聚合按原幣近似)"
-    # #235:同 splits/prices,讀取點在 import 之後。只快取「全數抓到」的結果——
-    # 部分失敗當日重試才對,把缺口快取起來等於把一次網路抖動變成當天的結論。
-    cached = fetch_cache.load("fx", todo)
-    if cached is not None:
-        fx.update(cached)
-        return fx, None
-    err = None
-    for c in todo:
-        try:
-            h = yf.Ticker(f"{c}=X").history(period="5d")["Close"].dropna()
-            if len(h):
-                usd_per_cur = 1.0 / float(h.iloc[-1])       # '{CUR}=X' 報 1 USD 兌 CUR → 反轉成 CUR→USD
-                if usd_per_cur > 0:
-                    fx[c] = round(usd_per_cur, 6)
-        except Exception as e:                               # 單一幣別抓不到不連累其他
-            err = f"匯率下載失敗({c}): {e}"
+    if bundle is None:
+        return fx, "匯率缺(未解析行情 bundle,多幣別聚合按原幣近似)"
+    fx.update({c: r for c, r in bundle.fx.items() if c in todo})
     missing = [c for c in todo if c not in fx]
-    if missing and not err:
-        err = f"匯率無資料: {','.join(missing)}"
-    if not err:
-        fetch_cache.store("fx", todo, {c: fx[c] for c in todo})
-    return fx, err
+    if not missing:
+        return fx, None
+    reason = "; ".join(gap.get("detail") or gap["code"] for gap in bundle.gaps
+                       if gap["code"] in {"fx_unavailable", "network_disabled",
+                                          "provider_missing", "transport_failed",
+                                          "empty_response", "response_shape",
+                                          "feed_incomplete"})
+    source = "供給的價格檔未含" if bundle.source == "supplied" else "來源無資料"
+    return fx, f"匯率無資料({source}): {','.join(missing)}" + (f" — {reason}" if reason else "")
 
 
 def fx_request_currencies(currencies, requested_display=None):
@@ -551,40 +537,26 @@ def fx_request_currencies(currencies, requested_display=None):
     return sorted(held)
 
 
-def fetch_fx_series(currencies, start, feed=None):
-    """非 USD 幣別的每日匯率序列('{CUR}=X' → usd_per_unit DataFrame),帳戶級估值用
-    (#171 拍板默認:混幣 V_t 用每日 fx、含匯率損益)。離線/缺 →(None, err),
+def fetch_fx_series(currencies, start, bundle=None, feed=None):
+    """非 USD 幣別的每日匯率序列(usd_per_unit DataFrame),帳戶級估值用
+    (#171 拍板默認:混幣 V_t 用每日 fx、含匯率損益)。缺 →(None, err),
     呼叫端退回即期 fx 常數近似(perf.basis.fx_approx 會標記、honesty 揭露)。
-    feed 在場 → 不碰網路:envelope 只帶即期匯率,序列誠實缺席走既有近似路徑。"""
+
+    #605:序列與即期出自同一份 bundle、同一次回應,故兩者不可能描述不同瞬間;
+    供給式 envelope 只帶即期匯率,序列誠實缺席、走既有近似路徑(形狀不變)。
+    ``start`` 只用來裁窗:bundle 的窗口是全審視窗的下界,可能比這裡要的更早。
+    """
     todo = sorted({c for c in currencies if c != "USD"})
     if not todo:
         return None, None
-    if feed is not None:
+    if bundle is None:
+        return None, "fx 序列缺(未解析行情 bundle),帳戶級估值退回即期近似"
+    if bundle.source == "supplied":
         return None, "fx 序列缺(供給的價格檔只帶即期匯率),帳戶級估值退回即期近似"
-    try:
-        import yfinance as yf
-    except ImportError:
-        return None, "yfinance 未安裝(fx 序列缺,帳戶級估值退回即期近似)"
-    try:
-        data = yf.download([f"{c}=X" for c in todo], start=start,
-                           progress=False, auto_adjust=True)["Close"]
-        if data is None or data.empty:
-            return None, "fx 序列無資料"
-        if data.ndim == 1:
-            data = data.to_frame(name=f"{todo[0]}=X")
-        cols = {}
-        for c in todo:
-            col = f"{c}=X"
-            if col in data.columns:
-                s = data[col].dropna()
-                if len(s):
-                    cols[c] = 1.0 / s                 # '{CUR}=X' 報 1 USD 兌 CUR → 反轉成 CUR→USD
-        if not cols:
-            return None, "fx 序列全缺"
-        import pandas as pd
-        return pd.DataFrame(cols), None
-    except Exception as e:
-        return None, f"fx 序列下載失敗: {e}"
+    frame = _project_frame(bundle.fx_frame, todo, start)
+    if frame is None:
+        return None, "fx 序列無資料"
+    return frame, None
 
 
 def usd_view(rts, held, last_px, cur_map, fx):
@@ -619,47 +591,106 @@ def pnl_by_currency(rts, held, last_px, cur_map):
     return {c: {k: round(v, 2) for k, v in d.items()} for c, d in sorted(out.items())}
 
 
-# ───────────────────── 4. yfinance 補價（賣太早）─────────────────────
-def fetch_prices(tickers, start, feed=None):
+# ───────────────────── 4. 行情取得（賣太早的補價）─────────────────────
+#: 一次復盤永遠要的基準/市場語境 symbol(#605 前散在 fetch_prices 的 universe 字面裡)。
+PRICE_CONTEXT_SYMBOLS = ("SPY", "QQQ", "SOXX", "^VIX")
+
+
+def _project_frame(frame, columns, start=None):
+    """把一份較寬的價格框投影成呼叫端要的欄位與窗口,或 ``None``。
+
+    #605 的取得層一次請求一個較寬的 universe(下界窗口 + rows 全部 ticker),
+    每個消費者再投影回自己歷來看到的那一份。三個動作都是必要的:選欄(多出來的
+    欄會多出 ``price_observations`` 條目與 ``price_snapshot.prices`` 鍵)、裁窗
+    (較早的起點會改變 β 的觀測數)、丟掉投影後整列皆空的日子(否則某個沒被投影
+    到的 symbol 自己的交易日會留在 index 裡,把 ``price_observations`` 的
+    staleness 基準日 ``data.index[-1]`` 往後推,讓本來新鮮的價變成過期)。
+    """
+    if frame is None:
+        return None
+    wanted = [c for c in frame.columns if str(c) in set(columns)]
+    if not wanted:
+        return None
+    out = frame[wanted]
+    if start is not None:
+        import pandas as pd
+        out = out[out.index >= pd.Timestamp(str(start))]
+    out = out.dropna(how="all")
+    return out if len(out.index) else None
+
+
+def _ledger_rebase_origin():
+    """這台機器的帳本錨點日,或 ``None``。
+
+    #605 的跨路徑陷阱:``prepare`` 凍結的分割 map 之後會被 ``consider`` 拿去對**帳本
+    錨點**套用,而錨點可能比這份 CSV 提到的任何日子都早。窗口只按 CSV 算,那份 map
+    對這次復盤是完整的、對下一次 ``consider`` 卻少一筆分割——沒有任何一側看起來有問題。
+    所以請求的窗口要蓋住兩者的聯集。讀不到帳本(第一次跑、壞行、沒設定)就回 ``None``:
+    這裡只會把窗口變寬,絕不擋跑。
+    """
+    try:
+        from ledger import load_ledger, latest_anchor, DEFAULT_LEDGER
+        events, _ = load_ledger(os.environ.get("TR_LEDGER") or DEFAULT_LEDGER)
+        anchor = latest_anchor(events, declared_only=True)
+    except Exception:                                       # noqa: BLE001  # 窗口提示,不是閘門
+        return None
+    as_of = (anchor or {}).get("as_of")
+    return str(as_of) if as_of else None
+
+
+def market_request(rows, date_end, prev_end, currencies=(), requested_display=None,
+                   rebase_origin=None):
+    """一次復盤要的唯一行情請求 —— 在任何分割被套用之前就算得出來。
+
+    這是 #605 的排序關鍵。分割必須在 ``round_trips`` 之前套用,而
+    ``round_trips`` 又決定價格 universe 與窗口,所以「先知道窗口再取得」是做不到的。
+    解法是請求一個可證明的**下界**:窗口取 ``rows[0]`` 前推(而非 round-trip 起點,
+    後者只會更晚),universe 取 rows 的全部 ticker(``tickers | bench`` 只會更窄),
+    然後每個消費者用 :func:`_project_frame` 投影回自己那一份。多取一點資料是安全的,
+    少取一天分割不是——後者靜默變成因子 1.0。
+
+    ``rebase_origin`` 是任何消費者會「從哪一天起往後套分割」的最早日期。CSV 這條路
+    是第一筆成交日;帳本那條路是錨點日,而錨點可能比這份 CSV 提到的任何日子都早
+    ——所以呼叫端把它傳進來,``market_data.build_request`` 才擋得住一個
+    「窗口蓋不住自己 rebase 起點」的請求。
+    """
+    first_trade = min(r["date"] for r in rows)
+    context_start, context_end = review_window(date_end, prev_end)
+    window_start = shared_price_start(
+        (first_trade - dt.timedelta(days=10)).isoformat(), context_start, context_end)
+    # A rebase origin older than the natural window widens the *window*; it never
+    # narrows the origin. Narrowing would be the silent-omission failure
+    # `market_data.build_request` refuses outright.
+    origin = min(window_start, str(rebase_origin)) if rebase_origin else window_start
+    window_start = min(window_start, origin)
+    tickers = {r["ticker"] for r in rows}
+    markets = {r["ticker"]: r.get("market", "US") for r in rows}
+    bench = {p for p in (_sector_proxy(t, markets.get(t, "US")) for t in tickers) if p}
+    bench |= {MARKET_BENCH.get(m, "SPY") for m in set(markets.values())}
+    bench |= set(PRICE_CONTEXT_SYMBOLS) | set(market_context_engine.SYMBOLS)
+    return market_data.build_request(
+        instruments=tickers, benchmarks=bench,
+        currencies=fx_request_currencies(currencies, requested_display),
+        window_start=window_start, rebase_origin=origin)
+
+
+def fetch_prices(tickers, start, bundle=None, feed=None):
     """價格框(index=日期, columns=ticker)。失敗一律 (None, 人話原因),絕不 crash。
 
-    feed(#289):沙箱 host 抓不到價時,agent 從公認資料源查回來的 envelope 走這條——
-    只讀 envelope、完全不碰網路,單日收盤就足以還原損益,帶日線 history 才解鎖
-    基準/β/帳戶柱。envelope 沒涵蓋的 ticker 就是缺價,誠實留白不補洞。"""
-    if feed is not None:
-        universe = sorted(set(tickers) | set(market_context_engine.SYMBOLS))
-        frame, err = price_feed.to_frame(feed, universe)
-        return frame, err
-    try:
-        import yfinance as yf
-    except ImportError:
-        return None, "yfinance 未安裝"
-    import pandas as pd                                    # yfinance 的相依,到這行必定可用
-    universe = sorted(set(tickers) | {"SPY", "QQQ", "SOXX", "^VIX"})
-    # #235:同 fetch_splits——快取只在 import 成功後可達,離線 shim 到不了這裡。
-    # 只快取「抓到東西」的結果:失敗與空框每次都該重試,不該被快取成當日結論。
-    key = {"universe": universe, "start": str(start)}
-    cached = fetch_cache.load("prices", key)
-    if cached is not None:
-        return (pd.DataFrame(cached["data"], columns=cached["columns"],
-                             index=pd.to_datetime(cached["index"])), None)
-    try:
-        data = yf.download(universe, start=start,
-                           progress=False, auto_adjust=True)["Close"]
-    except Exception as e:
-        return None, f"yfinance 下載失敗: {e}"
-    if data is None or data.empty:
-        return None, "yfinance 無資料"
-    if data.ndim == 1:
-        data = data.to_frame()
-    fetch_cache.store("prices", key, {
-        "index": [idx.date().isoformat() for idx in data.index],
-        "columns": [str(c) for c in data.columns],
-        # NaN 不是合法 JSON;None 讀回來由 pandas 還原成 NaN,缺價語意不變。
-        "data": [[None if value != value else float(value) for value in row]
-                 for row in data.to_numpy()],
-    })
-    return data, None
+    #605:取得層搬進 ``market_data``,本函式只投影。舊行為逐項保留 ——
+    universe 仍隱含補上 :data:`PRICE_CONTEXT_SYMBOLS`(引擎自取)或
+    ``market_context_engine.SYMBOLS``(供給式 envelope),故市場語境與價格出自同一框。
+    """
+    if bundle is None:
+        return None, "價格不可得(未解析行情 bundle)"
+    extra = (set(market_context_engine.SYMBOLS) if bundle.source == "supplied"
+             else set(PRICE_CONTEXT_SYMBOLS))
+    frame = _project_frame(bundle.frame, set(tickers) | extra, start)
+    if frame is None:
+        reason = "; ".join(gap.get("detail") or gap["code"] for gap in bundle.gaps
+                           if gap["code"] != "symbol_unpriced")
+        return None, reason or "行情來源無資料"
+    return frame, None
 
 
 def review_window(date_end, previous_end=None):
@@ -724,43 +755,23 @@ def market_context_from_prices(data, error, start, end):
                 prices[symbol] = series
     return market_context_engine.build_output(prices or None, error, start, end)
 
-def fetch_splits(tickers, feed=None):
-    """抓每檔的分割事件 {ticker: [(date, ratio), ...]}。抓不到/離線 → 回 {}(不調整,降級)。
-    feed(#289)在場 → 只認 envelope 宣告的分割事件,不碰網路;沒宣告 = 不調整(降級同離線)。
-    yfinance 沒有批次 splits 端點,只能逐檔;序列逐檔是 prepare 網路時間裡唯一隨持倉數
-    線性增長的段(#235 實測 8 執行緒 4.2×),故執行緒並行。結果按排序後的 ticker 合併,
-    與序列版逐檔輸出一致;單檔失敗仍不連累其他檔。"""
-    if feed is not None:
-        return price_feed.splits_map(feed, tickers)
-    try:
-        import yfinance as yf
-    except ImportError:
-        return {}
-    # #235:快取只在 import 成功後才可達,離線 shim 走上面那條 return 就先返回了
-    # ——舊快取因此永遠進不了確定性測試。日期不同即整檔作廢(fetch_cache)。
-    todo = sorted(set(tickers))
-    if not todo:
-        return {}
-    cached = fetch_cache.load("splits", todo)
-    if cached is not None:
-        return {t: [(dt.date.fromisoformat(d), float(r)) for d, r in rows]
-                for t, rows in cached.items()}
+def fetch_splits(tickers, bundle=None, feed=None):
+    """這些 ticker 的分割事件 {ticker: [(date, ratio), ...]}。缺 → {}(不調整,降級)。
 
-    def one(t):
-        try:
-            s = yf.Ticker(t).splits           # pandas Series:index=日期, value=分割比率(10:1 → 10.0)
-            if s is not None and len(s):
-                return [(d.date(), float(r)) for d, r in s.items() if r and r > 0]
-        except Exception:                     # 單檔抓不到不影響其他檔
-            return None
-        return None
+    #605:逐檔 ``Ticker(t).splits`` 退役 —— 它為每一檔重打一次價格下載已經打過的
+    chart 端點(六檔書實測 17 次請求 vs 下界 8 次)。現在分割觀測與收盤價出自同一次
+    回應,同一個 bundle。
 
-    with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
-        fetched = list(pool.map(one, todo))   # map 保持輸入順序 → 輸出決定論
-    out = {t: v for t, v in zip(todo, fetched) if v}
-    fetch_cache.store("splits", todo,
-                      {t: [[d.isoformat(), r] for d, r in rows] for t, rows in out.items()})
-    return out
+    有一個語意差異必須明講,因為它是靜默錯的形狀:``Ticker(t).splits`` 是**無界**的
+    (AAPL 回到 1987),窗口化的回應只含窗口內的分割。這仍然是完整的,理由寫在
+    ``market_data`` 的模組說明:每個消費者只套用某個真實帳面日期(錨點、成交日、
+    觀測日)**之後**的分割,而 :func:`market_request` 的窗口起點必定不晚於那個日期,
+    ``market_data.build_request`` 也擋掉蓋不住自己 rebase 起點的請求。
+    """
+    if bundle is None:
+        return {}
+    wanted = set(tickers)
+    return {t: events for t, events in bundle.splits.items() if t in wanted}
 
 def adjust_for_splits(rows, splits):
     """把每筆成交換算到『分割後(今日)』基礎,與 yfinance auto_adjust 的價格對齊。
@@ -2390,7 +2401,17 @@ def main():
             print(f"❌ 供給的價格檔幣別與交易紀錄不符({detail})——修正 envelope 後重跑 prepare",
                   file=sys.stderr)
             sys.exit(1)
-    splits = fetch_splits({r["ticker"] for r in rows}, feed=feed)
+    # #605:一次請求、一份 bundle。收盤價、分割觀測與匯率出自同一次回應,所以這張卡
+    # 上的價、分割與匯率不可能來自三個不同瞬間(實測 ^VIX 的末筆收盤在相隔數秒的兩次
+    # 呼叫間就不同了)。請求必須在分割套用之前組好——理由見 market_request。
+    cur_map, currencies, cur_conflicts = currency_map(rows)
+    requested_display = str(os.environ.get("TR_DISPLAY_CURRENCY") or "").strip().upper()
+    bundle = market_data.resolve(
+        market_request(rows, date_end, prev_end, currencies=currencies,
+                       requested_display=requested_display,
+                       rebase_origin=_ledger_rebase_origin()),
+        feed=feed)
+    splits = fetch_splits({r["ticker"] for r in rows}, bundle=bundle)
     n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
     # #330:供給價的軟性合理性複核——結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住
     # 「看起來合理但其實錯」的假數字。用這檔自己「最近一次真實成交價」(分割調整後,
@@ -2411,7 +2432,7 @@ def main():
     t_market = {r["ticker"]: r.get("market", "US") for r in rows}   # ticker→market(per-market 基準/拆帳用)
     bench = {p for p in (_sector_proxy(t, t_market.get(t, "US")) for t in tickers) if p}   # 拆帳要的板塊 ETF(押賽道 vs 選股)
     bench |= {MARKET_BENCH.get(m, "SPY") for m in set(t_market.values())}   # 各市場主基準(TW→^TWII)一起抓
-    px, yf_err = fetch_prices(tickers | bench, start, feed=feed)
+    px, yf_err = fetch_prices(tickers | bench, start, bundle=bundle)
     n_fwd = adaptive_n_fwd(rows)                           # 觀察窗隨資料長度自適應
     fwds, last_px = fwd_from_px(rts, px, n_fwd)
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
@@ -2433,14 +2454,14 @@ def main():
                     and not instrument_policy.is_diversified_allocation(r["ticker"])]  # 配置 ETF 再平衡/現金管理,非選股決策
     # 多市場幣別(#51/#129 PR-2a):跨 ticker 聚合必須在共同幣別(USD)上做,否則台股 985 元 + 美股 985 美元
     # 直接相加 = 靜默算錯。單一幣別組合(含純台股)聚合自洽 → 不抓匯率、路徑零變化。
-    cur_map, currencies, cur_conflicts = currency_map(rows)
+    # cur_map / currencies / requested_display 在上面組行情請求時就算過了(#605):
+    # 匯率必須與價格、分割同一次請求,所以幣別要在那之前就知道。
     mixed_ccy = len(currencies) > 1
     # Rendering is deterministic and must not fetch at preview/finalize time.
     # The orchestration layer therefore requests the locale's display currency
     # during prepare, even when that currency is not held in the portfolio.
-    requested_display = str(os.environ.get("TR_DISPLAY_CURRENCY") or "").strip().upper()
     fx_currencies = fx_request_currencies(currencies, requested_display)
-    fx, fx_err = fetch_fx(fx_currencies, feed=feed) if mixed_ccy else ({"USD": 1.0}, None)
+    fx, fx_err = fetch_fx(fx_currencies, bundle=bundle) if mixed_ccy else ({"USD": 1.0}, None)
     # 價格可得性(#289):這次的價從哪來、覆蓋到哪、還缺什麼——全部機讀化。
     # 缺價不是「零報酬」也不是「下市」,是資料可得性故障,必須對用戶與 QA 都保持可見。
     priced = {t for t in tickers if t in last_px}
@@ -2588,7 +2609,7 @@ def main():
         data_integrity["cash_residuals"] = cash_residuals
     fx_series = None
     if mixed_ccy and px is not None:
-        fx_series, _fxs_err = fetch_fx_series(currencies, start, feed=feed)
+        fx_series, _fxs_err = fetch_fx_series(currencies, start, bundle=bundle)
     acct_perf = account_perf(rows, px, cash_flows, cash_data, cur_map,
                              fx_spot=fx if mixed_ccy else None, fx_series=fx_series,
                              cash_residuals=cash_residuals)
