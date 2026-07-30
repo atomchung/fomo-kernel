@@ -1227,6 +1227,90 @@ def test_the_review_asks_the_ledger_for_that_origin_rather_than_assuming_one():
         f"the recorded anchor is the oldest date a later consumer rebases from; got {got!r}")
 
 
+def test_a_frozen_map_that_cannot_cover_the_anchor_refuses_instead_of_reconciling():
+    """The residue of windowed retrieval, and it is a silent-wrong-number one.
+
+    `refresh` and prepare's catch-up gate read the frozen map and may not
+    re-resolve (#558: refresh is two CLI calls and a fetch between them could
+    invalidate a `refresh_id` mid-answer). So a map whose window opens after the
+    ledger anchor cannot say what happened to the share counts in between.
+
+    Measured, not argued. 90 shares declared before a ten-for-one and never traded
+    since reconcile cleanly against a post-split broker view of 900 when the map
+    covers the split; one window short, `plan_refresh` returns a `large_change`
+    asking the user to confirm going from 90 shares to 900 — and confirming it
+    writes a wrong share count into the book.
+    """
+    import book_refresh as refresh_engine
+    complete = {"NVDA": [["2024-06-10", 10.0]]}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "ledger.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "snapshot", "as_of": "2024-01-01", "source": "broker",
+                "positions": [{"ticker": "NVDA", "shares": 90.0, "avg_cost": 40.0,
+                               "currency": "USD", "market": "US"}]}) + "\n")
+        events, _ = lg.load_ledger(path)
+        snap = os.path.join(tmp, "snap.json")
+        with open(snap, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-07-30", "positions": [
+                {"ticker": "NVDA", "shares": 900.0, "avg_cost": 4.0,
+                 "currency": "USD", "market": "US"}]}, handle)
+        snapshot, anchor = snapshot_adapter.normalize_book(snap)
+
+        covered = refresh_engine.plan_refresh(events, snapshot, anchor, splits=complete)
+        assert covered["summary"]["status"] == "reconciled", (
+            "with the split in the map this book has nothing to settle: "
+            f"{covered['summary']}")
+        short = refresh_engine.plan_refresh(events, snapshot, anchor, splits={})
+        assert [row["kind"] for row in short["pending_confirmations"]] == ["large_change"], (
+            "this is the damage being prevented — a share change the user never made: "
+            f"{short['pending_confirmations']}")
+
+        # The gate: a recorded window that opens after the anchor refuses.
+        state_dir = os.path.join(tmp, "root")
+        os.makedirs(state_dir, exist_ok=True)
+        with open(os.path.join(state_dir, "last_state.json"), "w", encoding="utf-8") as handle:
+            json.dump({"splits": {}, "splits_window": {"start": "2025-12-15",
+                                                       "rebase_origin": "2025-12-15"}}, handle)
+        try:
+            review._refuse_an_unprovable_split_basis(state_dir, "2024-01-01")
+        except review.ReviewError as exc:
+            assert "2025-12-15" in str(exc) and "2024-01-01" in str(exc), (
+                f"the refusal must name both dates so the user can act: {exc}")
+        else:
+            raise AssertionError(
+                "a frozen map that opens after the anchor must refuse rather than reconcile "
+                "against a basis nothing established")
+
+        # And it stays silent for the ordinary shapes.
+        review._refuse_an_unprovable_split_basis(state_dir, "2026-01-01")   # anchor inside window
+        with open(os.path.join(state_dir, "last_state.json"), "w", encoding="utf-8") as handle:
+            json.dump({"splits": {}}, handle)                # a pre-#605 review: map was unbounded
+        review._refuse_an_unprovable_split_basis(state_dir, "2024-01-01")
+
+
+def test_a_review_freezes_the_window_its_split_map_is_complete_from():
+    """The stamp the refusal above reads. Without it the insufficiency is
+    undetectable, which is how it would have shipped silently."""
+    import trade_recap as tr
+    rows = [{"ticker": "NVDA", "date": dt.date(2026, 7, 1), "qty": 10.0,
+             "price": 100.0, "market": "US", "currency": "USD"}]
+    request = tr.market_request(rows, "2026-07-30", None, rebase_origin="2020-03-04")
+    assert request["window_start"] <= "2020-03-04"
+    # `build_state` takes the window as a parameter and stamps it verbatim rather
+    # than re-deriving it — a second derivation is what would let the stamp and the
+    # map it describes drift apart. Checked at the signature, because driving the
+    # whole state builder needs a full review's worth of inputs and would test
+    # everything except this.
+    import inspect
+    assert "splits_window" in inspect.signature(tr.build_state).parameters, (
+        "build_state must accept the window beside the map it describes")
+    source = inspect.getsource(tr.build_state)
+    assert '"splits_window": splits_window,' in source, (
+        "the stamp must be the value it was handed, never a re-derivation inside build_state")
+
+
 def test_an_unreadable_ledger_widens_nothing_and_refuses_nothing():
     """It is a window hint, not a gate. A first-ever review, a corrupt line or an
     unset path must leave `prepare` working exactly as it does with no ledger."""

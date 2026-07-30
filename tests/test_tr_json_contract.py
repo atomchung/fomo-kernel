@@ -56,6 +56,7 @@ STATE_KEYS = {
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
     "price_snapshot", "valuation_frame", "market_context",  # #500 receipt is private state only
     "splits",                                           # #550:這次真的套用的分割事件;帳本存名目股數,跨分割累加股數的讀者(revisit.detect_exits)要拿同一份,否則減碼被讀成清倉
+    "splits_window",                                    # #605:上面那份表**從哪天起**是完整的。批次取得只帶窗口內的分割,而 refresh 與 catch-up 閘門按契約不重抓——一份蓋不住自己錨點的表會把 90 股讀成 900 股改動,故窗口跟著表凍,讓讀者查得出夠不夠
     "price_provenance", "price_request",                # #289:價格來源/覆蓋率 + 待補清單,degraded 模式必須可觀測
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }

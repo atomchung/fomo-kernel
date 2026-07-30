@@ -1962,7 +1962,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
                 max_pos_override=None, price_provenance=None, price_request=None,
-                prices=None, valuation_frame=None, splits=None):
+                prices=None, valuation_frame=None, splits=None,
+                splits_window=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -2094,6 +2095,14 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
         # 100 股(分割後)會等於 0——10% 減碼被讀成清倉。凍在 state 裡是為了讓
         # review._prepare_exit_capture 消費「這次復盤真的用過的那一份」,而不是各自再抓一次。
         "splits": split_policy.to_json(splits),
+        # #605:這份分割表**從哪一天起**是完整的。取得層改成一次批次請求之後,回應只帶
+        # 窗口內的分割(舊的逐檔 `Ticker(t).splits` 是無界的),而 `review._recorded_splits`
+        # 的兩個讀者(refresh、以及 prepare 自己的 catch-up 閘門)按契約不重抓
+        # (#558:refresh 是兩次 CLI 呼叫,中間抓一次網會讓 refresh_id 在用戶作答途中失效)。
+        # 一份「蓋不住自己錨點」的表在那裡會靜默把 90 股讀成 900 股改動 —— 實測
+        # plan_refresh 會冒出一筆 large_change,叫用戶確認一次從未發生的股數變動。
+        # 所以窗口跟著表一起凍,讓讀者**查得出**夠不夠,而不是假設夠。
+        "splits_window": splits_window,
         "valuation_frame": valuation_frame,                 # #500 private canonical native-price/FX receipt; never card JSON
         "price_provenance": price_provenance,               # #289:價格來源與覆蓋率(engine_fetch / agent_feed / unavailable),degraded 模式必須可觀測
         "price_request": price_request,                     # #289:還缺哪些價的機讀清單,agent 據此去公認資料源補檔再重跑 prepare
@@ -2717,7 +2726,9 @@ def main():
                             price_snapshot=price_snapshot, market_context=review_market,
                             max_pos_override=max_pos_override,
                             price_provenance=price_provenance, price_request=price_request,
-                            prices=px, valuation_frame=frame, splits=splits)
+                            prices=px, valuation_frame=frame, splits=splits,
+                            splits_window={"start": bundle.window["start"],
+                                           "rebase_origin": bundle.rebase_origin})
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."

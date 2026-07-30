@@ -526,6 +526,8 @@ def _refuse_if_the_book_must_catch_up(root, snapshot_path):
     try:
         events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
         snapshot, anchor = snapshot_adapter.normalize_book(snapshot_path)
+        recorded_anchor = ledger.latest_anchor(events or [], declared_only=True) or {}
+        _refuse_an_unprovable_split_basis(root, recorded_anchor.get("as_of"))
         plan = book_refresh.plan_refresh(events, snapshot, anchor,
                                          splits=_recorded_splits(root))
     except (ValueError, snapshot_adapter.SnapshotError) as exc:
@@ -650,6 +652,53 @@ def _recorded_splits(root):
     been reviewed carries no map and degrades to unadjusted, as before.
     """
     return (_previous_state(root) or {}).get("splits")
+
+
+def _refuse_an_unprovable_split_basis(root, anchor_as_of):
+    """Refuse when the frozen split map cannot testify about this book's anchor.
+
+    #605's residue, and it is a silent-wrong-number one. Retrieval used to be
+    unbounded, so whatever date a reader rebased from, the frozen map covered it.
+    One batched request carries only the splits inside its window, and the two
+    readers here — ``refresh`` and ``prepare``'s own catch-up gate — may not
+    re-resolve: ``refresh`` runs as two CLI calls and content-addresses what the
+    user was shown, so a fetch between them could invalidate a ``refresh_id``
+    mid-answer (#558's ruling, unchanged).
+
+    Measured, not argued. A book holding 90 shares declared before a ten-for-one
+    and never traded since reconciles cleanly against a post-split broker view of
+    900 when the map covers the split; with the map one window short,
+    ``plan_refresh`` returns a ``large_change`` asking the user to confirm going
+    from 90 shares to 900 — a change that never happened — plus a matching
+    ``avg_cost`` move. Confirm it and a wrong share count enters the book
+    durably.
+
+    ``trade_recap.market_request`` makes this unreachable for an ordinary root:
+    it derives its window from the union of the CSV's first trade and the ledger
+    anchor, and ``prepare`` passes the root's own ledger through ``TR_LEDGER``.
+    What it cannot cover is an anchor that arrives *after* the last review with
+    an older ``as_of``. That case refuses here rather than reconciling against a
+    basis nothing established — and refusing is cheap, because the repair is one
+    command: run ``prepare`` again and the map is re-frozen with the anchor in
+    its window.
+
+    A root with no recorded window at all is a pre-#605 review, whose map was
+    unbounded and therefore sufficient. Silence is correct there; treating a
+    missing stamp as insufficient would refuse every user mid-upgrade.
+    """
+    state = _previous_state(root) or {}
+    window = state.get("splits_window") or {}
+    start = str(window.get("start") or "").strip()
+    if not start or not anchor_as_of:
+        return
+    if str(anchor_as_of) >= start:
+        return
+    raise ReviewError(
+        f"the recorded split basis was resolved from {start} and cannot say what happened to "
+        f"this book's share counts before it, but the recorded book is anchored on "
+        f"{anchor_as_of}. Reconciling across that gap would read an unseen split as a share "
+        "change you never made. Run prepare again to re-resolve the split basis over the "
+        "anchor's own window, then repeat this command.")
 
 
 def _effective_splits(root, supplied):
@@ -6083,6 +6132,11 @@ def cmd_refresh(args):
     frozen_splits = _recorded_splits(root)
 
     def _frozen(events):
+        # Both refresh calls check the same condition against the same recorded
+        # window, so the plan and the answer cannot disagree about whether the
+        # basis was provable.
+        recorded_anchor = ledger.latest_anchor(events or [], declared_only=True) or {}
+        _refuse_an_unprovable_split_basis(root, recorded_anchor.get("as_of"))
         return book_refresh.plan_refresh(events, snapshot, anchor,
                                          splits=frozen_splits)
 
