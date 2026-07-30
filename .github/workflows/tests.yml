@@ -1,17 +1,28 @@
 name: tests
 
-# 每次 push / PR 自動跑全套測試 —— 引擎或規格被改壞時當場紅燈,擋在 merge 前。
+# push 只在 main 上跑——這是 merge 後的訊號,main 曾經悄悄變紅沒人發現;pull_request 維持
+# 不限分支,測的是「merge 後的結果」,這才是這個 repo 真正需要的訊號(各自綠的 PR 合起來
+# 變紅,發生過)。一個 PR 分支因此只拿到一個答案、對應一棵樹——過去 push 和 pull_request
+# 曾對同一顆 commit(同一個 headSha)報告矛盾結果,根因是 actions/checkout 對兩種事件結出
+# 不同的樹,不是同一棵樹給兩個答案(#637)。代價老實講:沒開 PR 的分支單純 push,現在不會
+# 觸發這份 CI。
 # 另有每週排程的 network smoke(見 network-smoke job):非阻塞,只給線上半邊訊號(#62)。
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:          # 手動也能點一次 network smoke
   schedule:
     - cron: "17 3 * * 1"      # 每週一 03:17 UTC:離線套件照跑 + network smoke 補線上訊號
 
-# 同一 ref 連續推送只保留最新一次 run,省 CI 額度。
+# 同一 ref 連續推送只保留最新一次 run,省 CI 額度。事件名加進 key 不是為了拆開 push 和
+# pull_request——兩者的 github.ref 本來就不同(refs/heads/<branch> vs refs/pull/<N>/merge),
+# 從未共用過同一個 group。真正會撞在一起的是 main 上的 push 和 schedule/workflow_dispatch:
+# 三者都解析到 refs/heads/main,拿掉事件名的話,push 落地可能悄悄取消掉正在跑的週期性
+# network smoke,那組非阻塞訊號就這樣無聲消失(#637)。
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -23,6 +34,20 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+      # #637: 兩個觸發曾各自結出不同的樹,卻對著同一個 headSha 報告矛盾結果。這步印出
+      # 事件名和實際結出的 commit,讓一個紅燈能被歸因,不必再開兩個 run 猜是哪一棵樹。
+      # base/head 取自事件 payload,不是 `git log --pretty=%P`:actions/checkout 預設
+      # fetch-depth: 1,淺 clone 會把 HEAD 的親代改寫成空,那條路在 CI 裡永遠不會觸發
+      # (本機用 --depth 1 實測過)。而且 base 才是 #637 真正缺的那個事實——當初那條分支
+      # 是跟「哪一版 main」合起來測的。
+      - name: State which tree and trigger this run actually tested
+        run: |
+          echo "event: ${{ github.event_name }}"
+          echo "resolved commit: $(git rev-parse HEAD)"
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "ephemeral merge of head ${{ github.event.pull_request.head.sha }}" \
+                 "into base ${{ github.event.pull_request.base.sha }}"
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -43,6 +68,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      # 跟 test job 同樣的歸因(#637),但少了 PR 那一段:這個 job 的 `if:` 只讓 schedule
+      # 和 workflow_dispatch 進來,兩者都沒有 pull_request payload,寫了也永遠不會印。
+      - name: State which tree and trigger this run actually tested
+        run: |
+          echo "event: ${{ github.event_name }}"
+          echo "resolved commit: $(git rev-parse HEAD)"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
