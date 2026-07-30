@@ -412,6 +412,48 @@ class ReceiptManifestTest(unittest.TestCase):
             self.assertIn("parent manifest not in this directory", result.stdout)
 
 
+class ManifestFreeTextGateTest(ReceiptManifestTest):
+    """#588: the manifest is quoted in public acceptance issues, so its two
+    remaining free-text fields are held to closed grammars at build time —
+    a path or prose fails closed instead of being one copy-paste from a
+    #274-class leak. Read paths are untouched: old manifests stay readable."""
+
+    def test_data_source_is_held_to_the_closed_grammar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            trace = root / "receipt.jsonl"
+            receipt(trace)
+            dest = root / "archived.jsonl"
+            for good in ("real", "test-drive", "mock:sample_ai_holder", "mock:tw.mixed-2"):
+                result = self.run_writer("build", *_build_argv(
+                    trace, dest, root, overrides={"--data-source": good}))
+                self.assertEqual(result.returncode, 0, (good, result.stderr))
+                self.assertEqual(json.loads(result.stdout)["data_source"], good)
+            for bad in ("/private/path/real-trades.csv",
+                        "mock:with space",
+                        "real trades from my broker export",
+                        "mock:",
+                        "csv"):
+                result = self.run_writer("build", *_build_argv(
+                    trace, dest, root, overrides={"--data-source": bad}))
+                self.assertEqual(result.returncode, 2, (bad, result.stdout))
+                self.assertIn("data-source must be", result.stderr, bad)
+
+    def test_the_traces_declared_client_is_held_to_the_identifier_charset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            trace = root / "receipt.jsonl"
+            dest = root / "archived.jsonl"
+            receipt(trace, client="/Users/someone/real notes about a trade")
+            result = self.run_writer("build", *_build_argv(trace, dest, root))
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertIn("declared client must match", result.stderr)
+            # The identifier form every real host writes still passes.
+            receipt(trace, client="codex-desktop")
+            result = self.run_writer("build", *_build_argv(trace, dest, root))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class VerdictKeyDriftTest(unittest.TestCase):
     """The manifest must keep every axis a verdict can carry.
 
