@@ -196,6 +196,109 @@ def test_parse_fails_closed():
            "must be positive", "非正匯率拒收")
 
 
+# ───── 1b. 供給價與股數必須落在同一個分割基礎(#583 §1)─────
+#
+# A supplied close is a raw observation as of its own session. The share count
+# it gets multiplied by has been carried across every split since. Before this,
+# nothing in the envelope said which basis the number was in and nothing
+# reconciled the two, so a structurally valid feed could pair a pre-split price
+# with a post-split quantity — a tenfold market value, weight and concentration
+# verdict, with valid provenance and no caveat anywhere.
+
+SPLIT_DAY = "2024-03-11"        # inside AS_OF's window, after the closes below
+PRE_SPLIT_DAY = "2024-03-08"
+
+
+def _split_row(ticker="AMD", close=100.0, date=PRE_SPLIT_DAY, splits=((SPLIT_DAY, 10.0),),
+               history=None):
+    row = {"ticker": ticker, "close": close, "date": date, "currency": "USD",
+           "splits": [list(pair) for pair in splits]}
+    if history is not None:
+        row["history"] = [list(pair) for pair in history]
+    return row
+
+
+def test_a_supplied_close_is_rebased_onto_the_share_counts_basis():
+    """The issue's own repro, in one row: 100 observed three days before a
+    ten-for-one. The engine keeps 100 as the declared observation and states 10
+    as the value to multiply a post-split share count by."""
+    row = pf.parse(envelope(prices=[_split_row()]))["prices"]["AMD"]
+    ok(row["close"] == 10.0, "供給收盤價已換算到分割後基礎(100 ÷ 10)", repr(row["close"]))
+    ok(row["observed_close"] == 100.0 and row["observed_date"] == PRE_SPLIT_DAY,
+       "原始觀測值與觀測日保留下來,換算可重播", repr(row))
+    ok(row["basis_date"] == SPLIT_DAY and row["split_factor"] == 10.0,
+       "basis_date = 被除掉的那次分割日", repr(row))
+
+
+def test_a_close_already_on_the_split_is_not_adjusted_twice():
+    """The ex-date's own close already prints in post-split terms, and so does
+    every session after it. A fix that divided unconditionally would be the same
+    tenfold error pointing the other way."""
+    for label, day in (("除權日當天", SPLIT_DAY), ("除權日之後", "2024-03-14")):
+        row = pf.parse(envelope(prices=[_split_row(date=day, close=12.0)]))["prices"]["AMD"]
+        ok(row["close"] == 12.0, f"{label}的收盤價不再被除第二次", repr(row["close"]))
+        ok(row["basis_date"] == day and row["split_factor"] == 1.0,
+           f"{label}的 basis 就是它自己的觀測日", repr(row))
+
+
+def test_a_feed_with_no_splits_is_unchanged():
+    """The compatibility half. Every envelope that declares no split must parse
+    to exactly the values it did before this rule existed — the normalization is
+    a division by 1.0 and must be observably nothing."""
+    row = pf.parse(envelope())["prices"]["AMD"]
+    ok(row["close"] == AMD_CLOSE and row["history"] == [(AS_OF, AMD_CLOSE)],
+       "無分割宣告 → close 與 history 完全不動", repr(row["close"]))
+    ok(row["observed_close"] == AMD_CLOSE and row["basis_date"] == row["observed_date"]
+       and row["split_factor"] == 1.0,
+       "無分割 → basis 就是觀測日,factor 恆 1.0", repr(row))
+
+
+def test_a_history_spanning_a_split_is_rebased_entry_by_entry():
+    """Each observation from its own date, so the split stops being a step in
+    the series. `to_frame` hands this straight to the beta/alpha, forward-return,
+    P&L-curve and account-TWR consumers, none of which can tell a corporate
+    action from a market move once it is inside their input."""
+    row = pf.parse(envelope(prices=[_split_row(
+        close=11.0, date=AS_OF,
+        history=[(PRE_SPLIT_DAY, 100.0), (SPLIT_DAY, 10.5), (AS_OF, 11.0)])]))["prices"]["AMD"]
+    ok(dict(row["history"]) == {PRE_SPLIT_DAY: 10.0, SPLIT_DAY: 10.5, AS_OF: 11.0},
+       "跨分割的日線序列逐點換算,分割不再是序列裡的跳空", repr(row["history"]))
+
+
+def test_an_unusable_split_event_fails_closed_by_name():
+    """A ratio is a multiplier on a share count and now on a price too. A
+    dropped bad one is a confident wrong number in two dimensions."""
+    raises(lambda: pf.parse(envelope(prices=[_split_row(splits=((SPLIT_DAY, 0.0),))])),
+           "must be positive", "非正分割比率拒收")
+    raises(lambda: pf.parse(envelope(prices=[_split_row(splits=(("not-a-date", 10.0),))])),
+           "not an ISO date", "壞分割日期拒收")
+
+
+def test_basis_conflicts_reads_the_two_divisors_against_each_other():
+    """`consider` may value a supplied close against a book carried across a
+    map the envelope never declared (the frozen one from the last review). The
+    two divisors past the observation's own date must be the same number, or the
+    operands are incomparable and the caller refuses."""
+    declared = pf.parse(envelope(prices=[_split_row()]))
+    silent = pf.parse(envelope(prices=[_split_row(splits=())]))
+    book = {"AMD": [[SPLIT_DAY, 10.0]]}
+    ok(pf.basis_conflicts(declared, book) == [], "宣告與帳本同一份分割 → 無衝突",
+       repr(pf.basis_conflicts(declared, book)))
+    ok(pf.basis_conflicts(silent, None) == [] and pf.basis_conflicts(silent, {}) == [],
+       "帳本也沒有分割資訊 → 無衝突(兩邊都是未調整,可比)")
+    conflict = pf.basis_conflicts(silent, book)
+    ok(len(conflict) == 1 and conflict[0]["ticker"] == "AMD"
+       and conflict[0]["split_date"] == SPLIT_DAY
+       and conflict[0]["declared_factor"] == 1.0 and conflict[0]["book_factor"] == 10.0,
+       "envelope 沒宣告、帳本有 → 報出衝突並指名那次分割", repr(conflict))
+    ok(pf.basis_conflicts(pf.parse(envelope(prices=[
+        _split_row(date="2024-03-14", splits=())])), book) == [],
+       "觀測日已在分割之後 → 兩邊除數都是 1.0,不算衝突")
+    broken = pf.basis_conflicts(silent, {"AMD": [["2024-03-11", "ten"]]})
+    ok(len(broken) == 1 and broken[0]["error"],
+       "壞掉的帳本分割圖 → 回報衝突而非拋錯(呼叫端本來就要拒)", repr(broken))
+
+
 def test_adapters():
     feed = pf.parse({**envelope(), "fx": [{"currency": "TWD", "usd_per_unit": 0.0307,
                                            "date": AS_OF}]})
@@ -561,7 +664,14 @@ def test_degraded_error_normalizes_so_session_id_stays_deterministic():
 
 
 def main():
-    for fn in (test_parse_contract, test_parse_fails_closed, test_adapters,
+    for fn in (test_parse_contract, test_parse_fails_closed,
+               test_a_supplied_close_is_rebased_onto_the_share_counts_basis,
+               test_a_close_already_on_the_split_is_not_adjusted_twice,
+               test_a_feed_with_no_splits_is_unchanged,
+               test_a_history_spanning_a_split_is_rebased_entry_by_entry,
+               test_an_unusable_split_event_fails_closed_by_name,
+               test_basis_conflicts_reads_the_two_divisors_against_each_other,
+               test_adapters,
                test_plausibility_flags,
                test_engine_without_prices_stays_observable,
                test_engine_with_supplied_close_restores_pnl,

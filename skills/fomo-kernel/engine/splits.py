@@ -37,18 +37,38 @@ where it is, and its result is passed in. A caller with no split data gets the
 unadjusted answer, which is the pre-existing behavior; it does not get a
 guessed one.
 
+A quantity is only half of every number the product states. The other half is
+the price it gets multiplied by, and a price is an observation with a date of
+its own, so it has a split basis too (#583). ``rebase_price`` is that side of
+the same rule: a close observed before a split is divided by the splits after
+it, which puts one operand in the other's basis instead of leaving the pair
+incomparable. It is the read-time family — the value is restated where it is
+read and never written back — because a stored exit price and a stored close
+are records of what happened, and the next split must not move them.
+
 Input is fail-closed. A split ratio is a multiplier on someone's share count;
 a malformed one that were quietly dropped would produce a confident wrong
-number, which is the failure this module exists to remove.
+number, which is the failure this module exists to remove. Dates are coerced
+here rather than at each call site for the same reason: ``derive_holdings``
+receives its ``as_of`` as a ``datetime.date`` from ``holdings_as_of`` and as an
+ISO string from ``build_derived_book``, and the tail rebase compared the two
+kinds directly — so recording the derived book for any split-crossing history
+raised ``TypeError`` and took ``prepare`` down with it (found by driving the
+real CLI, #583).
 """
 import datetime as dt
 
 __all__ = [
     "SplitDataError",
     "normalize",
+    "normalize_events",
     "to_json",
     "factor_after",
     "factor_between",
+    "last_applied",
+    "basis_date",
+    "rebase_price",
+    "rebase_series",
     "rebase_rows",
 ]
 
@@ -81,6 +101,30 @@ def _ratio(value, where):
     return ratio
 
 
+def normalize_events(rows, where="split events"):
+    """One ticker's ``[(date, ratio), ...]``, from any accepted spelling.
+
+    Accepts ``datetime.date`` keys with float ratios (what
+    ``trade_recap.fetch_splits`` and ``price_feed.splits_map`` return) and what
+    survives a JSON round trip through ``state.json`` or a parsed price envelope
+    (ISO strings, lists instead of tuples). Every factor below reads through
+    here rather than trusting its caller's spelling: a raw envelope row whose
+    date was still a string reached the comparison and raised ``TypeError``,
+    which is not the fail-closed refusal this module promises.
+    """
+    if not isinstance(rows, (list, tuple)):
+        raise SplitDataError(f"{where}: split events must be a list")
+    events = []
+    for i, row in enumerate(rows):
+        at = f"{where}[{i}]"
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise SplitDataError(f"{at}: expected [date, ratio]")
+        events.append((_date(row[0], at), _ratio(row[1], at)))
+    # Sorted once here so every reader below can assume date order and none of
+    # them has to remember to sort (or silently not).
+    return sorted(events, key=lambda pair: pair[0])
+
+
 def normalize(mapping):
     """``{ticker: [(date, ratio), ...]}`` from any accepted spelling of one.
 
@@ -99,18 +143,9 @@ def normalize(mapping):
         name = str(ticker or "").strip()
         if not name:
             raise SplitDataError("split events carry an empty ticker")
-        if not isinstance(rows, (list, tuple)):
-            raise SplitDataError(f"{name}: split events must be a list")
-        events = []
-        for i, row in enumerate(rows):
-            where = f"{name}[{i}]"
-            if not isinstance(row, (list, tuple)) or len(row) != 2:
-                raise SplitDataError(f"{where}: expected [date, ratio]")
-            events.append((_date(row[0], where), _ratio(row[1], where)))
+        events = normalize_events(rows, name)
         if events:
-            # Sorted once here so every reader below can assume date order and
-            # none of them has to remember to sort (or silently not).
-            out[name] = sorted(events, key=lambda pair: pair[0])
+            out[name] = events
     return out
 
 
@@ -120,6 +155,24 @@ def to_json(splits):
             for ticker, events in normalize(splits).items()}
 
 
+def _bound(value, where):
+    """A window edge: a coerced date, or ``None`` for "unbounded on this side"."""
+    return None if value is None else _date(value, where)
+
+
+def _applied(events, after, upto):
+    """The split events inside ``(after, upto]``, in date order.
+
+    The single walk every factor below reads, so "which splits apply to this
+    window" is decided once. ``after``/``upto`` may each be ``None`` for an
+    unbounded side.
+    """
+    after = _bound(after, "split window start")
+    upto = _bound(upto, "split window end")
+    return [(day, ratio) for day, ratio in normalize_events(events or ())
+            if (after is None or day > after) and (upto is None or day <= upto)]
+
+
 def factor_after(events, date):
     """Cumulative ratio of the splits strictly after ``date``.
 
@@ -127,11 +180,7 @@ def factor_after(events, date):
     split that happened after it. A split dated on the trade date itself does
     not count — the ex-date's own fills already print in post-split terms.
     """
-    factor = 1.0
-    for day, ratio in events or ():
-        if day > date:
-            factor *= ratio
-    return factor
+    return factor_between(events, date, None)
 
 
 def factor_between(events, after, upto):
@@ -141,13 +190,85 @@ def factor_between(events, after, upto):
     date the position was last stated in its own basis (``None`` = the position
     has no history yet, so every split up to ``upto`` applies — to zero shares,
     which is why an old split before a ticker's first trade is harmless rather
-    than something each caller must remember to skip).
+    than something each caller must remember to skip). ``upto`` is ``None``
+    when the window has no upper edge, which is what :func:`factor_after`
+    means.
     """
     factor = 1.0
-    for day, ratio in events or ():
-        if (after is None or day > after) and day <= upto:
-            factor *= ratio
+    for _day, ratio in _applied(events, after, upto):
+        factor *= ratio
     return factor
+
+
+def last_applied(events, after, upto=None):
+    """The date of the newest split inside ``(after, upto]``, or ``None``.
+
+    The companion to the factors: they say *how much* a window moved a
+    quantity, this says *when* it last moved. A basis that has to be stated —
+    a book's own quantity basis, a price's declared basis — is a date, not a
+    multiplier, and deriving it from a second walk over the same events is the
+    divergent-derivation shape (docs/development-guide.md §7).
+    """
+    applied = _applied(events, after, upto)
+    return applied[-1][0] if applied else None
+
+
+def basis_date(observed, events, upto=None):
+    """The date whose split basis a rebased observation is stated in (#583).
+
+    The companion statement to :func:`rebase_price`, and deliberately the only
+    place it is derived: the newest split that was divided out, or the
+    observation's own date when nothing was. Two surfaces need to say what basis
+    a price is on — the envelope a caller supplies and the frozen valuation
+    evidence built from the engine's own frame — and they must say it the same
+    way or the frame and the feed disagree about a value neither of them
+    changed.
+
+    Note what it is *not*: the price's recency. A stale quote whose splits have
+    all been divided out is on the current basis while being days old, and
+    conflating the two is exactly what made a frame-level ``as_of`` unable to
+    testify about a per-ticker observation (#583 §2).
+    """
+    return last_applied(events, observed, upto) or _date(observed, "observation date")
+
+
+def rebase_price(price, date, events, upto=None):
+    """A price observed on ``date``, restated in a later split basis (#583).
+
+    The price half of ``rebase_rows``' quantity half, and the same arithmetic
+    seen from the other side: a share count is *multiplied* by the splits after
+    it, so a price per share is *divided* by them. A close of 100 observed the
+    day before a ten-for-one is 10 in the basis the post-split share count is
+    stated in; multiplying 1,000 shares by 100 is a tenfold portfolio, and
+    every weight, concentration verdict and unrealized figure derived from it
+    inherits the error with no limitation stated anywhere.
+
+    ``upto`` bounds the target basis. Omitted, every later split applies, which
+    means "restate this onto the current basis" — the default because that is
+    what a share count carried to today needs. Supplied, only the splits up to
+    that date apply, which is what a comparison against *another observation*
+    needs: a quote whose own basis date is known must not be assumed to
+    postdate every split in the map (#583 §4).
+
+    Read-time only. Nothing here is ever written back: an exit price and a
+    supplied close are records of what was observed, and ``revisit_id`` derives
+    from what executed, so restating a stored number would churn identities the
+    user has already answered about.
+    """
+    factor = factor_after(events, date) if upto is None else factor_between(events, date, upto)
+    return float(price) if abs(factor - 1.0) <= 1e-12 else float(price) / factor
+
+
+def rebase_series(pairs, events, upto=None):
+    """``[(date, price), ...]`` restated onto one basis, each on its own date.
+
+    A daily close series that spans a split carries the split as a step change,
+    and every consumer that differences it — forward return, beta and alpha,
+    the P&L curve, account-level time-weighted return — reads that step as a
+    market move. Each observation is rebased from its own date, so the step
+    disappears and the real moves survive.
+    """
+    return [(day, rebase_price(price, day, events, upto)) for day, price in pairs or ()]
 
 
 def rebase_rows(rows, splits):

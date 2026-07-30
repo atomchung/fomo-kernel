@@ -63,8 +63,23 @@ Field rules:
 - `source` is the feed-level provenance shown on the card. A per-row `source` overrides it for that instrument.
 - Each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency`. One row per instrument.
 - `history` is optional: `[date, close]` pairs. When present it must agree with `close` on the shared date.
-- `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it whenever the source shows one inside the trade history, and check for one on any position the user has held for years. Omitting it is not cosmetic: the ledger records every trade at the share count that actually executed, so a sale placed after a split cannot be subtracted from buys placed before it. Without the split, a routine trim of a long-held position reads as a full liquidation — which closes that position's thesis and states on the saved card that the user exited something they still hold (#550).
+- `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it whenever the source shows one inside the trade history, and check for one on any position the user has held for years. Omitting it is not cosmetic, and it now costs something on both sides of the multiplication — see the section below.
 - `fx` is optional and only matters for a mixed-currency portfolio. Rates are USD per one unit of the currency. Omit a rate you cannot find.
+
+## Prices are raw observations; the engine does the split arithmetic
+
+**Every `close` and every `history` entry is the raw number the source printed on that row's own date. Never adjust a price for a split yourself.** Transcribe the observation, declare the split in `splits`, and stop there — the same division of labour as everywhere else in this file.
+
+The engine then rebases each observation onto the split basis of the share count it is about to be multiplied by, using that row's own date against the splits you declared. A close observed the day before a ten-for-one is divided by ten; a close already dated on or after the split is left exactly as it is, and a row with no splits is untouched. The same happens to a `history` series before any consumer differences it, so a split inside the window is not read as a market move by beta, alpha, the P&L curve, or account-level return.
+
+This is why an omitted split is not merely a missing nicety:
+
+- **On the share side** the ledger records every trade at the count that actually executed, so a sale placed after a split cannot be subtracted from buys placed before it. Without the split, a routine trim of a long-held position reads as a full liquidation — which closes that position's thesis and states on the saved card that the user exited something they still hold (#550).
+- **On the price side** the close you supplied stays in its own session's basis while the share count moves into the post-split one. A hundred shares become a thousand and are valued at the pre-split price: a tenfold market value, and with it a tenfold weight, an inverted concentration verdict, and a `consider` consequence that is wrong by the split ratio — all of it stated with valid provenance and no caveat anywhere on the card (#583).
+
+**When the basis cannot be established, the run refuses rather than guessing.** `consider` compares the split divisor your observation received against the one this book's share counts received past that same date. If a split falls between your close's date and the basis the book is on — typically because the envelope declared no splits while a previous review recorded one — the two numbers are not comparable, and no weight or consequence is computed from them. The message names the ticker, the close's date, and the split. Either repair is yours: declare the split in the envelope, or supply a close dated on or after it. The engine will not apply a corporate action your price source never confirmed, and it will not quietly ignore one it already knows about.
+
+`prepare` needs no such check: when you supply an envelope, the engine performs no split retrieval of its own, so the prices and the share counts are adjusted from the same declared events by construction.
 
 ## Coverage tiers
 

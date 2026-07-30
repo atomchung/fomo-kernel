@@ -24,6 +24,7 @@ Run:
 """
 import ast
 import csv
+import datetime as dt
 import json
 import os
 import subprocess
@@ -37,9 +38,11 @@ sys.path.insert(0, ENGINE)
 import book_refresh as br  # noqa: E402
 import ledger as lg  # noqa: E402
 import portfolio_basis as pb  # noqa: E402
+import price_feed as pf_module  # noqa: E402
 import review  # noqa: E402
 import revisit as rv  # noqa: E402
 import snapshot_adapter  # noqa: E402
+import trade_recap  # noqa: E402
 
 # NVDA's real ten-for-one, the split every case below is built on.
 SPLITS = {"NVDA": [("2024-06-10", 10.0)]}
@@ -684,6 +687,223 @@ def test_without_the_map_every_route_degrades_together():
 
         code, _prepared = _route(tmp, "prepare", "--snapshot-json", snapshot)
         assert code != 0, "split-blind, the catch-up gate must be refusing the review"
+
+
+# ───────── the other operand: what basis the price is on (#583) ─────────
+#
+# Everything above this line is about quantities. A quantity is half of every
+# number the product states; the price it is multiplied by is an observation
+# with a date, and therefore a split basis, of its own. #558's sweep audited one
+# dimension and reported itself complete — true, and true only of quantities.
+#
+# The book below is the same shape as `_CROSSING_LEDGER`'s: bought before
+# GLYPH's ten-for-one and untouched since, so the share count is ten times what
+# was transacted. Beside it sits a position the split never touched, and the two
+# are sized so that the aligned answer and the split-blind one disagree about
+# *which position is the largest* — not merely by how much.
+
+_PRICE_SPLIT = ("2024-06-10", 10.0)
+_PRICE_BOOK = ({"ticker": "GLYPH", "shares": 10, "avg_cost": 900.0,
+                "market": "US", "currency": "USD"},
+               {"ticker": "TARDY", "shares": 300, "avg_cost": 30.0,
+                "market": "US", "currency": "USD"})
+
+
+def _price_envelope(tmp, declare_split=True, name="prices.json"):
+    """A supplied envelope holding one raw pre-split observation.
+
+    GLYPH last printed 100 on 2024-06-07, three days before its ten-for-one.
+    That is the number the source shows and the number the agent must send;
+    the engine is what turns it into the 10 a post-split share count can be
+    multiplied by."""
+    glyph = {"ticker": "GLYPH", "close": 100.0, "date": "2024-06-07", "currency": "USD"}
+    if declare_split:
+        glyph["splits"] = [list(_PRICE_SPLIT)]
+    path = os.path.join(tmp, name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"as_of": "2024-06-10", "source": "Example Exchange official closes",
+                   "prices": [glyph,
+                              {"ticker": "TARDY", "close": 32.0, "date": "2024-06-10",
+                               "currency": "USD"}]}, f)
+    return path
+
+
+def _price_root(tmp, with_map=False):
+    """The recorded book, and optionally the map a finished review froze."""
+    with open(os.path.join(tmp, "ledger.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"type": "snapshot", "as_of": "2024-06-01",
+                            "source": "declared_book",
+                            "positions": [dict(row) for row in _PRICE_BOOK]}) + "\n")
+    if with_map:
+        with open(os.path.join(tmp, "last_state.json"), "w", encoding="utf-8") as f:
+            json.dump({"splits": {"GLYPH": [list(_PRICE_SPLIT)]}}, f)
+
+
+def _price_csv(tmp):
+    """The same book handed over as transactions — `consider`'s other route."""
+    path = os.path.join(tmp, "transactions.csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+        for row in _PRICE_BOOK:
+            writer.writerow([row["ticker"], row["shares"], row["avg_cost"], "BUY",
+                             "2024-06-01", "Trade"])
+    return path
+
+
+_PRICE_PREMISE = ('{"ticker": "TARDY", "side": "buy", "qty": 1, "price": 32.0, '
+                  '"currency": "USD"}')
+
+
+def test_a_pre_split_close_cannot_value_post_split_shares_on_either_consider_route():
+    """#583 §1, on the routes an agent actually calls. GLYPH's ten pre-split
+    shares are a hundred now, and the supplied close is 100 in the basis its own
+    session printed. Multiplied raw that is a 10,000 position against TARDY's
+    9,600, so the engine reports GLYPH as the book's largest holding at 51%.
+    Rebased onto the share count's basis it is 1,000 — nine per cent of the
+    book, and TARDY is the largest position, which it always was.
+
+    So this is not a precision caveat. Every verdict built on the denominator
+    inverts: which position is too heavy, whether the concentration rule is
+    broken, and what one more purchase does to any of it."""
+    for label, extra in (("ledger", ()), ("csv", None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            _price_root(tmp)
+            if extra is None:
+                extra = (_price_csv(tmp),)
+            code, payload = _route(tmp, "consider", *extra, "--premise", _PRICE_PREMISE,
+                                   "--prices", _price_envelope(tmp))
+            assert code == 0, (label, payload)
+            before = payload["evaluation"]["consequence"]["before"]
+            assert before["held"]["GLYPH"]["shares"] == 100.0, (label, before["held"])
+            assert before["max_ticker"] == "TARDY", (
+                label, "a pre-split close made the split-crossing position look like the "
+                       "largest holding in the book", before["weights"])
+            assert abs(before["weights"]["GLYPH"] - 1000.0 / 10600.0) < 1e-6, (
+                label, "GLYPH must be weighed at the rebased close, not the raw one",
+                before["weights"])
+
+
+def test_a_review_records_its_derived_book_on_a_split_crossing_history():
+    """Found by driving the real CLI rather than by reading it. `prepare` writes
+    down the book a transaction import derived (#549), and that writer passes its
+    `as_of` to `derive_holdings` as an ISO string while `holdings_as_of` passes a
+    date — so the tail rebase compared a `datetime.date` against a `str` and
+    raised `TypeError`. Any history with a split took the whole review down with
+    a traceback, which is not the fail-closed refusal `splits.py` promises, and
+    the offline suite was green because the only split-crossing `prepare` test
+    used a snapshot root that never reaches this writer.
+
+    The fix is where the date semantics live: every factor coerces its window
+    edges, so one reader decides what a date is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _route(tmp, "prepare", _price_csv(tmp), "--language", "en",
+                               "--prices", _price_envelope(tmp))
+        assert code == 0, payload
+        assert "review_plan" in payload, sorted(payload)
+        recorded = [json.loads(line) for line
+                    in open(os.path.join(tmp, "ledger.jsonl"), encoding="utf-8")
+                    if line.strip()]
+        derived = [row for row in recorded
+                   if row.get("type") == "snapshot" and row.get("source") == lg.DERIVED_BOOK_SOURCE]
+        assert derived, [row.get("source") for row in recorded]
+        row = derived[-1]
+        # The row is dated, and `holdings_as_of` bounds the tail rebase to that
+        # date: it states the book as its own day saw it, which for a day before
+        # the split is the pre-split count. Reading the same events today gives
+        # 100, and both are true statements — which is exactly why the recorded
+        # row must round-trip against its own date rather than against today's.
+        trades = [ev for ev in recorded if ev.get("type") == "trade"]
+        assert {p["ticker"]: p["shares"] for p in row["positions"]} == {
+            ticker: fact["shares"] for ticker, fact
+            in lg.holdings_as_of(trades, row["as_of"],
+                                 splits={"GLYPH": [list(_PRICE_SPLIT)]}).items()}, row
+
+
+def test_the_two_consider_routes_agree_about_the_price_basis():
+    """The acceptance line #583 shares with #558: one set of synthetic facts,
+    two independently built books, one interpretation. They are computed
+    differently on purpose — the ledger route carries the running position
+    inside the canonical book, the CSV route rebases the rows themselves — so
+    equal weights here are a result, not a tautology."""
+    weights = {}
+    for label, extra in (("ledger", ()), ("csv", None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            _price_root(tmp)
+            if extra is None:
+                extra = (_price_csv(tmp),)
+            _code, payload = _route(tmp, "consider", *extra, "--premise", _PRICE_PREMISE,
+                                    "--prices", _price_envelope(tmp))
+            weights[label] = payload["evaluation"]["consequence"]["before"]["weights"]
+    assert weights["ledger"].keys() == weights["csv"].keys(), weights
+    for ticker in weights["ledger"]:
+        assert abs(weights["ledger"][ticker] - weights["csv"][ticker]) < 1e-9, (ticker, weights)
+
+
+def test_consider_refuses_when_the_price_and_share_bases_cannot_be_reconciled():
+    """The fail-closed half. An envelope that declares no split still lets the
+    frozen map carry the share count across one — the shares move, the price
+    does not, and neither side looks wrong on its own. There is no honest number
+    to compute here: applying the split to the price would assert a corporate
+    action the price source never confirmed, and ignoring it is the tenfold
+    error above. So the route refuses, and says which ticker, which observation
+    date, and which split."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _price_root(tmp, with_map=True)
+        code, payload = _route(tmp, "consider", "--premise", _PRICE_PREMISE,
+                               "--prices", _price_envelope(tmp, declare_split=False))
+        assert code != 0, payload
+        assert payload.get("status") == "error", payload
+        message = payload.get("error", "")
+        assert "GLYPH" in message and "2024-06-07" in message and _PRICE_SPLIT[0] in message, message
+        assert "different split bases" in message, message
+
+
+def test_declaring_the_split_in_the_envelope_is_the_repair_the_refusal_names():
+    """The counterweight to the refusal, and the reason it is actionable rather
+    than a dead end: the same root, the same frozen map, and the one change the
+    message asks for makes the call succeed on the aligned number."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _price_root(tmp, with_map=True)
+        code, payload = _route(tmp, "consider", "--premise", _PRICE_PREMISE,
+                               "--prices", _price_envelope(tmp, declare_split=True))
+        assert code == 0, payload
+        before = payload["evaluation"]["consequence"]["before"]
+        assert before["max_ticker"] == "TARDY", before["weights"]
+
+
+def test_a_supplied_series_is_rebased_before_a_return_consumer_reads_it():
+    """#583's second acceptance line, through the production adapter pair.
+    `price_feed.to_frame` is what `fetch_prices` returns for a supplied
+    envelope, and `pnl_curve` is one of the consumers that differences it. A
+    ten-for-one left un-rebased inside the series is a 90% one-day collapse the
+    market never had, and the cumulative curve — the card's sparkline, and the
+    same daily series beta, alpha and account-level return are regressed on —
+    reads it as one."""
+    days = [(dt.date(2024, 6, 3) + dt.timedelta(days=n)).isoformat() for n in range(10)]
+    split_day = days[5]
+    # A flat, boring instrument: 100 before its ten-for-one and 10 after, which
+    # is the same company on the same day at the same market value.
+    history = [[day, 100.0 if day < split_day else 10.0] for day in days]
+    feed = pf_module.parse({"as_of": days[-1], "source": "Example Exchange",
+                            "prices": [{"ticker": "GLYPH", "close": 10.0, "date": days[-1],
+                                        "currency": "USD", "history": history,
+                                        "splits": [[split_day, 10.0]]}]})
+    frame, err = pf_module.to_frame(feed, ["GLYPH"])
+    assert err is None, err
+    series = frame["GLYPH"].tolist()
+    worst = min(later / earlier - 1.0 for earlier, later in zip(series, series[1:]))
+    assert worst > -0.5, (
+        f"the supplied series still carries the split as a {worst:.0%} one-day move; "
+        "every consumer that differences it reads that as the market", series)
+
+    rows = [{"ticker": "GLYPH", "date": dt.date.fromisoformat(days[0]), "qty": 100.0,
+             "price": 10.0, "side": "buy", "market": "US", "currency": "USD"}]
+    curve = trade_recap.pnl_curve(rows, frame, market="US")
+    assert "points" in curve, curve
+    worst_point = max(abs(point["cum_ret"]) for point in curve["points"])
+    assert worst_point < 0.05, (
+        "a flat instrument that split must show a flat cumulative curve", curve)
 
 
 def _main():

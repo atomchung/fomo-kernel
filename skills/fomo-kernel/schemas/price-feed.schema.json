@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/price-feed.schema.json",
   "title": "Fomo Kernel Agent-Supplied Price Feed",
-  "description": "Closing prices transcribed from a recognized market-data source when the host cannot retrieve prices itself. Declared facts only: the agent never computes a return, a weight, or a P&L number.",
+  "description": "Closing prices transcribed from a recognized market-data source when the host cannot retrieve prices itself. Declared facts only: the agent never computes a return, a weight, or a P&L number. Every close and history entry is a RAW market observation as printed on its own session date; never send a split-adjusted price. The engine rebases each observation onto the split basis of the share count it will be multiplied by, using that row's date against the declared splits.",
   "type": "object",
   "additionalProperties": false,
   "required": ["as_of", "source", "prices"],
@@ -37,12 +37,12 @@
           "close": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "description": "Closing price in the instrument's own trading currency."
+            "description": "Raw closing price as printed on `date`, in the instrument's own trading currency. Do not adjust it for a split yourself: state the observation and declare the split in `splits`, and the engine rebases it onto the share count's basis."
           },
           "date": {
             "type": "string",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-            "description": "Session date of this close."
+            "description": "Session date of this close, and therefore the split basis it is observed in."
           },
           "currency": {
             "type": "string",
@@ -57,7 +57,7 @@
           "history": {
             "type": "array",
             "maxItems": 2000,
-            "description": "Optional daily close series. Unlocks benchmark comparison, beta and alpha, the P&L curve, and account-level time-weighted return.",
+            "description": "Optional daily close series of raw observations, each as printed on its own date. Unlocks benchmark comparison, beta and alpha, the P&L curve, and account-level time-weighted return. The engine rebases a series that spans a declared split before any of those consumers difference it, so the split is not read as a market move.",
             "items": {
               "oneOf": [
                 {
@@ -84,7 +84,7 @@
           "splits": {
             "type": "array",
             "maxItems": 2000,
-            "description": "Optional split events the source shows, as [date, ratio] (a 10-for-1 split is 10). Omitted means no adjustment is applied, which is not cosmetic: the ledger records each trade at the share count that actually executed, so a sale after an undeclared split is subtracted from pre-split buys and a routine trim reads as a full exit (#550).",
+            "description": "Optional split events the source shows, as [date, ratio] (a 10-for-1 split is 10). Omitted means no adjustment is applied, which is not cosmetic, on either side of the multiplication. The ledger records each trade at the share count that actually executed, so a sale after an undeclared split is subtracted from pre-split buys and a routine trim reads as a full exit (#550); and the close above is the basis its own session printed, so an undeclared split leaves a pre-split price valuing a post-split share count — a tenfold market value, weight and concentration verdict (#583). When a split falls between a close's date and the day this book is read, `consider` refuses rather than guessing which side is wrong.",
             "items": {
               "oneOf": [
                 {

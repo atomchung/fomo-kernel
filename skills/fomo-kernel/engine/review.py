@@ -651,6 +651,24 @@ def _recorded_splits(root):
     return (_previous_state(root) or {}).get("splits")
 
 
+def _effective_splits(root, supplied):
+    """The one split map ``consider`` reasons over (#558 precedence, #583).
+
+    An agent envelope's own splits win — they arrived with the quotes, on one
+    basis at one instant, and a CSV-route caller may have no review in this root
+    to have frozen anything. Otherwise the map the last review froze. Neither is
+    fetched.
+
+    Two callers need this answer for the same call, which is why it is a
+    function rather than an expression: ``_consider_rows`` uses it to carry the
+    running position across each split, and ``cmd_consider`` uses it to check
+    that the prices it is about to multiply those shares by are on the same
+    basis. Resolving it twice by hand is how a check ends up validating a
+    different map from the one the arithmetic used.
+    """
+    return supplied if supplied is not None else _recorded_splits(root)
+
+
 def _profile_path(root):
     return os.path.join(root, "profile.json")
 
@@ -5175,8 +5193,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=Non
     froze. `consider` is a single CLI call, so unlike `refresh` it has no
     two-call determinism to protect — but it still never fetches, per #558's
     retrieval ruling: no store, no schedule, no new path."""
-    if splits is None:
-        splits = _recorded_splits(root)
+    splits = _effective_splits(root, splits)
     if args.paths:
         paths = [os.path.abspath(os.path.expanduser(p)) for p in args.paths]
         for path in paths:
@@ -5693,6 +5710,28 @@ def cmd_consider(args):
         # and because a CSV-route caller may have no review in this root to
         # have frozen anything.
         supplied_splits = price_feed.splits_map(feed) or None
+        # #583. `last_px` above is now on the basis of the envelope's own
+        # declared splits, and the shares it will be multiplied by are carried
+        # across whichever map wins below. Equal on both sides, the operands are
+        # comparable; unequal, this call cannot establish one basis and refuses
+        # before a book is read or a number computed — a supplied pre-split
+        # close against a post-split share count is a tenfold weight,
+        # concentration verdict and consequence, all of them stated with a valid
+        # state_version and no disclosure that anything is off.
+        conflicts = price_feed.basis_conflicts(
+            feed, _effective_splits(root, supplied_splits))
+        if conflicts:
+            detail = "; ".join(
+                f"{row['ticker']} priced from {row['observed_date']}"
+                + (f", but this book is carried across a split dated {row['split_date']}"
+                   if row.get("split_date") else "")
+                + (f" ({row['error']})" if row.get("error") else "")
+                for row in conflicts)
+            raise ReviewError(
+                "the supplied prices and this book's share counts are on different split "
+                f"bases, so no weight or consequence can be computed from them: {detail}. "
+                "Declare the split in the price envelope, or supply a close dated on or "
+                "after it.")
 
     cash_anchor = None
     if args.cash:
