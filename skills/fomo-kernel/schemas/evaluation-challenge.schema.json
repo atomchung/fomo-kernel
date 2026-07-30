@@ -117,7 +117,8 @@
             "description": "Which family of obligation this is, mirroring must_state's topic vocabulary but never its full width. disclosure: one of consequence.disclosures must be cited by anchor. basis: the book's own staleness or incompleteness must be cited by some basis.* anchor, once, regardless of which basis field the citing claim names. rule_collision: a rule this trade would_breach or leaves already_over must be cited by a rule_collisions.<id>.state or .worsens anchor -- never an unjudged or unmapped one, which must_state still names in prose but which required_coverage deliberately excludes."
           },
           "key": {
-            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx", "partial_book",
+            "enum": ["cost_basis", "cash_unreliable", "unmapped_driver",
+                     "unclassified_book", "etf_not_decomposed", "partial_book",
                      "stale", "unverified", "stale_and_unverified",
                      "would_breach", "already_over"],
             "description": "Which specific instance within the owes family. Mirrors consequence.DISCLOSURES exactly when owes is disclosure; one of answer_provenance.py's own three literals when owes is basis (stale: only stale_days > 0; unverified: only basis.completeness != declared_complete; stale_and_unverified: both at once -- and a basis entry never fires for any other reason, so exactly one of these three appears whenever owes is basis); the colliding rule_collisions[].state when owes is rule_collision, which by construction is always would_breach or already_over here."

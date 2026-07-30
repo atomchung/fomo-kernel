@@ -5166,9 +5166,17 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
             "canonical PortfolioBasis and the consider adapter disagree about which "
             "holdings cannot be valued: projection "
             f"{sorted(projection_unavailable)} vs adapter {sorted(excluded_tickers)}")
-    before = consequence.portfolio_state(rows, last_px=last_px,
-                                         max_pos_override=max_pos_override,
-                                         cash_anchor=cash_anchor, fx=fx)
+    try:
+        before = consequence.portfolio_state(rows, last_px=last_px,
+                                             max_pos_override=max_pos_override,
+                                             cash_anchor=cash_anchor, fx=fx)
+    except consequence.ConsequenceError as exc:
+        # #600's refusal reaches this facade too. The projection above rejects
+        # `unavailable_mixed_currency`, but that scope answers a question about
+        # the canonical book's own valuation, not about whether *this* caller
+        # supplied the rate the FIFO adapter needs, so the two can disagree.
+        # Surfaced as a ReviewError rather than escaping as a traceback.
+        raise ReviewError(str(exc)) from exc
     holdings = {ticker: holding for ticker, holding in basis.current_book["holdings"].items()
                 if ticker not in excluded_tickers}
     if set(before["held"]) != set(holdings):
@@ -5816,7 +5824,14 @@ def cmd_consider(args):
                           # every number derived from the partial denominator,
                           # including into the frozen record a later --resolve
                           # or reconciliation reads back.
-                          "excluded_holdings": result["excluded_holdings"]}
+                          "excluded_holdings": result["excluded_holdings"],
+                          # #598/#599, on the identical reasoning: the key in
+                          # `disclosures` says the concentration figures were
+                          # computed over a partially-legible book, and these
+                          # say which positions and how large, so the frozen
+                          # row carries the size of what it could not see.
+                          "unclassified_holdings": result["unclassified_holdings"],
+                          "undecomposed_etfs": result["undecomposed_etfs"]}
 
     # #414 / #479 Wave B: the semantic provenance gate. Runs here — after
     # consequence_stored and collisions exist, before the row is built,
