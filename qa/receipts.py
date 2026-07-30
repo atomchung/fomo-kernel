@@ -66,6 +66,14 @@ CAMPAIGN_CASE_ID_RE = re.compile(r"^[A-Za-z0-9:#._-]{1,64}$")
 # outside the receipt dir it is looked up in.
 PARENT_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
+# data_source grammar (#588): the manifest is the artifact whose values get
+# quoted in public acceptance issues, and this field's discipline ("real /
+# mock:<persona> / test-drive — no real CSV path") lived only in a comment.
+# A closed grammar makes a path or free prose fail closed instead of being
+# serialized one copy-paste away from a #274-class leak. The persona token
+# shares the identifier charset every other manifest id uses.
+DATA_SOURCE_RE = re.compile(r"^(real|test-drive|mock:[A-Za-z0-9._-]{1,64})$")
+
 
 def _parse_receipt(path):
     """Best-effort pull of client/route/verdict out of a ux_receipt jsonl."""
@@ -199,10 +207,27 @@ def build(argv):
     agent_effort = _declared_value(args.effort, "agent effort")
     campaign = _campaign_value(args.campaign, "campaign")
     case_id = _campaign_value(args.case_id, "case-id")
+    data_source = _declared_value(args.data_source, "data-source")
+    if not DATA_SOURCE_RE.match(data_source):
+        raise ValueError(
+            f"data-source must be 'real', 'test-drive', or 'mock:<persona>' "
+            f"(persona limited to [A-Za-z0-9._-], max 64) — got {data_source!r}; "
+            "never a path or free text, because the manifest is quoted in "
+            "public issues"
+        )
     parent_run_id = _resolve_state_lineage(args.state_mode, args.parent_run_id, args.receipt_dir)
     receipt_sha256 = _receipt_sha256(args.receipt)
 
     client, route, verdict = _parse_receipt(args.receipt)
+    # The trace's own client string ends up quoted in public campaign-coverage
+    # reports exactly like the ids above, and _parse_receipt never charset-checks
+    # it. None stays None: an unreadable trace is already "unattributed", and
+    # inventing a value for it is what report's legacy handling exists to avoid.
+    if client is not None and not PARENT_RUN_ID_RE.match(str(client)):
+        raise ValueError(
+            f"the receipt's declared client must match ^[A-Za-z0-9._-]+$ "
+            f"(no '/', no whitespace) — got {client!r}"
+        )
     manifest = {
         "run_id": args.run_id,
         "timestamp": args.stamp,
@@ -218,7 +243,7 @@ def build(argv):
             "model": agent_model,       # exact host label; supplied, never inferred
             "effort": agent_effort,     # exact host setting; supplied, never inferred
         },
-        "data_source": args.data_source,  # real / mock:<persona> / test-drive (no real CSV path)
+        "data_source": data_source,  # closed grammar, gated above (#588)
         "human_involvement": args.human,  # owner_live | agent_with_owner_verdict | agent_simulated
         "route": route,
         "owner_verdict": verdict or None,
