@@ -52,6 +52,29 @@ own mutation is not evidence (docs/maintainer-guide.md).
      red)
        -> test_consider's whole section M, headed by
           test_a_considered_trade_puts_the_whole_challenge_in_front_of_the_caller
+  9. `_price_basis_entries` returns [] so the market session never reaches
+     must_state (#618)
+       -> test_a_priced_answer_owes_the_market_session_it_was_valued_at,
+          test_an_instrument_off_the_frame_date_is_named_and_a_matching_one_is_not,
+          test_a_dotted_ticker_off_the_frame_date_keeps_its_fact_and_its_identity,
+          test_every_topic_appears_and_in_the_declared_order,
+          test_every_required_coverage_path_is_reachable_from_must_state,
+          and test_consider's the_priced_answer_owes_the_session_and_names_the_
+          instrument_off_it
+ 10. `review._price_observation_record` defaults an unpriced run to today's
+     date instead of returning None
+       -> test_consider's an_offline_answer_carries_no_price_day_at_all, plus
+          eleven more through `_check_evaluation_shape`
+ 11. `answer_provenance.required_coverage` stops emitting the price_basis
+     entry, so the block states an obligation the gate does not enforce
+       -> test_a_stale_and_unverified_basis_is_reported_as_both and
+          test_a_price_day_citation_does_not_also_pay_the_staleness_obligation,
+          plus test_consider's a_case_silent_about_the_price_day_is_refused_on_
+          the_production_path
+ 12. `_paid_path` takes the broadest matching path rather than the narrowest,
+     which is what plain prefix matching did before #618
+       -> test_a_case_covering_exactly_what_the_challenge_asked_for_is_accepted
+          and test_a_price_day_citation_does_not_also_pay_the_staleness_obligation
 """
 import copy
 import json
@@ -87,9 +110,26 @@ def _basis(**overrides):
     base = {
         "source": "snapshot_anchor", "as_of": "2026-01-01", "stale_days": 5,
         "completeness": "declared_complete", "cost_basis": "average_cost",
-        "valuation_basis": "unpriced", "reconciliation_ref": None,
+        # Priced, on a deliberately MIXED frame (#618): NVDA printed on the
+        # frame's own newest session and PLTR a day earlier, so both halves of
+        # the price_basis topic have something real to exercise -- the frame
+        # summary every priced answer owes, and the per-instrument exception a
+        # single frame date would have hidden (#583 section 2).
+        "valuation_basis": "priced", "reconciliation_ref": None,
+        "price_observations": {"as_of": "2026-01-06",
+                               "by_ticker": {"NVDA": "2026-01-06",
+                                             "PLTR": "2026-01-05"}},
         "state_version": "pb-v1:" + "0" * 64,
     }
+    base.update(overrides)
+    return base
+
+
+def _unpriced_basis(**overrides):
+    """The other lane: no current price reached this book, so it carries no
+    price observation at all -- not a null, not today's date."""
+    base = _basis(valuation_basis="unpriced")
+    base.pop("price_observations")
     base.update(overrides)
     return base
 
@@ -207,32 +247,39 @@ def test_a_case_covering_exactly_what_the_challenge_asked_for_is_accepted():
     this is where it shows up -- the case here is generated from the block,
     never hand-written to match it."""
     collisions = _rule_collisions()
-    challenge = _build(rule_collisions=collisions)
-    answer_provenance.validate_agent_case(
-        _case_covering(challenge, collisions), basis=_basis(),
-        consequence=_consequence(), rule_collisions=collisions, user_statements=())
+    for basis in (_basis(), _unpriced_basis()):
+        challenge = _build(basis=basis, rule_collisions=collisions)
+        answer_provenance.validate_agent_case(
+            _case_covering(challenge, collisions), basis=basis,
+            consequence=_consequence(), rule_collisions=collisions, user_statements=())
 
 
 def test_dropping_any_single_entry_the_challenge_named_is_refused():
     """The floor is a floor. Every entry the block named is load-bearing:
     removing exactly one and leaving the rest intact must be refused, so
-    the block cannot list an obligation nothing enforces."""
+    the block cannot list an obligation nothing enforces.
+
+    Run over both valuation lanes (#618). The priced one is what proves the
+    price day is enforced and not merely announced; the unpriced one is what
+    proves nothing was quietly made mandatory on a book that never had a
+    price observation to cite."""
     collisions = _rule_collisions()
-    challenge = _build(rule_collisions=collisions)
-    assert challenge["required_coverage"], "fixture must exercise at least one obligation"
-    for required in challenge["required_coverage"]:
-        case = _case_covering(challenge, collisions, skip=required["path"])
-        try:
-            answer_provenance.validate_agent_case(
-                case, basis=_basis(), consequence=_consequence(),
-                rule_collisions=collisions, user_statements=())
-        except answer_provenance.AnswerProvenanceError as exc:
-            assert required["path"] in str(exc), (
-                f"refused, but the message never names the dropped {required['path']}: {exc}")
-            continue
-        raise AssertionError(
-            f"the challenge named {required['path']} as owed, but a case dropping it "
-            "was accepted -- the block is listing an obligation nothing enforces")
+    for basis in (_basis(), _unpriced_basis()):
+        challenge = _build(basis=basis, rule_collisions=collisions)
+        assert challenge["required_coverage"], "fixture must exercise at least one obligation"
+        for required in challenge["required_coverage"]:
+            case = _case_covering(challenge, collisions, skip=required["path"])
+            try:
+                answer_provenance.validate_agent_case(
+                    case, basis=basis, consequence=_consequence(),
+                    rule_collisions=collisions, user_statements=())
+            except answer_provenance.AnswerProvenanceError as exc:
+                assert required["path"] in str(exc), (
+                    f"refused, but the message never names the dropped {required['path']}: {exc}")
+                continue
+            raise AssertionError(
+                f"the challenge named {required['path']} as owed, but a case dropping it "
+                "was accepted -- the block is listing an obligation nothing enforces")
 
 
 def test_every_required_coverage_path_is_reachable_from_must_state():
@@ -318,6 +365,95 @@ def test_a_collision_row_with_no_rule_id_is_stated_without_an_anchor():
     assert "anchor" not in rows[0], "an unaddressable row must not carry a citation path"
     assert not [r for r in challenge["required_coverage"] if r["owes"] == "rule_collision"], (
         "an uncitable collision must not be required, or no case on this book is submittable")
+
+
+# ─────────── 2b. which market session priced the book (#618) ───────────
+#
+# Since #611 a `consider` weight is a share of the current close rather than
+# of cost, so the same premise re-asked returns different numbers. Without
+# the price day in the answer the user cannot tell whether the market moved
+# or their own book did -- and "the numbers moved" with no attributable cause
+# is the #429-class question that comes back as a dogfood finding.
+
+
+def test_a_priced_answer_owes_the_market_session_it_was_valued_at():
+    challenge = _build()
+    priced = [e for e in challenge["must_state"] if e["topic"] == "price_basis"]
+    assert priced, "a priced answer that never says which close it used"
+    frame = priced[0]
+    assert frame["value"] == "2026-01-06"
+    assert frame["anchor"] == "basis.price_observations.as_of"
+    # ... and it is a different fact from the record's own as_of, which is the
+    # whole reason this exists: one is the last trade, the other is the market.
+    basis_dates = {e["value"] for e in challenge["must_state"]
+                   if e["topic"] == "basis" and e["anchor"] == "basis.as_of"}
+    assert basis_dates == {"2026-01-01"} and frame["value"] not in basis_dates
+
+
+def test_an_unpriced_answer_owes_no_price_day_and_is_given_none():
+    """The hard rule. An offline answer must not grow a date -- not a null,
+    not a placeholder, not today's -- and must not be told it owes one."""
+    challenge = _build(basis=_unpriced_basis())
+    assert not [e for e in challenge["must_state"] if e["topic"] == "price_basis"], (
+        "an unpriced book was handed a market session it never observed")
+    assert not [r for r in challenge["required_coverage"] if r["owes"] == "price_basis"], (
+        "an unpriced answer cannot cite a price day, so it must not be required to")
+
+
+def test_an_instrument_off_the_frame_date_is_named_and_a_matching_one_is_not():
+    """#583 section 2, one surface over. A frame date alone lets one fresh
+    close stand in for a stale one, and a date per holding on a same-day
+    frame is one entry per position saying the same thing. The exceptions
+    are exactly the instruments the summary does not describe."""
+    challenge = _build()
+    named = {e["detail"]["ticker"]: e["value"] for e in challenge["must_state"]
+             if e["topic"] == "price_basis" and "detail" in e}
+    assert named == {"PLTR": "2026-01-05"}, (
+        f"only the instrument off the frame date is owed its own entry; got {named}")
+    same_day = _basis(price_observations={"as_of": "2026-01-06",
+                                          "by_ticker": {"NVDA": "2026-01-06",
+                                                        "PLTR": "2026-01-06"}})
+    entries = [e for e in _build(basis=same_day)["must_state"] if e["topic"] == "price_basis"]
+    assert len(entries) == 1 and "detail" not in entries[0], (
+        "a same-day frame owes one sentence, not one per holding")
+
+
+def test_a_dotted_ticker_off_the_frame_date_keeps_its_fact_and_its_identity():
+    """`basis.price_observations.by_ticker.2330.TW` walks as by_ticker ->
+    '2330' -> 'TW' and resolves to nothing. The date is still owed, and the
+    ticker rides in `detail` -- without it the answer would carry a market
+    session with no instrument attached."""
+    basis = _basis(price_observations={"as_of": "2026-01-06",
+                                       "by_ticker": {"NVDA": "2026-01-06",
+                                                     "2330.TW": "2026-01-05"}})
+    entries = [e for e in _build(basis=basis)["must_state"] if e["topic"] == "price_basis"]
+    dotted = [e for e in entries if e.get("detail", {}).get("ticker") == "2330.TW"]
+    assert len(dotted) == 1, f"the dotted instrument's session was dropped: {entries}"
+    assert dotted[0]["value"] == "2026-01-05"
+    assert "anchor" not in dotted[0], "a path that cannot resolve must not be offered"
+
+
+def test_a_price_day_citation_does_not_also_pay_the_staleness_obligation():
+    """One claim, one debt. `basis.price_observations` is the first required
+    path to sit under another (`basis`), and plain prefix matching let a
+    single price-day citation discharge staleness too -- a case that never
+    mentioned the stale record accepted, the whole suite green."""
+    basis, consequence = _basis(), _consequence()
+    case = {"for": [{"claim": "Conviction is intact.", "provenance": "agent_judgment"}],
+            "against": [{"claim": "Priced at the sixth's closes.", "provenance": "engine_fact",
+                         "anchor": "basis.price_observations.as_of"}]}
+    try:
+        answer_provenance.validate_agent_case(
+            case, basis=basis, consequence=consequence, rule_collisions=(),
+            user_statements=())
+    except answer_provenance.AnswerProvenanceError as exc:
+        assert "basis" in str(exc), exc
+        assert "basis.price_observations" not in str(exc), (
+            f"the price day WAS cited; only staleness is still owed: {exc}")
+        return
+    raise AssertionError(
+        "a case citing only the price day was accepted on a stale book -- the price "
+        "citation paid the staleness obligation it never addressed")
 
 
 # ─────────── 3. what the gate cannot enforce is still stated ───────────
@@ -485,9 +621,16 @@ def test_a_stale_and_unverified_basis_is_reported_as_both():
         _basis(stale_days=0, completeness="unverified"), _consequence(), ())
     assert [r for r in fresh_only if r["owes"] == "basis"][0]["key"] == "unverified"
     exempt = answer_provenance.required_coverage(
-        _basis(stale_days=0, completeness="declared_complete"),
+        _unpriced_basis(stale_days=0, completeness="declared_complete"),
         _consequence(disclosures=[]), ())
     assert exempt == (), "a fresh, declared-complete book with no disclosures owes nothing"
+    # ... and pricing that same exempt book owes exactly one thing: which
+    # session it was priced at (#618). Nothing else about the basis moved.
+    priced = answer_provenance.required_coverage(
+        _basis(stale_days=0, completeness="declared_complete"),
+        _consequence(disclosures=[]), ())
+    assert [dict(r) for r in priced] == [
+        {"path": "basis.price_observations", "owes": "price_basis", "key": "price_observed"}], priced
 
 
 # ─────────── 5. the module's vocabularies and the schema's ───────────
@@ -531,8 +674,17 @@ def test_required_coverage_vocabulary_matches_the_schemas_enums():
     answer_provenance's too -- the schema publishes it and nothing else
     checks that the two still describe the same set."""
     schema = _challenge_schema()["properties"]["required_coverage"]["items"]["properties"]
-    assert set(schema["owes"]["enum"]) == {"disclosure", "basis", "rule_collision"}
+    assert set(schema["owes"]["enum"]) == {"disclosure", "basis", "price_basis",
+                                           "rule_collision"}
     keys = set(schema["key"]["enum"])
+    # #618's own literal. Named here rather than left to the behavioral tests
+    # because an enum value no code path emits and a code path no enum admits
+    # are both invisible to them.
+    assert "price_observed" in keys, (
+        "the price-day obligation's key is missing from the schema's key enum")
+    emitted = {entry["key"] for entry in answer_provenance.required_coverage(
+        _basis(), _consequence(), _rule_collisions())}
+    assert emitted <= keys, f"required_coverage emits a key the schema does not publish: {emitted - keys}"
     assert set(answer_provenance._COVERED_STATES) <= keys, (
         "a collision state the gate enforces is missing from the schema's key enum")
     import consequence as consequence_engine

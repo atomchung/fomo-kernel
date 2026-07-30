@@ -507,7 +507,11 @@ def _grounding_fidelity(path: str | None) -> dict:
 # `basis` numbers are deliberately NOT here: `stale_days` is contractually
 # presentable in words ("nine days old" is references/trade-consequence.md's
 # own example sentence), so failing a worded form would put this gate at war
-# with the reference it enforces.
+# with the reference it enforces. `price_basis` (#618) is out for the same
+# reason and not by omission: its values are dates, and the reference's own
+# example sentence states one as "priced at Tuesday's closes". Whether the
+# market session actually reached the user is the `comprehension` verdict's
+# call, exactly like every other engine-vocabulary string here.
 NUMERIC_FACT_TOPICS = ("position", "concentration", "cash")
 NUMBER_TOKEN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 

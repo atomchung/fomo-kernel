@@ -873,6 +873,53 @@ def _resolve_consider_prices(args, root, premise_ticker=None, premise_currency=N
         return None, bundle
 
 
+def _price_observation_record(feed, universe):
+    """Which market session each number in this answer was valued at (#618).
+
+    Before #611 a ``consider`` weight was a share of cost, or of whatever the
+    last review froze, so the same premise re-asked returned the same weights.
+    It is now a share of the current close — which is the point, and which
+    makes every weight a function of a market day the row never named. The
+    user could see that the numbers moved and had no way to tell whether the
+    market moved or their own book did.
+
+    **Per ticker, with a frame-level summary**, rather than one date for the
+    frame. That choice is #583 §2's, already paid for one surface over: a
+    single ``as_of`` over a mixed frame makes one fresh instrument stand in
+    for every stale one, and ``price_feed.parse`` already stores each row's
+    own ``observed_date`` so there is nothing to derive a second time here.
+
+    ``as_of`` is the newest observation **actually used**, computed from the
+    per-ticker map rather than copied from ``feed["as_of"]``. The envelope's
+    own declared frame date is an upper bound the parser enforces (a row may
+    not post-date it), not an observation: a supplied envelope may legitimately
+    declare today while every close in it is yesterday's, and copying that
+    forward would put the summary ahead of every number it summarizes — the
+    same confusion at frame level that the per-ticker map exists to prevent.
+    ``market_data.to_price_feed_envelope`` already takes ``max(row date)`` for
+    exactly this reason; this is that definition, applied to the subset that
+    reached the answer.
+
+    ``universe`` is what *this answer* needed priced — the held book, whatever
+    it could not value, and the premise's own ticker — the same set the
+    recovery kit is scoped to, read here rather than derived a second time. An
+    envelope may carry closes for instruments no number in this answer uses,
+    and dating those would owe the agent a sentence about a position the user
+    does not hold.
+
+    Returns ``None`` when no observation reached this book, which is what keeps
+    the hard rule of #618 mechanical: an unpriced run grows no date at all,
+    rather than a null, a placeholder, or today's.
+    """
+    by_ticker = {ticker: row["observed_date"]
+                 for ticker, row in ((feed or {}).get("prices") or {}).items()
+                 if ticker in set(universe or ()) and row.get("observed_date")}
+    if not by_ticker:
+        return None
+    return {"as_of": max(by_ticker.values()),
+            "by_ticker": {ticker: by_ticker[ticker] for ticker in sorted(by_ticker)}}
+
+
 def _profile_path(root):
     return os.path.join(root, "profile.json")
 
@@ -6657,6 +6704,18 @@ def cmd_consider(args):
                     if row["ticker"] in priced_universe},
         fx=fx, supplied=feed, unavailable_declared=declared_unavailable,
         bundle=market_bundle)
+    # #618. Frozen onto the basis beside `valuation_basis`, where "was this
+    # priced" already lives, and from the same `priced_universe` the kit above
+    # is scoped to. Stamped here rather than inside `_consider_rows` because the
+    # observation is a property of the feed, not of which lane read the book —
+    # the CSV and ledger lanes would otherwise each need their own copy of it.
+    #
+    # Conditional, and that is the contract: `valuation_basis: "unpriced"` runs
+    # carry no key at all, so there is no placeholder for a reader to mistake
+    # for an observation. `_price_observation_record` returns None for them.
+    price_observations = _price_observation_record(feed, priced_universe)
+    if price_observations is not None:
+        basis["price_observations"] = price_observations
     # #629, the refusal. Scoped to the one state that produces the harm: nothing
     # current reached this book at all, so every weight above would be a share
     # of *cost*. A retrospective card's cost weights describe what the user

@@ -152,12 +152,26 @@ def _check_evaluation_shape(row):
     assert set(basis_schema["required"]) <= set(row["basis"])
     assert row["basis"]["source"] in basis_schema["properties"]["source"]["enum"]
     assert isinstance(row["basis"]["stale_days"], int) and row["basis"]["stale_days"] >= 0
+    assert set(row["basis"]) <= set(basis_schema["properties"]), (
+        f"basis carries undeclared fields: {set(row['basis']) - set(basis_schema['properties'])}")
     if "valuation_coverage" in row["basis"]:
         coverage_schema = basis_schema["properties"]["valuation_coverage"]
         coverage = row["basis"]["valuation_coverage"]
         assert set(coverage) == set(coverage_schema["properties"])
         assert coverage["scope"] in coverage_schema["properties"]["scope"]["enum"]
         assert coverage["currencies"] == sorted(coverage["currencies"])
+    # #618. Absent on an unpriced row and, when present, a real per-instrument
+    # record whose summary is the newest observation in it -- never a frame
+    # date declared over instruments it does not describe.
+    observed = row["basis"].get("price_observations")
+    assert not (observed is not None and row["basis"]["valuation_basis"] == "unpriced"), (
+        f"an unpriced book grew a market session it never observed: {observed}")
+    if observed is not None:
+        assert set(observed) == set(basis_schema["properties"]["price_observations"]["properties"])
+        assert observed["by_ticker"], "an empty observation map is an absent one"
+        assert observed["as_of"] == max(observed["by_ticker"].values())
+        for day in observed["by_ticker"].values():
+            assert isinstance(day, str) and len(day) == 10 and day[4] == day[7] == "-"
 
     consequence_schema = EVALUATION_SCHEMA["properties"]["consequence"]
     assert set(consequence_schema["required"]) <= set(row["consequence"])
@@ -2352,6 +2366,125 @@ def test_the_challenge_is_absent_from_a_resolution():
         resolved = _ok(_run("consider", "--root", tmp, "--decision", "acted",
                             "--resolve", created["evaluation"]["evaluation_id"]))
         assert "challenge" not in resolved
+
+
+# ───── M2. which market session the answer was valued at (#618) ─────
+#
+# Before #611 a `consider` weight was a share of cost, or of whatever the last
+# review froze, so the same premise re-asked returned the same weights. It is
+# now a share of the current close — which is the point, and which makes every
+# number a function of a market day the row never named. A user who asks twice
+# could see that the numbers moved with no way to tell whether the market moved
+# or their own book did.
+#
+# What is proved here, and only here, is that the fact survives the real CLI in
+# both directions: an offline run grows no date at all, and a priced run freezes
+# one the block then names and the gate then enforces.
+
+_PRICE_DAY = "2026-07-30"
+_EARLIER_DAY = "2026-07-29"
+
+
+def _priced_collision_root(tmp):
+    """`_collision_root`'s book (AAA/BBB/CCC) with a supplied envelope that
+    prices it on a deliberately MIXED frame: two instruments on the frame's
+    own newest session, one a day earlier, and one close for an instrument the
+    book has never held — which must not be dated, because no number in this
+    answer used it."""
+    premise = _collision_root(tmp)
+    feed = os.path.join(tmp, "px.json")
+    rows = [("AAA", 130.0, _PRICE_DAY), ("BBB", 90.0, _PRICE_DAY),
+            ("CCC", 110.0, _EARLIER_DAY), ("ZZZ", 44.0, _PRICE_DAY)]
+    with open(feed, "w", encoding="utf-8") as handle:
+        json.dump({"as_of": _PRICE_DAY, "source": "fixture",
+                   "prices": [{"ticker": t, "close": c, "date": d, "currency": "USD"}
+                              for t, c, d in rows]}, handle)
+    return premise, feed
+
+
+def test_an_offline_answer_carries_no_price_day_at_all():
+    """The hard rule of #618, on the production path. Nothing retrieved means
+    nothing observed, and an answer that manufactures a date there — a null, a
+    placeholder, or today's — would tell the user the numbers came from a
+    market session that never priced this book."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp, "--premise", premise))
+        basis = payload["evaluation"]["basis"]
+        assert basis["valuation_basis"] == "unpriced"
+        assert "price_observations" not in basis, (
+            f"an offline consider grew a price observation: {basis['price_observations']}")
+        _check_evaluation_shape(payload["evaluation"])
+
+        challenge = payload["challenge"]
+        assert not [e for e in challenge["must_state"] if e["topic"] == "price_basis"], (
+            "an unpriced answer was told to state a market session it never had")
+        assert not [r for r in challenge["required_coverage"] if r["owes"] == "price_basis"], (
+            "an unpriced answer cannot cite a price day, so it must not be refused for not citing one")
+        _check_challenge_shape(challenge)
+
+
+def test_a_priced_answer_freezes_the_session_each_number_was_valued_at():
+    with tempfile.TemporaryDirectory() as tmp:
+        premise, feed = _priced_collision_root(tmp)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--prices", feed, "--premise", premise))
+        basis = payload["evaluation"]["basis"]
+        assert basis["valuation_basis"] == "priced"
+        assert basis["price_observations"] == {
+            "as_of": _PRICE_DAY,
+            "by_ticker": {"AAA": _PRICE_DAY, "BBB": _PRICE_DAY, "CCC": _EARLIER_DAY}}, (
+            "the frozen observations must be per instrument, scoped to what this answer "
+            f"needed priced, and summarized by their own newest: {basis['price_observations']}")
+        _check_evaluation_shape(payload["evaluation"])
+        assert _read_evaluations(tmp)[0]["basis"] == basis, (
+            "the stored row must carry the same observations the caller was handed")
+
+
+def test_the_priced_answer_owes_the_session_and_names_the_instrument_off_it():
+    with tempfile.TemporaryDirectory() as tmp:
+        premise, feed = _priced_collision_root(tmp)
+        challenge = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                                 "--prices", feed, "--premise", premise))["challenge"]
+        _check_challenge_shape(challenge)
+        entries = [e for e in challenge["must_state"] if e["topic"] == "price_basis"]
+        assert [e["value"] for e in entries] == [_PRICE_DAY, _EARLIER_DAY], (
+            f"the frame session and the one instrument off it are both owed: {entries}")
+        assert entries[0]["anchor"] == "basis.price_observations.as_of"
+        assert entries[1]["detail"] == {"ticker": "CCC"}, (
+            "the instrument the frame summary does not describe must be named")
+        assert any(r["owes"] == "price_basis" and r["path"] == "basis.price_observations"
+                   for r in challenge["required_coverage"]), (
+            "stating the price day is enforced, not merely announced")
+
+
+def test_a_case_silent_about_the_price_day_is_refused_on_the_production_path():
+    """The other direction of #479 Wave B's one-list rule, for #618's fact:
+    what the block says is owed is what a case is refused for dropping."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise, feed = _priced_collision_root(tmp)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--prices", feed, "--premise", premise))
+        challenge, collisions = payload["challenge"], payload["evaluation"]["rule_collisions"]
+
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_case_from_challenge(challenge, collisions,
+                                           skip="basis.price_observations"), f)
+        run = _run_env(_offline_env(), "consider", "--root", tmp, "--prices", feed,
+                       "--premise", premise, "--agent-case", case_path)
+        _fails(run, "basis.price_observations")
+        assert len(_read_evaluations(tmp)) == 1, (
+            "the refused attempt appended a row; the gate must fail closed")
+
+        # ... and the same case with the price day put back is accepted, so
+        # the refusal above is about that one fact and not about the shape of
+        # a case built this way.
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_case_from_challenge(challenge, collisions), f)
+        accepted = _ok(_run_env(_offline_env(), "consider", "--root", tmp, "--prices", feed,
+                                "--premise", premise, "--agent-case", case_path))
+        assert "agent_case" in accepted["evaluation"]
 
 
 # ───── N. automatic market-data resolution (#605 section E) ─────
