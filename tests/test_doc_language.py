@@ -81,6 +81,35 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
     # it, the same one-sided-drop shape the phrase above already guards.
     "bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for",
 )
+# #597 lane 1a: a decision the user brings with no recorded book is framed
+# rather than refused. Same guaranteed-delivery pair, because the two halves
+# fail in opposite directions and each half alone is worse than neither. An
+# entry point that keeps only "framed, not refused" invites a host to improvise
+# the portfolio numbers `consider` would have computed; one that keeps only the
+# shape clause leaves a host with nothing but the refusal, which is the
+# behaviour the owner-live walk on 2026-07-30 ruled against. The shape phrase
+# is load-bearing on its own: narrating an unchecked fact back at the user is
+# the caveat-filler pattern #552 owns, and this is its second instance.
+NO_BOOK_FRAMING_SECTIONS = {
+    Path("AGENTS.md"): "## Non-negotiable boundaries",
+    Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
+}
+NO_BOOK_FRAMING_REQUIRED_PHRASES = (
+    # The route exists at all.
+    "framed, not refused",
+    # Where its contract lives. AGENTS.md carries the repository-root path and
+    # SKILL.md the skill-relative one, so the shared tail is what is checked.
+    "references/decision-framing.md",
+    # The failure mode that makes it a thin `TradeEvaluation` instead of a
+    # separate outcome -- absent, not zero-valued, not a placeholder.
+    "no computed or placeholder portfolio number",
+    # The disclosure shape. Dropping the narration is a change of form, never
+    # permission to leave a decision-relevant gap unsaid.
+    "shaped as a question the user can answer rather than a gap narrated back at them",
+    # Why the route is worth having: it earns the next piece of evidence by
+    # naming what that evidence buys, rather than withholding an answer.
+    "naming the specific answer the next piece of evidence would buy",
+)
 # #549: PR #562 made every accepted source record the book at the time it
 # arrives and took `is_complete` out of the anchor decision entirely. Both
 # guaranteed-delivery entry points went on teaching the retired rule, and so
@@ -938,6 +967,56 @@ def test_recorded_book_rule_mutations_are_caught():
                 f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
             )
 
+
+def test_no_book_framing_rule_is_stated_in_both_entry_points():
+    """#597 lane 1a: `consider` fails closed with no book, and until this rule
+    landed the only behaviour either entry point described for that user was the
+    refusal. A host reading a stale entry point either refuses a user it should
+    have helped or invents the portfolio numbers it has no book for, and Claude
+    and Codex can diverge on the same engine. Same guaranteed-delivery pair as
+    FREEFORM_ANSWER_SECTIONS (docs/development-guide.md section 6).
+    """
+    for rel, heading in NO_BOOK_FRAMING_SECTIONS.items():
+        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
+        for phrase in NO_BOOK_FRAMING_REQUIRED_PHRASES:
+            assert phrase in section, f"{rel}: missing no-book framing phrase {phrase!r}"
+
+
+def test_no_book_framing_contract_is_a_routed_runtime_surface():
+    """The contract has to be reachable, not merely present: a reference file no
+    entry point names is text nothing loads. `profile.md` is the standing proof
+    -- registered in the engine's data files, covered by its own test, and named
+    by no runtime surface at all, so no agent has written one in the product's
+    lifetime.
+    """
+    contract = Path("skills/fomo-kernel/references/decision-framing.md")
+    assert (ROOT / contract).exists(), f"{contract} is missing"
+    assert contract in {rel for rel, _ in agent_runtime_files()}, (
+        f"{contract} is not an agent runtime surface -- the English-only and "
+        "link-resolution scans would skip it"
+    )
+
+
+def test_no_book_framing_mutations_are_caught():
+    """Mutation proof for both checks above, against the real committed text.
+    Section-scoped like the recorded-book proof, for the same reason: several of
+    these phrases also appear in the contract file and in the walk scenes, so a
+    file-wide replace would delete an unrelated line and leave the guarded
+    section intact -- a green mutation reporting a gate that never fired.
+    """
+    for rel, heading in NO_BOOK_FRAMING_SECTIONS.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        section = markdown_section(text, heading)
+        for phrase in NO_BOOK_FRAMING_REQUIRED_PHRASES:
+            assert phrase in section, (
+                f"fixture assumption broken: {rel}'s {heading} no longer contains {phrase!r}"
+            )
+            mutated = text.replace(section, section.replace(phrase, "", 1), 1)
+            mutated_section = markdown_section(mutated, heading)
+            assert phrase not in mutated_section, (
+                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
+            )
+
     revived = ("An incomplete snapshot may produce a bounded review, but it is not an "
                "accounting anchor; ask for the complete account view.")
     for rel, path in agent_runtime_files():
@@ -1299,6 +1378,9 @@ def main():
         test_recorded_book_rule_is_stated_in_both_entry_points,
         test_no_agent_runtime_surface_teaches_the_retired_completeness_rule,
         test_recorded_book_rule_mutations_are_caught,
+        test_no_book_framing_rule_is_stated_in_both_entry_points,
+        test_no_book_framing_contract_is_a_routed_runtime_surface,
+        test_no_book_framing_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,
         test_claude_md_is_a_host_adapter_over_the_shared_floor,
         test_agents_md_is_the_shared_always_on_floor,
