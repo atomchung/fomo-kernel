@@ -1,6 +1,6 @@
 # AGENTS.md — fomo-kernel
 
-> Thin routing guidance for Codex, Cursor, Claude Code, and other coding agents. Human-facing product documentation lives in [README.md](README.md). The only cross-agent workflow entry point is [skills/fomo-kernel/SKILL.md](skills/fomo-kernel/SKILL.md).
+> The shared always-on instruction floor for Codex, Cursor, Claude Code, and other coding agents: route selection, non-negotiable boundaries, and the instruction-authority policy — nothing more. Human-facing product documentation lives in [README.md](README.md). The only cross-agent workflow entry point is [skills/fomo-kernel/SKILL.md](skills/fomo-kernel/SKILL.md). Host adapters ([CLAUDE.md](CLAUDE.md), Codex configuration) add tool mechanics and never override anything here.
 
 ## When to trigger
 
@@ -14,6 +14,8 @@ contains no presentation receipt or owner verdict, so it may never be described
 as a user-experience pass.
 
 **Changing this repository is a third route.** If the task is maintenance rather than a review or a QA walk, follow [docs/issue-lifecycle.md](docs/issue-lifecycle.md) before loading context. Its one non-negotiable: an open issue is not by that fact active work. Load latest `main` and the current contract, the roadmap guard, the context index, then only the owning implementation and acceptance issues and what they directly reference — never every open issue. Read an issue's `Status` header before acting on its title or body.
+
+[docs/maintainer-guide.md](docs/maintainer-guide.md) is the detailed host-neutral contract for that route, and it is not auto-loaded on any client: read it before editing repository code. It holds the development discipline, the tests, the privacy boundary, the commit and PR conventions, and the mirrored-surfaces map naming every set of files that must change together — changing one surface of a mirrored set without its partners is the most frequent defect this repository ships. `python3 tests/run_all.py` must be green before a commit. CI runs the same suite on every push, but the only gate that blocks is a Claude Code hook, so on Codex, Cursor, or any other client run the suite yourself rather than letting CI find it (#592).
 
 ## Workflow
 
@@ -51,6 +53,19 @@ Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <revi
 6. Every accepted source records the book at the time it arrives, and which kind of source it was never decides whether it may anchor or be analyzed. Never ask whether a holdings view covers the user's whole account: that is an external account this product does not model, and whatever the user handed over is what gets recorded. A newer holdings view reaches the recorded book only through `review.py refresh`, which shows the narrow diff and asks about the differences only the user can settle. Later transaction files may unlock history-dependent diagnostics; ledger-derived current holdings stay canonical. Unreadable input, a missing or incompatible valuation or FX rate, a zero denominator, an unsettled reconciliation, and claims about an unreconciled current broker view all still fail closed.
 7. Invoke the engine only through the `engine/review.py` CLI (`prepare`, `resume`, `preview`, `finalize`, `capture`, `consider`, `refresh`, `render`, `repair-projections`, `set-cap`, `mute-rule`, or `doctor`). Never call another `engine/*` script or import engine modules directly; those paths bypass lifecycle validation, required-question gates, and canonical session state.
 8. An ad hoc informational question — including a `consider` call — gets a quick, direct, textual answer: no chart, no rendered artifact, no multi-tool production, unless the user asks for more. A chart is never invented on the spot; it matches a name in the small pre-defined set `references/freeform-answers.md` declares, or it does not exist — that set bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for. Brevity bounds what an answer produces, never which facts it owes: a surface with its own disclosure contract still states all of them.
+
+## Instruction authority
+
+Instruction discovery differs per client, and file order is a loading mechanism, not a licence to change what the product does. This file is the only one every supported client is guaranteed to receive, which is why the shared floor lives here and the detailed maintainer contract is routed rather than duplicated. [docs/maintainer-guide.md](docs/maintainer-guide.md) holds the per-client mechanics and how to check that a client really loaded this file.
+
+When instructions disagree:
+
+1. Deterministic code, schema, validator, and test-enforced contract outrank prose descriptions of them, and the owning issue body or owner ruling outranks historical comments and superseded issue text. Both lines are summaries — [docs/development-guide.md](docs/development-guide.md) and [docs/issue-lifecycle.md](docs/issue-lifecycle.md) own them in full, and where this summary and one of those disagree, the summary is the thing that is wrong.
+2. A nearer directory instruction may specialize a root invariant only for that directory's implementation mechanics.
+3. Host adapters — `CLAUDE.md`, Codex configuration, editor rules — may change tool mechanics only: never privacy, arithmetic, canonical state, product scope, acceptance, or runtime semantics.
+4. A genuine contradiction between a shared and a host-specific instruction is a repository defect. Stop, record it on the owning issue, and resolve the authority. Do not silently follow whichever file loaded last.
+
+Root `AGENTS.override.md` is not available as a host adapter here: Codex loads an override *instead of* the `AGENTS.md` at that directory level, so a root override would drop this floor entirely. Put client-specific mechanics in that client's own configuration, or in a nested `AGENTS.md` beside the code it governs.
 
 ## Why this bridge stays thin
 

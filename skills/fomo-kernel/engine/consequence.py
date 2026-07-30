@@ -8,7 +8,7 @@ what does that do to my book?" `prepare` today accepts only history, no
 hypothesis input, so Layer 2 "barely exists" until this module supplies the
 missing primitive. The engine answers with computed consequences, never
 prose — locale wording for anything disclosed here belongs in renderer copy,
-never in this file (CLAUDE.md, "Honesty decisions belong in code").
+never in this file (docs/maintainer-guide.md, "Honesty decisions belong in code").
 
 Three public functions, each a thin assembly of trade_recap's own pure
 functions — nothing here reimplements arithmetic trade_recap already owns:
@@ -498,9 +498,10 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     alone.
 
     `disclosures` is a list of machine-readable keys (DISCLOSURES), never
-    prose: locale wording belongs in the copy catalog, not here (CLAUDE.md,
-    "Honesty decisions belong in code"). A key is emitted when: the state is
-    cost-basis rather than priced (`cost_basis`); cash is not reliable
+    prose: locale wording belongs in the copy catalog, not here
+    (docs/maintainer-guide.md, "Honesty decisions belong in code"). A key is
+    emitted when: the state is cost-basis rather than priced (`cost_basis`);
+    cash is not reliable
     (`cash_unreliable`); the premise's ticker has no driver mapping, so
     sector/AI exposure cannot account for it (`unmapped_driver`); or the
     ledger mixes currencies without full fx coverage (`mixed_currency_no_fx`);

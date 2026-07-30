@@ -16,8 +16,9 @@
   2026-07-21: that version is right; later renderer iterations drifted away
   from it. Drift from the demo shape is a bug, not an evolution.
 - `card-template.html` stays as HTML design provenance (palette, dark mode),
-  synchronized with `card_renderer.render_html()` per CLAUDE.md; it no longer
-  defines section order.
+  synchronized with `card_renderer.render_html()` per
+  [maintainer-guide.md](maintainer-guide.md); it no longer defines section
+  order.
 - [layout-constraints.md](layout-constraints.md) restates this contract for a
   designer with no repository context: what is load-bearing, what the visual
   system currently is, and which questions are open. It is written to be handed
@@ -231,9 +232,9 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
   current set) never renders as consecutive paragraphs mid-block (root
   cause B in #276) or as a wall of per-number interruptions (2026-07-22
   reversal, same root cause, reached from real high-density data instead). Per-key disclosure
-  *conditions* live in `build_honesty_ledger()` (CLAUDE.md "Honesty decisions
-  belong in code"), not new SKILL.md prose — placement itself is now a
-  single rule with no per-key table to maintain.
+  *conditions* live in `build_honesty_ledger()` (`docs/maintainer-guide.md`,
+  "Honesty decisions belong in code"), not new SKILL.md prose — placement
+  itself is now a single rule with no per-key table to maintain.
 - A Block-1 gap note names the **actual** blocker. When price retrieval
   itself failed (#289), the annualized and vs-market notes say so instead of
   reciting the cash-anchor or benchmark-symbol reason; the renderer selects

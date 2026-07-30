@@ -188,7 +188,7 @@ reworded the calibration prompt.
 ## Every prompt is generic and synthetic
 
 No real ticker the owner holds, no real amount, no private content, per this
-repository's privacy boundary (`CLAUDE.md`, `tools/privacy_lint.py`). This
+repository's privacy boundary (`docs/maintainer-guide.md`, `tools/privacy_lint.py`). This
 corpus contains only well-known public company names and instruments used
 generically -- exactly the convention `skills/fomo-kernel/mock/*.csv` already
 uses for its own synthetic fixtures (NVDA, AMD, CVX, and similar large caps

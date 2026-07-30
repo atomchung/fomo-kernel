@@ -16,7 +16,7 @@ bespoke fixture plus its own literal block, and every new copy key in those
 registers demanded another.
 
 This module keeps the pin and removes the hand-mirroring, using the move
-CLAUDE.md's mirrored-surfaces table already prescribes and #401 already
+docs/maintainer-guide.md's mirrored-surfaces table already prescribes and #401 already
 applied to `card-template.html`: **generate the mirror, commit it, and fail
 the suite when a fresh regeneration disagrees.** The expectation still does
 not share a source with the value under test at comparison time — the golden

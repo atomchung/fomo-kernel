@@ -6,8 +6,8 @@
 it replays them with still look at something. Every probe is a pair: a clean
 input the checker must stay quiet on, and one minimal mutation it must catch.
 A checker that passes both halves of its pair cannot be silently a no-op —
-CLAUDE.md's rule is that a new checker lands with proof its matching mutation
-fails, and `eval-design.md` section "Mutation testing" says the same.
+docs/maintainer-guide.md's rule is that a new checker lands with proof
+its matching mutation fails, and `eval-design.md` section "Mutation testing" says the same.
 
 Same split as `tests/test_checkers_offline.py` for the card checkers: the bank
 holds converted misses only, and synthetic checker probes live here rather than

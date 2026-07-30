@@ -7785,7 +7785,8 @@ def test_thesis_updates_reject_out_of_vocabulary_inference_values():
 
 
 def test_schemas_cover_due_revisit_and_resolutions():
-    """Contract-sync pin (CLAUDE.md): the published schemas must describe what
+    """Contract-sync pin (docs/maintainer-guide.md): the published schemas must
+    describe what
     the code emits — a new question kind or bundle key updates them in the same
     change. (Offline suite has no jsonschema validator; pin the vocabulary.)"""
     plan_schema = json.loads((SCHEMAS / "review-plan.schema.json").read_text(encoding="utf-8"))

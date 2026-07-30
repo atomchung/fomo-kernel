@@ -821,7 +821,7 @@ def _assert_initial_snapshot_boundary(root, bundle):
     # criterion.  Prepare decides *which* differences need the user by asking
     # book_refresh, and that predicate needs the declaration envelope, which a
     # committed bundle does not carry.  Reconstructing one here would assemble
-    # the same fact from a second source — the defect class CLAUDE.md names.
+    # the same fact from a second source — the defect class docs/maintainer-guide.md names.
     # So this asserts only the narrower thing a frozen diff can answer by
     # itself: the one difference kind that destroys information never reaches
     # append_book_adoption.  A vanished position becomes an exit only when

@@ -143,7 +143,7 @@ def test_the_documentation_corpus_is_actually_being_read():
     paths = _tracked_text_files()
     assert len([p for p in paths if p.endswith(".py")]) > 30, len(paths)
     assert len([p for p in paths if p.endswith(".md")]) > 20, len(paths)
-    assert "CLAUDE.md" in paths and "skills/fomo-kernel/SKILL.md" in paths, \
+    assert "AGENTS.md" in paths and "skills/fomo-kernel/SKILL.md" in paths, \
         "the two guaranteed-delivery entry points must be in scope"
 
 

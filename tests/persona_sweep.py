@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Persona sweep: render every mock persona's card and gate the output.
 
-CLAUDE.md's merge discipline requires: "If the engine changed, run the persona
+docs/maintainer-guide.md's merge discipline requires: "If the engine
+changed, run the persona
 sweep." This is that command — the canonical form of what sessions previously
 re-invented ad hoc (#368 records the round that standardized it).
 
