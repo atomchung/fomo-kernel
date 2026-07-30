@@ -213,12 +213,13 @@ def test_the_cache_follows_the_runs_own_state_root():
     one. The default root here is a directory that *exists* — against an absent
     one this would pass through `store`'s opportunistic skip rather than through
     routing, which is how a check like this quietly stops testing anything.
+
+    No pandas guard, deliberately, matching the route-level gates in
+    `tests/test_consider.py`: pandas is a declared runtime dependency and CI
+    installs it, so a guard here would only make the one environment where this
+    check cannot run indistinguishable from a pass — this runner prints `passed`
+    for any test that returns without raising (external review, finding 1).
     """
-    try:
-        import pandas  # noqa: F401
-    except ImportError:
-        print("  (skip: pandas 未安裝,快取寫不出來)")
-        return
     with tempfile.TemporaryDirectory() as tmp:
         account_root = os.path.join(tmp, "account")     # what default_root() resolves to
         run_root = os.path.join(tmp, "run")             # what --root names
