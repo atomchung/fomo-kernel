@@ -56,6 +56,7 @@ STATE_KEYS = {
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
     "price_snapshot", "valuation_frame", "market_context",  # #500 receipt is private state only
     "splits",                                           # #550:這次真的套用的分割事件;帳本存名目股數,跨分割累加股數的讀者(revisit.detect_exits)要拿同一份,否則減碼被讀成清倉
+    "splits_window",                                    # #605:上面那份表**從哪天起**是完整的。批次取得只帶窗口內的分割,而 refresh 與 catch-up 閘門按契約不重抓——一份蓋不住自己錨點的表會把 90 股讀成 900 股改動,故窗口跟著表凍,讓讀者查得出夠不夠
     "price_provenance", "price_request",                # #289:價格來源/覆蓋率 + 待補清單,degraded 模式必須可觀測
     "problem_events", "problem_opportunities",          # #137 問題帳:事件規約 + Opportunity Check 快照
 }
@@ -99,6 +100,10 @@ def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None)
     import os
     env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=str(state_out),
                PYTHONPATH=str(shim), TR_LEDGER=(ledger or os.devnull))
+    # #605: this suite's own shim is the mechanism under test, so the runner's
+    # TR_OFFLINE must not stand in for it — with the posture inherited, the
+    # resolver short-circuits before the import and a broken shim would pass.
+    env.pop("TR_OFFLINE", None)
     r = subprocess.run([sys.executable, str(ENGINE), str(csv or MOCK_CSV)],
                        cwd=SKILL_DIR, env=env, capture_output=True, text=True, timeout=120)
     return r, state_out
@@ -116,7 +121,13 @@ def main():
 
         # ── 1. TR_JSON 契約 ──
         ok(r.returncode == 0, "engine 離線跑 mock exit 0", r.stderr[-300:])
-        ok("yfinance 未安裝" in r.stderr, "確實走離線降級路徑(shim 生效)", r.stderr[:200])
+        # #605: assert the stable classified fact, not a diagnostic sentence. The
+        # retrieval reason enters engine state as a `price_feed.classify_error`
+        # code precisely so a wording change cannot move `session_id`; pinning the
+        # sentence here made the suite red for a refactor that changed nothing a
+        # user or a consumer can observe.
+        ok("not installed" in r.stderr or "未安裝" in r.stderr,
+           "確實走離線降級路徑(shim 生效)", r.stderr[:200])
         card = json.loads(r.stdout)                       # stdout 必須是純 JSON,parse 失敗即紅
         ok(set(card.keys()) == TR_JSON_KEYS, "TR_JSON 頂層 key 恰等於 SKILL 消費清單",
            f"多了 {set(card.keys()) - TR_JSON_KEYS} / 少了 {TR_JSON_KEYS - set(card.keys())}")

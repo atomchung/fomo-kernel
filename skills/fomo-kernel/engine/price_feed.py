@@ -535,8 +535,13 @@ _ERROR_SIGNATURES = (
     # feed that matched none of the requested instruments).
     ("no_data", ("無資料", "no data", "empty", "covers none", "carries no prices",
                  "none of the requested")),
-    # The retrieval client itself is absent (offline shim / uninstalled dep).
-    ("client_missing", ("未安裝", "not installed", "no module named", "cannot be applied")),
+    # The retrieval client itself is absent (offline shim / uninstalled dep), or
+    # was deliberately not used (#605's TR_OFFLINE posture). Those two share one
+    # code on purpose: the resolver is built so an offline run degrades to exactly
+    # the missing-provider answer, and every consumer downstream — including the
+    # state sha256 that fixes session_id — must not be able to tell them apart.
+    ("client_missing", ("未安裝", "not installed", "no module named", "cannot be applied",
+                        "tr_offline")),
 )
 
 

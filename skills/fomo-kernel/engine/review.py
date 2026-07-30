@@ -34,6 +34,7 @@ import evaluation_challenge
 import horizon
 import instruments
 import ledger
+import market_data
 import price_feed
 import problems
 import portfolio_basis
@@ -525,6 +526,8 @@ def _refuse_if_the_book_must_catch_up(root, snapshot_path):
     try:
         events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
         snapshot, anchor = snapshot_adapter.normalize_book(snapshot_path)
+        recorded_anchor = ledger.latest_anchor(events or [], declared_only=True) or {}
+        _refuse_an_unprovable_split_basis(root, recorded_anchor.get("as_of"))
         plan = book_refresh.plan_refresh(events, snapshot, anchor,
                                          splits=_recorded_splits(root))
     except (ValueError, snapshot_adapter.SnapshotError) as exc:
@@ -651,6 +654,53 @@ def _recorded_splits(root):
     return (_previous_state(root) or {}).get("splits")
 
 
+def _refuse_an_unprovable_split_basis(root, anchor_as_of):
+    """Refuse when the frozen split map cannot testify about this book's anchor.
+
+    #605's residue, and it is a silent-wrong-number one. Retrieval used to be
+    unbounded, so whatever date a reader rebased from, the frozen map covered it.
+    One batched request carries only the splits inside its window, and the two
+    readers here — ``refresh`` and ``prepare``'s own catch-up gate — may not
+    re-resolve: ``refresh`` runs as two CLI calls and content-addresses what the
+    user was shown, so a fetch between them could invalidate a ``refresh_id``
+    mid-answer (#558's ruling, unchanged).
+
+    Measured, not argued. A book holding 90 shares declared before a ten-for-one
+    and never traded since reconciles cleanly against a post-split broker view of
+    900 when the map covers the split; with the map one window short,
+    ``plan_refresh`` returns a ``large_change`` asking the user to confirm going
+    from 90 shares to 900 — a change that never happened — plus a matching
+    ``avg_cost`` move. Confirm it and a wrong share count enters the book
+    durably.
+
+    ``trade_recap.market_request`` makes this unreachable for an ordinary root:
+    it derives its window from the union of the CSV's first trade and the ledger
+    anchor, and ``prepare`` passes the root's own ledger through ``TR_LEDGER``.
+    What it cannot cover is an anchor that arrives *after* the last review with
+    an older ``as_of``. That case refuses here rather than reconciling against a
+    basis nothing established — and refusing is cheap, because the repair is one
+    command: run ``prepare`` again and the map is re-frozen with the anchor in
+    its window.
+
+    A root with no recorded window at all is a pre-#605 review, whose map was
+    unbounded and therefore sufficient. Silence is correct there; treating a
+    missing stamp as insufficient would refuse every user mid-upgrade.
+    """
+    state = _previous_state(root) or {}
+    window = state.get("splits_window") or {}
+    start = str(window.get("start") or "").strip()
+    if not start or not anchor_as_of:
+        return
+    if str(anchor_as_of) >= start:
+        return
+    raise ReviewError(
+        f"the recorded split basis was resolved from {start} and cannot say what happened to "
+        f"this book's share counts before it, but the recorded book is anchored on "
+        f"{anchor_as_of}. Reconciling across that gap would read an unseen split as a share "
+        "change you never made. Run prepare again to re-resolve the split basis over the "
+        "anchor's own window, then repeat this command.")
+
+
 def _effective_splits(root, supplied):
     """The one split map ``consider`` reasons over (#558 precedence, #583).
 
@@ -681,6 +731,138 @@ def _effective_splits(root, supplied):
     merged = dict(recorded or {})
     merged.update(supplied)
     return merged
+
+
+def _consider_market_universe(args, root):
+    """What ``consider`` must ask the market about, read from the raw source once.
+
+    The same ordering problem ``trade_recap.market_request`` has, one route over:
+    the book cannot be built until the split map is known, and the request cannot
+    be built from a book that does not exist yet. So this reads the *source* — the
+    CSV rows, or the ledger's own events — for facts that need no arithmetic:
+    which instruments, which currency each one trades in, and the oldest date a
+    consumer will rebase a split from.
+
+    That last one is the whole reason this is not a one-liner. On the ledger route
+    the origin is the recorded anchor, which routinely predates every trade in any
+    CSV the user has handed over; a window scoped to the trades alone would leave
+    the resolved split map short of exactly the events ``ledger.derive_holdings``
+    applies at its anchor, and a missing split is a silent factor of 1.0.
+
+    One reader, one pass. The currency map travels with the universe rather than
+    being read again by a second function: they come from the same rows, and two
+    walks over one source is the divergent-derivation shape
+    docs/development-guide.md section 7 names — here it would put the envelope's
+    declared currency and the request's currency list one edit apart from
+    disagreeing.
+
+    Returns ``None`` when the source yields nothing to ask about. That is not an
+    error at this layer: the existing refusals in ``_consider_rows`` own it, and
+    say something more useful than this function could.
+    """
+    tickers, currencies, origin = {}, set(), None
+    if args.paths:
+        try:
+            rows = trade_recap.load([os.path.abspath(os.path.expanduser(path))
+                                     for path in args.paths])
+        except Exception:                                   # noqa: BLE001
+            return None                                     # _consider_rows refuses, with its message
+        for row in rows or ():
+            currency = str(row.get("currency") or "USD").upper()
+            tickers[row["ticker"]] = currency
+            currencies.add(currency)
+            day = str(row["date"])
+            origin = day if origin is None else min(origin, day)
+    else:
+        try:
+            events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+        except Exception:                                   # noqa: BLE001
+            return None
+        anchor_row = ledger.latest_anchor(events or [], declared_only=True) or {}
+        for position in anchor_row.get("positions") or ():
+            ticker = str(position.get("ticker") or "").strip()
+            if ticker:
+                currency = str(position.get("currency") or "USD").upper()
+                tickers[ticker] = currency
+                currencies.add(currency)
+        if anchor_row.get("as_of"):
+            origin = str(anchor_row["as_of"])
+        for event in events or ():
+            if event.get("type") != "trade":
+                continue
+            ticker = str(event.get("ticker") or "").strip()
+            if ticker:
+                currency = str(event.get("currency") or "USD").upper()
+                tickers.setdefault(ticker, currency)
+                currencies.add(currency)
+            day = str(event.get("date") or "")
+            if day:
+                origin = day if origin is None else min(origin, day)
+    if not tickers or origin is None:
+        return None
+    return {"currency_by_ticker": tickers, "currencies": currencies, "origin": origin}
+
+
+def _resolve_consider_prices(args, root, premise_ticker=None, premise_currency=None):
+    """Resolve the smallest current bundle this ``consider`` needs, as an envelope.
+
+    #605 section E. A ``consider`` with no ``--prices`` used to reason about the
+    book at whatever the last review froze — or refuse outright for a
+    mixed-currency book, because no rate was ever in reach (#602). There is no
+    product rule against retrieving current facts here, so it retrieves them.
+
+    They enter through ``market_data.to_price_feed_envelope`` and then through the
+    *existing* supplied-price path, unchanged. That lane already reconciles
+    declared currencies against the trades, checks that the prices and the share
+    counts are on one split basis, builds the valuation manifest and freezes the
+    provenance — so live resolution adds no second downstream path to get wrong,
+    and the acceptance criterion that a resolved run produces the same normalized
+    valuation facts as an equivalent supplied fixture holds by construction.
+
+    Returns ``(feed, bundle)``, either of which may be ``None``. Every failure
+    lands on the pre-#605 behaviour rather than on a refusal: no prices, the
+    book's own basis, and — for a mixed-currency book still missing a rate —
+    ``consequence.portfolio_state``'s existing fail-closed refusal, which remains
+    the residual floor. Nothing here ever substitutes a rate nobody observed.
+    """
+    universe = _consider_market_universe(args, root)
+    if universe is None:
+        return None, None
+    instruments = set(universe["currency_by_ticker"])
+    currencies = set(universe["currencies"])
+    currency_by_ticker = dict(universe["currency_by_ticker"])
+    if premise_ticker:
+        instruments.add(premise_ticker)                     # the trade being asked about
+        # And its currency. A premise may name an instrument the book has never
+        # held, in a currency the book has never held either — a USD-only book
+        # asked about a TWD listing. Adding the ticker without its currency
+        # requested no rate for it and declared the row as USD, so automatic
+        # retrieval could not complete an otherwise valid non-USD question
+        # (external review, finding 8). The downstream refusal was correct; it was
+        # refusing something the provider could have answered.
+        if premise_currency:
+            currency_by_ticker[premise_ticker] = str(premise_currency).upper()
+            currencies.add(str(premise_currency).upper())
+    try:
+        request = market_data.build_request(
+            instruments=instruments,
+            currencies=currencies,
+            window_start=universe["origin"],
+            rebase_origin=universe["origin"])
+    except market_data.MarketDataError:
+        return None, None
+    bundle = market_data.resolve(request, root=root)
+    envelope = market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker=currency_by_ticker)
+    if envelope is None:
+        return None, bundle
+    try:
+        return price_feed.parse(envelope), bundle
+    except price_feed.PriceFeedError:
+        # An envelope this repository built and cannot itself parse is a defect
+        # here, not a user error — so it degrades rather than refusing a review
+        # the user can otherwise have.
+        return None, bundle
 
 
 def _profile_path(root):
@@ -5737,12 +5919,25 @@ def cmd_consider(args):
     if args.instrument_map:
         instruments.load_map(os.path.abspath(os.path.expanduser(args.instrument_map)))
 
-    last_px, fx, supplied_splits = None, None, None
+    last_px, fx, supplied_splits, market_bundle = None, None, None, None
+    feed = None
     if args.prices:
         try:
             feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
             raise ReviewError(f"price feed rejected: {exc}") from exc
+    else:
+        # #605 section E: resolve the current facts this answer needs, rather than
+        # reasoning about the book at whatever the last review happened to freeze.
+        # The resolved envelope is fed into the identical path below — the supplied
+        # lane is the tested one, and a second lane is a second thing to get wrong.
+        # A supplied envelope is never topped up from here: past this branch the
+        # two are indistinguishable, which is the point.
+        feed, market_bundle = _resolve_consider_prices(
+            args, root,
+            premise_ticker=str(premise_payload.get("ticker") or "").strip() or None,
+            premise_currency=str(premise_payload.get("currency") or "").strip() or None)
+    if feed is not None:
         last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
         fx = price_feed.fx_rates(feed)
         # The envelope's own splits, already schema-validated on the way in
@@ -5768,11 +5963,19 @@ def cmd_consider(args):
                    if row.get("split_date") else "")
                 + (f" ({row['error']})" if row.get("error") else "")
                 for row in conflicts)
+            # A resolved envelope carries current observations, so both factors
+            # are normally 1.0 and this cannot fire; it still can for a quote that
+            # is genuinely stale (a halted or delisted instrument whose last close
+            # predates a split), and telling that user to fix an envelope they
+            # never wrote would send them after a file that does not exist.
+            repair = ("Declare the split in the price envelope, or supply a close dated on or "
+                      "after it." if args.prices else
+                      "Supply --prices with a close dated on or after that split, or refresh the "
+                      "book so its share counts and the available quote share one basis.")
             raise ReviewError(
-                "the supplied prices and this book's share counts are on different split "
-                f"bases, so no weight or consequence can be computed from them: {detail}. "
-                "Declare the split in the price envelope, or supply a close dated on or "
-                "after it.")
+                f"the {'supplied' if args.prices else 'retrieved'} prices and this book's share "
+                "counts are on different split bases, so no weight or consequence can be "
+                f"computed from them: {detail}. {repair}")
 
     cash_anchor = None
     if args.cash:
@@ -5943,6 +6146,11 @@ def cmd_refresh(args):
     frozen_splits = _recorded_splits(root)
 
     def _frozen(events):
+        # Both refresh calls check the same condition against the same recorded
+        # window, so the plan and the answer cannot disagree about whether the
+        # basis was provable.
+        recorded_anchor = ledger.latest_anchor(events or [], declared_only=True) or {}
+        _refuse_an_unprovable_split_basis(root, recorded_anchor.get("as_of"))
         return book_refresh.plan_refresh(events, snapshot, anchor,
                                          splits=frozen_splits)
 
@@ -5981,6 +6189,68 @@ def cmd_refresh(args):
            "reconciliation": adoption["reconciliation"]["status"],
            "carried_forward": adoption["carried"], "recorded_absent": adoption["sold"],
            "recorded_new": adoption["appeared"], "ledger": report})
+
+
+def cmd_resolve_market_data(args):
+    """The supported, observable acquisition entry point (#605 section F).
+
+    Normal users never need this: ``prepare`` and ``consider`` resolve their own
+    facts. It exists so a host that wants to *see* what retrieval produced — or
+    to capture it for a machine that cannot reach the provider — has a real
+    command instead of importing engine modules or hand-coding provider calls,
+    which is what every host was doing and what problem 4 of #605 is.
+
+    Deliberately inert with respect to state: it computes no portfolio result and
+    writes no canonical session, ledger, evaluation or projection row. The only
+    thing it touches is the same-day acquisition cache every other route shares,
+    and only because resolving is what it does.
+
+    The envelope it emits is the existing ``price-feed`` one, so its output is
+    directly usable as ``prepare --prices`` / ``consider --prices`` input and is
+    validated by the same parser those two run.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    payload = _load_json_arg(args.request, "--request")
+    try:
+        request = market_data.build_request(
+            instruments=payload.get("instruments") or (),
+            benchmarks=payload.get("benchmarks") or (),
+            currencies=payload.get("currencies") or (),
+            window_start=payload.get("window_start"),
+            window_end=payload.get("window_end"),
+            rebase_origin=payload.get("rebase_origin"))
+    except (market_data.MarketDataError, TypeError) as exc:
+        raise ReviewError(f"--request is not a usable market-data request: {exc}") from exc
+    bundle = market_data.resolve(request, root=root)
+    envelope = market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker=payload.get("currency_by_ticker") or {},
+        instruments_only=False)
+    result = {
+        "status": "ok",
+        "source": bundle.source,
+        "as_of": bundle.as_of,
+        "window": bundle.window,
+        "rebase_origin": bundle.rebase_origin,
+        "coverage": bundle.coverage(),
+        "gaps": bundle.gaps,
+        "envelope": envelope,
+    }
+    if envelope is not None:
+        # Refuse to hand out an envelope this repository's own parser rejects: the
+        # whole value of emitting the existing shape is that the two routes that
+        # consume it will accept it.
+        try:
+            price_feed.parse(envelope)
+        except price_feed.PriceFeedError as exc:
+            raise ReviewError(
+                f"the resolved envelope does not satisfy the price-feed contract: {exc}") from exc
+    if args.output:
+        path = os.path.abspath(os.path.expanduser(args.output))
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(envelope, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        result["output"] = path
+    _emit(result)
 
 
 def cmd_doctor(args):
@@ -6141,6 +6411,17 @@ def build_parser():
                               "(schemas/book-refresh.schema.json). Omit for the "
                               "read-only difference and its pending confirmations.")
     refresh.set_defaults(func=cmd_refresh)
+    resolve_md = sub.add_parser(
+        "resolve-market-data",
+        help="resolve current market facts into a price-feed envelope for inspection "
+             "or host reuse; prepare and consider do this themselves (#605)")
+    resolve_md.add_argument("--root")
+    resolve_md.add_argument("--request", required=True,
+                            help="a path to a JSON file, or an inline JSON object: "
+                                 "{instruments, benchmarks, currencies, window_start, "
+                                 "window_end, rebase_origin}")
+    resolve_md.add_argument("--output", help="write the envelope here instead of stdout")
+    resolve_md.set_defaults(func=cmd_resolve_market_data)
     doctor = sub.add_parser(
         "doctor", help="check optional runtime dependencies and what each unlocks (#322)")
     doctor.set_defaults(func=cmd_doctor)

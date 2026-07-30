@@ -69,22 +69,27 @@ def test_corrupt_cache_file_is_a_miss_not_a_crash():
 _SHIM_PROBE = r"""
 import datetime as dt, json, os, sys
 sys.path.insert(0, os.environ["ENGINE"])
-import fetch_cache, trade_recap
+import fetch_cache, market_data, trade_recap
 root = os.environ["TRADE_COACH_HOME"]
 today = dt.date.today().isoformat()
-# 先種一份「今天的」快取。若 fetch 路徑在 import 失敗前就讀快取,就會撈到這筆。
-fetch_cache.store("splits", sorted({"AAA"}), {"AAA": [["2026-01-02", 4.0]]}, root=root, today=today)
-fetch_cache.store("prices", {"universe": sorted({"AAA", "SPY", "QQQ", "SOXX", "^VIX"}),
-                             "start": "2026-01-01"},
-                  {"index": ["2026-01-02"], "columns": ["AAA"], "data": [[1.0]]},
-                  root=root, today=today)
-fetch_cache.store("fx", ["TWD"], {"TWD": 0.0307}, root=root, today=today)
-splits = trade_recap.fetch_splits({"AAA"})
-frame, err = trade_recap.fetch_prices({"AAA"}, "2026-01-01")
-fx, fx_err = trade_recap.fetch_fx({"TWD", "USD"})
+request = market_data.build_request(instruments=["AAA"], benchmarks=["SPY"],
+                                    currencies=["TWD"], window_start="2026-01-01")
+# 先種一份「今天的」快取,而且是**蓋得住**下面那個請求的一份。若解析路徑在
+# import 失敗前就讀快取,就會撈到這筆假資料。
+fetch_cache.store(market_data.CACHE_KIND, request, {
+    "source": "yahoo", "request": request, "as_of": "2026-01-02",
+    "frame": {"index": ["2026-01-02"], "columns": ["AAA", "SPY"], "data": [[1.0, 2.0]]},
+    "fx_frame": None, "splits": {"AAA": [["2026-01-02", 4.0]]},
+    "fx": {"USD": 1.0, "TWD": 0.0307}, "gaps": [],
+}, root=root, today=today)
+bundle = market_data.resolve(request, root=root, today=today)
+splits = trade_recap.fetch_splits({"AAA"}, bundle=bundle)
+frame, err = trade_recap.fetch_prices({"AAA"}, "2026-01-01", bundle=bundle)
+fx, fx_err = trade_recap.fetch_fx({"TWD", "USD"}, bundle=bundle)
 # default=str:快取命中時 splits 會帶 dt.date,序列化不得因此爆掉——
 # 這條探針要讓斷言說話,不是讓 json 先掛掉。
-print(json.dumps({"splits": splits, "frame_is_none": frame is None, "err": err,
+print(json.dumps({"source": bundle.source, "gaps": [g["code"] for g in bundle.gaps],
+                  "splits": splits, "frame_is_none": frame is None, "err": err,
                   "fx": fx, "fx_err": fx_err}, default=str))
 """
 
@@ -94,6 +99,11 @@ def test_offline_shim_cannot_read_the_cache():
 
     這條是 #235 的核心約束(見 issue 2026-07-19 comment)。把快取讀取移到
     `import yfinance` 之前,這個測試就會紅——那正是它要擋的突變。
+
+    #605:取得層搬進 `market_data` 之後,這條約束跟著搬,守的東西一模一樣——
+    種下的是一份「蓋得住該請求」的 bundle,所以它是真的可命中,唯一擋住它的
+    是 import 探測的順序。三個投影函式一起驗,因為它們現在共用同一份 bundle:
+    任何一個能在離線時變出數字,就是同一個缺陷的第二個出口。
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "root")
@@ -105,15 +115,20 @@ def test_offline_shim_cannot_read_the_cache():
         env = dict(os.environ)
         env.update({"ENGINE": ENGINE, "TRADE_COACH_HOME": root,
                     "PYTHONPATH": shim + os.pathsep + env.get("PYTHONPATH", "")})
+        # 這支驗的是 import 順序,不是 TR_OFFLINE 姿態:姿態在場會更早短路,
+        # 於是一個壞掉的 shim 也會過關。
+        env.pop("TR_OFFLINE", None)
         run = subprocess.run([sys.executable, "-c", _SHIM_PROBE],
                              env=env, capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, f"探針自身失敗:{run.stderr[:400]}"
         out = json.loads(run.stdout.strip().splitlines()[-1])
+        assert out["source"] == "unavailable" and out["gaps"] == ["provider_missing"], \
+            f"離線時必須直接降級,實際:source={out['source']} gaps={out['gaps']}"
         assert out["splits"] == {}, \
             f"離線時 fetch_splits 必須降級成 {{}},實際讀到快取:{out['splits']}"
-        assert out["frame_is_none"] is True and "yfinance" in (out["err"] or ""), \
-            f"離線時 fetch_prices 必須回 (None, 未安裝),實際:{out['err']}"
-        assert out["fx"] == {"USD": 1.0} and "yfinance" in (out["fx_err"] or ""), \
+        assert out["frame_is_none"] is True and "installed" in (out["err"] or ""), \
+            f"離線時 fetch_prices 必須回 (None, 缺 client),實際:{out['err']}"
+        assert out["fx"] == {"USD": 1.0} and (out["fx_err"] or ""), \
             f"離線時 fetch_fx 必須只剩 USD 錨點,實際讀到快取:{out['fx']}"
 
 

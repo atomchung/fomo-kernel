@@ -21,6 +21,7 @@ SUITES = [
     ("Synthetic price paths", "tests/test_price_paths.py"),
     ("Agent-supplied price fallback", "tests/test_price_feed.py"),
     ("Same-day fetch cache (#235)", "tests/test_fetch_cache.py"),
+    ("Market-data resolver contract (#605)", "tests/test_market_data.py"),
     ("Condition slots (#412)", "tests/test_conditions.py"),
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
     ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py"),
@@ -106,6 +107,24 @@ SUITES = [
 
 
 def main():
+    # #605: the offline posture is set once, here, rather than remembered by
+    # each suite. CI never installs yfinance so it is offline by construction,
+    # but a maintainer's machine has it — and once `consider` resolves market
+    # data automatically, every one of its ninety-odd `--prices`-free tests would
+    # reach the network, go non-deterministic, and move the literal
+    # `evaluation_id` digest `tests/test_consider.py` pins. Subprocesses inherit
+    # this, so a suite added to SUITES gets the posture without opting in, which
+    # is the difference between a rule in a primitive and a rule at a call site.
+    # `TR_TEST_NETWORK=1` is the documented opt-in and must still work.
+    # Assigned, not setdefault: an inherited `TR_OFFLINE=0` would otherwise
+    # survive and let the default suite reach the network without anyone asking
+    # for it (external review, finding 9). `TR_TEST_NETWORK=1` stays the one
+    # documented opt-in, and it clears the posture rather than competing with it.
+    if os.environ.get("TR_TEST_NETWORK") == "1":
+        os.environ.pop("TR_OFFLINE", None)
+    else:
+        os.environ["TR_OFFLINE"] = "1"
+
     results = []
     for label, rel in SUITES:
         path = os.path.join(ROOT, rel)
