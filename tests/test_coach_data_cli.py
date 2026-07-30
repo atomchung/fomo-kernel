@@ -299,12 +299,30 @@ def test_condition_checks_projection_is_status_export_and_reset_managed():
 # than teaching the checker to special-case it.
 #
 # Scope, named rather than silently assumed: this sees skills/fomo-kernel/
-# engine/*.py only. Two already-registered entries are written from outside
-# that scope and this check cannot see either: profile.md (written directly
-# by the agent per SKILL.md, never by engine code) and ux/ (written by
-# skills/fomo-kernel/tools/ux_receipt.py's pathlib `root / "ux" / ...`, a
-# different shape than os.path.join). Both stay correct because a dedicated
-# test exercises each -- profile.md via _seed()'s tests above,
+# engine/*.py only. Two already-registered entries fall outside it and this
+# check cannot see either -- for different reasons, and only one of them has
+# a writer at all.
+#
+#   ux/  is written, just not from engine/: skills/fomo-kernel/tools/
+#        ux_receipt.py's pathlib `root / "ux" / ...`, a different shape than
+#        os.path.join.
+#   profile.md  is written from nowhere. No SKILL.md, flows/*.md or
+#        references/*.md text instructs any agent to create it (the only
+#        `profile` in references/ is profile.json, a different file holding
+#        max_position_pct and muted_rules), and no engine module does either.
+#        It is a vestige of an earlier design, still registered so data-status
+#        /data-export/data-reset keep seeing a file an older root may hold.
+#
+# This comment said "written directly by the agent per SKILL.md" for a
+# release, and docs/maintainer-guide.md's registry row inherited that sentence
+# from here -- a writer nobody could find, asserted in the two places a reader
+# checks. Whether profile.md is revived, re-homed into an append-only
+# projection, or retired is issue #58's open call; the pair of statements is
+# mirrored, so correct both or neither.
+#
+# Both entries stay correct because a dedicated test exercises each --
+# profile.md via _seed()'s tests above (which prove the registry entry is
+# reachable by status/export/reset, never that anything produces the file),
 # test_reset_and_status_cover_ux_trace_dir for ux/ -- not because this check
 # reaches them. What this check adds is the direction #452 actually broke on:
 # a literal constructed inside engine/ with no test written for it at all.
