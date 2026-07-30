@@ -107,12 +107,12 @@ The CSV/FIFO path a review uses and the ledger reconstruction `consider` falls b
 
 Both books add up share counts, and a quantity recorded before a split is not comparable to one recorded after it. Ninety shares bought before a ten-for-one, minus a hundred sold after it, is zero — so a position the user still holds can be missing from the book this answer reasons about, with nothing said about it.
 
-`consider` never fetches split data. It reads, in order:
+`consider` never fetches split data. It resolves one map, per ticker:
 
-1. the `splits` field on a `--prices` row ([price-feed.md](price-feed.md)) — supply it whenever you supply prices for a ticker the user has held across one;
-2. otherwise, the map the last review in this coach root froze.
+1. the `splits` field on a `--prices` row ([price-feed.md](price-feed.md)) governs its own ticker — supply it whenever you supply prices for a ticker the user has held across one;
+2. every other ticker keeps the entry the last review in this coach root froze. Declaring a split for one ticker never erases another's recorded one: an envelope legitimately omits `splits` for a close already past its split, and that omission is not a statement that the split never happened.
 
-A root that has never been reviewed and a `--prices` envelope that says nothing about splits leave the answer on as-transacted quantities. That is the pre-existing behaviour and it is silent, which is the reason to fill in the envelope rather than rely on the fallback.
+A root that has never been reviewed and a `--prices` envelope that says nothing about splits leave the answer on as-transacted quantities. That is the pre-existing behaviour and it is silent, which is the reason to fill in the envelope rather than rely on the frozen entries.
 
 ## What the answer owes
 
