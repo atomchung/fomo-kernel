@@ -12,9 +12,15 @@ What this file settles:
      sell lowers it, matching an independently computed expectation; qty and
      notional forms of the same trade produce identical results; a brand-new
      position raises n_holdings.
-  D. consequence: the four disclosure keys (cost_basis, cash_unreliable,
-     unmapped_driver, mixed_currency_no_fx) each fire under their own
-     condition and stay absent otherwise.
+  D. consequence: the disclosure keys (cost_basis, cash_unreliable,
+     unmapped_driver) each fire under their own condition and stay absent
+     otherwise, and a book whose currencies cannot be converted is refused
+     rather than disclosed (#600 — the retired mixed_currency_no_fx).
+  D2. consequence: the two book-level legibility keys (#598's
+     unclassified_book, #599's etf_not_decomposed) name which positions the
+     concentration figures could not read and at what weight, stay disjoint,
+     respect #172's residual floor, and are both silent on a book that is
+     fully legible.
   E. rule_collision: would_breach / already_over / clear real verdicts for
      the five evaluable metric keys (including the avgdown_count pair of
      qualifying-average-down plus weight breach), unjudged for
@@ -358,21 +364,181 @@ def test_a_mapped_driver_ticker_has_no_unmapped_disclosure():
     assert "unmapped_driver" not in result["disclosures"]
 
 
-def test_mixed_currency_without_an_fx_map_produces_its_disclosure_key():
+def test_mixed_currency_without_an_fx_map_is_refused_not_disclosed():
+    """#600. The old behaviour summed TWD face values into a USD denominator
+    at a factor of 1.0 and attached `mixed_currency_no_fx`, whose own wording
+    said "aggregate figures are incomplete". They were not incomplete, they
+    were a different book: at ~31 TWD to the dollar the smaller holding reads
+    as the larger one. A reader cannot recover that from a disclosure, so the
+    state is refused, matching #497's canonical lane and AGENTS.md boundary 6."""
     rows = _rows("sample_tw_mixed.csv")   # TWD + USD
     premise = {"ticker": "AAPL", "side": "buy", "price": 190.0, "qty": 10.0}
-    result = cq.consequence(rows, premise)
-    assert result["after"]["mixed_currency"] is True
-    assert result["after"]["fx_gaps"] == ["TWD"]
-    assert "mixed_currency_no_fx" in result["disclosures"]
+    try:
+        cq.consequence(rows, premise)
+    except cq.ConsequenceError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("a mixed-currency book with no FX rate must not produce a state")
+    assert "TWD" in message, message
+    # The remedy is actionable in one round trip, and the message says so
+    # rather than only naming the fault.
+    assert "--prices" in message, message
+    assert "mixed_currency_no_fx" not in cq.DISCLOSURES
 
 
-def test_mixed_currency_with_a_covering_fx_map_has_no_disclosure_key():
+def test_a_no_longer_emitted_disclosure_is_still_declared_as_retired():
+    """A key removed from DISCLOSURES without being written down anywhere
+    would make the stored-row enum look like an oversight rather than a
+    deliberate replay carve-out, and the next cleanup would delete it."""
+    assert "mixed_currency_no_fx" in cq.RETIRED_DISCLOSURES
+
+
+def test_mixed_currency_with_a_covering_fx_map_still_answers():
     rows = _rows("sample_tw_mixed.csv")
     premise = {"ticker": "AAPL", "side": "buy", "price": 190.0, "qty": 10.0}
     result = cq.consequence(rows, premise, fx={"TWD": 0.031})
-    assert result["after"]["fx_gaps"] == []
-    assert "mixed_currency_no_fx" not in result["disclosures"]
+    assert result["after"]["mixed_currency"] is True
+    # `mixed_currency: true` survives as a statement about how the denominator
+    # was built, not as a limitation — everything here was converted at the
+    # caller's own rate before being added.
+    assert "fx_gaps" not in result["after"]
+    assert 0.0 < result["after"]["max_pct"] <= 1.0
+
+
+def test_a_partially_covering_fx_map_is_refused_naming_only_the_missing_one():
+    """A book in three currencies with two rates supplied is the same defect as
+    one with none: the third still enters the denominator at face value."""
+    rows = _rows("sample_tw_mixed.csv")
+    premise = {"ticker": "AAPL", "side": "buy", "price": 190.0, "qty": 10.0}
+    try:
+        cq.consequence(rows, premise, fx={"EUR": 1.08})
+    except cq.ConsequenceError as exc:
+        assert "TWD" in str(exc)
+        assert "EUR" not in str(exc), "a currency this book does not hold is not the fault"
+    else:
+        raise AssertionError("an fx map that misses a held currency must be refused")
+
+
+def test_a_single_currency_book_never_needs_an_fx_rate():
+    """The counterweight. #600's refusal must not reach a book that is
+    self-consistent without any conversion at all — a whole-TWD book included,
+    matching trade_recap's own single-currency convention."""
+    rows = _rows("sample_momentum.csv")   # USD only
+    premise = {"ticker": "NVDA", "side": "buy", "price": 120.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    assert result["after"]["mixed_currency"] is False
+
+
+# ───────────── D2. what the concentration figures could not read ─────────────
+# #598 / #599. Every assertion below was measured by running the code against
+# these fixtures, not predicted.
+
+def test_an_unclassified_held_position_is_named_with_the_weight_it_carries():
+    """#598's silent half. `unmapped_driver` above has only ever looked at the
+    premise's own ticker, so a book could carry large unclassified positions —
+    each contributing zero to ai_pct and dropped from max_sector_pct's
+    numerator — with nothing saying the figures were measured over part of the
+    book. COST and UNH are absent from DRIVER_FALLBACK, so this fixture is
+    entirely unclassified and its concentration figures are entirely silent."""
+    rows = _rows("sample_pyramid.csv")
+    premise = {"ticker": "COST", "side": "buy", "price": 500.0, "qty": 5.0}
+    result = cq.consequence(rows, premise)
+    assert "unclassified_book" in result["disclosures"]
+    named = result["unclassified_holdings"]
+    assert [row["ticker"] for row in named] == ["COST", "UNH"], named
+    # Sorted by weight descending, so the largest thing the numbers could not
+    # read is the first thing an answer reaches for.
+    assert named[0]["weight"] > named[1]["weight"]
+    assert _close(sum(row["weight"] for row in named), 1.0, tol=1e-9), (
+        "this whole book is unclassified, so the named weights must exhaust it")
+    # And the figures the disclosure qualifies really are the silent ones.
+    assert result["after"]["ai_pct"] == 0.0
+    assert result["after"]["max_sector_pct"] == 0
+
+
+def test_a_fully_classified_book_carries_neither_book_level_key():
+    """The counterweight: a disclosure that fires on every book says nothing.
+    Every holding here is in DRIVER_FALLBACK and none of them is a fund."""
+    rows = _rows("sample_ai_holder.csv")
+    premise = {"ticker": "NVDA", "side": "buy", "price": 120.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    assert result["unclassified_holdings"] == []
+    assert result["undecomposed_etfs"] == []
+    assert "unclassified_book" not in result["disclosures"]
+    assert "etf_not_decomposed" not in result["disclosures"]
+
+
+def test_a_held_fund_is_named_as_undecomposed_with_how_it_was_treated():
+    """#599. Nothing in this engine looks through a fund, and the two ways it
+    fails to are opposite: an allocation kind leaves the concentration
+    numerator wholesale, a sector/thematic kind counts as one opaque ticker.
+    An answer that says which one happened is saying something different about
+    the same weight, so both facts travel."""
+    rows = _dollar_book([("SPY", 50.0), ("SOXX", 30.0), ("NVDA", 20.0)])
+    premise = {"ticker": "NVDA", "side": "buy", "price": 1.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    assert "etf_not_decomposed" in result["disclosures"]
+    by_ticker = {row["ticker"]: row for row in result["undecomposed_etfs"]}
+    assert set(by_ticker) == {"SPY", "SOXX"}, by_ticker
+    assert by_ticker["SPY"]["kind"] == "broad_market_etf"
+    assert by_ticker["SPY"]["allocation_exempt"] is True
+    assert by_ticker["SOXX"]["kind"] == "thematic_etf"
+    assert by_ticker["SOXX"]["allocation_exempt"] is False
+    # The defect in one line: a textbook semiconductor fund is 30% of this
+    # book and the AI reading cannot see a cent of it.
+    assert result["after"]["ai_pct"] < 0.30
+
+
+def test_a_fund_is_never_owed_twice_by_both_book_level_keys():
+    """The two lists are disjoint by construction. SOXX is a recognized fund
+    AND has no DRIVER_FALLBACK entry, so a naive implementation names it in
+    both and the answer owes two sentences about one position — the second of
+    which ("no sector classification") points at the wrong remedy, since a
+    driver map cannot make a fund's constituents visible."""
+    rows = _dollar_book([("SOXX", 60.0), ("NVDA", 40.0)])
+    premise = {"ticker": "NVDA", "side": "buy", "price": 1.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    unclassified = {row["ticker"] for row in result["unclassified_holdings"]}
+    etfs = {row["ticker"] for row in result["undecomposed_etfs"]}
+    assert not unclassified & etfs
+    assert etfs == {"SOXX"}
+
+
+def test_a_fund_the_instrument_map_does_not_know_reads_as_an_unclassified_name():
+    """The real #599 case, and why the split above is where it is. A regional
+    active fund absent from instruments.FALLBACK is not an ETF as far as this
+    engine is concerned: it lands in the #598 list, where --instrument-map is
+    the half of the remedy that moves it. What it must never be is silent."""
+    rows = _dollar_book([("0056.TW", 70.0), ("NVDA", 30.0)])
+    premise = {"ticker": "NVDA", "side": "buy", "price": 1.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    assert [row["ticker"] for row in result["unclassified_holdings"]] == ["0056.TW"]
+    assert result["undecomposed_etfs"] == []
+
+
+def test_the_premise_ticker_joins_the_book_these_keys_describe():
+    """Read off `after`, not `before`: a user asking to buy a name nothing can
+    classify is being told about the book that trade produces."""
+    rows = _dollar_book([("NVDA", 100.0)])
+    result = cq.consequence(rows, {"ticker": "CPRT", "side": "buy",
+                                   "price": 50.0, "qty": 1.0})
+    assert [row["ticker"] for row in result["unclassified_holdings"]] == ["CPRT"]
+
+
+def test_a_residual_position_does_not_buy_the_answer_a_sentence_about_dust():
+    """Both lists apply #172's residual floor. A required disclosure is a
+    sentence the answer owes; a position under a tenth of a percent moves no
+    concentration figure and does not earn one."""
+    rows = _dollar_book([("NVDA", 100000.0), ("CPRT", 50.0)])
+    premise = {"ticker": "NVDA", "side": "buy", "price": 1.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)
+    assert result["after"]["weights"]["CPRT"] < tr.RESIDUAL_POS_TH
+    assert result["unclassified_holdings"] == []
+    assert "unclassified_book" not in result["disclosures"]
+    # ... and the same position above the floor is named, so the test above
+    # is not passing because the list is simply never populated.
+    bigger = cq.consequence(_dollar_book([("NVDA", 100.0), ("CPRT", 50.0)]), premise)
+    assert [row["ticker"] for row in bigger["unclassified_holdings"]] == ["CPRT"]
 
 
 # ───────────────── E. rule_collision ─────────────────

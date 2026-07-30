@@ -153,6 +153,13 @@ def _check_evaluation_shape(row):
 
     consequence_schema = EVALUATION_SCHEMA["properties"]["consequence"]
     assert set(consequence_schema["required"]) <= set(row["consequence"])
+    # additionalProperties: false, checked rather than assumed. Without this,
+    # an engine that starts freezing a new field onto the row -- as #598/#599
+    # do -- ships a row the schema rejects while the whole suite stays green,
+    # because nothing offline here runs a real validator.
+    assert set(row["consequence"]) <= set(consequence_schema["properties"]), (
+        f"consequence carries undeclared fields: "
+        f"{set(row['consequence']) - set(consequence_schema['properties'])}")
     allowed_disclosures = set(consequence_schema["properties"]["disclosures"]["items"]["enum"])
     assert set(row["consequence"]["disclosures"]) <= allowed_disclosures
 
@@ -977,10 +984,154 @@ def test_collision_states_constant_is_exactly_what_the_schema_declares():
 
 
 def test_disclosures_constant_is_exactly_what_the_schema_declares():
+    """The stored-row enum is what the engine can emit, plus exactly the keys
+    it deliberately retired (#600's `mixed_currency_no_fx`). Both halves are
+    declared once, in consequence.py, so a key can neither be emitted without
+    the schema accepting it nor linger in the schema without someone having
+    written down that it is history."""
     import consequence as cq  # noqa: E402
     schema_disclosures = set(
         EVALUATION_SCHEMA["properties"]["consequence"]["properties"]["disclosures"]["items"]["enum"])
-    assert schema_disclosures == set(cq.DISCLOSURES)
+    assert schema_disclosures == set(cq.DISCLOSURES) | set(cq.RETIRED_DISCLOSURES)
+    assert not set(cq.DISCLOSURES) & set(cq.RETIRED_DISCLOSURES), (
+        "a key cannot be both live and retired")
+
+
+def test_a_retired_disclosure_is_not_offered_by_the_live_challenge_block():
+    """The other half of the same fact. The stored row keeps a retired key
+    readable; the challenge is emitted fresh on every call and never stored, so
+    carrying one there would tell an agent it may owe a disclosure nothing can
+    produce."""
+    import consequence as cq  # noqa: E402
+    challenge_keys = set(
+        CHALLENGE_SCHEMA["properties"]["required_coverage"]["items"]["properties"]["key"]["enum"])
+    assert not challenge_keys & set(cq.RETIRED_DISCLOSURES)
+    assert set(cq.DISCLOSURES) <= challenge_keys
+
+
+# ────── F2. what the answer could not read, through the real CLI (#598/#599/#600) ──────
+
+def _fx_envelope(path, closes, fx=None, as_of="2026-07-30"):
+    """A minimal --prices envelope. `closes` is {ticker: (close, currency)}."""
+    payload = {"as_of": as_of, "source": "test",
+               "prices": [{"ticker": ticker, "close": close, "date": as_of, "currency": currency}
+                          for ticker, (close, currency) in sorted(closes.items())]}
+    if fx:
+        payload["fx"] = [{"currency": currency, "usd_per_unit": rate, "date": as_of}
+                         for currency, rate in sorted(fx.items())]
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    return path
+
+
+_TW_CLOSES = {"2330.TW": (1100.0, "TWD"), "2454.TW": (1400.0, "TWD"),
+              "6488.TWO": (900.0, "TWD"), "AAPL": (230.0, "USD"), "AMD": (170.0, "USD"),
+              "GOOG": (190.0, "USD"), "MSFT": (460.0, "USD")}
+_TW_PREMISE = '{"ticker": "AAPL", "side": "buy", "price": 230.0, "qty": 10}'
+
+
+def test_the_csv_lane_refuses_a_mixed_currency_book_with_no_fx_rate():
+    """#600, end to end on the lane that had the defect. `usd_view` resolved a
+    missing rate as 1.0, so a 220,000 TWD holding entered a USD denominator at
+    face value: on this fixture that is roughly a 31x overstatement of its
+    weight and a corresponding suppression of every USD holding's share, which
+    can invert which position is the largest. The message names the currency
+    and the remedy, because the caller can act on both in one round trip."""
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _fails(_run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                              "--premise", _TW_PREMISE), "TWD")
+        assert "--prices" in payload["error"]
+        # Refused before anything was recorded: a book that cannot be added up
+        # has no evaluation to store.
+        assert _read_evaluations(tmp) == []
+
+
+def test_the_same_book_answers_once_the_rate_is_supplied():
+    """The counterweight, and the proof the refusal above is about the missing
+    rate rather than about mixed currency itself."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prices = _fx_envelope(os.path.join(tmp, "px.json"), _TW_CLOSES, fx={"TWD": 0.0317})
+        payload = _ok(_run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                           "--prices", prices, "--premise", _TW_PREMISE))
+        after = payload["evaluation"]["consequence"]["after"]
+        assert after["mixed_currency"] is True
+        assert "fx_gaps" not in after, "the always-empty companion field is gone (#429)"
+        weights = after["weights"]
+        # Converted, the TWD leader is ~55% of the book. Unconverted it read as
+        # ~98%, and every USD holding as noise.
+        assert 0.50 < weights["2330.TW"] < 0.60, weights
+        assert weights["MSFT"] > 0.05, weights
+        assert "mixed_currency_no_fx" not in payload["evaluation"]["consequence"]["disclosures"]
+
+
+def test_a_partially_legible_book_says_so_on_the_row_and_in_what_the_answer_owes():
+    """#598 through the whole chain. The frozen row carries which positions the
+    concentration figures could not read, and because `required_coverage` is
+    derived from `disclosures`, the key also becomes something an --agent-case
+    is refused for dropping — the obligation and the gate are one list."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prices = _fx_envelope(os.path.join(tmp, "px.json"), _TW_CLOSES, fx={"TWD": 0.0317})
+        payload = _ok(_run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                           "--prices", prices, "--premise", _TW_PREMISE))
+        stored = payload["evaluation"]["consequence"]
+        assert "unclassified_book" in stored["disclosures"]
+        named = {row["ticker"]: row["weight"] for row in stored["unclassified_holdings"]}
+        # The defect in one line: the book's largest holding by far is a
+        # semiconductor company under its primary foreign listing, absent from
+        # a fallback table with no foreign entries at all, so max_sector_pct
+        # is measured without it.
+        assert "2330.TW" in named and named["2330.TW"] > 0.50, named
+        assert stored["after"]["max_sector_pct"] < named["2330.TW"]
+        challenge = payload["challenge"]
+        assert any(entry["key"] == "unclassified_book"
+                   for entry in challenge["required_coverage"]), challenge["required_coverage"]
+        assert any(entry["topic"] == "disclosure" and entry["value"] == "unclassified_book"
+                   for entry in challenge["must_state"])
+        # The row round-trips against the schema with the new fields on it.
+        _check_evaluation_shape(payload["evaluation"])
+
+
+def test_a_supplied_driver_map_is_a_real_remedy_not_just_advice():
+    """The reference tells the agent to build a --driver-map and re-ask. If
+    doing so did not actually clear the key, that instruction would be busywork
+    and the disclosure would be permanent noise on every mixed-market book."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prices = _fx_envelope(os.path.join(tmp, "px.json"), _TW_CLOSES, fx={"TWD": 0.0317})
+        driver_map = os.path.join(tmp, "drivers.json")
+        with open(driver_map, "w", encoding="utf-8") as handle:
+            json.dump({ticker: ["semis", 1] for ticker in
+                       ("2330.TW", "2454.TW", "6488.TWO", "AAPL", "AMD", "GOOG", "MSFT")}, handle)
+        payload = _ok(_run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                           "--prices", prices, "--driver-map", driver_map,
+                           "--premise", _TW_PREMISE))
+        stored = payload["evaluation"]["consequence"]
+        assert stored["unclassified_holdings"] == []
+        assert "unclassified_book" not in stored["disclosures"]
+        # And the figure the disclosure was qualifying moves to what it should
+        # have said all along.
+        assert stored["after"]["max_sector_pct"] > 0.90
+
+
+def test_a_supplied_instrument_map_moves_a_holding_to_the_limitation_that_is_true():
+    """#599's other half of the same remedy. Declaring a ticker a fund does not
+    make its constituents visible — nothing here does that — so the position
+    moves out of `unclassified_holdings`, where a driver map would have been
+    the fix, and into `undecomposed_etfs`, where the limitation stated is the
+    real one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prices = _fx_envelope(os.path.join(tmp, "px.json"), _TW_CLOSES, fx={"TWD": 0.0317})
+        instrument_map = os.path.join(tmp, "instruments.json")
+        with open(instrument_map, "w", encoding="utf-8") as handle:
+            json.dump({"2454.TW": {"kind": "sector_etf"}}, handle)
+        payload = _ok(_run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                           "--prices", prices, "--instrument-map", instrument_map,
+                           "--premise", _TW_PREMISE))
+        stored = payload["evaluation"]["consequence"]
+        assert "2454.TW" not in {row["ticker"] for row in stored["unclassified_holdings"]}
+        etfs = {row["ticker"]: row for row in stored["undecomposed_etfs"]}
+        assert etfs["2454.TW"]["kind"] == "sector_etf"
+        assert etfs["2454.TW"]["allocation_exempt"] is False
+        assert "etf_not_decomposed" in stored["disclosures"]
 
 
 # ───────────────────────── G. rule collisions ─────────────────────────

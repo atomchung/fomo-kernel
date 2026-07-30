@@ -110,8 +110,39 @@ SIDES = ("buy", "sell")
 
 # Machine-readable, never prose (see module docstring). A caller renders
 # wording from these keys; this module never constructs a sentence.
-DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
-               "partial_book")
+#
+# `mixed_currency_no_fx` is deliberately absent (#600). It disclosed a book
+# whose non-USD holdings had been summed into the denominator at a 1.0
+# conversion factor, and the wording it carried — "aggregate figures are
+# incomplete" — described a gap where the mechanism is an inversion: at ~31
+# TWD to the dollar, the smaller of two holdings reads as 97% of the book and
+# the larger as 3%. A reader told the numbers are incomplete cannot tell that
+# the ranking is backwards. `portfolio_state` now refuses instead, which is
+# what AGENTS.md boundary 6 already said ("a missing or incompatible
+# valuation or FX rate ... fail closed") and what #497 established for the
+# canonical PortfolioBasis lane; the legacy CSV lane was the one that never
+# got it. The key survives in schemas/trade-evaluation.schema.json's enum for
+# replay compatibility with rows written before this refusal existed, the
+# same posture #549's `declared_partial` has.
+#
+# The last two are the "what did these numbers not see" pair (#598/#599).
+# Both are about the *book*, not the premise: `unmapped_driver` above has
+# always looked only at the ticker being asked about, so a book could carry
+# several large unclassified or undecomposed positions — each contributing
+# zero to `ai_pct` and dropped from `max_sector_pct`'s numerator entirely —
+# with nothing in the response saying the concentration figures were computed
+# over a partially-legible book.
+DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver",
+               "unclassified_book", "etf_not_decomposed", "partial_book")
+
+# Keys no code path emits any more, kept valid on a *stored* row so an
+# evaluation written before the change still validates and still replays. The
+# declaration lives here rather than only in the schema so the drift test
+# between the two can stay exact: schemas/trade-evaluation.schema.json's enum
+# is DISCLOSURES plus this, and nothing else. The challenge schema does not
+# carry them, because that block is emitted live from the current disclosures
+# and never stored — there is no historical version of it to keep readable.
+RETIRED_DISCLOSURES = ("mixed_currency_no_fx",)
 
 # rule_collision's own vocabulary — deliberately distinct from
 # conditions.VERDICTS and problems.check_rules' broke/held/skipped. Those
@@ -401,6 +432,11 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     is absent. A consequence computed on cost basis is a different claim from
     one computed on live prices, and a caller must be able to tell which one
     it is holding.
+
+    Raises ConsequenceError when the book mixes currencies and `fx` does not
+    cover one of them (#600). Cost basis is a *different* denominator that is
+    still internally consistent; an unconverted currency is not a denominator
+    at all.
     """
     last_px = last_px or {}
     fx = dict(fx or {})
@@ -417,6 +453,23 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     cur_map, currencies, _conflicts = trade_recap.currency_map(rows)
     mixed_currency = len(currencies) > 1
     fx_gaps = sorted(c for c in currencies if c not in fx) if mixed_currency else []
+    if fx_gaps:
+        # #600. `usd_view` resolves a currency absent from `fx` as a factor of
+        # 1.0, so every holding in it entered the denominator at raw face
+        # value. That is not a gap in the numbers, it is a different number:
+        # one large TWD position beside several USD ones reads at ~31x its
+        # real weight, which suppresses every USD holding's share and can
+        # invert which position is the largest. Nothing downstream — weights,
+        # max_pct, top3, ai_pct, max_sector_pct, cash weight — survives it, so
+        # there is no per-field carve-out to make in the shape `partial_book`
+        # has; the whole state is refused. The remedy is in the message
+        # because the caller can act on it in one round trip.
+        raise ConsequenceError(
+            f"this book holds {', '.join(currencies)} and no FX rate was supplied for "
+            f"{', '.join(fx_gaps)}, so its holdings cannot be added into one denominator. "
+            "Every weight, concentration figure and cash share would be computed with "
+            f"1 {fx_gaps[0]} treated as 1 USD. Supply the rate through --prices (the "
+            "`fx` block in references/price-feed.md), then ask again.")
 
     if mixed_currency:
         _rts_v, held_v, lastpx_v = trade_recap.usd_view(rts, held, last_px, cur_map, fx)
@@ -454,10 +507,69 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
         "cash": {"balance": cash["balance"], "weight": cash["weight"],
                  "source": cash["source"], "reliable": cash["reliable"]},
         "basis": "priced" if last_px else "cost",
-        # Consumed by consequence()'s mixed_currency_no_fx disclosure.
+        # True means these weights were converted into one currency at the
+        # caller's supplied rates before being added — a fact about how the
+        # denominator was built, and the reason a reader may trust it. It is
+        # not a limitation key: the case where it *would* be one no longer
+        # reaches this return at all (#600, above). There is no companion
+        # `fx_gaps` list any more, because after that refusal it could only
+        # ever be empty, and a field whose only possible value is "nothing
+        # was missing" is the written-never-read shape #429 names.
         "mixed_currency": mixed_currency,
-        "fx_gaps": fx_gaps,
     }
+
+
+def _legibility(state):
+    """What the concentration figures in `state` could not see (#598/#599).
+
+    Two disjoint lists over the same book, each returning `[{ticker, weight,
+    ...}]` sorted by weight descending. Every entry is a position whose weight
+    is real and whose *composition* is not, which is the property `ai_pct` and
+    `max_sector_pct` are silently measured around:
+
+    - `unclassified` — a single name `trade_recap.driver()` has no entry for.
+      It contributes zero to `ai_pct`, and `dim_diversify` drops the whole
+      "未分類" bucket from `max_sector_pct`'s numerator on purpose
+      (trade_recap.py, `classified_sec`) so an unbuilt driver map cannot
+      impersonate a concentration signal. That is the right arithmetic and it
+      is invisible: a book can be four-fifths semiconductors and report a
+      comfortable `max_sector_pct` with nothing saying so. The remedy is
+      `--driver-map`, which is why the disclosure exists at all — the engine's
+      built-in table is an explicitly partial "common stock fallback" with, for
+      example, no entry for any foreign listing, so the same company under its
+      primary listing and under its US ADR classify differently.
+
+    - `etfs` — a holding `instruments` recognizes as a fund. Nothing anywhere
+      in this engine decomposes one into its constituents: an allocation kind
+      is exempted from concentration wholesale, a sector/thematic kind counts
+      as one opaque ticker, and neither contributes the sector or AI exposure
+      it actually holds. A recognized semiconductor ETF and a broad world
+      index fund of the same size are equally invisible to `ai_pct`.
+
+    Disjoint on purpose, so one position is never owed twice: a fund the
+    instrument map does not recognize is not an ETF as far as this engine is
+    concerned — it is an unclassified single name, and it lands in the first
+    list, where `--instrument-map` is the second half of the remedy.
+
+    Both apply `trade_recap.RESIDUAL_POS_TH`, the residual floor #172 already
+    uses to keep a dividend fraction or a one-share tail out of every
+    diagnostic. A required disclosure is a sentence the answer owes; a 0.05%
+    dust position does not move a concentration figure and does not earn one.
+    """
+    weights = state.get("weights") or {}
+    unclassified, etfs = [], []
+    for ticker in sorted(state.get("held") or {}):
+        weight = float(weights.get(ticker) or 0.0)
+        if weight < trade_recap.RESIDUAL_POS_TH:
+            continue
+        meta = instruments.info(ticker)
+        if meta["is_etf"]:
+            etfs.append({"ticker": ticker, "weight": weight, "kind": meta["kind"],
+                         "allocation_exempt": meta["allocation_exempt"]})
+        elif trade_recap.driver(ticker)[0] == _UNCLASSIFIED_DRIVER:
+            unclassified.append({"ticker": ticker, "weight": weight})
+    key = lambda row: (-row["weight"], row["ticker"])
+    return sorted(unclassified, key=key), sorted(etfs, key=key)
 
 
 _DELTA_FIELDS = ("max_pct", "top3", "ai_pct", "max_sector_pct", "n_holdings")
@@ -503,10 +615,20 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     emitted when: the state is cost-basis rather than priced (`cost_basis`);
     cash is not reliable
     (`cash_unreliable`); the premise's ticker has no driver mapping, so
-    sector/AI exposure cannot account for it (`unmapped_driver`); or the
-    ledger mixes currencies without full fx coverage (`mixed_currency_no_fx`);
-    or a held position could not be valued at all and was left out of the
-    denominator these numbers are measured against (`partial_book`, #515).
+    sector/AI exposure cannot account for it (`unmapped_driver`); the book
+    itself carries positions the concentration figures could not read — an
+    unclassified single name (`unclassified_book`) or a fund nothing
+    decomposes (`etf_not_decomposed`), both #598/#599 and both named in the
+    fields below; or a held position could not be valued at all and was left
+    out of the denominator these numbers are measured against
+    (`partial_book`, #515).
+
+    `unclassified_holdings` and `undecomposed_etfs` are to their keys what
+    `excluded_holdings` is to `partial_book`: the key says THAT the book was
+    partially legible, these say WHICH positions and at what weight, so an
+    answer can state the size of what it could not see rather than only that
+    something was missed. There is no key for a currency this book could not
+    convert — `portfolio_state` refuses that book outright (#600).
 
     `excluded_holdings` is what `rows_from_portfolio_basis` left out, passed
     through by the caller rather than re-derived here — `rows` alone cannot
@@ -534,15 +656,25 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     sector, _is_ai = trade_recap.driver(normalized["ticker"])
     if sector == _UNCLASSIFIED_DRIVER:
         disclosures.append("unmapped_driver")
-    if after["fx_gaps"]:
-        disclosures.append("mixed_currency_no_fx")
+    # Read off `after`, the book every number in this result describes — and
+    # the one the premise's own ticker has already joined, so an unclassified
+    # or undecomposed name the user is asking to *buy* is disclosed as part of
+    # the book it is about to become part of, not only through `unmapped_driver`
+    # above.
+    unclassified_holdings, undecomposed_etfs = _legibility(after)
+    if unclassified_holdings:
+        disclosures.append("unclassified_book")
+    if undecomposed_etfs:
+        disclosures.append("etf_not_decomposed")
     excluded = [dict(row) for row in excluded_holdings or ()]
     if excluded:
         disclosures.append("partial_book")
 
     return {"premise": normalized, "before": before, "after": after,
             "delta": _delta(before, after, normalized["ticker"]),
-            "disclosures": disclosures, "excluded_holdings": excluded}
+            "disclosures": disclosures, "excluded_holdings": excluded,
+            "unclassified_holdings": unclassified_holdings,
+            "undecomposed_etfs": undecomposed_etfs}
 
 
 # ─────────────────────────────── rule collision ───────────────────────────────

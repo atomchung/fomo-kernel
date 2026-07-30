@@ -123,12 +123,40 @@
             }
           }
         },
+        "unclassified_holdings": {
+          "type": "array",
+          "description": "Held positions with no sector/AI classification, and therefore contributing zero to `ai_pct` and dropped from `max_sector_pct`'s numerator entirely (#598). Same division of labour as `excluded_holdings` above: the `unclassified_book` disclosure says THAT the concentration figures were computed over a partially-legible book, this says WHICH positions and at what weight, so an answer can state the size of what it could not read. Absent on rows written before #598; a position below the residual floor (trade_recap.RESIDUAL_POS_TH) is not listed, since it moves no figure and would only buy the answer a sentence about dust.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ticker", "weight"],
+            "properties": {
+              "ticker": {"type": "string", "minLength": 1},
+              "weight": {"type": "number", "minimum": 0, "description": "Its weight in the same after-state denominator every other percentage on this row is measured against."}
+            }
+          }
+        },
+        "undecomposed_etfs": {
+          "type": "array",
+          "description": "Held fund positions whose constituents nothing in this engine inspects (#599). An allocation kind is exempted from concentration wholesale and a sector/thematic/leveraged kind counts as one opaque ticker; neither contributes the sector or AI exposure it actually holds, so a concentrated semiconductor fund and a broad world index fund of the same size are equally invisible to `ai_pct` and `max_sector_pct`. Disjoint from `unclassified_holdings` by construction: a fund the instrument map does not recognize is not an ETF as far as this engine is concerned and is listed there instead. Absent on rows written before #599.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ticker", "weight", "kind", "allocation_exempt"],
+            "properties": {
+              "ticker": {"type": "string", "minLength": 1},
+              "weight": {"type": "number", "minimum": 0},
+              "kind": {"type": "string", "minLength": 1, "description": "engine/instruments.py's own kind for it. Engine-assigned; never a user or agent claim."},
+              "allocation_exempt": {"type": "boolean", "description": "true when the position was left out of the concentration numerator wholesale rather than counted as one opaque ticker. Both are undecomposed; they are undecomposed in opposite directions, and an answer that says which one happened is saying something different about the same weight."}
+            }
+          }
+        },
         "disclosures": {
           "type": "array",
-          "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (docs/maintainer-guide.md, \"Honesty decisions belong in code\").",
+          "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (docs/maintainer-guide.md, \"Honesty decisions belong in code\"). `mixed_currency_no_fx` is no longer emitted by any code path -- #600 replaced it with a refusal in portfolio_state, because a currency summed at a 1.0 factor does not make the aggregate incomplete, it inverts it -- and survives in this enum only so rows written before that refusal still validate, the same replay-compatibility posture #549's `declared_partial` has.",
           "items": {
             "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
-                     "partial_book"]
+                     "unclassified_book", "etf_not_decomposed", "partial_book"]
           }
         }
       }
