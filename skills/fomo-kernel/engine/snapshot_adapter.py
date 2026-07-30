@@ -604,7 +604,12 @@ def prepare(path, driver_map=None, instrument_map=None, today=None):
                 row["ticker"]: (row["shares"], global_values[row["ticker"]])
                 for row in snapshot["positions"]
             }
-            size = trade_recap.dim_size([], held, {})
+            # #630: a declared holdings view *is* the recorded book — whatever the
+            # user handed over is what gets recorded (#549) — so this lane may
+            # state the whole-book claim that a transaction lane cannot make about
+            # the rows it happens to have been given.
+            size = trade_recap.dim_size(
+                [], held, {}, book_basis=trade_recap.BOOK_BASIS_RECORDED)
             diversification = trade_recap.dim_diversify(held, {})
             dimensions = [size, diversification]
             portfolio_structure = instruments.portfolio_analysis(size.get("weights"))

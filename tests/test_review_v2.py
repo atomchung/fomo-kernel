@@ -9446,6 +9446,269 @@ def test_frozen_prepare_keeps_one_session_identity_for_the_same_input():
             f"the same CSV and nonce must keep one session identity, got {ids}"
 
 
+# ───────── #630: a weekly file covering part of the book is not the book ─────────
+#
+# The whole section drives the real `review.py` subprocess over a real `mock/`
+# fixture — no `--card-json` injection — because the defect lived in exactly the
+# step injection skips: `prepare` reconciling what the engine derived from the
+# supplied rows against the book the ledger already holds.
+
+_BOOK_FIXTURE = ROOT / "skills" / "fomo-kernel" / "mock" / "sample_ai_holder.csv"
+# One ticker, dated after every row in the fixture. This is an ordinary weekly
+# export: nothing in flows/weekly-review.md asks for a cumulative file.
+_ONE_TICKER_WEEK = (
+    "Symbol,Quantity,Price,Action,Description,TradeDate,SettledDate,"
+    "Interest,Amount,Commission,Fee,CUSIP,RecordType\n"
+    "MSFT,10,410.00,BUY,BOUGHT MICROSOFT CORP,2024-11-04,2024-11-06,0,-4100.00,0,0,,Trade\n"
+    "MSFT,5,420.00,BUY,BOUGHT MICROSOFT CORP,2024-11-07,2024-11-11,0,-2100.00,0,0,,Trade\n")
+
+
+def _book_review(tmp, root, csv_path, env, tag, route, extra=()):
+    """One real prepare+finalize over `csv_path`, every question skipped."""
+    run = _run("prepare", csv_path, "--root", root, "--route", route, "--language", "en",
+               "--session-nonce", tag, *extra, env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = _pending_plan(root, run.stdout)
+    answers = {
+        "session_id": plan["session_id"], "observations": [],
+        "commitment": {"choice": "skip"},
+        "answers": [{"question_id": q["id"], "choice": "skip"}
+                    for q in plan["question_queue"]],
+        "thesis_updates": [{
+            "ticker": row["ticker"], "cycle_id": row["cycle_id"],
+            "why": "The imported history suggests a role that remains inferred",
+            "horizon": None,
+            "exit_trigger": "A later review contradicts the inferred role",
+            "target_size": "bounded", "driver": "imported history",
+            "maturity": "inferred", "source_type": "other",
+            "source_name": "imported history", "source_confidence": "candidate",
+        } for row in plan["missing_thesis_positions"]],
+    }
+    answers_path = pathlib.Path(tmp) / f"answers_{tag}.json"
+    answers_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+    narrative = {"headline": "Test headline", "mirror": "Test mirror"}
+    keys = plan["card_plan"]["required_honesty_keys"]
+    if keys:
+        narrative["honesty"] = {
+            key: "This limitation is stated plainly rather than treated as a zero."
+            for key in keys}
+    narrative_path = pathlib.Path(tmp) / f"narrative_{tag}.json"
+    narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+    final = _run("finalize", "--root", root, "--session-id", plan["session_id"],
+                 "--answers", answers_path, "--narrative", narrative_path, env=env)
+    assert final.returncode == 0, final.stdout + final.stderr
+    return plan
+
+
+def _sizing_dim(plan):
+    for row in plan["engine_card"].get("dims_raw") or []:
+        if row.get("dim") == "部位 sizing":
+            return row
+    return None
+
+
+def test_a_weekly_file_covering_part_of_the_book_is_not_measured_as_the_whole_book():
+    """#630: the account is six positions; the week traded one.
+
+    `trade_recap` builds its current book from the supplied rows (FIFO over the
+    CSV), and `prepare` only ever reconciled that against the ledger when the
+    root carried a *declared* holdings snapshot. A root whose book came from an
+    earlier CSV import has only #549's `trades_derived` row, so an ordinary
+    weekly export was measured as if it were the whole account: `max_pct` 1.0,
+    `risk_weights {MSFT: 1.0}`, and `sizing_coverage.scope full_current_book`
+    with `total_holdings: 1` — the engine asserting a whole-book measurement,
+    not reporting a partial view it knew about.
+
+    Concentration is only where it was noticed. Everything keyed on those same
+    narrowed holdings was wrong the same way and just as silently, so this
+    asserts the whole family: the durable metrics, the rule the user is asked
+    to commit to, the prescription, and the breach recorded against them.
+    """
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        _book_review(tmp, root, _BOOK_FIXTURE, env, "b1", "first_review")
+
+        # What the ledger holds after the week is ingested — the canonical book
+        # every current-view claim below owes its denominator to.
+        week = pathlib.Path(tmp) / "one_ticker_week.csv"
+        week.write_text(_ONE_TICKER_WEEK, encoding="utf-8")
+        plan = _book_review(tmp, root, week, env, "b2", "weekly_review")
+        events, _ = ledger_engine.load_ledger(os.path.join(root, "ledger.jsonl"))
+        book = ledger_engine.derive_holdings(events)["holdings"]
+        assert len(book) == 6, f"fixture must leave a six-position book: {sorted(book)}"
+
+        card, state = plan["engine_card"], plan["engine_state"]
+        assert plan["input"]["paths"] == [str(week)], \
+            "this review must be the ordinary case: only this period's trades"
+
+        # 1. No book-wide concentration claim measured over one ticker.
+        sizing = _sizing_dim(plan)
+        if sizing is not None:
+            assert sizing.get("max_pct") != 1.0, sizing
+            coverage = sizing.get("sizing_coverage") or {}
+            assert coverage.get("scope") != "full_current_book" \
+                or coverage.get("total_holdings") == len(book), \
+                f"a whole-book scope over {coverage.get('total_holdings')} holdings: {coverage}"
+
+        # 2. Durable state: the metrics the next review reconciles against, and
+        #    the book itself. `None` is the honest value for a dimension this
+        #    file cannot support; 1.0 is not.
+        for key in ("max_pos_pct", "top3_pct", "ai_pct", "max_sector_pct"):
+            assert state["metrics"].get(key) != 1.0, \
+                f"metrics.{key} still reports the single-ticker week as the whole book"
+        assert sorted((state.get("holdings") or {}).get("positions") or {}) == sorted(book), \
+            "durable holdings must be the canonical ledger book, not this file's slice"
+        assert state.get("n_held") == len(book)
+
+        # 3. The surface where the user is asked to commit, and the prescription
+        #    beside it, must not carry the fabricated weight either.
+        for row in card.get("candidate_rules") or []:
+            assert (row.get("params") or {}).get("max_pct") != 1.0, row
+        for row in card.get("prescriptions") or []:
+            assert (row.get("params") or {}).get("max_pct") != 1.0, row
+        for hole in card.get("top_holes") or []:
+            assert (hole.get("raw") or {}).get("max_pct") != 1.0, hole
+
+        # 4. No breach event recorded from a narrower-than-book measurement. A
+        #    user with a standing single-position cap got "最大單注 100%" written
+        #    into problems.jsonl against a position that is a small part of the
+        #    book.
+        for event in state.get("problem_events") or []:
+            assert event.get("key") not in {"oversize", "concentration"}, \
+                f"a structural breach recorded from a partial view: {event}"
+
+        # 5. The gap is disclosed rather than silently dropped.
+        detail = (card.get("data_integrity") or {}).get("accounting_reconciliation")
+        assert isinstance(detail, dict) and detail.get("mismatches"), \
+            "the reconciliation that withdrew these figures must say so on the card"
+        assert detail.get("canonical_positions_n") == len(book)
+
+
+def test_a_weekly_file_that_does_cover_the_book_still_computes_concentration():
+    """#630 counterweight, and the reason the fix is not "measure nothing".
+
+    A cumulative weekly file derives the same six positions the ledger holds, so
+    its concentration is a real whole-book reading and must survive — with
+    `full_current_book` earned rather than assumed. Without this, gating every
+    weekly review would pass the test above while destroying the product.
+
+    It also pins the two comparisons the derived lane must *not* make. Both
+    sides here are readings of the same trade rows: cost basis differs by
+    method (`derive_holdings` keeps a moving average, the card's own
+    accumulation is FIFO — 23250 against 24900 for this fixture's NVDA), and
+    market/currency are not written onto a holding by `trade_recap.build_state`
+    at all. Comparing either would withdraw the figures from every ordinary
+    review, and for the second one from every non-US book in particular.
+    """
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        first = _book_review(tmp, root, _BOOK_FIXTURE, env, "c1", "first_review")
+        assert (_sizing_dim(first) or {}).get("max_pct"), \
+            "the fixture must produce a real first-review concentration reading"
+
+        cumulative = pathlib.Path(tmp) / "cumulative_week.csv"
+        cumulative.write_text(
+            _BOOK_FIXTURE.read_text(encoding="utf-8")
+            + _ONE_TICKER_WEEK.split("\n", 1)[1], encoding="utf-8")
+        plan = _book_review(tmp, root, cumulative, env, "c2", "weekly_review")
+
+        sizing = _sizing_dim(plan)
+        assert sizing is not None, \
+            "a file that does cover the book must still be measured against it"
+        coverage = sizing["sizing_coverage"]
+        assert coverage["total_holdings"] == 6, coverage
+        assert coverage["book_basis"] == "recorded_book", coverage
+        assert coverage["scope"] == "full_current_book", coverage
+        assert 0 < sizing["max_pct"] < 1.0, sizing
+        assert plan["engine_state"]["metrics"]["max_pos_pct"] == sizing["max_pct"]
+        assert not ((plan["engine_card"].get("data_integrity") or {})
+                    .get("accounting_reconciliation") or {}).get("mismatches"), \
+            "a cumulative file must not be gated as if it disagreed with the book"
+
+
+def test_a_non_us_book_is_not_read_as_misclassified_by_the_derived_lane():
+    """#630's second false positive, which the first fix shipped with.
+
+    `_overlay_ledger_holdings` compares market and currency, defaulting the raw
+    side to US/USD because "transaction artifacts historically omit these
+    fields". Against a *declared* holdings view that is the point — it catches a
+    misclassified non-US position. Against the engine's own restatement of the
+    same trades it is unconditional: `trade_recap.build_state` writes neither
+    field onto a holding, so every `.TW`/`.TWO` position reads as misclassified
+    and every mixed-currency book has its current view withdrawn every week.
+
+    The persona sweep catches this through `tw_mixed`, four surfaces deep. This
+    says it directly, so the reason survives next to the branch it justifies.
+    """
+    source = (ROOT / "skills" / "fomo-kernel" / "mock" / "sample_tw_mixed.csv").read_text(
+        encoding="utf-8").strip().splitlines()
+    header, body = source[0], source[1:]
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        first_half = pathlib.Path(tmp) / "tw_week1.csv"
+        first_half.write_text("\n".join([header] + body[:len(body) // 2]) + "\n",
+                              encoding="utf-8")
+        whole = pathlib.Path(tmp) / "tw_week2.csv"
+        whole.write_text("\n".join(source) + "\n", encoding="utf-8")
+
+        _book_review(tmp, root, first_half, env, "tw1", "first_review")
+        plan = _book_review(tmp, root, whole, env, "tw2", "weekly_review")
+
+        events, _ = ledger_engine.load_ledger(os.path.join(root, "ledger.jsonl"))
+        book = ledger_engine.derive_holdings(events)["holdings"]
+        assert any(ticker.endswith((".TW", ".TWO")) for ticker in book), \
+            f"this fixture must actually hold a non-US position: {sorted(book)}"
+
+        detail = ((plan["engine_card"].get("data_integrity") or {})
+                  .get("accounting_reconciliation") or {})
+        assert not detail.get("mismatches"), (
+            "a non-US book whose file covers it must not be reported as "
+            f"misclassified: {detail.get('mismatches')}")
+        sizing = _sizing_dim(plan)
+        assert sizing is not None and sizing["sizing_coverage"]["total_holdings"] == len(book)
+
+
+def test_only_the_adapter_lane_skips_the_recorded_book_reconciliation():
+    """#630's one deliberate asymmetry, pinned so it stays deliberate.
+
+    `cmd_prepare` reaches `_ingest_trades` only when the caller supplied
+    `--card-json`/`--state-json`: there `engine_state.holdings` was asserted by
+    that caller and is not a derivation of the CSVs beside it, so reconciling
+    the two would compare an artifact with an unrelated file rather than a book
+    with itself. Every review a real user runs freezes its inputs and takes
+    `_verify_and_ingest_frozen_trades`, which does reconcile.
+
+    This fails if a plain CSV review ever stops taking that lane — the way the
+    defect would come back — and it drives both shapes through the real CLI
+    rather than reading the branch conditions.
+    """
+    week_rows = _ONE_TICKER_WEEK
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        _book_review(tmp, root, _BOOK_FIXTURE, env, "d1", "first_review")
+        week = pathlib.Path(tmp) / "week.csv"
+        week.write_text(week_rows, encoding="utf-8")
+        plain = _book_review(tmp, root, week, env, "d2", "weekly_review")
+        assert ((plain["engine_card"].get("data_integrity") or {})
+                .get("accounting_reconciliation") or {}).get("mismatches"), \
+            "a CSV review with no injected artifacts must reconcile against the book"
+
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        _book_review(tmp, root, _BOOK_FIXTURE, env, "e1", "first_review")
+        week = pathlib.Path(tmp) / "week.csv"
+        week.write_text(week_rows, encoding="utf-8")
+        card_path, state_path = _artifacts(tmp)
+        run = _run("prepare", week, "--root", root, "--route", "weekly_review",
+                   "--language", "en", "--session-nonce", "e2",
+                   "--card-json", card_path, "--state-json", state_path, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        adapter = _pending_plan(root, run.stdout)
+        assert not ((adapter["engine_card"].get("data_integrity") or {})
+                    .get("accounting_reconciliation")), \
+            "the adapter lane asserts its own artifacts; reconciling them is out of scope"
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0
