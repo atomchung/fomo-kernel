@@ -803,7 +803,7 @@ def _consider_market_universe(args, root):
     return {"currency_by_ticker": tickers, "currencies": currencies, "origin": origin}
 
 
-def _resolve_consider_prices(args, root, premise_ticker=None):
+def _resolve_consider_prices(args, root, premise_ticker=None, premise_currency=None):
     """Resolve the smallest current bundle this ``consider`` needs, as an envelope.
 
     #605 section E. A ``consider`` with no ``--prices`` used to reason about the
@@ -829,19 +829,31 @@ def _resolve_consider_prices(args, root, premise_ticker=None):
     if universe is None:
         return None, None
     instruments = set(universe["currency_by_ticker"])
+    currencies = set(universe["currencies"])
+    currency_by_ticker = dict(universe["currency_by_ticker"])
     if premise_ticker:
         instruments.add(premise_ticker)                     # the trade being asked about
+        # And its currency. A premise may name an instrument the book has never
+        # held, in a currency the book has never held either — a USD-only book
+        # asked about a TWD listing. Adding the ticker without its currency
+        # requested no rate for it and declared the row as USD, so automatic
+        # retrieval could not complete an otherwise valid non-USD question
+        # (external review, finding 8). The downstream refusal was correct; it was
+        # refusing something the provider could have answered.
+        if premise_currency:
+            currency_by_ticker[premise_ticker] = str(premise_currency).upper()
+            currencies.add(str(premise_currency).upper())
     try:
         request = market_data.build_request(
             instruments=instruments,
-            currencies=universe["currencies"],
+            currencies=currencies,
             window_start=universe["origin"],
             rebase_origin=universe["origin"])
     except market_data.MarketDataError:
         return None, None
     bundle = market_data.resolve(request, root=root)
     envelope = market_data.to_price_feed_envelope(
-        bundle, currency_by_ticker=universe["currency_by_ticker"])
+        bundle, currency_by_ticker=currency_by_ticker)
     if envelope is None:
         return None, bundle
     try:
@@ -5922,7 +5934,9 @@ def cmd_consider(args):
         # A supplied envelope is never topped up from here: past this branch the
         # two are indistinguishable, which is the point.
         feed, market_bundle = _resolve_consider_prices(
-            args, root, premise_ticker=str(premise_payload.get("ticker") or "").strip() or None)
+            args, root,
+            premise_ticker=str(premise_payload.get("ticker") or "").strip() or None,
+            premise_currency=str(premise_payload.get("currency") or "").strip() or None)
     if feed is not None:
         last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
         fx = price_feed.fx_rates(feed)

@@ -34,6 +34,7 @@ MOCK = ROOT / "skills" / "fomo-kernel" / "mock"
 COACH_PY = ENGINE_DIR / "coach.py"
 
 sys.path.insert(0, str(ENGINE_DIR))
+import price_feed as price_feed_engine  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
 import portfolio_basis as portfolio_basis_engine  # noqa: E402
 import review as review_engine  # noqa: E402
@@ -2547,6 +2548,55 @@ def test_n_the_resolved_facts_reach_the_answer_through_the_supplied_lane():
     assert feed is not None and "ZZZZ" in feed["prices"], (
         f"the resolved facts must come back as a parsed price feed: {feed}")
     assert bundle is not None and bundle.source == "yahoo"
+
+
+def test_n_a_non_usd_premise_gets_its_own_currency_requested():
+    """A premise may name an instrument the book has never held, in a currency the
+    book has never held either — a USD-only book asked about a TWD listing.
+
+    Adding the ticker without its currency requested no rate for it and declared
+    the row as USD, so automatic retrieval could not complete an otherwise valid
+    non-USD question (external review, finding 8). The downstream refusal was
+    correct; it was refusing something the provider could have answered.
+    """
+    sys.path.insert(0, str(ENGINE_DIR))
+    import market_data
+    import review as review_engine
+
+    class Args:
+        paths = [str(MOCK / "sample_momentum.csv")]
+
+    captured = {}
+
+    def fake_resolve(request, **kwargs):
+        captured["request"] = request
+        import pandas as pd
+        cols = {t: 100.0 for t in request["instruments"]}
+        cols.update({market_data.fx_symbol(c): 30.0 for c in request["currencies"]})
+        frame = pd.DataFrame([list(cols.values())], columns=list(cols),
+                             index=pd.DatetimeIndex([dt.datetime(2026, 7, 29)]))
+        fx = {"USD": 1.0}
+        fx.update({c: round(1.0 / 30.0, 6) for c in request["currencies"]})
+        return market_data.MarketDataBundle(source="yahoo", request=request, frame=frame,
+                                            splits={}, fx=fx)
+
+    real = market_data.resolve
+    market_data.resolve = fake_resolve
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            feed, _bundle = review_engine._resolve_consider_prices(
+                Args(), tmp, premise_ticker="2330.TW", premise_currency="TWD")
+    finally:
+        market_data.resolve = real
+
+    assert "TWD" in captured["request"]["currencies"], (
+        "the premise's currency must be requested, or no rate is ever retrieved for it: "
+        f"{captured['request']['currencies']}")
+    assert feed is not None
+    assert feed["prices"]["2330.TW"]["currency"] == "TWD", (
+        "and the envelope must declare that currency rather than defaulting it to USD, which is "
+        f"what `price_feed.currency_conflicts` compares against the trades: {feed['prices']}")
+    assert price_feed_engine.fx_rates(feed).get("TWD"), feed
 
 
 def test_n_an_empty_root_yields_no_universe_rather_than_a_bad_request():

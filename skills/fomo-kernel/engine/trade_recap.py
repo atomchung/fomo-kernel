@@ -634,8 +634,22 @@ def _ledger_rebase_origin():
         anchor = latest_anchor(events, declared_only=True)
     except Exception:                                       # noqa: BLE001  # 窗口提示,不是閘門
         return None
+    candidates = []
     as_of = (anchor or {}).get("as_of")
-    return str(as_of) if as_of else None
+    if as_of:
+        candidates.append(str(as_of))
+    # 錨點不是唯一的起點。一本只有交易、沒有宣告快照的帳本(CSV 匯入過、還沒宣告過持倉)
+    # 的 derive_holdings 從**第一筆交易**開始累加,所以那一天才是它的 rebase 起點——
+    # 只讀 declared anchor 會在這種帳本上回 None,窗口縮回 CSV,中間的分割整批消失
+    # (外部審查發現 1)。consider 自己的 _consider_market_universe 早就走交易了,
+    # 兩邊對「起點是什麼」必須是同一個答案。
+    for event in events or ():
+        if event.get("type") != "trade":
+            continue
+        day = str(event.get("date") or "").strip()
+        if day:
+            candidates.append(day)
+    return min(candidates) if candidates else None
 
 
 def market_request(rows, date_end, prev_end, currencies=(), requested_display=None,
@@ -2489,7 +2503,10 @@ def main():
             tickers=tickers, benchmarks=[b for b in bench if b not in last_px],
             currencies=[c for c in currencies if c not in fx],
             window=(context_start, context_end), as_of=context_end,
-            earliest_trade=start, reason=yf_err,
+            # 存代碼、不存原文(外部審查發現 7):price_request 進 state,而 state 的
+            # sha256 定住 session_id。TR_OFFLINE 與「沒裝 yfinance」被 classify_error
+            # 歸成同一個代碼,原文卻不同——不換成代碼,兩種等價姿態會給出不同的 session。
+            earliest_trade=start, reason=price_feed.classify_error(yf_err),
             missing=price_provenance["coverage"]["missing"])
     if mixed_ccy:
         rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)

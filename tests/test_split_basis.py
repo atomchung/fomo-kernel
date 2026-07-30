@@ -1311,6 +1311,65 @@ def test_a_review_freezes_the_window_its_split_map_is_complete_from():
         "the stamp must be the value it was handed, never a re-derivation inside build_state")
 
 
+def test_a_trade_only_ledger_supplies_a_rebase_origin_too():
+    """A ledger with trades and no declared snapshot still has a rebase origin —
+    its first trade — because that is where `derive_holdings` starts accumulating.
+
+    Reading only the declared anchor returned None for such a root, the window
+    snapped back to the CSV, and every split between the first ledger trade and
+    that CSV vanished from the frozen map (external review, finding 1).
+    `review._consider_market_universe` had walked trades all along, so the two
+    sides of the same question disagreed.
+    """
+    import trade_recap as tr
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "ledger.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            for day in ("2020-03-04", "2021-06-10"):
+                handle.write(json.dumps({
+                    "type": "trade", "date": day, "ticker": "NVDA", "action": "buy",
+                    "qty": 10.0, "price": 50.0, "currency": "USD", "market": "US"}) + "\n")
+        saved = os.environ.get("TR_LEDGER")
+        os.environ["TR_LEDGER"] = path
+        try:
+            got = tr._ledger_rebase_origin()
+        finally:
+            if saved is None:
+                os.environ.pop("TR_LEDGER", None)
+            else:
+                os.environ["TR_LEDGER"] = saved
+    assert got == "2020-03-04", (
+        "the oldest ledger trade is the oldest date a split gets rebased from on a root with no "
+        f"declared anchor; got {got!r}")
+
+
+def test_a_declared_anchor_and_an_older_trade_both_count():
+    """Whichever is older wins: `derive_holdings` skips trades at or before the
+    anchor, but a trade *before* an anchor still sits inside the history a reader
+    can replay, and widening the window is free while missing a split is not."""
+    import trade_recap as tr
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "ledger.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "trade", "date": "2019-01-02", "ticker": "NVDA", "action": "buy",
+                "qty": 5.0, "price": 40.0, "currency": "USD", "market": "US"}) + "\n")
+            handle.write(json.dumps({
+                "type": "snapshot", "as_of": "2024-01-01", "source": "broker",
+                "positions": [{"ticker": "NVDA", "shares": 5.0, "avg_cost": 40.0,
+                               "currency": "USD", "market": "US"}]}) + "\n")
+        saved = os.environ.get("TR_LEDGER")
+        os.environ["TR_LEDGER"] = path
+        try:
+            got = tr._ledger_rebase_origin()
+        finally:
+            if saved is None:
+                os.environ.pop("TR_LEDGER", None)
+            else:
+                os.environ["TR_LEDGER"] = saved
+    assert got == "2019-01-02", f"the older of the two must win; got {got!r}"
+
+
 def test_an_unreadable_ledger_widens_nothing_and_refuses_nothing():
     """It is a window hint, not a gate. A first-ever review, a corrupt line or an
     unset path must leave `prepare` working exactly as it does with no ledger."""

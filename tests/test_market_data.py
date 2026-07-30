@@ -365,6 +365,30 @@ def test_d_a_malformed_split_observation_is_reported_not_dropped():
     assert bundle.priced, "one bad split observation must not discard every close in the response"
 
 
+def test_d_closes_without_a_split_field_are_refused_rather_than_used():
+    """A response with prices but no `Stock Splits` field cannot say whether a
+    split happened, and "no split field" is indistinguishable from "no splits".
+
+    Using those closes is the setup for a tenfold share count, so the whole
+    resolution degrades instead (external review, finding 2). Before this, the
+    field defaulted to `{}`: the bundle stayed priced and usable, `fetch_splits`
+    returned an empty map, and `prepare` valued pre-split shares against post-split
+    closes with nothing anywhere looking wrong.
+    """
+    class NoActions(FakeProvider):
+        def __call__(self, symbols, start, end=None):
+            frame = FakeProvider.__call__(self, symbols, start, end)
+            return frame.drop(columns=[c for c in frame.columns if c[0] == "Stock Splits"])
+
+    with provider(NoActions()) as p:
+        bundle = p.resolve(_request(currencies=[]))
+    assert bundle.source == "unavailable", (
+        f"closes with no split field must not be handed over as usable: {bundle.to_json()}")
+    assert bundle.frame is None and not bundle.priced
+    assert [g["code"] for g in bundle.gaps] == ["response_shape"], bundle.gaps
+    assert "Stock Splits" in (bundle.gaps[0].get("detail") or ""), bundle.gaps
+
+
 def test_d_gap_codes_are_declared_before_they_are_emitted():
     try:
         market_data._gap("invented_code", "x")
@@ -582,19 +606,66 @@ def test_g_a_response_that_answered_nothing_is_never_frozen_as_a_day():
         assert len(p.calls) == 2, f"the retry must not be served from a cache ({len(p.calls)})"
 
 
-def test_g_a_partially_covered_bundle_is_cached_with_its_gaps():
-    """The counterweight to the two above: partial is not failure. A book where
-    one holding is delisted must not re-request the whole universe on every
-    command for the rest of the day."""
+def test_g_coverage_is_what_a_bundle_resolved_not_what_it_was_asked_for():
+    """Partial is not failure, but it is also not coverage of the missing part.
+
+    A bundle that requested {NVDA, DEAD} and priced only NVDA is worth caching —
+    a later request needing NVDA alone must be free. What it must NOT do is answer
+    a request that still needs DEAD: comparing the new request against the cached
+    bundle's *requested* symbols returned a bundle with no DEAD price and
+    suppressed the retry a transient outage deserves (external review, finding 5).
+    """
     with provider() as p:
         bundle = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
         assert bundle.usable and bundle.coverage()["missing"] == ["DEAD"]
-        assert p.day_entries(), "a bundle with real coverage must be cached"
+        assert p.day_entries(), "a bundle with real coverage must still be cached"
+
         market_data.reset_memo()
-        again = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
-        assert len(p.calls) == 1, f"the cached partial bundle must answer again ({len(p.calls)})"
-        assert [g["code"] for g in again.gaps] == ["symbol_unpriced"], (
-            f"and it must still say what it could not price: {again.gaps}")
+        narrower = _request(instruments=["NVDA"], benchmarks=[], currencies=[])
+        assert bundle.covers(narrower), "the priced part must be reusable"
+        p.resolve(narrower)
+        assert len(p.calls) == 1, f"a request over the priced part must be free ({len(p.calls)})"
+
+        market_data.reset_memo()
+        still_needs_dead = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
+        assert not bundle.covers(still_needs_dead), (
+            "a bundle that never priced DEAD does not cover a request for DEAD, however it was "
+            "labelled when the request went out")
+        p.resolve(still_needs_dead)
+        assert len(p.calls) == 2, (
+            f"the unresolved symbol must be retried, not answered from a bundle that never had "
+            f"it ({len(p.calls)} calls)")
+
+
+def test_g_an_unresolved_currency_is_not_covered_either():
+    """The same rule on the FX axis, which has its own consequence: a bundle
+    reused as though it carried a rate it never resolved sends a mixed-currency
+    book to a refusal that a retry might have avoided."""
+    with provider(FakeProvider(closes=dict(RECORDED_CLOSES, **{"TWD=X": []}))) as p:
+        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=["TWD"]))
+        assert "TWD" not in bundle.fx
+        assert not bundle.covers(_request(instruments=["NVDA"], benchmarks=[],
+                                          currencies=["TWD"]))
+        assert bundle.covers(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+
+
+def test_g_a_warm_memo_cannot_serve_an_offline_process():
+    """The posture is checked before the memo, not only inside the adapter.
+
+    A process that resolved online and then went offline would otherwise be
+    answered from its own warm memo — an online, priced, Yahoo-sourced bundle
+    returned under TR_OFFLINE, which is exactly the equivalence the flag exists to
+    provide (external review, finding 6). Nothing in the suite could see it,
+    because every offline test started from a cleared memo.
+    """
+    with provider() as p:
+        online = p.resolve(_request())
+        assert online.source == "yahoo" and online.priced
+        offline = p.resolve(_request(), env={"TR_OFFLINE": "1"})
+    assert offline.source == "unavailable", (
+        f"a warm memo must not survive the offline posture: {offline.source}")
+    assert not offline.priced and offline.fx == {"USD": 1.0}
+    assert [g["code"] for g in offline.gaps] == ["network_disabled"]
 
 
 def test_g_an_unreadable_cache_entry_is_a_miss_rather_than_a_crash():
@@ -751,43 +822,47 @@ def test_i_the_envelope_as_of_is_the_newest_row_not_the_frames_own_date():
     price_feed.parse(envelope)                              # would raise on a future-dated row
 
 
-def test_i_a_split_newer_than_the_close_it_would_divide_is_never_declared():
-    """The double-adjustment trap, found by driving this builder's own output
-    through `parse`.
+def test_i_a_stale_close_that_predates_a_split_is_left_out_rather_than_mispaired():
+    """The one my first version of this test got backwards, and external review
+    caught (finding 3).
 
-    A provider close is already retro-adjusted, and `parse` divides a declared
-    close by the splits *after* its date. So an observation dated 07-28 shipped
-    beside a 07-29 split gets divided by ten a second time — the tenfold weight
-    #583 exists to prevent, arriving through the repair for it. It also breaks
-    `parse` outright, since a split after `as_of` is refused.
+    A close is fetched with `auto_adjust=True`, so a stale one from *before* a
+    later split is already stated in the post-split basis. Declaring the split
+    would make `parse` divide it a second time — the tenfold error #583 exists to
+    prevent. But merely dropping the split, which is what this used to do, leaves
+    the other operand behind: a share count with no split map is still pre-split,
+    so 100 old shares at an adjusted $18 read as $1,800 instead of $18,000, and a
+    reverse split overstates instead.
 
-    Dropping the event is the correct pairing, not damage control: a split newer
-    than every close this instrument printed has been applied to none of them, so
-    quotes and share counts are both pre-split. The share side then falls back to
-    the frozen map, where `basis_conflicts` refuses if the two cannot be
-    reconciled.
+    There is no honest way to state that instrument in an envelope whose contract
+    is "a close is raw as of its own date". So it is left out, with a gap, and
+    reads as unpriced — a fact the disclosure layer already carries.
     """
     closes = dict(RECORDED_CLOSES, NVDA=[(_d("2026-07-28"), 180.0)])
     actions = {"NVDA": [(_d("2026-07-29"), 10.0)]}           # newer than NVDA's own close
     with provider(FakeProvider(closes=closes, actions=actions)) as p:
-        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+        bundle = p.resolve(_request(instruments=["NVDA", "AAPL"], benchmarks=[], currencies=[]))
     assert bundle.splits == {"NVDA": [(_d("2026-07-29"), 10.0)]}, (
         "the bundle must still *observe* it — this is an envelope-pairing rule, not a reason to "
         f"discard what the provider reported: {bundle.splits}")
-    envelope = market_data.to_price_feed_envelope(bundle, currency_by_ticker={"NVDA": "USD"})
-    assert "splits" not in envelope["prices"][0], (
-        f"a split newer than the close it would divide must not be declared: {envelope}")
-    parsed = price_feed.parse(envelope)                      # must not raise
-    assert parsed["prices"]["NVDA"]["close"] == 180.0, (
-        "and the close must be left exactly as the provider reported it, not divided again: "
-        f"{parsed['prices']['NVDA']}")
-    # An in-window split at or before the close is still declared — the normal case
-    # this must not have broken.
+    envelope = market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker={"NVDA": "USD", "AAPL": "USD"})
+    assert [row["ticker"] for row in envelope["prices"]] == ["AAPL"], (
+        "the mispairable instrument must be absent, not shipped with or without its split: "
+        f"{envelope}")
+    assert [g for g in bundle.gaps
+            if g["code"] == "symbol_unpriced" and "NVDA" in (g.get("detail") or "")], (
+        f"and its absence must be stated, not silent: {bundle.gaps}")
+    price_feed.parse(envelope)                               # must not raise
+
+    # The normal case this must not have broken: a split at or before the close is
+    # declared, and the instrument is priced.
     with provider() as p:
         normal = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
     normal_envelope = market_data.to_price_feed_envelope(
         normal, currency_by_ticker={"NVDA": "USD"})
     assert normal_envelope["prices"][0]["splits"] == [["2026-07-29", 10.0]], normal_envelope
+    assert price_feed.parse(normal_envelope)["prices"]["NVDA"]["close"] == 190.0
 
 
 # ───────────────── H. the boundary itself: one provider site ─────────────────

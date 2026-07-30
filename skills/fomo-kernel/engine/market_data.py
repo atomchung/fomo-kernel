@@ -333,13 +333,19 @@ class MarketDataBundle:
         provider pass, dressed as rigour. The invariant is enforced once, where it
         is knowable, which is what keeps two readers from disagreeing about it.
         """
-        if set(request["instruments"]) - set(self.request["instruments"]) - set(
-                self.request["benchmarks"]):
+        # Coverage is about what this bundle *resolved*, not what it was asked
+        # for. A bundle that requested {GOOD, DEAD} and priced only GOOD would
+        # otherwise "cover" a later request for DEAD, hand back a bundle with no
+        # DEAD price, and suppress the retry that a transient outage deserves
+        # (external review, finding 5). A narrower request over the priced part is
+        # still free, which is the reuse this exists for.
+        priced = set(self.priced)
+        resolved_fx = {code for code in self.request["currencies"] if code in self.fx}
+        if set(request["instruments"]) - priced:
             return False
-        if set(request["benchmarks"]) - set(self.request["benchmarks"]) - set(
-                self.request["instruments"]):
+        if set(request["benchmarks"]) - priced:
             return False
-        if set(request["currencies"]) - set(self.request["currencies"]):
+        if set(request["currencies"]) - resolved_fx:
             return False
         if self.request["window_start"] > request["window_start"]:
             return False
@@ -571,7 +577,19 @@ def _from_yahoo(request, root=None, today=None, env=None):
     if closes is None:
         return _unavailable(request, [_gap(
             "response_shape", "the response carries no Close field per symbol")])
-    actions = _field(data, "Stock Splits") or {}
+    actions = _field(data, "Stock Splits")
+    if actions is None:
+        # The request asked for actions; a response without them cannot say
+        # whether a split happened, and "no split field" is indistinguishable
+        # here from "no splits". Prices without that answer are the setup for a
+        # tenfold share count, so the whole resolution degrades rather than
+        # handing over closes nothing can be paired with (external review,
+        # finding 2). Visible as a gap and, downstream, as an unpriced book with
+        # a `price_request` — not as a quietly split-blind review.
+        return _unavailable(request, [_gap(
+            "response_shape",
+            "the response carries closes but no Stock Splits field, so no share basis can be "
+            "established for them")])
 
     bundle = _build_yahoo_bundle(request, closes, actions)
     if bundle.usable:
@@ -709,6 +727,13 @@ def resolve(request, *, feed=None, root=None, today=None, env=None, memo=True):
     request = build_request(**request) if not _is_normalized(request) else request
     if feed is not None:
         return _from_feed(request, feed)
+    # The posture is checked before the memo, not only inside the adapter. A
+    # process that resolved online and then went offline would otherwise be
+    # answered from its own warm memo — an online bundle returned under
+    # TR_OFFLINE, which is precisely the equivalence this flag exists to
+    # guarantee (external review, finding 6).
+    if not network_allowed(env):
+        return _from_yahoo(request, root=root, today=today, env=env)
     if memo:
         for bundle in _MEMO.values():
             if bundle.covers(request):
@@ -766,6 +791,7 @@ def to_price_feed_envelope(bundle, currency_by_ticker=None, instruments_only=Tru
     no prices, and ``parse`` rightly refuses one.
     """
     currency_by_ticker = currency_by_ticker or {}
+    skipped = []
     wanted = set(bundle.request["instruments"])
     if not instruments_only:
         wanted |= set(bundle.request["benchmarks"])
@@ -779,25 +805,45 @@ def to_price_feed_envelope(bundle, currency_by_ticker=None, instruments_only=Tru
                "close": round(float(series.iloc[-1]), 6),
                "date": observed,
                "currency": str(currency_by_ticker.get(ticker, "USD")).upper()}
-        # Only the splits this close already reflects. `price_feed.parse` divides a
-        # declared close by `factor_after(splits, its own date)`, and a provider
-        # close is *already* retro-adjusted — so declaring a split newer than the
-        # close would divide an adjusted number a second time, which is the exact
-        # tenfold error #583 exists to prevent, arriving through the repair for it.
+        # `price_feed.parse` divides a declared close by `factor_after(splits, its
+        # own date)`, and a provider close is *already* retro-adjusted onto today's
+        # basis. So a split newer than the close must not be declared — that would
+        # divide an adjusted number a second time.
         #
-        # Dropping it is also the right pairing rather than a lesser evil. A split
-        # newer than every close this instrument printed has not been applied to
-        # any of them, so quotes and share counts are both pre-split and
-        # comparable. What must not happen is one side moving alone: with the event
-        # undeclared here, the share count falls back to the frozen map through
-        # `review._effective_splits`, and if the two bases genuinely cannot be
-        # reconciled `price_feed.basis_conflicts` refuses — the fail-closed answer
-        # for an ambiguity, instead of a confident wrong weight.
+        # But dropping it is not enough, and an earlier version of this function
+        # stopped there on the wrong premise that such a close is "pre-split and
+        # therefore comparable to a pre-split share count" (external review,
+        # finding 3). Under `auto_adjust=True` it is the opposite: a stale close
+        # from before a later split is *already* stated in the post-split basis,
+        # while a share count with no split map is not. Pairing them understates
+        # the position by the split factor — 100 old shares at an adjusted $18 read
+        # as $1,800 instead of $18,000 — and a reverse split overstates it.
+        #
+        # There is no honest way to express that instrument in this envelope: the
+        # contract is that a close is raw as of its own date, and this one is not.
+        # So it is left out, with a gap, and reads as unpriced. Unpriced is a
+        # fact the disclosure layer already carries; a tenfold value is not.
+        later = [(day, ratio) for day, ratio in (bundle.splits.get(ticker) or ())
+                 if day.isoformat() > observed]
+        if later:
+            skipped.append(
+                f"{ticker}: last close {observed} predates a split dated "
+                f"{later[0][0].isoformat()}, so the retro-adjusted quote and this book's share "
+                "count cannot be put on one basis")
+            continue
         events = [(day, ratio) for day, ratio in (bundle.splits.get(ticker) or ())
                   if day.isoformat() <= observed]
         if events:
             row["splits"] = [[day.isoformat(), ratio] for day, ratio in events]
         rows.append(row)
+    for detail in skipped:
+        # Recorded on the bundle, because an instrument dropped here is a
+        # coverage fact its caller has to be able to see and disclose.
+        gap = _gap("symbol_unpriced", detail)
+        if gap not in bundle.gaps:
+            bundle.gaps.append(gap)
+    if skipped:
+        bundle.gaps.sort(key=lambda row: (row["code"], row.get("detail") or ""))
     if not rows:
         return None
     # `parse` refuses any observation dated after `as_of`, so it must be the
