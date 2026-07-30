@@ -5,7 +5,16 @@
 including a ``resume`` on the same session — re-fetches from scratch. This
 module keeps the previous fetch on disk so a same-day rerun answers from it.
 
-Three properties are load-bearing, in order:
+Four properties are load-bearing, in order:
+
+**The root is always the caller's.** ``root`` is a required keyword on every
+entry here, with no default and no fallback of its own. It used to default to
+``session.default_root()``, which meant a caller that forgot it wrote to the
+account's real coach directory instead of the root the run was given — and
+``prepare --root`` did exactly that, routing its session state to the given root
+and its cache to ``~/.trade-coach`` (#627). Whoever owns the root passes it; a
+run with no owner names ``session.default_root()`` itself, where the choice is
+visible.
 
 **A stale entry can never enter a deterministic test.** Both call sites consult
 the cache *after* ``import yfinance`` succeeds, so ``test_state_loop``'s offline
@@ -34,8 +43,6 @@ import json
 import os
 import tempfile
 
-import session
-
 _DIR = "cache"
 
 
@@ -43,12 +50,8 @@ def _today(today=None):
     return str(today or dt.date.today().isoformat())
 
 
-def _root(root=None):
-    return root or session.default_root()
-
-
-def _path(kind, root=None):
-    return os.path.join(_root(root), _DIR, f"{kind}.json")
+def _path(kind, root):
+    return os.path.join(root, _DIR, f"{kind}.json")
 
 
 def _key(inputs):
@@ -57,7 +60,7 @@ def _key(inputs):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def _read_day(kind, root=None, today=None):
+def _read_day(kind, root, today=None):
     """Return the file's entries when it belongs to ``today``, else an empty dict."""
     try:
         with open(_path(kind, root), encoding="utf-8") as handle:
@@ -70,19 +73,18 @@ def _read_day(kind, root=None, today=None):
     return entries if isinstance(entries, dict) else {}
 
 
-def load(kind, inputs, root=None, today=None):
+def load(kind, inputs, *, root, today=None):
     """Return the cached JSON value for these inputs, or None on any miss."""
     return _read_day(kind, root, today).get(_key(inputs))
 
 
-def store(kind, inputs, value, root=None, today=None):
+def store(kind, inputs, value, *, root, today=None):
     """Persist ``value`` for these inputs. Never raises, never creates the root."""
-    base = _root(root)
-    if not os.path.isdir(base):
+    if not os.path.isdir(root):
         return False                                       # opportunistic: do not create the state root
     entries = dict(_read_day(kind, root, today))
     entries[_key(inputs)] = value
-    directory = os.path.join(base, _DIR)
+    directory = os.path.join(root, _DIR)
     try:
         os.makedirs(directory, exist_ok=True)
         blob = {"date": _today(today), "entries": entries}

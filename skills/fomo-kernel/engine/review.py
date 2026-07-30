@@ -1710,6 +1710,12 @@ def _run_engine(paths, root, args, *, ledger_path=None):
         state_path = os.path.join(tmp, "state.json")
         env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
                    TR_LEDGER=ledger_path or os.path.join(root, "ledger.jsonl"),
+                   # #627: the engine cannot see `--root`, and its market-data
+                   # cache is state — same-root-as-the-session, not
+                   # same-root-as-the-account. Without this the cache resolved
+                   # its own root and an isolated run wrote the user's tickers
+                   # into the real `~/.trade-coach`.
+                   TR_STATE_ROOT=root,
                    TR_DISPLAY_CURRENCY=card_renderer.default_display_currency(args.language))
         env.pop("TR_PRICES", None)      # only an explicit --prices may inject a price envelope
         if getattr(args, "prices", None):
