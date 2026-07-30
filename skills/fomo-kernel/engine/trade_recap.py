@@ -501,9 +501,79 @@ def currency_map(rows):
     return cur_map, sorted(set(cur_map.values())), sorted(conflicts)
 
 
+#: #611's acquisition codes that mean "a requested rate did not arrive". Stated
+#: once because two readers need the same set: ``fetch_fx``'s diagnostic string
+#: and the refusal below, which quotes the codes rather than parsing prose.
+FX_MISSING_GAP_CODES = ("fx_unavailable", "network_disabled", "provider_missing",
+                        "transport_failed", "empty_response", "response_shape",
+                        "feed_incomplete")
+
+
+class MissingHeldCurrencyRate(ValueError):
+    """A held currency this aggregate would convert has no rate (#612).
+
+    Carries the currencies as data — the CLI frame formats them, and nothing
+    downstream has to read the sentence back out of a string.
+    """
+
+    def __init__(self, held, missing):
+        self.held = list(held)
+        self.missing = list(missing)
+        self.cause_codes = []
+        super().__init__(self._sentence())
+
+    def _sentence(self):
+        return (f"this book holds {', '.join(self.held)} and no FX rate covers "
+                f"{', '.join(self.missing)}, so its holdings cannot be added into one "
+                "denominator. Every weight, concentration figure, ranking and stored "
+                f"metric would be computed with 1 {self.missing[0]} treated as 1 USD. "
+                "Supply the rate through --prices (the `fx` block in "
+                "references/price-feed.md), then run prepare again.")
+
+    def with_cause(self, gaps):
+        """Attach the acquisition codes only this frame can see, and return self.
+
+        Enrichment, never a second check: the predicate stays in ``usd_view``.
+        """
+        self.cause_codes = sorted({gap["code"] for gap in (gaps or [])
+                                   if gap.get("code") in FX_MISSING_GAP_CODES})
+        if self.cause_codes:
+            self.args = (f"{self._sentence()} (market data reported: "
+                         f"{', '.join(self.cause_codes)})",)
+        return self
+
+
+def held_currency_fx_gaps(cur_map, fx):
+    """The held currencies a cross-currency conversion would silently call USD.
+
+    The single predicate behind every FX refusal in this repository (#612), so a
+    lane that aggregates inherits it instead of restating it. Two properties are
+    load-bearing:
+
+    * A **single-currency** book — including a pure non-USD one — aggregates
+      itself self-consistently and never needed a rate, so it is never a gap.
+      That is the same "單一幣別組合...零行為變化" convention the module keeps.
+    * The domain is ``cur_map``, which only ever holds *held* currencies. A
+      display currency requested by ``fx_request_currencies`` is not in it, so a
+      missing display rate stays a rendering degradation and can never reach
+      here.
+
+    The keys are read **verbatim**, never normalized: ``usd_view``'s factor
+    lookup is ``fx.get(cur_map.get(t, "USD"), 1.0)``, so a predicate that
+    case-folded or trimmed them could call a currency covered that the lookup
+    then misses, and the identity factor would be back through the guard's own
+    front door. Agreeing by construction is worth more here than tolerating a
+    dirty currency code, which fails closed and is fixable in the input.
+    """
+    held = {c for c in (cur_map or {}).values() if c}
+    if len(held) < 2:
+        return []
+    return sorted(c for c in held if c not in (fx or {}))
+
+
 def fetch_fx(currencies, bundle=None, feed=None):
     """非 USD 幣別 → {cur: usd_per_unit};USD 恆 1.0。缺誰記誰,不 crash
-    (呼叫端把缺口寫進 data_integrity;#602 起混幣缺匯率在 consequence 那側 fail closed)。
+    (缺口由 ``usd_view`` 的 fail-closed 述詞接手;#602 consider、#612 review 同一條)。
 
     #605:取得層已搬進 ``market_data``——這裡只把一份已解析的 bundle 投影成本函式
     歷來的回傳形狀。逐幣別 ``Ticker("{CUR}=X").history`` 那條路退役了:它與價格下載
@@ -521,10 +591,7 @@ def fetch_fx(currencies, bundle=None, feed=None):
     if not missing:
         return fx, None
     reason = "; ".join(gap.get("detail") or gap["code"] for gap in bundle.gaps
-                       if gap["code"] in {"fx_unavailable", "network_disabled",
-                                          "provider_missing", "transport_failed",
-                                          "empty_response", "response_shape",
-                                          "feed_incomplete"})
+                       if gap["code"] in FX_MISSING_GAP_CODES)
     source = "供給的價格檔未含" if bundle.source == "supplied" else "來源無資料"
     return fx, f"匯率無資料({source}): {','.join(missing)}" + (f" — {reason}" if reason else "")
 
@@ -563,8 +630,27 @@ def fetch_fx_series(currencies, start, bundle=None, feed=None):
 def usd_view(rts, held, last_px, cur_map, fx):
     """聚合前置換算視圖:把 rts 金額欄 / held 成本 / last_px 換到 USD,
     讓 dim_size / dim_diversify / overview_stats / payoff_attribution 零改動地在共同幣別上聚合。
-    ret(比率)與 hold(天數)不受等比縮放影響;fx 缺的幣別因子 = 1.0(呼叫端已記警告)。
-    ⚠️ 只給「聚合」消費;per-ticker 呈現(ticker_diagnosis / best_worst / 卡上單檔數字)一律用原幣原物件。"""
+    ret(比率)與 hold(天數)不受等比縮放影響。
+    ⚠️ 只給「聚合」消費;per-ticker 呈現(ticker_diagnosis / best_worst / 卡上單檔數字)一律用原幣原物件。
+
+    Raises :class:`MissingHeldCurrencyRate` when a held currency has no rate
+    (#612). The check is *here*, at the one place the conversion happens, rather
+    than at each consumer: every aggregate reader — weights, concentration,
+    rankings, ``what_if``, the diagnosis order, the persisted reconciliation
+    metrics — reaches its numbers through this function, so a lane added later
+    inherits the refusal instead of re-deriving it. The identity factor this
+    replaces was not a gap in the numbers, it was a different number: a TWD
+    holding beside several USD ones entered the denominator at face value, which
+    suppresses every USD holding's share and can invert which position is the
+    largest. Measured on the ``tw_mixed`` persona, its top position's card,
+    headline, candidate rule and stored ``max_pos_pct`` all read 87% of a book
+    that is really 57% of it. Nothing downstream survives that, so there is no
+    per-field carve-out to make — the whole view is refused, matching what
+    ``consequence.portfolio_state`` already does for the pre-trade lane (#600).
+    """
+    gaps = held_currency_fx_gaps(cur_map, fx)
+    if gaps:
+        raise MissingHeldCurrencyRate(sorted({c for c in (cur_map or {}).values() if c}), gaps)
     f = lambda t: fx.get(cur_map.get(t, "USD"), 1.0)
     rts_u = [dict(r, buy_px=r["buy_px"] * f(r["ticker"]), sell_px=r["sell_px"] * f(r["ticker"]))
              for r in rts]
@@ -2315,7 +2401,9 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
     if di.get("orphan_sells"):
         L.append({"key": "orphan_sells", "status": "present",
                   "data": {"tickers": sorted(di["orphan_sells"])}})
-    # 幣別:混幣聚合換 USD / 缺匯率近似 / 同檔多幣別衝突 → 金額幣別要標清楚
+    # 幣別:混幣聚合換 USD / 同檔多幣別衝突 → 金額幣別要標清楚。
+    # #612 之後 di["fx_gaps"] 在本 lane 已不會出現(缺匯率是 usd_view 的拒答,不是揭露),
+    # 這個分支只為兩種呼叫者保留:重繪 #612 之前提交的 bundle,以及自帶 fx_gaps 的 snapshot。
     cm = currency_meta or {}
     if cm.get("mixed") or di.get("fx_gaps") or di.get("currency_conflicts"):
         st = "conflict" if di.get("currency_conflicts") else ("fx_gap" if di.get("fx_gaps") else "mixed")
@@ -2571,7 +2659,13 @@ def main():
             earliest_trade=start, reason=price_feed.classify_error(yf_err),
             missing=price_provenance["coverage"]["missing"])
     if mixed_ccy:
-        rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
+        try:
+            rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
+        except MissingHeldCurrencyRate as exc:
+            # Not a second check — the predicate lives in usd_view. This frame
+            # only owns the acquisition codes (#611's machine-readable gaps),
+            # so it attaches them and re-raises for the one CLI error below.
+            raise exc.with_cause(bundle.gaps)
         decision_rts_u = [r for r in rts_u
                           if driver(r["ticker"])[0] not in BENCH_SELF
                           and not instrument_policy.is_diversified_allocation(r["ticker"])]
@@ -2619,9 +2713,9 @@ def main():
         "orphan_sells": {t: round(q, 2) for t, q in sorted(orphans.items())},
         "unclassified_drivers": unclassified,
     }
-    fx_gaps = [c for c in currencies if c not in fx] if mixed_ccy else []
-    if fx_gaps:
-        data_integrity["fx_gaps"] = fx_gaps                # 混幣但缺匯率:聚合按原幣近似(因子=1),卡面必須明示
+    # #612:「混幣但缺匯率」不再是卡面揭露,而是 usd_view 上游的拒答——這裡若還寫
+    # data_integrity["fx_gaps"],它的值恆為空(述詞同一個),正是 #429 說的死欄位。
+    # 缺匯率那份清單現在是拒答的內容;snapshot 那條線有自己的 fx_gaps 產出者,不受影響。
     if cur_conflicts:
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
     if price_plausibility:
@@ -2818,4 +2912,13 @@ def main():
         print(f"# [state] {path}", file=sys.stderr)        # 訊息走 stderr,不污染卡片
 
 if __name__ == "__main__":
-    main()
+    # #612: one controlled CLI error, never a traceback, and never a partial
+    # artifact — the refusal is raised inside `usd_view`, upstream of the card,
+    # the state write and the ledger ingest, so nothing has been produced yet.
+    # Caught at the process frame rather than at the call site so any later
+    # aggregation path in `main()` inherits the same single error line.
+    try:
+        main()
+    except MissingHeldCurrencyRate as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)

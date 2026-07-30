@@ -80,7 +80,7 @@ Field rules:
 - Each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency`. One row per instrument.
 - `history` is optional: `[date, close]` pairs. When present it must agree with `close` on the shared date.
 - `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it whenever the source shows one inside the trade history, and check for one on any position the user has held for years. Omitting it is not cosmetic, and it now costs something on both sides of the multiplication — see the section below.
-- `fx` is optional and only matters for a mixed-currency portfolio. Rates are USD per one unit of the currency. Omit a rate you cannot find.
+- `fx` carries USD-per-one-unit spot rates, and it is optional only while the book holds one currency. A **mixed-currency** book needs a rate for every currency it holds: without one there is no denominator its positions can be added into, so `prepare` and `consider` both refuse and name the currency instead of converting it at 1.0 (#612). Still omit a rate you cannot find — the refusal is recoverable and a guessed rate is not.
 
 ## Prices are raw observations; the engine does the split arithmetic
 

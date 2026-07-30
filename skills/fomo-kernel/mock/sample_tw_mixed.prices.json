@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-07-30",
+  "source": "fomo-kernel mock fixture (fictional closes; TWD rate rounded to a public order of magnitude)",
+  "prices": [
+    {"ticker": "2330.TW", "close": 1050.0, "date": "2026-07-30", "currency": "TWD"},
+    {"ticker": "2454.TW", "close": 1250.0, "date": "2026-07-30", "currency": "TWD"},
+    {"ticker": "6488.TWO", "close": 620.0, "date": "2026-07-30", "currency": "TWD"},
+    {"ticker": "AAPL", "close": 210.0, "date": "2026-07-30", "currency": "USD"},
+    {"ticker": "AMD", "close": 165.0, "date": "2026-07-30", "currency": "USD"},
+    {"ticker": "GOOG", "close": 175.0, "date": "2026-07-30", "currency": "USD"},
+    {"ticker": "MSFT", "close": 430.0, "date": "2026-07-30", "currency": "USD"}
+  ],
+  "fx": [
+    {"currency": "TWD", "usd_per_unit": 0.0317, "date": "2026-07-30"}
+  ]
+}
