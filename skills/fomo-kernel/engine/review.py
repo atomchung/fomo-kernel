@@ -1472,6 +1472,16 @@ def _prepare_exit_capture(root, state, persist):
             continue
         if value > 0:
             prices[str(ticker)] = value
+    # #583 §4: the split basis each of those quotes is stated in, stamped per
+    # ticker by the review that froze them. Without it `compare` assumed every
+    # quote postdated every split in the map and rebased the exit across all of
+    # them — true whenever the quote really is current, and unprovable, which is
+    # the whole objection. A state frozen before this evidence existed carries
+    # no `observations` and degrades to that same unbounded rebase.
+    price_basis = {str(ticker): (row or {}).get("basis_date")
+                   for ticker, row in (((state.get("price_snapshot") or {})
+                                        .get("observations") or {}).items())
+                   if isinstance(row, dict) and row.get("basis_date")}
     recent = [row for row in revisit.scan_recent_exits(revisits, as_of)
               if row.get("revisit_id") not in narratives]
     recent_ids = {row.get("revisit_id") for row in recent}
@@ -1484,13 +1494,15 @@ def _prepare_exit_capture(root, state, persist):
         due.append({
             "revisit_id": row.get("revisit_id"), "checkpoint": row.get("checkpoint"),
             "due_date": row.get("due_date"), "item": item,
-            "compare": revisit.compare(item, prices, splits=state.get("splits")),
+            "compare": revisit.compare(item, prices, splits=state.get("splits"),
+                                       price_basis=price_basis),
             "prior_exit_reason": prior.get("exit_reason"),
             "prior_note": prior.get("note"),
             "prior_capture": prior.get("capture"),
         })
     topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=prices,
-                                                splits=state.get("splits"))
+                                                splits=state.get("splits"),
+                                                price_basis=price_basis)
     backlog = {"items": topn[:2], "summary": summary, "total": total} if total else None
     return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
                                   "skipped_queue_lines": skipped, "path": queue_path}

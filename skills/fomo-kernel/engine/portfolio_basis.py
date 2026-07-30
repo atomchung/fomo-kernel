@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 import ledger
+import splits as split_policy
 
 
 CONTRACT_VERSION = "portfolio-basis-v1"
@@ -40,6 +41,10 @@ _COVERAGE_SCOPES = {"full_current_book", "bounded_valued_subset", "unavailable_m
 # What _normalized_anchor emits per position: the book-affecting facts only.
 # Its producer and this validator read the same tuple so they cannot drift.
 _NORMALIZED_POSITION_KEYS = ("ticker", "shares", "avg_cost", "market_value", "market", "currency")
+# #583 §2: the per-ticker replay evidence a valuation frame may additionally
+# carry. Additive by design — a frame stored before it existed keeps validating
+# under its recorded version — but never half-present within one frame.
+_OBSERVATION_KEYS = frozenset({"observed_at", "basis_date"})
 _PROJECTION_REL_TOL = 1e-12
 _PROJECTION_ABS_TOL = 1e-12
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -136,13 +141,23 @@ def _frame_reason(missing_price: list[dict[str, str]], missing_fx: list[str]) ->
 def build_valuation_frame(*, as_of: Any, positions: Mapping[str, Mapping[str, Any]],
                           prices: Mapping[str, Any], aggregate_currency: Any,
                           fx_to_aggregate: Mapping[str, Any],
-                          price_provenance: Any, fx_provenance: Any) -> ValuationFrame:
+                          price_provenance: Any, fx_provenance: Any,
+                          price_observations: Optional[Mapping[str, Mapping[str, Any]]] = None
+                          ) -> ValuationFrame:
     """Build the sole v1 native-price/FX receipt from already-frozen facts.
 
     This is intentionally a domain builder, not a renderer helper.  Every
     position is represented exactly once as a usable native price or as a
     ``{ticker,currency}`` gap; every non-aggregate position currency is likewise
     represented exactly once by an FX rate or an FX gap.
+
+    ``price_observations`` is the per-ticker evidence the alignment can be
+    replayed from (#583 §2): ``{ticker: {"observed_at", "basis_date"}}``, from
+    ``trade_recap.price_observations``.  Optional so a stored frame from before
+    it existed still validates and is never rewritten, but all-or-nothing within
+    one frame — the frame carries a single ``as_of``, and a frame where one
+    ticker's evidence is missing lets that ticker's stale observation borrow a
+    fresh neighbour's date, which is the ambiguity the field exists to remove.
     """
     as_of_date = _date(as_of, "valuation_frame.as_of")
     if not isinstance(positions, Mapping) or not isinstance(prices, Mapping) or not isinstance(fx_to_aggregate, Mapping):
@@ -161,12 +176,24 @@ def build_valuation_frame(*, as_of: Any, positions: Mapping[str, Mapping[str, An
         expected[ticker] = position["currency"]
     if set(prices) - set(expected):
         raise PortfolioBasisError("valuation_frame prices contain unknown tickers")
+    if price_observations is not None and not isinstance(price_observations, Mapping):
+        raise PortfolioBasisError("valuation_frame price observations must be an object")
     native, missing_price = {}, []
     for ticker, currency in sorted(expected.items()):
         price = prices.get(ticker)
         if _finite_number(price) and price > 0:
-            native[ticker] = {"price": float(price), "currency": currency,
-                              "provenance": price_provenance}
+            row = {"price": float(price), "currency": currency,
+                   "provenance": price_provenance}
+            if price_observations is not None:
+                evidence = price_observations.get(ticker)
+                if not isinstance(evidence, Mapping):
+                    raise PortfolioBasisError(
+                        f"valuation_frame has no price observation evidence for {ticker}")
+                row["observed_at"] = _date(evidence.get("observed_at"),
+                                           "valuation_frame.prices.observed_at").isoformat()
+                row["basis_date"] = _date(evidence.get("basis_date"),
+                                          "valuation_frame.prices.basis_date").isoformat()
+            native[ticker] = row
         else:
             missing_price.append({"ticker": ticker, "currency": currency})
     needed_fx = sorted(set(expected.values()) - {aggregate})
@@ -420,13 +447,37 @@ def validate_valuation_frame(value: Mapping[str, Any], *, positions: Optional[Ma
             or not isinstance(value["usable"], bool) or value["reason"] not in {None, "missing_price", "missing_fx", "missing_price_and_fx"}):
         raise PortfolioBasisError("valuation_frame coverage is invalid")
     normalized_prices, normalized_fx = {}, {}
+    # #583 §2. Per-ticker observation evidence is additive: a frame stored before
+    # it existed carries the three original keys and still validates, and is
+    # never rewritten. Within one frame it is all-or-nothing — a partial frame
+    # would let the ticker without evidence pass as though it shared a priced
+    # neighbour's observation date, which is the exact confusion a single
+    # frame-level `as_of` already caused.
+    evidence_bearing = {ticker for ticker, row in prices.items()
+                        if isinstance(row, Mapping) and _OBSERVATION_KEYS & set(row)}
+    if evidence_bearing and evidence_bearing != set(prices):
+        raise PortfolioBasisError("valuation_frame price observation evidence is partial")
     for ticker, row in prices.items():
         if (not isinstance(ticker, str) or not ticker or not isinstance(row, Mapping)
-                or set(row) != {"price", "currency", "provenance"} or not _finite_number(row["price"])
+                or set(row) not in ({"price", "currency", "provenance"},
+                                    {"price", "currency", "provenance"} | _OBSERVATION_KEYS)
+                or not _finite_number(row["price"])
                 or row["price"] <= 0 or not _currency(row["currency"])
                 or not isinstance(row["provenance"], str) or not row["provenance"]):
             raise PortfolioBasisError("valuation_frame native price is invalid")
         normalized_prices[ticker] = {"price": float(row["price"]), "currency": row["currency"], "provenance": row["provenance"]}
+        if _OBSERVATION_KEYS & set(row):
+            observed_at = _date(row["observed_at"], "valuation_frame.prices.observed_at")
+            basis_date = _date(row["basis_date"], "valuation_frame.prices.basis_date")
+            # A price is stated in the basis of its own observation, moved
+            # forward to whichever split was divided out of it
+            # (``splits.basis_date``); it can never be stated in a basis that
+            # predates the day it was observed.
+            if basis_date < observed_at:
+                raise PortfolioBasisError(
+                    "valuation_frame price basis precedes its own observation")
+            normalized_prices[ticker].update(observed_at=observed_at.isoformat(),
+                                             basis_date=basis_date.isoformat())
     for currency, row in fx.items():
         if (not _currency(currency) or not isinstance(row, Mapping) or set(row) != {"rate", "provenance", "as_of"}
                 or not _finite_number(row["rate"]) or row["rate"] <= 0
@@ -480,6 +531,45 @@ def _valuation_frame(value: Mapping[str, Any], positions: Optional[Mapping[str, 
     normalized = _canonical(dict(value))
     normalized["as_of"] = as_of.isoformat()
     return "priced", normalized, as_of
+
+
+def _refuse_unaligned_price_basis(valuation: Optional[Mapping[str, Any]],
+                                  splits: Optional[Mapping[str, Any]]) -> None:
+    """Refuse a frame whose prices are on an earlier split basis than the shares.
+
+    #583's user outcome, made mechanical on the one surface that holds both
+    operands: a frame states, per ticker, the date it was observed and the basis
+    it was rebased onto, and this book states which splits it carried its
+    quantities across.  If a split fell after an observation and the price was
+    not rebased across it, the two numbers are not comparable and multiplying
+    them yields a value wrong by the split ratio — with a valid
+    ``state_version`` and provenance on top of it.
+
+    Per ticker, never per book: the newest split in the book belongs to *some*
+    ticker, and holding every other price to it would refuse an ordinary book
+    for a corporate action that never touched those instruments.
+
+    Silent on a frame with no observation evidence (a stored frame from before
+    this existed) and on a book with no split information: neither is a
+    contradiction, and inventing one would refuse the replay of history that is
+    already recorded.
+    """
+    if not isinstance(valuation, Mapping) or valuation.get("contract_version") != VALUATION_FRAME_VERSION:
+        return
+    try:
+        events_by_ticker = split_policy.normalize(splits)
+    except split_policy.SplitDataError as exc:
+        raise PortfolioBasisError(f"split events cannot establish a share basis: {exc}") from exc
+    if not events_by_ticker:
+        return
+    for ticker, row in sorted((valuation.get("prices") or {}).items()):
+        if not isinstance(row, Mapping) or "basis_date" not in row:
+            continue
+        applied = split_policy.last_applied(events_by_ticker.get(ticker), row["observed_at"])
+        if applied is not None and _date(row["basis_date"], "valuation_frame.prices.basis_date") < applied:
+            raise PortfolioBasisError(
+                f"valuation_frame prices {ticker} on the {row['basis_date']} share basis while "
+                f"this book carried it across a split dated {applied.isoformat()}")
 
 
 def _version_payload(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -999,8 +1089,19 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
     anchor_date = _date(anchor["as_of"], "anchor.as_of") if anchor is not None else None
     applied_events = _post_anchor_events(events, anchor_date)
     version_evidence = _version_evidence(events, anchor_date)
+    # #583 §3. A split that moved a held quantity is the day this book last
+    # changed, exactly as a trade is, so it belongs in the freshness date rather
+    # than beside it. Without it the reference gate below accepted a valuation
+    # dated after the last trade but *before* a split the holdings had already
+    # been carried across — the two operands on different bases and the basis
+    # object reporting itself fresh. Advancing the date rather than adding a
+    # parallel field is what keeps every book no split touched byte-identical:
+    # `derive_holdings` reports `None` there, so nothing enters this list and
+    # `state_version` does not move.
+    quantity_basis = derived.get("quantity_basis")
     effective_candidates = ([] if anchor_date is None else [anchor_date]) + [
-        _date(event["date"], "trade.date") for event in applied_events]
+        _date(event["date"], "trade.date") for event in applied_events] + (
+        [_date(quantity_basis, "quantity_basis")] if quantity_basis else [])
     effective_date = max(effective_candidates) if effective_candidates else None
     if effective_date is None:
         # An empty ledger is a valid but unverified empty current-book query.
@@ -1008,6 +1109,7 @@ def query_current_book(events: Sequence[Mapping[str, Any]], *, valuation_manifes
 
     holdings = _canonical(derived["holdings"])
     valuation_basis, valuation, valuation_date = _valuation_manifest(valuation_manifest, positions=holdings)
+    _refuse_unaligned_price_basis(valuation, splits)
     reference_date = _date(reference_as_of, "reference_as_of") if reference_as_of else valuation_date
     if reference_date is not None and reference_date < effective_date:
         raise PortfolioBasisError("reference_as_of cannot precede current-book as_of")

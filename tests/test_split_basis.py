@@ -906,6 +906,203 @@ def test_a_supplied_series_is_rebased_before_a_return_consumer_reads_it():
         "a flat instrument that split must show a flat cumulative curve", curve)
 
 
+# ───── per-ticker evidence: one fresh ticker cannot speak for a stale one ─────
+
+def _engine_state(tmp, csv_path, prices_path):
+    """The engine's own frozen state, through the same TR_STATE_OUT path
+    `review._run_engine` uses — the artifact the review, the card and the exit
+    comparison all read afterwards."""
+    state_path = os.path.join(tmp, "state.json")
+    env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=state_path,
+               TR_LEDGER=os.devnull, TR_PRICES=prices_path)
+    run = subprocess.run([sys.executable, os.path.join(ENGINE, "trade_recap.py"), csv_path],
+                         capture_output=True, text=True, env=env, cwd=ENGINE, timeout=180)
+    assert run.returncode == 0, run.stderr[-800:]
+    with open(state_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_each_priced_ticker_keeps_its_own_observation_date_and_split_basis():
+    """#583 §2. The frame carried one `as_of` and per-ticker
+    `{price,currency,provenance}`, so a ticker whose last observation is days
+    old was indistinguishable from a same-day one once frozen — and the frame
+    could not testify at all about which split basis any of its numbers were in.
+
+    GLYPH last printed on 2024-06-07 and TARDY on 2024-06-10. Both rows now say
+    so, and both say which basis their value is stated in: GLYPH's is the split
+    date, because the split is what moved it there."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = _engine_state(tmp, _price_csv(tmp), _price_envelope(tmp))
+        frame = state["valuation_frame"]
+        assert frame["prices"]["GLYPH"]["price"] == 10.0, frame["prices"]
+        assert frame["prices"]["GLYPH"]["observed_at"] == "2024-06-07", frame["prices"]
+        assert frame["prices"]["GLYPH"]["basis_date"] == _PRICE_SPLIT[0], frame["prices"]
+        assert frame["prices"]["TARDY"]["observed_at"] == "2024-06-10", frame["prices"]
+        assert frame["as_of"] == "2024-06-10", frame["as_of"]
+
+        snapshot = state["price_snapshot"]
+        assert snapshot["observations"]["GLYPH"] == {"observed_at": "2024-06-07",
+                                                    "basis_date": _PRICE_SPLIT[0]}, snapshot
+        assert snapshot["observations"]["TARDY"]["observed_at"] == "2024-06-10", snapshot
+
+
+def test_a_frame_may_not_carry_that_evidence_for_only_some_of_its_tickers():
+    """All-or-nothing within one frame. A frame stored before this evidence
+    existed still validates untouched — that is the compatibility rule — but a
+    half-stamped one is worse than either: the ticker without evidence reads as
+    though it shared its priced neighbour's observation date, which is exactly
+    the ambiguity the field was added to remove."""
+    frame = _engine_frame()
+    frame["prices"]["NVDA"] = dict(frame["prices"]["NVDA"], observed_at="2026-07-20",
+                                   basis_date="2026-07-28")
+    frame["prices"]["ACME"] = {"price": 12.0, "currency": "USD", "provenance": "test"}
+    positions = {"NVDA": "USD", "ACME": "USD"}
+    pb.validate_valuation_frame(_engine_frame(), positions={"NVDA": "USD"})  # legacy still valid
+    try:
+        pb.validate_valuation_frame(frame, positions=positions)
+    except pb.PortfolioBasisError as exc:
+        assert "partial" in str(exc), exc
+    else:
+        raise AssertionError("a half-stamped frame must not validate")
+
+
+def test_a_price_basis_may_not_precede_its_own_observation():
+    """The internal consistency of the pair. A value cannot be stated in a basis
+    older than the session it was observed in; a frame claiming so is not
+    describing a rebase that happened."""
+    frame = _engine_frame()
+    frame["prices"]["NVDA"] = dict(frame["prices"]["NVDA"], observed_at="2026-07-28",
+                                   basis_date="2026-07-20")
+    try:
+        pb.validate_valuation_frame(frame, positions={"NVDA": "USD"})
+    except pb.PortfolioBasisError as exc:
+        assert "precedes its own observation" in str(exc), exc
+    else:
+        raise AssertionError("a basis before the observation must not validate")
+
+
+# ───── the book states which basis its own quantities are on (#583 §3) ─────
+
+def test_a_split_that_moved_a_held_quantity_is_part_of_the_books_own_date():
+    """`PortfolioBasis` computed freshness from the anchor and the trades alone,
+    so a book whose share count a split restated last month reported itself as
+    of its last trade. A valuation dated in between then passed the
+    `reference_as_of` gate — the basis object declaring itself fresh while its
+    holdings had already moved into the later basis.
+
+    A split is the day the share count changed, exactly as a trade is, so it
+    belongs in that date."""
+    events = [_snapshot("2023-12-31", 100.0)]
+    blind = pb.query_current_book(events, skipped_lines=0)
+    aware = pb.query_current_book(events, skipped_lines=0, splits=SPLITS)
+    assert blind.as_of == "2023-12-31", blind.as_of
+    assert aware.as_of == "2024-06-10", aware.as_of
+    assert lg.derive_holdings(events, splits=SPLITS)["quantity_basis"] == "2024-06-10"
+    # And the gate it exists for: a reference date after the last trade but
+    # before the split can no longer present itself as the newer of the two.
+    try:
+        pb.query_current_book(events, skipped_lines=0, splits=SPLITS,
+                              reference_as_of="2024-06-05")
+    except pb.PortfolioBasisError as exc:
+        assert "cannot precede" in str(exc), exc
+    else:
+        raise AssertionError("a reference before the applied split must not pass")
+
+
+def test_a_book_no_split_touched_keeps_the_exact_identity_it_had():
+    """The compatibility half, and the reason the freshness date was the
+    representation chosen over a new field. `derive_holdings` reports no
+    quantity basis for a book no split moved, so nothing enters the date and
+    nothing enters `state_version` — an existing user's stored basis is
+    byte-identical, with no migration and nothing to roll back."""
+    events = [_trade("2023-01-10", "BUY", 100.0, 150.0, ticker="ACME")]
+    plain = pb.query_current_book(events, skipped_lines=0)
+    with_map = pb.query_current_book(events, skipped_lines=0, splits=SPLITS)
+    assert lg.derive_holdings(events, splits=SPLITS)["quantity_basis"] is None
+    assert plain.as_of == with_map.as_of == "2023-01-10"
+    assert plain.state_version == with_map.state_version
+
+
+def test_a_frame_priced_before_an_applied_split_is_refused_not_multiplied():
+    """The fail-closed gate on the one surface that holds both operands. The
+    frame says GLYPH was observed on 2026-07-20 and is stated in that day's
+    basis; the book says it carried GLYPH across a split after that. The two
+    numbers are not comparable, and the product of them is wrong by the split
+    ratio while carrying a valid `state_version` and provenance."""
+    events = [_snapshot("2020-01-01", 100.0)]
+    stale = _engine_frame(as_of="2026-07-20")
+    stale["prices"]["NVDA"] = dict(stale["prices"]["NVDA"], observed_at="2026-07-20",
+                                   basis_date="2026-07-20")
+    late = {"NVDA": [["2026-07-25", 4.0]]}
+    try:
+        pb.query_current_book(events, skipped_lines=0, splits=late, valuation_manifest=stale,
+                              reference_as_of="2026-07-29")
+    except pb.PortfolioBasisError as exc:
+        assert "share basis" in str(exc) and "2026-07-25" in str(exc), exc
+    else:
+        raise AssertionError("a frame on an earlier share basis must not price this book")
+    # The counterweight: the same frame, rebased across that split, prices it.
+    aligned = _engine_frame(as_of="2026-07-20")
+    aligned["prices"]["NVDA"] = dict(aligned["prices"]["NVDA"], observed_at="2026-07-20",
+                                     basis_date="2026-07-25")
+    assert pb.query_current_book(events, skipped_lines=0, splits=late,
+                                 valuation_manifest=aligned,
+                                 reference_as_of="2026-07-29") is not None
+
+
+# ───── the exit comparison knows what basis its quote is on (#583 §4) ─────
+
+def test_an_exit_is_rebased_only_across_the_splits_its_quote_postdates():
+    """`compare` divided the exit price by every split after the exit and simply
+    assumed the quote it was comparing against postdated all of them. True
+    whenever the quote really is current — and unprovable, which was the
+    objection: `_prepare_exit_capture` dropped the price snapshot's dates on the
+    way in, so nothing in the comparison could tell.
+
+    Sold at 950 on 2024-05-20, quoted at 900 on 2024-06-05 — five days before
+    the ten-for-one. In the quote's own basis that is a small loss avoided.
+    Rebased across a split the quote predates, the same pair reads as +847%."""
+    item = {"ticker": "NVDA", "exit_date": "2024-05-20", "exit_price": 950.0,
+            "shares_sold": 20.0, "kind": "reduce"}
+    bounded = rv.compare(item, {"NVDA": 900.0}, splits=SPLITS,
+                         price_basis={"NVDA": "2024-06-05"})["orig_ret"]
+    assert abs(bounded - (900.0 / 950.0 - 1.0)) < 1e-6, bounded
+    unbounded = rv.compare(item, {"NVDA": 900.0}, splits=SPLITS)["orig_ret"]
+    assert unbounded > 8.0, ("without the quote's basis this is the pre-#583 reading", unbounded)
+    # A quote that genuinely postdates the split gets the full rebase, which is
+    # #559's answer and must not have changed.
+    after = rv.compare(item, {"NVDA": 197.0}, splits=SPLITS,
+                       price_basis={"NVDA": "2026-07-29"})["orig_ret"]
+    assert abs(after - 1.0737) < 1e-3, after
+
+
+def test_the_review_hands_the_exit_comparison_the_basis_it_froze():
+    """The wiring, on the production path: `_prepare_exit_capture` builds the
+    dict `compare` reads, and before #583 it kept only the prices out of
+    `price_snapshot` and dropped every date beside them.
+
+    The state here is assembled to make the two readings differ — a quote whose
+    basis predates a split the map carries — because that is the only way to
+    observe *which* basis the comparison used. What keeps the two agreeing in
+    production is that one function, `trade_recap.price_observations`, states
+    both the quote's basis and the map it was derived against."""
+    state = {"date_end": "2024-09-30", "splits": SPLITS,
+             "price_snapshot": {"as_of": "2024-06-05", "prices": {"NVDA": 900.0},
+                                "observations": {"NVDA": {"observed_at": "2024-06-05",
+                                                          "basis_date": "2024-06-05"}}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "ledger.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(_trade("2023-01-10", "BUY", 90.0, 150.0)) + "\n")
+            # ≥50% of the pre-sale position, which is what `detect_exits`
+            # records as a decision worth revisiting at all.
+            f.write(json.dumps(_trade("2024-05-20", "SELL", 50.0, 950.0)) + "\n")
+        _recent, _due, backlog, _meta = review._prepare_exit_capture(tmp, state, True)
+    assert backlog and backlog["items"], backlog
+    got = backlog["items"][0]["compare"]["orig_ret"]
+    assert abs(got - (900.0 / 950.0 - 1.0)) < 1e-6, (
+        "the frozen per-ticker basis did not reach the comparison", got, backlog)
+
+
 def _main():
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]
