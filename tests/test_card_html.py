@@ -1964,11 +1964,19 @@ def test_public_committed_rule_carries_the_user_cap_override():
             f"{language}: an invalid override is fail-closed on the public card"
 
 
-def _pre_commitment_bundle(language, rule_dim="部位 sizing"):
+def _pre_commitment_bundle(language, rule_dim="部位 sizing", prior_commitment=None):
     """A pre-commitment preview bundle: the engine prescribed a rule but the
-    user has not chosen one yet, so Block 4 falls to the standing-rule
-    placeholder. ``engine_state.rule`` carries the v1-only zh literal exactly
-    as ``trade_recap.prescribe`` writes it, and ``rule_dim`` its legacy label."""
+    user has not chosen one yet, so Block 4 falls to the placeholder branch.
+    ``engine_state.rule`` carries the v1-only zh literal exactly as
+    ``trade_recap.prescribe`` writes it, and ``rule_dim`` its legacy label.
+
+    Default (``prior_commitment=None``) is a genuine first review: nothing was
+    ever persisted to ``review_plan.state_snapshot.prior_commitment``, so
+    (#546) Block 4 must use the pending-choice wrapper rather than claim a
+    standing rule "remains". Pass a dict (e.g. ``{"rule": "..."}"``) to build
+    a returning user's preview instead, which keeps the standing-rule
+    continuity wrapper — the same ``prior_commitment.rule`` predicate
+    ``_reconciliation_lines`` already reads for #292."""
     bundle = copy.deepcopy(_session(language)["bundle"])
     bundle["commitment"] = None
     answers = dict(bundle.get("answers") or {})
@@ -1978,17 +1986,26 @@ def _pre_commitment_bundle(language, rule_dim="部位 sizing"):
     state["rule"] = "單筆部位上限定死 20%,超過就減"
     state["rule_dim"] = rule_dim
     state.pop("max_position_pct", None)
+    plan = bundle["review_plan"] = dict(bundle.get("review_plan") or {})
+    snapshot = dict(plan.get("state_snapshot") or {})
+    if prior_commitment is None:
+        snapshot.pop("prior_commitment", None)
+    else:
+        snapshot["prior_commitment"] = prior_commitment
+    plan["state_snapshot"] = snapshot
     return bundle
 
 
 def test_standing_rule_placeholder_resolves_copy_not_the_v1_literal():
-    """#356: before the user picks a rule, Block 4 restates the standing rule.
-    It used to interpolate ``engine_state.rule`` verbatim — a zh literal
-    ``trade_recap.prescribe`` hardcodes — so English cards printed a Chinese
-    sentence inside an English wrapper (found in /fomo-qa dogfood, five of the
-    thirteen mock personas). The placeholder now resolves the canonical text
-    from ``copy/<locale>.json`` "rules" through ``engine_state.rule_dim``, the
-    same resolution the committed and public rule paths already use.
+    """#356: before the user picks a rule, Block 4 states the engine's
+    prescription through the placeholder branch (which wrapper it picks is
+    #546's concern, covered below). It used to interpolate ``engine_state.rule``
+    verbatim — a zh literal ``trade_recap.prescribe`` hardcodes — so English
+    cards printed a Chinese sentence inside an English wrapper (found in
+    /fomo-qa dogfood, five of the thirteen mock personas). The placeholder now
+    resolves the canonical text from ``copy/<locale>.json`` "rules" through
+    ``engine_state.rule_dim``, the same resolution the committed and public
+    rule paths already use.
 
     Expectations are the literal catalog sentences, not ``load_copy`` lookups:
     reading the expected value from the same source the renderer reads makes
@@ -2001,7 +2018,7 @@ def test_standing_rule_placeholder_resolves_copy_not_the_v1_literal():
         block4 = _next_step_text(card_renderer.render_private(
             _pre_commitment_bundle(language)))
         assert sentence in block4, \
-            f"{language}: the standing-rule placeholder must print the catalog rule"
+            f"{language}: the placeholder must print the catalog rule"
         assert "單筆部位上限定死 20%,超過就減" not in block4, \
             f"{language}: the v1 engine literal must never reach a v2 card"
     # The English card carries no CJK at all — the wrapper being translated is
@@ -2021,6 +2038,52 @@ def test_standing_rule_placeholder_resolves_copy_not_the_v1_literal():
             f"{language}: an unresolvable dimension falls back to the generic line"
         assert "單筆部位上限定死" not in block4, \
             f"{language}: the fallback must not print the v1 literal either"
+
+
+def test_first_review_preview_states_the_recommendation_as_pending_not_standing():
+    """#546: the placeholder branch above fires on *every* preview —
+    ``cmd_preview`` always drafts with ``require_commitment=False``, before
+    the user has chosen a rule — not only on a user's very first review ever.
+    "The standing rule remains" is a continuity claim, true only when
+    ``review_plan.state_snapshot.prior_commitment`` actually holds a
+    persisted rule; ``state.rule_dim`` is this period's fresh prescription,
+    never a carried-forward answer. Same predicate ``_reconciliation_lines``
+    already reads for #292's breach sentence.
+
+    A fresh root (no prior commitment — the common real shape: a genuine
+    first review, or any later one whose most recent finalize offered no
+    candidate rule, confirmed against real personas by
+    ``tests/persona_sweep.py --baseline``) must not claim otherwise; a
+    returning user with a real persisted commitment may still see the
+    standing-rule continuity copy. Both renderers share this branch through
+    ``_card_structure`` (Markdown's compact text-first scan quotes the same
+    panel via ``_read_first_panels``, and HTML's rule panel is scoped by the
+    ``sec keystep`` section, the card's last content section)."""
+    continuity_markers = {"en": ("remain", "keep", "standing"), "zh-TW": ("維持",)}
+    for language in ("zh-TW", "en"):
+        markers = continuity_markers[language]
+        fresh = _pre_commitment_bundle(language)
+        fresh_md_block4 = _next_step_text(card_renderer.render_private(fresh))
+        fresh_html = card_renderer.render_html(fresh)
+        fresh_html_tail = fresh_html[fresh_html.index('<div class="sec keystep">'):]
+        for marker in markers:
+            assert marker not in fresh_md_block4, \
+                f"{language}: fresh-root Markdown preview must not claim rule " \
+                f"continuity ({marker!r} found in Next step)"
+            assert marker not in fresh_html_tail, \
+                f"{language}: fresh-root HTML preview must not claim rule " \
+                f"continuity ({marker!r} found in Next step)"
+
+        returning = _pre_commitment_bundle(language, prior_commitment={"rule": "placeholder"})
+        returning_md_block4 = _next_step_text(card_renderer.render_private(returning))
+        returning_html = card_renderer.render_html(returning)
+        returning_html_tail = returning_html[returning_html.index('<div class="sec keystep">'):]
+        assert any(marker in returning_md_block4 for marker in markers), \
+            f"{language}: a returning user with a real prior commitment must keep " \
+            f"the standing-rule continuity copy in Markdown"
+        assert any(marker in returning_html_tail for marker in markers), \
+            f"{language}: a returning user with a real prior commitment must keep " \
+            f"the standing-rule continuity copy in HTML"
 
 
 def test_standing_rule_placeholder_carries_the_user_cap_override():
@@ -2098,6 +2161,7 @@ def main():
         test_committed_rule_carries_the_user_cap_override,
         test_public_committed_rule_carries_the_user_cap_override,
         test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
+        test_first_review_preview_states_the_recommendation_as_pending_not_standing,
         test_standing_rule_placeholder_carries_the_user_cap_override,
         test_account_gate_sentence_names_the_actual_blocker,
         test_account_gate_degrades_instead_of_rendering_blank,
