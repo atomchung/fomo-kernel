@@ -398,6 +398,20 @@ def _anchored_cycle_start(position, anchor_date, ticker, integrity):
     return stated.isoformat(), False
 
 
+def _moved_basis(position, events, after, upto):
+    """Record the newest split this rebase actually applied to ``position``.
+
+    The book's own quantity basis (#583 §3): a share count that a split moved is
+    stated in that split's basis, not in the basis of the last trade. Recorded
+    where the rebase happens rather than re-derived afterwards, because a second
+    walk over the same events is the divergent-derivation shape.
+    """
+    moved = sp.last_applied(events, after, upto)
+    if moved is not None and (position.get("basis_moved") is None
+                              or moved > position["basis_moved"]):
+        position["basis_moved"] = moved
+
+
 def _carry_position(position, events, day):
     """Carry a running position into ``day``'s split basis, in place (#558).
 
@@ -409,11 +423,17 @@ def _carry_position(position, events, day):
     factor = sp.factor_between(events, position.get("basis_date"), day)
     if abs(factor - 1.0) > 1e-12:
         position["shares"] *= factor
+        _moved_basis(position, events, position.get("basis_date"), day)
     position["basis_date"] = day
 
 
 def derive_holdings(events, splits=None, as_of=None):
-    """錨點推導當前持倉。回傳 {anchor, holdings, integrity, counts}。
+    """錨點推導當前持倉。回傳 {anchor, holdings, quantity_basis, integrity, counts}。
+
+    ``quantity_basis`` (#583) — the newest split date that actually moved a
+    quantity still held, or ``None``. The single statement of what basis this
+    book's share counts are on, for the consumers that have to compare them
+    against a price observation with a basis of its own.
 
     holdings: {ticker: {shares, avg_cost(None=未宣告且不可知), cost_total, currency,
                         market, origin(snapshot|trades), since, cycle_id,
@@ -549,6 +569,7 @@ def derive_holdings(events, splits=None, as_of=None):
                   else sp.factor_between(events_t, basis, as_of))
         if abs(factor - 1.0) > 1e-12:
             p["shares"] *= factor
+            _moved_basis(p, events_t, basis, as_of)
 
     holdings = {}
     for t in sorted(pos):
@@ -569,9 +590,21 @@ def derive_holdings(events, splits=None, as_of=None):
                        "origin": p["origin"], "since": p["since"],
                        "cycle_id": cycle_id, "add_count": add_count,
                        "decision_cursor": f"{cycle_id}#add#{add_count}" if add_count else None}
+    # #583 §3. The newest split that actually moved a quantity still held. A
+    # book whose last trade is old but whose share count a split restated last
+    # month is not a month-old book in the only sense that matters to a price
+    # comparison, and `PortfolioBasis` was calling it one: its freshness date
+    # came from the anchor and the trades alone, so a valuation dated between
+    # the last trade and the split passed its own `reference_as_of` gate while
+    # the holdings had already moved into the later basis. `None` for every book
+    # with no split information and every book no split touched — which is what
+    # keeps their `state_version` exactly where it was.
+    quantity_basis = max((p["basis_moved"] for t, p in pos.items()
+                          if t in holdings and p.get("basis_moved")), default=None)
     return {"anchor": ({"as_of": anchor.get("as_of"), "source": anchor.get("source", "user_declared")}
                        if anchor is not None else None),
             "holdings": holdings,
+            "quantity_basis": quantity_basis.isoformat() if quantity_basis else None,
             "integrity": integrity,
             "counts": {"events": len(events),
                        "trades_applied": len(trades),

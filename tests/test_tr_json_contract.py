@@ -12,6 +12,7 @@
 本機裝了 yfinance 也不會連網、不隨行情漂(對 #64 的此檔範圍先行示範)。
 零依賴(標準庫,免 pytest);跑法:python3 tests/test_tr_json_contract.py
 """
+import datetime
 import json
 import pathlib
 import re
@@ -260,8 +261,28 @@ def main():
         ok(set(st["metrics"].keys()) == STATE_METRIC_KEYS, "metrics 鍵集合恰等於契約",
            f"diff: {set(st['metrics'].keys()) ^ STATE_METRIC_KEYS}")
         ok(st["insufficient_data"] is False, "mock(19 筆跨 300+ 天)不觸發 insufficient gate")
-        ok(set(st["price_snapshot"]) == {"as_of", "prices"},
-           "price_snapshot freezes one review-time price map", repr(st["price_snapshot"])[:120])
+        # #583 §2/§4: the frame-level `as_of` says when this run priced the book;
+        # `observations` says, per ticker, which session each number came from
+        # and which split basis it is stated in. One date could not do both, and
+        # the exit comparison was assuming the second rather than reading it.
+        ok(set(st["price_snapshot"]) == {"as_of", "prices", "observations"},
+           "price_snapshot freezes one review-time price map, with each ticker's own "
+           "observation date and split basis", repr(st["price_snapshot"])[:120])
+        # Presence of the key is not the contract; coverage is. This suite runs
+        # the engine offline, so both maps are legitimately empty here and the
+        # relation is all it can check — the populated case is asserted per
+        # ticker in tests/test_split_basis.py, where a supplied envelope means
+        # there are real prices to carry evidence for.
+        snap = st["price_snapshot"]
+        ok(set(snap["observations"]) == set(snap["prices"]),
+           "every frozen price carries its own observation evidence",
+           f"prices={sorted(snap['prices'])} observations={sorted(snap['observations'])}")
+        ok(all(set(row) == {"observed_at", "basis_date"}
+               and datetime.date.fromisoformat(row["observed_at"])
+                   <= datetime.date.fromisoformat(row["basis_date"])
+               for row in snap["observations"].values()),
+           "each observation states its date and a split basis at or after it",
+           repr(snap["observations"])[:200])
         frame = st["valuation_frame"]
         ok(set(frame) == {"contract_version", "as_of", "aggregate_currency", "prices", "fx_to_aggregate", "coverage", "usable", "reason"},
            "valuation frame is private typed state", repr(frame)[:120])

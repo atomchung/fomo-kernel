@@ -25,17 +25,33 @@ Validation is fail-closed: a malformed envelope raises :class:`PriceFeedError`
 instead of silently pricing part of a portfolio. Prices are money, and a price
 that is quietly wrong is worse than a price that is honestly missing.
 
+What a supplied price is *declared as* matters as much as the number (#583).
+``close`` and ``history`` are **raw market observations, each as of its own
+date**: the agent transcribes what the source printed that day and never
+calculates an adjustment. The engine then normalizes every observation onto the
+split basis its share count is stated in, using the row's own date against the
+declared ``splits`` — ``splits.rebase_price``, the same read-time family
+``revisit.rebased_exit_price`` belongs to. Before that, a structurally valid
+envelope could pair a pre-split close with a post-split share count: 100 shares
+became 1,000 across a ten-for-one and were valued at 100 rather than 10, a
+tenfold portfolio with no limitation disclosed anywhere on the card.
+
 Design notes:
 
 * Pure and offline. No network, no yfinance, no engine state.
 * ``parse`` accepts a decoded payload; ``load`` reads one from disk.
 * Provenance travels with the numbers (``provenance``) so the card can disclose
   that the closes came from the agent rather than from the engine's own fetch.
+* A parsed row keeps the observation it was built from (``observed_close``,
+  ``observed_date``) beside the normalized value, so the alignment is
+  replayable and a caller can still see exactly what the source printed.
 """
 import datetime as dt
 import json
 import os
 import re
+
+import splits as split_policy
 
 # The envelope's own version. Bump only on a breaking shape change; the parser
 # accepts a payload without the field so a hand-written envelope stays valid.
@@ -68,10 +84,12 @@ _MAX_HISTORY = 2000                 # ~8 trading years per instrument
 #     protection while adding a second guessed constant (a growth-rate
 #     assumption) on top of this one, for a check that is a soft,
 #     best-effort caveat rather than a gate.
-#   * Splits are handled upstream (adjust_for_splits already rebases trade
-#     rows onto today's split-adjusted terms before this check ever runs),
-#     so an undisclosed split still surfaces here -- correctly, since the
-#     source failed to report it.
+#   * Splits are handled on both sides before this check runs:
+#     adjust_for_splits rebases the trade rows onto today's basis, and
+#     since #583 ``parse`` rebases the supplied close onto the same one, so
+#     the comparison is like-for-like. An *undisclosed* split still surfaces
+#     here -- correctly, since the source failed to report it, which is the
+#     one case neither rebase can see (#566).
 PLAUSIBILITY_BAND = 20.0
 
 
@@ -201,12 +219,39 @@ def parse(payload):
         if day in merged and abs(merged[day] - close) > 1e-9:
             raise PriceFeedError(f"{at}.history disagrees with close on {day.isoformat()}")
         merged[day] = close
+        # #583. Every observation above is raw, in the basis its own session
+        # printed; the share counts these get multiplied by are carried onto the
+        # basis after every declared split. Rebase each observation from its own
+        # date so the two operands are comparable, and keep the raw value beside
+        # it so the alignment can be replayed. A split dated on an observation's
+        # own day is deliberately not applied to it (``factor_after``): the
+        # ex-date's own close already prints in post-split terms, which is also
+        # why a close already on or after the latest split is untouched here.
+        # No-split row: every factor is 1.0 and the values are byte-identical
+        # to what this parser returned before the rule existed.
+        try:
+            basis_factor = split_policy.factor_after(splits, day)
+            basis_day = split_policy.basis_date(day, splits)
+            normalized_close = split_policy.rebase_price(close, day, splits)
+            normalized_history = split_policy.rebase_series(sorted(merged.items()), splits)
+        except split_policy.SplitDataError as exc:
+            raise PriceFeedError(f"{at}.splits cannot establish a price basis: {exc}") from exc
         prices[ticker] = {
-            "close": close,
+            "close": normalized_close,
             "date": day.isoformat(),
             "currency": currency,
             "source": _text(row.get("source"), f"{at}.source", required=False) or source,
-            "history": [(d.isoformat(), value) for d, value in sorted(merged.items())],
+            # The declared observation, kept so the normalization is replayable
+            # and a reader can still see what the source actually printed.
+            # ``observed_date`` duplicates ``date`` on purpose: ``date`` is what
+            # every pre-#583 consumer already reads, and a second name that
+            # cannot drift from it is cheaper than teaching each of them that
+            # ``date`` now means "the date this basis was rebased *from*".
+            "observed_close": close,
+            "observed_date": day.isoformat(),
+            "basis_date": basis_day.isoformat(),
+            "split_factor": basis_factor,
+            "history": [(d.isoformat(), value) for d, value in normalized_history],
             # ISO strings, exactly like ``history`` above. A parsed feed is not
             # a private in-memory value: ``review._fingerprint`` runs the whole
             # thing through ``session.canonical``, so a ``datetime.date`` left
@@ -323,6 +368,65 @@ def splits_map(feed, tickers=None):
             out[ticker] = [(dt.date.fromisoformat(str(day)), ratio)
                            for day, ratio in row["splits"]]
     return out
+
+
+def basis_conflicts(feed, splits):
+    """Supplied observations whose split basis the share map contradicts (#583).
+
+    :func:`parse` normalizes every close onto the basis of the envelope's *own*
+    declared splits. That is the whole story wherever the same envelope also
+    supplies the share map — ``prepare`` with ``--prices`` performs no split
+    retrieval of its own, so the two are the same events by construction. It is
+    not the whole story for ``consider``, which falls back to the map the last
+    review froze when the envelope declares no splits: the shares are then
+    carried across a split the prices were never told about, and the pair is
+    incomparable again with nothing on either side looking wrong.
+
+    So compare the divisor each supplied observation actually received against
+    the one its share count did, past that observation's own date. Equal, the
+    operands are on one basis. Unequal, the basis cannot be established from the
+    evidence supplied, and the caller refuses: silently applying the external
+    map instead would have the engine assert a corporate action its price source
+    never confirmed, and silently ignoring it is the tenfold error this returns
+    a conflict for. Either repair is the agent's — declare the split in the
+    envelope, or supply a close dated on or after it.
+
+    Returns a list of ``{ticker, observed_date, declared_factor, book_factor,
+    split_date}`` sorted by ticker. Never raises: a malformed external map is
+    reported as a conflict for every ticker it covers rather than crashing a
+    caller that is already in the middle of refusing.
+    """
+    try:
+        book = split_policy.normalize(splits)
+    except split_policy.SplitDataError as exc:
+        book, book_error = {}, str(exc)
+    else:
+        book_error = None
+    conflicts = []
+    for ticker, row in (feed or {}).get("prices", {}).items():
+        observed = row.get("observed_date") or row.get("date")
+        book_events = book.get(ticker)
+        if book_error is None and not book_events:
+            continue
+        try:
+            declared = split_policy.factor_after(row.get("splits") or (), observed)
+            book_factor = (split_policy.factor_after(book_events, observed)
+                           if book_error is None else None)
+            moved = (split_policy.last_applied(book_events, observed)
+                     if book_error is None else None)
+        except split_policy.SplitDataError as exc:
+            declared, book_factor, moved, book_error = None, None, None, str(exc)
+        if book_error is None and abs(declared - book_factor) <= 1e-9:
+            continue
+        conflicts.append({
+            "ticker": ticker,
+            "observed_date": str(observed),
+            "declared_factor": declared,
+            "book_factor": book_factor,
+            "split_date": moved.isoformat() if moved is not None else None,
+            "error": book_error,
+        })
+    return sorted(conflicts, key=lambda row: row["ticker"])
 
 
 def currency_conflicts(feed, currency_by_ticker):

@@ -777,16 +777,28 @@ def adaptive_n_fwd(rows):
     span = (rows[-1]["date"] - rows[0]["date"]).days
     return 30 if span >= 365 else 20 if span >= 120 else 10   # ≥1年→30d,半年→20d,更短→10d
 
-def last_prices(data, max_stale_days=10):
-    """全價格 universe 的最新收盤價 {ticker: px}。
-    #79:last_px 不能依附在只掃 round-trip 的迴圈裡——持有中、從未平倉的標的
-    (往往是最大倉位)會被結構性排除,未實現損益/套牢診斷/what-if 全部靜默漏算。
-    抓價清單本來就含 held(main:tickers = rts | held),這裡把已抓到的價全放出來。
+def price_observations(data, splits=None, max_stale_days=10):
+    """每檔的最新收盤價 + 它自己的觀測日與所處分割基礎。
+
+    ``{ticker: {"price", "observed_at", "basis_date"}}`` —— the single reader of
+    the staleness gate below, and the single producer of the per-ticker evidence
+    a frozen valuation frame and the exit comparison both need (#583 §2/§4).
+
+    ``observed_at`` is that ticker's own last session in this frame, which a
+    frame-level ``as_of`` cannot express: one fresh instrument would otherwise
+    make every stale one look same-day.  ``basis_date`` is the share basis the
+    number is stated in (``splits.basis_date``) — a different fact from its
+    recency, since a value can be days old and still be denominated in today's
+    basis.  Both retrieval modes land on one definition: the engine's own fetch
+    is ``auto_adjust=True`` and therefore already retro-adjusted, and an
+    agent-supplied close is rebased onto the same basis by ``price_feed.parse``.
+
     staleness gate:最後有效價距價格框末日 > max_stale_days(日曆日)→ 不給價,
     下游自然降級成本基礎。下市/長期停牌的殭屍持倉,殘價當現價餵進未實現損益
     比「判不出」更糟;10 天罩得住連假與單日資料延遲,擋得住下市數月的殘價。"""
     if data is None:
         return {}
+    events_by_ticker = split_policy.normalize(splits)
     out = {}
     latest = data.index[-1]
     for t in data.columns:
@@ -795,8 +807,25 @@ def last_prices(data, max_stale_days=10):
             continue
         if (latest - col.index[-1]).days > max_stale_days:
             continue
-        out[t] = float(col.iloc[-1])
+        observed = col.index[-1].date()
+        out[str(t)] = {
+            "price": float(col.iloc[-1]),
+            "observed_at": observed.isoformat(),
+            "basis_date": split_policy.basis_date(
+                observed, events_by_ticker.get(str(t))).isoformat(),
+        }
     return out
+
+
+def last_prices(data, max_stale_days=10):
+    """全價格 universe 的最新收盤價 {ticker: px}。
+    #79:last_px 不能依附在只掃 round-trip 的迴圈裡——持有中、從未平倉的標的
+    (往往是最大倉位)會被結構性排除,未實現損益/套牢診斷/what-if 全部靜默漏算。
+    抓價清單本來就含 held(main:tickers = rts | held),這裡把已抓到的價全放出來。
+
+    #583:staleness 判斷與「這個價是哪一天的、在哪個分割基礎上」是同一次讀取,
+    故本函式只是 ``price_observations`` 的投影,不再自己走一遍價格框。"""
+    return {t: row["price"] for t, row in price_observations(data, None, max_stale_days).items()}
 
 def fwd_from_px(rts, data, n_fwd=N_FWD):
     if data is None:
@@ -2388,9 +2417,17 @@ def main():
     last_px = last_px or {}                                # 離線/無價格 → {} 而非 None,讓下游(ticker_diagnosis 等)不 crash
     review_market = market_context_from_prices(px, yf_err, context_start, context_end)
     price_as_of = (px.index[-1].date().isoformat() if px is not None and len(px.index) else context_end)
+    # #583 §2/§4: one frame-level as_of cannot say which basis a given ticker's
+    # number is on, and the exit comparison was assuming every quote postdated
+    # every split in the map rather than knowing it. Both readers below take
+    # their evidence from this one producer.
+    observations = price_observations(px, splits)
     price_snapshot = {"as_of": price_as_of,
                       "prices": {ticker: round(value, 6)
-                                 for ticker, value in sorted(last_px.items())}}
+                                 for ticker, value in sorted(last_px.items())},
+                      "observations": {ticker: {"observed_at": row["observed_at"],
+                                                "basis_date": row["basis_date"]}
+                                       for ticker, row in sorted(observations.items())}}
     decision_rts = [r for r in rts
                     if driver(r["ticker"])[0] not in BENCH_SELF
                     and not instrument_policy.is_diversified_allocation(r["ticker"])]  # 配置 ETF 再平衡/現金管理,非選股決策
@@ -2630,6 +2667,12 @@ def main():
             # ``last_px`` also contains benchmarks; the frame's strict price
             # partition is only the current held book.
             prices={ticker: last_px.get(ticker) for ticker in held},
+            # #583 §2: per-ticker observation date and split basis, so the frozen
+            # receipt can be replayed to prove the prices and the share counts
+            # it values were on one basis. Only priced holdings need an entry;
+            # a gap is already declared in `coverage.missing_price`.
+            price_observations={ticker: observations[ticker]
+                                for ticker in held if ticker in observations},
             aggregate_currency=currency_meta["aggregate_currency"],
             # ``fetch_fx`` has a USD identity default even when USD is not in
             # this book (for example a pure TWD review).  The domain builder

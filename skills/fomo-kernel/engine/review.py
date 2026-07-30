@@ -651,6 +651,24 @@ def _recorded_splits(root):
     return (_previous_state(root) or {}).get("splits")
 
 
+def _effective_splits(root, supplied):
+    """The one split map ``consider`` reasons over (#558 precedence, #583).
+
+    An agent envelope's own splits win — they arrived with the quotes, on one
+    basis at one instant, and a CSV-route caller may have no review in this root
+    to have frozen anything. Otherwise the map the last review froze. Neither is
+    fetched.
+
+    Two callers need this answer for the same call, which is why it is a
+    function rather than an expression: ``_consider_rows`` uses it to carry the
+    running position across each split, and ``cmd_consider`` uses it to check
+    that the prices it is about to multiply those shares by are on the same
+    basis. Resolving it twice by hand is how a check ends up validating a
+    different map from the one the arithmetic used.
+    """
+    return supplied if supplied is not None else _recorded_splits(root)
+
+
 def _profile_path(root):
     return os.path.join(root, "profile.json")
 
@@ -1454,6 +1472,16 @@ def _prepare_exit_capture(root, state, persist):
             continue
         if value > 0:
             prices[str(ticker)] = value
+    # #583 §4: the split basis each of those quotes is stated in, stamped per
+    # ticker by the review that froze them. Without it `compare` assumed every
+    # quote postdated every split in the map and rebased the exit across all of
+    # them — true whenever the quote really is current, and unprovable, which is
+    # the whole objection. A state frozen before this evidence existed carries
+    # no `observations` and degrades to that same unbounded rebase.
+    price_basis = {str(ticker): (row or {}).get("basis_date")
+                   for ticker, row in (((state.get("price_snapshot") or {})
+                                        .get("observations") or {}).items())
+                   if isinstance(row, dict) and row.get("basis_date")}
     recent = [row for row in revisit.scan_recent_exits(revisits, as_of)
               if row.get("revisit_id") not in narratives]
     recent_ids = {row.get("revisit_id") for row in recent}
@@ -1466,13 +1494,15 @@ def _prepare_exit_capture(root, state, persist):
         due.append({
             "revisit_id": row.get("revisit_id"), "checkpoint": row.get("checkpoint"),
             "due_date": row.get("due_date"), "item": item,
-            "compare": revisit.compare(item, prices, splits=state.get("splits")),
+            "compare": revisit.compare(item, prices, splits=state.get("splits"),
+                                       price_basis=price_basis),
             "prior_exit_reason": prior.get("exit_reason"),
             "prior_note": prior.get("note"),
             "prior_capture": prior.get("capture"),
         })
     topn, summary, total = revisit.scan_backlog(revisits, resolutions, prices=prices,
-                                                splits=state.get("splits"))
+                                                splits=state.get("splits"),
+                                                price_basis=price_basis)
     backlog = {"items": topn[:2], "summary": summary, "total": total} if total else None
     return recent, due, backlog, {"enqueued": len(new), "skipped_dup": dup,
                                   "skipped_queue_lines": skipped, "path": queue_path}
@@ -5175,8 +5205,7 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=Non
     froze. `consider` is a single CLI call, so unlike `refresh` it has no
     two-call determinism to protect — but it still never fetches, per #558's
     retrieval ruling: no store, no schedule, no new path."""
-    if splits is None:
-        splits = _recorded_splits(root)
+    splits = _effective_splits(root, splits)
     if args.paths:
         paths = [os.path.abspath(os.path.expanduser(p)) for p in args.paths]
         for path in paths:
@@ -5693,6 +5722,28 @@ def cmd_consider(args):
         # and because a CSV-route caller may have no review in this root to
         # have frozen anything.
         supplied_splits = price_feed.splits_map(feed) or None
+        # #583. `last_px` above is now on the basis of the envelope's own
+        # declared splits, and the shares it will be multiplied by are carried
+        # across whichever map wins below. Equal on both sides, the operands are
+        # comparable; unequal, this call cannot establish one basis and refuses
+        # before a book is read or a number computed — a supplied pre-split
+        # close against a post-split share count is a tenfold weight,
+        # concentration verdict and consequence, all of them stated with a valid
+        # state_version and no disclosure that anything is off.
+        conflicts = price_feed.basis_conflicts(
+            feed, _effective_splits(root, supplied_splits))
+        if conflicts:
+            detail = "; ".join(
+                f"{row['ticker']} priced from {row['observed_date']}"
+                + (f", but this book is carried across a split dated {row['split_date']}"
+                   if row.get("split_date") else "")
+                + (f" ({row['error']})" if row.get("error") else "")
+                for row in conflicts)
+            raise ReviewError(
+                "the supplied prices and this book's share counts are on different split "
+                f"bases, so no weight or consequence can be computed from them: {detail}. "
+                "Declare the split in the price envelope, or supply a close dated on or "
+                "after it.")
 
     cash_anchor = None
     if args.cash:
