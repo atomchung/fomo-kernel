@@ -2276,6 +2276,318 @@ def test_the_challenge_is_absent_from_a_resolution():
         assert "challenge" not in resolved
 
 
+# ───── N. automatic market-data resolution (#605 section E) ─────
+#
+# `consider` may now retrieve current market facts when no `--prices` is handed
+# over: it used to reason about the book at whatever the last review froze, and to
+# refuse a mixed-currency book outright for want of a rate (#602). Everything an
+# offline suite can say about that lives here; the live half — that a resolved run
+# really values the book at today's prices and that a same-day `prepare` bundle
+# satisfies a later `consider` with zero provider calls — needs a provider, and is
+# what `TR_TEST_NETWORK=1` plus `tests/test_market_data.py`'s witness cover.
+
+def _offline_env():
+    env = dict(os.environ)
+    env["TR_OFFLINE"] = "1"
+    return env
+
+
+def _run_env(env, *args):
+    return subprocess.run([sys.executable, str(REVIEW), *map(str, args)], cwd=ROOT,
+                          env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_n_offline_resolution_leaves_the_answer_exactly_as_it_was():
+    """The regression guard this whole feature rests on.
+
+    Ninety-odd tests in this file drive `consider` with no `--prices`, and every
+    one of them is only still meaningful because an offline resolution degrades to
+    *exactly* the pre-#605 answer — same evaluation_id, same frozen consequence,
+    byte for byte. If it did not, the entire suite would be silently re-baselined
+    by a retrieval change, which is the shape of green-suite lie this repository
+    keeps paying for.
+    """
+    premise = '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _ok(_run_env(_offline_env(), "consider", str(MOCK / "sample_momentum.csv"),
+                             "--root", tmp, "--premise", premise))
+    with tempfile.TemporaryDirectory() as tmp:
+        again = _ok(_run_env(_offline_env(), "consider", str(MOCK / "sample_momentum.csv"),
+                             "--root", tmp, "--premise", premise))
+    assert first["evaluation"]["evaluation_id"] == again["evaluation"]["evaluation_id"]
+    assert first["evaluation"]["consequence"] == again["evaluation"]["consequence"], (
+        "an offline consider must be deterministic; if retrieval leaks into it the frozen "
+        "consequence moves with the market and every stored evaluation stops being replayable")
+    assert first["evaluation"]["basis"]["valuation_basis"] == "unpriced", (
+        "with nothing retrieved the book must read as unpriced, which is exactly what a pre-#605 "
+        f"consider produced — and is the contrast the live run earns 'priced' against: "
+        f"{first['evaluation']['basis']}")
+
+
+def test_n_the_supplied_lane_still_answers_from_the_envelope_alone():
+    """`--prices` is authoritative for what it declares, and the new resolution
+    branch must not have disturbed it.
+
+    The zero-provider-call half of that claim needs a call counter and is asserted
+    in `tests/test_market_data.py`
+    (`test_f_a_supplied_envelope_is_never_served_from_a_yahoo_cache_entry`); what
+    this one adds is the route-level fact that the supplied close is the one the
+    answer used, with no offline posture forcing the outcome.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = os.path.join(tmp, "px.json")
+        with open(feed, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-07-29", "source": "broker", "prices": [
+                {"ticker": "NVDA", "close": 111.0, "date": "2026-07-29", "currency": "USD"}]},
+                handle)
+        # No TR_OFFLINE: if the supplied lane resolved anything, this would fetch.
+        env = dict(os.environ)
+        env.pop("TR_OFFLINE", None)
+        payload = _ok(_run_env(env, "consider", str(MOCK / "sample_momentum.csv"),
+                               "--root", tmp, "--prices", feed,
+                               "--premise", '{"ticker": "NVDA", "side": "buy", '
+                                            '"price": 130.0, "qty": 5}'))
+        assert payload["evaluation"]["basis"]["source"] == "transactions"
+        assert payload["evaluation"]["basis"]["valuation_basis"] == "priced", (
+            "the supplied envelope must still price the book: "
+            f"{payload['evaluation']['basis']}")
+        assert payload["evaluation"]["consequence"]["after"]["held"], payload
+
+
+def test_n_the_resolver_is_asked_for_the_premise_ticker_and_the_books_own_origin():
+    """What the request must contain, checked without a provider.
+
+    Two facts the request cannot get from the book (the book does not exist yet):
+    the premise's ticker, which may be an instrument the user has never held, and
+    the oldest date a consumer will rebase a split from — the ledger anchor on that
+    route, which routinely predates every trade in any CSV.
+    """
+    sys.path.insert(0, str(ENGINE_DIR))
+    import review as review_engine
+
+    class Args:
+        paths = [str(MOCK / "sample_momentum.csv")]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        universe = review_engine._consider_market_universe(Args(), tmp)
+        assert universe is not None, "a CSV book must yield a universe"
+        assert "NVDA" in universe["currency_by_ticker"]
+        assert universe["currencies"] == {"USD"}
+        assert universe["origin"] <= min(universe["origin"], "2030-01-01")
+        import trade_recap as trade_recap_engine
+        rows = trade_recap_engine.load([str(MOCK / "sample_momentum.csv")])
+        assert universe["origin"] == min(str(row["date"]) for row in rows), (
+            "the origin must be the oldest date in the source, since that is the oldest date a "
+            f"split gets rebased from: {universe['origin']}")
+
+
+_FAKE_PROVIDER = '''
+# Injected as usercustomize (never sitecustomize — Homebrew ships its own and
+# shadowing it removes site-packages) so the real `review.py consider` subprocess
+# runs against a deterministic provider. This is what makes the resolution route
+# testable offline at all.
+import datetime as dt
+import os
+import sys
+sys.path.insert(0, os.environ["ENGINE_DIR"])
+CLOSES = {"NVDA": 1000.0, "AMD": 200.0, "AVGO": 300.0, "MU": 50.0, "TSM": 100.0,
+          "ARM": 60.0, "PLTR": 40.0, "MRVL": 70.0, "AMAT": 80.0, "SPY": 500.0,
+          "ZZZZ": 10.0}
+
+
+def _fake_download(symbols, start, end=None):
+    import pandas as pd
+    open(os.environ["PROVIDER_LOG"], "a").write(",".join(sorted(symbols)) + "\\n")
+    index = pd.DatetimeIndex([dt.datetime(2026, 7, 29)])
+    data = {}
+    for symbol in symbols:
+        data[("Close", symbol)] = [CLOSES.get(symbol, 123.0)]
+        data[("Stock Splits", symbol)] = [float("nan")]
+    frame = pd.DataFrame(data, index=index)
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns)
+    return frame
+
+
+import market_data
+market_data._download = _fake_download
+'''
+
+
+def _with_fake_provider(tmp, *args):
+    """Run the real CLI against a deterministic provider, and report what it asked
+    for. TR_OFFLINE is removed on purpose: the point is to exercise the resolution
+    path, not the degradation."""
+    sitedir = os.path.join(tmp, "provider-site")
+    os.makedirs(sitedir, exist_ok=True)
+    with open(os.path.join(sitedir, "usercustomize.py"), "w", encoding="utf-8") as handle:
+        handle.write(_FAKE_PROVIDER)
+    log = os.path.join(tmp, "provider.log")
+    env = dict(os.environ)
+    env.pop("TR_OFFLINE", None)
+    env["ENGINE_DIR"] = str(ENGINE_DIR)
+    env["PROVIDER_LOG"] = log
+    env["PYTHONPATH"] = os.pathsep.join(
+        [sitedir, str(ENGINE_DIR), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    run = _run_env(env, *args)
+    try:
+        with open(log, encoding="utf-8") as handle:
+            asked = [line.strip().split(",") for line in handle if line.strip()]
+    except OSError:
+        asked = []
+    return run, asked
+
+
+def test_n_the_route_really_resolves_and_prices_the_book_it_reasons_about():
+    """The route-level gate, and the one that survives a severed call site.
+
+    `test_n_the_resolved_facts_reach_the_answer_through_the_supplied_lane` below
+    drives `_resolve_consider_prices` directly, so removing the call from
+    `cmd_consider` leaves it green — exactly the call-graph escape that got past
+    the split gates three times in one day (#572, #576, #577). This drives the real
+    CLI against an injected provider instead, so the observable is what the user
+    gets: a book valued at retrieved prices rather than an unpriced one.
+    """
+    premise = '{"ticker": "NVDA", "side": "buy", "price": 1000.0, "qty": 5}'
+    with tempfile.TemporaryDirectory() as tmp:
+        run, asked = _with_fake_provider(
+            tmp, "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", premise)
+        payload = _ok(run)
+        assert asked, "the route made no provider request at all — it is not resolving"
+        assert len(asked) == 1, f"one resolve per call, got {len(asked)}: {asked}"
+        assert "NVDA" in asked[0]
+        basis = payload["evaluation"]["basis"]
+        assert basis["valuation_basis"] == "priced", (
+            "the answer must be computed over a book valued at the retrieved prices; unpriced "
+            f"means the resolution never reached it: {basis}")
+        after = payload["evaluation"]["consequence"]["after"]
+        assert after.get("ai_pct") is not None, after
+        # And the retrieved close is the one that got used: NVDA at 1000 makes it
+        # the dominant position in this book, which cost basis alone would not.
+        assert after["max_ticker"] == "NVDA", (
+            "the resolved price must be what the weights were computed from — at 1000 a share "
+            f"NVDA dominates this book, which its cost basis alone would not: "
+            f"max_ticker={after.get('max_ticker')} weights={after.get('weights')}")
+
+
+def test_n_a_resolved_run_and_an_equivalent_supplied_run_agree(  # noqa: D401
+):
+    """#605's acceptance criterion: a supplied run and a resolved run produce the
+    same normalized valuation facts. Holds by construction — both enter through
+    `price_feed.parse` — and is pinned here because "by construction" stops being
+    true the moment someone adds a second lane."""
+    premise = '{"ticker": "NVDA", "side": "buy", "price": 1000.0, "qty": 5}'
+    with tempfile.TemporaryDirectory() as tmp:
+        resolved = _ok(_with_fake_provider(
+            tmp, "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", premise)[0])
+    with tempfile.TemporaryDirectory() as tmp:
+        # The same closes, handed over instead of retrieved.
+        closes = {"NVDA": 1000.0, "AMD": 200.0, "AVGO": 300.0, "MU": 50.0, "TSM": 100.0,
+                  "ARM": 60.0, "PLTR": 40.0, "MRVL": 70.0, "AMAT": 80.0}
+        feed = os.path.join(tmp, "px.json")
+        with open(feed, "w", encoding="utf-8") as handle:
+            json.dump({"as_of": "2026-07-29", "source": "yahoo (engine resolver)",
+                       "prices": [{"ticker": t, "close": c, "date": "2026-07-29",
+                                   "currency": "USD"} for t, c in sorted(closes.items())]},
+                      handle)
+        supplied = _ok(_run_env(_offline_env(), "consider",
+                                str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                                "--prices", feed, "--premise", premise))
+    left = resolved["evaluation"]["consequence"]
+    right = supplied["evaluation"]["consequence"]
+    for key in ("before", "after"):
+        assert left[key] == right[key], (
+            f"resolved and supplied must produce identical {key} facts, or there are two lanes "
+            f"where the design allows one:\n  resolved={left[key]}\n  supplied={right[key]}")
+
+
+def test_n_the_resolved_facts_reach_the_answer_through_the_supplied_lane():
+    """The wiring itself, gated offline with a stubbed resolver.
+
+    Without this the only proof that `consider` resolves at all needs a live
+    provider, so a change that quietly stopped resolving would leave the whole
+    offline suite green — the supply-side blind spot that has shipped in this
+    repository three times. The stub also pins the *shape* of the handoff: what
+    comes back is a parsed `price_feed`, because the resolved facts are required to
+    enter through the lane that already reconciles currencies, checks the split
+    basis and builds the valuation manifest.
+    """
+    sys.path.insert(0, str(ENGINE_DIR))
+    import market_data
+    import review as review_engine
+
+    class Args:
+        paths = [str(MOCK / "sample_momentum.csv")]
+
+    captured = {}
+
+    def fake_resolve(request, **kwargs):
+        captured["request"] = request
+        frame_rows = {t: 100.0 for t in request["instruments"]}
+        import pandas as pd
+        frame = pd.DataFrame([list(frame_rows.values())], columns=list(frame_rows),
+                             index=pd.DatetimeIndex([dt.datetime(2026, 7, 29)]))
+        return market_data.MarketDataBundle(source="yahoo", request=request, frame=frame,
+                                            splits={}, fx={"USD": 1.0})
+
+    real = market_data.resolve
+    market_data.resolve = fake_resolve
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            feed, bundle = review_engine._resolve_consider_prices(
+                Args(), tmp, premise_ticker="ZZZZ")
+    finally:
+        market_data.resolve = real
+
+    assert captured, "consider must actually ask the resolver"
+    assert "ZZZZ" in captured["request"]["instruments"], (
+        "the premise's own ticker must be requested — it may be an instrument the user has never "
+        f"held, and it is the one this question is about: {captured['request']['instruments']}")
+    assert feed is not None and "ZZZZ" in feed["prices"], (
+        f"the resolved facts must come back as a parsed price feed: {feed}")
+    assert bundle is not None and bundle.source == "yahoo"
+
+
+def test_n_an_empty_root_yields_no_universe_rather_than_a_bad_request():
+    """Nothing to ask about is not an error at this layer — `_consider_rows`'
+    refusals own it and say something more useful."""
+    sys.path.insert(0, str(ENGINE_DIR))
+    import review as review_engine
+
+    class Args:
+        paths = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert review_engine._consider_market_universe(Args(), tmp) is None
+
+
+def test_n_resolve_market_data_refuses_a_request_it_cannot_trust():
+    with tempfile.TemporaryDirectory() as tmp:
+        _fails(_run_env(_offline_env(), "resolve-market-data", "--root", tmp,
+                        "--request", '{"instruments": ["NVDA"], "window_start": "2026-06-01", '
+                                     '"rebase_origin": "2020-01-01"}'),
+               "rebase_origin")
+        _fails(_run_env(_offline_env(), "resolve-market-data", "--root", tmp,
+                        "--request", '{"instruments": [], "window_start": "2026-06-01"}'),
+               "market-data request")
+
+
+def test_n_resolve_market_data_writes_no_state_of_its_own():
+    """It is an acquisition entry point, not a lifecycle one: no session, no
+    ledger, no evaluation row. `coach.DATA_FILES` already covers the one thing it
+    does touch, the shared same-day cache."""
+    with tempfile.TemporaryDirectory() as tmp:
+        run = _run_env(_offline_env(), "resolve-market-data", "--root", tmp,
+                       "--request", '{"instruments": ["NVDA"], "window_start": "2026-06-01"}')
+        payload = _ok(run)
+        assert payload["envelope"] is None and payload["source"] == "unavailable", payload
+        assert [g["code"] for g in payload["gaps"]] == ["network_disabled"]
+        left = sorted(os.listdir(tmp))
+        assert left == [] or left == ["cache"], (
+            f"resolve-market-data must write no lifecycle state, found: {left}")
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

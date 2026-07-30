@@ -654,6 +654,142 @@ def test_g_the_cache_writes_under_the_registered_cache_directory():
             "a file outside it is one data-export and data-reset cannot see (#452)")
 
 
+# ───── I. the envelope: how a resolved bundle reaches the tested route ─────
+
+def test_i_a_resolved_bundle_becomes_an_envelope_its_own_parser_accepts():
+    """The whole point of emitting the existing shape: the two routes that consume
+    envelopes will accept this one. A builder whose output `parse` rejects would
+    have been discovered by a user, at the moment they asked a question."""
+    with provider() as p:
+        bundle = p.resolve(_request(instruments=["NVDA", "AAPL"], benchmarks=["SPY"],
+                                    currencies=["TWD"]))
+    envelope = market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker={"NVDA": "USD", "AAPL": "USD"})
+    parsed = price_feed.parse(envelope)
+    assert sorted(parsed["prices"]) == ["AAPL", "NVDA"], (
+        "instruments only by default: a benchmark is not a holding, and letting one into the "
+        f"envelope would put it in the book consider reasons about: {sorted(parsed['prices'])}")
+    assert parsed["prices"]["NVDA"]["close"] == 190.0
+    assert price_feed.fx_rates(parsed)["TWD"] == round(1.0 / 32.3638, 6)
+
+
+def test_i_the_split_observations_travel_with_the_quotes():
+    """They are what makes the two operands comparable through the existing
+    machinery: `splits_map` turns them into the per-ticker override
+    `review._effective_splits` prefers, for the same reason a supplied envelope's
+    own splits win — they arrived with these quotes, at one instant."""
+    with provider() as p:
+        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+    envelope = market_data.to_price_feed_envelope(bundle, currency_by_ticker={"NVDA": "USD"})
+    parsed = price_feed.parse(envelope)
+    assert price_feed.splits_map(parsed) == {"NVDA": [(_d("2026-07-29"), 10.0)]}, (
+        f"the observed split did not survive into the envelope: {envelope}")
+
+
+def test_i_a_current_observation_declares_no_split_after_itself_so_no_basis_conflict():
+    """A provider close fetched with `auto_adjust=True` is already on today's
+    basis, and the envelope's contract is that a close is raw and gets rebased
+    from its own date. Those two agree only because the observation is *current*:
+    there are no splits after today to divide out, so `factor_after` is 1.0 on
+    both sides and `basis_conflicts` — the fail-closed gate `consider` runs before
+    reading any book — has nothing to refuse. If this ever fires for a resolved
+    run, every consider on a split-crossing book refuses instead of answering."""
+    with provider() as p:
+        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+    parsed = price_feed.parse(market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker={"NVDA": "USD"}))
+    book = price_feed.splits_map(parsed)
+    assert price_feed.basis_conflicts(parsed, book) == [], (
+        "a resolved envelope must not manufacture the refusal a genuinely mismatched supplied "
+        f"one earns: {price_feed.basis_conflicts(parsed, book)}")
+    assert parsed["prices"]["NVDA"]["split_factor"] == 1.0
+    assert parsed["prices"]["NVDA"]["basis_date"] == parsed["prices"]["NVDA"]["observed_date"]
+
+
+def test_i_the_declared_currency_is_the_callers_not_a_default():
+    """`price_feed.currency_conflicts` compares this against the trades, so a
+    per-ticker default would either invent a conflict or hide one."""
+    with provider() as p:
+        bundle = p.resolve(_request(instruments=["2330.TW", "NVDA"], benchmarks=[],
+                                    currencies=["TWD"]))
+    envelope = market_data.to_price_feed_envelope(
+        bundle, currency_by_ticker={"2330.TW": "TWD", "NVDA": "USD"})
+    declared = {row["ticker"]: row["currency"] for row in envelope["prices"]}
+    assert declared == {"NVDA": "USD"}, (
+        "only priced instruments belong in the envelope, each with the currency the caller "
+        f"read from the book: {declared}")
+    with provider(FakeProvider(closes=dict(RECORDED_CLOSES,
+                                           **{"2330.TW": [(_d("2026-07-29"), 2205.0)]}))) as p:
+        bundle = p.resolve(_request(instruments=["2330.TW"], benchmarks=[], currencies=["TWD"]))
+    envelope = market_data.to_price_feed_envelope(bundle, currency_by_ticker={"2330.TW": "TWD"})
+    assert envelope["prices"][0]["currency"] == "TWD", envelope
+    price_feed.parse(envelope)                              # and it still parses
+
+
+def test_i_a_bundle_that_priced_nothing_yields_no_envelope():
+    """`parse` rightly refuses an envelope with no prices, so the builder must
+    return None rather than hand one over: the caller then degrades to the
+    pre-#605 answer instead of raising into a review."""
+    with provider() as p:
+        bundle = p.resolve(_request(instruments=["DEAD"], benchmarks=[], currencies=[]))
+    assert market_data.to_price_feed_envelope(bundle) is None
+    with provider() as p:
+        offline = p.resolve(_request(), env={"TR_OFFLINE": "1"})
+    assert market_data.to_price_feed_envelope(offline) is None
+
+
+def test_i_the_envelope_as_of_is_the_newest_row_not_the_frames_own_date():
+    """`parse` refuses any observation dated after `as_of`. A frame's last row can
+    belong to one late-closing market, which would put the frame-level date ahead
+    of every instrument in the envelope — or, with the mix reversed, behind one."""
+    closes = dict(RECORDED_CLOSES, NVDA=[(_d("2026-07-28"), 180.0)])
+    with provider(FakeProvider(closes=closes, actions={})) as p:
+        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=["SPY"], currencies=[]))
+    envelope = market_data.to_price_feed_envelope(bundle, currency_by_ticker={"NVDA": "USD"})
+    assert envelope["as_of"] == "2026-07-28", (
+        f"as_of must be the newest row actually present, not the frame's: {envelope}")
+    price_feed.parse(envelope)                              # would raise on a future-dated row
+
+
+def test_i_a_split_newer_than_the_close_it_would_divide_is_never_declared():
+    """The double-adjustment trap, found by driving this builder's own output
+    through `parse`.
+
+    A provider close is already retro-adjusted, and `parse` divides a declared
+    close by the splits *after* its date. So an observation dated 07-28 shipped
+    beside a 07-29 split gets divided by ten a second time — the tenfold weight
+    #583 exists to prevent, arriving through the repair for it. It also breaks
+    `parse` outright, since a split after `as_of` is refused.
+
+    Dropping the event is the correct pairing, not damage control: a split newer
+    than every close this instrument printed has been applied to none of them, so
+    quotes and share counts are both pre-split. The share side then falls back to
+    the frozen map, where `basis_conflicts` refuses if the two cannot be
+    reconciled.
+    """
+    closes = dict(RECORDED_CLOSES, NVDA=[(_d("2026-07-28"), 180.0)])
+    actions = {"NVDA": [(_d("2026-07-29"), 10.0)]}           # newer than NVDA's own close
+    with provider(FakeProvider(closes=closes, actions=actions)) as p:
+        bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+    assert bundle.splits == {"NVDA": [(_d("2026-07-29"), 10.0)]}, (
+        "the bundle must still *observe* it — this is an envelope-pairing rule, not a reason to "
+        f"discard what the provider reported: {bundle.splits}")
+    envelope = market_data.to_price_feed_envelope(bundle, currency_by_ticker={"NVDA": "USD"})
+    assert "splits" not in envelope["prices"][0], (
+        f"a split newer than the close it would divide must not be declared: {envelope}")
+    parsed = price_feed.parse(envelope)                      # must not raise
+    assert parsed["prices"]["NVDA"]["close"] == 180.0, (
+        "and the close must be left exactly as the provider reported it, not divided again: "
+        f"{parsed['prices']['NVDA']}")
+    # An in-window split at or before the close is still declared — the normal case
+    # this must not have broken.
+    with provider() as p:
+        normal = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+    normal_envelope = market_data.to_price_feed_envelope(
+        normal, currency_by_ticker={"NVDA": "USD"})
+    assert normal_envelope["prices"][0]["splits"] == [["2026-07-29", 10.0]], normal_envelope
+
+
 # ───────────────── H. the boundary itself: one provider site ─────────────────
 
 #: Modules that still reach the provider directly. Each entry is debt with an

@@ -723,3 +723,90 @@ def _is_normalized(request):
     return (isinstance(request, dict)
             and set(request) == {"instruments", "benchmarks", "currencies",
                                  "window_start", "window_end", "rebase_origin"})
+
+
+# ─────────────────── the envelope every other route already reads ───────────────────
+
+def to_price_feed_envelope(bundle, currency_by_ticker=None, instruments_only=True):
+    """One bundle as the existing supplied ``price-feed`` envelope (#605 §F).
+
+    This is deliberately the *only* way a resolved bundle reaches ``consider``.
+    The ``--prices`` lane is already the most thoroughly tested path into that
+    command — currency conflicts, split-basis reconciliation, the valuation
+    manifest, the frozen provenance — so pouring resolved facts into the same
+    envelope means live resolution adds no second downstream path to get wrong,
+    and #605's "a supplied run produces the same normalized valuation facts as an
+    equivalent Yahoo fixture" holds by construction rather than by comparison.
+
+    Two decisions about what goes in, both about honesty rather than convenience.
+
+    **The latest close per instrument, dated its own observation day — no
+    restated series.** A provider close fetched with ``auto_adjust=True`` is
+    already retro-adjusted onto today's split basis, while the envelope's
+    contract is that a close is a *raw* observation which ``price_feed.parse``
+    then rebases from its own date. Emitting an adjusted daily series while
+    declaring no splits would be a false statement that happens to compute
+    correctly; emitting one current observation is simply true, because there are
+    no splits after today to rebase across. Callers that need a series have the
+    bundle's own frame.
+
+    **The split observations travel with the quotes.** They are what makes the
+    two operands comparable through the existing machinery: ``splits_map`` turns
+    them into the per-ticker override ``review._effective_splits`` already
+    prefers over the frozen map — right for the same reason a supplied
+    envelope's own splits are, they arrived with these quotes, on one basis, at
+    one instant — and ``basis_conflicts`` compares a factor of 1.0 on both sides
+    for a current observation, so a resolved run cannot manufacture the refusal
+    that a genuinely mismatched supplied envelope earns.
+
+    ``currency_by_ticker`` is required for any ticker that is not USD:
+    ``price_feed.currency_conflicts`` compares this against the trades, and
+    guessing here would either invent a conflict or hide one. Returns ``None``
+    when the bundle priced nothing — there is no such thing as an envelope with
+    no prices, and ``parse`` rightly refuses one.
+    """
+    currency_by_ticker = currency_by_ticker or {}
+    wanted = set(bundle.request["instruments"])
+    if not instruments_only:
+        wanted |= set(bundle.request["benchmarks"])
+    rows = []
+    for ticker in sorted(set(bundle.priced) & wanted):
+        series = bundle.frame[ticker].dropna()
+        if not len(series):
+            continue
+        observed = series.index[-1].date().isoformat()
+        row = {"ticker": ticker,
+               "close": round(float(series.iloc[-1]), 6),
+               "date": observed,
+               "currency": str(currency_by_ticker.get(ticker, "USD")).upper()}
+        # Only the splits this close already reflects. `price_feed.parse` divides a
+        # declared close by `factor_after(splits, its own date)`, and a provider
+        # close is *already* retro-adjusted — so declaring a split newer than the
+        # close would divide an adjusted number a second time, which is the exact
+        # tenfold error #583 exists to prevent, arriving through the repair for it.
+        #
+        # Dropping it is also the right pairing rather than a lesser evil. A split
+        # newer than every close this instrument printed has not been applied to
+        # any of them, so quotes and share counts are both pre-split and
+        # comparable. What must not happen is one side moving alone: with the event
+        # undeclared here, the share count falls back to the frozen map through
+        # `review._effective_splits`, and if the two bases genuinely cannot be
+        # reconciled `price_feed.basis_conflicts` refuses — the fail-closed answer
+        # for an ambiguity, instead of a confident wrong weight.
+        events = [(day, ratio) for day, ratio in (bundle.splits.get(ticker) or ())
+                  if day.isoformat() <= observed]
+        if events:
+            row["splits"] = [[day.isoformat(), ratio] for day, ratio in events]
+        rows.append(row)
+    if not rows:
+        return None
+    # `parse` refuses any observation dated after `as_of`, so it must be the
+    # newest date actually present rather than the bundle's own frame-level one:
+    # a frame whose last row belongs to one late-closing market would otherwise
+    # sit ahead of every instrument in it, or behind, depending on the mix.
+    as_of = max(row["date"] for row in rows)
+    fx_rows = [{"currency": code, "usd_per_unit": rate, "date": as_of}
+               for code, rate in sorted(bundle.fx.items())
+               if code != "USD" and code in set(bundle.request["currencies"])]
+    return {"as_of": as_of, "source": f"{bundle.source} (engine resolver)",
+            "prices": rows, "fx": fx_rows}
