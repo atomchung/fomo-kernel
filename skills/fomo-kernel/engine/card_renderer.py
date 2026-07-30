@@ -1298,8 +1298,9 @@ def _hole_line(hole, language):
 
     Both locales now render the richer narration from the same raw dimension
     through copy ``hole_lines``. ``number_line`` stays on the engine card for
-    the v1 card, and the CLAUDE.md mirror obligation between the two now covers
-    two genuinely independent implementations rather than one string reused."""
+    the v1 card, and the maintainer guide's mirror obligation between the two
+    now covers two genuinely independent implementations rather than one
+    string reused."""
     d = hole.get("raw") or {}
     if d.get("applicable", True) is False:
         return ""
@@ -3885,7 +3886,7 @@ font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",san
 # only tokenized axis: spacing used 16 ad-hoc values and type used 7 steps, so
 # every layout ruling had to name a pixel instead of a scale.  See
 # docs/layout-constraints.md §5.  Generated into card-template.html by
-# tools/gen_card_template.py (#401); see CLAUDE.md.
+# tools/gen_card_template.py (#401); see docs/maintainer-guide.md.
 _HTML_WIDGET_CSS = """\
 .rc{--rc-surface-2:var(--surface-2,#ffffff);--rc-surface-1:var(--surface-1,#f5f4ef);
 --rc-surface-key:var(--surface-key,#f0eee6);

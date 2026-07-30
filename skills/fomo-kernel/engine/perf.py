@@ -355,7 +355,7 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
 
     window = {"start": day_dates[0].isoformat(), "end": day_dates[-1].isoformat(),
               "days": (day_dates[-1] - day_dates[0]).days, "traded_days": n}
-    # #375 L3:估算足跡與「存提款不可見」的量化揭露來源。條件算在引擎(CLAUDE.md
+    # #375 L3:估算足跡與「存提款不可見」的量化揭露來源。條件算在引擎(docs/maintainer-guide.md
     # 「Honesty decisions belong in code」),文案在 renderer/copy。
     #   estimated_footprint:trade 現金足跡是 qty×price 估的(來源沒有 Amount 欄),
     #     手續費/稅/匯損被排除在現金桶外 → 誤差隨週轉率放大(美股零佣金低週轉是雜訊,

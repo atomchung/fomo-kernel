@@ -21,7 +21,7 @@ collides with, which limitations the numbers carry, and what the engine did
 not look at. The block is emitted, never stored — see "Emitted, not stored"
 below.
 
-This is CLAUDE.md's "Honesty decisions belong in code" applied to the
+This is docs/maintainer-guide.md's "Honesty decisions belong in code" applied
 freeform surface. The card already works this way: ``build_honesty_ledger()``
 decides which limitations a card must disclose, and ``SKILL.md`` does not
 carry a growing list of "if field exists, add a sentence" instructions.
@@ -84,7 +84,7 @@ field nothing reads back is issue #429's defect, and it is cheaper not to
 write it than to discover later that nobody did.
 
 It likewise never enters ``_evaluation_id``'s seed, for the reason the
-``agent_case`` row in CLAUDE.md already states about itself: the seed
+``agent_case`` row in docs/maintainer-guide.md already states about itself: the seed
 identifies the subject being evaluated — this trade, this book, this
 stated reason — and a presentation obligation is not part of that subject.
 Because the block is derived from seeded inputs, adding it would not even

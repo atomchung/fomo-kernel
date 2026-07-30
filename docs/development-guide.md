@@ -8,8 +8,10 @@ receipts, not as scattered session notes.
 Scope: how changes to this repository go wrong, and the small rule set that
 prevents the expensive reruns. It complements, and never repeats:
 
-- [CLAUDE.md](../CLAUDE.md) — maintainer mechanics: tests, hooks, privacy
-  boundary, PR conventions, the mirrored-surfaces table
+- [maintainer-guide.md](maintainer-guide.md) — the shared, host-neutral
+  maintainer contract: tests, privacy boundary, PR conventions, the
+  mirrored-surfaces table. [CLAUDE.md](../CLAUDE.md) sits beside it as the
+  Claude Code adapter and carries only that client's hooks (#587)
 - [decision-fomo-kernel-shape.md](decision-fomo-kernel-shape.md) — product
   shape and the engine/model boundary (Layers 1–3)
 - [eval-design.md](eval-design.md) — evaluation methodology
@@ -61,7 +63,7 @@ says when you hit a lock, never that you missed one.
 ## 1. Mirror tax — the largest measured cost
 
 **Signature.** One fact stored in N files, kept aligned by hand or by an
-equality test; the mirrored-surfaces table in CLAUDE.md is the census.
+equality test; the mirrored-surfaces table in docs/maintainer-guide.md is the census.
 **Measured (#402).** The median change fans out to 4 surfaces, and
 `card_renderer.py` churned 1.8× its own line count in the review window.
 
@@ -225,7 +227,7 @@ read by no mechanical consumer, and repeatedly invited misreading.
   false-pass a milestone gate. Do not open a micro-PR for every small test
   improvement; collect related work under one owner, use focused tests during
   implementation, and run the complete offline suite when the bounded change
-  is ready to commit as `CLAUDE.md` requires (#402, #464, #483 owner decision
+  is ready to commit as `docs/maintainer-guide.md` requires (#402, #464, #483 owner decision
   2026-07-30).
 - **Quarantine an edge-case class into one owning track.** When a cross-cutting
   class such as stock splits, mixed-currency valuation, corruption recovery,
@@ -295,8 +297,8 @@ the disagreement ships silently. **Receipts.** Third recurrence in one cut
 - Collapse to one reader: share the function (`numbers_in`), stamp a
   once-derived value so every other site compares only stamped values
   (`line_id`), or classify once and render every surface from that
-  classification (`_condition_outcomes`). Register the pair in CLAUDE.md's
-  mirrored-surfaces table when the fix lands.
+  classification (`_condition_outcomes`). Register the pair in
+  docs/maintainer-guide.md's mirrored-surfaces table when the fix lands.
 - A unified reader is not done until it is checked for silently merging
   independent facts into one value — the same shape, one layer down (#438
   round 3).

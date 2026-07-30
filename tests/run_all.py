@@ -93,7 +93,7 @@ SUITES = [
     # on whoever remembered (the #368 lesson, applied one layer up).
     ("Question-episode bank, mechanical half (#417)", "evals/run_episodes.py"),
     ("Trigger matrix corpus and scorer (#458)", "tests/test_triggers.py"),
-    # #368: the sweep used to be a prose rule in CLAUDE.md ("if the engine
+    # #368: the sweep used to be a prose maintainer rule ("if the engine
     # changed, run the persona sweep") — i.e. enforced by whoever remembered.
     # It renders every persona x locale x decision variant in about the time
     # one fixture suite takes, so there is no cost argument for leaving the

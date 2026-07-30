@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure how many mirrored surfaces one change has to cross.
 
-`CLAUDE.md` lists seven "Mirrored surfaces" — pairs of files that must stay
+`docs/maintainer-guide.md` lists the "Mirrored surfaces" — sets of files that must stay
 synchronized by hand. That table says *what* must stay in sync; it does not
 say what obeying it costs. This tool measures the cost, so a claim like
 "iteration got cheaper" can be checked against a baseline instead of a

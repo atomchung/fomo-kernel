@@ -151,7 +151,8 @@ the prior review, which is where a zh literal has the most room to hide).
 ## 4. Out of scope for this contract
 
 - **The v1 zh human card** — `trade_recap.main()` and `rich_card.py` — is
-  zh-only legacy; the CLAUDE.md number-line mirror obligation is unchanged.
+  zh-only legacy; the maintainer guide's number-line mirror obligation is
+  unchanged.
   Do not i18n v1.
 
   **The exclusion is the v1 card, not the file.** An earlier wording fenced off

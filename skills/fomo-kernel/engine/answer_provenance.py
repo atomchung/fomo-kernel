@@ -81,7 +81,7 @@ small, curated, hand-enumerated whitelist (``GROUNDING_REFS``);
 (``rule_collisions``, ``excluded_holdings``), and grows whenever
 consequence.py grows. A hand-enumerated whitelist of every leaf path here
 would need a code change every time consequence.py gained a field — exactly
-the mirrored surface CLAUDE.md warns against. Walking the three named roots
+the mirrored surface docs/maintainer-guide.md warns against. Walking the three named roots
 generically, and refusing anything that does not bottom out at a scalar,
 gets the same "resolves to one fact, never a container" guarantee without a
 second copy of consequence.py's field list. This is mechanically exactly
@@ -146,7 +146,7 @@ public_fact tag requires and the price envelope already uses" — and
 ``source`` and ``as_of``/``date`` the same way. Picking ``source_ref`` /
 ``observed_at`` here would be a second, competing public-fact vocabulary the
 day someone reads both schemas side by side — exactly the mirrored-surface
-drift CLAUDE.md forbids — so this module uses the pair the codebase already
+drift docs/maintainer-guide.md forbids — so this module uses the pair the codebase already
 committed to.
 
 Design decision — the already_over / worsens direction (case 7)
@@ -201,7 +201,7 @@ What this module does not do
   to the real frozen value, but nothing here reads the sentence around it.
   Checking that mechanically, for free text, in general, is exactly the
   NLI/factuality scoring #414 defers; a regex narrowly fitted to this one
-  case would be the same false confidence CLAUDE.md's "a checker that stays
+  case would be the same false confidence docs/maintainer-guide.md's "a checker that stays
   green under its own mutation is not evidence" warns against.
 - It is wired into review.py (#479 Wave B, the single integration owner
   named in issue #414's Wave allocation comment): ``cmd_consider`` calls
@@ -486,7 +486,7 @@ def required_coverage(basis, consequence, rule_collisions=()):
     as part of what the answer owes — one function, read twice, so the
     surface that states the obligation and the gate that enforces it cannot
     drift (#479 Wave B cut 2). Deriving it in both places is precisely the
-    hand-mirrored surface CLAUDE.md forbids.
+    hand-mirrored surface docs/maintainer-guide.md forbids.
 
     Each entry is ``{"path", "owes", "key"}``. `path` is matched by prefix:
     covered when some engine_fact claim's anchor equals it or sits under it,

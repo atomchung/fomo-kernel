@@ -5,6 +5,14 @@ from pathlib import Path
 import json
 import re
 import shlex
+import tempfile
+
+# One reader of "which tracked files are worth reading as text" (#587). The
+# question is the same one tests/test_repo_hygiene.py already answers for
+# conflict markers, and a second copy of the suffix list is the mirrored surface
+# docs/maintainer-guide.md forbids. Imported rather than re-derived so a change
+# to that corpus reaches both scans at once.
+from test_repo_hygiene import _tracked_text_files as tracked_text_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +90,7 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
 # rejection that no longer exists. Sections differ per file because each entry
 # point already states this where it discusses the book; adding a ninth
 # non-negotiable rule so the headings could match would grow the entry-point
-# prompt CLAUDE.md deliberately keeps thin.
+# prompt the maintainer guide deliberately keeps thin.
 RECORDED_BOOK_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
     Path("skills/fomo-kernel/SKILL.md"): "## Agent artifact contract",
@@ -114,6 +122,87 @@ RECORDED_BOOK_RETIRED_PHRASES = (
     "complete account view",
     "complete initial snapshot",
 )
+# #587: instruction authority. Three files, three jobs, and the whole point is
+# that they cannot swap: `AGENTS.md` is the shared always-on floor every
+# supported client receives (Codex reads it natively, Claude Code imports it
+# from `CLAUDE.md`), `docs/maintainer-guide.md` is the detailed host-neutral
+# maintainer contract routed rather than auto-loaded, and `CLAUDE.md` is a host
+# adapter carrying Claude Code mechanics only. The shared contract used to live
+# in `CLAUDE.md`, which meant Codex never loaded it -- the asymmetry these
+# checks exist to keep closed.
+CLAUDE_ADAPTER = Path("CLAUDE.md")
+SHARED_FLOOR = Path("AGENTS.md")
+MAINTAINER_GUIDE = Path("docs/maintainer-guide.md")
+# Claude Code evaluates `@path` imports outside code spans and fences, so this
+# one line is what makes the shared floor reach a Claude session at all.
+CLAUDE_FLOOR_IMPORT = "@AGENTS.md"
+# One tuple, used twice in opposite directions: every one of these sections must
+# be in the maintainer guide and must not be back in the adapter. Two lists
+# would let a section be dropped from the guide and added to the adapter with
+# both halves still green.
+SHARED_SECTIONS = (
+    "## Repository role",
+    "## Development discipline",
+    "## Contract synchronization",
+    "## Honesty decisions belong in code",
+    "## Tests",
+    "## Dogfood QA",
+    "## Privacy boundary",
+    "## Commit and PR conventions",
+    "## Mirrored surfaces",
+    "## Public-repository quality bar",
+)
+# The owner's own wording from #587. Pinned because the failure mode is a
+# rewrite that keeps the first sentence and drops the second: "name the
+# Claude-only mechanism" alone reads as a style note, while the pair states
+# where everything else goes.
+CLAUDE_EDIT_BOUNDARY_PHRASES = (
+    "A change here must name the Claude-only mechanism it supports.",
+    "Shared product, architecture, test, privacy, issue, PR, or runtime "
+    "guidance belongs in the shared authority.",
+)
+# The adapter is ~20 lines of Claude-only content. The budget leaves room for a
+# second Claude mechanism and still fails long before the file could absorb a
+# shared contract again -- which is the regression, not length as such.
+CLAUDE_ADAPTER_LINE_BUDGET = 45
+SHARED_FLOOR_PHRASES = (
+    # The maintenance route. Without it the guide is unreachable from the only
+    # file both clients are guaranteed to read, and "routed rather than
+    # auto-loaded" becomes "not delivered at all".
+    "docs/maintainer-guide.md",
+    # The cross-client half of the commit rule. CI runs the same suite on every
+    # push, but it reports and `main` has no required status check, so the one
+    # gate that blocks lives in a single client (#592). Stating the rule only
+    # where that hook lives would leave every other client with neither the
+    # rule nor the enforcement.
+    "the only gate that blocks is a Claude Code hook",
+    # Conflict policy, in the order it resolves.
+    "Deterministic code, schema, validator, and test-enforced contract outrank "
+    "prose descriptions of them",
+    "may change tool mechanics only: never privacy, arithmetic, canonical "
+    "state, product scope, acceptance, or runtime semantics",
+    "is a repository defect",
+    "Do not silently follow whichever file loaded last.",
+    # The hazard that motivated naming it: Codex loads an override *instead of*
+    # the AGENTS.md at that level, so a root override silently drops the floor.
+    "AGENTS.override.md",
+)
+# Codex's default combined project-instruction budget is 32 KiB across every
+# AGENTS.md on the root-to-cwd path plus the user's global file. Half of it is
+# this repository's share; the global file is not ours to measure.
+CODEX_INSTRUCTION_BUDGET_BYTES = 16 * 1024
+# `CLAUDE.md` may still be *named* where a file legitimately describes the
+# adapter's role or the authority split. Everywhere else, naming it as the home
+# of a shared rule points a reader at a file that no longer holds it.
+CLAUDE_ADAPTER_CITATION_ALLOWLIST = {
+    "CLAUDE.md": "the adapter itself",
+    "AGENTS.md": "names the adapter in the authority policy",
+    "docs/maintainer-guide.md": "states the split it is one half of",
+    "docs/development-guide.md": "routes to both halves from its index",
+    "docs/language-policy.md": "lists it as an English-only surface",
+    "skills/fomo-kernel/tools/change_surface.py": "classifies it as a maintainer doc",
+    "tests/test_doc_language.py": "this check",
+}
 
 
 def _retired_completeness_violations(sources):
@@ -216,7 +305,8 @@ IMPORT_BYPASS_FIXTURES = (
 # per-language demo-card HTML mocks. These files are the GTM locale pair
 # (GTM_MARKDOWN_ALLOWLIST above) and are deliberately excluded from the
 # English-only and agent-runtime-surface checks; the checks below instead
-# enforce the language-invariant facts CLAUDE.md's Mirrored surfaces table
+# enforce the language-invariant facts docs/maintainer-guide.md's Mirrored
+# surfaces table
 # promises stay in sync, without asserting anything about translated prose.
 README_EN_PATH = ROOT / "README.md"
 README_ZH_PATH = ROOT / "README.zh-TW.md"
@@ -949,6 +1039,228 @@ def test_engine_import_bypass_mutations_are_caught():
         assert expected_module in found, f"{label}: expected {expected_module}, found {sorted(found)}"
 
 
+def collapsed(text):
+    """Whitespace-insensitive view of prose, for pinning a sentence longer than
+    one wrapped line. Pinning the literal including its line breaks turns a
+    harmless re-wrap into a red suite, and a check people have to re-wrap
+    around is a check they eventually delete."""
+    return " ".join(text.split())
+
+
+# The four checks below take their text as an argument and return reasons rather
+# than asserting, so the mutation test drives this exact logic against the real
+# committed files with one thing broken. A mutation test that re-implements the
+# comparison proves the comparison it wrote, not the gate.
+def adapter_violations(text):
+    """Reasons ``text`` fails as a Claude Code adapter over the shared floor."""
+    problems = []
+    # Claude Code does not evaluate `@path` inside a code span or fence, so an
+    # import that is merely *shown* is not one that is performed.
+    if CLAUDE_FLOOR_IMPORT not in re.sub(r"```.*?```", "", text, flags=re.DOTALL):
+        problems.append(f"{CLAUDE_FLOOR_IMPORT} is not imported -- a Claude session "
+                        f"would receive none of {SHARED_FLOOR}")
+    body = collapsed(text)
+    for phrase in CLAUDE_EDIT_BOUNDARY_PHRASES:
+        if collapsed(phrase) not in body:
+            problems.append(f"missing edit boundary: {phrase!r}")
+    lines = len(text.splitlines())
+    if lines > CLAUDE_ADAPTER_LINE_BUDGET:
+        problems.append(f"{lines} lines exceeds the {CLAUDE_ADAPTER_LINE_BUDGET}-line budget")
+    for heading in SHARED_SECTIONS:
+        if heading in text:
+            problems.append(f"{heading!r} is shared, host-neutral guidance")
+    return problems
+
+
+def floor_violations(text):
+    """Reasons ``text`` fails as the shared always-on instruction floor."""
+    body = collapsed(text)
+    return [f"missing authority phrase: {phrase!r}"
+            for phrase in SHARED_FLOOR_PHRASES if collapsed(phrase) not in body]
+
+
+def codex_discovery_violations(root):
+    """Reasons Codex's discovery of the shared floor is compromised under ``root``.
+
+    Takes the root as an argument so the mutation test can drive this exact
+    logic against a tree that really carries a root override. Asserting
+    ``not path.exists()`` against the live tree proves the file is absent
+    today and nothing at all about whether its arrival would be noticed.
+    """
+    problems = []
+    if (root / "AGENTS.override.md").is_file():
+        problems.append(
+            "AGENTS.override.md at the repository root: Codex loads an override "
+            "instead of the AGENTS.md at that level, so this drops the shared "
+            "instruction floor entirely. Put client mechanics in that client's own "
+            "configuration, or in a nested AGENTS.md beside the code it governs.")
+    payload = sorted(root.rglob("AGENTS.md"))
+    if not payload:
+        problems.append("no AGENTS.md found -- the enumeration is broken, not the tree")
+    total = sum(path.stat().st_size for path in payload)
+    if total > CODEX_INSTRUCTION_BUDGET_BYTES:
+        problems.append(
+            f"combined AGENTS.md payload is {total} bytes, over this repository's "
+            f"{CODEX_INSTRUCTION_BUDGET_BYTES}-byte share of Codex's 32 KiB "
+            "project-instruction cap: "
+            + ", ".join(str(path.relative_to(root)) for path in payload))
+    return problems
+
+
+def guide_violations(text):
+    """Reasons ``text`` fails as the detailed host-neutral maintainer contract."""
+    problems = [f"shared section {heading!r} was lost in the move"
+                for heading in SHARED_SECTIONS if heading not in text]
+    if "| Fact | Surfaces that must stay synchronized |" not in text:
+        problems.append("the mirrored-surfaces table header is gone")
+    return problems
+
+
+def stale_adapter_citations(sources):
+    """Every ``(rel, text)`` line naming CLAUDE.md outside the allowlist."""
+    return [f"{rel}:{number}: {line.strip()[:120]}"
+            for rel, text in sources
+            if rel not in CLAUDE_ADAPTER_CITATION_ALLOWLIST
+            for number, line in enumerate(text.splitlines(), 1)
+            if "CLAUDE.md" in line]
+
+
+def test_claude_md_is_a_host_adapter_over_the_shared_floor():
+    """#587: the shared maintainer contract used to live in `CLAUDE.md`, so
+    every rule in it was invisible to Codex, and `CLAUDE.md` had grown to ~51 KB
+    of always-on Claude context. It is now an adapter: it imports the shared
+    floor, states its own edit boundary, and holds Claude Code mechanics only.
+    Structural, not semantic -- review still owns whether a given sentence is
+    genuinely Claude-specific.
+    """
+    problems = adapter_violations((ROOT / CLAUDE_ADAPTER).read_text(encoding="utf-8"))
+    assert not problems, (
+        f"{CLAUDE_ADAPTER} is not a host adapter over the shared floor "
+        f"(shared guidance belongs in {MAINTAINER_GUIDE}):\n  " + "\n  ".join(problems)
+    )
+
+
+def test_agents_md_is_the_shared_always_on_floor():
+    """The floor both clients receive carries the maintenance route and the
+    authority policy. Precedence differs per client -- Codex orders files
+    root-to-cwd, Claude Code combines memories and resolves conflicts by
+    judgment -- so the policy has to say in the repository's own words that file
+    order never authorizes a host adapter to change product truth.
+    """
+    problems = floor_violations((ROOT / SHARED_FLOOR).read_text(encoding="utf-8"))
+    problems += codex_discovery_violations(ROOT)
+    assert not problems, f"{SHARED_FLOOR} is not the shared floor:\n  " + "\n  ".join(problems)
+
+
+def test_the_maintainer_guide_holds_the_shared_contract():
+    """The counterweight: demoting `CLAUDE.md` only helps if the material landed
+    somewhere both clients can be routed to. Presence, not wording -- the move
+    preserved the mirrored-surfaces table byte for byte, and a later edit to a
+    row is that row's own business.
+    """
+    guide = ROOT / MAINTAINER_GUIDE
+    assert guide.is_file(), f"{MAINTAINER_GUIDE} is missing -- the shared contract has no home"
+    problems = guide_violations(guide.read_text(encoding="utf-8"))
+    assert not problems, f"{MAINTAINER_GUIDE} lost shared contract:\n  " + "\n  ".join(problems)
+
+
+def test_no_shared_rule_is_cited_as_the_claude_adapters():
+    """A pointer at `CLAUDE.md` for a rule that now lives in the maintainer
+    guide sends its reader to a file that does not contain it, and no other
+    check in this suite can see that. #587 retargeted 34 such citations across
+    24 files -- three of them found only because a truncated `grep` was re-run
+    without the truncation, which is why this is mechanical and not a review
+    step.
+    """
+    sources = [(rel, (ROOT / rel).read_text(encoding="utf-8", errors="replace"))
+               for rel in tracked_text_files()]
+    assert len(sources) > 100, f"tracked-text enumeration is too small to trust: {len(sources)}"
+    violations = stale_adapter_citations(sources)
+    assert not violations, (
+        f"shared maintainer rules cited as CLAUDE.md's (they live in {MAINTAINER_GUIDE} "
+        "since #587):\n  " + "\n  ".join(violations)
+    )
+
+
+def test_instruction_authority_mutations_are_caught():
+    """Mutation proof for the four checks above, every arm driven against the
+    real committed text with one thing broken rather than a synthetic stand-in.
+    """
+    adapter = (ROOT / CLAUDE_ADAPTER).read_text(encoding="utf-8")
+    floor = (ROOT / SHARED_FLOOR).read_text(encoding="utf-8")
+    guide = (ROOT / MAINTAINER_GUIDE).read_text(encoding="utf-8")
+    assert not adapter_violations(adapter) and not floor_violations(floor) \
+        and not guide_violations(guide), "fixture assumption broken: the tree is already red"
+
+    # The import removed outright, and the import demoted to a code fence --
+    # shown but never performed, which is the subtler of the two.
+    assert adapter_violations(adapter.replace(CLAUDE_FLOOR_IMPORT, "", 1))
+    assert adapter_violations(
+        adapter.replace(CLAUDE_FLOOR_IMPORT, f"```\n{CLAUDE_FLOOR_IMPORT}\n```", 1))
+
+    # Either half of the edit boundary dropped. Mutated on the collapsed text
+    # because these sentences are wrapped in the file, and asserted to fire *for
+    # that phrase* -- a mutation that goes red for an unrelated reason reports a
+    # gate it never exercised.
+    for phrase in CLAUDE_EDIT_BOUNDARY_PHRASES:
+        problems = adapter_violations(collapsed(adapter).replace(collapsed(phrase), ""))
+        assert any(collapsed(phrase) in problem for problem in problems), \
+            f"dropping {phrase!r} from {CLAUDE_ADAPTER} would stay green: {problems}"
+
+    # A shared section coming back into the adapter, and the same section
+    # leaving the guide -- the two directions the single SHARED_SECTIONS tuple
+    # exists to keep from drifting apart.
+    for heading in SHARED_SECTIONS:
+        assert adapter_violations(adapter + f"\n{heading}\n\nShared prose.\n"), \
+            f"reviving {heading!r} in {CLAUDE_ADAPTER} would stay green"
+        assert guide_violations(guide.replace(heading, "## Something else", 1)), \
+            f"dropping {heading!r} from {MAINTAINER_GUIDE} would stay green"
+
+    # One line past the budget, and the mirrored-surfaces table header gone.
+    padded = adapter + "\n" * (CLAUDE_ADAPTER_LINE_BUDGET + 1 - len(adapter.splitlines()))
+    assert adapter_violations(padded), "a file one line past the budget would stay green"
+    assert guide_violations(guide.replace("| Fact | Surfaces that must stay synchronized |", "", 1))
+
+    # Each authority phrase dropped from the floor, each asserted to fire for
+    # itself rather than for whichever phrase happens to be checked first.
+    for phrase in SHARED_FLOOR_PHRASES:
+        problems = floor_violations(collapsed(floor).replace(collapsed(phrase), ""))
+        assert any(collapsed(phrase) in problem for problem in problems), \
+            f"dropping {phrase!r} from {SHARED_FLOOR} would stay green: {problems}"
+
+    # Codex discovery, driven against a real directory: an empty tree (a sum
+    # over no files is 0 and passes every ceiling -- the vacuous form), a root
+    # override, and a payload past the cap.
+    assert CODEX_INSTRUCTION_BUDGET_BYTES < 32 * 1024, \
+        "this repository's share must stay under Codex's own combined cap"
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp)
+        assert codex_discovery_violations(fake), "a tree with no AGENTS.md would stay green"
+        (fake / "AGENTS.md").write_text("floor\n", encoding="utf-8")
+        assert not codex_discovery_violations(fake), "fixture assumption broken"
+        (fake / "AGENTS.override.md").write_text("adapter\n", encoding="utf-8")
+        problems = codex_discovery_violations(fake)
+        assert any("AGENTS.override.md" in problem for problem in problems), \
+            f"a root override would stay green: {problems}"
+        (fake / "AGENTS.override.md").unlink()
+        (fake / "nested").mkdir()
+        (fake / "nested/AGENTS.md").write_text(
+            "x" * CODEX_INSTRUCTION_BUDGET_BYTES, encoding="utf-8")
+        problems = codex_discovery_violations(fake)
+        assert any("32 KiB" in problem for problem in problems), \
+            f"a payload past the cap would stay green: {problems}"
+
+    # A stale citation put back into a file the allowlist does not cover, and
+    # the same line in an allowlisted file staying silent.
+    sample = "skills/fomo-kernel/engine/consequence.py"
+    assert sample not in CLAUDE_ADAPTER_CITATION_ALLOWLIST, sample
+    revived = '# (CLAUDE.md, "Honesty decisions belong in code")'
+    assert stale_adapter_citations([(sample, revived)]), \
+        "a revived stale citation would stay green"
+    assert not stale_adapter_citations([(str(CLAUDE_ADAPTER), revived)]), \
+        "the allowlist must still exempt the adapter itself"
+
+
 _REGISTERED_TESTS = []  # populated by main(); see the registration self-check below
 
 
@@ -988,6 +1300,11 @@ def main():
         test_no_agent_runtime_surface_teaches_the_retired_completeness_rule,
         test_recorded_book_rule_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,
+        test_claude_md_is_a_host_adapter_over_the_shared_floor,
+        test_agents_md_is_the_shared_always_on_floor,
+        test_the_maintainer_guide_holds_the_shared_contract,
+        test_no_shared_rule_is_cited_as_the_claude_adapters,
+        test_instruction_authority_mutations_are_caught,
         test_json_ref_contract_links_are_discoverable,
         test_agent_runtime_surfaces_only_invoke_review_py,
         test_agent_runtime_surfaces_do_not_import_engine_internals,

@@ -74,7 +74,7 @@
         "trades": {
           "type": "string",
           "pattern": "^skills/fomo-kernel/mock/",
-          "description": "Synthetic CSV. Only mock fixtures are permitted; the privacy boundary in CLAUDE.md is not negotiable."
+          "description": "Synthetic CSV. Only mock fixtures are permitted; the privacy boundary in docs/maintainer-guide.md is not negotiable."
         },
         "route": {
           "enum": [

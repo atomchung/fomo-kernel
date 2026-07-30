@@ -233,8 +233,9 @@ KNOWN_UNWIRED = {"initial_thesis": "#429", "exit_consistency": "#429"}
 #     `condition_checks`, is read by more than a dozen functions across
 #     card_renderer.py (`_condition_now`, `_condition_outcome`,
 #     `_condition_reading_line`, `_condition_summary_line`, ... -- the
-#     "Per-period condition check flow" row of CLAUDE.md's mirrored-surfaces
-#     table names this cluster explicitly), not one contained loop. A
+#     "Per-period condition check flow" row of
+#     docs/maintainer-guide.md's mirrored-surfaces table names this
+#     cluster explicitly), not one contained loop. A
 #     trustworthy field scan there needs a real call-graph across that
 #     cluster, not a single-function AST walk, and this cut does not attempt
 #     one rather than ship an imprecise version of it. These two kinds stay

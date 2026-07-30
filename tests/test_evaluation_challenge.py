@@ -25,7 +25,7 @@ matter:
 Mutation table -- each row was applied to engine/evaluation_challenge.py or
 engine/answer_provenance.py, the suite re-run, and the named test confirmed
 red before the mutation was reverted. A checker that stays green under its
-own mutation is not evidence (CLAUDE.md).
+own mutation is not evidence (docs/maintainer-guide.md).
 
   1. `_SPEAKING_STATES` loses `would_breach`/`already_over`, so a collided
      rule is no longer stated

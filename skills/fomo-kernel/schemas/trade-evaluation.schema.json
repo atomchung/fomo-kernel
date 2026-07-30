@@ -125,7 +125,7 @@
         },
         "disclosures": {
           "type": "array",
-          "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (CLAUDE.md, \"Honesty decisions belong in code\").",
+          "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (docs/maintainer-guide.md, \"Honesty decisions belong in code\").",
           "items": {
             "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
                      "partial_book"]

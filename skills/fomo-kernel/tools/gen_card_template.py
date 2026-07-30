@@ -8,9 +8,9 @@ CSS, held equal to it -- declaration for declaration, both directions -- by
 `test_widget_fragment_css_stays_mirrored_with_card_template` (#368 Phase 1),
 with a short documented exception list for the handful of declarations that
 exist only because the reference still illustrates a few Tabler icons and one
-accessibility idea the icon-free runtime does not implement. `CLAUDE.md`
-measured (#401, `tools/change_surface.py`) that every one of the last several
-template edits also touched that test: the mirror was not really a second
+accessibility idea the icon-free runtime does not implement.
+`docs/maintainer-guide.md` measured (#401, `tools/change_surface.py`) that
+every one of the last several template edits also touched that test: the mirror was not really a second
 design decision, it was bookkeeping that followed from the first one.
 
 This script removes the bookkeeping by generating the file instead of

@@ -122,8 +122,8 @@ LANGUAGE_BRANCH_PATTERN = re.compile(
 # bilingual pair: the zh side reads `hole["number_line"]` (narrated by v1's
 # `trade_recap.number_line()`) while the en side builds the sentence in the
 # renderer from raw dimension fields. Collapsing it into copy means deciding
-# what happens to that cross-file mirror, which CLAUDE.md's "Hole number-line
-# copy" row documents as a standing obligation -- a design call, not a
+# what happens to that cross-file mirror, which docs/maintainer-guide.md's
+# "Hole number-line copy" row documents as a standing obligation -- a design call, not a
 # mechanical move.
 #
 # 50, not 51 or 73: #375 and batch 3 were open at the same time and each
