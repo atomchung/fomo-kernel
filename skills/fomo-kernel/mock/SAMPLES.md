@@ -43,7 +43,7 @@ Live market-dependent values may drift because online runs fetch historical and 
 | `sample_noisy_broker.csv` | Dividends, transfers, fees, and reinvestment rows | behavior matches the clean baseline after filtering |
 | `sample_rotator.csv` | Full-position rotation through unrelated hot themes | sequence exposes theme churn even when current snapshot is simply concentrated |
 | `sample_panic_seller.csv` | Several long-held losing positions exited in one stress window, followed by a higher re-entry | extreme exit-discipline branch |
-| `sample_tw_mixed.csv` | Taiwan and US instruments with multiple currencies | per-market benchmark and aggregate-currency contracts |
+| `sample_tw_mixed.csv` | Taiwan and US instruments with multiple currencies | per-market benchmark and aggregate-currency contracts. Ships a companion `sample_tw_mixed.prices.json`: a mixed-currency book has no reviewable aggregate without a held-currency FX rate (#612), so a harness running with no market-data source supplies one through the product's own `--prices` repair path rather than losing the persona. A single-currency persona has no companion file and takes the ordinary degraded path. |
 | `sample_bare_export.csv` | The normalized six-column schema and nothing else — no broker `Amount`, commission, or settlement columns | trades load and the card renders in full; each trade's cash footprint is estimated from quantity times price and disclosed (#375) |
 
 ## Fixture design rules

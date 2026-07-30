@@ -452,7 +452,11 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     # trade_recap's own "單一幣別組合...零行為變化" convention.
     cur_map, currencies, _conflicts = trade_recap.currency_map(rows)
     mixed_currency = len(currencies) > 1
-    fx_gaps = sorted(c for c in currencies if c not in fx) if mixed_currency else []
+    # #612: one predicate, read rather than restated. `usd_view` raises on the
+    # same condition, so this branch is what turns the shared refusal into this
+    # lane's own error type before the conversion is reached; a second copy of
+    # the rule here is how the two lanes drifted apart in the first place.
+    fx_gaps = trade_recap.held_currency_fx_gaps(cur_map, fx)
     if fx_gaps:
         # #600. `usd_view` resolves a currency absent from `fx` as a factor of
         # 1.0, so every holding in it entered the denominator at raw face

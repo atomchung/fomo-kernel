@@ -363,7 +363,23 @@ def date_slice_is_not_a_row_prefix(work):
             "and a different persona has to carry this check."]
 
 
-def _prepare(path_arg, locale, root, env):
+def persona_prices(source):
+    """The committed ``--prices`` envelope beside a persona, or ``None``.
+
+    A mixed-currency book has no reviewable aggregate without an FX rate
+    (#612): ``usd_view`` refuses rather than converting the missing rate to
+    1.0, so the sweep's no-market-data posture would leave `tw_mixed` with no
+    card at all rather than a degraded one. The envelope is the product's own
+    repair path — the same one the refusal names — so the persona keeps every
+    render, and the rate is a declared fixture value rather than a live rate
+    the sweep would then depend on. Personas whose book is single-currency
+    have no companion file and are untouched.
+    """
+    candidate = source.parent / f"{source.stem}.prices.json"
+    return candidate if candidate.exists() else None
+
+
+def _prepare(path_arg, locale, root, env, prices=None):
     """Run ``prepare`` and return ``(plan, error)``.
 
     The plan is read from ``.pending/``, which holds exactly the sessions that
@@ -372,15 +388,19 @@ def _prepare(path_arg, locale, root, env):
     rather than sorting by mtime: two plans in flight would mean the week-1
     finalize silently failed to commit, which should surface as an error here.
     """
+    # Supplying an envelope and declaring the source dead are contradictory
+    # claims about the same run, so a persona takes one or the other.
+    price_argv = (["--prices", str(prices)] if prices else
+                  # The sweep runs with no market data at all, which is a genuine
+                  # dead end rather than a skipped recovery step -- so it declares
+                  # one, the same thing a priceless host does (#623). Without the
+                  # declaration every persona's card is refused as an unattempted
+                  # recovery, which is the gate working: a degraded card is
+                  # delivered only when the dead end was stated.
+                  ["--prices-unavailable", "persona sweep runs with no market-data source"])
     proc = subprocess.run(
-        [sys.executable, "engine/review.py", "prepare", str(path_arg), "--language", locale,
-         # The sweep runs with no market data at all, which is a genuine dead
-         # end rather than a skipped recovery step -- so it declares one, the
-         # same thing a priceless host does (#623). Without the declaration
-         # every persona's card is refused as an unattempted recovery, which is
-         # the gate working: a degraded card is delivered only when the dead end
-         # was stated.
-         "--prices-unavailable", "persona sweep runs with no market-data source"],
+        [sys.executable, "engine/review.py", "prepare", str(path_arg), "--language", locale]
+        + price_argv,
         cwd=SKILL_DIR, capture_output=True, text=True,
         env={**env, "TRADE_COACH_HOME": str(root)})
     plans = list(root.glob(".pending/*/plan.json"))
@@ -399,7 +419,8 @@ def _seed_second_review(source, locale, root, env, work):
     cutoff = week_one_csv(source, week1)
     if cutoff is None:
         return None, "history has too few distinct trade dates to split", None
-    plan, error = _prepare(week1, locale, root, env)
+    prices = persona_prices(source)
+    plan, error = _prepare(week1, locale, root, env, prices=prices)
     if error:
         return None, None, f"prepare week 1: {error}"
     candidates = (plan.get("card_plan") or {}).get("candidate_rules") or []
@@ -429,7 +450,7 @@ def _seed_second_review(source, locale, root, env, work):
         if proc.returncode != 0:
             tail = proc.stderr.strip().splitlines()[-1:] or [""]
             return None, None, f"{command} week 1: rc={proc.returncode} {tail[0]}"
-    plan2, error = _prepare(source.relative_to(SKILL_DIR), locale, root, env)
+    plan2, error = _prepare(source.relative_to(SKILL_DIR), locale, root, env, prices=prices)
     if error:
         return None, None, f"prepare week 2: {error}"
     if plan2.get("route") != "weekly_review":
@@ -471,7 +492,8 @@ def _build_one(source, locale, review, out, env, review_module, bundles):
     root = out / "roots" / stem
     failures, notes = [], []
     if review == "first":
-        plan, error = _prepare(source.relative_to(SKILL_DIR), locale, root, env)
+        plan, error = _prepare(source.relative_to(SKILL_DIR), locale, root, env,
+                               prices=persona_prices(source))
     else:
         plan, note, error = _seed_second_review(
             source, locale, root, env, out / "work")

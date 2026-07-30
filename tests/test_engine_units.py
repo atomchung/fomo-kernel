@@ -1168,9 +1168,40 @@ def test_usd_view_ret_and_holdings_shape_invariant():
     assert rts[0]["buy_px"] == 900.0, "原物件不可被改(per-ticker 呈現要原幣)"
 
 
-def test_usd_view_missing_fx_factor_is_one():
+def test_usd_view_refuses_a_held_currency_it_has_no_rate_for():
+    """#612. The identity factor this replaces was not an approximation, it was
+    a different number: the same 900 TWD holding entered a USD denominator at
+    face value, ~31x its real weight. The refusal is inside the conversion, not
+    at a consumer, so a lane added later cannot aggregate around it — and it
+    carries the currencies as data rather than only as a sentence."""
+    try:
+        tr.usd_view([], {"2330.TW": (1, 900.0), "AAPL": (1, 100.0)}, {},
+                    {"2330.TW": "TWD", "AAPL": "USD"}, {"USD": 1.0})
+    except tr.MissingHeldCurrencyRate as exc:
+        assert exc.missing == ["TWD"] and exc.held == ["TWD", "USD"], (exc.missing, exc.held)
+        assert "TWD" in str(exc) and "--prices" in str(exc), str(exc)
+    else:
+        raise AssertionError("a held currency with no rate must refuse, never convert at 1.0")
+
+
+def test_held_currency_fx_gaps_leaves_single_currency_and_display_only_books_alone():
+    """The two compatibility halves of the same predicate (#612).
+
+    A single-currency book — including a pure non-USD one — aggregates itself
+    self-consistently and never asked for a rate, so it is not a gap. And the
+    predicate's domain is `cur_map`, which only ever holds *held* currencies:
+    the display currency `fx_request_currencies` widens the request with is not
+    in it, so a missing display rate stays a rendering degradation."""
+    assert tr.held_currency_fx_gaps({"2330.TW": "TWD"}, {"USD": 1.0}) == [], \
+        "a pure TWD book aggregates itself and must not require a rate"
     _, held_u, _ = tr.usd_view([], {"2330.TW": (1, 900.0)}, {}, {"2330.TW": "TWD"}, {"USD": 1.0})
-    assert _approx(held_u["2330.TW"][1], 900.0), "fx 缺 → 因子 1.0 近似(警告由 data_integrity 載)"
+    assert _approx(held_u["2330.TW"][1], 900.0), "single-currency conversion stays the identity"
+    assert tr.held_currency_fx_gaps({}, {"USD": 1.0}) == [], "an empty book has nothing to convert"
+    # TWD is requested for rendering and absent from `fx`; the held book is
+    # EUR + USD and fully covered, so nothing here is a held-currency gap.
+    assert tr.fx_request_currencies(["EUR", "USD"], "TWD") == ["EUR", "TWD", "USD"]
+    assert tr.held_currency_fx_gaps({"ASML.AS": "EUR", "AAPL": "USD"},
+                                    {"USD": 1.0, "EUR": 1.1}) == []
 
 
 def test_fetch_fx_usd_only_is_offline_noop():
