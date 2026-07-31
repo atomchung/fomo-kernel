@@ -457,6 +457,35 @@ def _virtual_review_basis(inputs, batches, state):
     return overlay, receipt
 
 
+def _carried_declaration(root, snapshot_path):
+    """The declaration with each still-held cycle start carried from the record.
+
+    #539: a declaration says what is held, never since when, so an ordinary
+    second declaration would give every continuously held position a cycle id
+    minted from its own ``as_of`` — and the user's thesis, written against the
+    previous id, would be asked for again as if they had never answered.
+
+    Returns ``None`` for a root with no recorded book, which is onboarding: there
+    is nothing to carry, and ``prepare`` loads the file the way it always has.
+
+    Deliberately here, before ``snapshot_adapter.prepare`` builds anything: the
+    stamped envelope is what ``_anchor`` writes to the ledger *and* what
+    ``_state_positions`` derives the plan's cycle ids from, so the questions the
+    user is asked and the book that is recorded cannot disagree about identity.
+    Doing it at finalize instead would fix the ledger after the review had
+    already re-asked. The refresh lane calls the same primitive from
+    ``build_adoption`` (#536): one implementation, and the only path through
+    which engine-assigned provenance enters a book.
+    """
+    events, _skipped = ledger.load_ledger(os.path.join(root, "ledger.jsonl"))
+    if not events or ledger.latest_anchor(events) is None:
+        return None
+    snapshot, _anchor = book_refresh.carry_recorded_starts(
+        snapshot_adapter.normalize_book(snapshot_path)[0], events,
+        splits=_recorded_splits(root))
+    return snapshot
+
+
 def _validate_initial_snapshot_root(root, anchor):
     """Resolve how a runtime snapshot declaration may enter this coach root.
 
@@ -4102,7 +4131,8 @@ def _prepare_session(args):
     if args.snapshot_json:
         try:
             card, state, adapter_meta = snapshot_adapter.prepare(
-                paths[0], driver_map=args.driver_map, instrument_map=args.instrument_map
+                paths[0], driver_map=args.driver_map, instrument_map=args.instrument_map,
+                snapshot=_carried_declaration(root, paths[0])
             )
         except (OSError, ValueError, snapshot_adapter.SnapshotError) as exc:
             raise ReviewError(f"snapshot adapter rejected input: {exc}") from exc

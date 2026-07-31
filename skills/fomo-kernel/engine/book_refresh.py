@@ -493,37 +493,116 @@ def _appearance_stamp(row, answer, as_of):
     return row
 
 
-def _carry_forward_provenance(row, recorded, derived):
-    """Keep an already-answered cycle start attached across later refreshes.
+def _carried_start(row, recorded, derived, as_of):
+    """Attach the cycle start the record already holds for one position (#539).
 
-    Without this the stamp survives exactly one refresh: the next declaration is
-    an ordinary envelope with no provenance on it, so the position's start would
-    snap back to the new anchor's date and the user's answer would have bought
-    exactly one review. The user is not asked again, and should not be — the
-    position is not appearing, it is simply still held.
+    A declaration says what is held, never since when. So an adopted position
+    whose start this declaration did not restate must be given the start the
+    book already had, or ``ledger._anchored_cycle_start`` falls back to the new
+    anchor's own date, ``cycle_id`` remints, and every memory keyed to that
+    cycle — the user's thesis first — reads as belonging to nothing.
 
-    Two gates, and both are about not carrying a stamp onto a different cycle.
-    The stamp is read from the last declaration's own row (the only place that
-    says a start was answered rather than assumed; a ``trades_derived``
-    restatement never stamps one, so reading the newest recorded row instead
-    would spend the user's answer the first time they imported a CSV). And it is applied only while
-    the record still traces the position back to that anchor
-    (``origin == "snapshot"``): a position sold and bought back reads
-    ``origin == "trades"``, and its real recorded open date must win over a
-    stamp describing the cycle before it.
+    The cases, in the order they are decided.
+
+    A row that already carries a stamp is left alone: it came from
+    ``_appearance_stamp`` a few lines up, which is the position the user was
+    just asked about, and this declaration *is* its first statement.
+
+    A start the user themselves gave is preserved as theirs. The stamp is read
+    from the last declaration's own row — the only place that says a start was
+    answered rather than assumed; a ``trades_derived`` restatement never stamps
+    one, so reading the newest recorded row instead would spend the user's #531
+    answer the first time they imported a CSV — and only while the record still
+    traces the position to that anchor (``origin == "snapshot"``). A position
+    sold and bought back reads ``origin == "trades"``, and inheriting the old
+    estimate would attach the user's words about the previous cycle to a new one.
+
+    Everything else still held takes the start the *derived* book states, stamped
+    ``recorded_book``. Reading it from the derived book rather than from the
+    previous anchor's stamp is what makes this safe without a further gate: the
+    derived start of a rebought position is its rebuy date, and of a
+    trades-origin holding its real, ledger-proven open date, so there is no
+    previous cycle to inherit from — the value is simply what the record says
+    about the position that is held right now. It is also a fixpoint: carrying it
+    again yields the same date, so replay, ``repair-projections`` and an
+    idempotent finalize retry are stable by construction.
+
+    A ticker absent from the derived book is untouched. It is appearing, and
+    #531 owns what happens to it.
+
+    Nothing is stamped when the start the record holds is not older than this
+    declaration's own ``as_of``. Equal means the stamp would restate what
+    ``_anchored_cycle_start`` already defaults to, and writing it anyway would
+    change the anchor's content address without changing a single fact — which
+    is what an idempotent replay of the same declaration is checked by. Later
+    means the declaration predates the record, and that is refused a few steps
+    on by the lane that owns the refusal; carrying a start into it here would
+    replace a plain "older than the current ledger anchor" with a validation
+    error about a field the user never supplied.
     """
-    ticker = row.get("ticker")
-    stamp = (recorded.get(ticker) or {}).get("since_basis")
-    if stamp not in lg.SINCE_BASES:
+    if row.get("since_basis"):
         return row
-    if (derived.get(ticker) or {}).get("origin") != "snapshot":
+    ticker = row.get("ticker")
+    held = derived.get(ticker) or {}
+    if not held:
         return row
     row = dict(row)
-    row["since_basis"] = stamp
     row.pop("since", None)
-    if stamp == "user_estimate":
-        row["since"] = recorded[ticker].get("since")
+    stamp = (recorded.get(ticker) or {}).get("since_basis")
+    if stamp in lg.SINCE_BASES and held.get("origin") == "snapshot":
+        if stamp == "unknown":
+            # No date to guard: the cycle is `ticker#unknown` either way, and
+            # that identity is already stable across declarations.
+            row["since_basis"] = "unknown"
+            return row
+        since, basis = recorded[ticker].get("since"), stamp
+    else:
+        since, basis = held.get("since"), "recorded_book"
+    # The date and the stamp are chosen together, deliberately: a start read off
+    # the derived book labelled `user_estimate` would attribute a ledger fact to
+    # the user, which is the same dishonesty as the reverse.
+    if not since or str(since) >= str(as_of):
+        return row
+    row["since"], row["since_basis"] = since, basis
+    # The start alone is not the identity. Two cycles opened on one day differ
+    # only here, so carrying the date without the sequence would give the live
+    # position the id of the one that was sold (#539).
+    seq = lg.cycle_sequence((held.get("cycle_id") or ""))
+    if seq and seq > 1:
+        row["cycle_seq"] = seq
     return row
+
+
+def carry_recorded_starts(envelope, events, *, splits=None, today=None):
+    """Validate one adopted book with every continuously-held start carried (#539).
+
+    The single primitive both adoption lanes call, and the single place engine
+    provenance may enter a book. The refresh lane calls it on the envelope it
+    assembled from its own answers; the review lane calls it in ``cmd_prepare``
+    on the declaration it is about to build a plan from, before
+    ``snapshot_adapter.prepare`` derives anything, so the plan's cycle ids and
+    the ledger anchor come from one stamped object rather than two derivations.
+
+    It is one function rather than one call per lane because the composition is
+    the part that drifts: ``derived`` and ``recorded`` are assembled here, so a
+    caller cannot supply a book read through a different window (#444's rule —
+    a single reader is still two readers when its input is assembled twice).
+
+    Returns ``normalize_book``'s ``(snapshot, anchor)``. The envelope may be a
+    raw one or a previously normalized one; only the declared fields are read.
+    """
+    positions = list(envelope.get("positions") or [])
+    if positions:
+        derived = lg.holdings_as_of(events or [], envelope["as_of"], splits=splits)
+        recorded = _declared_map(lg.latest_anchor(events or [], declared_only=True) or {})
+        positions = [_carried_start(row, recorded, derived, envelope["as_of"])
+                     for row in positions]
+    stamped = {key: value for key, value in envelope.items()
+               if key in snapshot_adapter.ENVELOPE_KEYS and value is not None}
+    stamped["positions"] = positions
+    return snapshot_adapter.normalize_book(
+        stamped, today=today or dt.date.fromisoformat(envelope["as_of"]),
+        allow_engine_provenance=True)
 
 
 def _carried_row(ticker, fact):
@@ -552,10 +631,10 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
     carried rows merged back in, the difference the ledger records must be the
     difference that actually happened.
 
-    This is also the only place ``allow_engine_provenance`` is turned on. The
-    envelope assembled here is not a caller's file: every ``since`` in it was
-    computed a few lines above by ``_appearance_stamp`` or copied off the
-    recorded anchor by ``_carry_forward_provenance``.
+    Validation and engine provenance both run through ``carry_recorded_starts``,
+    shared with the review lane: the envelope assembled here is not a caller's
+    file, and every ``since`` in the adopted book was either computed a few lines
+    above by ``_appearance_stamp`` or carried off the record by that primitive.
     """
     classifications = _validated_answers(receipt.get("pending_confirmations") or [], answers)
     resupply = sorted(ticker for ticker, value in classifications.items()
@@ -565,7 +644,6 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
                 "tickers": resupply}
 
     derived = lg.holdings_as_of(events, snapshot["as_of"], splits=splits)
-    recorded = _declared_map(lg.latest_anchor(events, declared_only=True) or {})
     by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
     carried, sold, appeared = [], [], {}
     for ticker, answer in sorted(classifications.items()):
@@ -579,8 +657,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
             fact = derived.get(ticker)
             if not fact:
                 raise RefreshError(f"{ticker} is no longer in the recorded book to carry forward")
-            carried.append(_carry_forward_provenance(
-                _carried_row(ticker, fact), recorded, derived))
+            carried.append(_carried_row(ticker, fact))
         elif answer["classification"] == "sold":
             sold.append(ticker)
 
@@ -588,17 +665,16 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
     for row in anchor.get("positions") or []:
         row = _supplied_row(row)
         answer = appeared.get(row.get("ticker"))
-        supplied.append(_appearance_stamp(row, answer, snapshot["as_of"]) if answer
-                        else _carry_forward_provenance(row, recorded, derived))
+        supplied.append(_appearance_stamp(row, answer, snapshot["as_of"]) if answer else row)
     envelope = {"as_of": snapshot["as_of"], "positions": supplied + carried}
     if snapshot.get("cash") is not None:
         envelope["cash"] = snapshot["cash"]
     if snapshot.get("fx"):
         envelope["fx"] = snapshot["fx"]
     try:
-        _adopted_snapshot, adopted_anchor = snapshot_adapter.normalize_book(
-            envelope, today=today or dt.date.fromisoformat(snapshot["as_of"]),
-            allow_engine_provenance=True)
+        _adopted_snapshot, adopted_anchor = carry_recorded_starts(
+            envelope, events, splits=splits,
+            today=today or dt.date.fromisoformat(snapshot["as_of"]))
     except snapshot_adapter.SnapshotError as exc:
         raise RefreshError(f"the adopted book failed validation: {exc}") from exc
 

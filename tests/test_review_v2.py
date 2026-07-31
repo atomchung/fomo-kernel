@@ -1194,7 +1194,12 @@ def test_a_differing_second_declaration_is_recorded_first_then_reviewed():
         derived = ledger_engine.derive_holdings(events)["holdings"]
         assert derived["PLTR"]["shares"] == 30, "holdings derive from the adopted anchor"
         assert derived["SPY"]["shares"] == 3, "post-adoption trades still apply on top"
-        assert derived["PLTR"]["cycle_id"] == "PLTR#2026-07-15#1"
+        # #539: adopting a newer view of a position that was never sold does not
+        # restart it. PLTR was on the books on 2026-07-10 and was added to on the
+        # 12th; the cycle the user's thesis is written against is still that one,
+        # so the declaration's own date does not become its start.
+        assert derived["PLTR"]["cycle_id"] == "PLTR#2026-07-10#1"
+        assert derived["SPY"]["cycle_id"] == "SPY#2026-07-10#1"
 
         # ...and only now is there a review. The same declaration that was
         # refused above reconciles clean against the book it just updated, so it
@@ -1216,6 +1221,114 @@ def test_a_differing_second_declaration_is_recorded_first_then_reviewed():
         assert [row["type"] for row in _ledger_rows(root)] == \
             ["snapshot", "trade", "trade", "adjustment", "snapshot", "reconciliation"], \
             "an identical finalize replay appends neither a second mark nor a second anchor"
+
+
+def test_a_second_declaration_does_not_ask_for_theses_it_already_has():
+    """#539's acceptance, end to end through the lane a user actually walks.
+
+    The user declares their holdings and writes a thesis for each position --
+    the most effortful thing a review asks of them. They declare again a few
+    weeks later, having sold nothing, and the review asks for the same theses
+    again: the snapshot-derived cycle ids were minted from each declaration's
+    own `as_of`, so the theses on file belonged to the previous generation of
+    ids and `missing_thesis_positions` was honestly reporting that none of the
+    current ids had one.
+
+    Nothing here touches the question layer. `missing_thesis_positions` is still
+    `positions where cycle_id not in active`; what changed is that a position
+    nobody sold keeps its cycle id, so it finds the thesis that was always there.
+    """
+    positions = [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                  "market": "US", "currency": "USD"},
+                 {"ticker": "PLTR", "shares": 20, "avg_cost": 30,
+                  "market": "US", "currency": "USD"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        first, _path = _snapshot_prepare(
+            tmp, root, payload={"as_of": "2026-06-30", "positions": positions},
+            name="first.json")
+        assert sorted(row["cycle_id"] for row in first["missing_thesis_positions"]) == \
+            ["PLTR#2026-06-30#1", "SPY#2026-06-30#1"], (
+                "the opening declaration has no theses yet, so both are asked for")
+        assert _finalize_snapshot_session(tmp, root, first, "first").returncode == 0
+
+        moved = [dict(positions[0]), dict(positions[1], shares=21)]
+        second, _later = _snapshot_prepare(
+            tmp, root, payload={"as_of": "2026-07-28", "positions": moved},
+            name="second.json")
+        assert second["missing_thesis_positions"] == [], (
+            "they answered this in the first review and sold nothing since; "
+            "asking again is the product telling them it does not remember")
+        assert sorted(row["cycle_id"] for row in
+                      second["state_snapshot"]["thesis_states"]) == \
+            ["PLTR#2026-06-30#1", "SPY#2026-06-30#1"], (
+                "and the theses are the same ones, still on the same cycles")
+        assert _finalize_snapshot_session(tmp, root, second, "second").returncode == 0
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        assert sorted(row["cycle_id"] for row
+                      in ledger_engine.derive_holdings(events)["holdings"].values()) == \
+            ["PLTR#2026-06-30#1", "SPY#2026-06-30#1"], (
+                "the recorded book agrees with the plan the user was shown")
+
+
+def test_a_review_lane_adoption_keeps_the_holding_duration_the_user_answered():
+    """#536: the review lane used to spend an answer the refresh lane collected.
+
+    The user updates their book, is asked about a position that appeared, and
+    says they have held it about fourteen months. The refresh lane records that.
+    Later they hand over a holdings view whose only change is small -- an
+    ordinary path, adopted without ceremony -- and get a review. Before this, the
+    review lane rebuilt the anchor from the declared envelope, which structurally
+    cannot carry provenance, so the answered start reverted to a bookkeeping date
+    and every holding-period reading for that position quietly became wrong. They
+    were never told and never re-asked, because the position is held, not
+    appearing.
+
+    The carry-forward has one implementation now, reached by both lanes, which is
+    this issue's third acceptance criterion.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        opening = [{"ticker": "SPY", "shares": 2, "avg_cost": 600,
+                    "market": "US", "currency": "USD"}]
+        plan, _path = _snapshot_prepare(
+            tmp, root, payload={"as_of": "2026-06-30", "positions": opening},
+            name="opening.json")
+        assert _finalize_snapshot_session(tmp, root, plan, "opening").returncode == 0
+
+        appeared = opening + [{"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                               "market": "US", "currency": "USD"}]
+        with_newco = _snapshot_json(tmp, payload={"as_of": "2026-07-15",
+                                                  "positions": appeared},
+                                    name="with-newco.json")
+        receipt = _refresh(str(root), str(with_newco))
+        assert [row["ticker"] for row in receipt["pending_confirmations"]] == ["NEWCO"]
+        adopted = _refresh(str(root), str(with_newco),
+                           {"refresh_id": receipt["refresh_id"],
+                            "answers": [{"ticker": "NEWCO", "classification": "confirmed",
+                                         "held_months": 14}]})
+        assert adopted["status"] == "adopted"
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        assert ledger_engine.derive_holdings(events)["holdings"]["NEWCO"]["cycle_id"] == \
+            "NEWCO#2025-05-15#1", "the refresh lane records the answer correctly"
+
+        # A small share change: `plan_refresh` raises nothing, so this reaches the
+        # review lane rather than being routed back (#530).
+        later = [dict(appeared[0]), dict(appeared[1], shares=11)]
+        review, _again = _snapshot_prepare(
+            tmp, root, payload={"as_of": "2026-07-28", "positions": later},
+            name="later.json")
+        assert review["engine_state"]["holdings"]["positions"]["NEWCO"]["cycle_start"] == \
+            "2025-05-15", (
+                "the plan the user is questioned from must not restart a "
+                "position they answered for")
+        assert _finalize_snapshot_session(tmp, root, review, "later").returncode == 0
+        events, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        holdings = ledger_engine.derive_holdings(events)["holdings"]
+        assert holdings["NEWCO"]["cycle_id"] == "NEWCO#2025-05-15#1", (
+            "and the adopted book keeps it: an answer the product spent "
+            "silently is the same defect as one it never collected")
+        assert holdings["SPY"]["cycle_id"] == "SPY#2026-06-30#1"
 
 
 def test_second_snapshot_reconciled_marks_ledger_without_new_anchor():

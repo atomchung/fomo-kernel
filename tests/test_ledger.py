@@ -152,6 +152,34 @@ def test_an_unknown_start_becomes_the_cycle_id_the_engine_already_has():
     assert not out["integrity"]
 
 
+def test_a_start_carried_off_the_record_reads_exactly_like_an_answered_one():
+    """#539: the third basis is a statement about whose date it is, not a rule.
+
+    ``recorded_book`` says the start came from the book already on record rather
+    than from anything the user said this time. ``_anchored_cycle_start`` has to
+    read it identically to ``user_estimate`` -- same date, same cycle, no
+    integrity note -- because the distinction it carries is for the ledger's own
+    honesty, not for the arithmetic. Any divergence here would make the fix for
+    a reminted cycle land as a *differently* reminted one, which no test above
+    would catch.
+    """
+    events = [_snap("2026-07-20", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
+                                    "since": "2026-06-30",
+                                    "since_basis": "recorded_book"}])]
+    out = lg.derive_holdings(events)
+    n = out["holdings"]["NVDA"]
+    assert n["since"] == "2026-06-30" and n["cycle_id"] == "NVDA#2026-06-30#1"
+    assert not out["integrity"]
+    answered = lg.derive_holdings([
+        _snap("2026-07-20", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
+                              "since": "2026-06-30", "since_basis": "user_estimate"}])
+    ])["holdings"]["NVDA"]
+    assert {key: value for key, value in n.items()} == answered, (
+        "the two bases differ in what they claim about the date's source and in "
+        "nothing else; a reader that treated them differently would be deciding "
+        "arithmetic from provenance")
+
+
 def test_a_cycle_start_with_no_stamp_is_ignored_and_reported():
     """A hand-edited ledger can put anything in the file. A date with no
     ``since_basis`` beside it is precisely the false precision the pairing rule

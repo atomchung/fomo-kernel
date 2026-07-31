@@ -43,6 +43,9 @@ class SnapshotError(ValueError):
 
 
 ENVELOPE_KEYS = {"as_of", "positions", "cash", "fx"}
+# What normalize_envelope returns, declared beside what it accepts so `prepare`
+# can tell a validated envelope from a raw one rather than trusting its caller.
+_NORMALIZED_KEYS = ENVELOPE_KEYS | {"merged_rows", "input_rows"}
 POSITION_KEYS = set(ledger.SNAPSHOT_POSITION_KEYS)   # single declaration: ledger.py
 # Engine-assigned, never agent-supplied. Also declared once, in ledger.py.
 ENGINE_ASSIGNED_KEYS = set(ledger.ENGINE_ASSIGNED_POSITION_KEYS)
@@ -127,6 +130,13 @@ def _normalize_provenance(raw, index, row):
     downstream reader would be free to print it as an exact day. Enforcing the
     pair here is what makes "a derived start date is never rendered as an exact
     date" true at the storage layer rather than a habit each renderer must keep.
+
+    The stamp says who the date came from, and the set of answers to that lives
+    in ``ledger.SINCE_BASES`` rather than here: ``user_estimate`` is the user's
+    own approximation, ``recorded_book`` is a start the record already held and
+    this declaration did not restate (#539), and ``unknown`` carries no date at
+    all. Both dated bases are validated identically — the distinction is stored,
+    not enforced, because nothing downstream may treat either as exact.
     """
     basis = raw.get("since_basis")
     since = raw.get("since")
@@ -135,6 +145,10 @@ def _normalize_provenance(raw, index, row):
             raise SnapshotError(
                 f"positions[{index}].since requires since_basis; a reconstructed "
                 "start date may not travel without the stamp saying it is one")
+        if raw.get("cycle_seq") is not None:
+            raise SnapshotError(
+                f"positions[{index}].cycle_seq requires the dated start it "
+                "sequences; a cycle segment cannot travel on its own")
         return
     if basis not in ledger.SINCE_BASES:
         allowed = ", ".join(ledger.SINCE_BASES)
@@ -143,13 +157,41 @@ def _normalize_provenance(raw, index, row):
         if since is not None:
             raise SnapshotError(
                 f"positions[{index}].since_basis is 'unknown' but a since was supplied")
+        if raw.get("cycle_seq") is not None:
+            raise SnapshotError(
+                f"positions[{index}].since_basis is 'unknown', which is a "
+                "two-segment cycle with no sequence to state")
         row["since_basis"] = "unknown"
         return
     if since is None:
         raise SnapshotError(
-            f"positions[{index}].since_basis is 'user_estimate' but no since was derived")
+            f"positions[{index}].since_basis is {basis!r} but no since was derived")
     row["since"] = _strict_date(since, f"positions[{index}].since").isoformat()
-    row["since_basis"] = "user_estimate"
+    row["since_basis"] = basis
+    _normalize_cycle_seq(raw, index, row)
+
+
+def _normalize_cycle_seq(raw, index, row):
+    """Attach the cycle's sequence segment, which only a dated start can carry.
+
+    A `cycle_id` is `ticker#since#seq`, and #539 carries the start across
+    declarations. The sequence has to travel with it: a position flattened and
+    reopened on the same day differs from the cycle it replaced in this segment
+    alone, so carrying the date without the sequence hands a live position the
+    identity of one that was sold — with that cycle's thesis, conditions and
+    closed status attached. Worse than the reminting it was fixing.
+
+    Refused without a dated pair, deliberately. `since_basis: "unknown"` yields
+    the two-segment `ticker#unknown` cycle, which has no sequence to state, and
+    a bare sequence with no start would claim a reopen the row cannot date.
+    """
+    seq = raw.get("cycle_seq")
+    if seq is None:
+        return
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+        raise SnapshotError(
+            f"positions[{index}].cycle_seq must be a positive integer")
+    row["cycle_seq"] = seq
 
 
 def _normalize_position(raw, index, *, allow_engine_provenance=False):
@@ -456,6 +498,12 @@ def _anchor(snapshot):
             position["since_basis"] = row["since_basis"]
             if row.get("since"):
                 position["since"] = row["since"]
+            # Only past the first (#539). Like `carried`, every snapshot payload
+            # is content-addressed, so an unconditional key would rewrite every
+            # existing `snapshot_id` — and the overwhelmingly common cycle is
+            # the first, where the sequence states nothing the default does not.
+            if (row.get("cycle_seq") or 1) > 1:
+                position["cycle_seq"] = row["cycle_seq"]
         positions.append(position)
     event = {
         "type": "snapshot",
@@ -579,14 +627,28 @@ def _honesty(snapshot, currencies, fx_gaps, unclassified, portfolio_structure):
     return entries
 
 
-def prepare(path, driver_map=None, instrument_map=None, today=None):
+def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=None):
     """Return ``(card, state, meta)`` for one normalized local snapshot.
 
     No history-only metric is synthesized.  When a complete, consistently valued
     portfolio cannot be put in one currency, ``weights_available`` is false and
     the adapter emits no sizing/diversification dimension.
+
+    ``snapshot`` is an envelope that has already been through
+    ``normalize_envelope``, supplied instead of loading ``path``.  Its one
+    producer is ``book_refresh.carry_recorded_starts``, which stamps each
+    continuously-held position with the cycle start the record already held
+    (#539) — and which is the review lane's only way to obtain one, because
+    engine-assigned provenance may not enter through the file path an agent
+    writes.  Passing it here rather than post-processing the result is what
+    gives this route one computation with two consumers: ``_anchor`` carries the
+    stamp into the ledger event, and ``_state_positions`` derives the plan's
+    cycle ids from that same anchor.
     """
-    snapshot = _load(os.path.abspath(os.path.expanduser(path)), _today(today))
+    if snapshot is None:
+        snapshot = _load(os.path.abspath(os.path.expanduser(path)), _today(today))
+    elif set(snapshot) != _NORMALIZED_KEYS:
+        raise SnapshotError("prepare's snapshot argument must be a normalized envelope")
     basis, native_values = _valuation(snapshot)
     global_values, currencies, fx_gaps = _global_values(snapshot, native_values)
     weights_available = bool(global_values)
