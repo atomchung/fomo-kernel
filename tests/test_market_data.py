@@ -582,6 +582,120 @@ def test_e_an_open_ended_request_is_not_served_from_a_closed_window():
         "stale close becomes today's weight")
 
 
+# ────────────── E2. the frozen frame: amending, not re-observing ──────────────
+#
+# `covers` is the right rule for the ordinary cache and the wrong one for a pass
+# that amends a review the user has already read. A caller in that position is
+# not asking for the current market; it is asking for the frame the card it is
+# amending was rendered from. #665: one unpriced symbol anywhere in the universe
+# made `covers` refuse forever, so `review.py add-cash` re-priced the whole
+# review at a second instant and then reported its own movement to the user as
+# facts moving underneath them.
+
+FROZEN = {"TR_OFFLINE": "0", market_data.FROZEN_ENV: "1"}
+
+
+def test_e2_a_frozen_pass_reuses_the_recorded_frame_and_asks_nothing():
+    with provider() as p:
+        first = p.resolve(_request())
+        market_data.reset_memo()          # a different process has no memo
+        again = p.resolve(_request(), env=FROZEN)
+    assert len(p.calls) == 1, (
+        f"a frozen pass must reach no provider at all; it made {len(p.calls) - 1} extra "
+        f"request(s): {p.calls[1:]}")
+    assert again.source == first.source and again.priced == first.priced, (
+        f"the frozen pass must answer with the recorded frame: {again.source} {again.gaps}")
+    assert again.to_json() == first.to_json(), (
+        "byte-identical is the whole claim — a card amended against anything else is a second "
+        "review wearing the first one's session id")
+
+
+def test_e2_a_frozen_pass_reuses_a_frame_the_coverage_rule_would_refuse():
+    """The #665 mechanism itself, at the level it happens.
+
+    DEAD comes back present-but-empty, exactly as a delisted or misspelled symbol
+    does. `covers` then refuses to serve this request from its own stored bundle
+    — deliberately, so a transient outage gets its retry — and every later pass
+    on the same book re-resolves. That retry is right for a fresh review and
+    wrong for one being amended, and the difference is the posture, not the
+    bundle.
+    """
+    request = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
+    with provider() as p:
+        stored = p.resolve(request)
+        assert not stored.covers(request), (
+            "precondition: an unpriced symbol is exactly what makes the ordinary cache refuse "
+            "to serve the request that produced it")
+        market_data.reset_memo()
+        ordinary = p.resolve(request)
+        assert len(p.calls) == 2, (
+            "precondition: without the frozen posture this request re-resolves every time — "
+            f"that is the bug, and it must still be reproducible here: {p.calls}")
+        assert ordinary.source == "yahoo"
+        market_data.reset_memo()
+        frozen = p.resolve(request, env=FROZEN)
+    assert len(p.calls) == 2, (
+        f"the frozen pass must not have added a third request: {p.calls}")
+    assert frozen.to_json() == stored.to_json(), (
+        "the frozen pass must hand back the same frame, gaps and all: a review is amended "
+        f"against what it was computed from, not against a better answer: {frozen.gaps}")
+
+
+def test_e2_a_frozen_pass_with_no_recorded_frame_states_it_and_still_asks_nothing():
+    """Fail-closed, and silent on the wire either way.
+
+    The frame being gone — a day boundary, a reset root, a session prepared
+    somewhere else — is a real change of facts, so it degrades exactly as an
+    unreachable provider does and the caller's own gate refuses. What it must
+    never do is quietly fetch a fresh one: that is the failure this posture
+    exists to remove, and 'no frame on record' is the moment it would be most
+    tempting.
+    """
+    with provider() as p:
+        bundle = p.resolve(_request(), env=FROZEN)
+    assert not p.calls, f"a frozen pass must never reach the provider: {p.calls}"
+    assert not bundle.usable and bundle.source == "unavailable", bundle.source
+    assert [gap["code"] for gap in bundle.gaps] == ["frozen_frame_gone"], bundle.gaps
+
+
+def test_e2_a_frozen_pass_does_not_read_a_different_days_frame():
+    with provider() as p:
+        p.resolve(_request())
+        market_data.reset_memo()
+        tomorrow = p.resolve(_request(), env=FROZEN, today=NEXT)
+    assert not tomorrow.usable, (
+        "yesterday's closes must not be served as this session's frozen frame; a day boundary "
+        f"is a changed price frame and the caller refuses on it: {tomorrow.source}")
+    assert len(p.calls) == 1, f"and it must still ask nothing: {p.calls}"
+
+
+def test_e2_an_offline_frozen_pass_degrades_exactly_as_offline_alone_does():
+    """The posture order, which is load-bearing in the unglamorous direction.
+
+    A machine that may not reach a provider has nothing to freeze. If the frozen
+    branch ran first, an offline review would report `frozen_frame_gone` where an
+    identical offline review reports `network_disabled` — two runs on the same
+    machine describing it differently because of which subcommand invoked them,
+    and a gate comparing the frame would then refuse a session for a reason that
+    is not about the market at all.
+    """
+    with provider() as p:
+        offline = p.resolve(_request(), env={"TR_OFFLINE": "1"})
+        both = p.resolve(_request(), env={"TR_OFFLINE": "1", market_data.FROZEN_ENV: "1"})
+    assert not p.calls, f"neither may reach the provider: {p.calls}"
+    assert both.to_json() == offline.to_json(), (
+        f"offline degradation must not depend on the frozen posture: "
+        f"{[g['code'] for g in both.gaps]} vs {[g['code'] for g in offline.gaps]}")
+
+
+def test_e2_the_frozen_posture_is_read_in_one_place_and_declared():
+    assert "frozen_frame_gone" in market_data.GAP_CODES, \
+        "a gap code must be declared before it can be emitted"
+    assert market_data.frame_frozen({market_data.FROZEN_ENV: "1"})
+    for spelling in ("0", "", "no", "off"):
+        assert not market_data.frame_frozen({market_data.FROZEN_ENV: spelling}), spelling
+
+
 # ────────────────────────── F. supplied envelope ──────────────────────────
 
 def _envelope(path, closes, fx=None, splits=None, as_of="2026-07-29"):
@@ -1058,6 +1172,30 @@ def test_h_the_offline_posture_has_exactly_one_reader():
     assert set(readers) == {"market_data.py"}, (
         f"{market_data.OFFLINE_ENV} is read outside the resolver: {readers}. One reader, so the "
         "posture cannot be re-decided per route.")
+
+
+def test_h_the_frozen_posture_has_exactly_one_reader_too():
+    """Same rule, same reason, for #665's posture.
+
+    `review.py` exports the variable through `market_data.FROZEN_ENV` rather than
+    a literal of its own precisely so this holds: a second module spelling the
+    name out is a second policy about when a review may be re-observed, and the
+    whole point of the posture is that no route gets to decide that for itself.
+    """
+    import ast
+    readers = {}
+    for name, path in _engine_modules():
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        if market_data.FROZEN_ENV not in source:
+            continue
+        tree = ast.parse(source, filename=path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value == market_data.FROZEN_ENV:
+                readers.setdefault(name, []).append(node.lineno)
+    assert set(readers) == {"market_data.py"}, (
+        f"{market_data.FROZEN_ENV} is spelled out outside the resolver: {readers}. Reach it "
+        "through market_data.FROZEN_ENV instead.")
 
 
 def test_i_the_resolver_never_picks_a_state_root_for_its_caller():

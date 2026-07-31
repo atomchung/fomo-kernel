@@ -92,14 +92,22 @@ __all__ = [
     "MarketDataError",
     "MarketDataBundle",
     "OFFLINE_ENV",
+    "FROZEN_ENV",
     "GAP_CODES",
     "network_allowed",
+    "frame_frozen",
     "build_request",
     "resolve",
     "reset_memo",
 ]
 
 OFFLINE_ENV = "TR_OFFLINE"
+#: A pass that may only reuse the exact frame an earlier pass already resolved
+#: for the identical request, and may never reach a provider. `review.py
+#: add-cash` sets it: that command amends a review the user has already been
+#: shown, so a second observation instant is not fresher data, it is a different
+#: review wearing the same session (#665).
+FROZEN_ENV = "TR_MARKET_DATA_FROZEN"
 CACHE_KIND = "market_data"
 
 #: Every degradation this module can report. Stable strings: a caller may branch
@@ -114,6 +122,7 @@ GAP_CODES = (
     "symbol_unpriced",      # a requested symbol came back with no usable close
     "fx_unavailable",       # a requested currency has no usable rate
     "feed_incomplete",      # a supplied envelope does not cover what was asked
+    "frozen_frame_gone",    # a frozen pass found no frame recorded for this request
 )
 
 # One resolved bundle per normalized request, for this process only. The disk
@@ -496,6 +505,54 @@ def network_allowed(env=None):
     return str(value).strip().lower() not in {"1", "true", "yes", "on"}
 
 
+def frame_frozen(env=None):
+    """Whether this process may only reuse an already-resolved frame (#665).
+
+    A posture, read here for the same reason :func:`network_allowed` is: it must
+    not be re-decided per route, or the next workflow inherits everything except
+    the one rule that mattered. ``resolve`` is the single consumer.
+
+    The distinction from ``TR_OFFLINE`` is the point. Offline means *this machine
+    cannot reach a provider*, and the honest answer is a degraded review. Frozen
+    means *this pass must answer with the frame an earlier pass already resolved*
+    — the review is not being computed for the first time, it is being amended,
+    and closes that moved since the user read the card are not fresher facts but
+    a second review. Where offline degrades, frozen reuses.
+    """
+    value = (env if env is not None else os.environ).get(FROZEN_ENV, "")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _from_frozen_frame(request, *, root, today=None):
+    """The exact frame recorded for this request, or a stated absence.
+
+    Exact key, not :meth:`MarketDataBundle.covers`. Coverage is the right rule
+    for the ordinary cache — it lets a narrower later request ride along free,
+    and it deliberately refuses to serve a request naming a symbol the stored
+    bundle failed to price, so a transient provider outage gets the retry it
+    deserves (#605 external review, finding 5). That refusal is exactly wrong
+    here, and it is what #665 was: one unpriced symbol anywhere in the universe
+    made every later pass on the same book re-resolve, `add-cash` re-priced the
+    whole review at a second instant, and the recompute's own moved numbers were
+    then reported to the user as "the facts moved". A pass amending a review does
+    not want a retry; it wants the frame the card it is amending was rendered
+    from, gaps and all.
+
+    Never reaches the provider, on any outcome. A miss is stated as a gap and the
+    review degrades exactly as an unreachable provider would, which the caller's
+    own gate then refuses — the frame this session was built on being gone is a
+    real change of facts, not something to paper over with fresh closes.
+    """
+    blob = fetch_cache.load(CACHE_KIND, request, root=root, today=today)
+    bundle = MarketDataBundle.from_json(blob) if blob is not None else None
+    if bundle is not None and bundle.usable:
+        return bundle
+    return _unavailable(request, [_gap(
+        "frozen_frame_gone",
+        "this pass may only reuse the frame already resolved for this request, "
+        "and no usable frame is recorded for it")])
+
+
 def _provider_available():
     """Whether :func:`_download` below could run at all — the other half of the
     provider seam, and module-level for exactly the same two reasons.
@@ -769,7 +826,14 @@ def resolve(request, *, root, feed=None, today=None, env=None, memo=True):
     # TR_OFFLINE, which is precisely the equivalence this flag exists to
     # guarantee (external review, finding 6).
     if not network_allowed(env):
+        # Checked before the frozen posture, not after. A process that may not
+        # reach a provider has nothing to freeze, and routing it here keeps an
+        # offline run's degradation byte-identical whether or not the caller
+        # asked for a frozen frame — the gap code a review reports must describe
+        # the machine it ran on, not which subcommand invoked it.
         return _from_yahoo(request, root=root, today=today, env=env)
+    if frame_frozen(env):
+        return _from_frozen_frame(request, root=root, today=today)
     if memo:
         for bundle in _MEMO.values():
             if bundle.covers(request):

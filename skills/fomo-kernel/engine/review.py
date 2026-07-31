@@ -1506,7 +1506,8 @@ def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
         # accumulation is FIFO, so `cost`/`avg_cost` move, and `origin`/`market`/
         # `currency` appear. `add-cash` re-enters this exact pipeline to add an
         # anchor to a session the user has already answered against, and refuses
-        # when anything but the anchor moved; that guard is what caught this.
+        # when the recorded book underneath it moved; that guard is what caught
+        # this.
         #
         # Disagreement is the other case, and it is still adopted below: there
         # the supplied file did not cover the book, so the card's own view is not
@@ -1733,8 +1734,20 @@ def _ingest_trades(root, paths, card, state):
     return result, card, state
 
 
-def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_receipt, card, state, *, append=True):
-    """Final short-lock gate for one frozen engine/PB transaction (#501)."""
+def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_receipt, card, state, *,
+                                     append=True, amending=False):
+    """Final short-lock gate for one frozen engine/PB transaction (#501).
+
+    ``amending`` is a pass recomputing a review the user has already been shown
+    — today only ``cmd_add_cash``. Such a pass may find every one of its rows
+    already recorded and nothing else: a transaction file that grew since the
+    card was rendered is a different review, and the answers already given were
+    made against a book that no longer exists. Refused *here*, before the
+    append, because a refusal that lands after it has already written the rows
+    it is refusing (#665, maintainer disposition: "remains a refusal before any
+    write"). The dedup that decides it is the engine's own, not a second digest
+    with its own opinion about what counts as the same file.
+    """
     frame = basis_receipt.get("valuation_frame")
     if not isinstance(frame, dict) or _frame_identity(frame) != basis_receipt["valuation_frame_identity"]:
         raise ReviewError("this review's price basis changed while it was being prepared; rerun prepare")
@@ -1789,6 +1802,14 @@ def _verify_and_ingest_frozen_trades(root, inputs, batches, overlay, basis_recei
         if append and (derived_book.get("holdings") or declared_anchor):
             card, state, reconciliation = _overlay_ledger_holdings(
                 card, state, derived_book, declared_anchor=declared_anchor)
+        if amending and verified_overlay["fresh"]:
+            raise ReviewError(
+                "the facts moved: this is not the anchor propagating into the account pillar — "
+                f"the transaction file has grown by {len(verified_overlay['fresh'])} row(s) since "
+                "this review's card was rendered, so the answers already given were made against "
+                "a book that no longer exists. Nothing was written. Start a fresh review with "
+                "prepare (adding --cash if you have the balance) rather than amending one the "
+                "user answered against different trades")
         if append and verified_overlay["fresh"]:
             ledger.append_events(ledger_path, verified_overlay["fresh"], recorded_at=state.get("date_end"))
         recorded_book = (_record_derived_book(root, ledger_path, verified_overlay["events"], state)
@@ -1976,6 +1997,13 @@ def _run_engine(paths, root, args, *, ledger_path=None):
         env.pop("TR_PRICES", None)      # only an explicit --prices may inject a price envelope
         if getattr(args, "prices", None):
             env["TR_PRICES"] = os.path.abspath(os.path.expanduser(args.prices))
+        # #665: a pass that amends a review the user has already read may only
+        # reuse the frame that review was rendered from. Never a CLI flag — it is
+        # a property of the lane, set by `cmd_add_cash` alone, so no caller can
+        # ask an ordinary `prepare` to answer from an older instant.
+        env.pop(market_data.FROZEN_ENV, None)
+        if getattr(args, "amending_session", False):
+            env[market_data.FROZEN_ENV] = "1"
         previous = _previous_state(root)
         if previous and previous.get("date_end"):
             env["TR_PREV_END"] = str(previous["date_end"])
@@ -3832,8 +3860,8 @@ def _cash_anchor_status(state, route, cadence):
                 + " — stating what it unlocks and that skipping keeps the holdings-only view. "
                 "If they answer, run add-cash --session-id <id> --cash '{\"currency\":\"<CUR>\","
                 "\"amount\":<number>,\"as_of\":\"<date>\"}' and continue on the session it "
-                "returns; it reuses this session's frozen prices and refuses if anything but "
-                "the anchor moved. Never guess a balance")}
+                "returns; it reuses this session's frozen prices rather than fetching new ones, "
+                "and refuses if the facts underneath the card moved. Never guess a balance")}
 
 
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
@@ -4242,7 +4270,7 @@ def _prepare_session(args):
         elif frozen_transaction is not None:
             ledger_ingest, card, state = _verify_and_ingest_frozen_trades(
                 root, frozen_transaction, batches, overlay, virtual_basis, card, state,
-                append=persist)
+                append=persist, amending=bool(getattr(args, "amending_session", False)))
         elif persist and paths:
             ledger_ingest, card, state = _ingest_trades(root, paths, card, state)
     finally:
@@ -5629,15 +5657,6 @@ def cmd_resume(args):
            "next_action": "run resume with --session-id" if pending else "run prepare"})
 
 
-# What supplying a cash anchor is allowed to move, and nothing else may. These
-# are exactly the keys a with/without-`--cash` pair differs in on the same book
-# (measured, not assumed: `engine_state` differs only in `cash`; `engine_card`
-# only in `cash`, `acct_perf`, and `honesty_ledger`). Anything outside them
-# moving means the second run was not the same review — a re-priced book, an
-# edited CSV, a changed ledger — and the user's answers would be silently
-# re-based onto numbers nobody saw.
-CASH_RECOMPUTE_STATE_KEYS = ("cash",)
-CASH_RECOMPUTE_CARD_KEYS = ("cash", "acct_perf", "honesty_ledger")
 # Artifacts the recomputed session inherits verbatim. `answers`/`narrative` are
 # what the user already answered; `question-surfaces`/`question-presentations`
 # are the exact question bytes they were asked, frozen so an interrupted session
@@ -5646,34 +5665,97 @@ CASH_RECOMPUTE_CARD_KEYS = ("cash", "acct_perf", "honesty_ledger")
 CASH_RECOMPUTE_CARRIED = ("answers", "narrative",
                           "question-surfaces", "question-presentations")
 
+# The facts underneath the card the user already read, which a cash anchor may
+# not move — stated positively, and it is the direction that matters (#665).
+#
+# The predecessor asked the opposite question. It excluded a hand-maintained set
+# of cash-derived keys from `engine_state` and `engine_card`, then compared
+# `state_snapshot` and `question_queue` **whole**, and that shape cannot be kept
+# true: the recompute re-enters the entire lane, so any downstream effect of the
+# re-entry — including its own second market-data resolution — arrived as
+# "drift". The command refused the exact session it exists for, and a card-beat
+# cash answer became unrecordable. What the recompute owes is not that nothing
+# moved; a cash anchor is *supposed* to move the account pillar. It owes that
+# the facts the user's answers were made against are the same facts. So this
+# names those facts, and compares nothing else.
+#
+# Two rules for adding a row. It must be an input or a frozen observation, never
+# a projection of one — a projection is where a cash-derived value eventually
+# appears, and that is the defect above rebuilt. And it must be measurably
+# invariant under `--cash` on the same book: measured across five mock books, an
+# anchor moves `engine_state.cash`, `engine_card`'s `cash`/`acct_perf`/
+# `honesty_ledger`, and `card_plan.required_honesty_keys`, and nothing else.
 
-def _without(mapping, keys):
-    return {key: value for key, value in (mapping or {}).items() if key not in keys}
+# The valuation inputs the card was priced from. `add-cash` reuses them rather
+# than re-resolving (see `cmd_add_cash`), so on the ordinary path these are
+# identical by construction and this row is the proof, not the hope.
+CASH_RECOMPUTE_FRAME_KEYS = ("price_snapshot", "price_provenance", "price_request",
+                             "valuation_frame", "splits", "splits_window",
+                             "currency_meta", "market_context")
+# The recorded book and the window it was read over. An edited CSV, a different
+# input file, or a ledger some other session moved in between lands here.
+CASH_RECOMPUTE_BOOK_KEYS = ("holdings", "portfolio_structure", "metrics",
+                            "date_start", "date_end", "prev_end", "n_trades",
+                            "n_round_trips", "n_held", "insufficient_data",
+                            "review_tier", "problem_events")
+# What the behavior review found. The driver and instrument maps reach a review
+# only through here, so a map supplied to this command but not to `prepare` is a
+# refusal rather than a silently re-attributed card.
+CASH_RECOMPUTE_DIAGNOSIS_KEYS = ("ticker_diagnosis", "top_holes", "dims_raw",
+                                 "overview", "strength", "payoff_attribution",
+                                 "alpha_beta_breakdown", "what_if",
+                                 "portfolio_structure", "prescriptions",
+                                 "thesis_questions", "vs_market_gate")
+
+
+def _named(mapping, keys):
+    return {key: (mapping or {}).get(key) for key in keys}
+
+
+def _question_identities(plan):
+    """Which questions were asked, without their wording.
+
+    The identity, not the bytes. A queue row's text quotes this period's
+    numbers, so comparing it byte for byte makes the gate hostage to every
+    figure on the card — which is how `question_queue` ended up in a refusal
+    naming a surface a cash anchor cannot reach (#665). What has to hold is that
+    the user's recorded answers still map onto the questions this session asks,
+    and that is the id, the kind, and whether an answer was required.
+    """
+    return [{"id": row.get("id"), "kind": row.get("kind"), "required": row.get("required"),
+             "ticker": row.get("ticker"), "cycle_id": row.get("cycle_id")}
+            for row in plan.get("question_queue") or []]
+
+
+CASH_RECOMPUTE_SOURCE_FACTS = (
+    ("the input files", lambda plan: (plan.get("input") or {}).get("paths")),
+    ("the valuation frame the card was priced from",
+     lambda plan: {"engine_state": _named(plan.get("engine_state"),
+                                          CASH_RECOMPUTE_FRAME_KEYS),
+                   "price_feed": ((plan.get("input") or {}).get("price_feed")
+                                  or {}).get("provenance")}),
+    ("the recorded book",
+     lambda plan: _named(plan.get("engine_state"), CASH_RECOMPUTE_BOOK_KEYS)),
+    ("what the review diagnosed",
+     lambda plan: _named(plan.get("engine_card"), CASH_RECOMPUTE_DIAGNOSIS_KEYS)),
+    ("the positions with no recorded thesis",
+     lambda plan: plan.get("missing_thesis_positions")),
+    ("the rules the user was offered",
+     lambda plan: {"candidate_rules": (plan.get("card_plan") or {}).get("candidate_rules"),
+                   "candidate_comparison":
+                       (plan.get("card_plan") or {}).get("candidate_comparison")}),
+    ("the questions the user already answered", _question_identities),
+)
 
 
 def _cash_recompute_drift(before, after):
-    """Everything the recompute moved that a cash anchor may not move.
+    """The source facts that moved under the recompute, as human-readable labels.
 
-    Returns a list of human-readable labels, empty when the two plans describe
-    the same review. The comparison is over the engine's own artifacts *and*
-    over the three agent-facing surfaces the user has already acted on, because
-    "nothing the user answered or chose was invalidated" is the claim this gate
-    exists to make true rather than assert.
+    Empty means the two plans were computed over the same facts — the anchor
+    propagated into the account pillar and nothing underneath it moved, which is
+    the outcome this command exists to produce rather than to refuse.
     """
-    checks = (
-        ("engine_state", lambda plan: _without(plan.get("engine_state"),
-                                               CASH_RECOMPUTE_STATE_KEYS)),
-        ("engine_card", lambda plan: _without(plan.get("engine_card"),
-                                              CASH_RECOMPUTE_CARD_KEYS)),
-        ("state_snapshot", lambda plan: plan.get("state_snapshot")),
-        ("question_queue", lambda plan: plan.get("question_queue")),
-        ("missing_thesis_positions", lambda plan: plan.get("missing_thesis_positions")),
-        ("card_plan.candidate_rules",
-         lambda plan: (plan.get("card_plan") or {}).get("candidate_rules")),
-        ("card_plan.candidate_comparison",
-         lambda plan: (plan.get("card_plan") or {}).get("candidate_comparison")),
-    )
-    return [label for label, read in checks
+    return [label for label, read in CASH_RECOMPUTE_SOURCE_FACTS
             if session.canonical(read(before)) != session.canonical(read(after))]
 
 
@@ -5690,16 +5772,29 @@ def cmd_add_cash(args):
     `prepare --cash` is a full second review: it re-resolves market data (a
     later instant, therefore different closes) and mints a session with none of
     the first one's frozen work. This command re-enters the same lane with the
-    anchor added and then **proves** it was the same review: every engine
-    artifact outside the cash keys must come back byte-identical, and so must
-    the question queue, the candidate rules and the missing-thesis list the user
-    has already acted on. In practice `market_data`'s same-day cache makes the
-    recompute a zero-request replay of the identical bundle, which is what makes
-    that gate pass rather than a coincidence; when it does not — a day boundary
-    crossed, an edited CSV, a ledger that moved — the command refuses and names
-    what drifted instead of re-basing the user's answers onto numbers nobody
-    saw. SKILL.md's "refetching live data would silently change the facts the
-    user already answered against" is the rule; this is its enforcement.
+    anchor added, and the two halves below are what make that a recompute of the
+    same review rather than a second one.
+
+    **It reuses the frame instead of re-resolving it** (`frozen_market_frame`;
+    `market_data.frame_frozen`). The same-day cache was carrying that claim
+    before, and it could not: `MarketDataBundle.covers` refuses to serve a
+    request naming a symbol the stored bundle failed to price — deliberately, so
+    a transient outage gets a retry — so a single unpriced symbol anywhere in
+    the universe made this command re-price the entire review at a second
+    instant. Every downstream number then moved, and the recompute reported its
+    own movement to the user as facts moving underneath them (#665). Amending a
+    review does not want a retry; it wants the frame the card being amended was
+    rendered from.
+
+    **And it proves the facts held rather than asserting it.** The source facts
+    the user's answers were made against — the input files, that frame, the
+    recorded book, the diagnosis, the rules they were offered, the questions
+    they answered — must come back identical. When they do not (an edited CSV, a
+    ledger another session moved, a driver map supplied here but not to
+    `prepare`, a frame no longer recorded) the command refuses and names what
+    moved, instead of re-basing answers onto numbers nobody saw. SKILL.md's
+    "refetching live data would silently change the facts the user already
+    answered against" is the rule; these two are its enforcement.
 
     A new session id is unavoidable and correct: the id is content-addressed
     from engine state and the anchor is part of that state. What must not change
@@ -5737,6 +5832,12 @@ def cmd_add_cash(args):
         cash=args.cash, prices=args.prices, driver_map=args.driver_map,
         instrument_map=args.instrument_map, condition_checks=args.condition_checks,
         prices_unavailable=declared_unavailable,
+        # #665: this pass amends a review the user has already read, so the
+        # anchor is its only new input. Two enforcement points, one idea: the
+        # market frame is reused rather than re-observed (`_run_engine`), and a
+        # transaction file that grew is refused before anything is written
+        # (`_verify_and_ingest_frozen_trades`).
+        amending_session=True,
         snapshot_json=None, card_json=None, state_json=None, timeout=args.timeout)
     result = _prepare_session(rerun)
     if result["status"] == "already_committed":
@@ -5751,13 +5852,17 @@ def cmd_add_cash(args):
             # than no recompute at all.
             shutil.rmtree(session.pending_dir(root, result["session_id"]), ignore_errors=True)
         raise ReviewError(
-            "adding the cash anchor changed more than the anchor; these no longer match the "
-            "session you are amending: " + ", ".join(drift)
-            + ". The answers already given were made against different facts, which is what a "
-              "re-priced book, an edited input file, or a ledger that moved in between looks "
-              "like. Pass the same --prices/--driver-map/--instrument-map this session was "
-              "prepared with; otherwise start a fresh review with prepare --cash rather than "
-              "re-basing answers onto numbers the user never saw")
+            "the facts moved: this is not the anchor propagating into the account pillar, "
+            "which is expected and allowed — it is that the review underneath it is no longer "
+            "the one the user answered. These no longer match the session you are amending: "
+            + ", ".join(drift)
+            + ". The answers already given were made against different facts, which is what an "
+              "edited input file, a ledger another session moved, or a driver/instrument map "
+              "supplied here but not to prepare looks like — and, when the frame itself moved, "
+              "a review whose frozen prices are no longer on record. Pass the same "
+              "--prices/--driver-map/--instrument-map this session was prepared with; otherwise "
+              "start a fresh review with prepare --cash rather than re-basing answers onto "
+              "numbers the user never saw")
     carried = {name: pending.get(name.replace("-", "_")) for name in CASH_RECOMPUTE_CARRIED}
     session.save_pending(root, result["session_id"], **carried)
     if result["session_id"] != args.session_id:
@@ -5768,6 +5873,14 @@ def cmd_add_cash(args):
     recomputed_plan = (session.load_pending(root, result["session_id"]).get("plan") or {})
     _emit({"status": "anchored", "session_id": result["session_id"],
            "superseded_session_id": args.session_id,
+           # #665: the gate has exactly two verdicts and both are stated. This is
+           # the allowed one — the anchor reached the account pillar and every
+           # fact underneath it held. The other is the refusal above, and the
+           # difference between them is what this command used to get wrong.
+           "recompute": {"outcome": "anchor_propagated",
+                         "market_frame": "reused",
+                         "source_facts_verified": [label for label, _read
+                                                   in CASH_RECOMPUTE_SOURCE_FACTS]},
            "review_plan": _plan_for_agent(recomputed_plan),
            "carried_forward": sorted(name for name, value in carried.items() if value is not None),
            "next_action": (
