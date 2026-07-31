@@ -218,13 +218,18 @@ def test_an_fx_only_envelope_is_accepted_with_prices_empty():
     ok(omitted["fx"] == {"TWD": {"usd_per_unit": 0.0307, "date": AS_OF,
                                  "source": "Central bank spot rate"}},
        "fx 正常解析,缺 per-row source 沿用 feed 級", repr(omitted["fx"]))
-    ok(omitted["coverage"] == "single_close", "沒有任何 price row → coverage 層級不因此報錯",
-       omitted["coverage"])
+    # #652: 沒有任何 price row 就沒有 coverage 層級可言——不是拒收的理由,但也絕不能
+    # 冒充回報 single_close(那宣稱「每檔一筆收盤」,這份 envelope 一筆都沒供)。見
+    # test_fx_only_parse_never_reports_a_single_close_coverage_tier 的完整釘樁。
+    ok("coverage" not in omitted, "沒有任何 price row → coverage 整鍵省略,不冒充任何層級",
+       omitted.get("coverage", "<absent>"))
 
     explicit_empty = pf.parse({"as_of": AS_OF, "source": "Central bank spot rate", "prices": [],
                                "fx": [{"currency": "TWD", "usd_per_unit": 0.0307, "date": AS_OF}]})
     ok(explicit_empty["prices"] == {} and explicit_empty["fx"] == omitted["fx"],
        "prices 顯式空陣列與省略同義", repr(explicit_empty))
+    ok("coverage" not in explicit_empty,
+       "顯式空陣列與省略同義,coverage 同樣整鍵省略", explicit_empty.get("coverage", "<absent>"))
 
     # 反向:兩邊都沒有才真正拒收 —— 單獨缺 prices 不再是拒收的理由。
     raises(lambda: pf.parse({"as_of": AS_OF, "source": "x"}),
@@ -248,6 +253,42 @@ def test_fx_only_still_enforces_every_fx_row_rule():
            "after as_of", "fx-only 仍拒收晚於 as_of 的匯率日期")
 
 
+def test_fx_only_parse_never_reports_a_single_close_coverage_tier():
+    """#652: #642 made `prices` optional so a host could repair a
+    missing-FX refusal with a rate-only envelope, but `any()` over an empty
+    `prices` dict is `False` — the old ternary fell through to the *smaller*
+    tier, `single_close`, which claims one close per instrument. An envelope
+    that supplied zero closes must never make that claim, at the parser
+    (`parse`) and at the propagation point named in the issue's own repro
+    (`provenance`, which copies `feed["coverage"]` into `record["series"]`).
+
+    Byte-stability is the other half: a price-only and a price+history
+    envelope must keep reporting exactly what they did before this fix."""
+    fx_only = pf.parse({"as_of": AS_OF, "source": "Bank of Taiwan",
+                        "fx": [{"currency": "TWD", "usd_per_unit": 0.0305, "date": AS_OF}]})
+    ok(fx_only["prices"] == {}, "fx-only → prices 解析成空 dict", repr(fx_only["prices"]))
+    ok("coverage" not in fx_only,
+       "fx-only → parse() 的回傳整個省略 coverage 鍵(不是 None,更不是 single_close)",
+       fx_only.get("coverage", "<absent>"))
+
+    # 對齊 issue 本身重現的呼叫路徑:provenance() 原封不動把 feed.get("coverage")
+    # 搬進 record["series"]。省略鍵 → .get() 回 None,誠實地說「沒有層級可回報」。
+    record = pf.provenance(mode="agent_feed", feed=fx_only,
+                           requested=["2330.TW"], priced=[])
+    ok(record["series"] is None,
+       "series 隨 coverage 一起誠實消失,不再繼承 single_close 的假話",
+       repr(record["series"]))
+    ok(record["coverage"] == {"requested_n": 1, "priced_n": 0, "missing": ["2330.TW"]},
+       "另一個同名但不同義的 coverage(requested/priced/missing 計數)不受影響",
+       repr(record["coverage"]))
+
+    # 反向釘住:既有兩層 tier 一個位元都不能動——這次修復只補「沒有價」這一格。
+    ok(pf.parse(envelope())["coverage"] == "single_close",
+       "只供收盤價的既有 envelope → single_close 不因這次修復而改變")
+    ok(pf.parse(series_envelope())["coverage"] == "daily_series",
+       "供 history 的既有 envelope → daily_series 不因這次修復而改變")
+
+
 def test_engine_accepts_an_fx_only_envelope_and_still_reports_prices_unavailable():
     """The full engine subprocess, not just the pure parser: an fx-only envelope
     must load without crashing, and because it prices nothing, `price_provenance`
@@ -263,6 +304,8 @@ def test_engine_accepts_an_fx_only_envelope_and_still_reports_prices_unavailable
            "fx-only envelope 沒有任何收盤價 → mode 仍是 unavailable", repr(prov)[:160])
         ok(prov["coverage"] == {"requested_n": 2, "priced_n": 0, "missing": ["AMD", "NVDA"]},
            "覆蓋率誠實:0/2,fx-only 不冒充定價成功", repr(prov["coverage"]))
+        ok("series" not in prov, "mode 不是 agent_feed → series 這個鍵從未被加上",
+           prov.get("series", "<absent>"))
         ok(card["overview"]["unrealized_coverage"]["priced_n"] == 0,
            "未實現覆蓋率仍是 0——這份 envelope 從未宣稱能定價,只帶了匯率")
 
@@ -738,6 +781,7 @@ def main():
     for fn in (test_parse_contract, test_parse_fails_closed,
                test_an_fx_only_envelope_is_accepted_with_prices_empty,
                test_fx_only_still_enforces_every_fx_row_rule,
+               test_fx_only_parse_never_reports_a_single_close_coverage_tier,
                test_engine_accepts_an_fx_only_envelope_and_still_reports_prices_unavailable,
                test_a_supplied_close_is_rebased_onto_the_share_counts_basis,
                test_a_close_already_on_the_split_is_not_adjusted_twice,
