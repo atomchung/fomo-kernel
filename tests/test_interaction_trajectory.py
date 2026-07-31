@@ -965,6 +965,129 @@ def test_cli_cash_anchor_checked_requires_outcome():
         assert done.returncode == 0, done.stderr
 
 
+# --- The obligation follows the executed plan, not just the route (#677) ------
+#
+# `weekly_review` structurally owes the #357 check (`ROUTE_CONTRACTS["weekly_
+# review"]["cash_anchor"] is True`), but a light-tier week's own plan carries
+# `input.cash_anchor.status == "not_applicable"` (reason `light_tier`,
+# `data-contract.md`) -- the same positive "no anchor was owed" claim a
+# snapshot review or a test drive already makes structurally. Before this,
+# the only way such a session could pass `verify` was a fabricated `declined`,
+# asserting a question that was never asked -- exactly the dishonesty this
+# tool exists to prevent (#230). `--cash-anchor-status`, transcribed from that
+# same plan fact at `start`, is what lets `verify` tell the two situations
+# apart: zero events is the honest trace, and any event recorded anyway is a
+# named contradiction rather than accepted evidence.
+
+def light_tier_weekly_rows():
+    """A light-tier weekly review walked and archived honestly end to end --
+    opener, one question, both card stages, rule choice, findings, and an
+    owner verdict, exactly what #677's own repro describes -- except the plan
+    declared `input.cash_anchor.status == "not_applicable"`, so no
+    `cash_anchor_checked` event exists anywhere in the trace.
+    """
+    rows = weekly_rows()
+    # redeclare() replaces the whole declaration rather than merging into it
+    # (see its docstring), so route="weekly_review" must be restated here or
+    # this silently falls back to declaration()'s first_review default.
+    redeclare(rows, route="weekly_review", cash_anchor_status="not_applicable")
+    drop(rows, CASH_ANCHOR)
+    before(rows, PREVIEW_ARTIFACT, row("question_presented", mode="plain_text"))
+    before(rows, PREVIEW_ARTIFACT, row("answers_received"))
+    after(rows, PREVIEW_CARD, row("rule_choice_presented", mode="plain_text",
+                                  grounding_expected=False, grounding_verbatim=True))
+    rows.append(row("findings_recorded", findings=[]))
+    rows.append(row("owner_verdict", controls="pass", card="pass", memory="pass"))
+    return rows
+
+
+def test_light_tier_weekly_review_verifies_with_no_cash_event():
+    """#677 proof 1: a complete synthetic light-tier weekly_review trace --
+    the exact shape the issue reproduced with, down to the required-owner-
+    verdict and required-findings gates it failed under -- verifies with no
+    cash_anchor_checked row at all."""
+    rows = light_tier_weekly_rows()
+    assert not any(entry.get("event") == "cash_anchor_checked" for entry in rows)
+    assert ux_receipt.verify_rows(
+        rows, require_owner_verdict=True, require_findings=True) == []
+
+
+def test_first_review_with_declared_not_applicable_status_also_verifies_with_no_cash_event():
+    """The narrowing is read from the trace's own declaration, not special-
+    cased to weekly_review: any route whose contract structurally owes the
+    check honors it the same way once the plan says not_applicable."""
+    rows = good_markdown_rows()
+    redeclare(rows, cash_anchor_status="not_applicable")
+    drop(rows, CASH_ANCHOR)
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_non_light_plan_still_requires_the_cash_anchor_event_when_absent():
+    """#677 proof 2: declaring a status is not a way to waive a real
+    obligation. Every status other than `not_applicable` -- an anchor
+    genuinely in play -- leaves the original unconditional requirement
+    exactly as it was: a missing event still fails."""
+    for status in ("anchored", "partial", "absent"):
+        rows = weekly_rows()
+        redeclare(rows, route="weekly_review", cash_anchor_status=status)
+        drop(rows, CASH_ANCHOR)
+        assert_has(ux_receipt.verify_rows(rows),
+                   "weekly_review must record exactly one cash_anchor_checked event")
+
+
+def test_light_tier_weekly_review_with_fabricated_decline_fails():
+    """#677 proof 3: a `declined` recorded against a plan that says
+    not_applicable is precisely the fabrication #677 exists to refuse --
+    asserting a question was asked and refused when the plan says none was
+    ever owed. It fails named as a contradiction, never as ordinary evidence."""
+    rows = light_tier_weekly_rows()
+    after(rows, PREVIEW_CARD, row("cash_anchor_checked", cash_outcome="declined"))
+    errors = ux_receipt.verify_rows(rows, require_owner_verdict=True, require_findings=True)
+    assert_has(errors, "not_applicable")
+    assert_has(errors, "contradicts")
+
+
+def test_unsupported_cash_anchor_status_fails():
+    rows = weekly_rows()
+    redeclare(rows, route="weekly_review", cash_anchor_status="bogus")
+    assert_has(ux_receipt.verify_rows(rows), "unsupported cash anchor status")
+
+
+def test_cli_start_records_cash_anchor_status():
+    with tempfile.TemporaryDirectory() as tmp:
+        result = subprocess.run(
+            [sys.executable, str(TOOL), "start",
+             "--session-id", "session-677", "--state-root", tmp,
+             "--client", "codex-desktop", "--route", "weekly_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline",
+             "--cash-anchor-status", "not_applicable"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        path = pathlib.Path(tmp) / "ux" / "session-677.jsonl"
+        first_row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        assert first_row["cash_anchor_status"] == "not_applicable"
+
+
+def test_cli_start_without_cash_anchor_status_omits_the_field():
+    """Omitting the flag must not write anything -- an explicit legacy row
+    (no key at all) is what keeps a receipt written before #677 verifying
+    exactly as it did (the "applicable" branch), rather than a null-ish
+    placeholder value a future reader could mistake for a real declaration."""
+    with tempfile.TemporaryDirectory() as tmp:
+        result = subprocess.run(
+            [sys.executable, str(TOOL), "start",
+             "--session-id", "session-677-legacy", "--state-root", tmp,
+             "--client", "codex-desktop", "--route", "weekly_review",
+             "--question-mode", "plain_text", "--card-mode", "markdown_inline"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        path = pathlib.Path(tmp) / "ux" / "session-677-legacy.jsonl"
+        first_row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        assert "cash_anchor_status" not in first_row
+
+
 # --- The card-free lane: book refresh (#523) ----------------------------------
 #
 # A refresh renders no card by design, so before this route existed the card
