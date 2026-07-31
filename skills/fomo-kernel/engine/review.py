@@ -2906,15 +2906,53 @@ def _exit_question(item, language, card=None, prior=None):
     }
 
 
+def _normalized_position_cost(cost, currency, card):
+    """A native-currency cost basis converted into the card's aggregate
+    currency (#664), or ``None`` when the review's own resolved FX map has no
+    rate for it.
+
+    Reads the same frozen ``currency_meta`` (#649's shared conversion result)
+    ``_exit_importance`` already reads, rather than a second acquisition of
+    the aggregate lookup. Never an identity/raw fallback: a book the engine
+    reports ``mixed`` already has a complete rate for every held currency —
+    ``trade_recap.usd_view`` fails the whole review closed otherwise — so
+    ``None`` here only guards a caller whose card/state did not go through
+    that gate, which is exactly the shape a unit test exercises directly.
+    """
+    meta = (card or {}).get("currency_meta") or {}
+    currency = str(currency or "USD").upper()
+    aggregate = str(meta.get("aggregate_currency") or currency).upper()
+    if not meta.get("mixed") or currency == aggregate:
+        return abs(float(cost or 0))
+    factor = (meta.get("fx") or {}).get(currency)
+    if factor is None:
+        return None
+    try:
+        return abs(float(cost) * float(factor))
+    except (TypeError, ValueError):
+        return None
+
+
 def _ticker_importance(card, state, ticker):
     for row in card.get("ticker_diagnosis") or []:
         if row.get("ticker") == ticker and row.get("impact") is not None:
             return abs(float(row["impact"])), "pnl_impact"
     pos = (_active_positions(state).get(ticker) or {})
     try:
-        return abs(float(pos.get("cost") or 0)), "position_cost"
+        cost = float(pos.get("cost") or 0)
     except (TypeError, ValueError):
         return 0.0, "unknown"
+    # #664: the position_cost fallback used to compare this raw native-currency
+    # magnitude directly against other tickers' raw magnitudes -- silently
+    # wrong on a mixed-currency book, where the same face value in TWD and USD
+    # differ by the exchange rate. Normalize it exactly like the ticker_diagnosis
+    # branch above already is (its rts/held/last_px are usd_view's own output).
+    normalized = _normalized_position_cost(cost, pos.get("currency"), card)
+    if normalized is None:
+        # Never fall back to the raw amount: refuse the ranking for this
+        # candidate rather than let an unconverted magnitude compete.
+        return None, "fx_unavailable"
+    return normalized, "position_cost"
 
 
 def _initial_thesis_id(cycle_id):
@@ -3147,9 +3185,20 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             cost = card_renderer._finite_number(pos.get("cost"))
             if cost is None or cost <= 0:
                 continue  # cannot ground the stem in a concrete magnitude
-            initial_candidates.append(_initial_thesis_question(
+            candidate = _initial_thesis_question(
                 ticker, pos, cost, card, state, language,
-                recalled=_recalled_entry_statement(evaluation_recall, ticker, cycle_id)))
+                recalled=_recalled_entry_statement(evaluation_recall, ticker, cycle_id))
+            if candidate.get("_importance") is None:
+                # #664: the "largest cost" ranking compares normalized amounts
+                # only. When the aggregate FX map has no rate for this
+                # position's currency, refuse to rank it rather than let its
+                # raw native-currency magnitude compete against one already
+                # normalized -- the same fail-closed posture #649 gives the
+                # aggregate reader this candidate's importance came from.
+                rejected.append(_rejection(candidate["id"], "initial_thesis",
+                                           "fx_unavailable", cycle_id=cycle_id))
+                continue
+            initial_candidates.append(candidate)
         initial_candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
         candidates.extend(initial_candidates[:INITIAL_THESIS_LIMIT])
         initial_overflow = initial_candidates[INITIAL_THESIS_LIMIT:]

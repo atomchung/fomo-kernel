@@ -2206,7 +2206,7 @@ def position_observables(holdings, last_px, date_end, prices=None, markets=None)
 
 
 def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
-                avg_down=None, last_px=None, prev_end=None, cash=None,
+                cur_map=None, avg_down=None, last_px=None, prev_end=None, cash=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
                 max_pos_override=None, price_provenance=None, price_request=None,
                 prices=None, valuation_frame=None, splits=None,
@@ -2271,6 +2271,11 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     add_cursors = current_cycle_add_cursors(rows)
     holdings = {t: {"shares": round(sh, 4), "cost": round(c, 2),
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
+                    # #664: the position's own native currency (same reader as
+                    # portfolio_basis.build_valuation_frame's `positions=` above),
+                    # so a downstream cost-basis question can label its native
+                    # amount correctly instead of a reader defaulting it to USD.
+                    "currency": (cur_map or {}).get(t, "USD"),
                     "cycle_start": cyc.get(t, {}).get("start"),
                     # 算不出開倉（CSV 缺期初持倉）→ 標 #unknown，不 fallback 裸 ticker（雙審 codex#4）
                     # ⚠️ 格式契約 = 頂部 CYCLE_ID_RE / CYCLE_ID_UNKNOWN_RE(#61):改這裡必先改常數,契約測試會抓
@@ -3009,7 +3014,7 @@ def main():
             fx_provenance=("engine_fetch" if not fx_err else "unavailable"),
         ).to_dict()
         state = build_state(rows, rts, held, dims, overview, ab, rx,
-                            currency_meta=currency_meta,
+                            currency_meta=currency_meta, cur_map=cur_map,
                             avg_down=avg_down, last_px=last_px,
                             prev_end=prev_end,
                             cash=cash_data, portfolio_structure=portfolio_structure,

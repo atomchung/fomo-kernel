@@ -757,6 +757,41 @@ def test_build_state_echoes_position_cap_override():
                           max_pos_override=5)["max_position_pct"] is None, "壞值 fail-closed → None"
 
 
+def test_build_state_threads_cur_map_onto_each_position_currency():
+    """#664: a held position's own native currency must reach
+    `state["holdings"]["positions"][ticker]["currency"]`, not default silently
+    to USD. Before this, `build_state`'s per-ticker dict carried no currency
+    field at all regardless of the caller's `cur_map` -- so a downstream
+    reader (the initial-thesis question stem) had nothing but its own "USD"
+    fallback, and a TWD position's raw cost was relabeled as if it were USD.
+
+    `cur_map=None` (the parameter's default, and every call site before #664)
+    must keep resolving to "USD" -- the same default `cur_map.get(t, "USD")`
+    already uses elsewhere (e.g. `portfolio_basis.build_valuation_frame`'s
+    `positions=` in `main()`), so this is additive rather than a behavior
+    change for a single-currency book.
+    """
+    rows = [_R("2330.TW", "buy", 900, 1000.0, "2024-03-01"),
+            _R("AAPL", "buy", 100, 150.0, "2024-03-02")]
+    rows[0]["currency"] = "TWD"
+    rows[1]["currency"] = "USD"
+    ab = dict(note="無價格")
+    cur_map, _currencies, _conflicts = tr.currency_map(rows)
+    assert cur_map == {"2330.TW": "TWD", "AAPL": "USD"}, cur_map
+
+    with_map = _state_from(rows, ab, cur_map=cur_map)["holdings"]["positions"]
+    assert with_map["2330.TW"]["currency"] == "TWD", with_map["2330.TW"]
+    assert with_map["AAPL"]["currency"] == "USD", with_map["AAPL"]
+
+    # Backward compatible: an existing caller that never learned about
+    # `cur_map` (every call site before #664) still gets the same USD default
+    # `build_state` always produced -- just now on an explicit field instead
+    # of a downstream reader assuming it.
+    no_map = _state_from(rows, ab)["holdings"]["positions"]
+    assert no_map["2330.TW"]["currency"] == "USD"
+    assert no_map["AAPL"]["currency"] == "USD"
+
+
 # ─────── J3. current_book_projection():dim_size × ticker_diagnosis 分母合一(#477) ───────
 #
 # #324/#481 已把診斷/處方的觸發「線」對齊到同一個 effective_oversize_trigger;這裡收的是

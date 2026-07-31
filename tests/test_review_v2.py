@@ -6760,6 +6760,44 @@ def test_exit_question_ranking_uses_engine_fx_for_mixed_currency_amounts():
         "raw TWD notional must not outrank a larger aggregate-currency exit"
 
 
+def test_ticker_importance_ranking_uses_engine_fx_for_mixed_currency_amounts():
+    """#664: the initial-thesis "largest cost" ranking must hold the same
+    discipline the sibling test above already holds for exit-notional ranking.
+    The `position_cost` fallback used to compare `pos["cost"]` -- a raw
+    native-currency face value -- directly across tickers, so a TWD position
+    could outrank a larger USD one purely because TWD amounts carry more
+    zeros. It must read `currency_meta.fx` (#649's already-resolved rate)
+    exactly like `_exit_importance` does, never the raw amount."""
+    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD",
+                              "fx": {"TWD": 0.0317}}, "ticker_diagnosis": []}
+    state = {"holdings": {"positions": {
+        "TWX": {"cost": 900000.0, "currency": "TWD"},
+        "USX": {"cost": 30000.0, "currency": "USD"},
+    }}}
+    tw_importance, tw_basis = review_engine._ticker_importance(card, state, "TWX")
+    us_importance, us_basis = review_engine._ticker_importance(card, state, "USX")
+    assert tw_basis == us_basis == "position_cost"
+    assert abs(tw_importance - 28530.0) < 1e-6, tw_importance
+    assert us_importance == 30000.0
+    assert us_importance > tw_importance, \
+        "a smaller USD position must outrank a larger raw-TWD one once normalized"
+
+
+def test_ticker_importance_refuses_rather_than_falls_back_to_raw_units_on_missing_fx():
+    """#664: a missing rate must never resolve to an identity factor of 1.0 --
+    the same "the identity factor is removed wherever currencies differ, not
+    merely guarded upstream" discipline #649 holds for the aggregate reader.
+    This is exercised directly because the real pipeline cannot reach this
+    state: a book the engine reports `mixed` already carries a complete `fx`
+    map for every held currency, since `trade_recap.usd_view` refuses the
+    whole review before a card/state with a gap could ever be built."""
+    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD", "fx": {}},
+           "ticker_diagnosis": []}
+    state = {"holdings": {"positions": {"TWX": {"cost": 900000.0, "currency": "TWD"}}}}
+    importance, basis = review_engine._ticker_importance(card, state, "TWX")
+    assert importance is None and basis == "fx_unavailable", (importance, basis)
+
+
 def test_custom_exit_reason_requires_the_users_words():
     question = review_engine._exit_question(
         {"revisit_id": "A#2026-07-01#1#2026-07-10#1.0", "ticker": "A",
@@ -9679,6 +9717,119 @@ def test_initial_thesis_dedup_skips_a_position_with_an_existing_thesis():
         assert all(set(row) == {"id", "kind", "cycle_id", "reason"} for row in rejected)
         assert any(q["kind"] == "initial_thesis" and q.get("ticker") == "AAA"
                    for q in plan["question_queue"]), "the un-thesised holding is still asked"
+
+
+_664_MIXED_BOOK_ROWS = [
+    # Three closed US round trips -- only their count matters, so the tier
+    # classifier (>= MIN_ROUND_TRIPS) reaches "behavioral" and the first-review
+    # question band is not suppressed as a thin/structural file (#306). Dated
+    # well before the open positions below so they never register as recent
+    # exits and compete for a capture slot.
+    "RTA,BUY,100,50.00,2024-01-05,Trade,US,USD",
+    "RTA,SELL,100,60.00,2024-02-05,Trade,US,USD",
+    "RTB,BUY,50,40.00,2024-01-06,Trade,US,USD",
+    "RTB,SELL,50,45.00,2024-02-06,Trade,US,USD",
+    "RTC,BUY,80,30.00,2024-01-07,Trade,US,USD",
+    "RTC,SELL,80,35.00,2024-02-07,Trade,US,USD",
+    # Four open, un-thesised positions -- two TW/TWD, two US/USD -- with no
+    # existing thesis, so every one is an initial_thesis candidate.
+    "3001.TW,BUY,900,1000.00,2024-03-01,Trade,TW,TWD",   # raw 900,000 TWD; normalized ~28,530
+    "3002.TW,BUY,600,1000.00,2024-03-02,Trade,TW,TWD",   # raw 600,000 TWD; normalized ~19,020 (smallest)
+    "USOPEN1,BUY,300,100.00,2024-03-03,Trade,US,USD",    # 30,000 USD (largest normalized)
+    "USOPEN2,BUY,220,100.00,2024-03-04,Trade,US,USD",    # 22,000 USD
+]
+_664_MIXED_BOOK_CLOSES = [
+    # Close == avg cost on every open position, so realized+unrealized impact
+    # is ~0 and `ticker_diagnosis` (which drops |impact| < 1) never reports
+    # them -- forcing `_ticker_importance`'s `position_cost` fallback, the
+    # exact path #664 fixes, rather than the already-normalized pnl_impact
+    # branch fed by usd_view's own `_u` arrays.
+    {"ticker": "3001.TW", "close": 1000.0, "date": "2026-07-30", "currency": "TWD"},
+    {"ticker": "3002.TW", "close": 1000.0, "date": "2026-07-30", "currency": "TWD"},
+    {"ticker": "USOPEN1", "close": 100.0, "date": "2026-07-30", "currency": "USD"},
+    {"ticker": "USOPEN2", "close": 100.0, "date": "2026-07-30", "currency": "USD"},
+]
+
+
+def test_initial_thesis_native_currency_label_and_normalized_cost_ranking_on_mixed_book():
+    """#664, driven through the real CLI (CSV ingestion -> `trade_recap.main`'s
+    `build_state` -> `review.py`'s question queue) rather than injected
+    artifacts, so a regression in either the write side (build_state
+    threading `cur_map` onto each position) or the read side
+    (`_ticker_importance`/`_initial_thesis_question`) is caught.
+
+    On this mixed TW/US first review, a TWD position's cost basis must reach
+    the initial-thesis stem in its own currency -- never relabeled USD -- and
+    the "largest cost" selection must rank on the FX-normalized value, not the
+    raw face value. Reproduces the book shape from the issue: 3001.TW's raw
+    TWD cost (900,000) is larger than 3002.TW's (600,000) and both dwarf the
+    USD positions' raw figures (30,000 / 22,000), but at the review's own
+    resolved rate (0.0317 USD per TWD) they convert to ~28,530 and ~19,020 --
+    both inside the USD positions' range. The normalized ranking must
+    interleave them (USOPEN1 > 3001.TW > USOPEN2 > 3002.TW), never group
+    every TWD position ahead of every USD one by raw magnitude alone.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        csv_path, prices = _fx_case(tmp, "initial_thesis_664", _664_MIXED_BOOK_ROWS,
+                                    fx={"TWD": 0.0317}, prices=_664_MIXED_BOOK_CLOSES)
+        root = pathlib.Path(tmp) / "coach"
+        run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                   "--prices", prices, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _fx_plan(root)
+        assert plan["route"] == "first_review"
+        assert plan["engine_state"]["review_tier"]["tier"] == "behavioral", \
+            "this fixture must actually clear the thin-file suppression (#306)"
+
+        initial = [q for q in plan["question_queue"] if q["kind"] == "initial_thesis"]
+        assert initial, "a mixed-currency first review must still emit initial-thesis questions"
+
+        by_ticker = {q["ticker"]: q for q in initial}
+        assert by_ticker["3001.TW"]["currency"] == "TWD", by_ticker["3001.TW"]
+        assert "TWD 900,000" in by_ticker["3001.TW"]["question"], by_ticker["3001.TW"]["question"]
+        assert "USD" not in by_ticker["3001.TW"]["question"], \
+            "a TWD position's stem must never relabel its native amount as USD"
+        assert by_ticker["USOPEN1"]["currency"] == "USD"
+
+        # Normalized order: USOPEN1 (30,000) > 3001.TW (~28,530) > USOPEN2
+        # (22,000) > 3002.TW (~19,020, the smallest, trimmed by INITIAL_THESIS_LIMIT).
+        assert [q["ticker"] for q in initial] == ["USOPEN1", "3001.TW", "USOPEN2"], \
+            (f"selection must rank by normalized cost, not raw face value: "
+             f"{[q['ticker'] for q in initial]}")
+        rejected = plan["card_plan"]["question_selection"]["rejected"]
+        assert {"id": review_engine._initial_thesis_id("3002.TW#2024-03-02#1"),
+                "kind": "initial_thesis", "cycle_id": "3002.TW#2024-03-02#1",
+                "reason": "initial_thesis_limit"} in rejected, \
+            "3002.TW has the smallest normalized cost and must be the one trimmed, not by raw units"
+
+
+def test_initial_thesis_selection_refuses_a_candidate_it_cannot_normalize_instead_of_ranking_it_raw():
+    """#664: when the aggregate FX map has no rate for a held currency, the
+    candidate must be refused from the ranked selection rather than compared
+    on its raw native-currency magnitude. Exercised through `_question_queue`
+    directly (the same pattern `test_weekly_review_quiet_week_backfills_...`
+    above uses) because the real CLI cannot construct this state -- a book
+    the engine reports `mixed` already has a complete `fx` map by the time a
+    card exists at all."""
+    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD", "fx": {}},
+           "ticker_diagnosis": [], "thesis_questions": []}
+    positions = {
+        "TWX": {"cost": 900000.0, "currency": "TWD", "cycle_id": "TWX#2026-01-01#1"},
+        "USX": {"cost": 30000.0, "currency": "USD", "cycle_id": "USX#2026-01-01#1"},
+    }
+    state = {"holdings": {"positions": positions}}
+    missing = [{"ticker": t, "cycle_id": p["cycle_id"]} for t, p in positions.items()]
+    queue, report = review_engine._question_queue(
+        card, state, {}, None, "en", route="first_review",
+        missing_thesis_positions=missing, tier="behavioral")
+    initial = [q for q in queue if q["kind"] == "initial_thesis"]
+    assert [q["ticker"] for q in initial] == ["USX"], \
+        f"the TWD candidate with no FX rate must never enter the ranked queue: {initial}"
+    assert {"id": review_engine._initial_thesis_id("TWX#2026-01-01#1"),
+            "kind": "initial_thesis", "cycle_id": "TWX#2026-01-01#1",
+            "reason": "fx_unavailable"} in report["rejected"]
+    assert all(set(row) == {"id", "kind", "cycle_id", "reason"} for row in report["rejected"])
 
 
 def _evaluation_row(evaluation_id, ticker, created, reason=None, decision="open"):
