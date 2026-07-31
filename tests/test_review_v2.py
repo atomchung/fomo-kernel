@@ -2051,7 +2051,12 @@ def test_add_cash_refuses_when_more_than_the_anchor_moved():
                    "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
         assert run.returncode != 0, run.stdout
         error = json.loads(run.stdout)["error"]
-        assert "changed more than the anchor" in error and "engine_state" in error, error
+        # The refusal names which of the gate's two verdicts it reached (#665).
+        # "the facts moved" is the one that refuses; the other -- the anchor
+        # propagating into the account pillar -- is what this command is for, and
+        # naming only "something changed" is what made the two indistinguishable.
+        assert "the facts moved" in error, error
+        assert "the valuation frame the card was priced from" in error, error
         assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
             "a refused recompute must leave no anchored, finalizable session behind"
 
@@ -2075,6 +2080,268 @@ def test_add_cash_carries_a_declared_price_dead_end_forward():
         recovery = (json.loads(added.stdout)["review_plan"]["input"]["price_feed"]["recovery"])
         assert recovery["outcome"] == "declared_unavailable", recovery
         assert "reachable from this host" in recovery["checked"], recovery
+
+
+# ── the card-beat answer has to be recordable on a priced review (#665) ──
+#
+# Everything above runs price-degraded, and that is why it stayed green through
+# the defect: with nothing retrieved there is no second retrieval to disagree
+# with the first. On a real user's review the engine fetches, and `add-cash`
+# fetched again — a second observation instant, therefore different closes,
+# therefore every derived number moved, and the recompute reported its own
+# movement as "the facts moved". The user answered the question the card asked
+# them and the answer could not be recorded (#665).
+#
+# The provider below is what makes that reproducible offline. Two properties,
+# both taken from the real thing: it answers with different closes every pass
+# (`market_data`'s own docstring records ^VIX moving between two calls seconds
+# apart), and one benchmark comes back unpriced, which is what makes the
+# same-day cache refuse to serve the request that produced it.
+
+_MOVING_PROVIDER = '''
+# Injected as usercustomize (never sitecustomize -- Homebrew ships its own and
+# shadowing it removes site-packages), so the real CLI subprocess runs against a
+# deterministic stand-in for a live market.
+import datetime as dt
+import os
+import sys
+sys.path.insert(0, os.environ["ENGINE_DIR"])
+
+UNPRICED = {"XLY"}          # present-but-empty, exactly as a dead symbol returns
+
+
+def _fake_download(symbols, start, end=None):
+    import pandas as pd
+    log = os.environ["PROVIDER_LOG"]
+    with open(log, "a") as handle:
+        handle.write(",".join(sorted(symbols)) + "\\n")
+    with open(log) as handle:
+        nth = len([line for line in handle if line.strip()])
+    days = [dt.date(2026, 7, 27), dt.date(2026, 7, 28), dt.date(2026, 7, 29)]
+    index = pd.DatetimeIndex([dt.datetime(d.year, d.month, d.day) for d in days])
+    data = {}
+    for symbol in symbols:
+        seed = sum(ord(c) for c in symbol)
+        # The nudge is the whole point: a second pass is a second instant.
+        base = 20.0 + (seed % 400) + 0.37 * (nth - 1)
+        if symbol in UNPRICED:
+            data[("Close", symbol)] = [float("nan")] * len(days)
+        elif symbol.endswith("=X"):
+            data[("Close", symbol)] = [32.0 + 0.01 * (nth - 1)] * len(days)
+        else:
+            data[("Close", symbol)] = [base - 1.0, base - 0.5, base]
+        data[("Stock Splits", symbol)] = [float("nan")] * len(days)
+    frame = pd.DataFrame(data, index=index)
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns)
+    return frame
+
+
+import market_data
+market_data._download = _fake_download
+# The other half of the provider seam. Without it `_from_yahoo` answers
+# `provider_missing` above the fake and never calls it -- which is every CI
+# runner, none of which install yfinance (#621).
+market_data._provider_available = lambda: True
+'''
+
+
+def _priced_env(tmp):
+    """A CLI environment that really resolves market data, against a live-like fake."""
+    sitedir = pathlib.Path(tmp) / "provider-site"
+    sitedir.mkdir(exist_ok=True)
+    (sitedir / "usercustomize.py").write_text(_MOVING_PROVIDER, encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("TR_OFFLINE", None)          # the point here is resolution, not degradation
+    env["ENGINE_DIR"] = str(ENGINE_DIR)
+    env["PROVIDER_LOG"] = str(pathlib.Path(tmp) / "provider.log")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(sitedir), str(ENGINE_DIR), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    return env
+
+
+def _provider_calls(env):
+    try:
+        with open(env["PROVIDER_LOG"], encoding="utf-8") as handle:
+            return [line.strip() for line in handle if line.strip()]
+    except OSError:
+        return []
+
+
+def _prepared_on_a_priced_review(tmp, root, csv=None):
+    env = _priced_env(tmp)
+    run = _run("prepare", csv or _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    plan = json.loads(run.stdout)["review_plan"]
+    assert plan["input"]["price_feed"]["provenance"]["mode"] == "engine_fetch", \
+        f"fixture must actually be engine-priced: {plan['input']['price_feed']}"
+    assert plan["input"]["cash_anchor"]["status"] == "absent", plan["input"]["cash_anchor"]
+    return env, plan
+
+
+def _preview(root, plan, tmp, env, tag):
+    answers = pathlib.Path(tmp) / f"answers-{tag}.json"
+    answers.write_text(json.dumps(_answers_for_plan(plan)), encoding="utf-8")
+    narrative = pathlib.Path(tmp) / f"narrative-{tag}.json"
+    narrative.write_text(json.dumps(_narrative_for_plan(plan)), encoding="utf-8")
+    return _run("preview", "--root", root, "--session-id", plan["session_id"],
+                "--answers", answers, "--narrative", narrative, env=env)
+
+
+def test_the_card_beat_cash_answer_is_recordable_on_an_engine_priced_review():
+    """#665's owning outcome, walked the way the product prescribes it.
+
+    prepare -> the card is previewed and shown -> the user answers the cash
+    question that card asked -> add-cash -> the amended card. Every step is the
+    real CLI, the prices are the engine's own, and the provider moves between
+    passes because a real one does.
+
+    The load-bearing assertion is the request count. The amended card must be
+    priced from the frame the user was reading, and the only way to know that is
+    that the recompute asked for nothing: a second resolution that happened to
+    agree would prove nothing, and one that disagreed is the defect.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_on_a_priced_review(tmp, root)
+        frozen_frame = json.loads(
+            (pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+             / "plan.json").read_text(encoding="utf-8"))["engine_state"]["price_snapshot"]
+
+        shown = _preview(root, plan, tmp, env, "first")
+        assert shown.returncode == 0, shown.stdout + shown.stderr
+        assert json.loads(shown.stdout)["private_card"], "the card the user is asked at"
+        calls_before = len(_provider_calls(env))
+        assert calls_before >= 1, "the review must really have fetched its own prices"
+
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", '{"currency":"USD","amount":0,"as_of":"2026-07-29"}', env=env)
+        assert added.returncode == 0, (
+            "a declared balance answered at the card beat must be recordable — this is the "
+            f"session the command exists for:\n{added.stdout}{added.stderr}")
+        out = json.loads(added.stdout)
+        assert out["recompute"]["outcome"] == "anchor_propagated", out["recompute"]
+        assert len(_provider_calls(env)) == calls_before, (
+            "the recompute re-resolved the market. The user is being shown an amended version "
+            "of a card they already read; a second observation instant is a different review "
+            f"wearing the same session: {_provider_calls(env)[calls_before:]}")
+
+        amended = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        assert amended["engine_state"]["price_snapshot"] == frozen_frame, (
+            "the amended card must be priced from the same frame the user was reviewing")
+        assert amended["input"]["cash_anchor"] == {"status": "anchored", "source": "anchored"}
+        acct = amended["engine_card"]["acct_perf"]
+        assert acct.get("acct_twr") is not None and acct.get("cash_drag") is not None, (
+            f"the account pillar is what answering buys; it is still empty: {acct}")
+        assert amended["engine_card"]["cash"]["source"] == "anchored"
+
+        # And the amended card renders, which is the beat the user actually gets.
+        again = _preview(root, amended, tmp, env, "second")
+        assert again.returncode == 0, again.stdout + again.stderr
+        assert json.loads(again.stdout)["private_card"]
+
+
+def test_a_source_that_really_moved_still_refuses_and_leaves_nothing_behind():
+    """The other half, and the one that keeps the fix from being a rubber stamp.
+
+    An input file edited between the card and the answer is not the anchor
+    propagating — it is a different review, and the answers already given were
+    made against numbers that no longer exist. Refused before any write: no
+    anchored pending session to finalize, and a ledger byte-identical to the one
+    the refusal started with.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        csv = pathlib.Path(tmp) / "trades.csv"
+        csv.write_text(_OFFLINE_MOCK.read_text(encoding="utf-8"), encoding="utf-8")
+        env, plan = _prepared_on_a_priced_review(tmp, root, csv=csv)
+        ledger_path = pathlib.Path(root) / "ledger.jsonl"
+        ledger_before = ledger_path.read_bytes()
+
+        with open(csv, "a", encoding="utf-8") as handle:
+            handle.write("TSLA,5,300.00,BUY,BOUGHT TESLA,2024-12-04,2024-12-06,0,"
+                         "-1500.00,0,0,,Trade\n")
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-29"}', env=env)
+        assert run.returncode != 0, run.stdout
+        assert ledger_path.read_bytes() == ledger_before, (
+            "the refusal must land before any write. The recompute re-enters the ingest, so a "
+            "gate that only reads the recomputed plan has already appended the rows it is about "
+            "to refuse -- and the user's next command would then run against a book neither "
+            "review was computed over")
+        error = json.loads(run.stdout)["error"]
+        assert "the facts moved" in error, error
+        assert "the transaction file has grown by 1 row(s)" in error, (
+            f"the refusal must name which fact moved, not only that something did: {error}")
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
+            "a refused recompute must leave no anchored, finalizable session behind"
+        pending = pathlib.Path(session_engine.pending_dir(str(root), plan["session_id"]))
+        assert not list(pending.glob("card-*")), \
+            f"and no card artifact for a review nobody accepted: {list(pending.iterdir())}"
+
+
+def test_a_frame_no_longer_on_record_refuses_instead_of_fetching_a_fresh_one():
+    """The fail-closed half of reusing the frame, and the more tempting failure.
+
+    The frame this session was built on can genuinely be gone — a day boundary,
+    a reset root, a session prepared on another machine. Quietly resolving a new
+    one would look like a fix and would be the original defect: the user would be
+    handed an amended card priced at an instant they never saw, with the account
+    pillar computed against it. So the recompute asks for nothing, the review
+    degrades, and the gate refuses naming the frame.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_on_a_priced_review(tmp, root)
+        ledger_before = (pathlib.Path(root) / "ledger.jsonl").read_bytes()
+        calls_before = len(_provider_calls(env))
+        shutil.rmtree(pathlib.Path(root) / "cache")      # the frame is no longer on record
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-29"}', env=env)
+        assert run.returncode != 0, run.stdout
+        error = json.loads(run.stdout)["error"]
+        assert "the facts moved" in error, error
+        assert "the valuation frame the card was priced from" in error, error
+        assert len(_provider_calls(env)) == calls_before, (
+            "the recompute went and fetched a replacement frame. That is the defect wearing a "
+            f"repair: {_provider_calls(env)[calls_before:]}")
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]]
+        assert (pathlib.Path(root) / "ledger.jsonl").read_bytes() == ledger_before
+
+
+def test_replaying_the_same_cash_anchor_changes_nothing():
+    """Idempotence, at the level the user can retry at.
+
+    An agent that loses the response and re-runs the command must not produce a
+    second review, a second ledger row, or a different answer. The anchored
+    session is already anchored, so the replay is refused with a stable message
+    and the session on disk is byte-identical afterwards.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_on_a_priced_review(tmp, root)
+        anchor = '{"currency":"USD","amount":1200,"as_of":"2026-07-29"}'
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", anchor, env=env)
+        assert added.returncode == 0, added.stdout + added.stderr
+        anchored_id = json.loads(added.stdout)["session_id"]
+        pending = pathlib.Path(session_engine.pending_dir(str(root), anchored_id))
+        before = {path.name: path.read_bytes() for path in sorted(pending.iterdir())}
+        ledger_before = (pathlib.Path(root) / "ledger.jsonl").read_bytes()
+        calls_before = len(_provider_calls(env))
+
+        replay = _run("add-cash", "--root", root, "--session-id", anchored_id,
+                      "--cash", anchor, env=env)
+        assert replay.returncode != 0, replay.stdout
+        assert "already carries a cash anchor" in json.loads(replay.stdout)["error"]
+        assert {path.name: path.read_bytes() for path in sorted(pending.iterdir())} == before, \
+            "a replay must not rewrite the session it is replaying"
+        assert (pathlib.Path(root) / "ledger.jsonl").read_bytes() == ledger_before
+        assert len(_provider_calls(env)) == calls_before, \
+            "and it must not reach the market on the way to refusing"
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [anchored_id], \
+            "no second pending session survives the replay"
 
 
 def test_add_cash_refuses_a_session_that_never_takes_an_anchor():

@@ -531,14 +531,17 @@ _DRIVEN_ROUTES = ("consider", "prepare", "refresh", "positions")
 _ROUTES_NOT_DRIVEN = {
     # `add-cash` (#357) performs no book read of its own: it re-enters
     # `_prepare_session` — the `prepare` route driven above — with one extra
-    # input, and then refuses unless the recomputed `engine_state` (holdings,
-    # splits, valuation frame: everything but `cash`) is byte-identical to the
-    # session it is amending. Whatever `prepare` establishes about the split
-    # basis, this route reproduces exactly or does not answer at all, so there
-    # is no second basis for it to get wrong. This is a mechanism, not a
-    # call-graph argument: it is pinned by
-    # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved.
-    "add-cash": "delegates to prepare and refuses any engine_state drift outside cash",
+    # input, and it does so on a frozen market frame, so the splits and the
+    # valuation frame it computes over are the ones `prepare` already resolved
+    # rather than a second resolution (#665). It then refuses unless the source
+    # facts come back identical, `the valuation frame the card was priced from`
+    # — holdings, splits, price snapshot, valuation frame — among them. Whatever
+    # `prepare` establishes about the split basis, this route reproduces exactly
+    # or does not answer at all, so there is no second basis for it to get
+    # wrong. This is a mechanism, not a call-graph argument: it is pinned by
+    # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved
+    # and ::test_a_frame_no_longer_on_record_refuses_instead_of_fetching_a_fresh_one.
+    "add-cash": "delegates to prepare on a frozen frame and refuses any source-fact drift",
 }
 
 
