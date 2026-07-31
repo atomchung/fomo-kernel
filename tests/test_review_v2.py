@@ -9301,6 +9301,157 @@ def test_initial_thesis_dedup_skips_a_position_with_an_existing_thesis():
                    for q in plan["question_queue"]), "the un-thesised holding is still asked"
 
 
+def _evaluation_row(evaluation_id, ticker, created, reason=None, decision="open"):
+    """A trade_evaluations.jsonl row shaped like consider's own writer.
+
+    When a context is present it carries both `reason` and `why_now`, because
+    schemas/decision-context.schema.json requires both -- a row with only one
+    is a shape `consider` cannot write, and a fixture that uses it would be
+    testing against an impossible record. When there is no context the key is
+    omitted rather than nulled: review's identity seed keys on that presence
+    test, so a stored `context: null` is a different row than no context."""
+    row = {"evaluation_id": evaluation_id, "created": created,
+           "premise": {"ticker": ticker, "side": "buy", "qty": 10.0, "price": 100.0,
+                       "date": created, "currency": "USD"},
+           "basis": {"state_version": "csv-v1:seed"}, "consequence": {}, "rule_collisions": [],
+           "decision": decision, "decided_on": created}
+    if reason is not None:
+        row["context"] = {"reason": reason, "why_now": f"why-now for {evaluation_id}"}
+    return row
+
+
+def test_initial_thesis_recalls_what_the_user_already_said_before_entering():
+    """#636: a holding the user discussed through `consider` before entering is
+    not asked to reconstruct a motive from memory. The stem quotes their own
+    stored words verbatim, dated, and carries the provenance to check the quote
+    against. A statement recorded *after* the entry is not an entry thesis and
+    must not be quoted."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True)
+        early = "Order visibility runs into the next build cycle."
+        latest = "Guidance was cut but the multiple already prices it."
+        after = "Chasing the breakout after the gap."
+        rows = [
+            # AAA: two statements before the 2026-01-01 entry. The later one is
+            # the user's current account of why they entered; `decision: acted`
+            # proves recall does not inherit the reconciliation's open-only filter.
+            _evaluation_row("eval-aaa-early", "AAA", "2025-12-20", early),
+            _evaluation_row("eval-aaa-latest", "AAA", "2025-12-28", latest, decision="acted"),
+            # BBB: recorded two months *after* its entry — a different decision
+            # than the one this question asks about.
+            _evaluation_row("eval-bbb-after", "BBB", "2026-03-01", after),
+        ]
+        (root / "trade_evaluations.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+        positions = {"AAA": _pos("AAA", 5000), "BBB": _pos("BBB", 4000)}
+        card, state = _density_artifacts(tmp, "recall", positions, thesis_questions=[])
+        run = _run("prepare", "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        asked = {q.get("ticker"): q for q in plan["question_queue"]
+                 if q.get("kind") == "initial_thesis"}
+        assert set(asked) == {"AAA", "BBB"}, "both holdings are still asked exactly once"
+
+        aaa = asked["AAA"]
+        assert latest in aaa["question"], "the stem quotes the user's own words verbatim"
+        assert early not in aaa["question"], \
+            "a superseded earlier statement is not the account of why they entered"
+        assert "2025-12-28" in aaa["question"], "the quote is dated, so it reads as a record"
+        assert aaa["recalled_statement"] == {
+            "evaluation_id": "eval-aaa-latest", "created": "2025-12-28", "quoted": latest}
+
+        bbb = asked["BBB"]
+        assert after not in bbb["question"], \
+            "a statement recorded after the entry is not the entry thesis"
+        assert "recalled_statement" not in bbb
+        assert "what was your thesis?" in bbb["question"], \
+            "with nothing to recall the question falls back unchanged"
+
+        # The recall replaces the wording of an existing question; it never adds
+        # one, so the route's #291 density band is untouched.
+        assert len(plan["question_queue"]) <= review_engine.QUESTION_POLICY["first_review"]["max"]
+
+        # A question row is `additionalProperties: false`, so a new field that
+        # is not declared makes the emitted plan invalid against the published
+        # schema -- silently, because nothing else in the offline suite feeds a
+        # first_review question queue through it. Pinned here with the same
+        # manual idiom test_consider.py uses (the suite carries no jsonschema
+        # dependency).
+        item_schema = json.loads(
+            (pathlib.Path(review_engine.__file__).resolve().parent.parent
+             / "schemas" / "review-plan.schema.json").read_text(encoding="utf-8")
+        )["properties"]["question_queue"]["items"]
+        assert item_schema["additionalProperties"] is False
+        allowed = set(item_schema["properties"])
+        for row in plan["question_queue"]:
+            assert set(row) <= allowed, f"undeclared question fields: {set(row) - allowed}"
+        recalled_schema = item_schema["properties"]["recalled_statement"]
+        assert set(recalled_schema["required"]) <= set(aaa["recalled_statement"])
+        assert set(aaa["recalled_statement"]) <= set(recalled_schema["properties"])
+
+
+def test_initial_thesis_recall_fails_closed_on_a_re_entry_cycle():
+    """#636: a ticker fully exited and re-entered is a new position with its own
+    reason (owner ruling: per cycle, not per ticker). A cycle id carries no
+    lower bound, so every statement made before the *first* entry also satisfies
+    `created <= start` for the second. Rather than attribute the previous
+    position's reason to this one, a re-entry recalls nothing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True)
+        first_cycle_reason = "Bought the first time for the backlog."
+        (root / "trade_evaluations.jsonl").write_text(
+            json.dumps(_evaluation_row("eval-old-cycle", "AAA", "2025-11-01",
+                                       first_cycle_reason)) + "\n", encoding="utf-8")
+        positions = {"AAA": dict(_pos("AAA", 5000), cycle_id="AAA#2026-01-01#2")}
+        card, state = _density_artifacts(tmp, "reentry", positions, thesis_questions=[])
+        run = _run("prepare", "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        asked = [q for q in plan["question_queue"]
+                 if q.get("kind") == "initial_thesis" and q.get("ticker") == "AAA"]
+        assert asked, "the re-entered holding is still asked its entry thesis"
+        assert first_cycle_reason not in asked[0]["question"], \
+            "the previous position's reason is not this position's entry thesis"
+        assert "recalled_statement" not in asked[0]
+
+
+def test_cycle_entry_rejects_a_non_canonical_cycle_id():
+    """#636: trade_recap.CYCLE_ID_RE is the shape's single source of truth. A
+    `split("#")` would accept `AAA#2026-01-01#garbage` and fail open into a
+    valid-looking entry date -- on a path that decides whether to attribute the
+    user's own words to a position, fail-open is the wrong direction."""
+    assert review_engine._cycle_entry("AAA#2026-01-01#1") == (dt.date(2026, 1, 1), 1)
+    # The shapes a permissive `split("#")` would also reject, because int() or
+    # fromisoformat() raises on them anyway.
+    for bad in ("AAA#2026-01-01#garbage", "AAA#unknown", "AAA", "", None,
+                "AAA#2026-13-01#1", "AAA#2026-01-01"):
+        assert review_engine._cycle_entry(bad) == (None, None), bad
+    # The shapes only the regex rejects. Without these the strictness is
+    # decorative: a split-based helper parses each of them into a real date
+    # and a real sequence, and the caller would attribute the user's words to
+    # a cycle id trade_recap can never have produced.
+    for forged in ("A A#2026-01-01#1", "#2026-01-01#1", " AAA#2026-01-01#1",
+                   "AAA#2026-01-01#1 "):
+        assert review_engine._cycle_entry(forged) == (None, None), forged
+
+
+def test_initial_thesis_recall_ignores_a_statement_with_no_words():
+    """#636: `consider` runs fine with no --decision-context, so an evaluation
+    may carry no reason at all. A recalled blank is worse than the canned
+    question it would replace, so it is dropped rather than quoted empty."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        root.mkdir(parents=True)
+        (root / "trade_evaluations.jsonl").write_text(
+            json.dumps(_evaluation_row("eval-bare", "AAA", "2025-12-20")) + "\n", encoding="utf-8")
+        recall = review_engine._evaluation_recall(str(root))
+        assert recall == {}, "an evaluation with no stored words is not a recallable statement"
+
+
 def test_initial_thesis_consumption_maturity_gate_and_idempotency():
     """#291: planned_entry forces a real captured thesis; other answers keep the
     inferred record legal; the classification projects; finalize stays idempotent."""
