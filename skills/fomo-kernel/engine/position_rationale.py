@@ -16,15 +16,19 @@ until one of them lands a row in this file is not yet memory — it is a writer
 without a reader, which is #429's failure class and is exactly why this module
 ships with the bounded query rather than after it.
 
-Three contract decisions differ from the shape frozen on #403, each because the
-frozen shape loses a user's words. They are one change, not three:
+The event contract here is the one the owner accepted on 2026-07-31 (#403,
+"Maintainer disposition"), which superseded the issue body on two details. Both
+are implemented below; neither is this module's invention. One addition is:
+idempotency by head comparison rather than id collision, which the accepted
+append semantics do not name and which the chain makes necessary.
 
 1. **The content address carries the predecessor.** Frozen, the address is the
-   payload minus ``recorded_at``, so a user who says A, then B, then A, then B
-   has their fourth statement hash identically to their second and silently
-   dropped as a retry — while the writer returns success. Two ``no_change``
-   confirmations of the same statement on the same day collide at the second.
-   With the predecessor in the address every real act is distinct.
+   payload minus ``recorded_at``, so a user who says A, then B, then A, then B —
+   one sitting, same day, same book — has their fourth statement hash identically
+   to their second and silently dropped as a retry, while the writer returns
+   success. That single case is the whole justification; an immediate repeat is
+   a no-op either way, and same-day confirmations collapse under head comparison
+   either way.
 
 2. **Idempotency is head comparison, not id collision.** The pointer alone
    breaks the retry it was meant to preserve: a write that lands and then dies
@@ -43,14 +47,24 @@ frozen shape loses a user's words. They are one change, not three:
    changed); ``supersedes is None`` records that nothing preceded it, which is
    the same fact carried where a later discovery cannot falsify it.
 
-Deviation 1 and 3 must travel together. Dropping the derived label while the
-address still has no predecessor makes the collision *worse* — the label is
-currently acting as an accidental discriminator, so A→B→A would collide at the
-third event instead of the fourth.
+1 and 3 must travel together. Dropping the derived label while the address still
+has no predecessor makes the collision *worse* — the label is currently acting
+as an accidental discriminator, so A→B→A would collide at the third event
+instead of the fourth.
 
-``mapping_status`` is likewise not stored, for reason 3's argument: a row either
-carries a ``condition_ref`` or it does not, and a second encoding of that in the
-same row is one more thing that can disagree with itself.
+Three refusals rather than resolutions, all from the same accepted disposition:
+a subject with two children of one predecessor, an ``expected_predecessor`` that
+is no longer the head, and a review session returning with different words under
+an id it already used. Each could be "resolved" by picking a winner; each winner
+would be one the user never nominated.
+
+``mapping_status`` is not stored here, and this is the one open item on #403.
+The row carries an optional ``condition_ref``; whether that condition is
+monitorable is ``conditions.py``'s answer, and the owner's 2026-07-31 ruling
+makes it three states rather than two — a monitored condition, one that is
+specific but currently blind, and wording that names nothing observable. A
+boolean beside the pointer could not carry the middle state, and duplicating the
+tier here would be a second reader of ``conditions.TIERS``.
 """
 import datetime as dt
 import json
@@ -112,6 +126,33 @@ def _subject(raw):
     return {key: str(raw[key]) for key in SUBJECT_KEYS}
 
 
+def _readable(row):
+    """Is this row safe for every reader below to dereference?
+
+    Deliberately strict about the fields the fold and the bounded query read
+    without guarding — a row admitted here and missing one of them would crash
+    the reader while `unreadable` still said the file was clean, which inverts
+    the degrade-then-say-by-how-much contract instead of merely weakening it.
+    `voice` is checked for the same reason it is a const: a row claiming any
+    other voice must never be handed back as the user's own words.
+    """
+    if not isinstance(row, dict):
+        return False
+    subject = row.get("subject")
+    if not isinstance(subject, dict) or any(
+            not isinstance(subject.get(key), str) or not subject[key] for key in SUBJECT_KEYS):
+        return False
+    if not isinstance(row.get("supersedes"), str) and row.get("supersedes") is not None:
+        # An unhashable or non-string pointer would raise out of the chain walk
+        # and take reads *and* writes for this subject with it, permanently.
+        return False
+    return (isinstance(row.get("event_id"), str) and row["event_id"]
+            and row.get("act") in ACTS
+            and isinstance(row.get("stated_at"), str) and row["stated_at"]
+            and row.get("voice") == VOICE
+            and row.get("capture_source") in CAPTURE_SOURCES)
+
+
 def load(path):
     """Return ``(rows, unreadable)`` — every stored event in file order, and how
     many lines could not be read.
@@ -124,7 +165,11 @@ def load(path):
     rows, unreadable = [], 0
     if not path or not os.path.exists(path):
         return rows, unreadable
-    with open(path, encoding="utf-8") as handle:
+    # errors="replace" so one truncated multi-byte character costs that line
+    # rather than every statement in the file: a crash mid-write of a non-ASCII
+    # statement would otherwise raise on every later read *and* every later
+    # append, which is the opposite of what this function promises.
+    with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
             if not line:
@@ -134,16 +179,27 @@ def load(path):
             except ValueError:
                 unreadable += 1
                 continue
-            if (isinstance(row, dict) and row.get("event_id")
-                    and isinstance(row.get("subject"), dict)
-                    and row["subject"].get("cycle_id") and row.get("act") in ACTS):
+            if _readable(row):
                 rows.append(row)
             else:
                 unreadable += 1
     return rows, unreadable
 
 
-def chain_for(rows, cycle_id):
+def _subject_ids(cycle_id, aliases):
+    """The one subject, under every id the engine has proven to be it.
+
+    Identity is ``thesis.py``'s domain, not this module's: the caller passes the
+    engine-proven relinks (``thesis.build_snapshot_cycle_relinks``) rather than
+    this reader guessing at continuity. #563's later-history upgrade moves a
+    cycle's start, and a reader that matched the current id alone would return
+    nothing for statements the user still owns — remembered, then silently gone,
+    which is the failure this stream exists to prevent.
+    """
+    return {str(cycle_id)} | {str(alias) for alias in (aliases or ()) if alias}
+
+
+def chain_for(rows, cycle_id, aliases=()):
     """Every event on one subject, oldest first, ordered by the chain itself.
 
     File order is the tiebreaker, not the ordering: a row's predecessor is what
@@ -152,7 +208,8 @@ def chain_for(rows, cycle_id):
     truncated copy — is kept and treated as a root rather than dropped, because
     losing a statement to a broken link is the loss this stream exists to stop.
     """
-    own = [row for row in rows if (row.get("subject") or {}).get("cycle_id") == cycle_id]
+    wanted = _subject_ids(cycle_id, aliases)
+    own = [row for row in rows if (row.get("subject") or {}).get("cycle_id") in wanted]
     by_id = {row["event_id"]: row for row in own}
     depth_memo, order = {}, {row["event_id"]: index for index, row in enumerate(own)}
 
@@ -169,16 +226,77 @@ def chain_for(rows, cycle_id):
         depth_memo[event_id] = _depth(parent, seen | {event_id}) + 1
         return depth_memo[event_id]
 
-    return sorted(own, key=lambda row: (_depth(row["event_id"], set()), order[row["event_id"]]))
+    def _root_depth(event_id):
+        parent = by_id[event_id].get("supersedes")
+        if parent and parent in by_id and _cycles(event_id):
+            # A cycle is only reachable in a hand-edited file. Memoizing the
+            # zero it produces would serve that caller's descent path to every
+            # later lookup, so this branch is computed fresh each time.
+            return 0
+        return _depth(event_id, set())
+
+    def _cycles(event_id):
+        seen, node = set(), event_id
+        while node and node in by_id and node not in seen:
+            seen.add(node)
+            node = by_id[node].get("supersedes")
+        return node in seen
+
+    # Depth places an event inside its own chain. Between two independent chains
+    # -- which a relink merge legitimately produces -- depth says nothing, so the
+    # date the user spoke breaks the tie before file order does. Without it the
+    # newest statement can sit mid-list while an older one is reported as latest.
+    return sorted(own, key=lambda row: (_root_depth(row["event_id"]),
+                                        row.get("stated_at") or "",
+                                        order[row["event_id"]]))
 
 
-def head_of(rows, cycle_id):
+def forks_in(rows, cycle_id, aliases=()):
+    """Predecessors with more than one child — a corrupt subject, reported not healed.
+
+    Two events superseding the same predecessor cannot both be the current
+    reason, and choosing between them by file order or timestamp would pick a
+    winner the user never nominated. A reader must still return what it can, so
+    `chain_for` linearizes rather than crashing; this is how it says the order it
+    produced is not the record's own. `append_locked` refuses outright, because
+    a new event superseding an ambiguous head would bury one branch for good.
+    """
+    wanted = _subject_ids(cycle_id, aliases)
+    children = {}
+    for row in rows:
+        if (row.get("subject") or {}).get("cycle_id") not in wanted:
+            continue
+        parent = row.get("supersedes")
+        if parent:
+            children.setdefault(parent, []).append(row["event_id"])
+    return sorted(parent for parent, kids in children.items() if len(kids) > 1)
+
+
+def classify(rows, cycle_id, event_id=None, aliases=()):
+    """Derive `initial | changed | no_change` for one event — the frozen
+    vocabulary, computed by the one reader rather than stored by the writer.
+
+    Lives here so every consumer reads the same derivation. An integration
+    surface that rolled its own would be the second reader of one fact, which is
+    the defect not storing the label was meant to end.
+    """
+    chain = chain_for(rows, cycle_id, aliases)
+    if not chain:
+        return None
+    row = next((r for r in chain if r["event_id"] == event_id), chain[-1]) \
+        if event_id else chain[-1]
+    if row.get("act") == "confirmation":
+        return "no_change"
+    return "initial" if not row.get("supersedes") else "changed"
+
+
+def head_of(rows, cycle_id, aliases=()):
     """The subject's latest event, or None. What a new event supersedes."""
-    chain = chain_for(rows, cycle_id)
+    chain = chain_for(rows, cycle_id, aliases)
     return chain[-1] if chain else None
 
 
-def effective_statement(rows, cycle_id):
+def effective_statement(rows, cycle_id, aliases=()):
     """The wording currently in force: the latest event that is a statement.
 
     Derived by walking back through confirmations rather than stored, and never
@@ -186,13 +304,13 @@ def effective_statement(rows, cycle_id):
     restated their reason, and recording it as though they had would put words
     in their mouth on a date they did not say them.
     """
-    for row in reversed(chain_for(rows, cycle_id)):
+    for row in reversed(chain_for(rows, cycle_id, aliases)):
         if row.get("act") == "statement":
             return row
     return None
 
 
-def build_event(*, subject, act, stated_at, capture_source, state_version,
+def build_event(*, subject, act, capture_source, state_version, stated_at=None,
                 supersedes=None, user_statement=None, origin_id=None,
                 condition_ref=None, recorded_at=None):
     """Build one validated, content-addressed event. Writes nothing.
@@ -230,7 +348,11 @@ def build_event(*, subject, act, stated_at, capture_source, state_version,
         "schema_version": SCHEMA_V,
         "subject": _subject(subject),
         "act": act,
-        "stated_at": _iso_date(stated_at, "stated_at"),
+        # Frozen default: the invocation's local calendar date. Sub-day precision
+        # is deliberately not what separates two same-day revisions — the
+        # predecessor chain is. A user referring to an earlier day supplies that
+        # date; nothing here invents one on their behalf.
+        "stated_at": _iso_date(stated_at or dt.date.today().isoformat(), "stated_at"),
         # Always present, null for a first event. Unlike the optional keys below
         # this one is constant across every row, so a null cannot shift another
         # row's digest — and it is the fact `initial` used to claim.
@@ -243,10 +365,17 @@ def build_event(*, subject, act, stated_at, capture_source, state_version,
         # Byte-for-byte. Not stripped, not normalized, not tidied into product
         # phrasing — the whole point of the stream is that these are their words.
         identity["user_statement"] = user_statement
-    if origin_id:
-        identity["origin_id"] = str(origin_id)
-    if condition_ref:
-        identity["condition_ref"] = str(condition_ref)
+    if supersedes is not None and not isinstance(supersedes, str):
+        raise PositionRationaleError("supersedes must be an event id string or None")
+    for key, value in (("origin_id", origin_id), ("condition_ref", condition_ref)):
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            # Omitting an empty string would make it indistinguishable from
+            # absent in the address, so two different sessions could hash
+            # identically and the second act be lost as a retry.
+            raise PositionRationaleError(f"{key} must be a non-empty string when supplied")
+        identity[key] = value
 
     row = dict(identity)
     row["event_id"] = thesis.stable_event_id("position-rationale", identity)
@@ -267,9 +396,10 @@ def append(root, **kwargs):
         return append_locked(locked_root, **kwargs)
 
 
-def append_locked(root, *, subject, act, stated_at, capture_source, state_version,
-                  user_statement=None, origin_id=None, condition_ref=None,
-                  recorded_at=None):
+def append_locked(root, *, subject, act, capture_source, state_version,
+                  stated_at=None, user_statement=None, origin_id=None,
+                  condition_ref=None, recorded_at=None, expected_predecessor=None,
+                  aliases=()):
     """Resolve the subject's head, then append unless this act is already recorded.
 
     Two idempotency rules, and they answer different questions.
@@ -286,27 +416,59 @@ def append_locked(root, *, subject, act, stated_at, capture_source, state_versio
     mirroring ``session._append_session_rows``, and checked before the head so a
     replay is a no-op regardless of what has happened since.
 
-    A statement whose words equal its predecessor's is legal and is *not* a
-    retry: it can only be a deliberate revert to an earlier reason, which the
-    frozen three-value contract could not represent at all. An immediate repeat
-    is what head comparison absorbs.
+    An immediate repeat of the head's exact act is a no-op, deliberately and by
+    the accepted contract — "identical payload against the same predecessor is
+    an idempotent no-op". What the chain buys is the *non-immediate* repeat: the
+    fourth event of A→B→A→B is a real re-statement with its own id, where the
+    address without a predecessor would have swallowed it. Saying the user can
+    restate identical words back-to-back would be a promise this code does not
+    keep, and the contract does not ask it to.
+
+    Two further refusals the accepted disposition requires, both fail-closed
+    rather than resolved by picking a winner: an already-forked subject, and an
+    `expected_predecessor` that is no longer the head.
     """
     path = _rationale_path(root)
     rows, _unreadable = load(path)
     cycle_id = _subject(subject)["cycle_id"]
 
-    if capture_source == "review" and origin_id:
-        for row in chain_for(rows, cycle_id):
-            if row.get("capture_source") == "review" and row.get("origin_id") == str(origin_id):
-                return {"path": path, "appended": 0, "status": "no-op",
-                        "event_id": row["event_id"]}
+    forks = forks_in(rows, cycle_id, aliases)
+    if forks:
+        raise PositionRationaleError(
+            f"{cycle_id} has two events superseding {', '.join(forks)}; the head is "
+            "ambiguous and appending would bury one branch. Repair the stream rather "
+            "than letting file order choose which reason the user meant")
 
-    head = head_of(rows, cycle_id)
+    head = head_of(rows, cycle_id, aliases)
+    head_id = (head or {}).get("event_id")
+    if expected_predecessor is not None and expected_predecessor != head_id:
+        raise PositionRationaleError(
+            f"expected predecessor {expected_predecessor or '(none)'} but the head is "
+            f"{head_id or '(none)'}; something was recorded in between. Re-read and retry "
+            "rather than forking the subject")
+
     row = build_event(subject=subject, act=act, stated_at=stated_at,
                       capture_source=capture_source, state_version=state_version,
-                      supersedes=(head or {}).get("event_id"),
-                      user_statement=user_statement, origin_id=origin_id,
-                      condition_ref=condition_ref, recorded_at=recorded_at)
+                      supersedes=head_id, user_statement=user_statement,
+                      origin_id=origin_id, condition_ref=condition_ref,
+                      recorded_at=recorded_at)
+
+    if capture_source == "review" and origin_id:
+        for prior in chain_for(rows, cycle_id, aliases):
+            if not (prior.get("capture_source") == "review"
+                    and prior.get("origin_id") == str(origin_id)):
+                continue
+            if _same_act(prior, row):
+                return {"path": path, "appended": 0, "status": "no-op",
+                        "event_id": prior["event_id"]}
+            # A replay is a no-op; a session that comes back saying something
+            # *different* under the same id is not a replay, and silently
+            # keeping the older words is the loss this stream exists to stop.
+            # `session._append_session_rows` refuses the same shape.
+            raise PositionRationaleError(
+                f"session {origin_id} already recorded a different rationale for {cycle_id} "
+                f"({prior['event_id']}); a re-finalize may not silently replace the user's "
+                "words. Record the correction as a new statement instead")
     if head is not None and _same_act(head, row):
         return {"path": path, "appended": 0, "status": "no-op",
                 "event_id": head["event_id"]}
@@ -346,7 +508,7 @@ def _same_act(head, candidate):
     return all(head.get(key) == candidate.get(key) for key in keys)
 
 
-def query(root, cycle_id, *, cap=QUERY_CAP):
+def query(root, cycle_id, *, cap=QUERY_CAP, aliases=()):
     """The bounded position-rationale reader (#450).
 
     Returns the earliest event, the latest, and up to six of the most recent
@@ -361,12 +523,12 @@ def query(root, cycle_id, *, cap=QUERY_CAP):
     """
     path = _rationale_path(root)
     rows, unreadable = load(path)
-    chain = chain_for(rows, cycle_id)
+    chain = chain_for(rows, cycle_id, aliases)
     total = len(chain)
     if not chain:
         return {"cycle_id": cycle_id, "items": [], "effective": None, "latest": None,
-                "span": None, "total": 0, "shown": 0, "beyond_cap": 0,
-                "unreadable": unreadable}
+                "change": None, "span": None, "total_count": 0, "shown_count": 0, "beyond_cap": 0,
+                "unreadable": unreadable, "forked": []}
 
     earliest, latest = chain[0], chain[-1]
     if total == 1:
@@ -377,18 +539,31 @@ def query(root, cycle_id, *, cap=QUERY_CAP):
         # Earliest and latest are always sent; the rest of the budget goes to the
         # most recent remaining, because a reason's recent history is what a
         # question is worth asking against.
-        shown = [earliest] + chain[1:-1][-max(0, cap - 2):] + [latest]
+        room = max(0, cap - 2)
+        # `x[-0:]` is `x[0:]`, so a cap of 0/1/2 would silently return the whole
+        # chain while reporting `beyond_cap: 0` -- the bounded surface unbounded,
+        # asserting nothing was held back.
+        middle = chain[1:-1][-room:] if room else []
+        shown = [earliest] + middle + [latest]
     dates = sorted(row["stated_at"] for row in chain)
     return {
         "cycle_id": cycle_id,
         "items": shown,
         # Derived, never stored: the wording in force is the latest statement,
         # which a run of confirmations does not change.
-        "effective": effective_statement(rows, cycle_id),
+        "effective": effective_statement(rows, cycle_id, aliases),
         "latest": latest,
+        # The frozen `initial | changed | no_change` vocabulary, derived here so
+        # no consumer has to re-derive it and disagree.
+        "change": classify(rows, cycle_id, aliases=aliases),
+        # Non-empty means the subject is forked and this order is the reader's,
+        # not the record's. A caller must not present it as the user's history.
+        "forked": forks_in(rows, cycle_id, aliases),
         "span": {"first": dates[0], "last": dates[-1]},
-        "total": total,
-        "shown": len(shown),
+        # #450 froze these two names; do not shorten them to match
+        # `_evaluation_reconciliation`'s local spelling.
+        "total_count": total,
+        "shown_count": len(shown),
         "beyond_cap": total - len(shown),
         "unreadable": unreadable,
     }

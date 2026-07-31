@@ -20,7 +20,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["cycle_id", "ticker", "market", "currency"],
-      "description": "The active position cycle this statement is about, resolved by the engine from the recorded book — never supplied and never guessed. All four keys are required: joining a rationale on ticker alone would cross an unproven sale-and-rebuy boundary, which is exactly the join #403 forbids.",
+      "description": "The active position cycle this statement is about. All four keys are required: joining a rationale on ticker alone would cross an unproven sale-and-rebuy boundary, which is exactly the join #403 forbids. The subject is resolved from the recorded book by the entry point, which also owns #403's route rules — one active cycle appends, no active position refuses, an ambiguous ticker fails closed. This module validates the shape and refuses a partial subject; it does not read the book, so it cannot itself confirm the cycle exists. A reader follows engine-proven relinks so a cycle whose start moved (#563) still finds statements written under its former id.",
       "properties": {
         "cycle_id": {"type": "string", "description": "The position cycle. A sold and rebought position is a different cycle and inherits nothing."},
         "ticker": {"type": "string"},
@@ -35,7 +35,7 @@
     "user_statement": {
       "type": "string",
       "minLength": 1,
-      "description": "The user's own words, byte for byte: not stripped, not normalized, not tidied into product phrasing. Required for `statement` and refused for `confirmation`, both enforced. A statement whose words equal its predecessor's is legal and is not a retry — it can only be a deliberate return to an earlier reason, which the three-value contract could not express at all."
+      "description": "The user's own words, byte for byte: not stripped, not normalized, not tidied into product phrasing. Required for `statement` and refused for `confirmation`, both enforced. Repeating the head's exact act is an idempotent no-op, as the accepted append semantics require; what the predecessor in the address buys is the *non-immediate* return to an earlier reason — the fourth event of A→B→A→B is a real re-statement with its own id rather than a collision with the second."
     },
     "supersedes": {
       "type": ["string", "null"],
@@ -68,7 +68,7 @@
     },
     "condition_ref": {
       "type": "string",
-      "description": "An optional link to the condition slot that makes this reason checkable, when a later slice legally creates one. Its presence is what `mapped` means; there is deliberately no separate `mapping_status` field, because a second encoding of one fact in an append-only row is one more thing that can disagree with itself. Never manufactured: a reason that names nothing observable stays unmapped and nothing claims to be watching it."
+      "description": "An optional link to the condition slot for this reason, when a later slice legally creates one. The pointer says a slot exists, never that it is monitored: a slot carries its own `tier` and may itself be `unmapped` (`conditions.py`), and the owner's 2026-07-31 ruling separates three states — monitored, specific but currently blind, and wording that names nothing observable. Monitored-ness is therefore read from the condition, not restated here; a boolean beside the pointer could not carry the middle state. Never manufactured: a reason that names nothing observable is preserved verbatim and nothing claims to be watching it."
     }
   }
 }

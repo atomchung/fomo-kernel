@@ -13,12 +13,17 @@ What this file settles:
      two confirmations on different days are two events.
   D. Nothing is joined across subjects, and a corrupt line costs one row rather
      than the record — and is counted rather than swallowed.
-  E. The bounded reader (#450) reports its truncation honestly and computes the
-     span, the totals and the effective statement from the untruncated chain.
+  E. The bounded reader (#450) reports its truncation honestly, follows
+     engine-proven cycle relinks, derives the frozen `initial | changed |
+     no_change` vocabulary, and computes the span, the totals and the effective
+     statement from the untruncated chain.
+  F. Three ambiguities fail closed rather than resolving to a winner the user
+     never nominated: a forked subject, a moved expected predecessor, and a
+     review session returning with different words under an id it already used.
 
 The three mutations this file exists to fail, per docs/development-guide.md §2:
 
-  1. Drop ``supersedes`` from the content address (the frozen #403 shape) —
+  1. Drop ``supersedes`` from the content address (#403's pre-amendment shape) —
      ``test_a_reason_the_user_returns_to_is_not_swallowed_as_a_retry`` fails,
      because the user's fourth statement hashes onto their second.
   2. Replace head comparison with id-collision idempotency —
@@ -132,14 +137,15 @@ def test_where_an_event_sits_in_its_chain_is_derived():
         assert len(roots) == 2, (
             "two chain roots read honestly as two origins, one discovered later; "
             "two rows each storing 'this was the first' would read as a contradiction")
-        assert pr.query(root, ACME["cycle_id"])["total"] == 3
+        assert pr.query(root, ACME["cycle_id"])["total_count"] == 3
 
 
 # ─────────────────── B. retry versus revert, the load-bearing pair ───────────────────
 
 def test_a_reason_the_user_returns_to_is_not_swallowed_as_a_retry():
-    """Mutation 1's target, and the defect that made this schema deviate from the
-    frozen one. The user says A, then B, then A again, then B again -- one
+    """Mutation 1's target, and the defect behind the owner's accepted
+    predecessor-linked identity. The user says A, then B, then A again, then B
+    again -- one
     sitting, same day, same book. Without the predecessor in the content address
     the fourth statement hashes identically to the second and is dropped as an
     "exact retry", while the writer returns a success receipt naming the older
@@ -184,8 +190,7 @@ def test_a_review_that_is_finalized_twice_does_not_resurrect_its_statement():
 
     Head comparison alone would not catch this -- the head has moved on -- so the
     review lane is idempotent on its own session and subject, the same key
-    `session._append_session_rows` uses. The direct route is unaffected: a user
-    who says the same thing twice on purpose still gets head comparison.
+    `session._append_session_rows` uses.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "coach")
@@ -198,6 +203,100 @@ def test_a_review_that_is_finalized_twice_does_not_resurrect_its_statement():
         assert len(_rows(root)) == 2
         assert pr.query(root, ACME["cycle_id"])["effective"]["user_statement"] == \
             "and then I changed my mind", "the newer direct statement stays in force"
+
+
+def test_a_review_session_that_comes_back_with_different_words_fails_closed():
+    """The session key makes a replay a no-op. It must not make a *correction* a
+    no-op: a user who resumes a review and rewords their reason has said
+    something new, and keeping the older words while reporting success is the
+    exact loss this stream exists to stop. `session._append_session_rows` refuses
+    the same shape rather than choosing which version to keep."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        first = _say(root, ACME, "because of the dividend", source="review",
+                     origin_id="session-abc")
+        try:
+            _say(root, ACME, "because of the dividend AND the buyback",
+                 source="review", origin_id="session-abc")
+        except pr.PositionRationaleError as exc:
+            assert "already recorded a different rationale" in str(exc)
+            assert first["event_id"] in str(exc)
+        else:
+            raise AssertionError("a changed statement under a used session id must fail closed")
+        assert len(_rows(root)) == 1, "and nothing is written on the way to refusing"
+
+
+def test_a_forked_subject_is_reported_and_refused_rather_than_healed():
+    """Two events superseding one predecessor cannot both be the current reason.
+    The accepted disposition requires corruption be reported rather than resolved
+    by file order or timestamp -- so the reader says `forked` and the writer
+    refuses, instead of appending onto a head that buries one branch for good."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        root_event = _say(root, ACME, "the original reason")
+        branch = pr.build_event(subject=ACME, act="statement",
+                                user_statement="a second child of the same parent",
+                                stated_at="2026-07-02", capture_source="direct",
+                                state_version="sv-1", supersedes=root_event["event_id"])
+        _say(root, ACME, "the first child", stated_at="2026-07-02")
+        with open(pr._rationale_path(root), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(branch, ensure_ascii=False, sort_keys=True) + "\n")
+
+        assert pr.query(root, ACME["cycle_id"])["forked"] == [root_event["event_id"]]
+        try:
+            _say(root, ACME, "a reason recorded on top of the fork")
+        except pr.PositionRationaleError as exc:
+            assert "ambiguous" in str(exc)
+        else:
+            raise AssertionError("appending onto a forked subject must fail closed")
+
+
+def test_an_expected_predecessor_that_moved_fails_closed():
+    """A caller that read the head, then acted, must not silently fork the
+    subject when something landed in between."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        stale = _say(root, ACME, "the reason I read before acting")
+        _say(root, ACME, "something recorded in between", stated_at="2026-07-02")
+        try:
+            pr.append(root, subject=ACME, act="statement", user_statement="mine",
+                      stated_at="2026-07-03", capture_source="direct",
+                      state_version="sv-1", expected_predecessor=stale["event_id"])
+        except pr.PositionRationaleError as exc:
+            assert "expected predecessor" in str(exc)
+        else:
+            raise AssertionError("a moved head must fail closed, not fork")
+        assert len(_rows(root)) == 2
+
+
+def test_the_frozen_change_vocabulary_is_derived_by_this_reader():
+    """`initial | changed | no_change` is not stored. It must still be computed
+    in exactly one place, or every integration surface rolls its own and the two
+    disagree -- which is the defect not storing it was meant to end."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        _say(root, ACME, "the first reason")
+        assert pr.query(root, ACME["cycle_id"])["change"] == "initial"
+        _say(root, ACME, "a different reason", stated_at="2026-07-02")
+        assert pr.query(root, ACME["cycle_id"])["change"] == "changed"
+        _confirm(root, ACME, stated_at="2026-07-03")
+        assert pr.query(root, ACME["cycle_id"])["change"] == "no_change"
+        assert pr.query(root, "NOSUCH#2026-01-01#1")["change"] is None
+
+
+def test_stated_at_defaults_to_the_local_calendar_date():
+    """Frozen by the accepted disposition. The chain, not sub-day precision,
+    separates two same-day revisions -- so a date is enough, and inventing a
+    clock time for a statement the user did not timestamp would be a fact
+    nobody stated."""
+    import datetime as _dt
+    event = pr.build_event(subject=ACME, act="statement", user_statement="a reason",
+                           capture_source="direct", state_version="sv-1")
+    assert event["stated_at"] == _dt.date.today().isoformat()
+    backdated = pr.build_event(subject=ACME, act="statement", user_statement="a reason",
+                               stated_at="2026-01-05", capture_source="direct",
+                               state_version="sv-1")
+    assert backdated["stated_at"] == "2026-01-05", "an explicit date always wins"
 
 
 # ─────────────────── C. confirmations ───────────────────
@@ -278,9 +377,9 @@ def test_nothing_is_joined_across_subjects():
                                   (WIDGET, "an unrelated reason"),
                                   (ACME_2, "the reason for the one I bought back")):
             query = pr.query(root, subject["cycle_id"])
-            assert query["total"] == 1, subject["cycle_id"]
+            assert query["total_count"] == 1, subject["cycle_id"]
             assert query["effective"]["user_statement"] == expected
-        assert pr.query(root, "NOSUCH#2026-01-01#1")["total"] == 0
+        assert pr.query(root, "NOSUCH#2026-01-01#1")["total_count"] == 0
 
 
 def test_a_corrupt_line_costs_one_row_and_is_counted():
@@ -292,7 +391,7 @@ def test_a_corrupt_line_costs_one_row_and_is_counted():
             handle.write("{not json at all\n")
             handle.write(json.dumps({"event_id": "x", "act": "statement"}) + "\n")
         query = pr.query(root, ACME["cycle_id"])
-        assert query["total"] == 2, "the readable rows survive"
+        assert query["total_count"] == 2, "the readable rows survive"
         assert query["unreadable"] == 2, (
             "and the count says so: a silently dropped row would make `total` a "
             "lie, which is worse than saying the record is damaged")
@@ -319,8 +418,8 @@ def test_the_bounded_reader_says_what_it_held_back():
         events = [_say(root, ACME, f"reason {n}", stated_at=f"2026-07-{n:02d}")
                   for n in range(1, 13)]
         query = pr.query(root, ACME["cycle_id"])
-        assert query["total"] == 12
-        assert query["shown"] == pr.QUERY_CAP == 8
+        assert query["total_count"] == 12
+        assert query["shown_count"] == pr.QUERY_CAP == 8
         assert query["beyond_cap"] == 4
         assert query["items"][0]["event_id"] == events[0]["event_id"], "earliest is kept"
         assert query["items"][-1]["event_id"] == events[-1]["event_id"], "and latest"
@@ -337,12 +436,12 @@ def test_a_short_history_is_returned_whole():
         root = os.path.join(tmp, "coach")
         one = _say(root, ACME, "the only reason")
         query = pr.query(root, ACME["cycle_id"])
-        assert (query["total"], query["shown"], query["beyond_cap"]) == (1, 1, 0)
+        assert (query["total_count"], query["shown_count"], query["beyond_cap"]) == (1, 1, 0)
         assert query["items"][0]["event_id"] == one["event_id"]
         assert query["span"] == {"first": "2026-07-01", "last": "2026-07-01"}
         _say(root, ACME, "a second reason", stated_at="2026-07-05")
         query = pr.query(root, ACME["cycle_id"])
-        assert (query["total"], query["shown"], query["beyond_cap"]) == (2, 2, 0)
+        assert (query["total_count"], query["shown_count"], query["beyond_cap"]) == (2, 2, 0)
 
 
 def test_an_out_of_order_file_still_reads_in_chain_order():
@@ -397,6 +496,164 @@ def test_recorded_at_is_not_part_of_the_identity():
                            state_version="sv-1", recorded_at="2026-07-04T17:30:00+00:00")
     assert early["event_id"] == later["event_id"]
     assert early["recorded_at"] != later["recorded_at"], "but both are recorded"
+
+
+def test_a_row_the_reader_would_crash_on_is_counted_not_admitted():
+    """A row admitted by `load` and then dereferenced by the fold would kill the
+    reader while `unreadable` still said the file was clean -- worse than a
+    silent skip, because it inverts the contract instead of weakening it. Every
+    field a later reader touches without guarding is checked on the way in."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        good = _say(root, ACME, "a real reason")
+        base = _rows(root)[0]
+        broken = [
+            {**base, "event_id": "no-stated-at", "stated_at": None},
+            {**base, "event_id": "unhashable-pointer", "supersedes": ["a", "b"]},
+            {**base, "event_id": "not-the-users-voice", "voice": "agent_guess"},
+            {**base, "event_id": "bad-source", "capture_source": "invented"},
+            {**base, "event_id": "thin-subject", "subject": {"cycle_id": ACME["cycle_id"]}},
+        ]
+        with open(pr._rationale_path(root), "a", encoding="utf-8") as handle:
+            for row in broken:
+                handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+        query = pr.query(root, ACME["cycle_id"])
+        assert query["total_count"] == 1 and query["unreadable"] == len(broken)
+        assert query["effective"]["event_id"] == good["event_id"]
+        # And the store stays writable: an unhashable pointer must not brick it.
+        assert _say(root, ACME, "a later reason", stated_at="2026-07-02")["status"] == "appended"
+
+
+def test_a_torn_multibyte_character_costs_one_line_not_the_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        _say(root, ACME, "管理層換人之後我才進場的")
+        with open(pr._rationale_path(root), "ab") as handle:
+            handle.write(b'{"event_id":"torn","user_statement":"\xe7\xae\xa1\xe7\n')
+        query = pr.query(root, ACME["cycle_id"])
+        assert query["total_count"] == 1, "the readable statement survives"
+        assert query["effective"]["user_statement"] == "管理層換人之後我才進場的"
+
+
+def test_a_small_cap_actually_bounds_the_reader():
+    """`x[-0:]` is `x[0:]`, so a cap of 0/1/2 returning the whole chain while
+    reporting `beyond_cap: 0` would be the bounded surface unbounded, asserting
+    nothing was held back."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        for n in range(1, 13):
+            _say(root, ACME, f"reason {n}", stated_at=f"2026-07-{n:02d}")
+        for cap in (0, 1, 2, 3, 8):
+            query = pr.query(root, ACME["cycle_id"], cap=cap)
+            assert query["shown_count"] == len(query["items"]) <= max(2, cap), cap
+            assert query["beyond_cap"] == 12 - query["shown_count"], cap
+
+
+def test_an_optional_field_supplied_empty_is_refused_not_silently_dropped():
+    """Omitting it would make it indistinguishable from absent in the address,
+    so two different review sessions could hash identically and the second act
+    be lost as a retry."""
+    for key in ("origin_id", "condition_ref"):
+        try:
+            pr.build_event(subject=ACME, act="statement", user_statement="a reason",
+                           stated_at="2026-07-01", capture_source="review",
+                           state_version="sv-1", **{key: ""})
+        except pr.PositionRationaleError as exc:
+            assert key in str(exc)
+        else:
+            raise AssertionError(f"an empty {key} must be refused")
+
+
+def test_an_independent_branch_cannot_bury_a_newer_statement():
+    """Depth places an event inside its own chain and says nothing between two
+    chains -- which a relink merge legitimately produces. Ordering those by file
+    order alone lets an older statement be reported as the user's current one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        old = "ACME#2026-01-15#1"
+        newer = pr.build_event(subject={**ACME, "cycle_id": old}, act="statement",
+                               user_statement="what I said most recently",
+                               stated_at="2026-08-20", capture_source="direct",
+                               state_version="sv-2")
+        with open(os.path.join(tmp, "seed.jsonl"), "w") as _:
+            pass
+        _say(root, ACME, "an older reason on the other branch", stated_at="2026-07-03")
+        with open(pr._rationale_path(root), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(newer, ensure_ascii=False, sort_keys=True) + "\n")
+        query = pr.query(root, ACME["cycle_id"], aliases=[old])
+        assert query["total_count"] == 2
+        assert query["effective"]["user_statement"] == "what I said most recently", (
+            "the later statement is the user's current reason even though the "
+            "other branch was written to the file first")
+
+
+def test_a_relinked_cycle_keeps_the_statements_recorded_under_its_old_id():
+    """#450 froze it: the reader follows engine-proven cycle relinks. #563's
+    later-history upgrade moves a cycle's start, so the id the user's statements
+    were written under is no longer the id the book calls that position. A reader
+    matching only the current id would report nothing -- the position would look
+    remembered and then silently lose its reason, which is the exact failure this
+    stream exists to prevent.
+
+    Identity stays `thesis.py`'s to prove: the caller passes the relinks, this
+    reader never guesses at continuity."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        _say(root, ACME, "the reason I gave before the history upgrade")
+        upgraded = "ACME#2026-01-15#1"          # #563 moved the start date
+
+        blind = pr.query(root, upgraded)
+        assert blind["total_count"] == 0, "without the relink the memory is gone"
+
+        seen = pr.query(root, upgraded, aliases=[ACME["cycle_id"]])
+        assert seen["total_count"] == 1
+        assert seen["effective"]["user_statement"] == \
+            "the reason I gave before the history upgrade"
+        assert seen["change"] == "initial"
+
+        # And an append continues the same chain rather than starting a new one.
+        out = pr.append(root, subject={**ACME, "cycle_id": upgraded}, act="statement",
+                        user_statement="and this is why I still hold it",
+                        stated_at="2026-07-02", capture_source="direct",
+                        state_version="sv-2", aliases=[ACME["cycle_id"]])
+        assert out["status"] == "appended"
+        after = pr.query(root, upgraded, aliases=[ACME["cycle_id"]])
+        assert after["total_count"] == 2 and after["change"] == "changed"
+        assert after["items"][-1]["supersedes"] == seen["effective"]["event_id"], (
+            "the upgraded cycle's first statement supersedes the pre-upgrade one, "
+            "rather than opening a second origin on the same position")
+
+
+def test_append_deadlocks_inside_a_held_lock_and_append_locked_does_not():
+    """The hazard the `append` / `append_locked` split exists for, pinned rather
+    than left to a docstring. `session._projection_lock` is a POSIX flock taken
+    per file descriptor, so re-entering it from the same process blocks forever
+    -- and the caller that would do this is `review.py` finalize, where the cost
+    is a hung review rather than an error."""
+    probe = (
+        "import sys, tempfile, os\n"
+        f"sys.path.insert(0, {ENGINE!r})\n"
+        "import session, position_rationale as pr\n"
+        "S = {'cycle_id':'A#1','ticker':'A','market':'US','currency':'USD'}\n"
+        "root = tempfile.mkdtemp()\n"
+        "with session.projection_transaction(root) as locked:\n"
+        "    pr.%s(locked, subject=S, act='statement', user_statement='x',\n"
+        "          stated_at='2026-07-01', capture_source='direct', state_version='v')\n"
+        "print('done')\n")
+    import subprocess
+    try:
+        subprocess.run([sys.executable, "-c", probe % "append"],
+                       capture_output=True, timeout=6)
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError(
+            "append() inside a held projection lock must block -- if this stopped "
+            "being true the split is no longer load-bearing and should be simplified")
+    done = subprocess.run([sys.executable, "-c", probe % "append_locked"],
+                          capture_output=True, timeout=60, text=True)
+    assert done.returncode == 0 and "done" in done.stdout, done.stderr
 
 
 def _main():
