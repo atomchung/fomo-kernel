@@ -3432,9 +3432,9 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # resolution the committed private card and the public card already use.
         # A prescription without a resolvable dimension falls through to the
         # generic localized line rather than the untranslated literal.
-        standing = (localized_rule(state.get("rule_dim"), language,
-                                   cap=state.get("max_position_pct"))
-                    if state.get("rule_dim") else None)
+        prescription = (localized_rule(state.get("rule_dim"), language,
+                                       cap=state.get("max_position_pct"))
+                        if state.get("rule_dim") else None)
         # #546: this branch also fires at preview time on a user's very first
         # review — ``require_commitment=False`` nulls ``bundle["commitment"]``
         # before the user has ever chosen a rule, and ``state["rule_dim"]`` is
@@ -3444,13 +3444,47 @@ def _next_block(bundle, copy, facts, state, snapshot):
         # predicate ``_reconciliation_lines`` already reads for #292: a genuine
         # first review has nothing to restate and gets the pending-choice line
         # instead, naming the same recommendation as awaiting the user's choice.
+        #
+        # #645: that gate decided *whether* to claim continuity and left the
+        # quoted rule resolved from ``state["rule_dim"]`` — so a returning user
+        # read "the standing rule remains" followed by a rule they never chose.
+        # The prior commitment is the only record of what is standing, so it is
+        # what gets quoted, and continuity is claimed only when the two are
+        # *proven* to name the same dimension. ``commitment["dim"]`` is that
+        # proof and it already exists: ``review._candidate_rules`` stamps the
+        # canonical ``dimension_id`` on every candidate row and
+        # ``_resolve_commitment`` carries it into the stored commitment. Both
+        # sides go through ``dimension_id`` because the two namespaces differ —
+        # a stored commitment carries the canonical id, ``state["rule_dim"]``
+        # the legacy label — and a custom commitment may supply either.
+        #
+        # A commitment with no ``dim`` cannot be compared without guessing: a
+        # condition slot drops the field deliberately (``_slot_commitment``) and
+        # a custom rule need not carry one. That case fails safe onto the same
+        # pending-choice line — the one wrapper here that asserts neither
+        # continuity nor divergence — rather than inferring a dimension from
+        # ``metric_key`` through a mapping no existing reader owns.
         prior_commitment = (((bundle.get("review_plan") or {}).get("state_snapshot") or {})
                             .get("prior_commitment") or {})
-        standing_key = "rule_standing" if prior_commitment.get("rule") else "rule_pending"
+        standing_rule = prior_commitment.get("rule")
+        prior_dim = prior_commitment.get("dim")
+        comparable = bool(prior_dim) and bool(state.get("rule_dim"))
+        if not standing_rule:
+            # #546: nothing was ever persisted, so nothing is standing.
+            standing_key, fields = "rule_pending", {"rule": prescription}
+        elif not comparable:
+            # #645 fail-safe: something is standing, but not something this
+            # payload can compare. Claim neither continuity nor divergence.
+            standing_key, fields = "rule_pending", {"rule": prescription}
+        elif dimension_id(prior_dim) == dimension_id(state.get("rule_dim")):
+            standing_key, fields = "rule_standing", {"rule": standing_rule}
+        else:
+            standing_key, fields = "rule_diverged", {"standing": standing_rule,
+                                                     "recommendation": prescription}
         text = None
-        if standing and missing.get(standing_key):
+        if all(fields.values()) and missing.get(standing_key):
             try:
-                text = missing[standing_key].format(rule=standing)
+                text = missing[standing_key].format(**fields)
             except (KeyError, IndexError, ValueError):
                 text = None
         if not text:

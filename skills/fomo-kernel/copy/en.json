@@ -43,6 +43,7 @@
     "rule": "No new rule commitment this time; you can pick one at the next review.",
     "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\"",
     "rule_pending": "No rule chosen yet this period; the recommendation is: \"{rule}\"",
+    "rule_diverged": "The standing rule is still \"{standing}\"; this period's leading issue is a different one, so \"{recommendation}\" stays a recommendation until you choose it.",
     "rule_skip": "You chose not to set a new commitment; the same baseline remains available next time.",
     "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
     "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. Too few closed trades here to say yet whether your selling costs you more than your buying; a file carrying the matching sells would settle that one question.",
