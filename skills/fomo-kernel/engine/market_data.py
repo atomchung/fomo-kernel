@@ -822,9 +822,31 @@ def to_price_feed_envelope(bundle, currency_by_ticker=None, instruments_only=Tru
 
     ``currency_by_ticker`` is required for any ticker that is not USD:
     ``price_feed.currency_conflicts`` compares this against the trades, and
-    guessing here would either invent a conflict or hide one. Returns ``None``
-    when the bundle priced nothing — there is no such thing as an envelope with
-    no prices, and ``parse`` rightly refuses one.
+    guessing here would either invent a conflict or hide one.
+
+    **Returns ``None`` when no instrument row survived** — nothing the bundle
+    priced was both inside this envelope's scope (a benchmark is outside it
+    unless ``instruments_only`` is false, so a bundle whose only successes are
+    benchmarks yields no envelope) and reconcilable onto one split basis by the
+    rule above. Stated as one condition rather than a list of causes on purpose:
+    the claim this paragraph replaces went stale by enumerating. That is this
+    lane's own rule and not a restatement of what ``price_feed.parse`` will
+    accept: this envelope is defined over instrument closes and dates itself
+    from them, since ``as_of`` is ``max(row date)`` read off the rows themselves,
+    so with no rows there is no observed session to declare one from. Nothing is
+    concealed by returning ``None`` — a dropped instrument is already recorded as
+    a gap on the bundle before this point, so the coverage fact outlives the
+    envelope, and the caller degrades to the pre-#605 unpriced answer rather than
+    raising into a review.
+
+    One consequence worth naming, because it is not obvious from the return
+    value: a currency rate this bundle *did* resolve is discarded along with it,
+    as ``fx`` is assembled below this point. A book whose held tickers all fail
+    to price while its currency pair resolves therefore reaches ``consider``
+    rateless, even though the bundle counts as ``usable`` on the strength of that
+    very rate. Whether such a rate should be able to travel on its own is a
+    question about this lane, open at the time of writing; it is not answered by
+    what ``parse`` does or does not accept on the other side.
     """
     currency_by_ticker = currency_by_ticker or {}
     skipped = []

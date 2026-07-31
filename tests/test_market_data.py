@@ -897,9 +897,12 @@ def test_i_the_declared_currency_is_the_callers_not_a_default():
 
 
 def test_i_a_bundle_that_priced_nothing_yields_no_envelope():
-    """`parse` rightly refuses an envelope with no prices, so the builder must
-    return None rather than hand one over: the caller then degrades to the
-    pre-#605 answer instead of raising into a review."""
+    """This envelope is defined over instrument closes and dates itself from
+    them — `as_of` is `max(row date)` — so with no rows there is no observed
+    session to declare one from, and the builder returns None rather than hand
+    over an envelope it cannot date: the caller then degrades to the pre-#605
+    answer instead of raising into a review. That is this lane's own rule, not a
+    claim about which envelopes `price_feed.parse` accepts."""
     with provider() as p:
         bundle = p.resolve(_request(instruments=["DEAD"], benchmarks=[], currencies=[]))
     assert market_data.to_price_feed_envelope(bundle) is None
