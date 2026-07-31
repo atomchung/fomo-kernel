@@ -7,7 +7,7 @@ fomo-kernel · trade-recap engine v0.2
 用法：python3 trade_recap.py [trades.csv ...]   (預設吃 ../mock/mock_trades.csv)
 隱私：本檔不含任何真實帳戶路徑;預設只跑 mock 資料。用戶自己的 CSV 由參數傳入,留在本機。
 """
-import csv, os, re, sys, statistics, datetime as dt
+import csv, math, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
 import instruments as instrument_policy
 import market_context as market_context_engine
@@ -260,6 +260,115 @@ def _cash_balance_one_ccy(flows, anchor, prev_end):
         bal = float(anchor["amount"]) + sum(cf["amount"] for cf in flows if cf["date"] > a_date)
         return bal, "anchored", True
     return sum(cf["amount"] for cf in flows), "csv_sum", False
+
+
+class CashAnchorInputError(ValueError):
+    """A ``--cash`` payload could not be resolved into a storable anchor (#662).
+
+    Raised only for the percentage input format: the absolute-amount
+    ``{currency, amount, as_of}`` shape is unchanged since #171 and never
+    reaches this class. Caught at the process frame beside
+    ``MissingAggregateCurrencyRate`` so a malformed or unconvertible
+    percentage fails the whole run rather than silently reaching
+    ``cash_position`` as an anchor it cannot use (no ``amount`` key, read as
+    no anchor at all).
+    """
+
+
+def resolve_cash_anchor_input(raw_anchor, held_mv, aggregate_currency):
+    """Resolve a ``--cash`` payload into the absolute-amount shape ``cash_position`` accepts.
+
+    ``raw_anchor`` is the parsed ``--cash`` JSON, exactly as it reaches
+    ``cash_position`` today: one ``{currency, amount, as_of}`` anchor, or a
+    list of them for a multi-currency account. #662 adds a second, single-
+    anchor input format the user may answer the cash-anchor ask with instead
+    of an absolute amount: ``{currency, percent_of_total, as_of}``. This is
+    the one place that format is accepted and converted — the agent never
+    does this arithmetic itself, and ``cash_position`` never sees a
+    percentage, so the stored anchor is always an absolute amount regardless
+    of which format the user answered in (the percentage is an input format,
+    never a second stored kind).
+
+    The denominator a percentage answer names is this account's total value —
+    cash plus current position market value — never the position value alone
+    (owner ruling 2026-08-01, #662). Solving for cash given that denominator
+    is why the algebra is ``p/(100-p)`` and not ``p/100``: a p% cash answer
+    means cash is p% of (cash + held_mv), so::
+
+        cash = (p/100) * (cash + held_mv)
+        cash * (1 - p/100) = (p/100) * held_mv
+        cash = p / (100 - p) * held_mv
+
+    A 30% answer against a 70,000 position value is 30,000 against a 100,000
+    total, never the 21,000 a p/100 misreading of the denominator (position
+    value alone) would produce.
+
+    ``held_mv`` must be this session's own frozen position market value — the
+    caller (``main``) computes it from the same frozen prices the review was
+    rendered from, never a freshly resolved one, so a percentage answered on
+    an amended review converts against the numbers the user actually saw.
+    Fails closed rather than converting against a garbage denominator: a
+    non-finite or non-positive ``held_mv`` refuses, the same zero/invalid-
+    denominator rule this book keeps everywhere else (AGENTS.md boundary 6).
+
+    ``aggregate_currency`` is the currency ``held_mv`` is measured in — USD
+    for a mixed-currency book, the book's own single currency otherwise
+    (``trade_recap.usd_view``). A multi-currency cash book cannot say which
+    currency's bucket a whole-account percentage belongs to, so the smallest
+    honest cut is a single anchor in that same aggregate currency; a
+    percentage anchor whose stated ``currency`` disagrees is refused rather
+    than silently relabelled or silently trusted.
+
+    Returns ``(resolved, derivation)``. ``resolved`` is byte-identical to
+    ``raw_anchor`` whenever it carried no percentage — the absolute-amount
+    path, unchanged. ``derivation`` is ``None`` on that path and otherwise the
+    disclosure the caller must surface rather than keep to itself: the
+    percent, the position value and currency it was measured against, the
+    formula, and the resulting amount.
+    """
+    items = raw_anchor if isinstance(raw_anchor, list) else [raw_anchor]
+    percent_items = [item for item in items
+                     if isinstance(item, dict) and "percent_of_total" in item]
+    if not percent_items:
+        return raw_anchor, None
+    if isinstance(raw_anchor, list) or len(percent_items) > 1:
+        raise CashAnchorInputError(
+            "percent_of_total is accepted for a single cash anchor only, never inside a "
+            "multi-currency list; answer each currency's balance with an absolute amount instead")
+    anchor = percent_items[0]
+    if "amount" in anchor:
+        raise CashAnchorInputError(
+            "--cash carries both amount and percent_of_total; supply exactly one")
+    percent = anchor.get("percent_of_total")
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not (0 < percent < 100):
+        raise CashAnchorInputError(
+            f"percent_of_total must be a number strictly between 0 and 100, got {percent!r}")
+    if not anchor.get("as_of"):
+        raise CashAnchorInputError("a percent_of_total anchor still needs as_of, like an "
+                                   "absolute-amount anchor")
+    currency = (anchor.get("currency") or "").strip().upper()
+    aggregate = (aggregate_currency or "").strip().upper()
+    if not currency:
+        raise CashAnchorInputError("a percent_of_total anchor still needs currency, like an "
+                                   "absolute-amount anchor")
+    if currency != aggregate:
+        raise CashAnchorInputError(
+            f"percent_of_total is measured against this review's position value in "
+            f"{aggregate_currency}, not {currency}; state the percentage in {aggregate_currency} "
+            "or answer with an absolute amount in that currency instead")
+    if (not isinstance(held_mv, (int, float)) or isinstance(held_mv, bool)
+            or not math.isfinite(held_mv) or held_mv <= 0):
+        raise CashAnchorInputError(
+            "percent_of_total needs this review's position market value to convert against, and "
+            f"it is not usable ({held_mv!r}); answer with an absolute amount instead")
+    amount = round(percent / (100.0 - percent) * held_mv, 2)
+    resolved = {key: value for key, value in anchor.items() if key != "percent_of_total"}
+    resolved["amount"] = amount
+    derivation = {"percent_of_total": percent, "position_value": round(held_mv, 2),
+                  "currency": currency,
+                  "formula": "amount = percent_of_total / (100 - percent_of_total) * position_value",
+                  "amount": amount}
+    return resolved, derivation
 
 
 def cash_position(cash_flows, held_mv, anchor=None, prev_end=None, fx=None):
@@ -2210,7 +2319,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                 portfolio_structure=None, price_snapshot=None, market_context=None,
                 max_pos_override=None, price_provenance=None, price_request=None,
                 prices=None, valuation_frame=None, splits=None,
-                splits_window=None):
+                splits_window=None, cash_anchor_conversion=None):
     """把這次復盤收斂成一張薄 JSON 狀態,給「下次對帳上次規矩」用(非給人看的卡)。
     只在 main() 偵測 TR_STATE_OUT 時呼叫並寫出;不設 → 完全不執行,引擎行為零變。
     設計依 requirements §4/§10:
@@ -2341,6 +2450,10 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             "positions": holdings,
         },
         "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
+        # #662:僅在這次傳入的 --cash 是百分比(percent_of_total)時非 None——換算揭露
+        # (percent/position_value/currency/formula/amount),供 cmd_add_cash 轉呈給 agent。
+        # 不參與 review._cash_recompute_drift 比對(該 gate 的鍵表本就不含 cash)。
+        "cash_anchor_conversion": cash_anchor_conversion,
         "price_snapshot": price_snapshot,                   # #191 PR B:review-time prices for deterministic exit/swap comparison; frozen in the session plan
         # #550:這次實際套用的分割事件。帳本存的是「當時成交的股數」(正確,不該改),
         # 所以任何跨分割累加股數的讀者都必須拿到同一份分割表,否則 90 股(分割前)減
@@ -2872,7 +2985,8 @@ def main():
     }
 
     # 帳戶現金地基（#171）：現金流 + 現金餘額錨點 → cash_position（多幣別 per-currency 各算再 fx 聚合）。
-    # held_mv = 持倉市值（聚合幣別 USD，無現價用成本近似，同 dim_diversify）= cash_weight 分母。
+    # held_mv = 持倉市值（聚合幣別 USD，無現價用成本近似，同 dim_diversify）= cash_weight 分母，
+    # 也是 #662 百分比現金輸入換算絕對金額所用的同一份分母（用凍結價格算出，非重新抓價）。
     import json
     # per-currency（每筆帶 currency）；聚合由 cash_position 內部做。帶 rows 進去讓「來源
     # 沒有 Amount 欄」時能用 qty×price 估出交易的現金足跡（#375），而不是整條路打死。
@@ -2883,6 +2997,15 @@ def main():
         cash_anchor = json.loads(_ca) if _ca else None
     except (ValueError, TypeError):
         cash_anchor = None
+    # #662: a percentage anchor ({currency, percent_of_total, as_of}) is
+    # resolved into an absolute amount right here, before cash_position ever
+    # sees it -- the stored anchor is always an absolute amount, and the
+    # agent never does this arithmetic itself. cash_anchor_conversion is None
+    # on the (unchanged) absolute-amount path and is otherwise the disclosure
+    # the CLI layer surfaces to the agent.
+    cash_anchor, cash_anchor_conversion = (
+        resolve_cash_anchor_input(cash_anchor, held_mv, currency_meta["aggregate_currency"])
+        if cash_anchor is not None else (cash_anchor, None))
     # 多幣別：cash_position 內部 per-currency 各算餘額再用 fx 聚合（台美各帳戶各自錨點）；單幣 fx=None → 因子 1.0。
     cash_data = cash_position(cash_flows, held_mv, anchor=cash_anchor,
                               prev_end=prev_end,
@@ -3023,7 +3146,8 @@ def main():
                             price_provenance=price_provenance, price_request=price_request,
                             prices=px, valuation_frame=frame, splits=splits,
                             splits_window={"start": bundle.window["start"],
-                                           "rebase_origin": bundle.rebase_origin})
+                                           "rebase_origin": bundle.rebase_origin},
+                            cash_anchor_conversion=cash_anchor_conversion)
         # prev_end(#270 解過的值,上次 review 的 date_end,已排除同週重跑自我別名)→
         # behavior 型問題事件只取其後的新交易(weekly 增量);None = 初診全期補齊,問題帳統計冷啟動。
         outdir = os.path.dirname(os.path.abspath(path)) or "."
@@ -3039,8 +3163,12 @@ if __name__ == "__main__":
     # of the card, the state write and the ledger ingest, so nothing has been
     # produced yet. Caught at the process frame rather than at the call site so
     # any later aggregation path in `main()` inherits the same single error line.
+    # #662's CashAnchorInputError joins it here for the same reason: a
+    # percentage anchor that cannot be converted (bad range, no usable
+    # position value) must fail the whole run rather than reach cash_position
+    # as a silently unusable anchor.
     try:
         main()
-    except MissingAggregateCurrencyRate as exc:
+    except (MissingAggregateCurrencyRate, CashAnchorInputError) as exc:
         print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)

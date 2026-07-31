@@ -2344,6 +2344,124 @@ def test_replaying_the_same_cash_anchor_changes_nothing():
             "no second pending session survives the replay"
 
 
+# --- #662: the cash-anchor ask accepts an absolute amount or a percentage ---
+#
+# A user answering "30%" used to cost three free-form clarification round
+# trips (#662's trigger). Owner disposition 2026-08-01: accept both formats;
+# the denominator a percentage names is the account's TOTAL value (cash plus
+# current position market value), stated in plain words and confirmed once;
+# the engine -- never the agent -- converts and discloses the derivation.
+
+def test_add_cash_converts_a_percentage_against_this_sessions_frozen_position_value():
+    """#662 proofs 1 and 2, walked through the real CLI on an engine-priced
+    review. The percentage converts against this session's own frozen
+    position value (no second market resolution), the stored amount is
+    exactly p/(100-p) * position_value -- never p/100, which would be the
+    position value alone rather than the total account value -- and the
+    response discloses that derivation instead of applying it silently.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_on_a_priced_review(tmp, root)
+        calls_before = len(_provider_calls(env))
+
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", '{"currency":"USD","percent_of_total":20,"as_of":"2026-07-29"}',
+                     env=env)
+        assert added.returncode == 0, added.stdout + added.stderr
+        out = json.loads(added.stdout)
+        assert out["recompute"]["outcome"] == "anchor_propagated", out["recompute"]
+        assert len(_provider_calls(env)) == calls_before, (
+            "converting a percentage must not re-resolve prices -- it uses this session's own "
+            f"frozen position value: {_provider_calls(env)[calls_before:]}")
+
+        assert "anchor_conversion" in out, (
+            "a percentage was converted but the response discloses nothing about it", out)
+        conversion = out["anchor_conversion"]
+        assert conversion["percent_of_total"] == 20
+        assert conversion["currency"] == "USD"
+        position_value = conversion["position_value"]
+        assert position_value > 0, "the fixture must really have a nonzero position value"
+        # The algebra (#662 owner ruling), recomputed independently here rather
+        # than trusted from the module under test: 20% of the ACCOUNT'S TOTAL
+        # (cash + positions) is 20/80 of the position value alone, not 20/100.
+        expected = round(20 / 80 * position_value, 2)
+        assert conversion["amount"] == expected, (conversion["amount"], expected, position_value)
+        assert conversion["amount"] != round(0.20 * position_value, 2), (
+            "20% of the position value alone is the wrong denominator (#662)")
+
+        amended = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        cash = amended["engine_state"]["cash"]
+        assert cash["balance"] == conversion["amount"], cash
+        assert cash["source"] == "anchored"
+        # The denominator claim proven end to end: after storing the converted
+        # amount, cash really is 20% of cash + positions on the amended card.
+        assert abs(cash["weight"] - 0.20) < 1e-9, cash["weight"]
+        assert amended["engine_card"]["cash"]["balance"] == conversion["amount"]
+
+
+def test_add_cash_percent_leaves_the_absolute_amount_response_unchanged():
+    """Regression (#662 proof 3): an absolute-amount payload's response must
+    carry no new key at all -- not even a null one -- now that a percentage
+    format exists beside it, and the stored figure is untouched."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_on_a_priced_review(tmp, root)
+        added = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                     "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-29"}', env=env)
+        assert added.returncode == 0, added.stdout + added.stderr
+        out = json.loads(added.stdout)
+        assert "anchor_conversion" not in out, (
+            "an absolute-amount response must not grow a new key", out)
+        amended = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        assert amended["engine_state"]["cash_anchor_conversion"] is None
+        assert amended["engine_state"]["cash"]["balance"] == 8200.0
+
+
+def test_add_cash_percent_refuses_without_a_usable_position_value():
+    """#662 proof 4: fails closed rather than converting against a garbage
+    denominator. A book with no currently held position has a position value
+    of zero, so a percentage cannot be resolved, and the refusal must leave no
+    pending session or ledger row behind -- exactly like every other add-cash
+    refusal in this file. The same book still takes a plain absolute amount:
+    the refusal is specific to the percentage format needing a denominator,
+    not to this book being otherwise unable to anchor cash at all.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        csv = pathlib.Path(tmp) / "fully_exited.csv"
+        csv.write_text(
+            "Symbol,Quantity,Price,Action,Description,TradeDate,SettledDate,Interest,Amount,"
+            "Commission,Fee,CUSIP,RecordType\n"
+            "AAA,10,100.00,BUY,BOUGHT AAA,2024-01-02,2024-01-04,0,-1000.00,0,0,,Trade\n"
+            "AAA,10,110.00,SELL,SOLD AAA,2024-06-02,2024-06-04,0,1100.00,0,0,,Trade\n",
+            encoding="utf-8")
+        env = _offline_env(tmp)
+        run = _run("prepare", csv, "--root", root, "--language", "en", env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = json.loads(run.stdout)["review_plan"]
+        assert plan["input"]["cash_anchor"]["status"] == "absent", plan["input"]["cash_anchor"]
+        ledger_before = (pathlib.Path(root) / "ledger.jsonl").read_bytes()
+
+        refused = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                       "--cash", '{"currency":"USD","percent_of_total":30,"as_of":"2024-06-02"}',
+                       env=env)
+        assert refused.returncode != 0, refused.stdout
+        error = json.loads(refused.stdout)["error"]
+        assert "position market value" in error and "not usable" in error, error
+        assert sorted(os.listdir(pathlib.Path(root) / ".pending")) == [plan["session_id"]], \
+            "a refused conversion must leave no anchored, finalizable session behind"
+        assert (pathlib.Path(root) / "ledger.jsonl").read_bytes() == ledger_before
+
+        recovered = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                         "--cash", '{"currency":"USD","amount":500,"as_of":"2024-06-02"}', env=env)
+        assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+        amended = session_engine.load_pending(
+            str(root), json.loads(recovered.stdout)["session_id"])["plan"]
+        assert amended["engine_state"]["cash"]["balance"] == 500.0
+        assert amended["engine_state"]["cash"]["weight"] == 1.0
+
+
 def test_add_cash_refuses_a_session_that_never_takes_an_anchor():
     """A snapshot states cash inline in its own envelope, so there is no second
     place to supply one -- and the plan already says `not_applicable`. The

@@ -1649,6 +1649,148 @@ def test_cash_position_single_dict_anchor_backward_compat():
     assert cp["by_currency"]["USD"]["balance"] == 6000.0
 
 
+# --- #662: a --cash payload may be an absolute amount or a percentage of the -
+# account's total value (cash + current position market value), and the engine
+# -- never the agent -- owns the conversion. resolve_cash_anchor_input is the
+# one place a percentage is accepted and turned into the absolute-amount shape
+# cash_position has always taken; these tests pin the algebra, the disclosure,
+# the absolute-amount regression path, and the fail-closed cases.
+
+def test_resolve_cash_anchor_input_converts_percent_with_the_correct_denominator():
+    """The load-bearing algebra (#662 owner ruling 2026-08-01).
+
+    The denominator a percentage answer names is the account's TOTAL value --
+    cash plus position value -- never the position value alone. Solving cash =
+    p% * (cash + position_value) for cash gives p/(100-p) * position_value, not
+    the p/100 * position_value a reader who forgets cash is IN the denominator
+    would reach. 30% against a 70,000 position is 30,000 (so the 100,000 total
+    is exactly 30% cash) -- never 21,000, which is what 30% of the position
+    value alone (the wrong denominator) would produce.
+    """
+    resolved, derivation = tr.resolve_cash_anchor_input(
+        {"currency": "USD", "percent_of_total": 30, "as_of": "2026-07-30"},
+        held_mv=70000.0, aggregate_currency="USD")
+    assert resolved["amount"] == 30000.0, resolved["amount"]
+    assert resolved["amount"] != 21000.0, "30% of the position value alone is the wrong reading"
+    total = resolved["amount"] + 70000.0
+    assert _approx(total, 100000.0), total
+    assert _approx(resolved["amount"] / total, 0.30), resolved["amount"] / total
+    # The absolute-amount shape cash_position has always accepted: currency,
+    # amount, as_of -- and nothing named percent_of_total left behind.
+    assert resolved == {"currency": "USD", "amount": 30000.0, "as_of": "2026-07-30"}, resolved
+
+
+def test_resolve_cash_anchor_input_discloses_the_derivation():
+    """The engine must show its work, not just the number (#662).
+
+    The agent never does this arithmetic itself, so the disclosure has to
+    carry everything a reader needs to check it: the percent asked about, the
+    position value it was measured against (and that value's currency), the
+    formula, and the resulting stored amount.
+    """
+    _resolved, derivation = tr.resolve_cash_anchor_input(
+        {"currency": "USD", "percent_of_total": 30, "as_of": "2026-07-30"},
+        held_mv=70000.0, aggregate_currency="USD")
+    assert derivation is not None, (
+        "a percentage anchor was converted but the derivation was not disclosed -- the agent "
+        "would apply the stored amount without ever seeing how it was computed")
+    assert derivation["percent_of_total"] == 30
+    assert derivation["position_value"] == 70000.0
+    assert derivation["currency"] == "USD"
+    assert derivation["amount"] == 30000.0
+    assert "100" in derivation["formula"] and "percent_of_total" in derivation["formula"]
+
+
+def test_resolve_cash_anchor_input_is_a_no_op_for_an_absolute_amount():
+    """Regression: the pre-#662 shape must be untouched, not merely equal.
+
+    Returning the exact same object (not a copy, not a re-serialization) is
+    the strongest statement that the absolute-amount path was never touched by
+    the new percentage branch."""
+    raw = {"currency": "USD", "amount": 8200, "as_of": "2026-07-30"}
+    resolved, derivation = tr.resolve_cash_anchor_input(raw, held_mv=70000.0,
+                                                        aggregate_currency="USD")
+    assert resolved is raw, "the absolute-amount anchor must pass through unchanged"
+    assert derivation is None, "no derivation to disclose when nothing was converted"
+
+
+def test_resolve_cash_anchor_input_multi_currency_list_is_a_no_op():
+    """Regression: a per-currency list -- #171's multi-account shape -- is
+    untouched when none of its entries name a percentage."""
+    raw = [{"currency": "USD", "amount": 100.0, "as_of": "2026-07-30"},
+           {"currency": "TWD", "amount": 2000.0, "as_of": "2026-07-30"}]
+    resolved, derivation = tr.resolve_cash_anchor_input(raw, held_mv=70000.0,
+                                                        aggregate_currency="USD")
+    assert resolved is raw
+    assert derivation is None
+
+
+def test_resolve_cash_anchor_input_refuses_a_non_positive_held_mv():
+    """Fails closed rather than converting against a garbage denominator
+    (#662) -- zero, negative, non-finite, and missing all refuse the same
+    way a missing/incompatible valuation refuses elsewhere (AGENTS.md
+    boundary 6), instead of silently producing a zero or nonsensical amount."""
+    anchor = {"currency": "USD", "percent_of_total": 30, "as_of": "2026-07-30"}
+    for bad_held_mv in (0.0, -1.0, float("nan"), float("inf"), None):
+        try:
+            tr.resolve_cash_anchor_input(anchor, held_mv=bad_held_mv, aggregate_currency="USD")
+        except tr.CashAnchorInputError:
+            pass
+        else:
+            raise AssertionError(f"held_mv={bad_held_mv!r} must refuse, never convert")
+
+
+def test_resolve_cash_anchor_input_refuses_a_percent_outside_zero_to_hundred():
+    for bad_percent in (0, 100, 100.0, -5, 150, True):
+        anchor = {"currency": "USD", "percent_of_total": bad_percent, "as_of": "2026-07-30"}
+        try:
+            tr.resolve_cash_anchor_input(anchor, held_mv=70000.0, aggregate_currency="USD")
+        except tr.CashAnchorInputError:
+            pass
+        else:
+            raise AssertionError(f"percent_of_total={bad_percent!r} must refuse")
+
+
+def test_resolve_cash_anchor_input_refuses_both_amount_and_percent():
+    anchor = {"currency": "USD", "amount": 1.0, "percent_of_total": 30, "as_of": "2026-07-30"}
+    try:
+        tr.resolve_cash_anchor_input(anchor, held_mv=70000.0, aggregate_currency="USD")
+    except tr.CashAnchorInputError as exc:
+        assert "amount" in str(exc) and "percent_of_total" in str(exc)
+    else:
+        raise AssertionError("carrying both amount and percent_of_total must refuse")
+
+
+def test_resolve_cash_anchor_input_refuses_inside_a_multi_currency_list():
+    """The smallest honest cut for a multi-currency book (#662): a percentage
+    names the account's total, which cannot be split across an unspecified set
+    of per-currency buckets, so it is only accepted as a single anchor -- never
+    inside the list a multi-currency account otherwise answers with."""
+    mixed = [{"currency": "USD", "percent_of_total": 30, "as_of": "2026-07-30"},
+             {"currency": "TWD", "amount": 2000.0, "as_of": "2026-07-30"}]
+    try:
+        tr.resolve_cash_anchor_input(mixed, held_mv=70000.0, aggregate_currency="USD")
+    except tr.CashAnchorInputError as exc:
+        assert "list" in str(exc)
+    else:
+        raise AssertionError("a percentage inside a multi-currency list must refuse")
+
+
+def test_resolve_cash_anchor_input_refuses_a_currency_that_is_not_the_aggregate():
+    """A percentage is measured against held_mv, which is itself denominated in
+    the book's aggregate currency (USD for a mixed book, trade_recap.usd_view).
+    Accepting a mismatched currency label would silently mislabel that amount
+    -- the exact class of bug #649 fought at the holdings aggregate -- so this
+    refuses instead of relabelling or trusting the caller's stated currency."""
+    anchor = {"currency": "TWD", "percent_of_total": 30, "as_of": "2026-07-30"}
+    try:
+        tr.resolve_cash_anchor_input(anchor, held_mv=70000.0, aggregate_currency="USD")
+    except tr.CashAnchorInputError as exc:
+        assert "USD" in str(exc) and "TWD" in str(exc)
+    else:
+        raise AssertionError("a percentage stated in a non-aggregate currency must refuse")
+
+
 def test_honesty_ledger_cash_reliability_trigger():
     """#171 呈現層:cash_reliability 只在『有可誤導的 weight 但不可信』時進 ledger。
     reliable(錨點)→ 不觸發;weight=None(算不出,不上卡)→ 不觸發(無可誤導數字);

@@ -54,6 +54,7 @@ STATE_KEYS = {
     "currency_meta",                                    # #51/#129 PR-2a(optional 附加欄,單幣 USD 時內容多為 None)
     "portfolio_structure",                              # skill v2 ETF P0:同 card 的確定性結構判讀
     "cash",                                             # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit;None=未提供現金錨點)
+    "cash_anchor_conversion",                           # #662:僅當這次 --cash 是 percent_of_total 才非 None——換算揭露(percent/position_value/currency/formula/amount),供 review.py cmd_add_cash 轉呈 agent
     "price_snapshot", "valuation_frame", "market_context",  # #500 receipt is private state only
     "splits",                                           # #550:這次真的套用的分割事件;帳本存名目股數,跨分割累加股數的讀者(revisit.detect_exits)要拿同一份,否則減碼被讀成清倉
     "splits_window",                                    # #605:上面那份表**從哪天起**是完整的。批次取得只帶窗口內的分割,而 refresh 與 catch-up 閘門按契約不重抓——一份蓋不住自己錨點的表會把 90 股讀成 900 股改動,故窗口跟著表凍,讓讀者查得出夠不夠
