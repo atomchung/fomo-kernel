@@ -51,6 +51,8 @@ ROOT = os.path.dirname(HERE)
 ENGINE = os.path.join(ROOT, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE)
 import position_rationale as pr  # noqa: E402
+sys.path.insert(0, HERE)
+import rationale_fixture  # noqa: E402
 
 ACME = {"cycle_id": "ACME#2026-06-30#1", "ticker": "ACME",
         "market": "US", "currency": "USD"}
@@ -654,6 +656,45 @@ def test_append_deadlocks_inside_a_held_lock_and_append_locked_does_not():
     done = subprocess.run([sys.executable, "-c", probe % "append_locked"],
                           capture_output=True, timeout=60, text=True)
     assert done.returncode == 0 and "done" in done.stdout, done.stderr
+
+
+def test_the_shared_fixture_reads_the_way_every_consumer_must_read_it():
+    """#450's shared fixture, exercised through the same public reader the
+    integration slice will use. It exists so this suite, the integration slice
+    and #450's later multi-source reader assert over one history instead of each
+    inventing its own -- two readers with two fixtures is how they end up
+    disagreeing about what the record says."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        seeded = rationale_fixture.seed(root)
+        want = seeded["expect"]
+
+        acme = pr.query(root, seeded["acme"]["cycle_id"])
+        assert acme["total_count"] == want["acme_total"]
+        assert acme["effective"]["user_statement"] == want["acme_effective"]
+        assert acme["change"] == want["acme_change"], (
+            "the latest act is a confirmation, so nothing changed -- while the "
+            "wording in force is still the statement it confirms")
+        assert acme["latest"]["act"] == "confirmation"
+
+        widget = pr.query(root, seeded["widget"]["cycle_id"])
+        assert widget["change"] == want["widget_change"]
+        assert widget["effective"]["user_statement"] == want["widget_effective"]
+
+        relinked = seeded["relinked"]
+        blind = pr.query(root, relinked["cycle_id"])
+        assert blind["total_count"] == want["relinked_total_without_alias"], (
+            "without the engine-proven relink the pre-upgrade statement is "
+            "invisible -- the failure the fixture carries this case to catch")
+        seen = pr.query(root, relinked["cycle_id"], aliases=relinked["aliases"])
+        assert seen["total_count"] == want["relinked_total"]
+        assert seen["effective"]["user_statement"] == want["relinked_effective"]
+
+        empty = pr.query(root, seeded["orphan"]["cycle_id"])
+        assert empty["total_count"] == want["orphan_total"]
+        assert empty["effective"] is None and empty["change"] is None, (
+            "a position with no recorded reason returns an empty history rather "
+            "than raising or inventing one")
 
 
 def _main():
