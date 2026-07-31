@@ -14,6 +14,9 @@ skills/fomo-kernel/dist/
 # ledger.jsonl 當預設輸入讀)——延續 *.csv 只留 mock 例外的隱私鐵律精神
 ledger.jsonl
 .trade-coach/
+# #403 同一條防線:position_rationales.jsonl 是使用者自己的原話,比帳本更私人。
+# 同樣寫在 coach root 底下,同樣會被從 repo 根目錄啟動的 dogfood run 掉在這裡。
+position_rationales.jsonl
 
 # #214 snapshot envelope backstop: *.json cannot be blanket-ignored (it would
 # swallow schemas and fixtures), so pin the exact recommended temporary

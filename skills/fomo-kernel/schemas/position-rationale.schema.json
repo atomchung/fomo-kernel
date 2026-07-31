@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/position-rationale.schema.json",
+  "title": "Fomo Kernel Position Rationale",
+  "description": "One event in the append-only chain recording why the user says they still hold one position cycle (#403). The readable contract; skills/fomo-kernel/engine/position_rationale.py holds the enforcement, because the offline suite carries no jsonschema dependency. The durable row stored in <root>/position_rationales.jsonl, and there is no agent-facing input shape: every field here is engine-assigned or is the user's own words passed through untouched. Nothing is ever rewritten — a changed reason is a new event naming the one it follows, so the record keeps what was said and when it stopped being current, rather than the current answer alone. Three fields differ from the shape first frozen on #403, and they are one change rather than three: `supersedes` enters the content address, idempotency moves from id collision to head comparison, and `act` replaces a stored `initial | changed | no_change`. Each is there because the frozen shape loses a statement the user made while the writer reports success; the module docstring carries the reasoning and the receipts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "subject", "act", "stated_at", "recorded_at",
+               "supersedes", "voice", "capture_source", "state_version"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "This stream's own shape. Written on every row because rows are append-only and a later row may be read beside a much older one."
+    },
+    "event_id": {
+      "type": "string",
+      "description": "Engine-assigned identity, content-addressed over every field except `recorded_at`. `supersedes` is part of that address, which is what makes a user who returns to an earlier reason (A, then B, then A, then B) produce four distinct events instead of silently dropping the fourth onto the second. Never supplied by a caller and never recomputed on read: a row carries the id it was written with."
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cycle_id", "ticker", "market", "currency"],
+      "description": "The active position cycle this statement is about, resolved by the engine from the recorded book — never supplied and never guessed. All four keys are required: joining a rationale on ticker alone would cross an unproven sale-and-rebuy boundary, which is exactly the join #403 forbids.",
+      "properties": {
+        "cycle_id": {"type": "string", "description": "The position cycle. A sold and rebought position is a different cycle and inherits nothing."},
+        "ticker": {"type": "string"},
+        "market": {"type": "string"},
+        "currency": {"type": "string"}
+      }
+    },
+    "act": {
+      "enum": ["statement", "confirmation"],
+      "description": "What the user did, and deliberately not `initial | changed | no_change`. `statement`: they said why they hold it, and the words are on this row. `confirmation`: they were asked and said nothing had changed, so the prior wording stays in force without being copied onto a day they did not say it. Whether an event is the first on its subject is read from `supersedes`, not stored — `thesis.build_snapshot_cycle_relinks` re-parents a subject retroactively by design (Front A of the same issue), so a frozen `initial` can end up behind three earlier events with nothing detecting the disagreement."
+    },
+    "user_statement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The user's own words, byte for byte: not stripped, not normalized, not tidied into product phrasing. Required for `statement` and refused for `confirmation`, both enforced. A statement whose words equal its predecessor's is legal and is not a retry — it can only be a deliberate return to an earlier reason, which the three-value contract could not express at all."
+    },
+    "supersedes": {
+      "type": ["string", "null"],
+      "description": "The event id of this subject's head at write time, or null for the first event on the subject. The immediate predecessor, never 'the prior substantive wording': pointing past confirmations would make two confirmations of one statement byte-identical, and which statement is currently in force is a derived walk back through them. Always present — a constant key cannot shift another row's digest the way an intermittent one would. A null here is what `initial` used to claim, carried where a later discovery cannot falsify it; two nulls on one subject read honestly as two origins, one found later."
+    },
+    "stated_at": {
+      "type": "string",
+      "format": "date",
+      "description": "The day the statement applies, supplied by the caller rather than taken from a clock inside the engine. Part of the content address."
+    },
+    "recorded_at": {
+      "type": "string",
+      "description": "When the kernel learned it. Stamped after the identity is computed and never part of it, so a replay of the same act reproduces the same id rather than growing the file by one row per retry."
+    },
+    "voice": {
+      "const": "user_verbatim",
+      "description": "What kind of source this row is. Constant for this stream by construction: an agent interpretation belongs in the thesis projection, and a legacy classification is never upgraded into a verbatim statement."
+    },
+    "capture_source": {
+      "enum": ["direct", "review", "light_capture"],
+      "description": "Which entrance produced it. `direct`: the user said it outside any review. `review`: a rationale-refresh question collected it. `light_capture`: the legacy cadence-light route, which keeps its own writer until its migration slice lands. A `review` row is additionally idempotent on its own session and subject, so a re-finalized session cannot resurrect its statement over a newer direct one."
+    },
+    "origin_id": {
+      "type": "string",
+      "description": "The producing interaction or session, when one exists. Omitted entirely when it does not, rather than sent as null: a key that appears only sometimes moves the digest of every row that lacks it."
+    },
+    "state_version": {
+      "type": "string",
+      "description": "The recorded book that resolved the subject. Required — a statement about a position is a statement about the book that said the position was held, and a rationale that cannot name it cannot be reconciled later."
+    },
+    "condition_ref": {
+      "type": "string",
+      "description": "An optional link to the condition slot that makes this reason checkable, when a later slice legally creates one. Its presence is what `mapped` means; there is deliberately no separate `mapping_status` field, because a second encoding of one fact in an append-only row is one more thing that can disagree with itself. Never manufactured: a reason that names nothing observable stays unmapped and nothing claims to be watching it."
+    }
+  }
+}

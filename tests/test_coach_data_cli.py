@@ -273,6 +273,37 @@ def test_condition_checks_projection_is_status_export_and_reset_managed():
         assert not os.path.exists(checks_path)
 
 
+def test_position_rationales_are_status_export_and_reset_managed():
+    """#403: position_rationales.jsonl holds the user's own words for why they
+    still hold a position -- the most personal thing this product stores, and
+    the one a user is most likely to want a copy of or gone. The registry is how
+    every data-control operation finds it (mirrors the condition_checks.jsonl
+    and verdicts.jsonl tests above, #412/#446)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "position_rationales.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"event_id":"position-rationale-0","act":"statement",'
+                    '"subject":{"cycle_id":"ACME#2026-06-30#1"}}\n')
+
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {entry["name"]: entry for entry in status["files"]}
+        assert status["present_count"] == 1
+        assert by_name["position_rationales.jsonl"]["exists"]
+        assert by_name["position_rationales.jsonl"]["lines"] == 1
+
+        out_zip = os.path.join(tmp, "backup.zip")
+        exported = _run("data-export", "--root", tmp, "--out", out_zip)
+        assert exported.returncode == 0, exported.stderr
+        assert json.loads(exported.stdout)["included"] == ["position_rationales.jsonl"]
+        with zipfile.ZipFile(out_zip) as zf:
+            assert zf.namelist() == ["position_rationales.jsonl"]
+
+        reset = _run("data-reset", "--root", tmp, "--confirm")
+        assert reset.returncode == 0, reset.stderr
+        assert json.loads(reset.stdout)["deleted"] == [path]
+        assert not os.path.exists(path)
+
+
 # ─── E. registry completeness: the next omission fails the suite (#452) ────
 #
 # DATA_FILES stays hand-authored -- each entry's description is user-facing

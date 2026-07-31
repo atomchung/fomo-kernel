@@ -32,6 +32,11 @@ SUITES = [
     ("Answer provenance gate (#414, Wave A)", "tests/test_answer_provenance.py"),
     ("Visible evaluation challenge (#479 Wave B)", "tests/test_evaluation_challenge.py"),
     ("Behavior verdicts (#446)", "tests/test_verdicts.py"),
+    # #403 Front B: the canonical stream, its fold and the #450 bounded reader.
+    # No CLI and no review integration yet — a row here is not memory until a
+    # later slice proves a reader quotes it, and this suite says so rather than
+    # asserting the capability it does not have.
+    ("Position rationale stream (#403 Front B)", "tests/test_position_rationale.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("PortfolioBasis current-book contract (#484)", "tests/test_portfolio_basis.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),

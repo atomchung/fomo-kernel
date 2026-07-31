@@ -415,6 +415,7 @@ DATA_FILES = [
     ("conditions.jsonl", "jsonl", "引擎算不出來、但你仍然承諾要盯的條件(#412;含你自己的原話與當時的基準值)"),
     ("condition_checks.jsonl", "jsonl", "每條 conditions.jsonl 條件在每次復盤週期的查核紀錄(#412 第二刀;查了沒/觀察到什麼/你怎麼回答,連沒查的週期也算一列,不覆寫舊列)"),
     ("verdicts.jsonl", "jsonl", "引擎判定的「說到 vs 做到」落差記錄(#446;目前只有 horizon 矛盾，可重算驗證，不進規矩對帳)"),
+    ("position_rationales.jsonl", "jsonl", "你為什麼「現在還繼續持有」某個部位的原話(#403;一個部位一條鏈,改口是新增一列而不是改寫舊列,說「沒變」也算一列)"),
     ("problems.jsonl", "jsonl", "問題事件記錄(#137)"),
     ("ledger.jsonl", "jsonl", "交易/持倉快照帳本"),
     ("trade_evaluations.jsonl", "jsonl", "買進/賣出前的假設性評估記錄(review.py consider):凍結當時算出的 before/after/rule collision,--resolve 才追加你後續的決定,不覆寫舊列"),

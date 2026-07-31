@@ -8624,7 +8624,12 @@ def test_all_json_schemas_parse():
              # trade-evaluation.schema.json the way `context` and `agent_case`
              # above are: a row carrying it would be a derived duplicate of
              # fields that row already freezes.
-             "evaluation-challenge.schema.json"}
+             "evaluation-challenge.schema.json",
+             # #403 Front B: the canonical position-rationale event. Standalone
+             # and deliberately not $ref-ed from anywhere yet -- it describes a
+             # durable row in its own stream, not an agent-facing envelope, and
+             # this slice adds no CLI and no question that could carry one.
+             "position-rationale.schema.json"}
     assert names == {p.name for p in SCHEMAS.glob("*.json")}
     for path in SCHEMAS.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["$schema"].endswith("2020-12/schema")
