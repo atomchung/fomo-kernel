@@ -89,7 +89,7 @@ Validated against [../schemas/price-feed.schema.json](../schemas/price-feed.sche
 }
 ```
 
-`prices` and `fx` are each optional; the envelope needs at least one of them, non-empty. The shape above answers a fully unpriced book. A book refused only for a missing held-currency rate (`MissingHeldCurrencyRate`, #612) needs *only* the rate — the closes are a separate, independent gap, and demanding both to clear a refusal that is purely about the rate would push you toward inventing prices, which is forbidden (below). This is a complete repair for that refusal:
+`prices` and `fx` are each optional; the envelope needs at least one of them, non-empty. The shape above answers a fully unpriced book. A book refused only for a missing rate on a currency its account aggregate spans (`MissingAggregateCurrencyRate`, #612/#649 — a currency that appears only in a cash-flow row counts) needs *only* the rate — the closes are a separate, independent gap, and demanding both to clear a refusal that is purely about the rate would push you toward inventing prices, which is forbidden (below). This is a complete repair for that refusal:
 
 ```json
 {

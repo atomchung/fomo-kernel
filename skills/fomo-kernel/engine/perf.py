@@ -182,16 +182,41 @@ def cash_reconcile_residuals(snapshots, cash_flows, fx=None, abs_floor=50.0, pct
 
 # ───────────────────────── 帳戶級 V_t 序列 + 三數字 ─────────────────────────
 def _fx_getter(currencies, px_index, fx_series, fx_spot):
-    """回 (fx_at(ccy, i), fx_approx):每交易日的 usd_per_unit。優先 fx_series(每日,含匯損益,
-    ffill/bfill 補洞);缺 → 即期常數近似(fx_approx=True);連即期都缺 → 1.0。持股幣別
-    (cur_map 值域)不會踩到最後這個分支:呼叫端 account_perf 的 fx_spot 與
-    trade_recap.usd_view 拒答用的是同一份 fx,#612 後 usd_view 沒拒答就代表每個持股
-    幣別都已有匯率。唯一還可能落到 1.0 的是只出現在現金流(股息/利息/存提/手續費)、
-    沒有對應持股的幣別——不在 usd_view 檢查的 cur_map 定義域裡,cash_position 對這類
-    幣別本身也是同樣近似(#642)。這條近似不再對外揭露成一份 data_integrity.fx_gaps
-    清單,該鍵在此線已不存在(#612/#429)。USD 恆 1。"""
+    """Return ``(fx_at(ccy, i), fx_approx, missing)`` — the usd_per_unit factor
+    for every trading day. ``fx_series`` wins (daily, so FX gain and loss is in
+    the chain); absent, the spot rate is held flat across the window and
+    ``fx_approx`` says so. USD is always 1.
+
+    ``currencies`` is the set that actually *carries value* (``cur_map``'s
+    values unioned with the cash buckets). It deliberately excludes the
+    unconditional ``"USD"`` ``account_perf`` used to add, which made a pure TWD
+    book look like a mixed one.
+
+    When even the spot rate is absent there are exactly two cases, and they need
+    opposite treatment (#649):
+
+    * **A single-currency world** (``len(currencies) < 2``, a pure TWD book
+      included): the aggregate currency *is* that currency, so a factor of 1.0
+      is an identity rather than an approximation, and nothing is missing.
+    * **Two or more currencies**: 1.0 adds one currency's raw units into
+      another's total. That is not a gap in the number, it is a different
+      number — one TWD interest row made a cash balance 28x its real size while
+      ``basis.fx_approx`` and ``unanchored`` both reported no problem. Such a
+      currency is returned in ``missing`` and ``account_perf`` withholds the
+      whole account pillar; ``cols`` is still filled with 1.0 only to keep the
+      shape uniform, and past that gate it has no reader.
+
+    Since #612 this gap is no longer disclosed as ``data_integrity.fx_gaps``
+    (the key does not exist on this lane — #612/#429), so approximating quietly
+    here means no honesty layer at all, which is why it has to be a gate rather
+    than a note. The criterion is the same one
+    ``trade_recap.missing_aggregate_fx_rates`` applies; this module is
+    stdlib-only by contract (see the module docstring), so it is a second
+    implementation of one rule, not a second rule."""
     fx_approx = False
     cols = {}
+    missing = []
+    single_currency = len({c for c in currencies if c}) < 2
     for c in currencies:
         if c == "USD":
             continue
@@ -207,12 +232,14 @@ def _fx_getter(currencies, px_index, fx_series, fx_spot):
                 fx_approx = True                      # 全窗用今日即期 = 匯損益歸零的近似
                 ser = [float(rate)] * len(px_index)
             else:
-                ser = [1.0] * len(px_index)           # 缺匯率:原幣近似(僅現金流獨有幣別會踩到,見上方 docstring #642)
+                if not single_currency:
+                    missing.append(c)                 # #649: mixed and no rate -> gate, never 1.0
+                ser = [1.0] * len(px_index)           # the single-currency identity (see docstring)
         cols[c] = ser
 
     def fx_at(c, i):
         return 1.0 if c == "USD" else cols[c][i]
-    return fx_at, fx_approx
+    return fx_at, fx_approx, sorted(missing)
 
 
 def account_perf(rows, px, cash_flows, cash_data, cur_map,
@@ -233,8 +260,19 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
     cash_flows = cash_flows or []
     by_ccy = (cash_data or {}).get("by_currency") or {}
     cash_ccys = sorted(set(by_ccy) | {cf.get("currency", "USD") for cf in cash_flows})
-    all_ccys = sorted(set(cash_ccys) | {cur_map.get(r["ticker"], "USD") for r in rows} | {"USD"})
-    fx_at, fx_approx = _fx_getter(all_ccys, px.index, fx_series, fx_spot)
+    # #649: the currencies that actually carry value. The old set unioned "USD"
+    # unconditionally, so a pure TWD book looked like two currencies with TWD
+    # permanently rateless — the identity factor and a missing rate were
+    # indistinguishable. USD does not need to be in the set: `fx_at` short
+    # circuits it to 1.0.
+    value_ccys = sorted(set(cash_ccys) | {cur_map.get(r["ticker"], "USD") for r in rows})
+    fx_at, fx_approx, fx_missing = _fx_getter(value_ccys, px.index, fx_series, fx_spot)
+    if fx_missing:
+        # The whole account pillar (acct_twr / irr_annual / cash_drag) rests on
+        # V_t = holdings + cash, and the cash bucket would add one currency into
+        # another at 1.0. Withhold it rather than emit a wrong number with a
+        # note beside it (#649).
+        return {"gate": _reason("missing_fx", currencies=fx_missing)}
 
     def day_idx(d):
         """flow/trade 日 → 掛到 ≥d 的第一個交易日(BOD:週末入金下個開盤到位);窗尾外 → None。"""

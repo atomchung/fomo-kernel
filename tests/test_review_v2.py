@@ -10659,6 +10659,138 @@ def test_the_612_refusal_is_repaired_by_fx_alone_with_no_closes_supplied():
         assert (root / "ledger.jsonl").exists()
 
 
+"""#649's fixture: a US-only stock book whose only foreign currency arrives in a
+cash-flow row. Synthetic throughout. The shape is ordinary — a Taiwanese
+sub-brokerage account trading US stocks with interest posting in TWD, an IBKR
+account whose base-currency interest accrues beside a single-market book, any
+account with an FX-conversion fee logged at home. It takes one such row."""
+_CASH_CCY_HEADER = "TradeDate,Action,Symbol,Quantity,Price,Amount,Currency,RecordType"
+_CASH_CCY_TRADES = ["2025-01-06,BUY,AAPL,100,200.00,-20000.00,USD,Trade",
+                    "2025-01-06,BUY,MSFT,50,380.00,-19000.00,USD,Trade",
+                    "2025-03-10,SELL,AAPL,40,240.00,9600.00,USD,Trade"]
+_CASH_CCY_TWD_INTEREST = "2025-04-01,INTEREST,,,,1000000.00,TWD,Interest"
+_CASH_CCY_USD_INTEREST = "2025-04-01,INTEREST,,,,120.00,USD,Interest"
+_CASH_CCY_CLOSES = [{"ticker": "AAPL", "close": 210.0, "date": "2026-07-30", "currency": "USD"},
+                    {"ticker": "MSFT", "close": 430.0, "date": "2026-07-30", "currency": "USD"}]
+_CASH_CCY_ANCHOR = json.dumps([{"currency": "TWD", "amount": 1000000, "as_of": "2025-04-02"},
+                               {"currency": "USD", "amount": 5000, "as_of": "2025-04-02"}])
+
+
+def _cash_ccy_case(tmp, name, rows, fx=None, prices=_CASH_CCY_CLOSES):
+    csv_path = pathlib.Path(tmp) / f"{name}.csv"
+    csv_path.write_text("\n".join([_CASH_CCY_HEADER] + rows) + "\n", encoding="utf-8")
+    envelope = pathlib.Path(tmp) / f"{name}.prices.json"
+    payload = {"schema_version": 1, "as_of": "2026-07-30", "source": "test fixture",
+               "prices": [dict(row) for row in prices]}
+    if fx:
+        payload["fx"] = [{"currency": currency, "usd_per_unit": rate, "date": "2026-07-30"}
+                         for currency, rate in sorted(fx.items())]
+    envelope.write_text(json.dumps(payload), encoding="utf-8")
+    return csv_path, envelope
+
+
+def test_a_currency_only_a_cash_flow_row_carries_is_fetched_and_refused_when_absent():
+    """#649, through the real CLI.
+
+    #612 put the FX refusal in the primitive that converts *holdings*, and its
+    domain was `cur_map` — which `load()` fills from BUY/SELL rows only.
+    `load_cash_flows` reads a separate per-row `Currency`, so a currency present
+    only there was invisible to the refusal *and* to the fetch decision that
+    shares the same set. On this book that was not a rate that failed to arrive:
+    none was ever requested. `cash_position` then added 1,000,000 raw TWD into a
+    USD total at 1.0 — a balance 28x its real size — while every honesty surface
+    said the opposite: `currency_meta.mixed: false`, `fx: "not_needed"`,
+    `basis.fx_approx: false`, `unanchored: []`, `cash_source: "anchored"`. That
+    is a strictly worse posture than the pre-#612 holdings case, which at least
+    degraded into a disclosed `fx_gaps` list.
+
+    Both halves on purpose, matching the #612 pair above: a refusal test alone
+    stays green when the supply side stops delivering rates at all, and the
+    converted counterweight is what makes the pair mean "TWD was asked for, the
+    rate arrived, and it was used".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        rows = _CASH_CCY_TRADES + [_CASH_CCY_TWD_INTEREST]
+
+        # 1. No rate: refused before anything is computed or persisted.
+        csv_path, no_rate = _cash_ccy_case(tmp, "cash_ccy_no_rate", rows)
+        refused_root = pathlib.Path(tmp) / "refused"
+        run = _run("prepare", csv_path, "--root", refused_root, "--language", "en",
+                   "--prices", no_rate, "--cash", _CASH_CCY_ANCHOR, env=env)
+        assert run.returncode == 2, run.stdout + run.stderr
+        payload = json.loads(run.stdout)
+        assert payload["status"] == "error"
+        assert "TWD" in payload["error"], payload["error"]
+        assert "--prices" in payload["error"] and "fx" in payload["error"], payload["error"]
+        assert "Traceback" not in run.stdout and "Traceback" not in run.stderr
+        # `_from_feed` emits `fx_unavailable` per *requested* currency, so this
+        # code is itself the evidence that TWD entered the acquisition request —
+        # the half of #649 that a refusal message alone would not prove.
+        assert "fx_unavailable" in payload["error"], payload["error"]
+        written = {str(path.relative_to(refused_root))
+                   for path in refused_root.rglob("*")} if refused_root.exists() else set()
+        assert not [name for name in written if name.startswith(".pending")], written
+        assert "ledger.jsonl" not in written, written
+
+        # 2. The same book with the rate supplied: converted, and honest about it.
+        _csv2, with_rate = _cash_ccy_case(tmp, "cash_ccy_rate", rows, fx={"TWD": 0.030849})
+        priced_root = pathlib.Path(tmp) / "priced"
+        ok = _run("prepare", csv_path, "--root", priced_root, "--language", "en",
+                  "--prices", with_rate, "--cash", _CASH_CCY_ANCHOR, env=env)
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+        card = _fx_plan(priced_root)["engine_card"]
+        meta = card["currency_meta"]
+        assert meta["mixed"] is True and meta["currencies"] == ["TWD", "USD"], meta
+        assert meta["fx"] == {"TWD": 0.030849}, meta
+        assert card["price_provenance"]["fx"] == "feed", card["price_provenance"]
+        # 1,000,000 TWD is 30,849 USD beside 5,000 USD: 35,849, not 1,005,000.
+        cash = card["cash"]
+        assert abs(cash["balance"] - 35849.0) < 0.01, cash
+        assert 0.50 < cash["weight"] < 0.53, cash                 # not the 0.967 of the 1.0 sum
+        assert cash["by_currency"]["TWD"]["balance"] == 1000000.0, cash   # per-currency stays raw
+        # The mix is now stated rather than denied.
+        assert [entry for entry in card["honesty_ledger"]
+                if entry["key"] == "currency_mix"], card["honesty_ledger"]
+        assert (priced_root / "ledger.jsonl").exists()
+
+
+def test_a_book_whose_cash_rows_share_the_stock_currency_is_byte_stable():
+    """#649's regression half: a genuinely single-currency book must not change.
+
+    The universe now spans cash-flow rows, so the book that must be proven
+    unchanged is not only a trade-only one — it is a book that *has* cash-flow
+    rows in the same currency it trades in. Neither of these may request a rate,
+    report a mix, or convert anything, whichever currency it is denominated in.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        twd_closes = [{"ticker": "2330.TW", "close": 1050.0,
+                       "date": "2026-07-30", "currency": "TWD"}]
+        twd_rows = ["2024-01-05,BUY,2330.TW,1000,550.00,-550000.00,TWD,Trade",
+                    "2024-02-05,SELL,2330.TW,200,600.00,120000.00,TWD,Trade",
+                    "2024-03-01,INTEREST,,,,900.00,TWD,Interest"]
+        for name, rows, closes, aggregate in (
+                ("cash_pure_usd", _CASH_CCY_TRADES + [_CASH_CCY_USD_INTEREST],
+                 _CASH_CCY_CLOSES, "USD"),
+                ("cash_pure_twd", twd_rows, twd_closes, "TWD")):
+            csv_path, envelope = _cash_ccy_case(tmp, name, rows, prices=closes)
+            root = pathlib.Path(tmp) / name
+            run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                       "--prices", envelope, env=env)
+            assert run.returncode == 0, name + ": " + run.stdout + run.stderr
+            card = _fx_plan(root)["engine_card"]
+            meta = card["currency_meta"]
+            assert meta["mixed"] is False and meta["fx"] is None, (name, meta)
+            assert meta["currencies"] == [aggregate], (name, meta)
+            assert meta["aggregate_currency"] == aggregate, (name, meta)
+            # No rate was requested, so none can be reported missing: the
+            # "單一幣別組合...零行為變化" convention, still intact.
+            assert card["price_provenance"]["fx"] == "not_needed", (name, card["price_provenance"])
+            assert not [entry for entry in card["honesty_ledger"]
+                        if entry["key"] == "currency_mix"], (name, card["honesty_ledger"])
+
+
 def test_single_currency_and_display_only_gaps_are_untouched_by_the_fx_refusal():
     """#612's two compatibility halves, through the CLI.
 
