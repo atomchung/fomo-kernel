@@ -130,7 +130,7 @@ This is why an omitted split is not merely a missing nicety:
 
 ## Coverage tiers
 
-Both are accepted; supply what the source actually gives you.
+Both are accepted; supply what the source actually gives you. Both describe `prices` specifically — the rate-only shape above supplies neither, and is never reported as if it had (#652): omitting `prices` means there is no tier, not the smaller one.
 
 | Supplied | Restores |
 |---|---|

@@ -24,7 +24,11 @@ Two coverage tiers for ``prices``, both accepted:
 ``prices`` itself is optional (#642) when the envelope carries ``fx``: a host
 that can read a public FX rate but not every instrument's close can still
 repair a book refused only for its missing rate. An envelope must still
-declare at least one of the two — see :func:`parse`.
+declare at least one of the two — see :func:`parse`. Both tiers above describe
+``prices`` specifically: an envelope with none supplied has neither, and
+:func:`parse` omits ``coverage`` entirely rather than reporting one it never
+earned (#652 — the old ternary read an empty ``prices`` dict as the smaller
+tier, ``single_close``, instead of no tier at all).
 
 Validation is fail-closed: a malformed envelope raises :class:`PriceFeedError`
 instead of silently pricing part of a portfolio. Prices are money, and a price
@@ -186,9 +190,10 @@ def _pairs(rows, where, as_of, value_name, value_check):
 def parse(payload):
     """Validate a decoded envelope into the engine's normalized feed structure.
 
-    Returns ``{"as_of", "source", "prices", "fx", "coverage"}`` where ``prices``
-    maps engine symbol to ``{close, date, currency, source, history, splits}``.
-    Raises :class:`PriceFeedError` on anything the engine should not price from.
+    Returns ``{"as_of", "source", "prices", "fx"}``, plus ``"coverage"`` only
+    when ``prices`` is non-empty, where ``prices`` maps engine symbol to
+    ``{close, date, currency, source, history, splits}``. Raises
+    :class:`PriceFeedError` on anything the engine should not price from.
 
     ``prices`` is optional (#642): a host whose own price retrieval is blocked
     can usually still read one FX rate off a public source even when
@@ -199,6 +204,12 @@ def parse(payload):
     neither ``prices`` nor ``fx`` has nothing for the engine to apply and is
     refused below, once both are parsed, so the message can name whichever of
     the two is genuinely empty.
+
+    ``coverage`` states which of the two tiers above ``prices`` reached —
+    never a claim about ``fx``. An fx-only envelope's ``prices`` is ``{}``, so
+    there is no tier to report at all: ``coverage`` is omitted rather than
+    defaulting to ``single_close``, the smaller tier, which would claim one
+    close per instrument that was never supplied (#652).
     """
     if not isinstance(payload, dict):
         raise PriceFeedError("price feed must be a JSON object")
@@ -308,15 +319,28 @@ def parse(payload):
             "price feed must declare at least one of prices or fx; an envelope "
             "with neither has nothing for the engine to apply")
 
-    return {
+    feed = {
         "as_of": as_of.isoformat(),
         "source": source,
         "prices": prices,
         "fx": fx,
-        "coverage": ("daily_series"
-                     if any(len(row["history"]) > 1 for row in prices.values())
-                     else "single_close"),
     }
+    # #652: `any()` over an empty `prices` is `False`, so this used to fall
+    # through to the *smaller* tier, `single_close` — a claim of one close per
+    # instrument for an envelope that supplied zero. `coverage` is a statement
+    # about `prices` alone (never about `fx`), so when `prices` is empty there
+    # is no tier to report and the key is omitted entirely, matching this
+    # module's own "absent, never a placeholder" rule for a fact nothing
+    # observed (`basis.price_observations`, #618) rather than inventing a new
+    # sentinel value nothing else in this file uses. Every reader already
+    # reaches this through `.get("coverage")` (`provenance` below), which
+    # returns `None` for a missing key exactly as it would for one explicitly
+    # set to `None` — so nothing downstream needed to change to stay honest.
+    if prices:
+        feed["coverage"] = ("daily_series"
+                             if any(len(row["history"]) > 1 for row in prices.values())
+                             else "single_close")
+    return feed
 
 
 def load(path):
@@ -624,6 +648,12 @@ def provenance(*, mode, feed=None, error=None, requested=(), priced=(),
     }
     if mode == "agent_feed" and feed:
         record["source"] = feed.get("source")
+        # `feed["coverage"]` (the tier: single_close/daily_series) is a
+        # different fact from `record["coverage"]` above (requested/priced/
+        # missing counts) despite the shared name. `.get` already degrades to
+        # `None` for a feed that priced nothing, since #652 made `parse` omit
+        # the key rather than defaulting it to `single_close` — a claim of one
+        # close per instrument an fx-only feed never supplied.
         record["series"] = feed.get("coverage")
         record["sources_by_ticker"] = {ticker: row["source"]
                                        for ticker, row in sorted(feed.get("prices", {}).items())
