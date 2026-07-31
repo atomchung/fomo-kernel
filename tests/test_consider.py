@@ -1156,6 +1156,31 @@ def test_the_same_book_answers_once_the_rate_is_supplied():
         assert "mixed_currency_no_fx" not in payload["evaluation"]["consequence"]["disclosures"]
 
 
+def test_an_fx_only_envelope_is_accepted_and_clears_the_currency_refusal():
+    """#642: the schema used to require `prices` non-empty, so there was no way
+    to hand `consider` an envelope that repairs only the #600/#612 currency
+    refusal. An envelope carrying `fx` and nothing else must be accepted --
+    parsed and applied, never rejected at the door -- and it does clear that
+    refusal. What remains is #629's own, separate, pre-existing rule: a trade
+    decision refuses rather than answers on cost basis when no current price
+    ever reached the book, because no closes were supplied here at all. This
+    proves the envelope shape reached that second, correct refusal rather than
+    being bounced by the first one for want of a `prices` array."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prices = _fx_envelope(os.path.join(tmp, "px.json"), {}, fx={"TWD": 0.0317})
+        with open(prices, encoding="utf-8") as f:
+            envelope = json.load(f)
+        assert envelope["prices"] == [], "this envelope must genuinely carry no closes"
+
+        run = _run("consider", str(MOCK / "sample_tw_mixed.csv"), "--root", tmp,
+                   "--prices", prices, "--premise", _TW_PREMISE)
+        payload = _fails(run, "refused rather than answered on cost basis")
+        # Not the currency refusal this envelope was supposed to clear.
+        assert "no FX rate covers" not in payload["error"], payload["error"]
+        assert "--prices" in payload["error"]
+        assert _read_evaluations(tmp) == [], "a refused answer stores nothing"
+
+
 def test_a_partially_legible_book_says_so_on_the_row_and_in_what_the_answer_owes():
     """#598 through the whole chain. The frozen row carries which positions the
     concentration figures could not read, and because `required_coverage` is
