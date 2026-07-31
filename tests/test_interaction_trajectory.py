@@ -838,10 +838,17 @@ def test_weekly_opener_after_first_card_fails():
 # row is retrospective evidence: an agent that forgot to look cannot fabricate
 # it afterwards without also getting the ordering wrong.
 #
-# `provided`/`declined` record a question asked at the card beat, where the
-# owner ruled it belongs -- the anchor costs the account pillar and nothing
-# else, so asking before the card spends a turn on a value the user cannot yet
-# see. Requiring the row after the first card is what makes it evidence.
+# `provided` and `declined` both record a question asked at the card beat,
+# where the owner ruled it belongs -- the anchor costs the account pillar and
+# nothing else, so asking before the card spends a turn on a value the user
+# cannot yet see. From there the two outcomes diverge (#663). Nothing
+# recomputes on a `declined`, so the card that asked the question is also the
+# settled card, and the row belongs after it -- requiring the row after the
+# card is what makes it evidence rather than intent. A `provided` answer
+# always triggers `add-cash` and a recompute, so the settled card is the one
+# rendered *afterward*: the exactly-once preview pair this trace may record is
+# that later card, and the row therefore belongs *before* it -- the inverse
+# ordering, for the same "evidence rather than intent" reason.
 #
 # What no longer exists is the escape both halves used to share. `skipped` meant
 # "the agent decided not to ask", and #357's fifth recurrence recorded it
@@ -887,26 +894,52 @@ def test_cash_anchor_found_in_source_passes_before_the_first_surface():
     assert ux_receipt.verify_rows(rows) == []
 
 
-def test_an_answered_cash_question_is_recorded_at_the_card_beat():
-    """The owner's ruling, mechanically. The balance is asked for in the same
-    message as the preview card, so both user-decided outcomes belong after
-    it -- and both are accepted there, because declining is a real answer."""
-    for outcome in ("provided", "declined"):
-        rows = good_markdown_rows()
-        drop(rows, CASH_ANCHOR)
-        after(rows, PREVIEW_CARD, row("cash_anchor_checked", cash_outcome=outcome))
-        assert ux_receipt.verify_rows(rows) == [], outcome
+def test_a_declined_cash_answer_is_recorded_at_the_card_beat():
+    """The owner's ruling, mechanically, for the outcome nothing recomputes:
+    the balance is asked for in the same message as the preview card, and
+    since a decline leaves that card standing as the settled one, the row
+    belongs after it -- declining is a real answer and is accepted there."""
+    rows = good_markdown_rows()
+    drop(rows, CASH_ANCHOR)
+    after(rows, PREVIEW_CARD, row("cash_anchor_checked", cash_outcome="declined"))
+    assert ux_receipt.verify_rows(rows) == []
 
 
-def test_an_answered_cash_question_before_any_card_fails():
+def test_a_declined_cash_answer_before_any_card_fails():
     """The half that makes "the user was asked" evidence rather than intent.
     A `declined` recorded before the card is a claim about a question that had
     nothing to be attached to -- the shape of #357's fifth recurrence, where a
     correctly ordered row meant only that the agent had decided for the user."""
-    for outcome in ("provided", "declined"):
-        rows = good_markdown_rows()
-        at(rows, CASH_ANCHOR)["cash_outcome"] = outcome
-        assert_has(ux_receipt.verify_rows(rows), "before any card was presented")
+    rows = good_markdown_rows()
+    at(rows, CASH_ANCHOR)["cash_outcome"] = "declined"
+    assert_has(ux_receipt.verify_rows(rows), "before any card was presented")
+
+
+def test_a_provided_cash_answer_may_precede_the_settled_preview_pair():
+    """#663: `good_markdown_rows()` already positions its one cash-anchor row
+    before the (only) preview pair -- exactly the shape a `provided` answer
+    must take now that the receipt event for the settled, post-recompute card
+    is deferred until after this row rather than recorded for the pre-cash
+    card that prompted the question."""
+    rows = good_markdown_rows()
+    at(rows, CASH_ANCHOR)["cash_outcome"] = "provided"
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_a_provided_cash_answer_after_the_settled_preview_fails():
+    """#663's own repro, mechanically: recording `provided` after the single
+    recorded preview pair means that pair was generated and shown *before*
+    the user answered -- which can never be true of a provided answer,
+    because providing one always triggers add-cash and a recompute. The only
+    way a trace could satisfy the pre-#663 "after the card" rule for this
+    outcome was to receipt the superseded, pre-cash card as the decision
+    artifact, which is exactly what this shape does and what must now fail."""
+    rows = good_markdown_rows()
+    drop(rows, CASH_ANCHOR)
+    after(rows, PREVIEW_CARD, row("cash_anchor_checked", cash_outcome="provided"))
+    errors = ux_receipt.verify_rows(rows)
+    assert_has(errors, "cash_anchor_checked recorded 'provided'")
+    assert_has(errors, "superseded pre-cash card")
 
 
 def test_no_cash_outcome_means_the_agent_chose_not_to_ask():
@@ -919,6 +952,90 @@ def test_no_cash_outcome_means_the_agent_chose_not_to_ask():
         assert retired not in ux_receipt.CASH_OUTCOMES, (
             f"{retired!r} let an agent record a legitimate decision not to ask, which is "
             "indistinguishable from forgetting from the user's chair (#357)")
+
+
+# --- #663: the settled card is the one this trace may record -----------------
+#
+# The maintainer's disposition names the exact shape: prepare -> first preview
+# shown (asks the cash question) -> cash answer -> add-cash -> second preview
+# shown (the settled card) -> commitment. The receipt cannot see "first" or
+# "second" card content -- it never carries card content at all (#360) -- so
+# the only honest signal it has is order: the recorded stage=preview pair must
+# sit after cash_anchor_checked(provided), because that is structurally the
+# only position a post-recompute card can occupy. These two traces are
+# production-shaped end to end (required question, cash answer, one preview
+# pair, rule choice, finalize) and differ in exactly that one position.
+
+def _end_to_end_provided_trace(preview_after_cash):
+    """A complete first_review trace differing only in whether the recorded
+    stage=preview pair sits before or after the cash answer."""
+    rows = [
+        declaration(),
+        row("question_presented", mode="plain_text"),
+        row("answers_received"),
+    ]
+    preview_pair = [
+        row("artifact_generated", stage="preview", artifact_path="/tmp/card-private-preview.md"),
+        row("card_presented", stage="preview", mode="markdown_inline"),
+    ]
+    cash = row("cash_anchor_checked", cash_outcome="provided")
+    if preview_after_cash:
+        rows.append(cash)
+        rows.extend(preview_pair)
+    else:
+        rows.extend(preview_pair)
+        rows.append(cash)
+    rows.append(row("rule_choice_presented", mode="plain_text",
+                     grounding_expected=False, grounding_verbatim=True))
+    rows.append(row("artifact_generated", stage="final", artifact_path="/tmp/card-private.md"))
+    rows.append(row("card_presented", stage="final", mode="markdown_inline"))
+    return rows
+
+
+def test_end_to_end_provided_trace_pointing_at_the_settled_card_verifies():
+    """Required proof 1: prepare -> first preview shown -> cash answer ->
+    add-cash -> second preview shown -> commitment, walked per #663's
+    deferred-event instruction, verifies clean -- its one preview
+    artifact/card pair is, structurally, the settled post-recompute card."""
+    rows = _end_to_end_provided_trace(preview_after_cash=True)
+    assert ux_receipt.verify_rows(rows) == []
+
+
+def test_end_to_end_provided_trace_pointing_at_the_superseded_card_fails():
+    """Required proof 2: the same trace shape, except the recorded preview
+    pair is the one generated and shown *before* the cash answer -- the
+    superseded, pre-cash card kept as the decision artifact. Fails, named."""
+    rows = _end_to_end_provided_trace(preview_after_cash=False)
+    errors = ux_receipt.verify_rows(rows)
+    assert_has(errors, "cash_anchor_checked recorded 'provided'")
+    assert_has(errors, "superseded pre-cash card")
+
+
+def test_trace_id_stays_the_original_conversation_id_across_add_cash():
+    """Required proof 3. `add-cash` returns a new ENGINE session id -- proven
+    for real in test_review_v2.py::
+    test_add_cash_recomputes_the_same_review_without_re_asking_anything
+    (`out["session_id"] != plan["session_id"]`) -- but the RECEIPT's own
+    session id is the conversation id chosen once at `start`
+    (`references/ux-receipt.md`: "keep the original session id for the whole
+    trace") and is unrelated to it. The pre-existing declared-session_id
+    invariant (`test_session_id_must_be_consistent`) already enforces this for
+    every row, engine session replacement included, so #663 adds no separate
+    mechanism -- this asserts that coverage against #663's own scenario."""
+    rows = _end_to_end_provided_trace(preview_after_cash=True)
+    original_id = rows[0]["session_id"]
+    assert all(entry["session_id"] == original_id for entry in rows), (
+        "a trace spanning add-cash's engine session replacement must still "
+        "use one conversation session id throughout")
+    assert ux_receipt.verify_rows(rows) == []
+
+    # The mechanism: substituting the new ENGINE session id into even one row
+    # -- what would happen if an agent mistakenly keyed a post-add-cash event
+    # to add-cash's returned id instead of the original conversation id -- is
+    # refused by that same pre-existing check.
+    drifted = _end_to_end_provided_trace(preview_after_cash=True)
+    at(drifted, PREVIEW_ARTIFACT)["session_id"] = "engine-session-b-returned-by-add-cash"
+    assert_has(ux_receipt.verify_rows(drifted), "declared session_id")
 
 
 def test_cash_anchor_checked_not_required_outside_trade_history_routes():

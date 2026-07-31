@@ -199,10 +199,17 @@ VERDICT_AXES = ("controls", "card", "memory", "change",
 #                       same hole one level down.
 #   cash_anchor the #357 check, on the routes that read a trade history. Its
 #               required position depends on the outcome, not on the route:
-#               `found_in_source` before the first surface, `provided`/
-#               `declined` after the first card. A declared positions snapshot
-#               states `cash` inline in its own envelope, and `test_drive`
-#               persists no accounting anchor at all, so neither owes one.
+#               `found_in_source` before the first surface; `declined` after
+#               the settled preview card, since nothing recomputes and that
+#               card is the one the question was attached to; `provided`
+#               *before* the settled preview card (#663) — providing an
+#               anchor always triggers `add-cash` and a recompute, so the one
+#               `stage=preview` pair this trace may record (see `cards`
+#               above) must be the card rendered after that recompute, never
+#               the pre-cash card that only prompted the question. A declared
+#               positions snapshot states `cash` inline in its own envelope,
+#               and `test_drive` persists no accounting anchor at all, so
+#               neither owes one.
 #               On a route where this is True, whether *this instance* owes
 #               the event is narrowed further by the trace's own declared
 #               `cash_anchor_status` (#677): `not_applicable` — the plan's
@@ -1390,13 +1397,34 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     # the row is retrospective evidence and must precede the first surface — the
     # anti-backfill rule this check has always carried.
     #
-    # `provided`/`declined` record a question the user was asked *at the card
-    # beat*, which is where the owner ruled it belongs: the anchor costs the
-    # account pillar and nothing else, so asking before the card spends a turn
-    # on something the user cannot yet see the value of. Requiring the row after
-    # the first card is what makes that ordering evidence rather than intent —
-    # and a `declined` recorded before any card is refused, because at that
-    # moment there was no card the question could have been attached to.
+    # `declined` records a question the user was asked *at the card beat*,
+    # which is where the owner ruled it belongs: the anchor costs the account
+    # pillar and nothing else, so asking before the card spends a turn on
+    # something the user cannot yet see the value of. Requiring the row after
+    # the (settled) card is what makes that ordering evidence rather than
+    # intent — and a `declined` recorded before any card is refused, because
+    # at that moment there was no card the question could have been attached
+    # to. Nothing recomputes on a decline, so the card that asked is also the
+    # card the user decided against: the ordinary "card, then check" shape.
+    #
+    # `provided` inverts that shape (#663). Providing an anchor always
+    # triggers `add-cash` and a recompute (`flows/first-review.md` step 6:
+    # "if they answered, run add-cash, rerun preview on the session it
+    # returns, and show that card before the commitment is written"), so the
+    # card the user actually used to choose or skip the rule is never the one
+    # that prompted the question — it is the one rendered afterward, from the
+    # recomputed session. The exactly-once `stage=preview` pair the `cards`
+    # check above enforces therefore has exactly one honest position on a
+    # `provided` trace: after this event, not before it. The user did see the
+    # earlier, pre-cash card — that presentation is not deferred — but it is
+    # an intermediate interaction, not the accepted decision artifact, so
+    # this trace never records that first card's own artifact/presentation
+    # pair at all; the receipt event is deferred to the settled card instead.
+    # A `provided` trace whose recorded preview pair sits at or before this
+    # row has kept the superseded pre-cash card as its decision artifact,
+    # which is the gap #663 reported: recording the honest, single preview
+    # pair for the *first* card was the only way the old "after the card"
+    # rule for this outcome could be satisfied at all.
     #
     # #677: whether *this instance* owes the event at all is read from the
     # trace's own declared `cash_anchor_status`, not assumed from the route.
@@ -1427,11 +1455,29 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 if index >= first_surface:
                     errors.append(
                         "cash_anchor_checked was recorded after the first question or card")
-            elif index < min(_positions(rows, "card_presented") or [len(rows)]):
-                errors.append(
-                    f"cash_anchor_checked recorded {outcome!r} before any card was presented; "
-                    "the balance is asked for at the card beat, so a row placed earlier "
-                    "cannot be evidence the user was shown what answering would buy")
+            elif outcome == "declined":
+                if index < min(_positions(rows, "card_presented") or [len(rows)]):
+                    errors.append(
+                        f"cash_anchor_checked recorded {outcome!r} before any card was presented; "
+                        "the balance is asked for at the card beat, so a row placed earlier "
+                        "cannot be evidence the user was shown what answering would buy")
+            elif outcome == "provided" and preview_card:
+                # #663: unlike `declined`, a `provided` answer always triggers
+                # `add-cash` and a recompute, so the exactly-once preview pair
+                # must postdate this row rather than precede it — see the
+                # block comment above for why.
+                preview_artifact = _positions(rows, "artifact_generated", stage="preview")
+                stale = [position for position in preview_artifact + preview_card
+                         if position < index]
+                if stale:
+                    errors.append(
+                        "cash_anchor_checked recorded 'provided' but the recorded preview "
+                        "artifact/card precedes it; providing an anchor always triggers "
+                        "add-cash and a recompute, so the one preview pair this trace may "
+                        "record must be the settled card shown after that recompute — "
+                        "recording it before this event keeps the superseded pre-cash card "
+                        "as the decision artifact instead of the card the user actually used "
+                        "to choose or skip the rule")
 
     if Counter(row.get("event") for row in rows)["widget_attempt_failed"] and "widget" not in card_modes:
         errors.append("widget failure was recorded without declared widget capability")

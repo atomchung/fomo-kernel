@@ -76,10 +76,14 @@ once and they hold for every run that follows in the same conversation.
    [interaction-delivery.md](../skills/fomo-kernel/references/interaction-delivery.md)
    (#293). On a review route it also proves the cash anchor was settled by the
    user rather than by the agent's discretion: `cash_anchor_checked` carries
-   `found_in_source` before the first surface, or `provided`/`declined` after
-   the card the question was asked at, and no outcome exists for "not asked"
-   (#357). When an anchor arrives mid-run, `add-cash` mints a new session id —
-   keep the original one for the whole trace.
+   `found_in_source` before the first surface, `declined` after the settled
+   card the question was asked at, or `provided` *before* the recorded
+   preview pair — providing an anchor always mints a new session id via
+   `add-cash` and recomputes the review, so the settled card is the one
+   rendered afterward, and the exactly-once preview pair this trace may
+   record is reserved for it, never the pre-cash card that only asked (#663).
+   Keep the original session id for the whole trace regardless. No outcome
+   exists for "not asked" (#357).
 4. **Verdict and verification** — the session ended with an `owner_verdict`
    event and `tools/ux_receipt.py verify` passing. Human-graded runs use both
    `--require-owner-verdict` and `--require-timing-integrity`; only
