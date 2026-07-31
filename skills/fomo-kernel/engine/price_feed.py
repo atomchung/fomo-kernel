@@ -13,13 +13,18 @@ adapter's division of labour: the agent transcribes *declared facts* from a
 recognized market-data source into a normalized envelope, and the engine keeps
 every calculation. The agent never computes a return, a weight, or a P&L number.
 
-Two coverage tiers, both accepted:
+Two coverage tiers for ``prices``, both accepted:
 
 * ``close`` only — one closing price per instrument. Restores market value,
   unrealized P&L, total P&L, weights, concentration, and what-if.
 * ``close`` plus ``history`` — a daily close series. Additionally restores the
   paths that need a series: beta/alpha, the benchmark window, the P&L curve,
   and account-level time-weighted return.
+
+``prices`` itself is optional (#642) when the envelope carries ``fx``: a host
+that can read a public FX rate but not every instrument's close can still
+repair a book refused only for its missing rate. An envelope must still
+declare at least one of the two — see :func:`parse`.
 
 Validation is fail-closed: a malformed envelope raises :class:`PriceFeedError`
 instead of silently pricing part of a portfolio. Prices are money, and a price
@@ -184,6 +189,16 @@ def parse(payload):
     Returns ``{"as_of", "source", "prices", "fx", "coverage"}`` where ``prices``
     maps engine symbol to ``{close, date, currency, source, history, splits}``.
     Raises :class:`PriceFeedError` on anything the engine should not price from.
+
+    ``prices`` is optional (#642): a host whose own price retrieval is blocked
+    can usually still read one FX rate off a public source even when
+    transcribing every instrument's close is not practical, and the #612
+    refusal that sends an agent here names exactly that repair — "supply the
+    rate through --prices". An envelope carrying only ``fx`` is what makes that
+    repair reachable. What is not optional is the envelope as a whole: one with
+    neither ``prices`` nor ``fx`` has nothing for the engine to apply and is
+    refused below, once both are parsed, so the message can name whichever of
+    the two is genuinely empty.
     """
     if not isinstance(payload, dict):
         raise PriceFeedError("price feed must be a JSON object")
@@ -196,9 +211,11 @@ def parse(payload):
         raise PriceFeedError(f"price feed.as_of ({as_of.isoformat()}) is in the future")
     source = _text(_require(payload, "source", "price feed"), "price feed.source")
 
-    rows = _require(payload, "prices", "price feed")
-    if not isinstance(rows, list) or not rows:
-        raise PriceFeedError("price feed.prices must be a non-empty list")
+    rows = payload.get("prices")
+    if rows is None:
+        rows = []
+    if not isinstance(rows, list):
+        raise PriceFeedError("price feed.prices must be a list")
     if len(rows) > _MAX_ROWS:
         raise PriceFeedError(f"price feed.prices has {len(rows)} rows; the limit is {_MAX_ROWS}")
 
@@ -281,6 +298,15 @@ def parse(payload):
             "date": _date(_require(row, "date", at), f"{at}.date", not_after=as_of).isoformat(),
             "source": _text(row.get("source"), f"{at}.source", required=False) or source,
         }
+
+    # #642: checked once both blocks are parsed, so the message names whichever
+    # of the two is genuinely empty rather than hard-coding "prices" — an
+    # envelope can legitimately carry fx alone (a rate-only repair) or prices
+    # alone (the pre-#642 shape); it may not carry neither.
+    if not prices and not fx:
+        raise PriceFeedError(
+            "price feed must declare at least one of prices or fx; an envelope "
+            "with neither has nothing for the engine to apply")
 
     return {
         "as_of": as_of.isoformat(),

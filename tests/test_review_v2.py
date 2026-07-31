@@ -10337,6 +10337,64 @@ def test_a_review_refuses_a_held_currency_it_has_no_rate_for_and_converts_when_i
         assert (priced_root / "ledger.jsonl").exists()
 
 
+def test_the_612_refusal_is_repaired_by_fx_alone_with_no_closes_supplied():
+    """#642. The refusal above names its own repair -- "Supply the rate through
+    --prices (the `fx` block...)" -- but the schema required `prices` with
+    `minItems: 1`, so there was no way to hand back an envelope carrying only
+    the missing rate. The two gaps are independent: a host that can read one
+    public FX rate off a central bank or exchange page often cannot also
+    transcribe every instrument's close in the same pass, and demanding both to
+    clear a refusal that is purely about the rate pushes toward inventing
+    prices, which `references/price-feed.md` forbids in its strongest terms.
+
+    This is the round trip: the same book, still refused with no envelope
+    (proven by the sibling test above), unblocked here by an envelope that
+    supplies `fx` and nothing else -- `prices` genuinely absent, not merely
+    empty-and-ignored.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        mixed = _FX_TWD_ROWS + _FX_USD_ROWS
+        csv_path, fx_only = _fx_case(tmp, "mixed_fx_only", mixed,
+                                     fx={"TWD": 0.0317}, prices=[])
+        payload = json.loads(pathlib.Path(fx_only).read_text(encoding="utf-8"))
+        assert "prices" not in payload or payload["prices"] == [], (
+            "this envelope must genuinely carry no closes, or the round trip "
+            f"below proves nothing about the fx-only repair: {payload}")
+
+        root = pathlib.Path(tmp) / "fx_only"
+        run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                   "--prices", fx_only, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        plan = _fx_plan(root)
+        sizing = _fx_sizing(plan)
+        # The rate alone is enough to fix the denominator: 2330.TW is still the
+        # largest position, at its real converted share -- not the ~97% a
+        # TWD-treated-as-USD face value would read as (the bug #612 fixed), and
+        # not the fully-priced sibling test's ~47% either, because no closes
+        # were supplied here. Every holding honestly falls back to cost, named
+        # in sizing_coverage rather than silently computed as if it were a
+        # current market value.
+        assert sizing["max_ticker"] == "2330.TW"
+        assert 0.35 < sizing["max_pct"] < 0.45, sizing["max_pct"]
+        assert sizing["sizing_coverage"]["priced"] == [], sizing["sizing_coverage"]
+        assert sorted(sizing["sizing_coverage"]["cost_fallback"]) == ["2330.TW", "AAPL", "MSFT"], \
+            sizing["sizing_coverage"]
+        assert plan["engine_card"]["currency_meta"]["fx"] == {"TWD": 0.0317}
+        assert "fx_gaps" not in (plan["engine_card"].get("data_integrity") or {})
+
+        # No closes were supplied, so the review stays honestly degraded for
+        # price-dependent numbers -- an fx-only envelope clears the currency
+        # refusal, it does not manufacture prices nobody sent. `recovery`
+        # still reads "supplied": an envelope arrived, whatever it covered.
+        feed_status = plan["input"]["price_feed"]
+        assert feed_status["provenance"]["mode"] == "unavailable", feed_status
+        assert feed_status["provenance"]["fx"] == "feed", feed_status
+        assert feed_status["recovery"] == {"attempted": True, "outcome": "supplied"}, feed_status
+        assert (root / "ledger.jsonl").exists()
+
+
 def test_single_currency_and_display_only_gaps_are_untouched_by_the_fx_refusal():
     """#612's two compatibility halves, through the CLI.
 

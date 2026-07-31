@@ -2,10 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/price-feed.schema.json",
   "title": "Fomo Kernel Agent-Supplied Price Feed",
-  "description": "Closing prices transcribed from a recognized market-data source when the host cannot retrieve prices itself. Declared facts only: the agent never computes a return, a weight, or a P&L number. Every close and history entry is a RAW market observation as printed on its own session date; never send a split-adjusted price. The engine rebases each observation onto the split basis of the share count it will be multiplied by, using that row's date against the declared splits.",
+  "description": "Closing prices, an FX rate, or both, transcribed from a recognized market-data source when the host cannot retrieve them itself. Declared facts only: the agent never computes a return, a weight, or a P&L number. Every close and history entry is a RAW market observation as printed on its own session date; never send a split-adjusted price. The engine rebases each observation onto the split basis of the share count it will be multiplied by, using that row's date against the declared splits. `prices` and `fx` are each optional (#642) -- a host that can read one public FX rate but not every instrument's close may supply `fx` alone, which is what makes a book refused only for a missing held-currency rate (#612) repairable without fabricating closes nobody asked for -- but the envelope must declare at least one of the two; see `anyOf` below.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["as_of", "source", "prices"],
+  "required": ["as_of", "source"],
+  "anyOf": [
+    {"required": ["prices"], "properties": {"prices": {"minItems": 1}}},
+    {"required": ["fx"], "properties": {"fx": {"minItems": 1}}}
+  ],
   "properties": {
     "schema_version": {
       "const": 1
@@ -22,8 +26,8 @@
     },
     "prices": {
       "type": "array",
-      "minItems": 1,
       "maxItems": 500,
+      "description": "One row per priced instrument. Optional when `fx` is supplied and non-empty (#642): omit it entirely, or send an empty list, for a rate-only repair. See the top-level `anyOf` -- an envelope needs at least one of `prices` or `fx`.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -113,7 +117,7 @@
     },
     "fx": {
       "type": "array",
-      "description": "Spot rates for a mixed-currency portfolio. Omit an unavailable rate instead of guessing it.",
+      "description": "Spot rates for a mixed-currency portfolio. Omit an unavailable rate instead of guessing it. May be supplied with `prices` omitted or empty (#642) -- a rate-only envelope is a complete repair for a book refused only for a missing held-currency rate.",
       "items": {
         "type": "object",
         "additionalProperties": false,

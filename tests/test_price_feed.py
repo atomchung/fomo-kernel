@@ -173,7 +173,8 @@ def test_parse_fails_closed():
     """價格是錢:寧可拒收整份,也不要靜默用半份算 P&L。"""
     raises(lambda: pf.parse({}), "as_of is required", "缺 as_of 拒收")
     raises(lambda: pf.parse(envelope(source="")), "source", "空 source 拒收(來源必須說得出)")
-    raises(lambda: pf.parse(envelope(prices=[])), "non-empty", "空 prices 拒收")
+    raises(lambda: pf.parse(envelope(prices=[])), "at least one of prices or fx",
+           "空 prices 又沒有 fx → 拒收(#642:單獨空 prices 不再是拒收的理由,缺兩者才是)")
     raises(lambda: pf.parse({**envelope(), "schema_version": 99}),
            "schema_version", "未知 schema_version 拒收")
     tomorrow = (dt.date.today() + dt.timedelta(days=2)).isoformat()
@@ -201,6 +202,69 @@ def test_parse_fails_closed():
     raises(lambda: pf.parse({**envelope(), "fx": [{"currency": "TWD", "usd_per_unit": -1,
                                                    "date": AS_OF}]}),
            "must be positive", "非正匯率拒收")
+
+
+# ───── 1a. fx-only envelope:#612 的拒答名對了修法,schema 卻不接受它(#642)─────
+
+def test_an_fx_only_envelope_is_accepted_with_prices_empty():
+    """#612's refusal tells the agent to supply the rate through --prices. A host
+    that can read one public FX rate but not every instrument's close must be
+    able to do exactly that, without fabricating closes it does not have —
+    `prices` omitted entirely, or sent as an explicit empty list, both parse to
+    the same shape."""
+    omitted = pf.parse({"as_of": AS_OF, "source": "Central bank spot rate",
+                        "fx": [{"currency": "TWD", "usd_per_unit": 0.0307, "date": AS_OF}]})
+    ok(omitted["prices"] == {}, "prices 省略 → 解析成空 dict(不是拒收)", repr(omitted["prices"]))
+    ok(omitted["fx"] == {"TWD": {"usd_per_unit": 0.0307, "date": AS_OF,
+                                 "source": "Central bank spot rate"}},
+       "fx 正常解析,缺 per-row source 沿用 feed 級", repr(omitted["fx"]))
+    ok(omitted["coverage"] == "single_close", "沒有任何 price row → coverage 層級不因此報錯",
+       omitted["coverage"])
+
+    explicit_empty = pf.parse({"as_of": AS_OF, "source": "Central bank spot rate", "prices": [],
+                               "fx": [{"currency": "TWD", "usd_per_unit": 0.0307, "date": AS_OF}]})
+    ok(explicit_empty["prices"] == {} and explicit_empty["fx"] == omitted["fx"],
+       "prices 顯式空陣列與省略同義", repr(explicit_empty))
+
+    # 反向:兩邊都沒有才真正拒收 —— 單獨缺 prices 不再是拒收的理由。
+    raises(lambda: pf.parse({"as_of": AS_OF, "source": "x"}),
+           "at least one of prices or fx", "prices 與 fx 都沒供 → 拒收")
+    raises(lambda: pf.parse({"as_of": AS_OF, "source": "x", "prices": [], "fx": []}),
+           "at least one of prices or fx", "prices 與 fx 都是空陣列 → 同樣拒收")
+
+
+def test_fx_only_still_enforces_every_fx_row_rule():
+    """The fx-only shape only drops the requirement that prices also be
+    present — it must not loosen anything about an fx row itself."""
+    raises(lambda: pf.parse({"as_of": AS_OF, "source": "x",
+                             "fx": [{"currency": "USD", "usd_per_unit": 1.0, "date": AS_OF}]}),
+           "USD", "fx-only 仍拒收 USD 匯率(恆 1.0,不得供給)")
+    raises(lambda: pf.parse({"as_of": AS_OF, "source": "x",
+                             "fx": [{"currency": "TWD", "usd_per_unit": -1, "date": AS_OF}]}),
+           "must be positive", "fx-only 仍拒收非正匯率")
+    raises(lambda: pf.parse({"as_of": AS_OF, "source": "x",
+                             "fx": [{"currency": "TWD", "usd_per_unit": 1.0,
+                                    "date": "2024-03-20"}]}),
+           "after as_of", "fx-only 仍拒收晚於 as_of 的匯率日期")
+
+
+def test_engine_accepts_an_fx_only_envelope_and_still_reports_prices_unavailable():
+    """The full engine subprocess, not just the pure parser: an fx-only envelope
+    must load without crashing, and because it prices nothing, `price_provenance`
+    stays honest about that — mode reads `unavailable` exactly as it would with
+    no envelope at all, so a fx-only repair is never misread as "prices arrived"."""
+    with tempfile.TemporaryDirectory(prefix="fomo-pf-") as tmp:
+        path = write(tmp, "fx_only.json",
+                     {"as_of": AS_OF, "source": "Central bank spot rate",
+                      "fx": [{"currency": "TWD", "usd_per_unit": 0.0307, "date": AS_OF}]})
+        _, card, _ = run_engine(tmp, trades_csv(tmp), prices=path)
+        prov = card["price_provenance"]
+        ok(prov["mode"] == "unavailable",
+           "fx-only envelope 沒有任何收盤價 → mode 仍是 unavailable", repr(prov)[:160])
+        ok(prov["coverage"] == {"requested_n": 2, "priced_n": 0, "missing": ["AMD", "NVDA"]},
+           "覆蓋率誠實:0/2,fx-only 不冒充定價成功", repr(prov["coverage"]))
+        ok(card["overview"]["unrealized_coverage"]["priced_n"] == 0,
+           "未實現覆蓋率仍是 0——這份 envelope 從未宣稱能定價,只帶了匯率")
 
 
 # ───── 1b. 供給價與股數必須落在同一個分割基礎(#583 §1)─────
@@ -672,6 +736,9 @@ def test_degraded_error_normalizes_so_session_id_stays_deterministic():
 
 def main():
     for fn in (test_parse_contract, test_parse_fails_closed,
+               test_an_fx_only_envelope_is_accepted_with_prices_empty,
+               test_fx_only_still_enforces_every_fx_row_rule,
+               test_engine_accepts_an_fx_only_envelope_and_still_reports_prices_unavailable,
                test_a_supplied_close_is_rebased_onto_the_share_counts_basis,
                test_a_close_already_on_the_split_is_not_adjusted_twice,
                test_a_feed_with_no_splits_is_unchanged,
