@@ -523,8 +523,95 @@ def test_a_row_the_reader_would_crash_on_is_counted_not_admitted():
         query = pr.query(root, ACME["cycle_id"])
         assert query["total_count"] == 1 and query["unreadable"] == len(broken)
         assert query["effective"]["event_id"] == good["event_id"]
-        # And the store stays writable: an unhashable pointer must not brick it.
-        assert _say(root, ACME, "a later reason", stated_at="2026-07-02")["status"] == "appended"
+
+
+def test_a_damaged_stream_is_readable_but_not_writable():
+    """The reader degrades and says by how much; the writer refuses outright.
+
+    A line the loader could not read may be the subject's real head, so
+    appending against the last *readable* one can root a second branch or make
+    an older reason current -- and return a success receipt while doing it. The
+    user's existing words are still there to repair from; a new row written over
+    a head nobody could see is not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        good = _say(root, ACME, "a real reason")
+        with open(pr._rationale_path(root), "a", encoding="utf-8") as handle:
+            handle.write("{not json at all\n")
+
+        query = pr.query(root, ACME["cycle_id"])
+        assert query["total_count"] == 1 and query["unreadable"] == 1, (
+            "the reader still returns what it can, and says what it could not")
+        assert query["effective"]["event_id"] == good["event_id"]
+
+        try:
+            _say(root, ACME, "a reason written over a head nobody could see")
+        except pr.PositionRationaleError as exc:
+            assert "unreadable" in str(exc) and "Repair" in str(exc)
+        else:
+            raise AssertionError("appending to a damaged canonical stream must fail closed")
+        with open(pr._rationale_path(root), encoding="utf-8") as handle:
+            lines = [line for line in handle if line.strip()]
+        assert len(lines) == 2, "and nothing is written on the way to refusing"
+
+
+def test_conflicting_content_under_one_event_id_fails_closed():
+    """Content addressing makes this unreachable in normal operation, so it means
+    the file was edited outside the engine. Choosing between the two by file
+    order would pick a version of the user's words that nothing nominated."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        first = _say(root, ACME, "what I actually said")
+        forged = dict(_rows(root)[0])
+        forged["user_statement"] = "words put in my mouth"
+        with open(pr._rationale_path(root), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(forged, ensure_ascii=False, sort_keys=True) + "\n")
+
+        assert pr.query(root, ACME["cycle_id"])["conflicting_ids"] == [first["event_id"]]
+        try:
+            _say(root, ACME, "a later reason", stated_at="2026-07-02")
+        except pr.PositionRationaleError as exc:
+            assert "conflicting content" in str(exc)
+        else:
+            raise AssertionError("a conflicting duplicate identity must fail closed")
+
+
+def test_a_merged_subject_keeps_every_edge_and_still_reports_the_newest_statement():
+    """The relink case a depth-ordered read gets wrong.
+
+    An older chain A1 -> A2 -> A3 plus a newer independent root B1, both on one
+    subject after a proven relink. Ordering by chain depth puts every A event
+    after B1, so the user's August statement stops being their latest and an
+    older March revision is quoted back at them as their current reason -- with
+    nothing flagged, because a two-root subject is not a fork. The order must
+    preserve every predecessor edge *and* still end at B1."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        former = "ACME#2026-01-02#1"
+        old = {**ACME, "cycle_id": former}
+        a1 = _say(root, old, "A1: the original reason", stated_at="2026-01-10")
+        a2 = _say(root, old, "A2: revised in February", stated_at="2026-02-10")
+        a3 = _say(root, old, "A3: revised in March", stated_at="2026-03-10")
+        b1 = pr.append(root, subject=ACME, act="statement",
+                       user_statement="B1: what I said most recently, in August",
+                       stated_at="2026-08-20", capture_source="direct",
+                       state_version="sv-2")
+
+        query = pr.query(root, ACME["cycle_id"], aliases=[former])
+        assert query["total_count"] == 4
+        assert [row["user_statement"][:2] for row in query["items"]] == \
+            ["A1", "A2", "A3", "B1"], "every predecessor edge intact, newest last"
+        assert query["latest"]["event_id"] == b1["event_id"]
+        assert query["effective"]["event_id"] == b1["event_id"], (
+            "the August statement is the user's current reason, not the March one")
+        assert query["change"] == "changed", (
+            "the later root is not the first statement about this position; "
+            "calling it `initial` would tell the next review they never explained it")
+        assert pr.classify(_rows(root), ACME["cycle_id"], a1["event_id"],
+                           aliases=[former]) == "initial"
+        for event in (a2, a3):
+            assert pr.classify(_rows(root), ACME["cycle_id"], event["event_id"],
+                               aliases=[former]) == "changed"
 
 
 def test_a_torn_multibyte_character_costs_one_line_not_the_file():

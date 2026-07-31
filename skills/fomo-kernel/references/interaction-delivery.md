@@ -22,7 +22,7 @@ Immediately after `prepare`, resolve exactly one adapter from what this host can
 
 ## Author a question surface, or use the engine's
 
-Every queue row arrives with display-ready `question` and `options`. `add_thesis`, `headline_motive`, `initial_thesis`, `exit_consistency`, `condition_crossing`, and `condition_basis` may also carry a `question_opportunity`, which invites you to write a grounded, specific stem instead of the generic one. `due_revisit`, `rule_breach`, and recent-exit `revisit` stay engine-rendered.
+Every queue row arrives with display-ready `question` and `options`. `add_thesis`, `headline_motive`, `initial_thesis`, `exit_consistency`, `condition_crossing`, and `condition_basis` may also carry a `question_opportunity`, which invites you to write a grounded, specific stem instead of the generic one. `due_revisit`, `rule_breach`, and recent-exit `revisit` stay engine-rendered. `rationale_refresh` stays engine-rendered too: its stem is a dated quote of the user's own recorded words, and an agent rephrasing of a verbatim statement is exactly what this stream exists to prevent.
 
 A `condition_crossing` is the one kind where the engine's own fallback is deliberately the flattest sentence it can write, because the question needs something a template cannot produce: **one sentence for acting on the line and one for not**. Ground both in `context.condition.criterion` and `context.condition.evidence` — the user's own words and what the lookup returned — and nothing else. The engine's comparison is already made; what the question buys is the chance for a user who knows the figure is misleading to say so, which only exists if the stem gives that side real weight.
 

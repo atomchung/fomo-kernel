@@ -68,7 +68,8 @@ def _choice(question):
         "due_revisit": "skip",
         "condition_crossing": "skip",
         "condition_basis": "skip",
-    }.get(question["kind"], "deliberate_plan")
+    }.get(question["kind"], "skip" if question["kind"] == "rationale_refresh"
+                                     else "deliberate_plan")
 
 
 def _thesis_updates(plan, maturity="inferred"):

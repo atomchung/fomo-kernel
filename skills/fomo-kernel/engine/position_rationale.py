@@ -58,13 +58,13 @@ is no longer the head, and a review session returning with different words under
 an id it already used. Each could be "resolved" by picking a winner; each winner
 would be one the user never nominated.
 
-``mapping_status`` is not stored here, and this is the one open item on #403.
-The row carries an optional ``condition_ref``; whether that condition is
-monitorable is ``conditions.py``'s answer, and the owner's 2026-07-31 ruling
-makes it three states rather than two — a monitored condition, one that is
-specific but currently blind, and wording that names nothing observable. A
-boolean beside the pointer could not carry the middle state, and duplicating the
-tier here would be a second reader of ``conditions.TIERS``.
+``mapping_status`` is not stored here, and that is settled rather than open
+(owner disposition on PR #661). The row carries only ``condition_ref``:
+``conditions.py`` owns the condition's current tier and failure reason, and the
+integration receipt owns the user-visible ``recorded`` versus ``monitored``
+distinction. One reader, one fact. Duplicating monitorability here would also
+rot by construction — a condition that is blind today can become watchable next
+quarter through a new slot revision, while this row can never be updated.
 """
 import datetime as dt
 import json
@@ -150,7 +150,15 @@ def _readable(row):
             and row.get("act") in ACTS
             and isinstance(row.get("stated_at"), str) and row["stated_at"]
             and row.get("voice") == VOICE
-            and row.get("capture_source") in CAPTURE_SOURCES)
+            and row.get("capture_source") in CAPTURE_SOURCES
+            # A schema-v1 row is validated as complete, not merely as walkable.
+            # A row missing the book that resolved it, or when the kernel heard
+            # it, is not a lesser record of the same fact — it is a row this
+            # contract never produced, and admitting it lets a reader answer
+            # questions the row cannot support.
+            and row.get("schema_version") == SCHEMA_V
+            and isinstance(row.get("recorded_at"), str) and row["recorded_at"]
+            and isinstance(row.get("state_version"), str) and row["state_version"])
 
 
 def load(path):
@@ -200,55 +208,80 @@ def _subject_ids(cycle_id, aliases):
 
 
 def chain_for(rows, cycle_id, aliases=()):
-    """Every event on one subject, oldest first, ordered by the chain itself.
+    """Every event on one subject, oldest first, in a deterministic topological
+    order that preserves every predecessor edge.
 
-    File order is the tiebreaker, not the ordering: a row's predecessor is what
-    places it, so a stream written out of order still reads correctly. A row
-    whose predecessor is absent from the file — a dangling pointer left by a
-    truncated copy — is kept and treated as a root rather than dropped, because
-    losing a statement to a broken link is the loss this stream exists to stop.
+    A global sort on chain depth is wrong once a proven relink merges two
+    histories onto one subject: depth would beat date, so every depth-1 and
+    depth-2 event of an older chain sorts *after* a newer independent root, and
+    the user's most recent statement stops being the latest one. Kahn's
+    algorithm instead: a row is emitted only after the row it supersedes, and
+    among the rows currently available the earliest `stated_at` goes first, with
+    file order breaking a same-day tie. So `A1→A2→A3` plus a newer root `B1`
+    reads A1, A2, A3, B1 — every edge intact and B1 still latest.
+
+    A row whose predecessor is absent from the file — a dangling pointer left by
+    a truncated copy — is a root rather than a dropped statement. A cycle, which
+    only a hand-edited file can contain, drains at the end rather than vanishing.
     """
     wanted = _subject_ids(cycle_id, aliases)
     own = [row for row in rows if (row.get("subject") or {}).get("cycle_id") in wanted]
-    by_id = {row["event_id"]: row for row in own}
-    depth_memo, order = {}, {row["event_id"]: index for index, row in enumerate(own)}
+    by_id, order = {}, {}
+    for index, row in enumerate(own):
+        by_id.setdefault(row["event_id"], row)
+        order.setdefault(row["event_id"], index)
 
-    def _depth(event_id, seen):
-        if event_id in depth_memo:
-            return depth_memo[event_id]
-        row = by_id.get(event_id)
-        parent = (row or {}).get("supersedes")
-        if not row or not parent or parent not in by_id or parent in seen:
-            # No parent, a parent outside this file, or a cycle a hand-edited
-            # file could contain: a root, never a crash.
-            depth_memo[event_id] = 0
-            return 0
-        depth_memo[event_id] = _depth(parent, seen | {event_id}) + 1
-        return depth_memo[event_id]
+    children, indegree = {}, {}
+    for event_id, row in by_id.items():
+        parent = row.get("supersedes")
+        linked = bool(parent) and parent in by_id and parent != event_id
+        indegree[event_id] = 1 if linked else 0
+        if linked:
+            children.setdefault(parent, []).append(event_id)
 
-    def _root_depth(event_id):
-        parent = by_id[event_id].get("supersedes")
-        if parent and parent in by_id and _cycles(event_id):
-            # A cycle is only reachable in a hand-edited file. Memoizing the
-            # zero it produces would serve that caller's descent path to every
-            # later lookup, so this branch is computed fresh each time.
-            return 0
-        return _depth(event_id, set())
+    def _key(event_id):
+        return (by_id[event_id].get("stated_at") or "", order[event_id], event_id)
 
-    def _cycles(event_id):
-        seen, node = set(), event_id
-        while node and node in by_id and node not in seen:
-            seen.add(node)
-            node = by_id[node].get("supersedes")
-        return node in seen
+    available = sorted((e for e, d in indegree.items() if not d), key=_key)
+    emitted, seen = [], set()
+    while available:
+        event_id = available.pop(0)
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        emitted.append(by_id[event_id])
+        for child in children.get(event_id, ()):
+            indegree[child] -= 1
+            if indegree[child] <= 0 and child not in seen:
+                available.append(child)
+        available.sort(key=_key)
 
-    # Depth places an event inside its own chain. Between two independent chains
-    # -- which a relink merge legitimately produces -- depth says nothing, so the
-    # date the user spoke breaks the tie before file order does. Without it the
-    # newest statement can sit mid-list while an older one is reported as latest.
-    return sorted(own, key=lambda row: (_root_depth(row["event_id"]),
-                                        row.get("stated_at") or "",
-                                        order[row["event_id"]]))
+    # Whatever a cycle stranded. Kept, never dropped: losing a statement to a
+    # hand-edited file is the loss this stream exists to stop.
+    stranded = sorted((e for e in by_id if e not in seen), key=_key)
+    return emitted + [by_id[event_id] for event_id in stranded]
+
+
+def duplicate_ids_in(rows, cycle_id, aliases=()):
+    """Event ids carried by two rows with different content.
+
+    Content addressing makes this unreachable in normal operation, so reaching
+    it means the file was edited outside the engine. Selecting between them by
+    file order would pick a version of the user's words that nothing nominated.
+    An identical repeat of one row is not a conflict — that is a write that
+    landed twice, and both copies say the same thing.
+    """
+    wanted = _subject_ids(cycle_id, aliases)
+    seen, conflicting = {}, set()
+    for row in rows:
+        if (row.get("subject") or {}).get("cycle_id") not in wanted:
+            continue
+        event_id = row["event_id"]
+        canonical = session.canonical(row)
+        if event_id in seen and seen[event_id] != canonical:
+            conflicting.add(event_id)
+        seen.setdefault(event_id, canonical)
+    return sorted(conflicting)
 
 
 def forks_in(rows, cycle_id, aliases=()):
@@ -287,7 +320,11 @@ def classify(rows, cycle_id, event_id=None, aliases=()):
         if event_id else chain[-1]
     if row.get("act") == "confirmation":
         return "no_change"
-    return "initial" if not row.get("supersedes") else "changed"
+    # Position in the merged chain, never the pointer alone. On a subject a
+    # proven relink merged, the later root is not the user's first statement
+    # about that position — and saying it is would tell the next review to open
+    # as though they had never explained it.
+    return "initial" if chain[0]["event_id"] == row["event_id"] else "changed"
 
 
 def head_of(rows, cycle_id, aliases=()):
@@ -429,8 +466,26 @@ def append_locked(root, *, subject, act, capture_source, state_version,
     `expected_predecessor` that is no longer the head.
     """
     path = _rationale_path(root)
-    rows, _unreadable = load(path)
+    rows, unreadable = load(path)
     cycle_id = _subject(subject)["cycle_id"]
+
+    if unreadable:
+        # A reader may degrade and say by how much; a writer may not. A line this
+        # loader could not read may be the subject's real head, so appending
+        # against the last *readable* one can root a second branch or make an
+        # older reason current — while returning success. Repair the stream
+        # first; the user's existing words are still there to repair from.
+        raise PositionRationaleError(
+            f"{path} has {unreadable} unreadable line(s); appending against a head "
+            "this writer cannot see could bury a statement you already made. "
+            "Repair the file before recording anything new")
+
+    duplicates = duplicate_ids_in(rows, cycle_id, aliases)
+    if duplicates:
+        raise PositionRationaleError(
+            f"{cycle_id} carries conflicting content under {', '.join(duplicates)}; "
+            "the stream was edited outside the engine and file order must not "
+            "decide which version of your words is real")
 
     forks = forks_in(rows, cycle_id, aliases)
     if forks:
@@ -452,7 +507,7 @@ def append_locked(root, *, subject, act, capture_source, state_version,
             if not (prior.get("capture_source") == "review"
                     and prior.get("origin_id") == str(origin_id)):
                 continue
-            if _same_act(prior, row):
+            if _same_answer(prior, row):
                 return {"path": path, "appended": 0, "status": "no-op",
                         "event_id": prior["event_id"]}
             # A replay is a no-op; a session that comes back saying something
@@ -500,7 +555,29 @@ def append_locked(root, *, subject, act, capture_source, state_version,
                 prefix = "\n"
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(prefix + json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        # #403 requires the root lock *plus* flush/fsync: a receipt that names an
+        # event id is a promise the row is on disk, and returning it before the
+        # bytes are durable makes a power loss look like a statement the user
+        # never made. `session._fsync_file` sets the discipline for canonical
+        # writes; the .jsonl appenders that skip it are not returning an id.
+        handle.flush()
+        os.fsync(handle.fileno())
     return {"path": path, "appended": 1, "status": "appended", "event_id": row["event_id"]}
+
+
+def _same_answer(prior, candidate):
+    """Did this session already record this answer?
+
+    Compared on what the user said — the act and their words — and deliberately
+    not on `state_version` or `stated_at`. Both are re-derived at write time:
+    the book moves when the user hands over a newer file, and the date rolls
+    over at midnight. Including them made a byte-identical finalize retry raise
+    "already recorded a different rationale", which is false, and whose stated
+    remedy would append a statement the user never made. "Retrying the same
+    session with identical content is a no-op" is a never-loosen invariant.
+    """
+    return all(prior.get(key) == candidate.get(key)
+               for key in ("act", "user_statement", "condition_ref"))
 
 
 def _same_act(head, candidate):
@@ -535,7 +612,7 @@ def query(root, cycle_id, *, cap=QUERY_CAP, aliases=()):
     if not chain:
         return {"cycle_id": cycle_id, "items": [], "effective": None, "latest": None,
                 "change": None, "span": None, "total_count": 0, "shown_count": 0, "beyond_cap": 0,
-                "unreadable": unreadable, "forked": []}
+                "unreadable": unreadable, "forked": [], "conflicting_ids": []}
 
     earliest, latest = chain[0], chain[-1]
     if total == 1:
@@ -566,6 +643,9 @@ def query(root, cycle_id, *, cap=QUERY_CAP, aliases=()):
         # Non-empty means the subject is forked and this order is the reader's,
         # not the record's. A caller must not present it as the user's history.
         "forked": forks_in(rows, cycle_id, aliases),
+        # Conflicting content under one id: the file was edited outside the
+        # engine, and nothing here picks a winner.
+        "conflicting_ids": duplicate_ids_in(rows, cycle_id, aliases),
         "span": {"first": dates[0], "last": dates[-1]},
         # #450 froze these two names; do not shorten them to match
         # `_evaluation_reconciliation`'s local spelling.

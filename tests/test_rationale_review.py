@@ -330,6 +330,47 @@ def test_a_forked_subject_is_not_asked_about():
             "recently make")
 
 
+def test_a_relinked_position_does_not_silently_lose_its_reason():
+    """The alias mechanism, exercised through the plan rather than the module.
+
+    `_thesis_event_history` returns `(thesis_rows, decision_rows)`. Passing that
+    tuple whole made `_cycle_aliases` filter both lists away as non-dicts and
+    return `{}` — so after a proven relink the statement stayed on disk while the
+    plan asserted the user had never given a reason. Silent, and exactly the
+    "remembered, then gone" failure the alias parameter exists to prevent."""
+    with tempfile.TemporaryDirectory() as root:
+        _prepared(root)
+        _say(root, "COST", "the reason I gave before the upgrade", stated_at="2026-01-10")
+        plan = _prepared(root)
+        entry = next(row for row in plan["state_snapshot"]["position_rationales"]
+                     if row["ticker"] == "COST")
+        cycle_id = entry["cycle_id"]
+
+        # A relink row of the shape `thesis.build_snapshot_cycle_relinks` emits,
+        # moving this position's cycle start the way #563 does.
+        moved = "COST#2023-06-01#1"
+        import thesis as thesis_engine
+        relink = {"event": "thesis_cycle_relink", "schema_version": 2, "ticker": "COST",
+                  "cycle_id": moved, "status": "open", "position_status": "open",
+                  "origin": "snapshot",
+                  "cycle_provenance": {"kind": "snapshot_cycle_relink",
+                                       "from_cycle_id": cycle_id,
+                                       "basis": "unique_open_ticker"}}
+        relink["event_id"] = thesis_engine.stable_event_id("thesis-cycle-relink", relink)
+        with open(os.path.join(root, "theses.jsonl"), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(relink, ensure_ascii=False, sort_keys=True) + "\n")
+
+        # Through the production helper every call site uses, not a local
+        # re-derivation -- the bug was in the composition, so testing anything
+        # else would have stayed green through it.
+        aliases = review_engine._alias_map(root)
+        assert aliases.get(moved) == [cycle_id], (
+            "the fold must see the relink row; passing the history tuple whole "
+            "filtered every row away and returned {}")
+        assert pr.query(root, moved, aliases=aliases.get(moved, []))["total_count"] == 1, (
+            "and the statement is found under the position's new id")
+
+
 def _main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith("test_") and callable(fn)]

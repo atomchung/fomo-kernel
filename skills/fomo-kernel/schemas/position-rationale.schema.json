@@ -68,7 +68,7 @@
     },
     "condition_ref": {
       "type": "string",
-      "description": "An optional link to the condition slot for this reason, when a later slice legally creates one. The pointer says a slot exists, never that it is monitored: a slot carries its own `tier` and may itself be `unmapped` (`conditions.py`), and the owner's 2026-07-31 ruling separates three states — monitored, specific but currently blind, and wording that names nothing observable. Monitored-ness is therefore read from the condition, not restated here; a boolean beside the pointer could not carry the middle state. Never manufactured: a reason that names nothing observable is preserved verbatim and nothing claims to be watching it."
+      "description": "An optional link to the condition slot for this reason, when a later slice legally creates one. The pointer says a slot exists, never that it is monitored. There is deliberately no `mapping_status` field and this is settled, not an open choice: `conditions.py` owns the condition's current tier and failure reason, and the integration receipt owns the user-visible `recorded` versus `monitored` distinction — one reader, one fact. A status copied here would also rot by construction, since a condition that is blind today can become watchable next quarter through a new slot revision while this row can never be updated. Never manufactured: a reason that names nothing observable is preserved verbatim and nothing claims to be watching it."
     }
   }
 }

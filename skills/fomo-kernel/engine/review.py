@@ -2331,6 +2331,19 @@ def _cycle_aliases(thesis_rows, cycle_relinks=()):
     return closed
 
 
+def _alias_map(root, cycle_relinks=()):
+    """``{cycle_id: [every prior id]}`` for this root — the one composition.
+
+    Exists as a named helper rather than three inline call sites because
+    `_thesis_event_history` returns a *pair* of row lists, and passing that pair
+    whole made `_cycle_aliases` filter both away as non-dicts and return `{}`.
+    Silent: the statement stayed on disk while the plan asserted the user had
+    never given a reason. One place to get it right, one place to test.
+    """
+    history_rows, decision_rows = _thesis_event_history(root)
+    return _cycle_aliases(list(history_rows) + list(decision_rows), cycle_relinks)
+
+
 def _resolve_rationale_subject(root, ticker):
     """Resolve a ticker to the one active position cycle a rationale attaches to.
 
@@ -2398,14 +2411,13 @@ def _rationale_state(root, positions, thesis_cycles, as_of, cycle_relinks=()):
     recorded are counted but not listed: this surface exists so a prior statement
     can be quoted back, and there is nothing to quote for them.
     """
-    aliases = _cycle_aliases(_thesis_event_history(root), cycle_relinks)
-    entries, without, unreadable = [], 0, 0
+    aliases = _alias_map(root, cycle_relinks)
+    entries, without = [], 0
     for ticker, holding in sorted((positions or {}).items()):
         cycle_id = holding.get("cycle_id") if isinstance(holding, dict) else None
         if not cycle_id:
             continue
         view = position_rationale.query(root, cycle_id, aliases=aliases.get(cycle_id, []))
-        unreadable += view.get("unreadable") or 0
         effective = view.get("effective")
         if not effective:
             without += 1
@@ -2430,6 +2442,10 @@ def _rationale_state(root, positions, thesis_cycles, as_of, cycle_relinks=()):
             "forked": view.get("forked") or [],
         })
 
+    # Whole-file, read once. `query` reports the same count for every subject, so
+    # summing it per position would multiply the damage by the book's size — in
+    # the one number that tells the user how damaged their record is.
+    _rows, unreadable = position_rationale.load(position_rationale._rationale_path(root))
     entries.sort(key=lambda row: (row["days_since"] is None, -(row["days_since"] or 0),
                                  row["ticker"]))
     shown = entries[:RATIONALE_LOOKUP_CAP]
@@ -2441,7 +2457,10 @@ def _rationale_state(root, positions, thesis_cycles, as_of, cycle_relinks=()):
         "unreadable_events": unreadable,
         # Computed over the full set, never the shown slice: the cap keeps the
         # surface readable and must never shrink what it reports about.
-        "oldest_days_since": max((row["days_since"] or 0 for row in entries), default=None),
+        # None when nothing has a usable date, never 0 — reporting "the oldest
+        # reason is 0 days old" would say the user just told us.
+        "oldest_days_since": max((row["days_since"] for row in entries
+                                  if row["days_since"] is not None), default=None),
     }
     return shown, summary
 
@@ -5805,12 +5824,18 @@ def _record_rationale_answers(plan, answers, amap):
             continue
         prior = question.get("prior_rationale") or {}
         note = (answer.get("note") or "").strip()
+        if choice == "same" and note:
+            raise ReviewError(
+                "`same` says the reason you already recorded still holds, so there is "
+                "nowhere for a note to go — recording it as a confirmation would drop "
+                "the words and recording it as a statement would put a date on them "
+                "you did not choose. Answer `changed` to record new wording")
         if choice == "changed" and not note:
             raise ReviewError(
                 "a changed holding reason needs the user's own words in `note`; "
                 "recording that it changed without saying to what stores nothing")
         subject, state_version = _resolve_rationale_subject(root, question.get("ticker") or "")
-        aliases = _cycle_aliases(_thesis_event_history(root)).get(subject["cycle_id"], [])
+        aliases = _alias_map(root).get(subject["cycle_id"], [])
         report = position_rationale.append_locked(
             root, subject=subject,
             act="confirmation" if choice == "same" else "statement",
@@ -5875,11 +5900,24 @@ def cmd_finalize(args):
         # attached to a position. The reverse also holds — a refused rationale
         # is never reported as recorded.
         try:
-            rationale_events = _record_rationale_answers(
-                plan, answers,
-                thesis.validate_required_answers(plan, answers, allow_commitment_missing=True))
+            # `commit_bundle` releases the projection lock on return, so this
+            # takes it again rather than trusting the finalize transaction to
+            # still hold it. Without this the append runs unlocked: a concurrent
+            # `record-rationale` landing between the head read and the write
+            # forks the subject permanently, and `expected_predecessor` cannot
+            # see it because it was compared against the older head.
+            with session.projection_transaction(root) as rationale_root:
+                rationale_events = _record_rationale_answers(
+                    dict(plan, state_root=rationale_root), answers,
+                    thesis.validate_required_answers(plan, answers,
+                                                     allow_commitment_missing=True))
             rationale_error = None
-        except (ReviewError, position_rationale.PositionRationaleError) as exc:
+        except (ReviewError, position_rationale.PositionRationaleError,
+                portfolio_basis.PortfolioBasisError, ledger.LedgerIntegrityError) as exc:
+            # Its callee resolves a subject against the book, so the book's own
+            # refusals belong here too. Anything escaping this leaves a committed
+            # card with no JSON receipt at all, which an agent reads as a failed
+            # finalize.
             rationale_events, rationale_error = [], str(exc)
     # A no-op idempotent retry writes nothing and legacy sessions may lack the
     # HTML artifact; emit its path only when the file is really there so the
@@ -7641,7 +7679,7 @@ def cmd_record_rationale(args):
 
     with session.projection_transaction(root) as locked_root:
         subject, state_version = _resolve_rationale_subject(locked_root, ticker)
-        aliases = _cycle_aliases(_thesis_event_history(locked_root)).get(subject["cycle_id"], [])
+        aliases = _alias_map(locked_root).get(subject["cycle_id"], [])
         report = position_rationale.append_locked(
             locked_root, subject=subject,
             act="confirmation" if args.confirm else "statement",
@@ -8172,7 +8210,8 @@ def main():
         args.func(args)
     except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError,
             question_surface.QuestionSurfaceError, book_refresh.RefreshError,
-            snapshot_adapter.SnapshotError, position_rationale.PositionRationaleError) as exc:
+            snapshot_adapter.SnapshotError, position_rationale.PositionRationaleError,
+            portfolio_basis.PortfolioBasisError) as exc:
         _emit({"status": "error", "error": str(exc)})
         return 2
     return 0

@@ -549,7 +549,7 @@ _ROUTES_NOT_DRIVEN = {
     # beside a card that still commits, per the owner's 2026-07-31 ruling that
     # a rationale and its neighbours are independent outcomes with separate
     # receipts. This is a mechanism, not a call-graph argument: it is pinned by
-    # tests/test_review_v2.py::test_a_rationale_that_cannot_be_recorded_does_not_fail_the_review.
+    # tests/test_rationale_review.py::test_a_rationale_that_cannot_be_recorded_does_not_fail_the_review.
     "finalize": "reads the book only to resolve a rationale subject; failure is receipted, not fatal",
 }
 
