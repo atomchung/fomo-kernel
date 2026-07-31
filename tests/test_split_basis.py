@@ -49,6 +49,7 @@ import price_feed as pf_module  # noqa: E402
 import review  # noqa: E402
 import revisit as rv  # noqa: E402
 import snapshot_adapter  # noqa: E402
+import splits as split_policy  # noqa: E402
 import trade_recap  # noqa: E402
 
 # NVDA's real ten-for-one, the split every case below is built on.
@@ -1432,6 +1433,256 @@ def test_an_unreadable_ledger_widens_nothing_and_refuses_nothing():
                 os.environ.pop("TR_LEDGER", None)
             else:
                 os.environ["TR_LEDGER"] = saved
+
+
+# ───── was the split already applied before the file arrived? (#582) ─────
+#
+# Everything above assumes the input records what executed, un-rebased. Nothing
+# checked it, and nothing said so anywhere a maintainer would find it. Hand the
+# engine a broker export that has already restated its own history and the split
+# is applied a second time: ten times the real share count on a ten-for-one,
+# cost preserved, so avg_cost falls tenfold and every weight, concentration
+# verdict and sizing rule is measured against a book that never existed.
+#
+# It survived every gate above because it *inflates*. #550's family erased
+# positions, and a book reaching zero is at least a visible anomaly; a position
+# ten times too large reads as a large position rather than a broken one.
+#
+# The comparison is between two things the review already fetched: the file's
+# own price for a trade, rebased, and that day's retro-adjusted close. It has to
+# reach a **pre-split** row — after the split both readings agree, which is
+# exactly why #330's plausibility check, anchored on the ticker's most recent
+# trade, cannot see this at all.
+
+_S582_SPLIT = ("2024-06-10", 10.0)              # NVDA's public ten-for-one
+_S582_AS_OF = "2026-07-24"
+# Raw observations as printed on their own session dates. NVDA spans the split;
+# STOIC never split, and its trade price is deliberately nowhere near its close.
+_S582_ENVELOPE = {
+    "as_of": _S582_AS_OF,
+    "source": "Example Exchange official closes",
+    "prices": [
+        {"ticker": "NVDA", "close": 190.0, "date": _S582_AS_OF, "currency": "USD",
+         "splits": [list(_S582_SPLIT)],
+         "history": [["2023-01-10", 152.0], ["2023-11-15", 486.0],
+                     ["2024-06-07", 1200.0], ["2024-06-11", 121.0],
+                     [_S582_AS_OF, 190.0]]},
+        {"ticker": "STOIC", "close": 505.0, "date": _S582_AS_OF, "currency": "USD",
+         "history": [["2023-01-20", 242.0], ["2024-06-11", 440.0],
+                     [_S582_AS_OF, 505.0]]},
+    ],
+}
+# What executed, each row in its own day's basis.
+_S582_AS_EXECUTED = [["NVDA", 90, 150.00, "BUY", "2023-01-10"],
+                     ["NVDA", 30, 480.00, "BUY", "2023-11-15"],
+                     ["STOIC", 70, 24.00, "BUY", "2023-01-20"],
+                     ["STOIC", 20, 500.00, "SELL", _S582_AS_OF]]
+# The same history as a broker that restates its own past would export it: the
+# NVDA rows already carry post-split quantities and prices. STOIC is byte-identical
+# in both files, and its 24.00 fill sits a factor of ten under its own close —
+# the shape this check looks for, on a ticker that never split.
+_S582_ALREADY_ADJUSTED = [["NVDA", 900, 15.00, "BUY", "2023-01-10"],
+                          ["NVDA", 300, 48.00, "BUY", "2023-11-15"],
+                          ["STOIC", 70, 24.00, "BUY", "2023-01-20"],
+                          ["STOIC", 20, 500.00, "SELL", _S582_AS_OF]]
+
+
+def _s582_envelope_on_the_post_split_basis():
+    """The same envelope with NVDA's pre-split `history` typed on today's basis.
+
+    `references/price-feed.md` and the schema both say a `history` entry is a raw
+    observation as printed on its own session date, and `price_feed.parse`
+    rebases it by the declared splits. Typing the already-adjusted close there
+    instead divides it a second time. This is not a hostile input: it was built
+    by a careful reader of that contract during review of #582, which is the
+    argument for pinning what the check does with it.
+    """
+    envelope = json.loads(json.dumps(_S582_ENVELOPE))
+    for row in envelope["prices"]:
+        if row["ticker"] == "NVDA":
+            row["history"] = [[day, close / 10.0 if day < _S582_SPLIT[0] else close]
+                              for day, close in row["history"]]
+    return envelope
+
+
+def _s582_inputs(tmp, rows, envelope_payload=None):
+    envelope = os.path.join(tmp, "prices.json")
+    with open(envelope, "w", encoding="utf-8") as handle:
+        json.dump(envelope_payload or _S582_ENVELOPE, handle)
+    csv_path = os.path.join(tmp, "transactions.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+        for row in rows:
+            writer.writerow(list(row) + ["Trade"])
+    return csv_path, envelope
+
+
+def _s582_prepare(tmp, rows, envelope_payload=None):
+    csv_path, envelope = _s582_inputs(tmp, rows, envelope_payload)
+    return _route(tmp, "prepare", csv_path, "--prices", envelope, "--language", "en")
+
+
+def test_an_already_adjusted_transaction_file_is_raised_not_reviewed():
+    """The defect, end to end through the real CLI.
+
+    Detection uses only what this review already fetched — the same supplied
+    envelope that prices the book — and the refusal names the ticker, so the
+    agent can put the question to the user rather than reporting a shrug."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_ALREADY_ADJUSTED)
+        assert code != 0, ("an already-adjusted file must not review silently", payload)
+        error = payload.get("error") or ""
+        assert "NVDA" in error, error
+        assert "already split-adjusted" in error, error
+        assert not os.path.exists(os.path.join(tmp, "ledger.jsonl")), (
+            "the refusal must come before anything is recorded")
+
+
+def test_the_same_history_as_executed_reviews_without_a_word():
+    """The counterweight, and the half that makes the test above mean something.
+
+    The identical positions, the identical envelope, the identical split — only
+    the basis the file states them in differs. A check that cannot tell these
+    two apart is a check that refuses every user who ever held through a
+    split."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_AS_EXECUTED)
+        assert code == 0, payload
+        assert "review_plan" in payload, sorted(payload)
+
+
+def test_a_ticker_with_no_split_in_the_window_is_never_examined():
+    """No cost and no false positives, on the same run as the finding above.
+
+    STOIC's 24.00 fill is a factor of ten under its own close on that day —
+    byte-identical in both files, and exactly the disagreement this check looks
+    for. It has no split event, so it is not compared at all: there is no basis
+    for it to be on the wrong side of, and inventing one would refuse an
+    ordinary book over an unusual fill."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_ALREADY_ADJUSTED)
+        assert code != 0, payload
+        assert "STOIC" not in (payload.get("error") or ""), payload["error"]
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_AS_EXECUTED)
+        assert code == 0, ("STOIC alone must never raise anything", payload)
+
+
+def test_the_check_reads_the_real_close_series_and_not_merely_its_absence():
+    """The trap this repository has walked into before: a gate that proves a
+    parameter was passed and never that its value was real (#576).
+
+    `close_series` is the supply, and it is driven here on the frame the review
+    itself resolved. Empty in, silence out — so a supply that returns nothing
+    turns the finding above off, which is what makes that test evidence."""
+    import trade_recap as tr
+    rows = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10), "qty": 900.0, "price": 1.5}]
+    events = {"NVDA": [list(_S582_SPLIT)]}
+    parsed = pf_module.parse(json.loads(json.dumps(_S582_ENVELOPE)))
+    frame, error = pf_module.to_frame(parsed, ["NVDA"])
+    assert frame is not None, error
+    closes = tr.close_series(frame, {"NVDA"})
+    assert closes.get("NVDA"), ("the supply produced no series at all", closes)
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(rows, closes, events)] == ["NVDA"]
+    assert split_policy.basis_disagreements(rows, tr.close_series(None, {"NVDA"}), events) == []
+    assert split_policy.basis_disagreements(rows, {}, events) == []
+
+
+def test_a_split_too_small_to_separate_the_two_readings_says_nothing():
+    """Silence is the honest answer, not a guess.
+
+    A three-for-two puts the two readings 33% apart, inside the range one fill
+    may legitimately sit from its own session's close. The engine cannot tell
+    them apart, so it does not try — the alternative is a threshold that decides
+    which reading is true, which is the adjudication #416 forbids."""
+    closes = {"SMALL": [[dt.date(2023, 1, 10), 100.0]]}
+    small = {"SMALL": [["2024-06-10", 1.5]]}
+    big = {"SMALL": [["2024-06-10", 4.0]]}
+    on_the_wrong_basis = [{"ticker": "SMALL", "date": dt.date(2023, 1, 10),
+                           "qty": 100.0, "price": 100.0 / 1.5}]
+    assert split_policy.basis_disagreements(on_the_wrong_basis, closes, small) == []
+    quartered = [{"ticker": "SMALL", "date": dt.date(2023, 1, 10),
+                  "qty": 100.0, "price": 25.0}]
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(quartered, closes, big)] == ["SMALL"]
+
+
+def test_one_row_on_each_basis_is_a_different_problem_and_stays_silent():
+    """An export basis is a property of the whole file. One pre-split row
+    reading as-executed beside one reading already-adjusted is not the defect
+    this check names, so it reports nothing rather than the reading it happens
+    to be looking for.
+
+    `closes` here are **adjusted** closes, the basis this function is handed
+    (15.2 and 48.6 are the raw 152 and 486 divided by the ten-for-one) — stated
+    because getting that wrong is what made the first version of this test green
+    for the wrong reason: both of its rows read `unexplained`, so it proved the
+    unanimity rule only by accident and would have kept passing had the rule
+    been dropped. Caught by the mutation that collapses `unexplained` into the
+    finding.
+    """
+    closes = {"NVDA": [[dt.date(2023, 1, 10), 15.2], [dt.date(2023, 11, 15), 48.6]]}
+    events = {"NVDA": [list(_S582_SPLIT)]}
+    mixed = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10), "qty": 900.0, "price": 1.5},
+             {"ticker": "NVDA", "date": dt.date(2023, 11, 15), "qty": 30.0, "price": 48.0}]
+    assert split_policy.basis_disagreements(mixed, closes, events) == []
+    # Each half alone reads the way the mix says it does, which is what makes
+    # the silence above the unanimity rule rather than two unreadable rows.
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(mixed[:1], closes, events)] == ["NVDA"]
+    assert split_policy.basis_disagreements(mixed[1:], closes, events) == []
+
+
+def test_a_price_a_factor_above_its_close_is_the_third_outcome_and_stays_silent():
+    """The disagreement that is *not* this defect's signature buys silence.
+
+    Two readings are separable; a third is neither. A rebased row price a factor
+    **above** its close is as far from "as executed" as the defect is, and in the
+    opposite direction — so it is not a double-applied split and this check has
+    nothing to say about it. Only `already_adjusted`, unanimously, is a finding;
+    collapsing `unexplained` into it would turn every other price disagreement on
+    a split-carrying ticker into an accusation.
+
+    It is worth pinning because it is reachable by an ordinary mistake, not only
+    by a contrived one. Typing an already-adjusted close into a `history` entry —
+    which the schema defines as a raw observation, and `parse` therefore divides
+    by the split a second time — produces exactly this ratio. That happened
+    during review of #582, to a reader of the contract, on a file that really was
+    already adjusted. The engine must run the review rather than accuse the user
+    of the wrong thing about the right file.
+    """
+    closes = {"NVDA": [[dt.date(2023, 1, 10), 15.2]]}
+    events = {"NVDA": [list(_S582_SPLIT)]}
+    ten_times_high = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10),
+                       "qty": 90.0, "price": 152.0}]
+    assert split_policy.basis_disagreements(ten_times_high, closes, events) == []
+    # The same magnitude in the other direction is the defect, so the silence
+    # above is about the direction and not about the size of the gap.
+    ten_times_low = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10),
+                      "qty": 900.0, "price": 1.52}]
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(ten_times_low, closes, events)] == ["NVDA"]
+    # And end to end: the whole envelope typed on the wrong basis reviews rather
+    # than raising, because the engine cannot tell a mistyped feed from a
+    # mispriced fill and may not pick (#416).
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_AS_EXECUTED,
+                                      _s582_envelope_on_the_post_split_basis())
+        assert code == 0, ("a feed on the wrong basis must not become an accusation "
+                           "about the transaction file", payload)
+
+
+def test_a_post_split_trade_alone_can_never_raise_this():
+    """Why #330's check cannot see this defect and this one is not redundant
+    with it. After the split both readings agree, and #330 anchors on the
+    ticker's *most recent* trade — which for almost every real book is on that
+    side of the split."""
+    closes = {"NVDA": [[dt.date(2024, 6, 11), 121.0]]}
+    events = {"NVDA": [list(_S582_SPLIT)]}
+    after = [{"ticker": "NVDA", "date": dt.date(2024, 6, 11), "qty": 100.0, "price": 121.0}]
+    assert split_policy.basis_disagreements(after, closes, events) == []
 
 
 def _main():

@@ -547,6 +547,68 @@ def _refuse_if_the_book_must_catch_up(root, snapshot_path):
         raise ReviewError(book_refresh.NEEDS_BOOK_UPDATE)
 
 
+def _refuse_an_unsettled_transaction_basis(card):
+    """Refuse a transaction file whose own prices contradict its split basis (#582).
+
+    The mirror of the refusal above, one input lane over. That one routes a
+    *holdings view* carrying something only the user can settle into the lane
+    that asks them (#530); this one has no such lane to route to, because a
+    transaction file is exactly the input the user has handed over without a
+    second account of their position, and `book_refresh` needs a declaration to
+    compare against. Measured, not assumed: a user who does eventually supply
+    one is protected by accident — derived comes out exactly `factor ×`
+    declared, which `plan_refresh` raises as `large_change` — but only while
+    that position clears `REFRESH_MAJOR_DELTA` *and* `REFRESH_CORE_WEIGHT`. The
+    same defect on a small corner of the book returns `status: ready` with
+    nothing pending and is adopted silently. This runs at ingest instead, on the
+    file alone, at any position size, so the two complement rather than overlap.
+
+    So the difference is stated here and the answer is asked for in the same
+    breath, on the same terms #530 established: the engine names the specific
+    observed fact, offers the readings it cannot choose between, and records
+    nothing until a person settles it. The engine deliberately does not re-base
+    anything either way. An adjusted export, a currency in the wrong unit and a
+    strange fill all print the same disagreement, and `engine/splits.py` says
+    why picking one from the numbers is the adjudication #416 forbids.
+
+    Refusing rather than disclosing is the point. Every weight, concentration
+    verdict, position-size number and rule on the card is measured against the
+    share count this premise produces, so continuing *is* choosing the
+    as-executed reading — silently, on a card full of numbers. The user gets to
+    answer instead, and each answer has a real next step: re-export as executed,
+    declare the ticker's real corporate actions in a price envelope, or fix the
+    currency during normalization.
+    """
+    findings = ((card or {}).get("data_integrity") or {}).get("split_basis") or []
+    if not findings:
+        return
+    lines = []
+    for row in findings:
+        evidence = row.get("rows") or [{}]
+        first = evidence[0]
+        lines.append(
+            f"{row.get('ticker')}: {row.get('examined_n')} trade(s) dated before its "
+            f"{', '.join(str(day) for day, _ratio in (row.get('splits') or []))} split "
+            f"(cumulative factor {row.get('factor')}x) record prices this review reads as "
+            f"{first.get('rebased_price')} against a market close of {first.get('market_close')} "
+            f"on {first.get('close_date')} — off by that same factor, on every trade checked")
+    raise ReviewError(
+        "; ".join(lines) + ". This engine reads a transaction file as recording what executed, "
+        "un-rebased, and multiplies each share count by the splits that came after it; a file "
+        "that is already split-adjusted therefore has the split applied twice, which is ten "
+        "times the real share count on a ten-for-one, with the cost preserved — so avg_cost, "
+        "weight, concentration and every rule measured against them would be computed on a book "
+        "that never existed. An unusual fill, a currency written in the wrong unit and an "
+        "already-adjusted export all produce this same disagreement and the engine may not pick "
+        "between them, so nothing has been recorded and no number has been changed. Ask the user "
+        "which it is: 'the prices your file records for this ticker look like they are already "
+        "split-adjusted — is that what your broker exports?' If yes, export as-executed "
+        "transaction history and rerun prepare. If the corporate action is what is wrong for "
+        "this holding, supply that ticker's real split events in a price envelope "
+        "(references/price-feed.md) and rerun prepare --prices <path>. If the currency is wrong, "
+        "correct it during normalization and rerun prepare.")
+
+
 def _apply_snapshot_reconciliation(card, state, reconciliation):
     """Freeze the reconciliation into both engine artifacts, honesty included.
 
@@ -4090,6 +4152,10 @@ def _prepare_session(args):
             card, state, engine_meta = _run_engine(
                 (frozen_transaction or {}).get("frozen_paths", paths), root, args,
                 ledger_path=(frozen_transaction or {}).get("ledger_snapshot"))
+        # #582, and deliberately here: before save_pending, before any ledger
+        # write, and before the user is shown a card whose every weight rests on
+        # a share basis the file's own prices contradict.
+        _refuse_an_unsettled_transaction_basis(card)
         if frozen_transaction is not None:
             batches, _skipped_non_trade, _skipped_future = _parse_frozen_candidates(
                 frozen_transaction["frozen_paths"])

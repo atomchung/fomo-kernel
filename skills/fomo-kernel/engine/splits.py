@@ -54,6 +54,21 @@ incomparable. It is the read-time family — the value is restated where it is
 read and never written back — because a stored exit price and a stored close
 are records of what happened, and the next split must not move them.
 
+Everything above rests on one premise about the input, and #582 is the reason
+it is now written down in three places rather than assumed in none: **a
+transaction file records what executed, un-rebased**. ``rebase_rows`` is only
+correct on a file of that kind. Hand it a broker export that has already
+restated its own history onto today's basis and the factor is applied a second
+time — ten times the real share count on a ten-for-one, with cost preserved, so
+``avg_cost`` falls tenfold too and every weight, concentration verdict and
+position-size rule is measured against a book that never existed. Nothing in
+this engine could see that: #550's family *erased* positions, and a book
+reaching zero is at least a visible anomaly, while this one inflates and
+inflation reads as a large position rather than a broken one.
+:func:`basis_disagreements` is the check that can see it, and it is here
+because it is a statement about split basis and needs nothing this module does
+not already own.
+
 Input is fail-closed. A split ratio is a multiplier on someone's share count;
 a malformed one that were quietly dropped would produce a confident wrong
 number, which is the failure this module exists to remove. Dates are coerced
@@ -64,10 +79,12 @@ kinds directly — so recording the derived book for any split-crossing history
 raised ``TypeError`` and took ``prepare`` down with it (found by driving the
 real CLI, #583).
 """
+import bisect
 import datetime as dt
 
 __all__ = [
     "SplitDataError",
+    "EXECUTION_BAND",
     "normalize",
     "normalize_events",
     "to_json",
@@ -78,7 +95,28 @@ __all__ = [
     "rebase_price",
     "rebase_series",
     "rebase_rows",
+    "basis_disagreements",
 ]
+
+# The widest ratio between one fill and that session's own close that still
+# reads as "these two numbers are the same day's price" (#582). It is the only
+# constant this check carries, and everything else about it is derived.
+#
+# Deliberately wide, for the same reason `price_feed.PLAUSIBILITY_BAND` is: the
+# cost of a false positive here is a user who cannot review at all, and no real
+# fill prints 35% away from its own session's close. It is *not* the sensitivity
+# of the detector — the two hypotheses being separated are "≈ the close" and
+# "≈ the close divided by the split factor", which a real split puts at least a
+# factor of two apart, so widening this band trades away nothing but false
+# positives until it approaches the square root of the factor.
+#
+# That relation is where the separation requirement comes from rather than from
+# a second guessed number: the two bands are disjoint exactly when the factor
+# exceeds `band ** 2`, so a split too small to tell the readings apart — a
+# three-for-two, at 1.5 — is not examined at all instead of being guessed at.
+# Not being able to separate them is the honest answer there; the engine does
+# not get to pick one (#416).
+EXECUTION_BAND = 1.35
 
 
 class SplitDataError(ValueError):
@@ -302,3 +340,157 @@ def rebase_rows(rows, splits):
             row["price"] = row["price"] / factor
             changed += 1
     return changed
+
+
+# ───────────── did the file already have the split applied? (#582) ─────────────
+
+
+def _close_index(pairs, where="close series"):
+    """``[(date, close), ...]`` coerced, positives only, in date order.
+
+    Shape is fail-closed for the same reason a split ratio is; a value that is
+    not a usable number is simply absent, which is the honest reading of a
+    session the source did not price.
+    """
+    index = []
+    for i, pair in enumerate(pairs or ()):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise SplitDataError(f"{where}[{i}]: expected [date, close]")
+        day = _date(pair[0], f"{where}[{i}]")
+        try:
+            close = float(pair[1])
+        except (TypeError, ValueError):
+            continue
+        if close > 0:                      # also drops NaN, which compares false
+            index.append((day, close))
+    index.sort(key=lambda pair: pair[0])
+    return index
+
+
+def _close_on(index, day, lookback_days):
+    """That day's close, or the newest one within ``lookback_days`` before it.
+
+    A trade dated on a market holiday, or on a session the source did not
+    return, has no close of its own. Walking back a few days finds the session
+    the market last printed; walking back further would compare a fill against
+    a price from another week, so it stops instead and the row is simply not
+    examinable.
+    """
+    if not index:
+        return None
+    at = bisect.bisect_right(index, (day, float("inf"))) - 1
+    if at < 0:
+        return None
+    found_day, close = index[at]
+    return None if (day - found_day).days > lookback_days else (found_day, close)
+
+
+def _separable(factor, band):
+    """Whether the two readings of one price are far enough apart to tell apart.
+
+    ``band`` is how far a fill may sit from its own session's close, so the
+    "as executed" reading occupies ``[1/band, band]`` and the "already adjusted"
+    reading occupies that interval divided by ``factor``. They are disjoint
+    exactly when the factor is outside ``[1/band², band²]``. Inside it the
+    evidence cannot distinguish the two, and the answer is silence.
+    """
+    edge = band * band
+    return factor > edge or factor < 1.0 / edge
+
+
+def basis_disagreements(rows, closes, splits, *, band=EXECUTION_BAND, lookback_days=5):
+    """Tickers whose recorded prices contradict the basis they were rebased onto (#582).
+
+    ``rows`` are ``trade_recap.load()``-shaped dicts **after** :func:`rebase_rows`,
+    ``closes`` is ``{ticker: [(date, close), ...]}`` from the retro-adjusted price
+    frame the review already fetched, and ``splits`` is the very map the rebase
+    used. Nothing here retrieves anything: the check exists because the engine
+    already held both halves of the comparison and never put them side by side.
+
+    The arithmetic is the whole argument. A rebased row and a retro-adjusted
+    close for the same day are supposed to be the same kind of number, so their
+    ratio is ``≈ 1`` — that is what "as executed" looks like, and it is what the
+    engine assumes without checking. If the file was already adjusted, the row
+    carried today's-basis price in, :func:`rebase_rows` divided it by the factor
+    a second time, and the ratio is ``≈ 1/factor`` instead: a tenfold
+    disagreement on a ten-for-one, not a matter of degree.
+
+    What this deliberately does not do is decide which it is. An adjusted
+    export, a currency written in the wrong unit and a genuinely strange fill
+    can all print the same disagreement, and choosing between them from the
+    numbers is the engine-side adjudication #416 forbids — so this reports the
+    contradiction and its evidence, and the caller states it and asks. It never
+    re-bases anything and never writes.
+
+    Three properties keep it cheap and quiet:
+
+    * **Only tickers the map carries a split for are looked at.** A ticker with
+      no split event in the window is never indexed, never compared, and cannot
+      produce a finding.
+    * **Only rows a split falls after are examined.** After the split both
+      readings agree, which is exactly why #330's check — anchored on the
+      ticker's *most recent* trade — cannot see this defect at all.
+    * **Every examined row must agree.** An export basis is a property of the
+      whole file, so one row reading "as executed" and another "already
+      adjusted" is a different problem and this stays silent rather than
+      claiming the one it happens to be looking for.
+
+    Returns a list of ``{ticker, examined_n, splits, rows}`` sorted by ticker,
+    JSON-safe, with the row evidence capped so a caller can print it. Empty is
+    the answer for an ordinary file, and for every book with no split at all.
+    """
+    events_by_ticker = normalize(splits)
+    if not events_by_ticker or not closes:
+        return []
+    findings = []
+    for ticker in sorted(events_by_ticker):
+        events = events_by_ticker[ticker]
+        index = _close_index((closes or {}).get(ticker), ticker)
+        if not index:
+            continue
+        examined, verdicts, factors = [], set(), []
+        for row in rows or ():
+            if row.get("ticker") != ticker:
+                continue
+            day = _date(row.get("date"), f"{ticker}: trade date")
+            factor = factor_after(events, day)
+            if not _separable(factor, band):
+                continue                       # post-split, or a split too small to read
+            found = _close_on(index, day, lookback_days)
+            if found is None:
+                continue                       # the frame does not reach this trade
+            try:
+                price = float(row.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if not price > 0:
+                continue
+            close_day, close = found
+            ratio = price / close
+            if 1.0 / band <= ratio <= band:
+                verdicts.add("as_executed")
+            elif 1.0 / band <= ratio * factor <= band:
+                verdicts.add("already_adjusted")
+            else:
+                verdicts.add("unexplained")
+            factors.append(factor)
+            examined.append({"date": day.isoformat(),
+                             "rebased_price": round(price, 6),
+                             "market_close": round(close, 6),
+                             "close_date": close_day.isoformat(),
+                             "ratio": round(ratio, 6),
+                             "split_factor": round(factor, 6)})
+        if not examined or verdicts != {"already_adjusted"}:
+            continue
+        earliest = min(row["date"] for row in examined)
+        findings.append({
+            "ticker": ticker,
+            "examined_n": len(examined),
+            "factor": round(max(factors), 6),
+            "splits": [[day.isoformat(), ratio] for day, ratio in events
+                       if day.isoformat() > earliest],
+            # Evidence, not a dump: three rows say the same thing a hundred do,
+            # and this list is printed back to a person.
+            "rows": examined[:3],
+        })
+    return findings

@@ -905,6 +905,31 @@ def adjust_for_splits(rows, splits):
     而「分割對已記錄股數做了什麼」只准有一個實作。這裡保留名字與行為,只是不再自己算。"""
     return split_policy.rebase_rows(rows, splits)
 
+def close_series(frame, tickers):
+    """``{ticker: [(date, close), ...]}`` out of an already-fetched price frame.
+
+    The projection :func:`splits.basis_disagreements` reads (#582), and it takes
+    the *bundle's own* frame rather than the narrowed one ``fetch_prices``
+    returns: the narrowed window starts at the earliest round-trip entry, and a
+    position bought long ago and never sold has no round trip, so its own trades
+    would fall outside the very window the check needs to reach. Nothing is
+    retrieved here — this is the response the review already paid for, read a
+    second way.
+    """
+    out = {}
+    if frame is None:
+        return out
+    wanted = {str(t) for t in (tickers or ())}
+    for column in frame.columns:
+        name = str(column)
+        if name not in wanted:
+            continue
+        series = [(idx.date(), float(value)) for idx, value in frame[column].items()
+                  if value == value]                       # NaN compares false
+        if series:
+            out[name] = series
+    return out
+
 def adaptive_n_fwd(rows):
     """賣出後觀察窗隨資料長度自適應:資料短就用短窗,讓半年資料的近端賣出也算得到 winner_early。"""
     span = (rows[-1]["date"] - rows[0]["date"]).days
@@ -2586,6 +2611,14 @@ def main():
         feed=feed, root=_state_root())
     splits = fetch_splits({r["ticker"] for r in rows}, bundle=bundle)
     n_adj = adjust_for_splits(rows, splits)                # 分割調整,對齊今日價
+    # #582:上面那一步有一個從未寫下來、也從未查證的前提——這份對帳單記的是「當時成交
+    # 的原始數量與價格」。券商若匯出的是已還原(already-adjusted)的歷史,分割就被套了
+    # 第二次:十股變一百股、avg_cost 掉十倍,而權重、集中度與所有靠它們量的規矩都在量
+    # 一本不存在的帳。這裡不新增任何取得——比對用的兩半引擎本來就都握著,只是從沒放在
+    # 一起看:同一天的「已調整成交價」與「已調整收盤價」。判定不在引擎手上(#416),
+    # 引擎只把矛盾與證據講清楚,由 review.py 拒答並讓使用者回答。
+    split_basis = split_policy.basis_disagreements(
+        rows, close_series(getattr(bundle, "frame", None), {r["ticker"] for r in rows}), splits)
     # #330:供給價的軟性合理性複核——結構驗證(#289)只擋正值/幣別/日期/重複列,擋不住
     # 「看起來合理但其實錯」的假數字。用這檔自己「最近一次真實成交價」(分割調整後,
     # 與供給收盤價同一基準)當唯一不必連網的錨點;rows 已按日期排序,同檔後面的列
@@ -2720,6 +2753,12 @@ def main():
         data_integrity["currency_conflicts"] = cur_conflicts   # 同一檔多幣別 = 輸入資料錯,取最後一筆
     if price_plausibility:
         data_integrity["price_plausibility"] = price_plausibility   # #330:供給價與最近成交價落差過大,只揭露不擋跑
+    if split_basis:
+        # #582:與上一行只差一個字的差別,但那個差別就是全部——#330 是「這批供給價裡
+        # 有一筆可疑」,只揭露;這條是「這份交易檔的股數基礎可能整份都錯了」,揭露
+        # 不夠,因為卡上每個數字都建立在它上面。review.py 讀這個鍵並拒答(不改數字、
+        # 不自己決定是哪一種),所以它不進 honesty_ledger:沒有一張卡會帶著它印出來。
+        data_integrity["split_basis"] = split_basis
     # #477:sizing 投影仍適用、但有檔既無現價也無正成本基礎(bounded_valued_subset)——
     # 這是「輸入缺這筆事實」的誠實揭露,不是 #485 已廢除的「帳戶宣告是否完整」那套本體論
     # (見 current_book_projection 文件字串);投影整體不適用(空倉/全無可估值)則 dim_size
