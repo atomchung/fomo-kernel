@@ -144,6 +144,35 @@ DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver",
 # and never stored — there is no historical version of it to keep readable.
 RETIRED_DISCLOSURES = ("mixed_currency_no_fx",)
 
+# Why `rows_from_portfolio_basis` left a holding out of the usable book. The
+# tuple is the single definition; schemas/trade-evaluation.schema.json and
+# schemas/evaluation-challenge.schema.json mirror it, and tests/test_consider.py
+# pins the two against this constant.
+#
+# The first two are missing facts about the holding itself (#515). The third is
+# a different kind of gap and #673's whole subject: the ledger's integrity
+# record names this holding, so its recorded share count and cost are the
+# numbers in doubt — not absent, but not derivable from the history supplied.
+# The distinction is load-bearing downstream, because an integrity-excluded
+# holding is also the one thing a premise may not be *about* (see
+# `_refuse_premise_on_integrity`), while a holding with no cost on record is
+# merely outside the denominator.
+EXCLUSION_REASONS = ("unusable_shares", "unavailable_cost", "integrity_oversell")
+
+# The subset of the above that means "this holding's own record is untrustworthy".
+INTEGRITY_EXCLUSION_REASONS = ("integrity_oversell",)
+
+# ledger integrity `issue` → the exclusion reason it produces. An issue absent
+# from this table is refused whole-book by `integrity_exclusions` rather than
+# excluded, however clearly it names a ticker: an exclusion is a *disclosed*
+# degradation, and this route cannot disclose a warning whose meaning for one
+# holding it has no vocabulary for. Only `oversell` can reach here from a
+# canonical basis — portfolio_basis.validate_portfolio_basis rejects every
+# other issue outright, and `_bad_integrity` drops the whole basis for any
+# `bad_*` row before that — so the table is exhaustive in production and the
+# refusal below is the defensive floor under a hand-built basis.
+_INTEGRITY_EXCLUSION_REASON = {"oversell": "integrity_oversell"}
+
 # rule_collision's own vocabulary — deliberately distinct from
 # conditions.VERDICTS and problems.check_rules' broke/held/skipped. Those
 # answer "what happened over a realized period"; this answers "does one
@@ -246,6 +275,104 @@ def _fifo_held(rows):
     return trade_recap.fifo_held(open_lots)
 
 
+def integrity_exclusions(basis):
+    """``{ticker: exclusion reason}`` for every integrity warning on ``basis``.
+
+    Owner ruling on #673. The canonical integrity record is a list of
+    per-holding accounting warnings — one ``oversell`` row per sell with no
+    matching prior buy, each naming its own ticker — and gating the *whole*
+    basis on that list being non-empty turned one such sell anywhere in the
+    history into a permanent, account-wide refusal of every ``consider`` call.
+    Permanent because the rows are derived from history that has already
+    happened: no future trade clears them. The review lane treats the identical
+    condition as a disclosure and delivers the card, so a book the review lane
+    could review was a book the pre-trade lane could not evaluate at all.
+
+    What an ``oversell`` actually damages is that one ticker's share count. The
+    replay clamps the sell to the shares it can see, so a user who bought 100
+    before the export window, then bought 10 and sold 30 inside it, has a
+    recorded position of zero and a true position of 80. Every *other* holding
+    is replayed independently and is untouched. So the warning is scoped to the
+    holding it names, and this function is where that scoping happens.
+
+    Raises ``ConsequenceError`` for a warning that cannot be scoped — no
+    ticker, or an ``issue`` outside ``_INTEGRITY_EXCLUSION_REASON``. That
+    refusal is still whole-book, deliberately: a warning this route cannot name
+    a reason for is one it cannot disclose, and silently absorbing it into the
+    usable book is the failure mode the exclusion exists to prevent.
+    """
+    if not isinstance(basis, Mapping):
+        raise ConsequenceError("canonical PortfolioBasis is not an object")
+    warnings = basis.get("integrity") or ()
+    if not isinstance(warnings, (list, tuple)):
+        raise ConsequenceError("canonical PortfolioBasis integrity record is not a list")
+    out = {}
+    for row in warnings:
+        issue = row.get("issue") if isinstance(row, Mapping) else None
+        ticker = row.get("ticker") if isinstance(row, Mapping) else None
+        reason = _INTEGRITY_EXCLUSION_REASON.get(issue) if isinstance(issue, str) else None
+        if reason is None or not isinstance(ticker, str) or not ticker.strip():
+            named = issue if isinstance(issue, str) and issue else "an unnamed issue"
+            raise ConsequenceError(
+                "canonical PortfolioBasis has an integrity warning that cannot be scoped "
+                f"to one holding: {named}")
+        out[ticker.strip()] = reason
+    return out
+
+
+def integrity_excluded_tickers(excluded_holdings):
+    """The tickers in ``excluded_holdings`` that were excluded for an integrity
+    reason rather than a missing valuation fact.
+
+    One definition, read by every consumer that has to tell the two apart — the
+    canonical-`before` facade in review.py must not accuse an integrity-excluded
+    holding of having no cost on record, and the premise gate below must refuse
+    only for this half. A caller re-deriving the distinction from the reason
+    string beside its own presentation is how the two would come to disagree.
+    """
+    integrity = set(INTEGRITY_EXCLUSION_REASONS)
+    return {row["ticker"] for row in excluded_holdings or ()
+            if isinstance(row, Mapping) and row.get("reason") in integrity
+            and isinstance(row.get("ticker"), str)}
+
+
+def _refuse_premise_on_integrity(premise, excluded_holdings):
+    """Refuse a premise that is *about* an integrity-excluded holding, naming
+    the ticker and the reason.
+
+    The bounded answer #673 restores is an answer about the rest of the book.
+    It is not an answer about the damaged holding itself: the whole content of
+    a consequence for ``ORPH`` is what the position becomes, and the position it
+    starts from is exactly the number the integrity warning says is not
+    derivable.
+
+    Runs before ``validate_premise`` on purpose. That validator would reach a
+    sell of an excluded holding first and refuse it as "not currently held",
+    which is a claim about the book — and the wrong claim, since the recorded
+    zero is precisely what is in doubt.
+
+    Scoped to integrity exclusions. A holding excluded for a *missing* fact
+    (`unavailable_cost`) is a different case that #528 owns, and this leaf does
+    not change it.
+    """
+    if not isinstance(premise, Mapping):
+        return
+    ticker = premise.get("ticker")
+    if not isinstance(ticker, str) or not ticker.strip():
+        return
+    ticker = ticker.strip()
+    for row in excluded_holdings or ():
+        if (isinstance(row, Mapping) and row.get("ticker") == ticker
+                and row.get("reason") in INTEGRITY_EXCLUSION_REASONS):
+            raise ConsequenceError(
+                f"this book's record for {ticker} carries an integrity warning "
+                f"({row['reason']}), so its recorded shares and cost are not derivable from the "
+                f"supplied history and no consequence for a trade in {ticker} can be computed "
+                "from them. The rest of the book is unaffected and can still be asked about; "
+                f"supplying the transactions that {ticker}'s history is missing is what makes "
+                "this question answerable.")
+
+
 def rows_from_portfolio_basis(basis):
     """Adapt one canonical current book to consequence input rows.
 
@@ -259,12 +386,14 @@ def rows_from_portfolio_basis(basis):
 
     Returns ``(rows, excluded)``.
 
-    A damaged (claim-affecting integrity warning) or empty basis cannot make a
-    current-book verdict at all.  A basis where *some* holding cannot be valued
-    is a different thing, and the owner ruled on it (#515, 2026-07-28): compute
-    over the part that can be used and name what was left out.  A user holding
-    six positions where one has no cost gets an answer about the priced part of
-    their book, not a refusal -- a refusal gives them nothing and is
+    An empty basis cannot make a current-book verdict at all.  A basis where
+    *some* holding cannot be used is a different thing, and the owner ruled on
+    it twice: for a holding that cannot be valued (#515, 2026-07-28) and then
+    for a holding the integrity record names (#673, 2026-07-31).  Both rulings
+    are the same sentence: compute over the part that can be used and name what
+    was left out.  A user holding six positions where one has no cost -- or one
+    whose history carries an unmatched sell -- gets an answer about the usable
+    part of their book, not a refusal.  A refusal gives them nothing and is
     indistinguishable from a broken product.
 
     So a holding that cannot become a usable row is EXCLUDED and recorded here,
@@ -278,15 +407,23 @@ def rows_from_portfolio_basis(basis):
     ``basis["cost_basis"]`` is deliberately not read.  It is a whole-book
     summary of a per-holding fact (``partial_average_cost`` means *some*
     holding lacks a cost), and gating on it refused six positions because of
-    one -- the exact defect this leaf removes.  How the book was declared --
-    snapshot anchor versus replayed trade history, partial versus unverified --
-    never gates this adapter either (#485); only a genuinely missing fact does,
-    and now only for the holding actually missing it.
+    one -- the exact defect #515 removed.  ``basis["integrity"]`` was the same
+    shape of whole-book summary over a per-holding fact and was still gated
+    whole until #673; it is now read through :func:`integrity_exclusions`,
+    which scopes each warning to the holding it names.  How the book was
+    declared -- snapshot anchor versus replayed trade history, partial versus
+    unverified -- never gates this adapter either (#485); only a genuinely
+    missing or genuinely underivable fact does, and only for the holding it is
+    actually missing or underivable for.
+
+    An integrity warning naming a ticker this book does not currently hold is
+    still recorded in ``excluded``.  It removes nothing from the denominator --
+    there was nothing of it there to remove -- but a recorded zero is exactly
+    what an unmatched sell puts in doubt, so "this book has no position in X"
+    is not a fact this answer may rest on, and the caller has to be able to say
+    so.  It is also what the premise gate reads.
     """
-    if not isinstance(basis, Mapping):
-        raise ConsequenceError("canonical PortfolioBasis is not an object")
-    if basis.get("integrity"):
-        raise ConsequenceError("canonical PortfolioBasis has claim-affecting integrity warnings")
+    integrity = integrity_exclusions(basis)
     current_book = basis.get("current_book")
     holdings = current_book.get("holdings") if isinstance(current_book, Mapping) else None
     if not isinstance(holdings, Mapping) or not holdings:
@@ -301,6 +438,12 @@ def rows_from_portfolio_basis(basis):
         holding = holdings[ticker]
         if not isinstance(ticker, str) or not isinstance(holding, Mapping):
             raise ConsequenceError("canonical PortfolioBasis has invalid holding")
+        if ticker in integrity:
+            # Checked before shares and cost, because those are the values the
+            # warning is about: a clamped replay leaves a perfectly well-formed
+            # positive share count that is simply not the user's position.
+            excluded.append({"ticker": ticker, "reason": integrity[ticker]})
+            continue
         try:
             qty = float(holding["shares"])
         except (KeyError, TypeError, ValueError):
@@ -321,10 +464,22 @@ def rows_from_portfolio_basis(basis):
         rows.append({"ticker": ticker, "side": "buy", "qty": qty, "price": price,
                      "date": as_of, "market": holding.get("market", "US"),
                      "currency": holding.get("currency", "USD")})
+    # A warning naming a ticker this book does not hold excludes nothing from
+    # the denominator, and is recorded anyway -- see the docstring. Appended
+    # after the holdings loop, then sorted, so the list stays one ticker-ordered
+    # record whichever half an entry came from.
+    for ticker in sorted(set(integrity) - set(holdings)):
+        excluded.append({"ticker": ticker, "reason": integrity[ticker]})
+    excluded.sort(key=lambda row: row["ticker"])
     if not rows:
+        # The floor under exclude-and-disclose: an empty denominator is not a
+        # bounded answer. Named with each holding's own reason, because "no
+        # holding could be valued" is false for a book emptied by integrity
+        # warnings, and the reason is what tells the user which repair --
+        # a cost, or the missing transactions -- would make the book answerable.
         raise ConsequenceError(
-            "canonical PortfolioBasis has no holding that can be valued: "
-            + ", ".join(row["ticker"] for row in excluded))
+            "canonical PortfolioBasis has no usable holding: "
+            + ", ".join(f"{row['ticker']} ({row['reason']})" for row in excluded))
     return rows, excluded
 
 
@@ -649,9 +804,10 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     itself carries positions the concentration figures could not read — an
     unclassified single name (`unclassified_book`) or a fund nothing
     decomposes (`etf_not_decomposed`), both #598/#599 and both named in the
-    fields below; or a held position could not be valued at all and was left
-    out of the denominator these numbers are measured against
-    (`partial_book`, #515).
+    fields below; or a position was left out of the usable book these numbers
+    are measured against, because it could not be valued (#515) or because the
+    integrity record names it (#673) — `partial_book` either way, with
+    `excluded_holdings[].reason` saying which.
 
     `unclassified_holdings` and `undecomposed_etfs` are to their keys what
     `excluded_holdings` is to `partial_book`: the key says THAT the book was
@@ -672,7 +828,13 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     the partial denominator; the disclosure key says *that* something was
     excluded, this says *what* (#515's first invariant: the excluded holding is
     named wherever the derived number appears).
+
+    A premise that is *about* an integrity-excluded holding is refused by name
+    rather than answered over the bounded book (#673) — see
+    `_refuse_premise_on_integrity` for why that one case is not a bounded
+    answer at all.
     """
+    _refuse_premise_on_integrity(premise, excluded_holdings)
     normalized = validate_premise(premise, rows)
     premise_row = _premise_row(normalized)
 

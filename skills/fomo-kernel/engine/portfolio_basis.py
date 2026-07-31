@@ -334,7 +334,10 @@ def _semantically_known_events(events: Sequence[Mapping[str, Any]]) -> bool:
 def _bad_integrity(integrity: Sequence[Mapping[str, Any]]) -> bool:
     # A malformed input is unknown state.  An oversell is a known, claim-affecting
     # accounting warning: retain it in the basis so downstream claim gates can
-    # fail closed without pretending the replay never happened.
+    # fail closed without pretending the replay never happened.  What a consumer
+    # does with a retained row is that consumer's policy, not this one's: since
+    # #673, `consequence.integrity_exclusions` scopes it to the holding it names
+    # rather than reading the list as a whole-book verdict.
     return any(str(item.get("issue", "")).startswith("bad_") for item in integrity)
 
 

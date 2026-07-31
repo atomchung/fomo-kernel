@@ -649,8 +649,232 @@ def test_a_book_where_nothing_can_be_valued_still_refuses():
         ])
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}')
-        _fails(run, "no holding that can be valued: NVDA")
+        _fails(run, "no usable holding: NVDA (unavailable_cost)")
         assert not os.path.exists(_evaluation_path(tmp))
+
+
+# ───── D2. an integrity warning is scoped to the holding it names (#673) ─────
+#
+# `_INTEGRITY_BOOK` is one mid-history export in ledger shape: five declared
+# positions, one of which (ORPH) is sold beyond what the history can account
+# for and then bought back. That is the ordinary shape of an export that starts
+# mid-account -- the earlier buy is simply outside the window -- and it is why
+# the whole-book gate this section replaces was permanent: the warning is
+# derived from history that has already happened, so no future trade clears it.
+#
+# Every position costs 1000 except ORPH, whose re-buy costs 2000, which is what
+# makes the two denominators tell each other apart: over the whole book AAA is
+# 1000/6000, over the usable book it is 1000/4000. A fixture where the excluded
+# holding happened to weigh the same as the others could not fail.
+_INTEGRITY_CLEAN = [{"ticker": t, "shares": 10, "avg_cost": 100.0,
+                     "market": "US", "currency": "USD"} for t in ("AAA", "BBB", "CCC", "DDD")]
+_INTEGRITY_BOOK = [
+    _snapshot_event("2026-01-01", _INTEGRITY_CLEAN + [
+        {"ticker": "ORPH", "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}]),
+    # 30 sold against 10 the history can see: `derive_holdings` clamps to zero
+    # and records {"issue": "oversell", "ticker": "ORPH", ...}.
+    _trade_event("2026-01-05", "ORPH", "sell", 30, 150.0),
+    _trade_event("2026-01-06", "ORPH", "buy", 20, 100.0),
+]
+
+
+def test_an_unmatched_sell_excludes_that_holding_instead_of_disabling_the_account():
+    """#673's owning outcome: a book the review lane can review is a book the
+    pre-trade lane can evaluate.
+
+    Before this leaf `consider` exited 2 with "canonical PortfolioBasis has
+    claim-affecting integrity warnings" for every premise on this book, forever,
+    while the review lane disclosed the identical condition and delivered its
+    card. The gate read a whole-book summary of a per-holding fact -- exactly
+    the shape #515 had already removed one line above it.
+
+    The numbers are the assertion, not the presence of an answer. ORPH's re-buy
+    is 2000 of a 6000 whole book, so if the denominator had not shrunk AAA would
+    read 0.1667 here; over the four usable holdings it reads exactly 0.25."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _INTEGRITY_BOOK)
+        payload = _ok(_run("consider", "--root", tmp,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "qty": 10, '
+                                        '"price": 100.0, "currency": "USD"}'))
+        row = payload["evaluation"]
+        result = row["consequence"]
+        assert result["excluded_holdings"] == [
+            {"ticker": "ORPH", "reason": "integrity_oversell"}], (
+            "the excluded holding and the reason it was excluded must both be named -- "
+            "an exclusion the user cannot see is the silent partial denominator #515 "
+            "refused, and a reason of 'unavailable_cost' would send them after a cost "
+            "that is on record")
+        assert "partial_book" in result["disclosures"]
+        assert "ORPH" not in result["before"]["weights"]
+        assert set(result["before"]["weights"]) == {"AAA", "BBB", "CCC", "DDD"}
+        for ticker in ("AAA", "BBB", "CCC", "DDD"):
+            assert abs(result["before"]["weights"][ticker] - 0.25) < 1e-9, (
+                f"{ticker} must be sized against the 4000 that is usable, not the 6000 "
+                f"whole book: got {result['before']['weights'][ticker]}")
+        assert abs(result["before"]["max_pct"] - 0.25) < 1e-9
+        # 2000 of the 5000 the bounded book becomes -- the question was answered,
+        # and answered on the same denominator it was asked on.
+        assert abs(result["after"]["weights"]["AAA"] - 0.4) < 1e-9
+        _check_evaluation_shape(row)
+        # The exclusion is owed to the user, not merely present in the payload:
+        # the challenge is where a bounded denominator becomes a fact the answer
+        # has to state, and the reason is what points the repair at the missing
+        # transactions instead of at a cost that is on record.
+        _check_challenge_shape(payload["challenge"])
+        owed = [entry for entry in payload["challenge"]["must_state"]
+                if entry["topic"] == "excluded_holding"]
+        assert owed == [{"topic": "excluded_holding",
+                         "anchor": "consequence.excluded_holdings.0.ticker",
+                         "value": "ORPH", "detail": {"reason": "integrity_oversell"}}], owed
+        assert "partial_book" in [entry["key"] for entry
+                                  in payload["challenge"]["required_coverage"]], (
+            "an answer that does not state the bounded denominator must be refused, "
+            "not merely discouraged")
+
+
+def test_a_rule_is_judged_against_the_book_the_integrity_exclusion_left():
+    """#515's second invariant, reached through #673's exclusion: the verdict
+    is computed on the bounded book and says so.
+
+    The cap is 20% and AAA is already 25% of the usable book, so the honest
+    verdict is `already_over` -- this trade digs deeper into a line the user is
+    past, it is not what crosses it. Over the whole 6000 book AAA's before
+    weight is 16.7%, under the line, and the same rule would come back
+    `would_breach` instead. So the state, not merely the `partial_book` marker,
+    is what pins which denominator the rule was judged on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _INTEGRITY_BOOK)
+        with open(os.path.join(tmp, "rules.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "rule", "rule_id": "r1", "date": "2026-01-01",
+                "text": "Cap any single position at 20%.",
+                "metric_key": "max_pos_pct", "problem_key": "oversize",
+                "status": "tracking"}) + "\n")
+        _ok(_run("set-cap", "--root", tmp, "--pct", "0.20"))
+        payload = _ok(_run("consider", "--root", tmp,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "qty": 10, '
+                                        '"price": 100.0, "currency": "USD"}'))
+        collisions = payload["evaluation"]["rule_collisions"]
+        assert collisions, "the tracked rule must still be evaluated, not suppressed"
+        assert all(row.get("partial_book") is True for row in collisions), (
+            "a collision judged against a bounded book must carry the qualifier")
+        cap = [row for row in collisions if row["metric_key"] == "max_pos_pct"]
+        assert cap and cap[0]["state"] == "already_over", (
+            f"the cap must be judged on the usable book's own weights: {cap}")
+
+
+def test_a_premise_on_the_integrity_excluded_holding_refuses_by_name():
+    """The bounded answer is an answer about the rest of the book. It is not an
+    answer about the damaged holding: the entire content of a consequence for
+    ORPH is what its position becomes, and the position it starts from is the
+    number the warning says is not derivable.
+
+    Both sides, because the sell is the one that would otherwise be refused for
+    the wrong reason -- `validate_premise` reaches it first and calls it "not
+    currently held", which is a claim about the book, and the wrong claim."""
+    for side in ("buy", "sell"):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_ledger(os.path.join(tmp, "ledger.jsonl"), _INTEGRITY_BOOK)
+            run = _run("consider", "--root", tmp,
+                       "--premise", '{"ticker": "ORPH", "side": "%s", "qty": 5, '
+                                    '"price": 100.0, "currency": "USD"}' % side)
+            payload = _fails(run, "ORPH")
+            assert "integrity_oversell" in payload["error"], (
+                "a refusal the user can act on names the reason, not only the ticker: "
+                f"got {payload['error']!r}")
+            assert "not currently held" not in payload["error"], (
+                "the recorded zero is exactly what the warning puts in doubt")
+            assert not os.path.exists(_evaluation_path(tmp)), (
+                "a refused question leaves no row behind")
+
+
+def test_a_book_whose_every_holding_is_integrity_excluded_still_refuses():
+    """The floor under exclude-and-disclose, on the integrity side. Excluding
+    the last holding leaves an empty denominator, which is not a bounded answer
+    -- it is no answer, and inventing one would be worse than refusing. The
+    refusal names each holding's own reason, because "nothing could be valued"
+    is false here and would send the user after costs that are on record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+                for t in ("AAA", "BBB")]),
+            _trade_event("2026-01-05", "AAA", "sell", 30, 150.0),
+            _trade_event("2026-01-05", "BBB", "sell", 30, 150.0),
+            _trade_event("2026-01-06", "AAA", "buy", 5, 100.0),
+            _trade_event("2026-01-06", "BBB", "buy", 5, 100.0),
+        ])
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "CCC", "side": "buy", "qty": 1, "price": 100.0}')
+        _fails(run, "no usable holding: AAA (integrity_oversell), BBB (integrity_oversell)")
+        assert not os.path.exists(_evaluation_path(tmp))
+
+
+def test_a_bad_ledger_warning_stays_whole_book_fatal_even_though_it_names_a_ticker():
+    """The other half of the ruling: only warnings this route can scope AND
+    name a reason for degrade locally. A `bad_*` row means the replay could not
+    read the source at all, and `portfolio_basis` drops the entire basis for one
+    -- naming a ticker does not make unknown state a bounded subset. Pinned end
+    to end so #673's per-holding exclusion cannot later be widened into it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", _INTEGRITY_CLEAN + [
+                {"ticker": "ORPH", "shares": 10, "avg_cost": "not a number",
+                 "market": "US", "currency": "USD"}]),
+        ])
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, "price": 100.0}')
+        _fails(run, "no trustworthy canonical current book")
+        assert not os.path.exists(_evaluation_path(tmp))
+
+
+def test_an_integrity_warning_this_route_cannot_scope_refuses_the_whole_book():
+    """The adapter's own defensive floor, at the layer that decides.
+
+    Both warning shapes are `ledger.derive_holdings`' own rows. `bad_trade_event`
+    (ledger.py:568) carries an issue and a `detail` and no ticker at all;
+    `bad_avg_cost` (ledger.py:550) does name its ticker -- and is still refused
+    whole-book, because naming a holding is not the same as this route having a
+    per-holding reason it can disclose for it. Neither can reach a canonical
+    basis today (portfolio_basis drops the basis for any `bad_*` row), which is
+    exactly why the refusal is asserted here rather than only through the CLI:
+    an exclusion is a *disclosed* degradation, and a warning with no reason in
+    `EXCLUSION_REASONS` would be absorbed into a book that then looks whole."""
+    import consequence as cq  # noqa: E402  (engine dir already on sys.path)
+    for warning, named in (({"issue": "bad_trade_event", "detail": '{"type": "trade"}'},
+                            "bad_trade_event"),
+                           ({"issue": "bad_avg_cost", "ticker": "ORPH"}, "bad_avg_cost")):
+        basis = {"as_of": "2026-01-01", "integrity": [warning],
+                 "current_book": {"holdings": {
+                     "AAA": {"shares": 10, "cost_total": 1000.0,
+                             "currency": "USD", "market": "US"}}}}
+        try:
+            cq.rows_from_portfolio_basis(basis)
+        except cq.ConsequenceError as exc:
+            assert "cannot be scoped to one holding" in str(exc) and named in str(exc), (
+                f"the refusal must name the warning it could not scope: {exc}")
+        else:
+            raise AssertionError(
+                f"an integrity warning this route has no reason for ({named}) must not "
+                "yield a usable book")
+
+
+def test_exclusion_reasons_constant_is_exactly_what_both_schemas_declare():
+    """One vocabulary, three files. `excluded_holdings[].reason` is written by
+    consequence.py, stored under trade-evaluation.schema.json and restated live
+    under evaluation-challenge.schema.json, and the challenge schema's own
+    description promises it mirrors the stored one exactly. A reason added to
+    the engine without both enums is a row the validator rejects at delivery."""
+    import consequence as cq  # noqa: E402
+    stored = set(EVALUATION_SCHEMA["properties"]["consequence"]["properties"]
+                 ["excluded_holdings"]["items"]["properties"]["reason"]["enum"])
+    assert stored == set(cq.EXCLUSION_REASONS)
+    live = set(CHALLENGE_SCHEMA["properties"]["must_state"]["items"]["properties"]["detail"]
+               ["properties"]["reason"]["enum"])
+    assert live == stored, "the challenge schema promises it mirrors the stored one exactly"
+    assert set(cq.INTEGRITY_EXCLUSION_REASONS) < set(cq.EXCLUSION_REASONS), (
+        "the integrity subset must be a strict subset -- it is what decides which "
+        "exclusions also refuse a premise about them")
 
 
 def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
@@ -2172,6 +2396,13 @@ def _check_challenge_shape(challenge):
             assert entry["anchor"].split(".")[0] in ("basis", "consequence", "rule_collisions")
         if "detail" in entry:
             assert set(entry["detail"]) <= detail_allowed
+            # #673: the enum, not only the key. `reason` is what tells an
+            # excluded holding the answer must send the user after a missing
+            # cost from one it must send them after missing transactions, so a
+            # value the schema does not declare is a sentence nothing defines.
+            if entry["detail"].get("reason") is not None:
+                assert entry["detail"]["reason"] in set(
+                    entry_props["detail"]["properties"]["reason"]["enum"]), entry
 
     quote_props = props["quote_verbatim"]["items"]["properties"]
     for quoted in challenge["quote_verbatim"]:
