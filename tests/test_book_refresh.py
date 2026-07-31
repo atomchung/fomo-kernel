@@ -246,6 +246,173 @@ def test_a_stamped_start_survives_the_next_refresh():
             "silently spend the user's answer on one review")
 
 
+def test_a_position_nobody_ever_asked_about_keeps_its_cycle_too():
+    """#539: the stamp was never the fact worth carrying, and most rows have none.
+
+    The appearance question is only asked for a position that appears *after* the
+    book exists, so every position in the user's first declaration is
+    permanently unstampable. Carrying only a stamp therefore reached exactly the
+    rows that needed it least: a position the user was asked about kept its
+    cycle, and the ones they were never asked about -- the whole opening book --
+    reminted on every adoption, taking every thesis written against them with it.
+
+    What is carried now is the start the record already holds, which for these
+    rows is the date the book first saw them. That is the same lower bound the
+    default produces on the first declaration; the defect was that each later
+    declaration replaced it with a newer, weaker one.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        assert lg.derive_holdings(events)["holdings"]["ACME"]["cycle_id"] == \
+            "ACME#2026-06-30#1"
+        # WIDGET moves below both thresholds, so nothing is asked and the adopted
+        # book really differs from the record -- without that the refresh
+        # reconciles clean, keeps the old anchor, and proves nothing.
+        second = _snapshot(tmp, [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                                  "market": "US", "currency": "USD"},
+                                 dict(KEPT[0], shares=48), KEPT[1]], as_of="2026-07-25")
+        receipt = _cli(root, second)
+        assert receipt["pending_confirmations"] == []
+        assert _cli(root, second, {"refresh_id": receipt["refresh_id"],
+                                   "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        holdings = lg.derive_holdings(events)["holdings"]
+        assert holdings["ACME"]["cycle_id"] == "ACME#2026-06-30#1", (
+            "a position held right through two declarations is one position; "
+            "reminting it to ACME#2026-07-25#1 is what re-asks its thesis")
+        assert holdings["WIDGET"]["shares"] == 48.0, "the new view's numbers are adopted"
+        assert holdings["WIDGET"]["cycle_id"] == "WIDGET#2026-06-30#1", (
+            "a share count changing is not a position restarting")
+
+
+def test_a_start_the_ledger_can_prove_is_not_overwritten_by_a_declaration():
+    """#539, second symptom: the same defect where the engine knew the answer.
+
+    A position opened by a real trade after the anchor carries the date it was
+    actually bought. Before this, the next declaration replaced that with its own
+    `as_of` -- discarding a proven fact in favour of a bookkeeping one, and
+    reminting the cycle while doing it. Nobody is asked anything here; the record
+    already holds the truth and adoption has only to keep it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        with open(os.path.join(root, "ledger.jsonl"), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "trade", "date": "2026-07-05",
+                                     "ticker": "NEWCO", "action": "buy", "qty": 10,
+                                     "price": 5.0, "market": "US",
+                                     "currency": "USD"}, sort_keys=True) + "\n")
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        before = lg.derive_holdings(events)["holdings"]["NEWCO"]
+        assert before["origin"] == "trades" and before["cycle_id"] == "NEWCO#2026-07-05#1"
+        second = _snapshot(tmp, [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                                  "market": "US", "currency": "USD"},
+                                 dict(KEPT[0], shares=48), KEPT[1],
+                                 {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                                  "market": "US", "currency": "USD"}],
+                          as_of="2026-07-25")
+        receipt = _cli(root, second)
+        assert receipt["pending_confirmations"] == [], (
+            "the record already holds NEWCO, so it is not an appearance")
+        assert _cli(root, second, {"refresh_id": receipt["refresh_id"],
+                                   "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        assert lg.derive_holdings(events)["holdings"]["NEWCO"]["cycle_id"] == \
+            "NEWCO#2026-07-05#1", (
+                "the buy date is the start; a declaration states what is held, "
+                "never since when, so it may not overwrite one")
+        stamped = {row["ticker"]: row.get("since_basis")
+                   for row in lg.latest_anchor(events)["positions"]}
+        assert stamped["NEWCO"] == "trade_event", (
+            "and it is labelled by the evidence: the ledger watched this cycle "
+            "open, so the date is exact rather than a declaration's lower bound")
+        assert stamped["ACME"] == "snapshot_anchor"
+
+        # The second declaration is where a transport-only marker would have lost
+        # it. NEWCO now sits in the anchor and derives `origin == "snapshot"` like
+        # every other row, so a basis recomputed from origin here would silently
+        # demote a trade-proven date to a bookkeeping one -- and nothing
+        # downstream could ever tell that it had been exact.
+        third = _snapshot(tmp, [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                                 "market": "US", "currency": "USD"},
+                                dict(KEPT[0], shares=47), KEPT[1],
+                                {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                                 "market": "US", "currency": "USD"}],
+                          as_of="2026-07-30")
+        again = _cli(root, third)
+        assert _cli(root, third, {"refresh_id": again["refresh_id"],
+                                  "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"]
+               if p["ticker"] == "NEWCO"][0]
+        assert (row["since"], row["since_basis"]) == ("2026-07-05", "trade_event"), (
+            "a start's evidence survives every later adoption; it is not "
+            "recoverable afterwards, because by then `origin` describes the "
+            "snapshot writer rather than how the start was learned")
+
+
+def test_a_carried_start_never_hands_a_live_position_a_sold_cycles_identity():
+    """The start alone is not the identity, and the gap is worse than reminting.
+
+    A `cycle_id` is `ticker#since#seq`. Two cycles opened on the same day --
+    a position flattened and bought back within one session, which is ordinary
+    behavior -- differ in the sequence and nothing else. So an adoption that
+    carries the date and not the sequence does not merely misname the live
+    position: it gives it the exact id of the one that was sold, and the folded
+    thesis for that cycle is closed, possibly falsified, with its own exit
+    narrative and its own standing conditions. A user who is re-asked for a
+    thesis has lost work; a user handed a sold cycle's thesis is being told
+    something untrue about the position they hold.
+
+    Nothing is asked here. The round trip is already in the ledger and the
+    declaration agrees with it, so this passes through adoption in silence.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        with open(os.path.join(root, "ledger.jsonl"), "a", encoding="utf-8") as handle:
+            for row in ({"type": "trade", "date": "2026-07-20", "ticker": "ACME",
+                         "action": "sell", "qty": 100, "price": 14.0},
+                        {"type": "trade", "date": "2026-07-20", "ticker": "ACME",
+                         "action": "buy", "qty": 80, "price": 13.0}):
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        assert lg.derive_holdings(events)["holdings"]["ACME"]["cycle_id"] == \
+            "ACME#2026-07-20#2", "the round trip opened a second cycle on one day"
+
+        second = _snapshot(tmp, [{"ticker": "ACME", "shares": 80, "avg_cost": 13.0,
+                                  "market": "US", "currency": "USD"},
+                                 dict(KEPT[0], shares=48), KEPT[1]], as_of="2026-07-25")
+        receipt = _cli(root, second)
+        assert receipt["pending_confirmations"] == []
+        assert _cli(root, second, {"refresh_id": receipt["refresh_id"],
+                                   "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        book = lg.derive_holdings(events)
+        assert book["holdings"]["ACME"]["cycle_id"] == "ACME#2026-07-20#2", (
+            "ACME#2026-07-20#1 is the cycle the user sold; adopting a book may "
+            "not hand its thesis, its conditions and its closed status to the "
+            "position they are still holding")
+        assert not book["integrity"]
+
+        # And it settles: carrying a carried sequence changes nothing, so an
+        # ordinary cadence of declarations cannot walk the identity anywhere.
+        third = _snapshot(tmp, [{"ticker": "ACME", "shares": 80, "avg_cost": 13.0,
+                                 "market": "US", "currency": "USD"},
+                                dict(KEPT[0], shares=47), KEPT[1]], as_of="2026-07-30")
+        again = _cli(root, third)
+        _cli(root, third, {"refresh_id": again["refresh_id"], "answers": []})
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        assert lg.derive_holdings(events)["holdings"]["ACME"]["cycle_id"] == \
+            "ACME#2026-07-20#2"
+        stamped = {row["ticker"]: (row.get("since"), row.get("since_basis"))
+                   for row in lg.latest_anchor(events)["positions"]}
+        assert stamped["ACME"] == ("2026-07-20", "trade_event")
+        assert stamped["WIDGET"] == ("2026-06-30", "snapshot_anchor"), (
+            "a start the book only knows as a declaration date stays a lower "
+            "bound however many declarations it survives; surviving is not "
+            "evidence, and nothing may read it as a purchase date later")
+
+
 def test_a_stamp_never_survives_onto_a_different_cycle():
     """The carry-forward's own limit, and it is not a hypothetical.
 
@@ -254,6 +421,14 @@ def test_a_stamp_never_survives_onto_a_different_cycle():
     days ago as an eighteen-month holding — a number the user never said, in
     the field this issue exists to make honest. The record's own `origin`
     settles it: `trades` means the ledger has the real open date.
+
+    #539 sharpened what "settles it" produces. The old carry-forward could only
+    keep the wrong estimate or keep nothing, and keeping nothing dropped the
+    position back to the new declaration's own date — still not the eighteen
+    months, and still not the truth the ledger was holding. Now the real open
+    date is what gets carried, stamped as the record's rather than the user's.
+    The invariant under test is unchanged and is asserted twice below: the
+    estimate does not survive, and the date the user never gave is not restated.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = _root(tmp)
@@ -289,9 +464,18 @@ def test_a_stamp_never_survives_onto_a_different_cycle():
         assert out["status"] == "adopted", out
         events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
         row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "NEWCO"][0]
-        assert "since" not in row and "since_basis" not in row, (
+        assert row["since_basis"] == "trade_event", (
             "the estimate described the cycle that was sold; it must not be "
-            "reattached to the one the ledger can date itself")
+            "reattached to the one the ledger can date itself -- and the new "
+            "cycle's start is labelled by the evidence that supports it")
+        assert row["since"] == "2026-07-20", (
+            "the rebuy is the start the ledger can prove, and it is the only "
+            "start this position may carry")
+        assert lg.derive_holdings(events)["holdings"]["NEWCO"]["cycle_id"] == \
+            "NEWCO#2026-07-20#2", (
+                "a rebought position opens its own cycle -- dated by the ledger "
+                "rather than by whichever day the user next declared, and "
+                "numbered so it is not the cycle it replaced")
         assert lg.derive_holdings(events)["holdings"]["NEWCO"]["cycle_id"] != "NEWCO#2025-01-15#1"
 
 
@@ -361,8 +545,16 @@ def test_only_the_refresh_lane_may_write_engine_assigned_provenance():
     """One privileged call site, and a mechanical count rather than a comment.
 
     `allow_engine_provenance` is a bypass of rule 1's gate. It is safe only
-    while exactly one caller uses it -- the one that assembled the envelope out
-    of answers the engine itself converted -- so the count is the check.
+    while exactly one *implementation* uses it -- the one that assembles every
+    value it passes, out of answers the engine itself converted or starts the
+    record already held -- so the count is the check.
+
+    #539/#536 made the reading precise rather than looser. Two lanes now adopt a
+    book, and both reach `carry_recorded_starts`; what this counts is that
+    neither grew its own way in. A second literal, in this file or any other,
+    would be a second place a cycle start could be authored, which is the thing
+    #531 forbids -- and it would be invisible to every other test here, because
+    each lane's own behavior would look correct in isolation.
     """
     engine_files = sorted(name for name in os.listdir(ENGINE) if name.endswith(".py"))
     users = {}
@@ -848,9 +1040,16 @@ def test_a_stamped_position_keeps_the_canonical_current_book_usable():
         assert basis.current_book["holdings"]["OLDCO"]["cycle_id"] == "OLDCO#unknown"
         projection = portfolio_basis.sizing_projection(basis)
         assert projection is not None and projection.applicable
-        stamped = [row for row in lg.latest_anchor(events)["positions"]
-                   if row.get("since_basis")]
-        assert {row["ticker"] for row in stamped} == {"NEWCO", "OLDCO"}
+        stamped = {row["ticker"]: row.get("since_basis")
+                   for row in lg.latest_anchor(events)["positions"]}
+        # #539: every adopted position states where its start came from, and the
+        # basis says what the date is worth. The two the user was just asked
+        # about keep their own answers; the three already on record keep the
+        # start the record held -- which is what stops their cycle ids reminting
+        # -- labelled as the lower bound a declaration date is, not upgraded.
+        assert stamped == {"NEWCO": "user_estimate", "OLDCO": "unknown",
+                           "ACME": "snapshot_anchor", "WIDGET": "snapshot_anchor",
+                           "BIGCO": "snapshot_anchor"}
         for row in basis.current_book["anchor"]["positions"]:
             assert not {"since", "since_basis"} & set(row), (
                 "the anchor projection carries book-affecting facts only; "
@@ -1040,7 +1239,11 @@ def test_the_classification_enum_matches_the_engine_constant():
         assert not unknown, f"{kind} allows an undeclared classification: {sorted(unknown)}"
     answer = (schema["$defs"]["input"]["properties"]["answers"]["items"]["properties"])
     assert answer["held_months"]["maximum"] == br.HELD_MONTHS_MAX
-    assert set(lg.SINCE_BASES) == {"user_estimate", "unknown"}
+    # #539: four evidence classes, kept separable rather than collapsed into one
+    # "carried" marker. What a carried date is worth cannot be recovered later --
+    # after adoption `origin` describes the snapshot writer, not the evidence.
+    assert set(lg.SINCE_BASES) == {"user_estimate", "unknown",
+                                   "trade_event", "snapshot_anchor"}
     assert lg.ENGINE_ASSIGNED_POSITION_KEYS <= lg.SNAPSHOT_POSITION_KEYS, (
         "an engine-assigned field still has to be a field a position may carry")
 
