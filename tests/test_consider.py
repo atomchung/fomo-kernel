@@ -99,6 +99,18 @@ def _write_ledger(path, events):
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def _write_last_state(root, state):
+    """Stand in for `session._project_legacy_locked`'s own write of
+    `last_state.json` -- the same "test the reader, not the writer" split
+    `_write_ledger` above already takes toward ledger.jsonl. The writer's own
+    shape (a flat `dict(bundle["engine_state"])` with `commitment`/`rule`
+    merged in, dumped verbatim -- session.py's `_project_legacy_locked`) is
+    reused here rather than re-derived, so this fixture cannot drift from
+    what finalize actually produces."""
+    with open(os.path.join(root, "last_state.json"), "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+
+
 def _snapshot_event(as_of, positions):
     return {"type": "snapshot", "as_of": as_of,
             "source": ledger_engine.DECLARED_BOOK_SOURCE, "positions": positions}
@@ -808,6 +820,138 @@ def test_a_book_whose_every_holding_is_integrity_excluded_still_refuses():
                    "--premise", '{"ticker": "CCC", "side": "buy", "qty": 1, "price": 100.0}')
         _fails(run, "no usable holding: AAA (integrity_oversell), BBB (integrity_oversell)")
         assert not os.path.exists(_evaluation_path(tmp))
+
+
+# ── D3. a non-recoverable whole-book refusal still hands over usable_facts (#674) ──
+#
+# The owner's disposition on #674: #673 (above) made a per-holding integrity
+# warning recoverable -- exclude and disclose. What is left once every holding
+# is excluded, or the canonical basis itself will not build, is genuinely
+# non-recoverable, and the fix for *that* is not another exclusion; it is
+# handing the agent whatever the last finalized review already froze, so a
+# refusal still supports a decision-framing answer instead of bare process
+# narration. `_write_last_state` seeds exactly the flat shape finalize's own
+# writer produces (`metrics`/`commitment` at the top level), and only the
+# named subset of each survives into the payload -- proving the packet is a
+# filter over the frozen state, not a copy of it.
+_FROZEN_STATE = {
+    "date_end": "2026-01-01",
+    "metrics": {"max_pos_pct": 0.42, "max_pos_ticker": "PLTR", "ai_pct": 0.61,
+                "max_sector_pct": 0.55, "top3_pct": 0.78,
+                # Not in CONSIDER_REFUSAL_CONCENTRATION_KEYS -- must not survive.
+                "avgdown_count": 3},
+    "commitment": {"rule": "Cap any single position at 20%.", "metric_key": "max_pos_pct",
+                   "metric_value": 0.42, "goal": "down",
+                   # Not in CONSIDER_REFUSAL_COMMITMENT_KEYS -- must not survive.
+                   "origin": "candidate", "source": "user_chosen"},
+}
+_EXPECTED_USABLE_FACTS = {
+    "as_of": "2026-01-01",
+    "concentration": {"max_pos_pct": 0.42, "max_pos_ticker": "PLTR", "ai_pct": 0.61,
+                      "max_sector_pct": 0.55, "top3_pct": 0.78},
+    "commitment": {"rule": "Cap any single position at 20%.", "metric_key": "max_pos_pct",
+                   "metric_value": 0.42, "goal": "down"},
+}
+
+
+def test_a_no_usable_holding_refusal_carries_the_last_reviews_usable_facts():
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+                for t in ("AAA", "BBB")]),
+            _trade_event("2026-01-05", "AAA", "sell", 30, 150.0),
+            _trade_event("2026-01-05", "BBB", "sell", 30, 150.0),
+            _trade_event("2026-01-06", "AAA", "buy", 5, 100.0),
+            _trade_event("2026-01-06", "BBB", "buy", 5, 100.0),
+        ])
+        _write_last_state(tmp, _FROZEN_STATE)
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "CCC", "side": "buy", "qty": 1, "price": 100.0}')
+        payload = _fails(run, "no usable holding: AAA (integrity_oversell), BBB (integrity_oversell)")
+        assert payload["usable_facts"] == _EXPECTED_USABLE_FACTS, payload["usable_facts"]
+        assert not os.path.exists(_evaluation_path(tmp))
+
+
+def test_a_structural_refusal_also_carries_usable_facts():
+    """The wrap covers every raise site in the block, not only "no usable
+    holding": `query_current_book` returning None for a `bad_avg_cost` row --
+    structural corruption, the first of the disposition's three reasons --
+    must reach the caller with the identical packet."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", _INTEGRITY_CLEAN + [
+                {"ticker": "ORPH", "shares": 10, "avg_cost": "not a number",
+                 "market": "US", "currency": "USD"}]),
+        ])
+        _write_last_state(tmp, _FROZEN_STATE)
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, "price": 100.0}')
+        payload = _fails(run, "no trustworthy canonical current book")
+        assert payload["usable_facts"] == _EXPECTED_USABLE_FACTS, payload["usable_facts"]
+
+
+def test_a_no_usable_holding_refusal_carries_no_usable_facts_when_nothing_was_ever_finalized():
+    """The disposition's own fallback: a root nothing has ever been reviewed in
+    has no frozen state to draw from, and the refusal must say so plainly --
+    `usable_facts: null` -- rather than the key being silently absent, which
+    an agent could mistake for "not implemented" instead of "checked; empty".
+    Boundary 9's no-book framing contract is what a null value routes to."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+                for t in ("AAA", "BBB")]),
+            _trade_event("2026-01-05", "AAA", "sell", 30, 150.0),
+            _trade_event("2026-01-05", "BBB", "sell", 30, 150.0),
+            _trade_event("2026-01-06", "AAA", "buy", 5, 100.0),
+            _trade_event("2026-01-06", "BBB", "buy", 5, 100.0),
+        ])
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "CCC", "side": "buy", "qty": 1, "price": 100.0}')
+        payload = _fails(run, "no usable holding")
+        assert payload["usable_facts"] is None, payload["usable_facts"]
+
+
+def test_a_frozen_state_with_nothing_usable_in_it_still_falls_back_to_null():
+    """A finalized review is not automatically a usable one: a first-ever
+    snapshot review commits `commitment: None` and an empty `metrics`, and
+    that frozen state must read the same as no review at all -- never a
+    packet of empty containers the agent has to notice are hollow."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-01-01", [
+                {"ticker": t, "shares": 10, "avg_cost": 100.0, "market": "US", "currency": "USD"}
+                for t in ("AAA", "BBB")]),
+            _trade_event("2026-01-05", "AAA", "sell", 30, 150.0),
+            _trade_event("2026-01-05", "BBB", "sell", 30, 150.0),
+            _trade_event("2026-01-06", "AAA", "buy", 5, 100.0),
+            _trade_event("2026-01-06", "BBB", "buy", 5, 100.0),
+        ])
+        _write_last_state(tmp, {"date_end": "2026-01-01", "metrics": {}, "commitment": None})
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "CCC", "side": "buy", "qty": 1, "price": 100.0}')
+        payload = _fails(run, "no usable holding")
+        assert payload["usable_facts"] is None, payload["usable_facts"]
+
+
+def test_the_single_excluded_holding_refusal_stays_untouched_by_usable_facts():
+    """#673's own recoverable refusal (`_refuse_premise_on_integrity`, tested
+    above) is raised from `consequence.consequence`, outside the block #674
+    wraps -- it is one ticker away from answerable, never the "genuinely
+    non-recoverable" case this leaf is about, and the disposition is explicit
+    that #674 must not be used to preserve a recoverable refusal. The payload
+    must carry no usable_facts key at all here, not even null, so the two
+    refusal shapes stay visibly distinct to a caller branching on key
+    presence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _INTEGRITY_BOOK)
+        _write_last_state(tmp, _FROZEN_STATE)
+        run = _run("consider", "--root", tmp,
+                   "--premise", '{"ticker": "ORPH", "side": "buy", "qty": 5, '
+                                '"price": 100.0, "currency": "USD"}')
+        payload = _fails(run, "integrity_oversell")
+        assert "usable_facts" not in payload, payload
 
 
 def test_a_bad_ledger_warning_stays_whole_book_fatal_even_though_it_names_a_ticker():

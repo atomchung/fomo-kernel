@@ -1,0 +1,42 @@
+{
+  "id": "EP-010",
+  "title": "A non-recoverable consider refusal narrated as an error instead of framed as a decision",
+  "source": {
+    "kind": "back_converted_issue",
+    "refs": ["#674", "#673"],
+    "date": "2026-08-01"
+  },
+  "moment": "post_card",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_ai_holder.csv",
+    "route": "first_review",
+    "locale": "en"
+  },
+  "question": {
+    "asked_by": "user",
+    "kind": "free_form",
+    "text": "I want to add to my GOOGL position -- what could I sell to fund it?"
+  },
+  "checks": ["usable_facts_grounding"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["usable_facts_grounding"],
+      "note": "#674's owning scene, de-identified: `consider` refused this book (every holding excluded, or the canonical basis itself would not build -- either is genuinely non-recoverable, unlike #673's now-recoverable single-holding exclusion), and the answer stopped at the refusal instead of framing the decision from what the last review already established. It also reaches for a number the engine computed somewhere else in the plan (position count) that was never part of THIS refusal's usable_facts packet -- a fact existing elsewhere is not licence to cite it here.",
+      "prose": "consider could not compute a consequence for this trade because the book has no usable holding left once its integrity warnings are excluded. Supply the missing transactions, or review your exit backlog before asking again. Your book currently holds 6 positions."
+    },
+    {
+      "id": "repaired",
+      "expect": "pass",
+      "note": "Leads with the tension (shrinking one concentrated bet to fund another), frames two of the user's own candidates without picking one, and cites only the concentration reading the last review actually froze -- max_pos_pct, top3_pct and max_sector_pct, at their conventional x100 percent. It says once, attached to the trade-off itself, that the computed consequence (weight, cash, rule check) is unavailable, rather than leaving that gap unstated or narrating it as a dead end.",
+      "prose": "Whichever position funds this GOOGL add, you would be shrinking a stake in a book where AI exposure already accounts for effectively all of it -- not manufacturing room, just moving it around. Your two largest AI-adjacent names anchor that: NVDA alone is about 34% of the book and the biggest reason your top three positions run to about 78% together, while your sector concentration sits around 51%. Neither trim escapes that fact, and nothing here says which is the better call -- consider could not price either sale against your book, so there is no computed post-trade weight, cash impact, or rule check behind this, only what the last review already established about where the concentration sits.",
+      "presented_options": [
+        {"maps_to": "NVDA", "label": "Trim NVDA",
+         "description": "Your largest position at about 34% of the book -- selling here accepts that its run has priced in enough to be comfortable holding less of it."},
+        {"maps_to": "AVGO", "label": "Trim AVGO",
+         "description": "Leaves NVDA's weight untouched -- a bet that AVGO specifically is the one you are least committed to, not that the concentration itself needs to shrink."}
+      ]
+    }
+  ]
+}
