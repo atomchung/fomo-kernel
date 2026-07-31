@@ -113,6 +113,15 @@ WEEKLY_OPENERS = ("prior_commitment", "prior_skip")
 # all. A run where nobody was asked can now record nothing, which `verify`
 # refuses, so it is distinguishable from one where they declined.
 CASH_OUTCOMES = ("found_in_source", "provided", "declined")
+# What the executed Review Plan said about this review's cash-anchor
+# obligation (`input.cash_anchor.status`, `references/data-contract.md`),
+# declared once at `start` the same way `route` itself is a transcribed plan
+# fact rather than something this tool re-derives (#677). `anchored`,
+# `partial`, and `absent` all mean an anchor was in play; `not_applicable` —
+# a light-tier week, a declared snapshot, or a test drive — means none was,
+# so `verify` reads it to decide whether `cash_anchor_checked` is owed on
+# *this* trace at all, rather than only how it is positioned once written.
+CASH_ANCHOR_STATUSES = ("anchored", "partial", "absent", "not_applicable")
 # The two moments a card-free lane becomes visible to the user (#523). A book
 # refresh (`flows/book-refresh.md`) narrates the engine's own difference and
 # then reports what it recorded; those are the surfaces this trace can prove
@@ -194,6 +203,15 @@ VERDICT_AXES = ("controls", "card", "memory", "change",
 #               `declined` after the first card. A declared positions snapshot
 #               states `cash` inline in its own envelope, and `test_drive`
 #               persists no accounting anchor at all, so neither owes one.
+#               On a route where this is True, whether *this instance* owes
+#               the event is narrowed further by the trace's own declared
+#               `cash_anchor_status` (#677): `not_applicable` — the plan's
+#               own classification, for example a light-tier week — means
+#               zero events is the honest trace, and any event recorded
+#               anyway contradicts the plan the same trace declares it
+#               walked. Omitting the declaration keeps the original
+#               unconditional reading (exactly one event), so a receipt
+#               written before this field existed still verifies unchanged.
 #   opener      memory kinds, exactly one of which must precede the first
 #               surface. `()` for a route that carries no opening memory.
 #   change      True  — at least one visible change surface: the narrated diff
@@ -432,6 +450,12 @@ def start_receipt(args: argparse.Namespace) -> None:
         "question_modes": question_modes,
         "card_modes": card_modes,
     }
+    # Optional and omitted by default (#677): a caller that does not transcribe
+    # the plan's cash-anchor status gets the original unconditional reading in
+    # `verify_rows`, so every trace written before this field existed — and
+    # every route this field does not matter on — is unaffected.
+    if args.cash_anchor_status is not None:
+        row["cash_anchor_status"] = args.cash_anchor_status
     _append(path, row)
 
 
@@ -1076,6 +1100,13 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
         errors.append(f"unsupported trace version: {declaration.get('version')!r}")
     if route not in ROUTES:
         errors.append(f"unsupported route: {route!r}")
+    # #677: validated unconditionally, like every other declared enum, rather
+    # than only where the route currently reads it — a hand-built or
+    # hand-edited trace can carry the field on any route, and a garbage value
+    # should fail the same way an unsupported route or event kind does.
+    declared_cash_status = declaration.get("cash_anchor_status")
+    if declared_cash_status is not None and declared_cash_status not in CASH_ANCHOR_STATUSES:
+        errors.append(f"unsupported cash anchor status {declared_cash_status!r}")
     if any(row.get("session_id") != session_id for row in rows):
         errors.append("all events must use the declared session_id")
     for index, row in enumerate(rows, 1):
@@ -1367,11 +1398,27 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
     # and a `declined` recorded before any card is refused, because at that
     # moment there was no card the question could have been attached to.
     #
-    # A light-tier session never calls this tool at all, and its plan says so
-    # (`input.cash_anchor.status == "not_applicable"`, reason `light_tier`).
+    # #677: whether *this instance* owes the event at all is read from the
+    # trace's own declared `cash_anchor_status`, not assumed from the route.
+    # The premise this check used to rest on — "a light-tier session never
+    # calls this tool at all" — held only while receipts were optional; gate 3
+    # (`docs/qa-runbook.md`) now wants one for every route run, and a
+    # light-tier weekly review's plan legitimately carries
+    # `input.cash_anchor.status == "not_applicable"` (reason `light_tier`).
+    # Zero cash-anchor events is the honest trace for that plan, and a
+    # fabricated `declined` recording a question that was never asked is
+    # exactly the dishonesty this tool exists to prevent — so it fails here,
+    # named as a contradiction rather than accepted as evidence.
     if contract["cash_anchor"]:
         checks = _positions(rows, "cash_anchor_checked")
-        if len(checks) != 1:
+        if declared_cash_status == "not_applicable":
+            if checks:
+                errors.append(
+                    f"{route} declared input.cash_anchor.status=not_applicable, so "
+                    f"row {checks[0] + 1}'s cash_anchor_checked event contradicts the "
+                    "plan this trace says it walked — a check the plan says was not "
+                    "owed cannot also have happened")
+        elif len(checks) != 1:
             errors.append(f"{route} must record exactly one cash_anchor_checked event")
         else:
             index = checks[0]
@@ -1528,6 +1575,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="extra capability beyond the universal plain_text fallback")
     start.add_argument("--card-mode", action="append", choices=CARD_MODES, default=[],
                        help="extra capability beyond the universal markdown_inline fallback")
+    start.add_argument(
+        "--cash-anchor-status", choices=CASH_ANCHOR_STATUSES, default=None,
+        help="input.cash_anchor.status from the executed plan, on a route that "
+             "structurally owes the #357 check (first_review/weekly_review); "
+             "not_applicable (for example a light-tier week) means verify "
+             "requires zero cash_anchor_checked events instead of one. Omit "
+             "to keep the original unconditional reading of exactly one.",
+    )
     start.set_defaults(handler=start_receipt)
 
     event = subparsers.add_parser("event", help="append a presentation fact after the user-visible action")

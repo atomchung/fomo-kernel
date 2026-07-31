@@ -25,6 +25,16 @@ python3 tools/ux_receipt.py start \
 
 Universal fallbacks are written into both declarations automatically. The CLI rejects a `plain_text` adapter claiming optional controls, and a `validated_widget` adapter missing either native controls or a widget.
 
+On `first_review` and `weekly_review` — the two routes that structurally owe the cash-anchor check below — also transcribe the executed plan's `input.cash_anchor.status` (`data-contract.md`): `anchored`, `partial`, or `absent` change nothing, but `not_applicable` — for example on a light-tier week — tells `verify` this trace owes zero `cash_anchor_checked` events instead of one:
+
+```bash
+python3 tools/ux_receipt.py start \
+  --session-id <session_id> --client <client> --route weekly_review \
+  --adapter plain_text --cash-anchor-status not_applicable
+```
+
+Omitting `--cash-anchor-status` keeps `verify`'s original unconditional reading — exactly one `cash_anchor_checked` event is still required — so every receipt written before this flag existed still verifies unchanged. What declaring `not_applicable` changes is explained below, after `--cash-outcome`.
+
 ## Events
 
 ```bash
@@ -54,13 +64,13 @@ python3 tools/ux_receipt.py event --session-id <id> --event card_presented --sta
 
 `native_options` and `plain_text` share the same `surface_digest` and write the same canonical answer. The trace rejects extra question-content fields.
 
-`--cash-outcome` takes exactly one of `found_in_source` (the statement carried a balance row, so nothing was asked), `provided` (the user was asked at the card beat and gave one), or `declined` (the user was asked and did not). Every value states what the *user's* data or answer decided; there is no value for "the agent decided not to ask". The retired `skipped` was exactly that, and #357's fifth recurrence recorded it correctly and in order while the user was never offered the question — the gate passed and the experience was identical to forgetting. Now a run that never asked can record nothing, and `verify` refuses a trace with no `cash_anchor_checked` on a route that owes one, so "nobody was asked" and "they declined" are different traces.
+`--cash-outcome` takes exactly one of `found_in_source` (the statement carried a balance row, so nothing was asked), `provided` (the user was asked at the card beat and gave one), or `declined` (the user was asked and did not). Every value states what the *user's* data or answer decided; there is no value for "the agent decided not to ask". The retired `skipped` was exactly that, and #357's fifth recurrence recorded it correctly and in order while the user was never offered the question — the gate passed and the experience was identical to forgetting. Now a run that never asked can record nothing, and `verify` refuses a trace with no `cash_anchor_checked` on a review whose declared plan says the check was owed, so "nobody was asked" and "they declined" are different traces.
 
 Position follows the outcome, and `verify` enforces it both ways. `found_in_source` is read before `prepare` runs, so it must precede the first question or card — retrospective evidence rather than a self-report, the same anti-backfill rule as the weekly opener. `provided` and `declined` record a question asked in the same message as the preview card (`data-contract.md`), so they must come *after* the first `card_presented`; a `declined` recorded earlier is refused, because at that point there was no card the question could have been attached to.
 
 When the user provides an anchor, `review.py add-cash` recomputes the review and returns a new session id. **Keep the original session id for the whole trace.** A receipt records one conversation with a user, not one engine session — the same reason a refresh trace is keyed by `refresh_id` and a `consider` trace by `evaluation_id`.
 
-`snapshot_review` states cash inline in its own envelope and `test_drive` persists no anchor, so neither carries this requirement; `input.cash_anchor.status` says `not_applicable` on both, and on a light-tier week.
+`snapshot_review` states cash inline in its own envelope and `test_drive` persists no anchor, so neither carries this requirement at all — `ROUTE_CONTRACTS` says so structurally, independent of anything a trace declares. `first_review` and `weekly_review` do carry it structurally, but a *specific* review can still have no cash-anchor opportunity: a light-tier week's plan carries `input.cash_anchor.status == "not_applicable"` (reason `light_tier`) the same positive way a snapshot's or a test drive's does (`data-contract.md`). Transcribe that status with `--cash-anchor-status not_applicable` at `start` (above, #677), and `verify` requires **zero** `cash_anchor_checked` events instead of one for that trace — recording one anyway, of any outcome, fails as a named contradiction: the plan this trace declares it walked said no check was owed, so an event claiming one happened cannot also be true. A `declined` written to make an honest gap verify is exactly the fabrication this tool exists to catch, not a way around it. Omit the flag and `verify` keeps the original unconditional reading, so a receipt written before it existed still verifies exactly as it did.
 
 `answers_received` is a content-free latency marker. It makes the answered-to-card wait measurable from the trace as `card_presented(stage=preview).ts - answers_received.ts`.
 
@@ -182,7 +192,7 @@ All four route axes must be `pass` before `verify --require-owner-verdict` accep
 python3 tools/ux_receipt.py verify --session-id <id>
 ```
 
-`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget degraded to Markdown with no recorded failure, or when a weekly opening memory did not precede the first card. Which of those a trace owes is decided by its declared route — cards, cash anchor, opening memory, change surface, and verdict axes are declared once per route inside the tool, so a route either carries an obligation or it does not, and none of them can be skipped by wording. It does not re-check answered questions or the commitment — the engine owns those.
+`verify` fails when a stage's card was not presented after its artifact, when the final card precedes the preview card, when a declared widget degraded to Markdown with no recorded failure, or when a weekly opening memory did not precede the first card. Which of those a trace owes is decided by its declared route — cards, cash anchor, opening memory, change surface, and verdict axes are declared once per route inside the tool, so a route either carries an obligation or it does not, and none of them can be skipped by wording. The cash anchor is narrowed once more, per trace rather than per route: a `first_review`/`weekly_review` trace that declared `--cash-anchor-status not_applicable` at `start` owes zero `cash_anchor_checked` events instead of one, and owes a failure if it recorded one anyway. It does not re-check answered questions or the commitment — the engine owns those.
 
 Timing plausibility is a separate signal. Verification stays compatible with legacy receipts and exits successfully with a `WARN` and `timing_integrity.status=suspect` when stamped rows reverse or an entire owner-verdict trace was recorded in a sub-three-second burst. A suspect result sets `owner_live_eligible=false` and cannot be cited as owner-live UX ground truth; audit contemporaneous evidence or re-run the walkthrough. Legacy receipts without `ts` pass ordinary verification but are `not_assessed` rather than fresh evidence.
 
