@@ -525,7 +525,7 @@ _BOOK_READERS_INTERNAL = frozenset({
 })
 
 # Routes driven below. Each name is a `cmd_<name>` in review.py.
-_DRIVEN_ROUTES = ("consider", "prepare", "refresh", "positions")
+_DRIVEN_ROUTES = ("consider", "prepare", "refresh", "positions", "record-rationale")
 
 # A route may sit here only with a reason naming who owns it instead.
 _ROUTES_NOT_DRIVEN = {
@@ -692,6 +692,28 @@ def test_positions_answers_on_the_split_adjusted_book():
         assert rows["NVDA"]["shares"] == 100.0, rows["NVDA"]
         assert rows["NVDA"]["cost_total"] == 10000.0, (
             "a split is a zero-dollar event", rows["NVDA"])
+
+
+def test_record_rationale_finds_the_position_on_a_split_crossing_book():
+    """`record-rationale` (#403) reads the book to answer one question -- is this
+    a position you hold, and which cycle is it -- and that answer is what decides
+    whether the user's words are recorded at all.
+
+    The observable is therefore the refusal, not a number. Split-blind, the
+    share count is wrong in a way that can read as a position no longer held,
+    and the route then refuses to record a reason for something the user does
+    own: their words are turned away on the strength of an arithmetic error.
+    That is worse than a wrong figure, because nothing about the message tells
+    the user the book was the problem."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _crossing_root(tmp)
+        code, payload = _route(tmp, "record-rationale", "--ticker", "NVDA",
+                               "--statement", "still holding it through the split")
+        assert code == 0, payload
+        assert payload["status"] == "appended", payload
+        assert payload["ticker"] == "NVDA"
+        assert payload["effective_statement"] == "still holding it through the split"
+        assert payload["cycle_id"], "the subject resolves to a real cycle, not a guess"
 
 
 def test_a_review_can_start_at_all_on_a_split_crossing_book():

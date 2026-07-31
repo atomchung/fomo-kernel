@@ -38,6 +38,7 @@ import market_data
 import price_feed
 import problems
 import portfolio_basis
+import position_rationale
 import question_surface
 import revisit
 import session
@@ -2291,6 +2292,90 @@ def _thesis_cycle_index(positions, thesis_rows, cycle_relinks):
         if cycle_id and ticker and cycle_id not in index:
             index[cycle_id] = {"ticker": ticker, "live": False}
     return index
+
+
+def _cycle_aliases(thesis_rows, cycle_relinks=()):
+    """``{cycle_id: [every prior id for it]}``, transitively closed.
+
+    A relink row records one hop — ``cycle_provenance.from_cycle_id`` → ``cycle_id``
+    — and #563's later-history upgrade can move the same position twice, so A→B→C
+    must resolve C's aliases to both B and A. ``_thesis_cycle_index`` walks the
+    same edges for a different answer (is this id live?) and is deliberately
+    single-hop; this is the per-cycle list a rationale reader needs to find the
+    statements the user made before their position's start date moved.
+
+    Takes the same two ingredients as `_thesis_cycle_index` and concatenates them
+    the same way, so no third composition of history-plus-this-session exists.
+    """
+    rows = [row for row in list(thesis_rows or []) + list(cycle_relinks or [])
+            if isinstance(row, dict)]
+    direct = {}
+    for row in rows:
+        provenance = row.get("cycle_provenance")
+        origin = provenance.get("from_cycle_id") if isinstance(provenance, dict) else None
+        target = row.get("cycle_id")
+        if origin and target and origin != target:
+            direct.setdefault(target, set()).add(origin)
+
+    closed = {}
+    for target in direct:
+        seen, frontier = set(), list(direct[target])
+        while frontier:
+            node = frontier.pop()
+            if node in seen or node == target:
+                continue
+            seen.add(node)
+            frontier.extend(direct.get(node, ()))
+        if seen:
+            closed[target] = sorted(seen)
+    return closed
+
+
+def _resolve_rationale_subject(root, ticker):
+    """Resolve a ticker to the one active position cycle a rationale attaches to.
+
+    #403's route rules, and they fail closed rather than guessing: the canonical
+    book is the only authority, an exited ticker is not a holding rationale, and
+    a symbol that does not match exactly is a miss rather than something to
+    case-fold into a position the user did not name. Returns the four-key subject
+    `position_rationale` requires plus the `state_version` of the book that
+    resolved it, so the stored row can name the book that said the position was
+    held.
+    """
+    ledger_path = os.path.join(root, "ledger.jsonl")
+    try:
+        events, skipped_lines = ledger.load_ledger(ledger_path)
+    except ledger.LedgerIntegrityError as exc:
+        raise ReviewError(str(exc)) from exc
+    if not events:
+        raise ReviewError(
+            f"no recorded book in {ledger_path}; a holding rationale is about a position "
+            "this book says you hold, so run `prepare` or `refresh` first")
+    basis = portfolio_basis.query_current_book(
+        events, skipped_lines=skipped_lines,
+        reference_as_of=dt.date.today().isoformat(), splits=_effective_splits(root, None))
+    if basis is None:
+        raise ReviewError(
+            f"no trustworthy canonical current book in {ledger_path}; the ledger may be "
+            "unreadable or its integrity checks failed, and a rationale must not be "
+            "attached to a position nobody could confirm you hold")
+    holdings = basis.current_book["holdings"]
+    holding = holdings.get(ticker)
+    if not isinstance(holding, dict) or not holding.get("cycle_id"):
+        held = ", ".join(sorted(holdings)) or "nothing"
+        raise ReviewError(
+            f"{ticker} is not an open position in the recorded book (currently held: {held}); "
+            "a holding rationale needs a position you hold. If this is a trade you are "
+            "considering rather than one you own, that is a different question")
+    subject = {"cycle_id": holding["cycle_id"], "ticker": ticker,
+               "market": holding.get("market") or "", "currency": holding.get("currency") or ""}
+    missing = [key for key in ("market", "currency") if not subject[key]]
+    if missing:
+        raise ReviewError(
+            f"the recorded book does not state {ticker}'s " + " or ".join(missing) +
+            "; a rationale joined without them could cross a same-ticker boundary, so "
+            "this fails closed rather than guessing")
+    return subject, basis.state_version
 
 
 def _plan_thesis_cycles(plan):
@@ -7286,6 +7371,66 @@ def _positions_diagnosis(rows, canonical_held, weights, last_px, max_pos_overrid
     return diagnosed, residual
 
 
+def cmd_record_rationale(args):
+    """``record-rationale``: state why you still hold a position, outside a review.
+
+    #403's direct entry. The user's explicit statement is the whole
+    authorization — no card, no rule selection, no question queue, no pending
+    session and no second confirmation. It is deliberately not `capture`, which
+    requires a pending light-tier plan and appends into the rebuildable thesis
+    projection; this writes the canonical stream `position_rationale` owns.
+
+    Read and write happen under one lock, `cmd_refresh`'s shape: the book that
+    resolves the subject and the book named on the stored row must be the same
+    book, or a rationale could be attached to a position that moved while the
+    command was running. ``--expect`` carries a head the caller read earlier and
+    fails closed if something landed in between, rather than forking the subject.
+    """
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    ticker = (args.ticker or "").strip()
+    if not ticker:
+        raise ReviewError("--ticker is required")
+    statement = args.statement
+    if args.confirm and statement is not None:
+        raise ReviewError(
+            "--confirm says the reason you already recorded still holds; supplying "
+            "--statement as well would restate it on a day you did not say it. Use one")
+    if not args.confirm and not (statement or "").strip():
+        raise ReviewError(
+            "--statement is required: this records your own words for why you still "
+            "hold the position, and an empty one records nothing")
+
+    with session.projection_transaction(root) as locked_root:
+        subject, state_version = _resolve_rationale_subject(locked_root, ticker)
+        aliases = _cycle_aliases(_thesis_event_history(locked_root)).get(subject["cycle_id"], [])
+        report = position_rationale.append_locked(
+            locked_root, subject=subject,
+            act="confirmation" if args.confirm else "statement",
+            user_statement=None if args.confirm else statement,
+            stated_at=args.stated_at, capture_source="direct",
+            state_version=state_version, aliases=aliases,
+            expected_predecessor=args.expect)
+        view = position_rationale.query(locked_root, subject["cycle_id"], aliases=aliases)
+
+    effective = view.get("effective") or {}
+    _emit({
+        "status": report["status"],
+        "event_id": report["event_id"],
+        "ticker": ticker,
+        "cycle_id": subject["cycle_id"],
+        # What is in force now, echoed back so the user sees what the record says
+        # rather than trusting that the write meant what they intended.
+        "effective_statement": effective.get("user_statement"),
+        "effective_since": effective.get("stated_at"),
+        "change": view.get("change"),
+        "statements_recorded": view.get("total_count"),
+        # `recorded` means the words are durable. It is deliberately not a claim
+        # that anything is being monitored: no condition is created here, and a
+        # receipt that blurred the two would promise a watcher that does not exist.
+        "monitoring": "none requested; this records your reason, not a condition to watch",
+    })
+
+
 def cmd_positions(args):
     """Read-only current-book outlet (#561): "what do I currently hold,"
     asked away from any review, `consider` premise, or `refresh` snapshot.
@@ -7734,6 +7879,22 @@ def build_parser():
                               "(schemas/book-refresh.schema.json). Omit for the "
                               "read-only difference and its pending confirmations.")
     refresh.set_defaults(func=cmd_refresh)
+    record = sub.add_parser(
+        "record-rationale",
+        help="state why you still hold a position, without running a review (#403)")
+    record.add_argument("--ticker", required=True,
+                        help="the position you are talking about; resolved against the recorded book")
+    record.add_argument("--statement", help="your own words, stored byte for byte")
+    record.add_argument("--confirm", action="store_true",
+                        help="the reason already recorded still holds; records that you were "
+                             "asked and said so, without restating the wording")
+    record.add_argument("--stated-at", dest="stated_at",
+                        help="the day the statement applies; defaults to today")
+    record.add_argument("--expect", dest="expect",
+                        help="the event id you read as current; fails closed if it moved")
+    record.add_argument("--root")
+    record.set_defaults(func=cmd_record_rationale, paths=None)
+
     positions = sub.add_parser(
         "positions",
         help="read-only per-position diagnosis of the recorded current book; no "
@@ -7772,7 +7933,7 @@ def main():
         args.func(args)
     except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError,
             question_surface.QuestionSurfaceError, book_refresh.RefreshError,
-            snapshot_adapter.SnapshotError) as exc:
+            snapshot_adapter.SnapshotError, position_rationale.PositionRationaleError) as exc:
         _emit({"status": "error", "error": str(exc)})
         return 2
     return 0
