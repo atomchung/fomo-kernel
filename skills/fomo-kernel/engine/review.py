@@ -129,9 +129,43 @@ EVALUATION_EVIDENCE_REFS_CAP = 5
 EVALUATION_CONTEXT_TEXT_MAX = 1000
 EVALUATION_EVIDENCE_REF_MAX = 500
 
+# #674: when `consider` refuses a whole book for a genuinely non-recoverable
+# reason (structural corruption, an integrity warning this route cannot
+# scope, or no usable holding left -- see `_consider_rows`), the refusal may
+# still hand the agent a bounded packet of already-computed facts to frame a
+# decision from, drawn from the last finalized review's frozen state
+# (`last_state.json`) rather than recomputed. These two tuples are the single
+# declaration of which keys of that frozen state count as "usable" for this
+# purpose, so the refusal payload and evals/run_episodes.py's grounding check
+# read the same list instead of two hand-copied ones drifting apart.
+# `max_pos_pct`/`ai_pct`/`max_sector_pct`/`top3_pct` are the whole-book
+# concentration readings `consequence.py` also judges rule collisions
+# against; `max_pos_ticker` is the one non-numeric reading that names them.
+CONSIDER_REFUSAL_CONCENTRATION_KEYS = ("max_pos_pct", "max_pos_ticker", "ai_pct",
+                                       "max_sector_pct", "top3_pct")
+# The subset of a frozen `commitment` (`_resolve_commitment`'s own shape) that
+# is a fact about what the user already committed to, not an engine
+# computation that could go stale between reviews: the rule's own words,
+# which metric it watches, the value frozen when it was chosen, and the
+# direction that counts as a breach.
+CONSIDER_REFUSAL_COMMITMENT_KEYS = ("rule", "metric_key", "metric_value", "goal")
+
 
 class ReviewError(ValueError):
-    pass
+    """A refusal or invalid input one of this CLI's commands raised.
+
+    ``payload_extra``, when supplied, is merged into ``main()``'s emitted
+    error JSON beside ``status``/``error`` (#674) -- a small, deterministic,
+    engine-computed addition the raiser attaches, never prose the agent has
+    to parse back out of the message. Every existing raise site is
+    unaffected: the keyword defaults to nothing, and the positional message
+    still reaches ``ValueError`` exactly as before, so ``str(exc)`` -- and
+    every existing test asserting on it -- is unchanged.
+    """
+
+    def __init__(self, message, *, payload_extra=None):
+        super().__init__(message)
+        self.payload_extra = payload_extra
 
 
 def _emit(obj):
@@ -6392,6 +6426,50 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
     return before
 
 
+def _usable_facts_snapshot(root):
+    """Already-computed facts the last finalized review froze, for a
+    `consider` refusal that cannot compute a fresh consequence (#674).
+
+    Reads ``last_state.json`` through ``_previous_state`` -- the same helper
+    ``_recorded_splits`` already relies on for a lane with no review of its
+    own -- and carries forward only values that call for no new arithmetic:
+    the account's own whole-book concentration reading and the rule the user
+    is actually committed to, both copied verbatim from
+    ``CONSIDER_REFUSAL_CONCENTRATION_KEYS`` / ``CONSIDER_REFUSAL_COMMITMENT_KEYS``.
+    Never rescaled, recombined, or judged against the premise the caller
+    supplied: this function's whole job is to hand over a bounded, frozen
+    fact surface, not to compute one.
+
+    Returns ``None`` when no review has ever been finalized in this root, or
+    when a finalized one froze neither a concentration reading nor a
+    commitment. The caller reads ``None`` as "no usable computed fact
+    exists" and falls back to the no-book framing contract
+    (references/decision-framing.md) rather than inventing a portfolio claim
+    -- the owning issue's disposition is explicit that a non-recoverable
+    refusal must never manufacture a fact the last review did not actually
+    freeze.
+    """
+    state = _previous_state(root)
+    if not isinstance(state, dict):
+        return None
+    metrics = state.get("metrics")
+    metrics = metrics if isinstance(metrics, dict) else {}
+    concentration = {key: metrics[key] for key in CONSIDER_REFUSAL_CONCENTRATION_KEYS
+                     if key in metrics and metrics[key] is not None}
+    commitment = state.get("commitment")
+    commitment = commitment if isinstance(commitment, dict) else {}
+    rule = {key: commitment[key] for key in CONSIDER_REFUSAL_COMMITMENT_KEYS
+            if key in commitment and commitment[key] is not None}
+    if not concentration and not rule:
+        return None
+    facts = {"as_of": state.get("date_end")}
+    if concentration:
+        facts["concentration"] = concentration
+    if rule:
+        facts["commitment"] = rule
+    return facts
+
+
 def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=None):
     """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
     a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
@@ -6458,25 +6536,38 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=Non
         raise ReviewError(
             f"no usable trade or snapshot history in {ledger_path}; run a review first, or pass "
             "CSV paths directly, before asking consider about a hypothetical trade")
-    basis = portfolio_basis.query_current_book(
-        events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
-        reference_as_of=dt.date.today().isoformat(),
-        splits=splits)
-    if basis is None:
-        raise ReviewError(
-            f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
-            "separate historical transaction view")
-    basis_dict = basis.to_dict()
+    # #674: every refusal in this block is genuinely non-recoverable -- no
+    # corrected premise and no different ticker fixes structural corruption
+    # (`basis is None`), an integrity warning this route cannot scope to one
+    # holding, or every holding being excluded and leaving no usable row.
+    # That is what distinguishes this block from the single excluded-holding
+    # refusal `consequence.consequence` raises later (still one ticker away
+    # from answerable) and from a plain caller error above (still one
+    # corrected argument away). Wrapped so every ReviewError raised inside --
+    # whichever of the three fires -- carries the same bounded usable_facts
+    # packet, attached once here rather than duplicated at each raise site.
     try:
-        rows, excluded_holdings = consequence.rows_from_portfolio_basis(basis_dict)
-    except consequence.ConsequenceError as exc:
-        raise ReviewError(str(exc)) from exc
-    # Freeze only the portable fact identity/disclosure envelope.  The full
-    # current_book remains the canonical ledger query, not a copied second
-    # persisted book inside every evaluation.
-    projection = portfolio_basis.sizing_projection(basis)
-    if projection is None:
-        raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
+        basis = portfolio_basis.query_current_book(
+            events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+            reference_as_of=dt.date.today().isoformat(),
+            splits=splits)
+        if basis is None:
+            raise ReviewError(
+                f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
+                "separate historical transaction view")
+        basis_dict = basis.to_dict()
+        try:
+            rows, excluded_holdings = consequence.rows_from_portfolio_basis(basis_dict)
+        except consequence.ConsequenceError as exc:
+            raise ReviewError(str(exc)) from exc
+        # Freeze only the portable fact identity/disclosure envelope.  The full
+        # current_book remains the canonical ledger query, not a copied second
+        # persisted book inside every evaluation.
+        projection = portfolio_basis.sizing_projection(basis)
+        if projection is None:
+            raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
+    except ReviewError as exc:
+        raise ReviewError(str(exc), payload_extra={"usable_facts": _usable_facts_snapshot(root)}) from exc
     basis_meta = {key: basis_dict[key] for key in (
         "source", "as_of", "stale_days", "completeness", "cost_basis",
         "valuation_basis", "reconciliation_ref", "state_version")}
@@ -7979,7 +8070,16 @@ def main():
     except (ReviewError, session.SessionError, thesis.ThesisError, card_renderer.RenderError,
             question_surface.QuestionSurfaceError, book_refresh.RefreshError,
             snapshot_adapter.SnapshotError) as exc:
-        _emit({"status": "error", "error": str(exc)})
+        payload = {"status": "error", "error": str(exc)}
+        # #674: a narrow, deterministic extra a raiser may attach to itself --
+        # today only a non-recoverable `consider` book refusal sets one,
+        # carrying the usable_facts packet the decision-framing contract
+        # reads. Every other raise site across this CLI leaves it unset, so
+        # this is a no-op for them and the emitted shape is unchanged.
+        extra = getattr(exc, "payload_extra", None)
+        if extra:
+            payload.update(extra)
+        _emit(payload)
         return 2
     return 0
 

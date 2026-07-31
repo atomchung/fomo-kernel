@@ -36,6 +36,13 @@ What the mechanical half proves, per answer under test:
                         check validator, every figure in the prose traces to
                         the record, and a lookup that failed is spoken as a
                         lookup that failed (#412 second half)
+``usable_facts_grounding``
+                        a non-recoverable `consider` refusal's decision-framing
+                        answer cites only the bounded usable_facts packet the
+                        refusal actually carried -- never any other number the
+                        engine happens to have computed elsewhere in the plan
+                        -- and frames at least two of the user's own nominated
+                        options (#674)
 
 Every check is an **invariant** — something the product must never do. None of
 them compares an answer against the wording the product happens to ship today,
@@ -138,8 +145,19 @@ HEX_TOKEN = re.compile(r"^[0-9a-f]{12,}$")
 
 CHECK_NAMES = ("number_provenance", "honesty_coverage", "privacy_trace",
                "surface_hygiene", "locale_purity", "condition_integrity",
-               "condition_check_integrity")
+               "condition_check_integrity", "usable_facts_grounding")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
+
+# #674: mirrors review.CONSIDER_REFUSAL_CONCENTRATION_KEYS -- the same list a
+# non-recoverable `consider` refusal's usable_facts.concentration is filtered
+# to. Locked together by a drift test in tests/test_episode_checkers.py rather
+# than a shared import: review.py pulls in the rest of the engine by bare
+# sibling import (`import consequence`, `import ledger`, ...), so unlike
+# conditions.py and card_renderer.py above it cannot be loaded through
+# `_load_module` without first putting engine/ on sys.path for every other
+# loader call in this file too.
+CONSIDER_REFUSAL_CONCENTRATION_KEYS = ("max_pos_pct", "max_pos_ticker", "ai_pct",
+                                       "max_sector_pct", "top3_pct")
 
 # The rubric judge's axes (#417 second half). The names live here rather than in
 # `evals/judge_episodes.py` for one reason: a typo'd axis has to fail in the free
@@ -665,10 +683,33 @@ def engine_facts(plan, episode):
     foreign_labels = {str(value) for value in copy_en.get("dimensions", {}).values()
                       if str(value) not in local_labels} if locale != "en" else set()
 
+    # #674: the bounded number allow-set for `usable_facts_grounding`, deliberately
+    # narrower than `numbers` above. A non-recoverable `consider` refusal's
+    # usable_facts.concentration carries exactly
+    # CONSIDER_REFUSAL_CONCENTRATION_KEYS's numeric fields, copied verbatim from
+    # `metrics` -- never the whole plan, which is what makes this check settle a
+    # different question from number_provenance: not "did the engine ever compute
+    # this", but "is this one of the facts THIS refusal actually handed over".
+    # Both the record's own scale and its conventional x100 percent form count
+    # (references/trade-consequence.md, "a fraction-shaped value ... is written
+    # x100 as a percent") -- an answer is free to say "34%" or "0.34" for the
+    # same reading.
+    metrics = ((plan.get("engine_state") or {}).get("metrics") or {})
+    usable_facts_numbers = set()
+    for key in CONSIDER_REFUSAL_CONCENTRATION_KEYS:
+        value = metrics.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        value = float(value)
+        usable_facts_numbers.add(value)
+        for places in (0, 1, 2):
+            usable_facts_numbers.add(round(value * 100, places))
+
     return {
         "locale": locale,
         "engine_text": "\n".join(strings),
         "numbers": numbers,
+        "usable_facts_numbers": usable_facts_numbers,
         "dates": {match for text in strings for match in DATE.findall(text)},
         "tokens": tokens,
         "identifiers": identifiers,
@@ -1020,6 +1061,41 @@ def check_condition_check_integrity(answer, facts):
     return findings
 
 
+def check_usable_facts_grounding(answer, facts):
+    """#674: a non-recoverable `consider` refusal's decision-framing answer may
+    cite only the bounded usable_facts packet the refusal actually carried.
+
+    Deliberately narrower than ``check_number_provenance``: that check asks
+    whether the engine computed a number *anywhere* in the plan, and this
+    refusal shape exists precisely because most of the plan was never
+    computed for this call at all -- only ``usable_facts`` was, and it is
+    frozen from a *different* review's own frozen state, so "somewhere in
+    today's plan" is the wrong allow-set to hold this answer to. A number
+    that traces to the whole plan but not to ``facts["usable_facts_numbers"]``
+    is arithmetic the refusal never handed over, whatever else the engine
+    happens to know.
+
+    The second half is structural rather than numeric: a refusal framed from
+    fewer than two of the user's own nominated options has not framed a
+    decision between alternatives at all, which is the owning issue's other
+    named obligation.
+    """
+    findings = []
+    allowed = facts["usable_facts_numbers"]
+    for role, text in _surfaces(answer):
+        for match in NUMBER.finditer(text):
+            value = float(match.group(0).replace(",", ""))
+            if not _number_matches(value, allowed):
+                findings.append(
+                    f"{role}: {match.group(0)!r} is not part of this refusal's usable_facts "
+                    "packet — a number the engine computed somewhere else does not license "
+                    "citing it here")
+    if len(answer.get("presented_options") or []) < 2:
+        findings.append("fewer than two of the user's own nominated options are framed — "
+                        "this is process narration, not a decision framed between alternatives")
+    return findings
+
+
 def run_check(name, episode, answer, facts):
     """Return ``(findings, looked_at_something)``.
 
@@ -1045,6 +1121,8 @@ def run_check(name, episode, answer, facts):
     if name == "condition_check_integrity":
         return (check_condition_check_integrity(answer, facts),
                 answer.get("condition_check") is not None)
+    if name == "usable_facts_grounding":
+        return check_usable_facts_grounding(answer, facts), bool(_surfaces(answer))
     raise AssertionError(f"unknown check {name}")
 
 

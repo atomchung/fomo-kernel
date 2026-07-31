@@ -376,6 +376,94 @@ def test_condition_check_integrity_abstains_when_the_answer_carries_no_check():
     assert looked is False, "a check with nothing to inspect has abstained, not passed"
 
 
+# ── usable_facts_grounding (#674) ───────────────────────────────────────────
+#
+# A #674 refusal's usable_facts packet is narrower than the whole plan
+# `number_provenance` already allows, so these probes need their own facts
+# dict rather than the shared FACTS above: one where the bounded allow-set
+# (`usable_facts_numbers`) is a strict subset of what the plan otherwise
+# contains, so a mutation that widened the check back to `numbers` would
+# accept a figure the refusal never actually carried.
+
+_UF_FACTS = _facts(
+    numbers={20.0, 34.0, 43.0, 6.0, 100.0, 3560.0},  # the whole plan's numbers
+    usable_facts_numbers={0.34344827586206894, 34.0, 34.3, 34.34,   # max_pos_pct
+                         1.0, 100.0,                              # ai_pct
+                         0.7848275862068965, 78.0, 78.5, 78.48},   # top3_pct
+)
+
+
+def test_usable_facts_grounding_accepts_a_percent_form_of_a_concentration_figure():
+    answer = {"prose": "NVDA is about 34% of the book.",
+             "presented_options": [{"maps_to": "NVDA", "label": "a", "description": ""},
+                                   {"maps_to": "AVGO", "label": "b", "description": ""}]}
+    assert R.check_usable_facts_grounding(answer, _UF_FACTS) == []
+
+
+def test_usable_facts_grounding_accepts_the_records_own_fraction_scale_too():
+    """references/trade-consequence.md's own convention is symmetric: an
+    answer may quote the record's raw scale instead of the x100 percent."""
+    answer = {"prose": "NVDA is 0.34 of the book.",
+             "presented_options": [{"maps_to": "NVDA", "label": "a", "description": ""},
+                                   {"maps_to": "AVGO", "label": "b", "description": ""}]}
+    assert R.check_usable_facts_grounding(answer, _UF_FACTS) == []
+
+
+def test_usable_facts_grounding_catches_a_number_the_engine_computed_elsewhere_in_the_plan():
+    """The discriminating case against `number_provenance`: 6 is a real number
+    the engine emitted somewhere in this plan (FACTS["numbers"] carries it),
+    so the broader check would accept it. It is not part of THIS refusal's
+    usable_facts packet, and citing it here is exactly the leak #674 closes."""
+    answer = {"prose": "Your book currently holds 6 positions.",
+             "presented_options": [{"maps_to": "NVDA", "label": "a", "description": ""},
+                                   {"maps_to": "AVGO", "label": "b", "description": ""}]}
+    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
+    assert findings and "'6'" in findings[0] and "usable_facts" in findings[0], findings
+    assert R.check_number_provenance(answer, _UF_FACTS) == [], (
+        "sanity check: the plan-wide check must NOT catch this, or the two checks are not "
+        "actually testing different allow-sets")
+
+
+def test_usable_facts_grounding_catches_fewer_than_two_presented_options():
+    answer = {"prose": "NVDA is about 34% of the book.",
+             "presented_options": [{"maps_to": "NVDA", "label": "a", "description": ""}]}
+    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
+    assert findings and "fewer than two" in findings[0], findings
+
+
+def test_usable_facts_grounding_catches_zero_presented_options():
+    """The recorded-miss shape: pure process narration frames no alternative
+    at all, which is a sharper failure than framing only one."""
+    answer = {"prose": "consider could not compute a consequence for this trade."}
+    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
+    assert findings and "fewer than two" in findings[0], findings
+
+
+def test_usable_facts_grounding_abstains_when_the_answer_carries_no_surfaces():
+    _findings, looked = R.run_check("usable_facts_grounding", {}, {}, _UF_FACTS)
+    assert looked is False, "a check with nothing to inspect has abstained, not passed"
+
+
+def test_consider_refusal_concentration_keys_matches_reviews_own_constant():
+    """#674's mirrored-but-not-imported constant (see run_episodes.py's own
+    comment on why review.py cannot be `_load_module`-loaded here): this is
+    the drift test that keeps the two declarations from silently diverging,
+    the same discipline test_exclusion_reasons_constant_is_exactly_what_
+    both_schemas_declare already applies to EXCLUSION_REASONS."""
+    import importlib.util
+    engine_dir = ROOT / "skills" / "fomo-kernel" / "engine"
+    spec = importlib.util.spec_from_file_location("episode_checkers_review", engine_dir / "review.py")
+    review_module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(engine_dir))
+    try:
+        spec.loader.exec_module(review_module)
+    finally:
+        sys.path.remove(str(engine_dir))
+    assert review_module.CONSIDER_REFUSAL_CONCENTRATION_KEYS == R.CONSIDER_REFUSAL_CONCENTRATION_KEYS, (
+        "review.py and evals/run_episodes.py have drifted on which metrics keys count as "
+        "\"usable\" for a #674 refusal")
+
+
 # ── the interlocks ───────────────────────────────────────────────────────────
 
 def test_a_declared_check_with_nothing_to_inspect_reports_no_data():

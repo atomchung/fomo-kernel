@@ -89,6 +89,40 @@ There is no disclosure key for a book whose currencies could not be converted. `
 
 Pass `--prices` (an envelope in the shape [price-feed.md](price-feed.md) describes) to price the book on current market value instead of cost, and `--cash` (a `{as_of, amount, currency}` object, or a list of them for a multi-currency book) to anchor the cash balance. `--driver-map` and `--instrument-map` carry the same local classification files a review accepts.
 
+## When the whole book refuses (#674)
+
+Everything above is the recoverable case: some holding is excluded, the rest of the book still answers. Sometimes nothing is left to compute a consequence against at all, and that refusal is a different shape, not a bigger version of the one above. It fires for exactly three reasons, all genuinely non-recoverable — no corrected premise and no different ticker fixes any of them:
+
+- the canonical basis itself will not build (structural corruption a malformed ledger row leaves behind);
+- an integrity warning names a ticker but this route has no reason it can disclose for it, so it cannot be scoped to one holding the way an `oversell` warning is above;
+- every holding was excluded, leaving no usable row to size anything against.
+
+Contrast this against the paragraph above rather than reading it as a licence to widen it: a book where *one* holding is unusable is the recoverable case, and answers about the rest of the book exactly as documented above. This section is what happens when *nothing* is left.
+
+The response is still `{"status": "error", "error": "<message>"}`, and it carries one more field:
+
+```json
+{"status": "error", "error": "canonical PortfolioBasis has no usable holding: ...",
+ "usable_facts": {
+   "as_of": "2026-07-14",
+   "concentration": {"max_pos_pct": 0.42, "max_pos_ticker": "PLTR", "ai_pct": 0.61,
+                     "max_sector_pct": 0.55, "top3_pct": 0.78},
+   "commitment": {"rule": "Cap any single position at 20%.", "metric_key": "max_pos_pct",
+                  "metric_value": 0.42, "goal": "down"}}}
+```
+
+`usable_facts` is never something this call computed. It is copied, unchanged, from whatever the *last finalized review* already froze — the same `last_state.json` a later `refresh` and split resolution already read forward — filtered to two bounded pieces: `concentration` (the whole-book weight and concentration reading: `max_pos_pct`/`max_pos_ticker`/`ai_pct`/`max_sector_pct`/`top3_pct`) and `commitment` (the rule the user is actually tracking: its own words, the metric it watches, the value frozen when it was chosen, and the direction that counts as a breach). Either half is omitted when that review never froze it; the whole field is `null` when no review has ever been finalized in this root, or when one was and froze neither. Never treat `null` as a smaller version of this contract — it means no computed fact exists, and the answer that follows is [decision-framing.md](decision-framing.md)'s no-book contract instead, with no computed or frozen portfolio number anywhere in it.
+
+**What the answer owes here is framing, not narration.** The bare refusal — "supply a source," "review your exit backlog," restate the error, ask the user to fix the book — is exactly the failure this leaf exists to close; declining to compute a consequence is not declining to help the user decide.
+
+- The first visible sentence is a decision tension — what the trade-off actually is — never the engine's error message and never a request to restart the review.
+- Frame at least two of the user's own nominated options — the specific holdings *they* are weighing, gathered from the conversation, never invented. `usable_facts` carries no opinion on which tickers are on the table; that is the user's context, not the engine's.
+- For each option, state what selling (or keeping) it would commit the user to believing, and which fact in `usable_facts` it trades off — cite only fields the payload actually carries. Nothing here licenses recomputing a weight, a rule collision, or any other arithmetic the refusal could not produce; a fact absent from `usable_facts` is a fact this answer does not have, not one to estimate.
+- Never name which security to sell. This file's opening ruling — the engine computes, it never recommends — holds exactly as hard on a refusal as it does on a priced answer.
+- Say once, attached to the claim it qualifies, that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter.
+
+This is a different posture from a declared price dead end (`--prices-unavailable`, [below](#which-market-session-priced-it)): that one refuses the question outright rather than answer on cost basis. This one is a bounded framing that still answers, built from facts already on record before this call was ever made.
+
 ## Reading a rule collision
 
 For every rule currently in the user's rotation (a muted rule is excluded, matching the rotation it opted out of), the response states whether this one hypothetical trade would collide with it right now — never whether the book is generally fine.

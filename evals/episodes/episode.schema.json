@@ -127,7 +127,8 @@
           "surface_hygiene",
           "locale_purity",
           "condition_integrity",
-          "condition_check_integrity"
+          "condition_check_integrity",
+          "usable_facts_grounding"
         ]
       },
       "description": "The mechanical validators that bear on this episode. Every one is an invariant — none compares an answer against the wording the product ships today. A declared check with nothing to inspect fails the episode. An empty list is the honest `unmapped` state and requires blocked_on."
