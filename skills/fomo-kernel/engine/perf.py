@@ -183,8 +183,13 @@ def cash_reconcile_residuals(snapshots, cash_flows, fx=None, abs_floor=50.0, pct
 # ───────────────────────── 帳戶級 V_t 序列 + 三數字 ─────────────────────────
 def _fx_getter(currencies, px_index, fx_series, fx_spot):
     """回 (fx_at(ccy, i), fx_approx):每交易日的 usd_per_unit。優先 fx_series(每日,含匯損益,
-    ffill/bfill 補洞);缺 → 即期常數近似(fx_approx=True);連即期都缺 → 1.0(data_integrity
-    的 fx_gaps 已在上游揭露)。USD 恆 1。"""
+    ffill/bfill 補洞);缺 → 即期常數近似(fx_approx=True);連即期都缺 → 1.0。持股幣別
+    (cur_map 值域)不會踩到最後這個分支:呼叫端 account_perf 的 fx_spot 與
+    trade_recap.usd_view 拒答用的是同一份 fx,#612 後 usd_view 沒拒答就代表每個持股
+    幣別都已有匯率。唯一還可能落到 1.0 的是只出現在現金流(股息/利息/存提/手續費)、
+    沒有對應持股的幣別——不在 usd_view 檢查的 cur_map 定義域裡,cash_position 對這類
+    幣別本身也是同樣近似(#642)。這條近似不再對外揭露成一份 data_integrity.fx_gaps
+    清單,該鍵在此線已不存在(#612/#429)。USD 恆 1。"""
     fx_approx = False
     cols = {}
     for c in currencies:
@@ -202,7 +207,7 @@ def _fx_getter(currencies, px_index, fx_series, fx_spot):
                 fx_approx = True                      # 全窗用今日即期 = 匯損益歸零的近似
                 ser = [float(rate)] * len(px_index)
             else:
-                ser = [1.0] * len(px_index)           # 缺匯率:原幣近似(上游 fx_gaps 揭露)
+                ser = [1.0] * len(px_index)           # 缺匯率:原幣近似(僅現金流獨有幣別會踩到,見上方 docstring #642)
         cols[c] = ser
 
     def fx_at(c, i):

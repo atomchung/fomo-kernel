@@ -10,7 +10,7 @@ When the host blocks the engine's own retrieval, recovering the prices is your f
 
 `prepare` reports price availability in `review_plan.input.price_feed`:
 
-- `provenance.mode`: `engine_fetch` (the engine retrieved the prices itself), `agent_feed` (an envelope was applied), or `unavailable` (retrieval failed and no envelope was supplied).
+- `provenance.mode`: `engine_fetch` (the engine retrieved the prices itself), `agent_feed` (an envelope priced at least one requested instrument), or `unavailable` (no instrument was priced). An `fx`-only envelope reads `unavailable` here even though it was supplied and applied — `mode` is about instrument closes specifically; `recovery.outcome` below is what shows an envelope arrived at all.
 - `provenance.coverage`: how many instruments were requested, how many were priced, and which are missing.
 - `request`: present only when coverage is incomplete. It lists the exact symbols, benchmarks, currencies, and window still needed.
 
@@ -89,14 +89,29 @@ Validated against [../schemas/price-feed.schema.json](../schemas/price-feed.sche
 }
 ```
 
+`prices` and `fx` are each optional; the envelope needs at least one of them, non-empty. The shape above answers a fully unpriced book. A book refused only for a missing held-currency rate (`MissingHeldCurrencyRate`, #612) needs *only* the rate — the closes are a separate, independent gap, and demanding both to clear a refusal that is purely about the rate would push you toward inventing prices, which is forbidden (below). This is a complete repair for that refusal:
+
+```json
+{
+  "as_of": "2026-07-21",
+  "source": "Taiwan Bank spot rates",
+  "fx": [
+    {"currency": "TWD", "usd_per_unit": 0.0307, "date": "2026-07-21",
+     "source": "https://rate.bot.com.tw/xrt"}
+  ]
+}
+```
+
+`prices` is omitted entirely here (an empty `"prices": []` is equally valid). The book's own closes stay unpriced and the review still discloses that degradation — this envelope clears only the currency-conversion refusal, not the missing-price one.
+
 Field rules:
 
 - `as_of` is the non-future end-of-day date the feed represents. No row may be dated after it.
 - `source` is the feed-level provenance shown on the card. A per-row `source` overrides it for that instrument.
-- Each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency`. One row per instrument.
+- `prices` is optional (#642): omit it, or send an empty list, when all you have is an FX rate. When present, each row needs `ticker`, `close` (positive, trading currency), `date`, and `currency` — one row per instrument.
 - `history` is optional: `[date, close]` pairs. When present it must agree with `close` on the shared date.
 - `splits` is optional: `[date, ratio]` pairs, where a ten-for-one split is `10`. Supply it whenever the source shows one inside the trade history, and check for one on any position the user has held for years. Omitting it is not cosmetic, and it now costs something on both sides of the multiplication — see the section below.
-- `fx` carries USD-per-one-unit spot rates, and it is optional only while the book holds one currency. A **mixed-currency** book needs a rate for every currency it holds: without one there is no denominator its positions can be added into, so `prepare` and `consider` both refuse and name the currency instead of converting it at 1.0 (#612). Still omit a rate you cannot find — the refusal is recoverable and a guessed rate is not.
+- `fx` carries USD-per-one-unit spot rates, and it is optional only while the book holds one currency. A **mixed-currency** book needs a rate for every currency it holds: without one there is no denominator its positions can be added into, so `prepare` and `consider` both refuse and name the currency instead of converting it at 1.0 (#612). Still omit a rate you cannot find — the refusal is recoverable and a guessed rate is not. `fx` alone, with `prices` omitted, is a complete envelope (#642): the two gaps fail independently, and the rate is usually the easier of the two to look up — one spot rate on one page, against one close per instrument.
 
 ## Prices are raw observations; the engine does the split arithmetic
 
