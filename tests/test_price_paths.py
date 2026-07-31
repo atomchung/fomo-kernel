@@ -678,26 +678,90 @@ def test_acct_csv_sum_gated_hold_only():
 
 
 def test_acct_partial_broken_rollback_gated():
-    """partial 但盲算幣別回滾出負現金 = 假設破裂 → 帳戶柱降 None(不出污染數字)。"""
+    """partial 但盲算幣別回滾出負現金 = 假設破裂 → 帳戶柱降 None(不出污染數字)。
+
+    #649: this fixture is mixed (USD holdings, a TWD cash flow), so it now has
+    to carry `fx_spot` — the production path always does, because
+    `trade_recap`'s currency universe spans cash-flow rows. The rollback is
+    computed in the original currency, so this gate's verdict is unaffected by
+    the rate and still fires for its own reason."""
     px = _px_frame({"X": _lin(100, 150)})
     flows = [_cf(0, -1000, "trade"), _cf(50, -10000, "withdrawal", ccy="TWD")]
     cd = {"source": "partial", "reliable": False,
           "by_currency": {"USD": _anch(0), "TWD": _anch(-10000, reliable=False)}}
-    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"},
+                        fx_spot={"USD": 1.0, "TWD": 0.03})
     assert a["acct_twr"] is None and a["gate"]["status"] == "negative_cash_rollback", a
     assert a["gate"]["data"]["currencies"] == ["TWD"], a["gate"]
     assert a["hold_twr"] is not None, a["hold_twr"]
 
 
 def test_acct_partial_ok_discloses_unanchored():
-    """partial 且盲算桶不負 → 帳戶柱照出,basis.unanchored 記缺錨點幣別(honesty 揭露源)。"""
+    """partial 且盲算桶不負 → 帳戶柱照出,basis.unanchored 記缺錨點幣別(honesty 揭露源)。
+
+    #649: as above, a mixed fixture needs `fx_spot` before the account pillar
+    can be computed at all."""
     px = _px_frame({"X": _lin(100, 150)})
     flows = [_cf(0, -1000, "trade"), _cf(50, 10000, "deposit", ccy="TWD")]
     cd = {"source": "partial", "reliable": False,
           "by_currency": {"USD": _anch(0), "TWD": _anch(10000, reliable=False)}}
-    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"},
+                        fx_spot={"USD": 1.0, "TWD": 0.03})
     assert a["acct_twr"] is not None, a
     assert a["basis"]["unanchored"] == ["TWD"], a["basis"]
+
+
+def test_acct_refuses_a_cash_only_currency_it_has_no_rate_for():
+    """#649. A currency carried only by cash-flow rows — a dividend, an interest
+    credit, a deposit, a fee — with no holding behind it.
+
+    This is what #612's predicate cannot reach: its domain is `cur_map`, the
+    held currencies, so a US stock book plus one TWD interest row looks like a
+    single-currency book. No rate was ever requested, and `_fx_getter` then
+    added raw TWD units into a USD net value at 1.0. The whole account pillar
+    (TWR / IRR / cash drag) rests on V_t = holdings + cash, so no single field
+    can be kept.
+
+    Both halves on purpose: a refusal test alone stays green if the supply side
+    stops delivering rates entirely — a bill this repository keeps paying. The
+    converted counterweight is what makes the pair mean "the rate arrived and
+    was actually used"."""
+    px = _px_frame({"X": _lin(100, 150)})
+    flows = [_cf(0, -1000, "trade"), _cf(50, 300000, "interest", ccy="TWD")]
+    cd = {"source": "anchored", "reliable": True,
+          "by_currency": {"USD": _anch(0), "TWD": _anch(300000)}}
+
+    refused = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"})
+    assert refused == {"gate": {"status": "missing_fx",
+                                "data": {"currencies": ["TWD"]}}}, refused
+    assert "acct_twr" not in refused and "hold_twr" not in refused, refused
+
+    priced = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"},
+                             fx_spot={"USD": 1.0, "TWD": 0.03})
+    assert priced["gate"] is None, priced["gate"]
+    # 300,000 TWD converts to 9,000 USD: cash really is the larger side
+    # (holdings run 1,000 -> 1,500), but not at "300,000 dollars" magnitude.
+    # avg_cash_weight is the direct reading of that.
+    assert 0.7 < priced["avg_cash_weight"] < 0.75, priced["avg_cash_weight"]
+    assert priced["basis"]["fx_approx"] is True, priced["basis"]
+    assert priced["hold_twr"] is not None and abs(priced["hold_twr"] - 0.5) < 1e-9, priced
+
+
+def test_acct_single_currency_book_still_needs_no_rate():
+    """#649's compatibility half: a pure TWD book has no second currency to add
+    into, so 1.0 is an identity rather than a gap.
+
+    The old `all_ccys` unioned `"USD"` unconditionally, which made "only one
+    currency carries value" and "a rate is missing" the same set size. Dropping
+    that union is what separates them, and this test is the boundary itself."""
+    px = _px_frame({"X": _lin(100, 150)})
+    flows = [_cf(0, -1000, "trade", ccy="TWD")]
+    cd = {"source": "anchored", "reliable": True, "by_currency": {"TWD": _anch(1000)}}
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "TWD"})
+    assert a["gate"] is None, a["gate"]
+    assert abs(a["acct_twr"] - 0.25) < 0.02, a["acct_twr"]
+    assert abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+    assert a["basis"]["fx_approx"] is False, a["basis"]
 
 
 def test_acct_fx_daily_series_captures_currency_gain():

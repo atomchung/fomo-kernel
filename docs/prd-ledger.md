@@ -114,7 +114,7 @@ Every incoming source records the book at its own time (#549): a holdings view r
 - Store every event in original currency with explicit `market` and `currency`.
 - Normalize Taiwan tickers to the data-provider convention when fetching prices.
 - Convert only for aggregate presentation; preserve original-currency detail for brokerage reconciliation.
-- Use cached rates offline and disclose the rate date. If no rate exists, show original currencies rather than guessing.
+- Use cached rates offline and disclose the rate date. If no rate exists, the aggregate that would have needed it is refused rather than guessed: a factor of 1.0 is a different number, not a rougher one (#612, and #649 for a currency that reaches the account total through a cash-flow row alone). Per-currency detail stays in its own currency, as above.
 - Compare each market sub-portfolio with its own benchmark. Never synthesize a cross-market total alpha.
 - Keep behavioral concentration global because one user can hold the same driver across markets.
 

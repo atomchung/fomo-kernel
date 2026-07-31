@@ -271,12 +271,24 @@ def cash_position(cash_flows, held_mv, anchor=None, prev_end=None, fx=None):
     - cash_balance：聚合 USD；cash_weight = 現金 /（持倉市值 + 現金），分母 ≤0 → None。
     - recent_net_deposit：本期（prev_end 後）外部淨流入，per-currency 換 USD 加總。
     - reliable：所有有現金流的幣別都有錨點=True（source=anchored）；部分=partial；全無=csv_sum。
-    - by_currency：{ccy: {balance(原幣), source, reliable}} per-currency 明細（呈現層可展開、可只揭露缺錨點的幣別）。"""
+    - by_currency：{ccy: {balance(原幣), source, reliable}} per-currency 明細（呈現層可展開、可只揭露缺錨點的幣別）。
+
+    Raises :class:`MissingAggregateCurrencyRate` when two cash buckets would be
+    added together and one of them has no rate (#649). A factor of 1.0 is the
+    identity of a single-currency world, never a stand-in for a rate that did
+    not arrive: one TWD interest row summed into a USD total at face value put
+    a balance 28x its real size on the card, under ``source: "anchored"``.
+    Whether the *holdings* are in the same currency as these buckets is one
+    question up — :func:`aggregate_currencies` owns it, because only the caller
+    sees both sides."""
     if isinstance(prev_end, str):
         prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
     fx = fx or {}
     anchors = [anchor] if isinstance(anchor, dict) else list(anchor or [])
     currencies = sorted({cf.get("currency", "USD") for cf in cash_flows}) or ["USD"]
+    gaps = missing_aggregate_fx_rates(currencies, fx)
+    if gaps:
+        raise MissingAggregateCurrencyRate(currencies, gaps)
 
     def _anchor_for(c):
         # 帶 currency 的錨點按幣別配對；無 currency 的錨點只在單一幣別時對應（向後相容舊單桶格式）。
@@ -509,25 +521,31 @@ FX_MISSING_GAP_CODES = ("fx_unavailable", "network_disabled", "provider_missing"
                         "feed_incomplete")
 
 
-class MissingHeldCurrencyRate(ValueError):
-    """A held currency this aggregate would convert has no rate (#612).
+class MissingAggregateCurrencyRate(ValueError):
+    """A currency this aggregate would convert has no rate (#612, widened #649).
 
     Carries the currencies as data — the CLI frame formats them, and nothing
     downstream has to read the sentence back out of a string.
+
+    #649 widened what ``currencies`` may hold. It used to be the *held* set, so
+    the sentence said "this book holds"; a currency that reaches the account
+    aggregate through a cash-flow row alone is equally unaddable and equally
+    invisible in a holdings list, so the sentence names the aggregate's span
+    instead of claiming every currency in it is held.
     """
 
-    def __init__(self, held, missing):
-        self.held = list(held)
+    def __init__(self, currencies, missing):
+        self.currencies = list(currencies)
         self.missing = list(missing)
         self.cause_codes = []
         super().__init__(self._sentence())
 
     def _sentence(self):
-        return (f"this book holds {', '.join(self.held)} and no FX rate covers "
-                f"{', '.join(self.missing)}, so its holdings cannot be added into one "
-                "denominator. Every weight, concentration figure, ranking and stored "
-                f"metric would be computed with 1 {self.missing[0]} treated as 1 USD. "
-                "Supply the rate through --prices (the `fx` block in "
+        return (f"this account's aggregate spans {', '.join(self.currencies)} and no FX "
+                f"rate covers {', '.join(self.missing)}, so its amounts cannot be added "
+                "into one denominator. Every weight, concentration figure, ranking, cash "
+                f"balance and stored metric would be computed with 1 {self.missing[0]} "
+                "treated as 1 USD. Supply the rate through --prices (the `fx` block in "
                 "references/price-feed.md), then run prepare again.")
 
     def with_cause(self, gaps):
@@ -543,32 +561,74 @@ class MissingHeldCurrencyRate(ValueError):
         return self
 
 
-def held_currency_fx_gaps(cur_map, fx):
-    """The held currencies a cross-currency conversion would silently call USD.
+def aggregate_currencies(cur_map, cash_flows=None):
+    """Every currency whose amounts can enter the account-level aggregate (#649).
+
+    The one builder. #612 put the FX refusal in the primitive that converts
+    *holdings*, and its domain was ``cur_map`` — so a currency that reaches the
+    account total only through a cash-flow row (a dividend, an interest credit,
+    a custody fee, a wire) was invisible to it. It was invisible to the *fetch*
+    decision for the same reason, which is worse: a USD stock book with one TWD
+    interest row never requested a TWD rate, so ``cash_position`` added raw TWD
+    units into a USD total at 1.0 while ``currency_meta.mixed`` said ``false``.
+
+    Two domains are deliberately outside this set.
+
+    * **The display currency.** ``fx_request_currencies`` widens the *request*
+      with the renderer's target, which the account never converts; a missing
+      display rate stays a rendering degradation, exactly as #612 requires.
+    * **A cash anchor in a currency with no flow.** ``cash_position`` buckets
+      by cash-flow currency and ``_anchor_for`` pairs anchors into those
+      buckets, so such an anchor is dropped rather than converted — it cannot
+      widen what gets added together, and treating it as if it could would
+      refuse a review over an amount nothing reads.
+
+    ``cash_flows`` is :func:`load_cash_flows` output. Passing it without its
+    ``trade_rows`` estimate cannot narrow the answer: that fallback derives each
+    row's currency from a trade row, and every trade row's currency is already a
+    value of ``cur_map``.
+    """
+    held = {c for c in (cur_map or {}).values() if c}
+    cash = {(cf.get("currency") or "USD") for cf in (cash_flows or [])}
+    return sorted(held | cash)
+
+
+def missing_aggregate_fx_rates(currencies, fx):
+    """The currencies a cross-currency conversion would silently call USD.
 
     The single predicate behind every FX refusal in this repository (#612), so a
-    lane that aggregates inherits it instead of restating it. Two properties are
-    load-bearing:
+    lane that aggregates inherits it instead of restating it. Its domain is
+    whatever :func:`aggregate_currencies` built for that lane — the held set for
+    the holdings view, the account-wide set for the review — never a set
+    assembled at the call site. Two properties are load-bearing:
 
     * A **single-currency** book — including a pure non-USD one — aggregates
       itself self-consistently and never needed a rate, so it is never a gap.
       That is the same "單一幣別組合...零行為變化" convention the module keeps.
-    * The domain is ``cur_map``, which only ever holds *held* currencies. A
-      display currency requested by ``fx_request_currencies`` is not in it, so a
-      missing display rate stays a rendering degradation and can never reach
-      here.
+    * The domain never contains a currency the aggregate does not convert, which
+      is what keeps a requested display rate a rendering degradation.
 
-    The keys are read **verbatim**, never normalized: ``usd_view``'s factor
+    The codes are read **verbatim**, never normalized: ``usd_view``'s factor
     lookup is ``fx.get(cur_map.get(t, "USD"), 1.0)``, so a predicate that
     case-folded or trimmed them could call a currency covered that the lookup
     then misses, and the identity factor would be back through the guard's own
     front door. Agreeing by construction is worth more here than tolerating a
     dirty currency code, which fails closed and is fixable in the input.
     """
-    held = {c for c in (cur_map or {}).values() if c}
-    if len(held) < 2:
+    ccys = {c for c in (currencies or ()) if c}
+    if len(ccys) < 2:
         return []
-    return sorted(c for c in held if c not in (fx or {}))
+    return sorted(c for c in ccys if c not in (fx or {}))
+
+
+def held_currency_fx_gaps(cur_map, fx):
+    """The predicate over the holdings view's own domain (#612).
+
+    Kept as the name ``usd_view`` and ``consequence.portfolio_state`` read,
+    and now literally the shared predicate over the shared builder rather than
+    a second walk of ``cur_map``.
+    """
+    return missing_aggregate_fx_rates(aggregate_currencies(cur_map), fx)
 
 
 def fetch_fx(currencies, bundle=None, feed=None):
@@ -633,7 +693,7 @@ def usd_view(rts, held, last_px, cur_map, fx):
     ret(比率)與 hold(天數)不受等比縮放影響。
     ⚠️ 只給「聚合」消費;per-ticker 呈現(ticker_diagnosis / best_worst / 卡上單檔數字)一律用原幣原物件。
 
-    Raises :class:`MissingHeldCurrencyRate` when a held currency has no rate
+    Raises :class:`MissingAggregateCurrencyRate` when a held currency has no rate
     (#612). The check is *here*, at the one place the conversion happens, rather
     than at each consumer: every aggregate reader — weights, concentration,
     rankings, ``what_if``, the diagnosis order, the persisted reconciliation
@@ -650,7 +710,7 @@ def usd_view(rts, held, last_px, cur_map, fx):
     """
     gaps = held_currency_fx_gaps(cur_map, fx)
     if gaps:
-        raise MissingHeldCurrencyRate(sorted({c for c in (cur_map or {}).values() if c}), gaps)
+        raise MissingAggregateCurrencyRate(aggregate_currencies(cur_map), gaps)
     f = lambda t: fx.get(cur_map.get(t, "USD"), 1.0)
     rts_u = [dict(r, buy_px=r["buy_px"] * f(r["ticker"]), sell_px=r["sell_px"] * f(r["ticker"]))
              for r in rts]
@@ -2602,7 +2662,16 @@ def main():
     # #605:一次請求、一份 bundle。收盤價、分割觀測與匯率出自同一次回應,所以這張卡
     # 上的價、分割與匯率不可能來自三個不同瞬間(實測 ^VIX 的末筆收盤在相隔數秒的兩次
     # 呼叫間就不同了)。請求必須在分割套用之前組好——理由見 market_request。
-    cur_map, currencies, cur_conflicts = currency_map(rows)
+    cur_map, _held_currencies, cur_conflicts = currency_map(rows)
+    # #649: the requested currency universe must cover every currency that can
+    # enter the aggregate, not only the held ones. The cash-flow currencies have
+    # to be known before this line, while their *amounts* are only correct after
+    # splits are applied — so this borrows `load_cash_flows` for the currencies
+    # alone, without `trade_rows`: that estimate's rows take their currency from
+    # a trade row, which is already a `cur_map` value, so omitting it cannot
+    # narrow the universe. One extra CSV parse buys the thing this issue is
+    # about — the fetch decision and the refusal predicate reading one set.
+    currencies = aggregate_currencies(cur_map, load_cash_flows(paths))
     requested_display = str(os.environ.get("TR_DISPLAY_CURRENCY") or "").strip().upper()
     bundle = market_data.resolve(
         market_request(rows, date_end, prev_end, currencies=currencies,
@@ -2668,6 +2737,17 @@ def main():
     # during prepare, even when that currency is not held in the portfolio.
     fx_currencies = fx_request_currencies(currencies, requested_display)
     fx, fx_err = fetch_fx(fx_currencies, bundle=bundle) if mixed_ccy else ({"USD": 1.0}, None)
+    # #649: the acquisition above and this refusal read the *same* set. Before,
+    # the fetch decision was made over held currencies while `cash_position` and
+    # `account_perf` went on to convert a wider one, so a currency could be
+    # invisible to the request and visible to the total — no rate was ever asked
+    # for, and none was ever reported missing. Raised here rather than at each
+    # consumer, and upstream of the card, the state write and the ledger ingest,
+    # so a rate that genuinely did not arrive withholds the account-level
+    # aggregates instead of standing beside a wrong one with a disclaimer.
+    aggregate_fx_gaps = missing_aggregate_fx_rates(currencies, fx)
+    if aggregate_fx_gaps:
+        raise MissingAggregateCurrencyRate(currencies, aggregate_fx_gaps).with_cause(bundle.gaps)
     # 價格可得性(#289):這次的價從哪來、覆蓋到哪、還缺什麼——全部機讀化。
     # 缺價不是「零報酬」也不是「下市」,是資料可得性故障,必須對用戶與 QA 都保持可見。
     priced = {t for t in tickers if t in last_px}
@@ -2692,13 +2772,11 @@ def main():
             earliest_trade=start, reason=price_feed.classify_error(yf_err),
             missing=price_provenance["coverage"]["missing"])
     if mixed_ccy:
-        try:
-            rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
-        except MissingHeldCurrencyRate as exc:
-            # Not a second check — the predicate lives in usd_view. This frame
-            # only owns the acquisition codes (#611's machine-readable gaps),
-            # so it attaches them and re-raises for the one CLI error below.
-            raise exc.with_cause(bundle.gaps)
+        # `usd_view` keeps its own refusal for the lanes that call it directly
+        # (`consequence.portfolio_state`, unit tests). It cannot fire here: its
+        # domain is the held currencies, a subset of the set the check above
+        # already proved covered, so nothing on this path re-derives the rule.
+        rts_u, held_u, lastpx_u = usd_view(rts, held, last_px, cur_map, fx)
         decision_rts_u = [r for r in rts_u
                           if driver(r["ticker"])[0] not in BENCH_SELF
                           and not instrument_policy.is_diversified_allocation(r["ticker"])]
@@ -2952,12 +3030,12 @@ def main():
 
 if __name__ == "__main__":
     # #612: one controlled CLI error, never a traceback, and never a partial
-    # artifact — the refusal is raised inside `usd_view`, upstream of the card,
-    # the state write and the ledger ingest, so nothing has been produced yet.
-    # Caught at the process frame rather than at the call site so any later
-    # aggregation path in `main()` inherits the same single error line.
+    # artifact — the refusal is raised right after acquisition (#649), upstream
+    # of the card, the state write and the ledger ingest, so nothing has been
+    # produced yet. Caught at the process frame rather than at the call site so
+    # any later aggregation path in `main()` inherits the same single error line.
     try:
         main()
-    except MissingHeldCurrencyRate as exc:
+    except MissingAggregateCurrencyRate as exc:
         print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)

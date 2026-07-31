@@ -1177,8 +1177,9 @@ def test_usd_view_refuses_a_held_currency_it_has_no_rate_for():
     try:
         tr.usd_view([], {"2330.TW": (1, 900.0), "AAPL": (1, 100.0)}, {},
                     {"2330.TW": "TWD", "AAPL": "USD"}, {"USD": 1.0})
-    except tr.MissingHeldCurrencyRate as exc:
-        assert exc.missing == ["TWD"] and exc.held == ["TWD", "USD"], (exc.missing, exc.held)
+    except tr.MissingAggregateCurrencyRate as exc:
+        assert exc.missing == ["TWD"] and exc.currencies == ["TWD", "USD"], \
+            (exc.missing, exc.currencies)
         assert "TWD" in str(exc) and "--prices" in str(exc), str(exc)
     else:
         raise AssertionError("a held currency with no rate must refuse, never convert at 1.0")
@@ -1188,10 +1189,11 @@ def test_held_currency_fx_gaps_leaves_single_currency_and_display_only_books_alo
     """The two compatibility halves of the same predicate (#612).
 
     A single-currency book — including a pure non-USD one — aggregates itself
-    self-consistently and never asked for a rate, so it is not a gap. And the
-    predicate's domain is `cur_map`, which only ever holds *held* currencies:
-    the display currency `fx_request_currencies` widens the request with is not
-    in it, so a missing display rate stays a rendering degradation."""
+    self-consistently and never asked for a rate, so it is not a gap. And this
+    lane's domain is the *held* currencies: the display currency
+    `fx_request_currencies` widens the request with is not in it, so a missing
+    display rate stays a rendering degradation. #649 widened what the *review*
+    lane's domain is without touching either half of this one."""
     assert tr.held_currency_fx_gaps({"2330.TW": "TWD"}, {"USD": 1.0}) == [], \
         "a pure TWD book aggregates itself and must not require a rate"
     _, held_u, _ = tr.usd_view([], {"2330.TW": (1, 900.0)}, {}, {"2330.TW": "TWD"}, {"USD": 1.0})
@@ -1208,6 +1210,97 @@ def test_held_currency_fx_gaps_leaves_single_currency_and_display_only_books_alo
     # guard's own front door — so a dirty code fails closed instead.
     assert tr.held_currency_fx_gaps({"2330.TW": "twd", "AAPL": "USD"},
                                     {"USD": 1.0, "TWD": 1 / 30}) == ["twd"]
+
+
+def test_aggregate_currencies_spans_cash_flow_rows_not_only_holdings():
+    """#649. The one builder every FX decision reads.
+
+    #612's domain was `cur_map`, so a currency that reaches the account total
+    through a cash-flow row alone — a dividend, an interest credit, a custody
+    fee — was invisible to it *and* to the fetch decision that shares it. A USD
+    stock book with one TWD interest row therefore never requested a TWD rate,
+    and `cash_position` added raw TWD units into a USD total at 1.0.
+    """
+    flows = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD"),
+             dict(date=dt.date(2025, 4, 1), amount=1000000.0, kind="interest", currency="TWD")]
+    assert tr.aggregate_currencies({"AAPL": "USD", "MSFT": "USD"}, flows) == ["TWD", "USD"], \
+        "a cash-only currency is still added into the base aggregate"
+    # Both compatibility halves: a genuinely single-currency book stays single,
+    # whichever side of it the currency came from.
+    assert tr.aggregate_currencies({"AAPL": "USD"}, []) == ["USD"]
+    assert tr.aggregate_currencies({"2330.TW": "TWD"},
+                                   [dict(currency="TWD")]) == ["TWD"]
+    # A blank Currency column is USD on both sides, matching `load`/`load_cash_flows`.
+    assert tr.aggregate_currencies({"AAPL": "USD"}, [{}]) == ["USD"]
+
+    # The review lane builds the universe from `load_cash_flows(paths)` — no
+    # `trade_rows` — because the estimate that argument unlocks needs amounts
+    # that are only correct after splits are applied, which cannot happen before
+    # the market request is composed. That omission is safe for exactly one
+    # reason, asserted here rather than reasoned about: the estimated rows take
+    # their currency from a trade row, and every trade row's currency is already
+    # a value of `cur_map`.
+    rows = [dict(date=dt.date(2025, 1, 6), ticker="2330.TW", side="buy", qty=1000.0,
+                 price=550.0, currency="TWD", market="TW")]
+    estimated = tr.load_cash_flows([], trade_rows=rows)
+    assert estimated and all(f.get("estimated") for f in estimated), estimated
+    cur_map, _held, _conflicts = tr.currency_map(rows)
+    assert tr.aggregate_currencies(cur_map, estimated) == tr.aggregate_currencies(cur_map), \
+        "the qty x price estimate must never widen the universe"
+
+
+def test_cash_position_refuses_a_second_bucket_it_has_no_rate_for():
+    """#649, at the primitive that adds the buckets together.
+
+    The reported balance was 1,005,000 on a book whose real one is 35,849 — 28x
+    — while `source: "anchored"`, `reliable: true` and `unanchored: []` all said
+    the number was as solid as this product ever claims. A missing rate is not a
+    gap in that number, it is a different number, so the bucket sum refuses
+    rather than falling back to 1.0.
+
+    The converted counterweight is deliberate: a refusal test on its own stays
+    green if the supply side stops delivering rates entirely.
+    """
+    flows = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD"),
+             dict(date=dt.date(2025, 4, 1), amount=1000000.0, kind="interest", currency="TWD")]
+    anchors = [{"as_of": "2025-04-02", "amount": 1000000.0, "currency": "TWD"},
+               {"as_of": "2025-04-02", "amount": 5000.0, "currency": "USD"}]
+    try:
+        tr.cash_position(flows, held_mv=34100.0, anchor=anchors)
+    except tr.MissingAggregateCurrencyRate as exc:
+        assert "TWD" in exc.missing and "TWD" in str(exc), (exc.missing, str(exc))
+    else:
+        raise AssertionError("two cash buckets and no rate must refuse, never sum at 1.0")
+
+    cp = tr.cash_position(flows, held_mv=34100.0, anchor=anchors,
+                          fx={"USD": 1.0, "TWD": 0.030849})
+    assert _approx(cp["balance"], 35849.0), cp["balance"]          # 1,000,000 x 0.030849 + 5,000
+    assert 0.51 < cp["weight"] < 0.52, cp["weight"]                 # not the 0.967 of the 1.0 sum
+    assert cp["by_currency"]["TWD"]["balance"] == 1000000.0, cp     # per-currency stays raw
+
+
+def test_cash_position_single_bucket_and_flowless_anchor_keep_the_identity():
+    """#649's two compatibility halves at this primitive.
+
+    A single bucket — including a pure non-USD one — is the aggregate currency
+    itself, so its factor is an identity and no rate was ever needed. And an
+    anchor in a currency no cash flow created is *dropped* by `_anchor_for`
+    rather than converted, so it can never widen what is added together;
+    refusing a review over it would block a book on an amount nothing reads.
+    """
+    twd_only = [dict(date=dt.date(2025, 1, 10), amount=-100000.0, kind="trade", currency="TWD")]
+    cp = tr.cash_position(twd_only, held_mv=500000.0,
+                          anchor={"as_of": "2025-01-05", "amount": 300000.0})
+    assert _approx(cp["balance"], 200000.0), cp["balance"]
+
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchors = [{"as_of": "2025-01-01", "amount": 500.0, "currency": "TWD"},   # no TWD flow
+               {"as_of": "2025-01-01", "amount": 5000.0, "currency": "USD"}]
+    assert tr.aggregate_currencies({"AAPL": "USD"}, usd_only) == ["USD"], \
+        "an anchor with no matching bucket must not widen the universe"
+    cp2 = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchors)
+    assert list(cp2["by_currency"]) == ["USD"], cp2["by_currency"]
+    assert _approx(cp2["balance"], -15000.0), cp2["balance"]
 
 
 def test_fetch_fx_usd_only_is_offline_noop():
