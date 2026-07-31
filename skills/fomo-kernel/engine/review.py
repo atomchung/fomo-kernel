@@ -2864,26 +2864,49 @@ def _initial_thesis_id(cycle_id):
     return "initial_thesis_" + hashlib.sha256(str(cycle_id).encode("utf-8")).hexdigest()[:12]
 
 
-def _initial_thesis_question(ticker, pos, cost, card, state, language):
+def _initial_thesis_question(ticker, pos, cost, card, state, language, recalled=None):
     """One first-review entry-thesis capture (#291) grounded in ticker + cost.
 
     The stem cites the engine-owned cost basis (the deterministic per-position
     magnitude the engine stores; live-price weights are not persisted). Both the
     stem number and the stored `cost_basis` come from the same value so the card
     context and the recorded event cannot drift.
+
+    ``recalled`` is a ``_recalled_entry_statement`` result: the user's own words
+    about this ticker, recorded through ``consider`` no later than this cycle's
+    entry. When one exists the stem stops asking the user to reconstruct a
+    motive from memory and shows them what they actually said, dated, so the
+    question becomes confirm-or-correct (#636). The words are inserted verbatim
+    and never truncated, translated or paraphrased — the same rule
+    schemas/decision-context.schema.json puts on storing them.
+
+    The choice set, the event and the question budget are deliberately
+    unchanged: this is the same question asked better in the same slot, not an
+    extra one. What a different answer branches to is unchanged too, so the
+    recall cannot turn into the #429 shape of a question nothing consumes.
     """
     cycle_id = pos.get("cycle_id")
     currency = str(pos.get("currency") or "USD")
     amount = _format_notional(cost, currency)
     importance, basis = _ticker_importance(card, state, ticker)
     because = _asked_because(basis, language)
+    said = (recalled or {}).get("reason") or (recalled or {}).get("why_now")
     if str(language).lower().startswith("en"):
-        stem = (f"You are holding {ticker} at a cost basis of about {amount}. "
-                "When you first entered this position, what was your thesis?")
+        stem = f"You are holding {ticker} at a cost basis of about {amount}. "
+        if said:
+            stem += (f"On {recalled['created'].isoformat()} you said: “{said}” "
+                     "Was that the thesis you entered on?")
+        else:
+            stem += "When you first entered this position, what was your thesis?"
         if because:
             stem += f" (Asked because {because}.)"
     else:
-        stem = f"你持有 {ticker}，成本約 {amount}。當初第一次進場時，你的論點是什麼？"
+        stem = f"你持有 {ticker}，成本約 {amount}。"
+        if said:
+            stem += (f"{recalled['created'].isoformat()} 你說：「{said}」"
+                     "當初進場的論點就是這個嗎？")
+        else:
+            stem += "當初第一次進場時，你的論點是什麼？"
         if because:
             stem += f"（問這題是因為{because}）"
     row = {
@@ -2893,6 +2916,15 @@ def _initial_thesis_question(ticker, pos, cost, card, state, language):
         "cost_basis": cost, "currency": currency,
         "_importance": importance, "_importance_basis": basis, "_tie": 1,
     }
+    if said:
+        # Provenance for the agent and the receipt: which stored statement the
+        # stem quoted, so a reader can check the quote against the source
+        # rather than trusting the rendered stem.
+        row["recalled_statement"] = {
+            "evaluation_id": recalled.get("evaluation_id"),
+            "created": recalled["created"].isoformat(),
+            "quoted": said,
+        }
     if because:
         row["asked_because"] = because
     row["question_opportunity"] = question_surface.build_opportunity(row, language)
@@ -2915,7 +2947,7 @@ def _rejection(id_, kind, reason, cycle_id=None):
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
                     route=None, missing_thesis_positions=None, tier=None,
-                    condition_questions=None):
+                    condition_questions=None, evaluation_recall=None):
     """Return (queue, selection_report). The report states, plan-internally, how
     the route's density band was filled: the eligible/selected counts, why the
     queue fell short of the route minimum, and every candidate rejected with its
@@ -3056,7 +3088,9 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
             cost = card_renderer._finite_number(pos.get("cost"))
             if cost is None or cost <= 0:
                 continue  # cannot ground the stem in a concrete magnitude
-            initial_candidates.append(_initial_thesis_question(ticker, pos, cost, card, state, language))
+            initial_candidates.append(_initial_thesis_question(
+                ticker, pos, cost, card, state, language,
+                recalled=_recalled_entry_statement(evaluation_recall, ticker, cycle_id)))
         initial_candidates.sort(key=lambda row: (-float(row.get("_importance") or 0), str(row.get("id"))))
         candidates.extend(initial_candidates[:INITIAL_THESIS_LIMIT])
         initial_overflow = initial_candidates[INITIAL_THESIS_LIMIT:]
@@ -3878,7 +3912,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         card, state, active, previous, language, recent_exits, by_cycle, due_revisits,
         problem_stats, rule_history, horizon_markers, route=route,
         missing_thesis_positions=missing, tier=review_tier["tier"],
-        condition_questions=condition_questions)
+        condition_questions=condition_questions,
+        evaluation_recall=_evaluation_recall(root))
     question_selection["rejected"].extend(condition_deferred)
     candidate_rules = _candidate_rules(card, state, language)
     plan = {
@@ -6414,6 +6449,99 @@ def _fold_evaluations(rows):
         if isinstance(row, dict) and row.get("evaluation_id"):
             latest[row["evaluation_id"]] = row
     return latest
+
+
+def _evaluation_recall(root):
+    """What the user already told us, in their own words, about a ticker.
+
+    ``consider`` stores the user's exact ``reason`` and ``why_now`` on
+    ``trade_evaluations.jsonl`` (schemas/decision-context.schema.json: stored
+    verbatim, never rewritten or translated). Nothing outside ``consider`` ever
+    read that text, so a first review asked its entry-motive question from
+    scratch — offering five buckets to a user who had already answered in their
+    own language, and storing a choice ``evals/run_episodes.py`` still lists in
+    ``KNOWN_UNWIRED``. This returns the text so ``_question_queue`` can show it
+    back instead of asking someone to reconstruct it from memory (#636).
+
+    Returns ``{ticker: [statement, ...]}``, each list oldest ``created`` first.
+    Cycle matching belongs to the caller, which is the layer that knows which
+    cycle a ticker is currently in.
+
+    Two scope choices worth stating, because both differ from
+    ``_evaluation_reconciliation`` directly below:
+
+    * ``decision`` is not read at all. A resolved evaluation is still something
+      the user said, so that function's open-only filter is the wrong one here.
+    * A statement with neither ``reason`` nor ``why_now`` is dropped rather than
+      returned empty. ``consider`` may run with no ``--decision-context``, and a
+      recalled blank is worse than the canned question it would replace.
+
+    Like that function this states a fact — "you said this, on this date" — and
+    never a cause. Nothing here claims a position was opened *because* of a
+    statement; ``premise`` is what the user contemplated, not what they did.
+    """
+    recall = {}
+    for row in _fold_evaluations(thesis.read_jsonl(_evaluation_path(root))).values():
+        premise = row.get("premise") or {}
+        ticker = premise.get("ticker")
+        context = row.get("context") or {}
+        reason = context.get("reason")
+        why_now = context.get("why_now")
+        if not ticker or not (reason or why_now):
+            continue
+        try:
+            created = dt.date.fromisoformat(str(row.get("created")))
+        except (TypeError, ValueError):
+            continue
+        recall.setdefault(str(ticker), []).append({
+            "evaluation_id": row.get("evaluation_id"),
+            "created": created,
+            "reason": reason,
+            "why_now": why_now,
+        })
+    for statements in recall.values():
+        statements.sort(key=lambda item: (item["created"], str(item.get("evaluation_id") or "")))
+    return recall
+
+
+def _cycle_start_date(cycle_id):
+    """The entry date encoded in a ``trade_recap`` cycle id, or None.
+
+    The contract is ``trade_recap.py``'s: ``"{ticker}#{start}#{seq}"``, with
+    ``"{ticker}#unknown"`` for a position whose opening trade is not in the
+    supplied history. The unknown form returns None rather than guessing — a
+    recalled statement must not attach to a cycle whose start nobody knows.
+    """
+    parts = str(cycle_id or "").split("#")
+    if len(parts) < 2:
+        return None
+    try:
+        return dt.date.fromisoformat(parts[1])
+    except ValueError:
+        return None
+
+
+def _recalled_entry_statement(recall, ticker, cycle_id):
+    """The user's latest own-words statement recorded no later than this
+    cycle's entry, or None.
+
+    "No later than the entry" is what makes this an *entry* thesis rather than
+    a later add: an evaluation recorded after the position opened describes a
+    decision the entry question is not asking about. Same-day counts — the
+    contemplation and the fill routinely land on one date.
+
+    The latest qualifying statement wins. An earlier one it superseded is not
+    the user's current account of why they entered, and showing the oldest
+    would be the same memory-reconstruction problem in a new place.
+    """
+    start = _cycle_start_date(cycle_id)
+    if start is None:
+        return None
+    eligible = [item for item in (recall or {}).get(str(ticker), [])
+                if item["created"] <= start]
+    if not eligible:
+        return None
+    return eligible[-1]
 
 
 def _evaluation_reconciliation(root, rows, date_end):
