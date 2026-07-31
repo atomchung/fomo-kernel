@@ -539,6 +539,18 @@ _ROUTES_NOT_DRIVEN = {
     # call-graph argument: it is pinned by
     # tests/test_review_v2.py::test_add_cash_refuses_when_more_than_the_anchor_moved.
     "add-cash": "delegates to prepare and refuses any engine_state drift outside cash",
+    # `finalize` (#403) reaches the book through exactly one call,
+    # `_resolve_rationale_subject`, and only to answer the question
+    # `record-rationale` — driven above — asks of it: is this ticker an open
+    # position, and which cycle. It reads no share count, no cost and no weight,
+    # so no number on the card or in the bundle moves with the split basis. And
+    # the one thing that could go wrong there cannot reach the review: a book
+    # that failed to resolve the subject is receipted as `rationale_error`
+    # beside a card that still commits, per the owner's 2026-07-31 ruling that
+    # a rationale and its neighbours are independent outcomes with separate
+    # receipts. This is a mechanism, not a call-graph argument: it is pinned by
+    # tests/test_review_v2.py::test_a_rationale_that_cannot_be_recorded_does_not_fail_the_review.
+    "finalize": "reads the book only to resolve a rationale subject; failure is receipted, not fatal",
 }
 
 

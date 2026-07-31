@@ -474,7 +474,8 @@ def test_unmapped_never_turns_into_a_failure():
 # `state:` proofs have something truthful to check against.
 CONSUMER_PLAN = {"state_snapshot": {"thesis_states": [], "headline_motive_events": [],
                                     "due_revisits": [], "problem_stats": {},
-                                    "condition_slots_due": []}}
+                                    "condition_slots_due": [],
+                                    "position_rationales": []}}
 
 
 def _with_consumers(consumers, unwired):

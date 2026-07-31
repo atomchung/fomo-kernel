@@ -37,6 +37,11 @@ SUITES = [
     # later slice proves a reader quotes it, and this suite says so rather than
     # asserting the capability it does not have.
     ("Position rationale stream (#403 Front B)", "tests/test_position_rationale.py"),
+    # #403 integration: the direct entry and the next review's reader. Its first
+    # test is the slice's acceptance condition — a statement recorded outside a
+    # review is quoted back by the next one — and until that passes the stream is
+    # a writer without a reader (#429), not memory.
+    ("Rationale direct entry and next-review reader (#403)", "tests/test_rationale_review.py"),
     ("Snapshot-anchored ledger", "tests/test_ledger.py"),
     ("PortfolioBasis current-book contract (#484)", "tests/test_portfolio_basis.py"),
     ("Exit revisit and swap", "tests/test_revisit.py"),

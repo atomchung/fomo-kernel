@@ -201,7 +201,8 @@
               "initial_thesis",
               "exit_consistency",
               "condition_crossing",
-              "condition_basis"
+              "condition_basis",
+              "rationale_refresh"
             ]
           },
           "ticker": {
@@ -448,6 +449,37 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "The user's words, verbatim from schemas/decision-context.schema.json's `reason` (or `why_now` when only that is present). Never truncated, translated or paraphrased -- the same rule that schema puts on storing them."
+              }
+            }
+          },
+          "prior_rationale": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["statement", "stated_at", "event_id"],
+            "description": "rationale_refresh only (#403): the holding reason the user last recorded for this cycle, carried so the question quotes their own words instead of asking them to reconstruct it. A fact and never a cause -- it says they said this, on this date, and asserts nothing about whether it is still true, which is the entire point of asking. The same boundary `recalled_statement` draws just above. Absent whenever nothing is on file for the cycle: a position with no recorded reason is not a refresh, and the question is not asked at all.",
+            "properties": {
+              "statement": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Their wording, byte for byte off the position_rationales.jsonl row. Never truncated, translated, or tidied into product phrasing -- the whole value of a self-report is that our defaults did not anticipate it."
+              },
+              "stated_at": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                "description": "The day the statement applies, shown in the stem so the quote reads as a dated record rather than a present-tense claim."
+              },
+              "event_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The event this question is asked against. The answer supersedes exactly this event; a head that moved between plan and finalize fails closed rather than forking the subject."
+              },
+              "days_since": {
+                "type": ["integer", "null"],
+                "description": "Whole days from `stated_at` to today, or null when either date is unusable. Measured against today rather than the review's date_end, because how long since they last said it is a question about now."
+              },
+              "statements_recorded": {
+                "type": "integer",
+                "description": "How many statements this cycle has on file, so a first reason and a fifth revision are not presented alike."
               }
             }
           }

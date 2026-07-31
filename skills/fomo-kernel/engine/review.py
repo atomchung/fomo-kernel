@@ -2378,6 +2378,82 @@ def _resolve_rationale_subject(root, ticker):
     return subject, basis.state_version
 
 
+# The bounded rationale surface (#403/#450). Same bound and the same reason as
+# CONDITION_LOOKUP_CAP: the plan is re-sent as agent context on every later turn,
+# so a portfolio of forty positions must not grow it without limit.
+RATIONALE_LOOKUP_CAP = 8
+
+
+def _rationale_state(root, positions, thesis_cycles, as_of, cycle_relinks=()):
+    """What the user has already said about why they hold each position.
+
+    A supply-side fact surface, not a card section and not a decision: the engine
+    states what was said and how long ago, and whether that earns a question this
+    week is the agent's call against everything else competing for the budget
+    (#403's own ruling — importance is situational).
+
+    Ordered oldest-statement-first, because staleness is what makes re-asking
+    worth a slot, and capped like `_condition_due` with a summary beside it so
+    the list can never be read as the whole record. Positions with nothing
+    recorded are counted but not listed: this surface exists so a prior statement
+    can be quoted back, and there is nothing to quote for them.
+    """
+    aliases = _cycle_aliases(_thesis_event_history(root), cycle_relinks)
+    entries, without, unreadable = [], 0, 0
+    for ticker, holding in sorted((positions or {}).items()):
+        cycle_id = holding.get("cycle_id") if isinstance(holding, dict) else None
+        if not cycle_id:
+            continue
+        view = position_rationale.query(root, cycle_id, aliases=aliases.get(cycle_id, []))
+        unreadable += view.get("unreadable") or 0
+        effective = view.get("effective")
+        if not effective:
+            without += 1
+            continue
+        entries.append({
+            "ticker": ticker,
+            "cycle_id": cycle_id,
+            # The user's own words, carried verbatim so the question can quote
+            # rather than paraphrase. Never rewritten into product phrasing.
+            "statement": effective.get("user_statement"),
+            "stated_at": effective.get("stated_at"),
+            # Against today, not the review's `date_end`: `date_end` is where the
+            # trade history stops, and "how long since you last told me why" is a
+            # question about now. A file whose trades end two years ago would
+            # otherwise report every statement as negative days old.
+            "days_since": _days_between(effective.get("stated_at"), as_of),
+            "last_event_id": (view.get("latest") or {}).get("event_id"),
+            "statements_recorded": view.get("total_count"),
+            "change": view.get("change"),
+            # Non-empty means the subject is forked and the order is the
+            # reader's, not the record's — never present it as their history.
+            "forked": view.get("forked") or [],
+        })
+
+    entries.sort(key=lambda row: (row["days_since"] is None, -(row["days_since"] or 0),
+                                 row["ticker"]))
+    shown = entries[:RATIONALE_LOOKUP_CAP]
+    summary = {
+        "positions_with_a_recorded_reason": len(entries),
+        "positions_without_one": without,
+        "shown": len(shown),
+        "beyond_cap": max(0, len(entries) - len(shown)),
+        "unreadable_events": unreadable,
+        # Computed over the full set, never the shown slice: the cap keeps the
+        # surface readable and must never shrink what it reports about.
+        "oldest_days_since": max((row["days_since"] or 0 for row in entries), default=None),
+    }
+    return shown, summary
+
+
+def _days_between(earlier, later):
+    """Whole days from one ISO date to another, or None if either is unusable."""
+    try:
+        return (dt.date.fromisoformat(str(later)) - dt.date.fromisoformat(str(earlier))).days
+    except (TypeError, ValueError):
+        return None
+
+
 def _plan_thesis_cycles(plan):
     """The cycle index for a plan that already exists — the single way any
     finalize-side consumer obtains one.
@@ -3060,10 +3136,73 @@ def _rejection(id_, kind, reason, cycle_id=None):
     return {"id": id_, "kind": kind, "cycle_id": cycle_id, "reason": reason}
 
 
+# At most one per review (#403). This is the same slot every other kind competes
+# for, not an extra one: a position whose recorded reason is going stale is worth
+# a question only when it beats everything else this week, and the density policy
+# already owns that trade-off.
+RATIONALE_REFRESH_LIMIT = 1
+# Below this a statement is recent enough that re-asking learns nothing — the
+# user would just read back what they wrote weeks ago. Deliberately generous:
+# #403's value is a *series* over quarters, and a question that arrives too often
+# trains the user to answer it without thinking, which is worse than not asking.
+RATIONALE_REFRESH_MIN_DAYS = 45
+
+
+def _rationale_refresh_id(cycle_id, event_id):
+    return "rationale_" + thesis.stable_event_id("rationale-refresh", {
+        "cycle_id": str(cycle_id or ""), "event_id": str(event_id or "")})[-12:]
+
+
+def _rationale_refresh_question(entry, language):
+    """One question quoting what the user already said, so the review confirms or
+    corrects rather than asking them to reconstruct it (#636's shape, #403's
+    subject). Engine-rendered: the stem is a dated quote of their own words, and
+    nothing here paraphrases them.
+    """
+    copy = card_renderer.load_copy(language)
+    stem = (copy.get("rationale_refresh") or {}).get("stem") or ""
+    question = stem.format(ticker=entry.get("ticker") or "",
+                           statement=entry.get("statement") or "",
+                           stated_at=entry.get("stated_at") or "")
+    return {
+        "id": _rationale_refresh_id(entry.get("cycle_id"), entry.get("last_event_id")),
+        "kind": "rationale_refresh", "ticker": entry.get("ticker"),
+        "cycle_id": entry.get("cycle_id"), "required": True, "question": question,
+        "options": _options_from_copy(language, "rationale_refresh_choices",
+                                      ("same", "changed", "skip")),
+        "prior_rationale": {
+            "statement": entry.get("statement"),
+            "stated_at": entry.get("stated_at"),
+            "event_id": entry.get("last_event_id"),
+            "days_since": entry.get("days_since"),
+            "statements_recorded": entry.get("statements_recorded") or 0,
+        },
+        # Staleness is the whole claim to a slot, so it is also the importance.
+        "_importance": min(1.0, (entry.get("days_since") or 0) / 365.0),
+        "_importance_basis": "days since the user last stated this reason",
+        "_tie": 6,
+    }
+
+
+def _rationale_refresh_candidates(rationale_state, language):
+    """The refresh questions this review could ask, most stale first.
+
+    A forked subject is skipped rather than asked about: the reader's order is
+    not the record's there, so the question could quote a statement the user did
+    not most recently make. Fail closed on the question, not on the review.
+    """
+    eligible = [entry for entry in (rationale_state or [])
+                if entry.get("statement") and entry.get("last_event_id")
+                and not entry.get("forked")
+                and (entry.get("days_since") or 0) >= RATIONALE_REFRESH_MIN_DAYS]
+    return [_rationale_refresh_question(entry, language) for entry in eligible]
+
+
 def _question_queue(card, state, active, previous_state, language, recent_exits=None, thesis_states=None,
                     due_revisits=None, problem_stats=None, rule_history=None, horizon_markers=None,
                     route=None, missing_thesis_positions=None, tier=None,
-                    condition_questions=None, evaluation_recall=None):
+                    condition_questions=None, evaluation_recall=None,
+                    rationale_state=None):
     """Return (queue, selection_report). The report states, plan-internally, how
     the route's density band was filled: the eligible/selected counts, why the
     queue fell short of the route minimum, and every candidate rejected with its
@@ -3215,6 +3354,11 @@ def _question_queue(card, state, active, previous_state, language, recent_exits=
     # than behind the motive questions. Built by _build_plan (it needs the
     # store), budgeted there too — this only ranks what arrives.
     candidates.extend(condition_questions or [])
+    # #403: at most one, and only when the recorded reason is old enough that
+    # re-asking can learn something. It competes in the same band as everything
+    # else — this adds a candidate, never a guaranteed slot.
+    candidates.extend(
+        _rationale_refresh_candidates(rationale_state, language)[:RATIONALE_REFRESH_LIMIT])
     breach_questions = _rule_breach_questions(problem_stats, rule_history, language)
     candidates.extend(breach_questions[:RULE_BREACH_LIMIT])
     for row in breach_questions[RULE_BREACH_LIMIT:]:
@@ -3995,6 +4139,14 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
     condition_due, condition_summary, thesis_links, condition_retired = (
         ([], None, {}, []) if route == "snapshot_review"
         else _condition_due(root, thesis_cycles, (previous or {}).get("date_end")))
+    # #403/#450: what the user already told us about why they still hold each
+    # position. Snapshot reviews are excluded for the same reason they queue no
+    # questions. Attached unconditionally otherwise, empty included, so "nothing
+    # was recorded" is a claim the plan makes rather than a key that is missing.
+    rationale_state, rationale_summary = (
+        ([], None) if route == "snapshot_review"
+        else _rationale_state(root, positions, thesis_cycles,
+                              dt.date.today().isoformat(), cycle_relinks))
     # #317/#429: reconcile any `consider` evaluation still open against what
     # the local ledger actually shows happened. `_ledger_trade_events` reads
     # only real, dated trade events — never `_rows_from_ledger`'s synthesized
@@ -4029,7 +4181,8 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         problem_stats, rule_history, horizon_markers, route=route,
         missing_thesis_positions=missing, tier=review_tier["tier"],
         condition_questions=condition_questions,
-        evaluation_recall=_evaluation_recall(root))
+        evaluation_recall=_evaluation_recall(root),
+        rationale_state=rationale_state)
     question_selection["rejected"].extend(condition_deferred)
     candidate_rules = _candidate_rules(card, state, language)
     plan = {
@@ -4066,6 +4219,13 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
                            # verdict, never the prose (references/condition-slots.md).
                            "condition_slots_due": condition_due,
                            "condition_slots_summary": condition_summary,
+                           # #403/#450: the reason the user gave for still
+                           # holding each position, oldest first, with the
+                           # summary stating what the cap held back. A fact
+                           # surface — whether any of it earns a question this
+                           # week is the agent's judgment, not the engine's.
+                           "position_rationales": rationale_state,
+                           "position_rationales_summary": rationale_summary,
                            # #416 C2: the thesis conditions that stopped being
                            # checked *this* period, because their position was
                            # fully exited. An event, so the card says it once;
@@ -5606,6 +5766,63 @@ def cmd_preview(args):
            "paths": paths, "next_action": "show the review-card preview (delivery contract: references/card-delivery.md); ask the user to choose one rule or skip; then finalize"})
 
 
+def _record_rationale_answers(plan, answers, amap):
+    """Write what the review learned about a holding reason into the canonical
+    stream, through the one append service (#403) rather than a bundle key.
+
+    Deliberately not projected out of the session bundle the way every other
+    kind's answer is. `position_rationales.jsonl` is canonical, not rebuildable,
+    and a second writer into it would be the parallel store #403 forbids — so
+    the review lane calls the same service the direct entry does, inside the
+    finalize transaction that already holds the root lock.
+
+    `same` records a confirmation: they were asked and said the wording still
+    holds, which is a real act with its own date and is not a restatement.
+    `changed` records their new words. `skip` records nothing — the honest shape
+    of a question posed and not answered, matching `_condition_answers`.
+
+    The answer supersedes exactly the event the question quoted. A head that
+    moved between plan and finalize fails closed rather than forking the subject:
+    the user answered about a statement that is no longer the current one, and
+    guessing which they meant is the thing this stream must never do.
+    """
+    root = plan.get("state_root")
+    if not root or not os.path.isdir(root) or plan.get("route") == "snapshot_review":
+        return []
+    session_id = str(plan.get("session_id") or "")
+    written = []
+    for question in plan.get("question_queue") or []:
+        if question.get("kind") != "rationale_refresh":
+            continue
+        answer = amap[question["id"]]
+        choice = answer.get("choice")
+        offered = {option.get("value") for option in question.get("options") or []}
+        if choice not in ("same", "changed", "skip") or choice not in offered:
+            raise ReviewError(
+                f"rationale_refresh answer {choice!r} is not one of the choices this "
+                f"question offered ({', '.join(sorted(offered))})")
+        if choice == "skip":
+            continue
+        prior = question.get("prior_rationale") or {}
+        note = (answer.get("note") or "").strip()
+        if choice == "changed" and not note:
+            raise ReviewError(
+                "a changed holding reason needs the user's own words in `note`; "
+                "recording that it changed without saying to what stores nothing")
+        subject, state_version = _resolve_rationale_subject(root, question.get("ticker") or "")
+        aliases = _cycle_aliases(_thesis_event_history(root)).get(subject["cycle_id"], [])
+        report = position_rationale.append_locked(
+            root, subject=subject,
+            act="confirmation" if choice == "same" else "statement",
+            user_statement=None if choice == "same" else answer.get("note"),
+            capture_source="review", origin_id=session_id,
+            state_version=state_version, aliases=aliases,
+            expected_predecessor=prior.get("event_id"))
+        written.append({"question_id": question["id"], "cycle_id": subject["cycle_id"],
+                        "event_id": report["event_id"], "status": report["status"]})
+    return written
+
+
 def cmd_finalize(args):
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     with session.finalize_transaction(root, args.session_id) as transaction:
@@ -5646,6 +5863,24 @@ def cmd_finalize(args):
         result, projection, projection_error = transaction.commit_bundle(
             bundle, private_md, public_md, private_html, persist=bool(plan.get("persist"))
         )
+        # After the bundle commits, inside the same transaction: a rationale is
+        # canonical rather than projected, so it is written by the one append
+        # service and is idempotent on this session — a finalize retry returns
+        # the same events instead of resurrecting them over anything newer.
+        #
+        # Receipted separately rather than allowed to fail the review, which is
+        # the shape the owner ruled for the analogous rationale/condition pair:
+        # two independent outcomes, two receipts, and a card the user has
+        # already been shown is not discarded because a statement could not be
+        # attached to a position. The reverse also holds — a refused rationale
+        # is never reported as recorded.
+        try:
+            rationale_events = _record_rationale_answers(
+                plan, answers,
+                thesis.validate_required_answers(plan, answers, allow_commitment_missing=True))
+            rationale_error = None
+        except (ReviewError, position_rationale.PositionRationaleError) as exc:
+            rationale_events, rationale_error = [], str(exc)
     # A no-op idempotent retry writes nothing and legacy sessions may lack the
     # HTML artifact; emit its path only when the file is really there so the
     # delivery contract's markdown fallback triggers instead of file-not-found.
@@ -5655,7 +5890,11 @@ def cmd_finalize(args):
            "public_card": os.path.join(result["path"], "card-public.md"),
            "private_card_html": html_path if os.path.isfile(html_path) else None,
            "projection": projection, "projection_error": projection_error,
-           "recoverable": bool(projection_error)})
+           "recoverable": bool(projection_error),
+           # #403: what the review recorded about why the user still holds a
+           # position, and — never silently — what it could not.
+           "rationale_events": rationale_events,
+           "rationale_error": rationale_error})
 
 
 def cmd_resume(args):

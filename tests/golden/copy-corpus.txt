@@ -10308,7 +10308,7 @@ copy-key coverage
 [zh-TW] reached 58 · unreached 0 · trivial 25
 [en] reached 79 · unreached 0 · trivial 4
 
-registers not claimed by any scene in this corpus (74):
+registers not claimed by any scene in this corpus (77):
   account_perf
   add_choices
   add_descriptions
@@ -10364,6 +10364,9 @@ registers not claimed by any scene in this corpus (74):
   public_mirror
   public_patterns
   public_performance
+  rationale_refresh
+  rationale_refresh_choices
+  rationale_refresh_choices_descriptions
   review_milestone
   rule_breach_choices
   rule_breach_decisions

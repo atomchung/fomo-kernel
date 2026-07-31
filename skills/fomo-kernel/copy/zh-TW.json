@@ -1,536 +1,267 @@
 {
-  "language": "zh-TW",
-  "title": "復盤卡",
-  "private_badge": "復盤卡，只留在本機",
-  "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
-  "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
-  "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
-  "markdown_summary": {
-    "risk": "主要風險",
-    "next": "下次規則"
+  "account_gate": {
+    "cash_residual": "更新那一段的現金部位，就能看到含現金的帳戶級報酬。",
+    "chain_unavailable": "這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬。",
+    "default": "補齊現金錨點，就能看到含現金的帳戶級報酬。",
+    "mixed_trade_footprint": "交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史。",
+    "negative_cash_rollback": "補上還沒有錨點的那個幣別，就能看到含現金的帳戶級報酬。",
+    "no_cash_anchor": "補一個目前的現金餘額，就能看到含現金的帳戶級報酬。"
   },
-  "snapshot_numbers": "第一次持倉結構",
-  "snapshot_strength": "這份快照建立了什麼",
-  "snapshot_hole": "主要結構風險",
-  "sections": {
-    "performance": "相對績效",
-    "strength": "你做對的一件事",
-    "hole": "最大的行為漏洞",
-    "etf": "ETF 與組合結構",
-    "rule": "下次只改這一件"
+  "account_perf": {
+    "account_base": "帳戶級累積報酬為 {value}",
+    "annualized_suffix": "，年化報酬 {value}",
+    "cash_drag_suffix": "；與僅計持倉的差距 {value} 來自持有現金——這是觀察，不是對錯判定",
+    "holdings_only": "僅計持倉的累積報酬為 {value}。",
+    "terminator": "。"
   },
-  "blocks": {
-    "performance": "這期的績效",
-    "trades": "關鍵交易 · 按金額排序",
-    "risks": "風險與問題",
-    "next": "下一步",
-    "summary": "總結"
+  "add_choices": {
+    "new_evidence": "有新的可驗證證據",
+    "planned_tranche": "事先規劃的分批",
+    "price_only": "只有價格下跌／想攤低成本",
+    "skip": "先跳過",
+    "valuation_change": "估值或賠率變了"
   },
-  "period": {
-    "span": "復盤區間 {start} → {end}",
-    "as_of": "截至 {end}",
-    "vix": "VIX {value}"
+  "add_descriptions": {
+    "new_evidence": "必須補 claim 與 source，之後能回頭驗證。",
+    "planned_tranche": "進場前已定好節奏，價格下跌不是新增理由。",
+    "price_only": "沒有新事實，主要是想攤低成本或等回本。",
+    "skip": "先不定性，卡上只標未確認。",
+    "valuation_change": "判斷沒變，但價格讓賠率或安全邊際改變。"
+  },
+  "alpha_interval": {
+    "below_negative": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。",
+    "below_unreliable": "* 年化 α 統計上還不可信。",
+    "lead": "風險調整後 alpha{scope} 年化 {alpha}%，95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。",
+    "negative_caveat": "（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）",
+    "scope_suffix": "（{market} 部位）",
+    "tile_sub": "95% 區間 {low}%～{high}%"
+  },
+  "asked_because": {
+    "exit_notional": "它是你近期金額最大的出場之一",
+    "pnl_impact": "它是你本週影響損益最大的部位",
+    "position_cost": "它是你本週成本最大的部位"
+  },
+  "benchmark_line": {
+    "beta_suffix": "；β {beta}",
+    "comparator_default": "市場大盤",
+    "line": "{subject}對 {comparator} 的超額報酬 {excess} 個百分點{beta}。",
+    "subject_default": "持倉",
+    "subject_market": "{market} 部位"
+  },
+  "best_strength": {
+    "averaging_down": "你往下加碼 {count} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重{example}",
+    "averaging_down_example": "(例:{ticker})",
+    "diversification": "{n} 檔分布在不同驅動因子，沒有全押在同一個故事上",
+    "exit_discipline": "該獲利了結時你不手軟：賣掉的賺錢單只有 {winner_early} 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」",
+    "holding_period": "進出有一致的節奏：中位持有 {median_hold} 天，不是隨機亂買亂賣",
+    "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。",
+    "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct},沒把身家壓在一檔上"
   },
   "block_missing": {
     "absolute_pnl": "本期算不出帳面損益：缺交易或估值基礎。",
     "annualized": "本期算不出年化報酬：現金流錨點不完整。",
     "annualized_prices": "本期算不出年化報酬：現價取不到，整體持倉沒有可用的估值基礎。",
-    "vs_market": "本期無法比對大盤：缺可用的基準序列。",
-    "vs_market_prices": "本期無法比對大盤：基準指數的價格取不到。",
-    "trades": "本期沒有可排序的標的層診斷。",
-    "trades_traded": "本期沒有可排序的標的層診斷；這期交易過：{tickers}。",
+    "annualized_reconciliation": "本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。把你目前的持倉畫面給我，這個差異就能對清楚。",
+    "annualized_short_series": "本期算不出年化報酬：價格序列不足兩天，沒有可衡量的變化。",
     "risks": "本期沒有行為診斷：引擎沒有可評分的維度。",
     "rule": "這次沒有新的規矩承諾；下次復盤可再選一條。",
-    "rule_standing": "這期不改規矩；現行規矩維持：「{rule}」",
-    "rule_pending": "這期還沒選規矩；建議是：「{rule}」",
     "rule_diverged": "現行規矩仍是「{standing}」；這期最該處理的是另一件事，「{recommendation}」在你選定之前都只是建議。",
+    "rule_insufficient_data": "樣本仍短，這次不硬塞承諾；先把它當基線。",
+    "rule_pending": "這期還沒選規矩；建議是：「{rule}」",
     "rule_skip": "你這次選擇不設新承諾；下次仍可用同一份基線對帳。",
     "rule_snapshot": "這次開場檢查先保留結構基線，不強迫設定承諾。",
+    "rule_standing": "這期不改規矩；現行規矩維持：「{rule}」",
     "rule_structural": "這次是開場結構檢查：先立基線、不硬塞承諾。已平倉的交易還太少，還看不出你的賣出是不是比買進更傷你；補上對應的賣出紀錄就能回答這一題。",
-    "rule_insufficient_data": "樣本仍短，這次不硬塞承諾；先把它當基線。",
     "snapshot_unlock": "這次只看得到你手上有什麼，看不到你是怎麼走到這裡的。交易紀錄能回答它唯一答不了的那一題：你的賣出是不是比買進更傷你。",
-    "annualized_short_series": "本期算不出年化報酬：價格序列不足兩天，沒有可衡量的變化。",
-    "annualized_reconciliation": "本期算不出年化報酬：匯入的交易紀錄推不出快照錨定的持倉，沒有可用的帳戶估值基礎。把你目前的持倉畫面給我，這個差異就能對清楚。"
+    "trades": "本期沒有可排序的標的層診斷。",
+    "trades_traded": "本期沒有可排序的標的層診斷；這期交易過：{tickers}。",
+    "vs_market": "本期無法比對大盤：缺可用的基準序列。",
+    "vs_market_prices": "本期無法比對大盤：基準指數的價格取不到。"
   },
-  "account_gate": {
-    "default": "補齊現金錨點，就能看到含現金的帳戶級報酬。",
-    "no_cash_anchor": "補一個目前的現金餘額，就能看到含現金的帳戶級報酬。",
-    "mixed_trade_footprint": "交易紀錄裡只有一部分帶券商的現金金額，兩種口徑併不成同一條現金史。",
-    "negative_cash_rollback": "補上還沒有錨點的那個幣別，就能看到含現金的帳戶級報酬。",
-    "cash_residual": "更新那一段的現金部位，就能看到含現金的帳戶級報酬。",
-    "chain_unavailable": "這個區間沒有任何一天算得出可用的帳戶淨值可以串成報酬。"
+  "blocks": {
+    "next": "下一步",
+    "performance": "這期的績效",
+    "risks": "風險與問題",
+    "summary": "總結",
+    "trades": "關鍵交易 · 按金額排序"
   },
-  "footnote_label": "資料備註",
-  "kpi": {
-    "pnl": "帳面總損益",
-    "pnl_sub": "已實現 {realized} · 未實現 {unrealized}",
-    "payoff": "已實現盈虧比",
-    "payoff_sub": "賺 {win} vs 賠 {loss}",
-    "excess": "相對大盤",
-    "excess_sub": "β {beta}",
-    "alpha": "年化 α",
-    "alpha_unreliable": "統計上還不可信",
-    "curve": "這期走勢",
-    "spark_caption": "高點 {peak} · 低點 {trough}"
+  "breach_evidence": {
+    "joiner": "; ",
+    "more": "；另有 {extra} 筆",
+    "none": "帳上有一筆事件"
   },
-  "etf_classification": {
-    "allocation": "配置型 ETF 已從單一股票集中度排除：{list}。",
-    "concentrated": "產業／主題／槓桿 ETF 仍算集中風險：{list}。"
+  "candidate_comparison": {
+    "joiner": "、",
+    "line": "本期「{top}」的訊號比「{others}」更強——這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。"
   },
-  "dimensions": {
-    "exit_discipline": "出場紀律",
-    "position_sizing": "部位 sizing",
-    "diversification": "分散",
-    "holding_period": "持有時間",
-    "averaging_down": "加碼攤平",
-    "alpha_beta": "大盤與選股歸因",
-    "entry_style": "進場風格"
-  },
-  "public_patterns": {
-    "exit_discipline": "這次浮現的模式，關乎出場決策如何被安排與檢驗。",
-    "position_sizing": "這次浮現的模式，關乎風險如何分配到不同部位。",
-    "diversification": "這次浮現的模式，關乎組合是否代表彼此不同的底層風險。",
-    "holding_period": "這次浮現的模式，關乎持有時間是否對齊一致的決策時間軸。",
-    "holding_period_same_day": "所有已完成交易皆為當日進出，沒有隔夜持有。",
-    "averaging_down": "這次浮現的模式，關乎虧損部位的加碼如何受到界線約束。",
-    "alpha_beta": "這次浮現的模式，關乎相對大盤結果如何拆分為市場暴險與選擇。",
-    "entry_style": "這次浮現的模式，關乎進場時點與近期價格移動的關係。"
-  },
-  "rules": {
-    "exit_discipline": "出場前先寫下交易論述已完成或失效的事實；只因害怕回吐，不賣。",
-    "position_sizing": "單筆部位上限定死 {cap}；超過就減，不新增。",
-    "diversification": "新增部位前先看是否仍是同一個驅動因子；同一注已過重，不新增。",
-    "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
-    "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。"
-  },
-  "rule_grounding": {
-    "position_sizing": "本期實況：最大單一部位 {ticker} 佔 {pct}。",
-    "diversification": "本期實況：前幾大部位 {tickers} 合計佔 {pct}。",
-    "holding_period": "本期實況：{tickers} 同一檔既有短進短出、也有長抱。",
-    "averaging_down": "本期實況：你在虧損部位往下加碼 {count} 次，包括 {tickers}。"
-  },
-  "rule_targets": {
-    "line": "本期會被它攔下的：{items}",
-    "count_unit": " 次",
-    "more_suffix": "、及其他 {n} 檔"
-  },
-  "rule_tradeoff": {
-    "sizing_vs_proven_edge": "上限管的是單筆爆掉，不跟「選股是真 edge」衝突。",
-    "sizing_vs_hypothesis": "上限管的是單筆爆掉；押對賽道還沒驗證，更不該靠加大單注押它。"
-  },
-  "condition_state": {
-    "already_met": "這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。",
-    "unmapped_no_threshold": "這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。",
-    "unmapped_no_baseline": "這條記下來了，但背後那個數字查不到，所以現在還沒在盯。",
-    "unmapped_no_adjudicator": "這條記成一個是或否的判斷，由你來下，不是被量出來的。",
-    "event_watch_started": "這條是一個是或否的判斷：從現在起會幫你盯著，有動靜就來問你——最後怎麼認定還是你說了算。"
-  },
-  "condition_check": {
-    "then_now": "上次你承諾：「{rule}」——當時是 {then}，現在是 {now}。",
-    "then_now_no_baseline": "上次你承諾：「{rule}」——當時查不到數字；現在是 {now}。",
-    "then_now_event": "上次你承諾：「{rule}」——從那時開始盯。最新狀況：{now}。",
-    "verdict_met": "已經過線了。",
-    "verdict_near_line": "離線很近了。",
-    "verdict_not_met": "還沒到線。",
-    "verdict_unknown": "這期沒有結論。",
-    "fact": "{criterion}——{value}（{source}，資料日 {as_of}）。",
-    "fact_no_source": "{criterion}——{value}。",
-    "fact_looks_wrong": "上面哪個數字看起來不對就說一聲，可以重新確認它的算法。",
-    "thesis_guard": "這是你說過會推翻 {ticker} 論點的那件事。",
-    "thesis_retired": "{criterion}——之後不再追蹤了：{ticker} 已經全數出清，這條要守的論點也結束了。",
-    "note_deferred": "這個已經過線了，下次復盤會來問你。",
-    "note_deferred_event": "這可能就是你在盯的那件事，下次復盤會來問你。",
-    "note_unanswered": "這個已經過線了，而你還沒表態；下次復盤會再問一次。",
-    "note_unanswered_event": "這可能就是你在盯的那件事，而你還沒表態；下次復盤會再問一次。",
-    "note_basis_open": "它在量的東西可能變了（{note}），這件事還沒處理；下次復盤會來問你。",
-    "blind": "{criterion}——這期沒查到，現在是盯不到的狀態。",
-    "blind_with_reason": "{criterion}——這期沒查到（{reason}），現在是盯不到的狀態。",
-    "summary_checked": "這期 {total} 條裡查了 {checked} 條。",
-    "summary_open": "還沒結案、下次會再處理的事項：{deferred} 項。",
-    "summary_trimmed": "這張卡列出 {describable} 筆讀數裡的 {shown} 筆，其餘都在你的紀錄裡。"
-  },
-  "condition_crossing": {
-    "met": "你設的是：「{criterion}」。這期查到：{evidence}。這樣算跨過去了嗎？",
-    "near_line": "你設的是：「{criterion}」。這期查到：{evidence}——離線很近。這樣算跨過去了嗎？",
-    "event": "你設的是：「{criterion}」。這期查到：{evidence}。這件事發生了嗎？"
-  },
-  "condition_crossing_choices": {
-    "confirmed": "算，就當它跨過去了",
-    "overridden": "不算，別當它跨過去",
-    "yes": "有，發生了",
-    "no": "沒有，還沒發生",
-    "skip": "先放著"
-  },
-  "condition_crossing_choices_descriptions": {
-    "confirmed": "這個讀數成立，你寫的規矩就該生效。",
-    "overridden": "這個讀數量到的不是你原本的意思——說一下為什麼。",
-    "yes": "你在盯的那件事已經發生了。",
-    "no": "還沒發生，繼續盯。",
-    "skip": "先不回答；讀數本身還是會被記下來。"
+  "cash_lines": {
+    "amount_joiner": "、",
+    "anchored": "有餘額錨點的帳戶現金為 {cash}。",
+    "anchored_with_weight": "有餘額錨點的帳戶現金為 {cash}，佔帳戶 {weight}。",
+    "by_currency": "有餘額錨點的帳戶現金（原幣）：{amounts}。"
   },
   "condition_basis": {
     "stem": "你設的是：「{criterion}」。它在量的東西可能變了：{note}。這條要怎麼處理？"
   },
   "condition_basis_choices": {
-    "revise_threshold": "量的東西不變，把線挪一下",
-    "revise_metric": "改成量別的",
     "keep": "維持原樣",
+    "revise_metric": "改成量別的",
+    "revise_threshold": "量的東西不變，把線挪一下",
     "skip": "先放著"
   },
   "condition_basis_choices_descriptions": {
-    "revise_threshold": "要量的還是同一個東西，只是數字該調。",
-    "revise_metric": "這個數字已經量不到你的意思了——把條件重寫一次。",
     "keep": "這個變動不影響你原本在追的東西。",
+    "revise_metric": "這個數字已經量不到你的意思了——把條件重寫一次。",
+    "revise_threshold": "要量的還是同一個東西，只是數字該調。",
     "skip": "先不回答；條件維持原本寫的樣子。"
   },
-  "patterns_panel": {
-    "label": "一個模式，還沒下判斷（不用回答）",
-    "sold_winner_early": "這期賣掉的 {total} 筆有 {early} 筆賣完還漲，最明顯是 {tickers}。"
+  "condition_check": {
+    "blind": "{criterion}——這期沒查到，現在是盯不到的狀態。",
+    "blind_with_reason": "{criterion}——這期沒查到（{reason}），現在是盯不到的狀態。",
+    "fact": "{criterion}——{value}（{source}，資料日 {as_of}）。",
+    "fact_looks_wrong": "上面哪個數字看起來不對就說一聲，可以重新確認它的算法。",
+    "fact_no_source": "{criterion}——{value}。",
+    "note_basis_open": "它在量的東西可能變了（{note}），這件事還沒處理；下次復盤會來問你。",
+    "note_deferred": "這個已經過線了，下次復盤會來問你。",
+    "note_deferred_event": "這可能就是你在盯的那件事，下次復盤會來問你。",
+    "note_unanswered": "這個已經過線了，而你還沒表態；下次復盤會再問一次。",
+    "note_unanswered_event": "這可能就是你在盯的那件事，而你還沒表態；下次復盤會再問一次。",
+    "summary_checked": "這期 {total} 條裡查了 {checked} 條。",
+    "summary_open": "還沒結案、下次會再處理的事項：{deferred} 項。",
+    "summary_trimmed": "這張卡列出 {describable} 筆讀數裡的 {shown} 筆，其餘都在你的紀錄裡。",
+    "then_now": "上次你承諾：「{rule}」——當時是 {then}，現在是 {now}。",
+    "then_now_event": "上次你承諾：「{rule}」——從那時開始盯。最新狀況：{now}。",
+    "then_now_no_baseline": "上次你承諾：「{rule}」——當時查不到數字；現在是 {now}。",
+    "thesis_guard": "這是你說過會推翻 {ticker} 論點的那件事。",
+    "thesis_retired": "{criterion}——之後不再追蹤了：{ticker} 已經全數出清，這條要守的論點也結束了。",
+    "verdict_met": "已經過線了。",
+    "verdict_near_line": "離線很近了。",
+    "verdict_not_met": "還沒到線。",
+    "verdict_unknown": "這期沒有結論。"
   },
-  "exit_consistency": {
-    "question": "這是你出場規則裡一致的做法、情緒反應，還是外部限制？"
+  "condition_crossing": {
+    "event": "你設的是：「{criterion}」。這期查到：{evidence}。這件事發生了嗎？",
+    "met": "你設的是：「{criterion}」。這期查到：{evidence}。這樣算跨過去了嗎？",
+    "near_line": "你設的是：「{criterion}」。這期查到：{evidence}——離線很近。這樣算跨過去了嗎？"
   },
-  "add_choices": {
-    "planned_tranche": "事先規劃的分批",
-    "new_evidence": "有新的可驗證證據",
-    "valuation_change": "估值或賠率變了",
-    "price_only": "只有價格下跌／想攤低成本",
-    "skip": "先跳過"
+  "condition_crossing_choices": {
+    "confirmed": "算，就當它跨過去了",
+    "no": "沒有，還沒發生",
+    "overridden": "不算，別當它跨過去",
+    "skip": "先放著",
+    "yes": "有，發生了"
   },
-  "headline_motive_choices": {
-    "deliberate_plan": "事先規劃",
-    "emotional_reaction": "情緒反應",
-    "external_constraint": "外部限制"
+  "condition_crossing_choices_descriptions": {
+    "confirmed": "這個讀數成立，你寫的規矩就該生效。",
+    "no": "還沒發生，繼續盯。",
+    "overridden": "這個讀數量到的不是你原本的意思——說一下為什麼。",
+    "skip": "先不回答；讀數本身還是會被記下來。",
+    "yes": "你在盯的那件事已經發生了。"
   },
-  "initial_thesis_choices": {
-    "planned_entry": "進場前就有明確論點",
-    "momentum_follow": "追了動能／FOMO",
-    "external_call": "別人推薦的",
-    "no_clear_thesis": "沒有明確論點",
-    "skip": "先跳過"
-  },
-  "exit_choices": {
-    "full": {
-      "price_target": "到價了",
-      "thesis_broken": "原本判斷失效",
-      "swap": "換到更好的標的",
-      "anxiety": "想先落袋",
-      "other": "其他理由",
-      "skip": "先不回答"
-    },
-    "reduce": {
-      "price_target": "到了減碼點",
-      "thesis_broken": "信心動搖",
-      "swap": "換到更好的標的",
-      "anxiety": "想先落袋一部分",
-      "other": "其他理由",
-      "skip": "先不回答"
-    }
-  },
-  "honesty": {
-    "snapshot_scope": "交易歷史維度——攤平、出場紀律、持有行為、勝率、盈虧比、alpha 與歷史動機——不在這次持倉快照的評分範圍內。",
-    "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
-    "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
-    "unclassified_drivers": "部分標的尚未分類，組合集中度可能被低估。",
-    "price_source": "這期的現價不是引擎自己抓到的：不是來自明確標示的外部資料源與截止日，就是根本取不到，卡上會說明是哪一種。",
-    "price_plausibility": "有供給的收盤價與該檔最近一次實際成交價落差過大，這個來源在採信前應該重新核實。",
-    "unrealized_coverage": "部分持倉缺現價，未實現損益不是完整帳面。",
-    "sizing_coverage": "部分持倉既無現價也無成本基礎，部位大小與過重判斷僅涵蓋能估值的持倉。",
-    "orphan_sells": "有賣出缺少已知建倉，相關已實現損益未納入。",
-    "unpriced_exits": "有部位離開紀錄時沒有成交價，這些出場未納入勝率、盈虧比與出場紀律。",
-    "currency_mix": "組合含多幣別；聚合數字使用共同幣別，部分匯率可能為近似。",
-    "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
-    "acct_perf_basis": "帳戶績效建立在近似的地基上——部分錨點、成本平線計價、匯率近似、用量×價估算的交易現金金額，或一段完全沒有存提款紀錄的期間——需保留不確定性。",
-    "accounting_reconciliation": "匯入交易未能重現快照錨定的目前持倉，因此這次不評分部位大小、分散與未實現損益。",
-    "snapshot_reconciliation": "這份持倉宣告已與帳本推導持倉對帳；一致即標記為已對帳，若有差異則以明確的調整事件保留紀錄，並改以較新宣告為記帳錨點，不猜測差異原因。",
-    "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。",
-    "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。"
-  },
-  "instrument_tags": {
-    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}{price_note}(待你確認交易論述)",
-    "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣，不是紀律",
-    "adds_pending_confirmation": "？加碼 {n_adds} 次待確認：是定投還是凹單，要你定",
-    "suspected_dca": "✓疑似定投：漲跌都買/規律 {n_adds} 次，不是凹單",
-    "deep_underwater": "✗套牢:{cur_pct}{price_note} 還抱著沒處理",
-    "too_heavy": "⚠押太重：佔組合 {wpct_pct}",
-    "disciplined_hold": "✓紀律持有：賺 {cur_pct}{price_note}",
-    "roughly_neutral": "— 大致中性"
-  },
-  "stress_test": {
-    "labels": {
-      "ai_thematic": "AI 概念股(跨板塊)",
-      "sector": "「{sector}」板塊",
-      "single_ticker": "單檔 {ticker}"
-    },
-    "line": "你 {label} 暴險約 {exposure}（佔 {pct}）；回檔 30% → 帳面 −{drop30}、回檔 50% → −{drop50}，撐得住嗎？"
-  },
-  "prescription_kinds": {
-    "amplify": "揚長",
-    "amplify_hypothesis": "揚長(假設，待驗證)",
-    "selection_inconclusive": "選股：資料不足以判定",
-    "outsource": "外包短板(漸進)",
-    "cut_loss": "砍損耗"
-  },
-  "prescription_texts": {
-    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡，押對賽道佔 {alloc_pp}pp(拆帳)。那還只是假設，不是已證實的 edge——押對 AI 也可能只是站到風口，要靠下次的賽道判斷才驗得出來。",
-    "selection_inconclusive": "拆帳看，板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note}，統計上還分不出選股是本事還是運氣。",
-    "selection_inconclusive_t_wide": "α 的 95% 區間還太寬(t={t})",
-    "selection_inconclusive_t_unstable": "α 統計量還算不穩",
-    "outsource_selection": "扣掉賽道，你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差。這不是說『別選股』(你享受它、ETF 也會錯過妖股),而是可以撥一部分資金被動化托底，選股當衛星。(流程觀察，非標的建議)",
-    "amplify_selection_edge": "扣掉賽道紅利，你板塊內選股仍貢獻 {sel_pp}pp、α 統計上站得住——這是真 edge。",
-    "cut_averaging_down": "虧損中加碼 {count} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。",
-    "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct},單一押注過重。"
-  },
-  "due_choices": {
-    "still_valid": "還成立",
-    "modified": "部分對，要調",
-    "falsified": "看錯了",
-    "skip": "先跳過"
-  },
-  "rule_breach_choices": {
-    "keep_tracking": "這次守不住",
-    "revise_rule": "規矩需要修訂",
-    "exception": "這次是正當例外"
-  },
-  "rule_breach_decisions": {
-    "keep_tracking": "這次沒守住，繼續追蹤",
-    "revise_rule": "標記為需要修訂",
-    "exception": "記為正當例外"
-  },
-  "horizons": {
-    "weeks": "週",
-    "quarters": "季",
-    "years": "年"
-  },
-  "problem_keys": {
-    "avgdown_breach": "攤平越過部位界線",
-    "sell_winner_early": "賣出贏家的機會成本",
-    "oversize": "單一部位過重",
-    "concentration": "同一驅動因子集中",
-    "hold_inconsistency": "持有時間軸混用",
-    "exit_anxiety": "焦慮驅動出場",
-    "fomo_entry": "FOMO 進場",
-    "horizon_break": "交易論述時間軸破戒"
-  },
-  "trends": {
-    "worse": "惡化",
-    "flat": "持平",
-    "better": "改善"
-  },
-  "pnl_lines": {
-    "display": {
-      "total": "帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
-      "realized_only": "已實現損益 {realized}；目前未實現損益未評分。",
-      "unrealized_only": "未實現損益 {unrealized}；已實現損益無法取得。"
-    },
-    "original": {
-      "both": "{currency} 帳面損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
-      "realized_only": "{currency} 已實現損益 {realized}。",
-      "unrealized_only": "{currency} 未實現損益 {unrealized}。"
-    }
-  },
-  "alpha_interval": {
-    "scope_suffix": "（{market} 部位）",
-    "negative_caveat": "（區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力）",
-    "lead": "風險調整後 alpha{scope} 年化 {alpha}%，95% 區間為 {low}% 到 {high}%；定論強度以這個區間為準。",
-    "tile_sub": "95% 區間 {low}%～{high}%",
-    "below_unreliable": "* 年化 α 統計上還不可信。",
-    "below_negative": "年化 α 的區間包含負值，代表這段期間的選股優勢在統計上還不能視為穩定能力。"
-  },
-  "best_strength": {
-    "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。",
-    "exit_discipline": "該獲利了結時你不手軟：賣掉的賺錢單只有 {winner_early} 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」",
-    "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct},沒把身家壓在一檔上",
-    "averaging_down": "你往下加碼 {count} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重{example}",
-    "averaging_down_example": "(例:{ticker})",
-    "diversification": "{n} 檔分布在不同驅動因子，沒有全押在同一個故事上",
-    "holding_period": "進出有一致的節奏：中位持有 {median_hold} 天，不是隨機亂買亂賣"
-  },
-  "reconciliation": {
-    "statement": "上次你承諾：「{rule}」。",
-    "statement_with_metric": "上次你承諾：「{rule}」——追蹤的數字當時 {then}，這次 {now}。"
-  },
-  "snapshot": {
-    "overview": {
-      "subject_with_count": "使用者提供的 {positions} 個持倉",
-      "subject_generic": "使用者提供的持倉",
-      "opening": "這是針對{subject}的開場組合檢查。",
-      "opening_as_of": "這是針對{subject}的開場組合檢查，快照截至 {as_of}。",
-      "valuation_market_value": "結構權重採使用者提供的市值口徑。",
-      "valuation_cost": "結構權重採使用者提供的成本口徑。",
-      "valuation_unavailable": "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。",
-      "missing_avg_cost": "以下持倉缺少平均成本：{tickers}。",
-      "missing_fx": "以下幣別缺少可靠匯率：{currencies}。"
-    },
-    "strength": {
-      "weighted": "已用你提供的持倉建立組合結構基線，並據此評分權重；缺少的輸入維持明示，不用推測補齊。",
-      "baseline": "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。"
-    },
-    "holes": {
-      "leading_risk": "現有快照的主要結構風險是「{label}」。",
-      "clean_structure": "這次持倉快照沒有觸發集中度或分散度的結構風險。",
-      "no_weights": "這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"
-    }
-  },
-  "problems": {
-    "trend_line": "{name}：近期 {recent} 次，前期 {prev} 次（{trend}）。",
-    "breach_decision": "規矩「{rule}」：{label}。",
-    "breach_note": " 註記：「{note}」。",
-    "rule_held": "規矩「{rule}」在最近一個可觀測週期守住了。"
-  },
-  "exit_followup": {
-    "position_fallback": "這筆部位",
-    "check": "{ticker}，{checkpoint} 天複核：{label}。",
-    "note": " 註記：「{note}」。",
-    "as_of": "（截至 {as_of}）",
-    "needs_prices": " {missing} 缺現價{when}，本期不判結果。",
-    "replacement_fallback": "換入標的",
-    "frozen_lead": " 以 {as_of} 凍結現價計，",
-    "frozen_lead_absent": " ",
-    "swap": "{lead}原標的後續 {orig}；{swaps}同期 {swap}；swap 淨差 {net}。",
-    "frozen_note": "（以 {as_of} 凍結現價計）",
-    "idle": " 賣後資金閒置，原標的同期 {orig}{when}。",
-    "backlog": "歷史出場 backlog 尚有 {count} 筆未複核（清倉 {full}、減倉 {reduce}）",
-    "backlog_span": "，期間 {first} 到 {last}",
-    "backlog_top": "；最常出現：{top}",
-    "sentence_end": "。",
-    "backlog_priced": " 有現價可回看的 {priced} 筆，出場後平均走勢為 {avg}；其中 {rose} 筆後續上漲。",
-    "action_full": "清倉",
-    "action_reduce": "減倉",
-    "focus": "Backlog 優先回看：{ticker}，{exit_date} {action}。",
-    "focus_needs_prices": " {missing} 缺凍結現價{when}，不判結果。",
-    "focus_swap": " 原標的後續 {orig}{when}；換入標的同期 {swap}；swap 淨差 {net}。",
-    "focus_idle": " 賣後資金閒置，原標的同期 {orig}{when}。",
-    "focus_orig": " 原標的後續 {orig}{when}。"
-  },
-  "account_perf": {
-    "holdings_only": "僅計持倉的累積報酬為 {value}。",
-    "account_base": "帳戶級累積報酬為 {value}",
-    "annualized_suffix": "，年化報酬 {value}",
-    "cash_drag_suffix": "；與僅計持倉的差距 {value} 來自持有現金——這是觀察，不是對錯判定",
-    "terminator": "。"
+  "condition_state": {
+    "already_met": "這條線今天就已經跨過了，所以它現在是一個要做的決定，不是一個等著響的警報。",
+    "event_watch_started": "這條是一個是或否的判斷：從現在起會幫你盯著，有動靜就來問你——最後怎麼認定還是你說了算。",
+    "unmapped_no_adjudicator": "這條記成一個是或否的判斷，由你來下，不是被量出來的。",
+    "unmapped_no_baseline": "這條記下來了，但背後那個數字查不到，所以現在還沒在盯。",
+    "unmapped_no_threshold": "這條用你的原話記著；裡面沒有可以量的線，所以沒辦法幫你盯。"
   },
   "currency_note": {
-    "cached_dated": "顯示換算沿用上次對帳匯率（截至 {when}）。",
     "cached": "顯示換算沿用上次對帳匯率。",
-    "portfolio_fx_gap": "至少一個持倉幣別缺少可靠匯率；金額保留原幣，不把近似聚合值當成精確換算。",
-    "no_rate": "找不到可靠的 {currency} 顯示匯率；金額保留原幣，不做猜測換算。"
-  },
-  "benchmark_line": {
-    "line": "{subject}對 {comparator} 的超額報酬 {excess} 個百分點{beta}。",
-    "subject_market": "{market} 部位",
-    "subject_default": "持倉",
-    "comparator_default": "市場大盤",
-    "beta_suffix": "；β {beta}"
-  },
-  "split_lines": {
-    "line": "{subject}贏大盤的 {excess} 個百分點拆為：市場／賽道配置 {allocation} 個百分點、標的選擇 {selection} 個百分點。",
-    "subject_market": "{market} ",
-    "subject_default": ""
+    "cached_dated": "顯示換算沿用上次對帳匯率（截至 {when}）。",
+    "no_rate": "找不到可靠的 {currency} 顯示匯率；金額保留原幣，不做猜測換算。",
+    "portfolio_fx_gap": "至少一個持倉幣別缺少可靠匯率；金額保留原幣，不把近似聚合值當成精確換算。"
   },
   "decision_entries": {
     "line": "{ticker}：{label}。這個判斷與證據邊界已保存，供下次對帳。",
     "ticker_default": "position"
   },
-  "motive_entries": {
-    "subject_default": "這次浮現的行為",
-    "context": "引擎脈絡：{fact}。",
-    "recorded": "「{subject}」的動機記為：{label}。",
-    "saved": "這個選項已保存，供後續復盤對帳。",
-    "terminator": "。"
+  "demo_badge": "示範資料／演練，不是你的真實交易，也不寫入正式教練記憶",
+  "dimensions": {
+    "alpha_beta": "大盤與選股歸因",
+    "averaging_down": "加碼攤平",
+    "diversification": "分散",
+    "entry_style": "進場風格",
+    "exit_discipline": "出場紀律",
+    "holding_period": "持有時間",
+    "position_sizing": "部位 sizing"
+  },
+  "due_choices": {
+    "falsified": "看錯了",
+    "modified": "部分對，要調",
+    "skip": "先跳過",
+    "still_valid": "還成立"
+  },
+  "due_descriptions": {
+    "falsified": "真的判斷錯誤，記進教訓。",
+    "modified": "理由部分成立，需要修正。",
+    "skip": "不算已回答，下次復盤同一關會再出現。",
+    "still_valid": "理由仍成立，賣早也是紀律。"
+  },
+  "etf_classification": {
+    "allocation": "配置型 ETF 已從單一股票集中度排除：{list}。",
+    "concentrated": "產業／主題／槓桿 ETF 仍算集中風險：{list}。"
+  },
+  "exit_choices": {
+    "full": {
+      "anxiety": "想先落袋",
+      "other": "其他理由",
+      "price_target": "到價了",
+      "skip": "先不回答",
+      "swap": "換到更好的標的",
+      "thesis_broken": "原本判斷失效"
+    },
+    "reduce": {
+      "anxiety": "想先落袋一部分",
+      "other": "其他理由",
+      "price_target": "到了減碼點",
+      "skip": "先不回答",
+      "swap": "換到更好的標的",
+      "thesis_broken": "信心動搖"
+    }
+  },
+  "exit_consistency": {
+    "question": "這是你出場規則裡一致的做法、情緒反應，還是外部限制？"
+  },
+  "exit_descriptions": {
+    "anxiety": "主要是怕回吐，所以先鎖住全部或部分成果。",
+    "other": "以上都不符合，用自己的話留下一句。",
+    "price_target": "原先設定的目標或減碼條件已經完成。",
+    "skip": "保存為已略過，之後不再追問這筆的賣出理由。",
+    "swap": "資金改放到另一個標的或用途。",
+    "thesis_broken": "原本判斷失效，或信心因新事實而下降。"
   },
   "exit_entries": {
-    "line": "{ticker}：你把這次{action}記為「{label}」。這裡只保存當時的理由，尚未判斷決策結果。",
-    "ticker_default": "這筆部位",
     "action_full": "清倉",
-    "action_partial": "減倉"
+    "action_partial": "減倉",
+    "line": "{ticker}：你把這次{action}記為「{label}」。這裡只保存當時的理由，尚未判斷決策結果。",
+    "ticker_default": "這筆部位"
   },
-  "review_milestone": {
-    "line": "開始這次復盤時，你已有 {completed} 次完成紀錄。",
-    "noun_one": "",
-    "noun_many": ""
+  "exit_followup": {
+    "action_full": "清倉",
+    "action_reduce": "減倉",
+    "as_of": "（截至 {as_of}）",
+    "backlog": "歷史出場 backlog 尚有 {count} 筆未複核（清倉 {full}、減倉 {reduce}）",
+    "backlog_priced": " 有現價可回看的 {priced} 筆，出場後平均走勢為 {avg}；其中 {rose} 筆後續上漲。",
+    "backlog_span": "，期間 {first} 到 {last}",
+    "backlog_top": "；最常出現：{top}",
+    "check": "{ticker}，{checkpoint} 天複核：{label}。",
+    "focus": "Backlog 優先回看：{ticker}，{exit_date} {action}。",
+    "focus_idle": " 賣後資金閒置，原標的同期 {orig}{when}。",
+    "focus_needs_prices": " {missing} 缺凍結現價{when}，不判結果。",
+    "focus_orig": " 原標的後續 {orig}{when}。",
+    "focus_swap": " 原標的後續 {orig}{when}；換入標的同期 {swap}；swap 淨差 {net}。",
+    "frozen_lead": " 以 {as_of} 凍結現價計，",
+    "frozen_lead_absent": " ",
+    "frozen_note": "（以 {as_of} 凍結現價計）",
+    "idle": " 賣後資金閒置，原標的同期 {orig}{when}。",
+    "needs_prices": " {missing} 缺現價{when}，本期不判結果。",
+    "note": " 註記：「{note}」。",
+    "position_fallback": "這筆部位",
+    "replacement_fallback": "換入標的",
+    "sentence_end": "。",
+    "swap": "{lead}原標的後續 {orig}；{swaps}同期 {swap}；swap 淨差 {net}。"
   },
-  "horizon_entries": {
-    "ticker_default": "這筆部位",
-    "voice_inferred": "原先推測",
-    "voice_recorded": "已記錄",
-    "exit_too_fast": "{ticker}：{voice}的 thesis 時間軸是「{horizon}」，{days} 天後就出場；這是時間軸不一致，不替動機下定論。",
-    "held_too_long": "{ticker}：{voice}的 thesis 時間軸是「{horizon}」，持有 {days} 天後仍未結束；時間軸已漂移，仍需釐清。"
-  },
-  "public_band": {
-    "low": "低",
-    "moderate": "中",
-    "high": "高",
-    "very_high": "很高"
-  },
-  "public_performance": {
-    "line": "{subject}：相對各自市場大盤 {excess} 個百分點；β {beta}。",
-    "subject_default": "可比較部位"
-  },
-  "payoff_lines": {
-    "sub_wrap": "（{sub}）",
-    "original_currency": "已實現盈虧比 {payoff}；平均盈虧金額因顯示匯率缺失而保留原幣。",
-    "drag_with_amount": "最大已實現拖累是 {ticker}，淨影響 {drag}；拿掉它後盈虧比會是 {after}。",
-    "drag_plain": "最大已實現拖累是 {ticker}；拿掉它後盈虧比會是 {after}。"
-  },
-  "cash_lines": {
-    "anchored_with_weight": "有餘額錨點的帳戶現金為 {cash}，佔帳戶 {weight}。",
-    "anchored": "有餘額錨點的帳戶現金為 {cash}。",
-    "by_currency": "有餘額錨點的帳戶現金（原幣）：{amounts}。",
-    "amount_joiner": "、"
-  },
-  "public_mirror": {
-    "structural_with_severity": "這次開場組合檢查把「{dim}」列為主要結構風險，風險壓力為{severity}。",
-    "structural": "這次開場組合檢查把「{dim}」列為主要結構風險。",
-    "structural_dim_default": "組合結構",
-    "snapshot_baseline": "這次開場組合檢查只建立結構基線；交易歷史行為維度維持未評分。",
-    "no_holes": "這次可用歷史不足以排序出主要行為模式。",
-    "behavioral": "這次復盤在「{dim}」看見{severity}程度的行為壓力。",
-    "behavioral_dim_default": "主要行為維度",
-    "structure": "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
-  },
-  "tag_values": {
-    "price_note": "(現 {px}／均 {avg_cost})"
-  },
-  "sectors": {
-    "bonds": "債券",
-    "crypto": "加密",
-    "regional_etf": "區域ETF",
-    "semiconductors": "半導體",
-    "commodities": "商品",
-    "broad_market_etf": "大盤ETF",
-    "unclassified": "未分類",
-    "consumer": "消費",
-    "drones_defense": "無人機國防",
-    "rare_earth_materials": "稀土材料",
-    "datacenter_power": "資料中心電力",
-    "software_cloud": "軟體雲",
-    "fintech": "金融科技",
-    "telecom": "電信",
-    "ev_ai": "電動車AI"
-  },
-  "hole_lines": {
-    "joiner": "；",
-    "ticker_joiner": ", ",
-    "exit_forward": "{n_rt} 筆決策賣出（{n_scored} 有 fwd、{n_trunc} 截斷）中 {early_rate} 在 {n_fwd} 天後更高、平均續漲 {avg_forgone}{winner_early}",
-    "exit_winner_early": "；賣掉賺錢的有 {winner_early} 續漲（賣太早）",
-    "exit_holding": "賺錢抱 {hold_win} 天 / 賠錢抱 {hold_lose} 天（處置缺口 {disp_gap}）",
-    "position_sizing": "你最大一筆 {max_ticker} 佔 {max_pct}，其餘平均 {avg_pct}",
-    "diversification": "你持有 {n} 檔看似分散，但 AI capex 暴險 {ai_pct}、最大板塊「{max_sector}」{max_sector_pct}、top3 {top3}——同一個驅動因子",
-    "holding_no_data": "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）",
-    "holding_same_day": "所有已完成交易皆為當日進出，沒有隔夜持有",
-    "holding_base": "你持有時間 {min}~{max} 天、中位 {median_hold} 天",
-    "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 檔同一檔又當沖又長抱（{tickers}）——同檔沒有一致框架",
-    "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同檔框架大致一致）",
-    "averaging_down": "你有 {count} 次在虧損倉往下加碼（{tickers}），其中 {breach} 次加碼當下佔成本 >25%"
-  },
-  "add_descriptions": {
-    "planned_tranche": "進場前已定好節奏，價格下跌不是新增理由。",
-    "new_evidence": "必須補 claim 與 source，之後能回頭驗證。",
-    "valuation_change": "判斷沒變，但價格讓賠率或安全邊際改變。",
-    "price_only": "沒有新事實，主要是想攤低成本或等回本。",
-    "skip": "先不定性，卡上只標未確認。"
-  },
+  "footnote_label": "資料備註",
   "generic_choices": {
     "deliberate_plan": "事先規劃",
     "emotional_reaction": "情緒反應",
@@ -543,44 +274,326 @@
     "external_constraint": "資金、稅務或其他限制主導了行動。",
     "skip": "這次先不替動機下定論。"
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "事先規劃",
+    "emotional_reaction": "情緒反應",
+    "external_constraint": "外部限制"
+  },
+  "hole_lines": {
+    "averaging_down": "你有 {count} 次在虧損倉往下加碼（{tickers}），其中 {breach} 次加碼當下佔成本 >25%",
+    "diversification": "你持有 {n} 檔看似分散，但 AI capex 暴險 {ai_pct}、最大板塊「{max_sector}」{max_sector_pct}、top3 {top3}——同一個驅動因子",
+    "exit_forward": "{n_rt} 筆決策賣出（{n_scored} 有 fwd、{n_trunc} 截斷）中 {early_rate} 在 {n_fwd} 天後更高、平均續漲 {avg_forgone}{winner_early}",
+    "exit_holding": "賺錢抱 {hold_win} 天 / 賠錢抱 {hold_lose} 天（處置缺口 {disp_gap}）",
+    "exit_winner_early": "；賣掉賺錢的有 {winner_early} 續漲（賣太早）",
+    "holding_base": "你持有時間 {min}~{max} 天、中位 {median_hold} 天",
+    "holding_consistent": "{base}（中位 {median_hold} 天 = 你的主框架；同檔框架大致一致）",
+    "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 檔同一檔又當沖又長抱（{tickers}）——同檔沒有一致框架",
+    "holding_no_data": "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）",
+    "holding_same_day": "所有已完成交易皆為當日進出，沒有隔夜持有",
+    "joiner": "；",
+    "position_sizing": "你最大一筆 {max_ticker} 佔 {max_pct}，其餘平均 {avg_pct}",
+    "ticker_joiner": ", "
+  },
+  "honesty": {
+    "accounting_reconciliation": "匯入交易未能重現快照錨定的目前持倉，因此這次不評分部位大小、分散與未實現損益。",
+    "acct_perf_basis": "帳戶績效建立在近似的地基上——部分錨點、成本平線計價、匯率近似、用量×價估算的交易現金金額，或一段完全沒有存提款紀錄的期間——需保留不確定性。",
+    "alpha_credibility": "Alpha 的樣本或統計強度不足，不能當成穩定能力。",
+    "cash_reliability": "現金餘額缺完整錨點，含現金的帳戶判讀有限。",
+    "currency_mix": "組合含多幣別；聚合數字使用共同幣別，部分匯率可能為近似。",
+    "etf_metadata": "ETF 費用率或 tracking error 資料不完整，本卡沒有把缺值猜成零。",
+    "orphan_sells": "有賣出缺少已知建倉，相關已實現損益未納入。",
+    "price_plausibility": "有供給的收盤價與該檔最近一次實際成交價落差過大，這個來源在採信前應該重新核實。",
+    "price_source": "這期的現價不是引擎自己抓到的：不是來自明確標示的外部資料源與截止日，就是根本取不到，卡上會說明是哪一種。",
+    "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。",
+    "sector_attribution": "部分標的缺板塊基準，賽道與選股拆帳不完整。",
+    "sizing_coverage": "部分持倉既無現價也無成本基礎，部位大小與過重判斷僅涵蓋能估值的持倉。",
+    "snapshot_reconciliation": "這份持倉宣告已與帳本推導持倉對帳；一致即標記為已對帳，若有差異則以明確的調整事件保留紀錄，並改以較新宣告為記帳錨點，不猜測差異原因。",
+    "snapshot_scope": "交易歷史維度——攤平、出場紀律、持有行為、勝率、盈虧比、alpha 與歷史動機——不在這次持倉快照的評分範圍內。",
+    "unclassified_drivers": "部分標的尚未分類，組合集中度可能被低估。",
+    "unpriced_exits": "有部位離開紀錄時沒有成交價，這些出場未納入勝率、盈虧比與出場紀律。",
+    "unrealized_coverage": "部分持倉缺現價，未實現損益不是完整帳面。"
+  },
+  "horizon_entries": {
+    "exit_too_fast": "{ticker}：{voice}的 thesis 時間軸是「{horizon}」，{days} 天後就出場；這是時間軸不一致，不替動機下定論。",
+    "held_too_long": "{ticker}：{voice}的 thesis 時間軸是「{horizon}」，持有 {days} 天後仍未結束；時間軸已漂移，仍需釐清。",
+    "ticker_default": "這筆部位",
+    "voice_inferred": "原先推測",
+    "voice_recorded": "已記錄"
+  },
+  "horizons": {
+    "quarters": "季",
+    "weeks": "週",
+    "years": "年"
+  },
+  "initial_thesis_choices": {
+    "external_call": "別人推薦的",
+    "momentum_follow": "追了動能／FOMO",
+    "no_clear_thesis": "沒有明確論點",
+    "planned_entry": "進場前就有明確論點",
+    "skip": "先跳過"
+  },
   "initial_thesis_descriptions": {
-    "planned_entry": "進場前就有明確的論點。",
-    "momentum_follow": "追了價格動能或 FOMO。",
     "external_call": "KOL、朋友或研究報告推薦的。",
+    "momentum_follow": "追了價格動能或 FOMO。",
     "no_clear_thesis": "在沒有明確論點下持有。",
+    "planned_entry": "進場前就有明確的論點。",
     "skip": "這次先不替進場動機下定論。"
   },
-  "exit_descriptions": {
-    "price_target": "原先設定的目標或減碼條件已經完成。",
-    "thesis_broken": "原本判斷失效，或信心因新事實而下降。",
-    "swap": "資金改放到另一個標的或用途。",
-    "anxiety": "主要是怕回吐，所以先鎖住全部或部分成果。",
-    "other": "以上都不符合，用自己的話留下一句。",
-    "skip": "保存為已略過，之後不再追問這筆的賣出理由。"
+  "instrument_tags": {
+    "adds_pending_confirmation": "？加碼 {n_adds} 次待確認：是定投還是凹單，要你定",
+    "deep_underwater": "✗套牢:{cur_pct}{price_note} 還抱著沒處理",
+    "disciplined_hold": "✓紀律持有：賺 {cur_pct}{price_note}",
+    "roughly_neutral": "— 大致中性",
+    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}{price_note}(待你確認交易論述)",
+    "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣，不是紀律",
+    "suspected_dca": "✓疑似定投：漲跌都買/規律 {n_adds} 次，不是凹單",
+    "too_heavy": "⚠押太重：佔組合 {wpct_pct}"
   },
-  "due_descriptions": {
-    "still_valid": "理由仍成立，賣早也是紀律。",
-    "modified": "理由部分成立，需要修正。",
-    "falsified": "真的判斷錯誤，記進教訓。",
-    "skip": "不算已回答，下次復盤同一關會再出現。"
+  "kpi": {
+    "alpha": "年化 α",
+    "alpha_unreliable": "統計上還不可信",
+    "curve": "這期走勢",
+    "excess": "相對大盤",
+    "excess_sub": "β {beta}",
+    "payoff": "已實現盈虧比",
+    "payoff_sub": "賺 {win} vs 賠 {loss}",
+    "pnl": "帳面總損益",
+    "pnl_sub": "已實現 {realized} · 未實現 {unrealized}",
+    "spark_caption": "高點 {peak} · 低點 {trough}"
+  },
+  "language": "zh-TW",
+  "markdown_summary": {
+    "next": "下次規則",
+    "risk": "主要風險"
+  },
+  "motive_entries": {
+    "context": "引擎脈絡：{fact}。",
+    "recorded": "「{subject}」的動機記為：{label}。",
+    "saved": "這個選項已保存，供後續復盤對帳。",
+    "subject_default": "這次浮現的行為",
+    "terminator": "。"
+  },
+  "patterns_panel": {
+    "label": "一個模式，還沒下判斷（不用回答）",
+    "sold_winner_early": "這期賣掉的 {total} 筆有 {early} 筆賣完還漲，最明顯是 {tickers}。"
+  },
+  "payoff_lines": {
+    "drag_plain": "最大已實現拖累是 {ticker}；拿掉它後盈虧比會是 {after}。",
+    "drag_with_amount": "最大已實現拖累是 {ticker}，淨影響 {drag}；拿掉它後盈虧比會是 {after}。",
+    "original_currency": "已實現盈虧比 {payoff}；平均盈虧金額因顯示匯率缺失而保留原幣。",
+    "sub_wrap": "（{sub}）"
+  },
+  "period": {
+    "as_of": "截至 {end}",
+    "span": "復盤區間 {start} → {end}",
+    "vix": "VIX {value}"
+  },
+  "pnl_lines": {
+    "display": {
+      "realized_only": "已實現損益 {realized}；目前未實現損益未評分。",
+      "total": "帳面總損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
+      "unrealized_only": "未實現損益 {unrealized}；已實現損益無法取得。"
+    },
+    "original": {
+      "both": "{currency} 帳面損益 {total}，其中已實現 {realized}、未實現 {unrealized}。",
+      "realized_only": "{currency} 已實現損益 {realized}。",
+      "unrealized_only": "{currency} 未實現損益 {unrealized}。"
+    }
+  },
+  "prescription_kinds": {
+    "amplify": "揚長",
+    "amplify_hypothesis": "揚長(假設，待驗證)",
+    "cut_loss": "砍損耗",
+    "outsource": "外包短板(漸進)",
+    "selection_inconclusive": "選股：資料不足以判定"
+  },
+  "prescription_texts": {
+    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡，押對賽道佔 {alloc_pp}pp(拆帳)。那還只是假設，不是已證實的 edge——押對 AI 也可能只是站到風口，要靠下次的賽道判斷才驗得出來。",
+    "amplify_selection_edge": "扣掉賽道紅利，你板塊內選股仍貢獻 {sel_pp}pp、α 統計上站得住——這是真 edge。",
+    "cut_averaging_down": "虧損中加碼 {count} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。",
+    "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct},單一押注過重。",
+    "outsource_selection": "扣掉賽道，你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差。這不是說『別選股』(你享受它、ETF 也會錯過妖股),而是可以撥一部分資金被動化托底，選股當衛星。(流程觀察，非標的建議)",
+    "selection_inconclusive": "拆帳看，板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note}，統計上還分不出選股是本事還是運氣。",
+    "selection_inconclusive_t_unstable": "α 統計量還算不穩",
+    "selection_inconclusive_t_wide": "α 的 95% 區間還太寬(t={t})"
+  },
+  "private_badge": "復盤卡，只留在本機",
+  "problem_keys": {
+    "avgdown_breach": "攤平越過部位界線",
+    "concentration": "同一驅動因子集中",
+    "exit_anxiety": "焦慮驅動出場",
+    "fomo_entry": "FOMO 進場",
+    "hold_inconsistency": "持有時間軸混用",
+    "horizon_break": "交易論述時間軸破戒",
+    "oversize": "單一部位過重",
+    "sell_winner_early": "賣出贏家的機會成本"
+  },
+  "problems": {
+    "breach_decision": "規矩「{rule}」：{label}。",
+    "breach_note": " 註記：「{note}」。",
+    "rule_held": "規矩「{rule}」在最近一個可觀測週期守住了。",
+    "trend_line": "{name}：近期 {recent} 次，前期 {prev} 次（{trend}）。"
+  },
+  "public_badge": "可分享版，已移除金額、日期、標的與精確部位",
+  "public_band": {
+    "high": "高",
+    "low": "低",
+    "moderate": "中",
+    "very_high": "很高"
+  },
+  "public_custom_rule": "已承諾一條自訂流程規矩；內容只留在復盤卡。",
+  "public_mirror": {
+    "behavioral": "這次復盤在「{dim}」看見{severity}程度的行為壓力。",
+    "behavioral_dim_default": "主要行為維度",
+    "no_holes": "這次可用歷史不足以排序出主要行為模式。",
+    "snapshot_baseline": "這次開場組合檢查只建立結構基線；交易歷史行為維度維持未評分。",
+    "structural": "這次開場組合檢查把「{dim}」列為主要結構風險。",
+    "structural_dim_default": "組合結構",
+    "structural_with_severity": "這次開場組合檢查把「{dim}」列為主要結構風險，風險壓力為{severity}。",
+    "structure": "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
+  },
+  "public_patterns": {
+    "alpha_beta": "這次浮現的模式，關乎相對大盤結果如何拆分為市場暴險與選擇。",
+    "averaging_down": "這次浮現的模式，關乎虧損部位的加碼如何受到界線約束。",
+    "diversification": "這次浮現的模式，關乎組合是否代表彼此不同的底層風險。",
+    "entry_style": "這次浮現的模式，關乎進場時點與近期價格移動的關係。",
+    "exit_discipline": "這次浮現的模式，關乎出場決策如何被安排與檢驗。",
+    "holding_period": "這次浮現的模式，關乎持有時間是否對齊一致的決策時間軸。",
+    "holding_period_same_day": "所有已完成交易皆為當日進出，沒有隔夜持有。",
+    "position_sizing": "這次浮現的模式，關乎風險如何分配到不同部位。"
+  },
+  "public_performance": {
+    "line": "{subject}：相對各自市場大盤 {excess} 個百分點；β {beta}。",
+    "subject_default": "可比較部位"
+  },
+  "rationale_refresh": {
+    "stem": "你在 {stated_at} 說你持有 {ticker} 是因為：「{statement}」。現在還是這個理由嗎？"
+  },
+  "rationale_refresh_choices": {
+    "changed": "理由變了",
+    "same": "還是同一個理由",
+    "skip": "先不回答"
+  },
+  "rationale_refresh_choices_descriptions": {
+    "changed": "寫下現在的理由。舊的字句會留著，不是被覆蓋。",
+    "same": "以今天的日期記下你確認過。你原本的字句原封不動保留。",
+    "skip": "先不回答；你先前說的仍然有效。"
+  },
+  "reconciliation": {
+    "statement": "上次你承諾：「{rule}」。",
+    "statement_with_metric": "上次你承諾：「{rule}」——追蹤的數字當時 {then}，這次 {now}。"
+  },
+  "review_milestone": {
+    "line": "開始這次復盤時，你已有 {completed} 次完成紀錄。",
+    "noun_many": "",
+    "noun_one": ""
+  },
+  "rule_breach_choices": {
+    "exception": "這次是正當例外",
+    "keep_tracking": "這次守不住",
+    "revise_rule": "規矩需要修訂"
+  },
+  "rule_breach_decisions": {
+    "exception": "記為正當例外",
+    "keep_tracking": "這次沒守住，繼續追蹤",
+    "revise_rule": "標記為需要修訂"
   },
   "rule_breach_descriptions": {
+    "exception": "這次有正當例外；在 note 留下理由，事件仍保留在帳上。",
     "keep_tracking": "規矩合理，但這次沒有守住；照實記錄並繼續追。",
-    "revise_rule": "規矩本身不合理；在 note 簡述為何要改，收尾時用唯一 commitment 寫替代規矩。",
-    "exception": "這次有正當例外；在 note 留下理由，事件仍保留在帳上。"
+    "revise_rule": "規矩本身不合理；在 note 簡述為何要改，收尾時用唯一 commitment 寫替代規矩。"
   },
-  "asked_because": {
-    "pnl_impact": "它是你本週影響損益最大的部位",
-    "position_cost": "它是你本週成本最大的部位",
-    "exit_notional": "它是你近期金額最大的出場之一"
+  "rule_grounding": {
+    "averaging_down": "本期實況：你在虧損部位往下加碼 {count} 次，包括 {tickers}。",
+    "diversification": "本期實況：前幾大部位 {tickers} 合計佔 {pct}。",
+    "holding_period": "本期實況：{tickers} 同一檔既有短進短出、也有長抱。",
+    "position_sizing": "本期實況：最大單一部位 {ticker} 佔 {pct}。"
   },
-  "breach_evidence": {
-    "none": "帳上有一筆事件",
-    "more": "；另有 {extra} 筆",
-    "joiner": "; "
+  "rule_targets": {
+    "count_unit": " 次",
+    "line": "本期會被它攔下的：{items}",
+    "more_suffix": "、及其他 {n} 檔"
   },
-  "candidate_comparison": {
-    "line": "本期「{top}」的訊號比「{others}」更強——這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。",
-    "joiner": "、"
+  "rule_tradeoff": {
+    "sizing_vs_hypothesis": "上限管的是單筆爆掉；押對賽道還沒驗證，更不該靠加大單注押它。",
+    "sizing_vs_proven_edge": "上限管的是單筆爆掉，不跟「選股是真 edge」衝突。"
+  },
+  "rules": {
+    "averaging_down": "往下加碼前寫出一個進場時不知道的新證據；寫不出，不加。",
+    "diversification": "新增部位前先看是否仍是同一個驅動因子；同一注已過重，不新增。",
+    "exit_discipline": "出場前先寫下交易論述已完成或失效的事實；只因害怕回吐，不賣。",
+    "holding_period": "進場時先標短線、波段或長線；出場只用同一時間框架的理由。",
+    "position_sizing": "單筆部位上限定死 {cap}；超過就減，不新增。"
+  },
+  "sections": {
+    "etf": "ETF 與組合結構",
+    "hole": "最大的行為漏洞",
+    "performance": "相對績效",
+    "rule": "下次只改這一件",
+    "strength": "你做對的一件事"
+  },
+  "sectors": {
+    "bonds": "債券",
+    "broad_market_etf": "大盤ETF",
+    "commodities": "商品",
+    "consumer": "消費",
+    "crypto": "加密",
+    "datacenter_power": "資料中心電力",
+    "drones_defense": "無人機國防",
+    "ev_ai": "電動車AI",
+    "fintech": "金融科技",
+    "rare_earth_materials": "稀土材料",
+    "regional_etf": "區域ETF",
+    "semiconductors": "半導體",
+    "software_cloud": "軟體雲",
+    "telecom": "電信",
+    "unclassified": "未分類"
+  },
+  "snapshot": {
+    "holes": {
+      "clean_structure": "這次持倉快照沒有觸發集中度或分散度的結構風險。",
+      "leading_risk": "現有快照的主要結構風險是「{label}」。",
+      "no_weights": "這次開場檢查只建立結構基線；無法取得的權重不會被當成低風險。"
+    },
+    "overview": {
+      "missing_avg_cost": "以下持倉缺少平均成本：{tickers}。",
+      "missing_fx": "以下幣別缺少可靠匯率：{currencies}。",
+      "opening": "這是針對{subject}的開場組合檢查。",
+      "opening_as_of": "這是針對{subject}的開場組合檢查，快照截至 {as_of}。",
+      "subject_generic": "使用者提供的持倉",
+      "subject_with_count": "使用者提供的 {positions} 個持倉",
+      "valuation_cost": "結構權重採使用者提供的成本口徑。",
+      "valuation_market_value": "結構權重採使用者提供的市值口徑。",
+      "valuation_unavailable": "目前沒有可靠估值口徑，因此不評分依賴權重的組合結構。"
+    },
+    "strength": {
+      "baseline": "已用使用者提供的持倉建立結構基線；依賴權重的優勢暫不評分。",
+      "weighted": "已用你提供的持倉建立組合結構基線，並據此評分權重；缺少的輸入維持明示，不用推測補齊。"
+    }
+  },
+  "snapshot_hole": "主要結構風險",
+  "snapshot_numbers": "第一次持倉結構",
+  "snapshot_strength": "這份快照建立了什麼",
+  "split_lines": {
+    "line": "{subject}贏大盤的 {excess} 個百分點拆為：市場／賽道配置 {allocation} 個百分點、標的選擇 {selection} 個百分點。",
+    "subject_default": "",
+    "subject_market": "{market} "
+  },
+  "stress_test": {
+    "labels": {
+      "ai_thematic": "AI 概念股(跨板塊)",
+      "sector": "「{sector}」板塊",
+      "single_ticker": "單檔 {ticker}"
+    },
+    "line": "你 {label} 暴險約 {exposure}（佔 {pct}）；回檔 30% → 帳面 −{drop30}、回檔 50% → −{drop50}，撐得住嗎？"
+  },
+  "tag_values": {
+    "price_note": "(現 {px}／均 {avg_cost})"
+  },
+  "title": "復盤卡",
+  "trends": {
+    "better": "改善",
+    "flat": "持平",
+    "worse": "惡化"
   }
 }

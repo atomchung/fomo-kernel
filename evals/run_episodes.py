@@ -191,6 +191,14 @@ QUESTION_CONSUMERS = {
     # writes a new slot row on the line — which is what the *next* review's due
     # list carries forward, criterion and all.
     "condition_basis": ("condition_checks", ("card", "state:condition_slots_due")),
+    # #403: the answer is written straight into the canonical
+    # position_rationales.jsonl through the one append service, not projected
+    # out of the session bundle the way every other kind's is -- a second writer
+    # into a canonical stream would be the parallel store the issue forbids.
+    # So the verifiable consumer is the plan key the *next* review reads it back
+    # through, and there is deliberately no card claim: #403 parks card layout,
+    # and a rationale is a fact surface rather than a card section.
+    "rationale_refresh": ("position_rationales", ("state:position_rationales",)),
 }
 # Kinds whose answer reaches nothing, each pinned to the issue that owns the
 # disposition. A ratchet, not an exemption: a kind that becomes wired must leave

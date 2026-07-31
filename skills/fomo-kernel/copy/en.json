@@ -1,536 +1,267 @@
 {
-  "language": "en",
-  "title": "Review Card",
-  "private_badge": "Review card; stored locally only",
-  "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
-  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
-  "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
-  "markdown_summary": {
-    "risk": "Key risk",
-    "next": "Next rule"
+  "account_gate": {
+    "cash_residual": "Update the cash position for that stretch, and you'll see the account-level return with cash included.",
+    "chain_unavailable": "No day in this window produced a usable account value to chain into a return.",
+    "default": "Complete the cash anchor, and you'll see the account-level return with cash included.",
+    "mixed_trade_footprint": "Only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history.",
+    "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see the account-level return with cash included.",
+    "no_cash_anchor": "Add one current cash balance, and you'll see the account-level return with cash included."
   },
-  "snapshot_numbers": "Opening portfolio structure",
-  "snapshot_strength": "What this snapshot establishes",
-  "snapshot_hole": "The leading structural risk",
-  "sections": {
-    "performance": "Relative performance",
-    "strength": "One thing you did well",
-    "hole": "The biggest behavioral leak",
-    "etf": "ETF and portfolio structure",
-    "rule": "Change only this next time"
+  "account_perf": {
+    "account_base": "Account-level cumulative return was {value}",
+    "annualized_suffix": "; annualized return was {value}",
+    "cash_drag_suffix": "; the gap versus the holdings pillar, {value}, is explained by holding cash — an observation, not a verdict",
+    "holdings_only": "Holdings-only cumulative return was {value}.",
+    "terminator": "."
   },
-  "blocks": {
-    "performance": "Performance",
-    "trades": "Key trades · ranked by money impact",
-    "risks": "Risks and problems",
-    "next": "Next step",
-    "summary": "Summary"
+  "add_choices": {
+    "new_evidence": "New testable evidence",
+    "planned_tranche": "A pre-planned tranche",
+    "price_only": "Only the price fell / lower the cost basis",
+    "skip": "Skip for now",
+    "valuation_change": "The valuation or odds changed"
   },
-  "period": {
-    "span": "Review period {start} → {end}",
-    "as_of": "As of {end}",
-    "vix": "VIX {value}"
+  "add_descriptions": {
+    "new_evidence": "Requires a claim and source that a later review can test.",
+    "planned_tranche": "The tranche schedule existed before the price move.",
+    "price_only": "No new fact; the main motive was lowering the cost basis or getting back to even.",
+    "skip": "Leave the motive unclassified for now.",
+    "valuation_change": "The thesis is unchanged, but price changed the odds or margin of safety."
+  },
+  "alpha_interval": {
+    "below_negative": "The annualized α interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill.",
+    "below_unreliable": "* The annualized α is not yet statistically credible.",
+    "lead": "Risk-adjusted alpha{scope} was {alpha}% annualized, with a 95% interval from {low}% to {high}%; the interval controls how strong the conclusion may be.",
+    "negative_caveat": " (The interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill.)",
+    "scope_suffix": " for {market} holdings",
+    "tile_sub": "95% interval {low}% to {high}%"
+  },
+  "asked_because": {
+    "exit_notional": "it is one of your largest recent exits by amount",
+    "pnl_impact": "it is the position with the largest P&L impact this week",
+    "position_cost": "it is your largest position by cost this week"
+  },
+  "benchmark_line": {
+    "beta_suffix": "; β {beta}",
+    "comparator_default": "their market benchmark",
+    "line": "{subject} beat {comparator} by {excess} pp{beta}.",
+    "subject_default": "The holdings",
+    "subject_market": "{market} holdings"
+  },
+  "best_strength": {
+    "averaging_down": "you added down {count} times and still stayed inside your own position limit, never letting one name grow heavy on the way down{example}",
+    "averaging_down_example": " (for example {ticker})",
+    "diversification": "{n} names spread across different drivers, so you are not all-in on one story",
+    "exit_discipline": "you take profit without flinching: only {winner_early} of the winners you sold kept climbing afterwards, so you are not the kind who clings to a gain until it gives itself back",
+    "holding_period": "your entries and exits keep a consistent rhythm: a median hold of {median_hold} days, not random buying and selling",
+    "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak.",
+    "position_sizing": "single-position size is under control: even your heaviest name is only {max_pct}, so your net worth is not riding on one ticker"
   },
   "block_missing": {
     "absolute_pnl": "Absolute P&L is not computable this period: no trades or valuation basis.",
     "annualized": "Annualized return is not computable this period: the cash-flow anchor is incomplete.",
     "annualized_prices": "Annualized return is not computable this period: current prices could not be retrieved, so no portfolio-level valuation exists.",
-    "vs_market": "Benchmark comparison is not computable this period: no resolvable benchmark series.",
-    "vs_market_prices": "Benchmark comparison is not computable this period: the benchmark prices could not be retrieved.",
-    "trades": "No ranked instrument diagnosis this period.",
-    "trades_traded": "No ranked instrument diagnosis this period; traded: {tickers}.",
+    "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled.",
+    "annualized_short_series": "Annualized return is not computable this period: the price series covers fewer than two days, so there is no change to measure.",
     "risks": "No behavioral diagnosis this period: the engine scored no dimension.",
     "rule": "No new rule commitment this time; you can pick one at the next review.",
-    "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\"",
-    "rule_pending": "No rule chosen yet this period; the recommendation is: \"{rule}\"",
     "rule_diverged": "The standing rule is still \"{standing}\"; this period's leading issue is a different one, so \"{recommendation}\" stays a recommendation until you choose it.",
+    "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
+    "rule_pending": "No rule chosen yet this period; the recommendation is: \"{rule}\"",
     "rule_skip": "You chose not to set a new commitment; the same baseline remains available next time.",
     "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
+    "rule_standing": "No rule change this period; the standing rule remains: \"{rule}\"",
     "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. Too few closed trades here to say yet whether your selling costs you more than your buying; a file carrying the matching sells would settle that one question.",
-    "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
     "snapshot_unlock": "This check can see what you hold, not how you got here. Your transaction history would answer the one question it cannot: whether your selling costs you more than your buying.",
-    "annualized_short_series": "Annualized return is not computable this period: the price series covers fewer than two days, so there is no change to measure.",
-    "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled."
+    "trades": "No ranked instrument diagnosis this period.",
+    "trades_traded": "No ranked instrument diagnosis this period; traded: {tickers}.",
+    "vs_market": "Benchmark comparison is not computable this period: no resolvable benchmark series.",
+    "vs_market_prices": "Benchmark comparison is not computable this period: the benchmark prices could not be retrieved."
   },
-  "account_gate": {
-    "default": "Complete the cash anchor, and you'll see the account-level return with cash included.",
-    "no_cash_anchor": "Add one current cash balance, and you'll see the account-level return with cash included.",
-    "mixed_trade_footprint": "Only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history.",
-    "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see the account-level return with cash included.",
-    "cash_residual": "Update the cash position for that stretch, and you'll see the account-level return with cash included.",
-    "chain_unavailable": "No day in this window produced a usable account value to chain into a return."
+  "blocks": {
+    "next": "Next step",
+    "performance": "Performance",
+    "risks": "Risks and problems",
+    "summary": "Summary",
+    "trades": "Key trades · ranked by money impact"
   },
-  "footnote_label": "Data notes",
-  "kpi": {
-    "pnl": "Total P&L",
-    "pnl_sub": "{realized}, {unrealized} unrealized",
-    "payoff": "Realized payoff ratio",
-    "payoff_sub": "{win} win vs {loss} loss",
-    "excess": "Benchmark excess",
-    "excess_sub": "β {beta}",
-    "alpha": "Annualized alpha",
-    "alpha_unreliable": "not yet statistically credible",
-    "curve": "Path this period",
-    "spark_caption": "peak {peak} · trough {trough}"
+  "breach_evidence": {
+    "joiner": "; ",
+    "more": "; and {extra} more",
+    "none": "a recorded event"
   },
-  "etf_classification": {
-    "allocation": "Diversified allocation ETFs were separated from single-name concentration: {list}.",
-    "concentrated": "Sector, thematic, or leveraged ETFs remained concentration risk: {list}."
+  "candidate_comparison": {
+    "joiner": " and ",
+    "line": "{top} scored higher than {others} on this period's severity ranking -- that reflects which pattern showed up more strongly this period, not which rule is the right fit for you."
   },
-  "dimensions": {
-    "exit_discipline": "exit discipline",
-    "position_sizing": "position sizing",
-    "diversification": "portfolio diversification",
-    "holding_period": "holding-horizon consistency",
-    "averaging_down": "averaging-down discipline",
-    "alpha_beta": "benchmark attribution",
-    "entry_style": "entry style"
-  },
-  "public_patterns": {
-    "exit_discipline": "The highlighted behavior concerned how exit decisions were timed and evaluated.",
-    "position_sizing": "The highlighted behavior concerned how risk was distributed across position sizes.",
-    "diversification": "The highlighted behavior concerned whether the portfolio represented distinct underlying risks.",
-    "holding_period": "The highlighted behavior concerned whether holding durations matched a consistent decision horizon.",
-    "holding_period_same_day": "All completed trades were same-day; no overnight holding.",
-    "averaging_down": "The highlighted behavior concerned how additions to losing positions were bounded.",
-    "alpha_beta": "The highlighted behavior concerned how benchmark-relative results were attributed between exposure and selection.",
-    "entry_style": "The highlighted behavior concerned when entries occurred relative to recent price moves."
-  },
-  "rules": {
-    "exit_discipline": "Before exiting, name the fact that completed or broke the thesis. Fear of giving back gains is not enough.",
-    "position_sizing": "Cap any single position at {cap}. Trim if it goes over, and do not add.",
-    "diversification": "Before adding a position, check whether it is still the same underlying driver. If that bet is already too large, do not add.",
-    "holding_period": "Label the trade as short-term, swing, or long-term at entry. Exit only for a reason from the same horizon.",
-    "averaging_down": "Before averaging down, write one piece of evidence you did not know at entry. If you cannot, do not add."
-  },
-  "rule_grounding": {
-    "position_sizing": "This period: your largest single position {ticker} is {pct} of the portfolio.",
-    "diversification": "This period: your top positions {tickers} together hold {pct}.",
-    "holding_period": "This period: {tickers} mixed quick exits and long holds within the same position.",
-    "averaging_down": "This period: you averaged down {count} times into losing positions, including {tickers}."
-  },
-  "rule_targets": {
-    "line": "What this rule would catch this period: {items}",
-    "count_unit": "x",
-    "more_suffix": ", and {n} more"
-  },
-  "rule_tradeoff": {
-    "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge.",
-    "sizing_vs_hypothesis": "The cap limits what a single position can cost you, and the sector call is still unverified — not something to back with a bigger single bet."
-  },
-  "condition_state": {
-    "already_met": "This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.",
-    "unmapped_no_threshold": "This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you.",
-    "unmapped_no_baseline": "This one is recorded, but the figure behind it could not be found, so it is not being watched yet.",
-    "unmapped_no_adjudicator": "This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you.",
-    "event_watch_started": "This one is a yes-or-no call: it is being watched from now on, and when something turns up you get asked — the call stays yours."
-  },
-  "condition_check": {
-    "then_now": "Last time you committed: \"{rule}\" — it was {then} when you set it, {now} now.",
-    "then_now_no_baseline": "Last time you committed: \"{rule}\" — nothing was on record when you set it; it is {now} now.",
-    "then_now_event": "Last time you committed: \"{rule}\" — you started watching for it then. Latest: {now}.",
-    "verdict_met": "That is past your line.",
-    "verdict_near_line": "That is close to your line.",
-    "verdict_not_met": "That is still clear of your line.",
-    "verdict_unknown": "There is no verdict on it this period.",
-    "fact": "{criterion} — {value} ({source}, as of {as_of}).",
-    "fact_no_source": "{criterion} — {value}.",
-    "fact_looks_wrong": "If a figure there looks wrong, say so — the basis can be re-checked.",
-    "thesis_guard": "This is what you said would break your {ticker} thesis.",
-    "thesis_retired": "{criterion} — no longer checked from here on: you are fully out of {ticker}, so the thesis it was guarding is closed.",
-    "note_deferred": "That is past your line; I will ask you about it next review.",
-    "note_deferred_event": "That may be the thing you were watching for; I will ask you about it next review.",
-    "note_unanswered": "That is past your line and you have not said either way; I will ask again next review.",
-    "note_unanswered_event": "That may be the thing you were watching for and you have not said either way; I will ask again next review.",
-    "note_basis_open": "What this measures may have changed ({note}), and that is still unsettled; I will ask about it next review.",
-    "blind": "{criterion} — not checked this period, so it is currently blind.",
-    "blind_with_reason": "{criterion} — not checked this period ({reason}), so it is currently blind.",
-    "summary_checked": "Checked {checked} of {total} conditions this period.",
-    "summary_open": "Open concerns coming back next review: {deferred}.",
-    "summary_trimmed": "This card shows {shown} of {describable} readings; the rest are in your record."
-  },
-  "condition_crossing": {
-    "met": "You set this: \"{criterion}\". This period: {evidence}. Does that count as crossed?",
-    "near_line": "You set this: \"{criterion}\". This period: {evidence} — close to the line. Does that count as crossed?",
-    "event": "You set this: \"{criterion}\". This period: {evidence}. Did it happen?"
-  },
-  "condition_crossing_choices": {
-    "confirmed": "Yes, treat it as crossed",
-    "overridden": "No, do not treat it as crossed",
-    "yes": "Yes, it happened",
-    "no": "No, it did not",
-    "skip": "Leave it for now"
-  },
-  "condition_crossing_choices_descriptions": {
-    "confirmed": "The reading stands, and the rule you wrote applies.",
-    "overridden": "The reading is measuring something other than what you meant — say why.",
-    "yes": "The thing you were watching for has happened.",
-    "no": "It has not happened; keep watching.",
-    "skip": "Leave it unanswered; the reading is recorded either way."
+  "cash_lines": {
+    "amount_joiner": ", ",
+    "anchored": "Anchored account cash was {cash}.",
+    "anchored_with_weight": "Anchored account cash was {cash}, {weight} of the account.",
+    "by_currency": "Anchored account cash by original currency: {amounts}."
   },
   "condition_basis": {
     "stem": "You set this: \"{criterion}\". What is being measured may have changed: {note}. What should happen to it?"
   },
   "condition_basis_choices": {
-    "revise_threshold": "Keep the measure, move the line",
-    "revise_metric": "Measure something else",
     "keep": "Leave it as it is",
+    "revise_metric": "Measure something else",
+    "revise_threshold": "Keep the measure, move the line",
     "skip": "Leave it for now"
   },
   "condition_basis_choices_descriptions": {
-    "revise_threshold": "The same quantity is still the right one; the number should change.",
-    "revise_metric": "That quantity no longer captures what you meant — write the condition again.",
     "keep": "The change does not affect what you were tracking.",
+    "revise_metric": "That quantity no longer captures what you meant — write the condition again.",
+    "revise_threshold": "The same quantity is still the right one; the number should change.",
     "skip": "Leave it unanswered; the condition stands as written."
   },
-  "patterns_panel": {
-    "label": "A pattern, not yet judged (no answer needed)",
-    "sold_winner_early": "{early} of the {total} positions you sold kept rising afterwards, most clearly {tickers}."
+  "condition_check": {
+    "blind": "{criterion} — not checked this period, so it is currently blind.",
+    "blind_with_reason": "{criterion} — not checked this period ({reason}), so it is currently blind.",
+    "fact": "{criterion} — {value} ({source}, as of {as_of}).",
+    "fact_looks_wrong": "If a figure there looks wrong, say so — the basis can be re-checked.",
+    "fact_no_source": "{criterion} — {value}.",
+    "note_basis_open": "What this measures may have changed ({note}), and that is still unsettled; I will ask about it next review.",
+    "note_deferred": "That is past your line; I will ask you about it next review.",
+    "note_deferred_event": "That may be the thing you were watching for; I will ask you about it next review.",
+    "note_unanswered": "That is past your line and you have not said either way; I will ask again next review.",
+    "note_unanswered_event": "That may be the thing you were watching for and you have not said either way; I will ask again next review.",
+    "summary_checked": "Checked {checked} of {total} conditions this period.",
+    "summary_open": "Open concerns coming back next review: {deferred}.",
+    "summary_trimmed": "This card shows {shown} of {describable} readings; the rest are in your record.",
+    "then_now": "Last time you committed: \"{rule}\" — it was {then} when you set it, {now} now.",
+    "then_now_event": "Last time you committed: \"{rule}\" — you started watching for it then. Latest: {now}.",
+    "then_now_no_baseline": "Last time you committed: \"{rule}\" — nothing was on record when you set it; it is {now} now.",
+    "thesis_guard": "This is what you said would break your {ticker} thesis.",
+    "thesis_retired": "{criterion} — no longer checked from here on: you are fully out of {ticker}, so the thesis it was guarding is closed.",
+    "verdict_met": "That is past your line.",
+    "verdict_near_line": "That is close to your line.",
+    "verdict_not_met": "That is still clear of your line.",
+    "verdict_unknown": "There is no verdict on it this period."
   },
-  "exit_consistency": {
-    "question": "Was that a consistent exit rule, an emotional reaction, or an external constraint?"
+  "condition_crossing": {
+    "event": "You set this: \"{criterion}\". This period: {evidence}. Did it happen?",
+    "met": "You set this: \"{criterion}\". This period: {evidence}. Does that count as crossed?",
+    "near_line": "You set this: \"{criterion}\". This period: {evidence} — close to the line. Does that count as crossed?"
   },
-  "add_choices": {
-    "planned_tranche": "A pre-planned tranche",
-    "new_evidence": "New testable evidence",
-    "valuation_change": "The valuation or odds changed",
-    "price_only": "Only the price fell / lower the cost basis",
-    "skip": "Skip for now"
+  "condition_crossing_choices": {
+    "confirmed": "Yes, treat it as crossed",
+    "no": "No, it did not",
+    "overridden": "No, do not treat it as crossed",
+    "skip": "Leave it for now",
+    "yes": "Yes, it happened"
   },
-  "headline_motive_choices": {
-    "deliberate_plan": "Deliberate plan",
-    "emotional_reaction": "Emotional reaction",
-    "external_constraint": "External constraint"
+  "condition_crossing_choices_descriptions": {
+    "confirmed": "The reading stands, and the rule you wrote applies.",
+    "no": "It has not happened; keep watching.",
+    "overridden": "The reading is measuring something other than what you meant — say why.",
+    "skip": "Leave it unanswered; the reading is recorded either way.",
+    "yes": "The thing you were watching for has happened."
   },
-  "initial_thesis_choices": {
-    "planned_entry": "I had a planned thesis",
-    "momentum_follow": "I chased the momentum",
-    "external_call": "Someone recommended it",
-    "no_clear_thesis": "No clear thesis",
-    "skip": "Skip for now"
-  },
-  "exit_choices": {
-    "full": {
-      "price_target": "The target was reached",
-      "thesis_broken": "The original thesis failed",
-      "swap": "Reallocated to a better opportunity",
-      "anxiety": "Locked in the gain",
-      "other": "Another reason",
-      "skip": "Skip for now"
-    },
-    "reduce": {
-      "price_target": "The planned reduction point was reached",
-      "thesis_broken": "Confidence weakened",
-      "swap": "Reallocated to a better opportunity",
-      "anxiety": "Locked in part of the gain",
-      "other": "Another reason",
-      "skip": "Skip for now"
-    }
-  },
-  "honesty": {
-    "snapshot_scope": "Transaction-history dimensions — averaging down, exit discipline, holding behavior, win rate, payoff, alpha, and historical motives — are out of scope for this position-snapshot review.",
-    "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",
-    "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
-    "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
-    "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
-    "price_plausibility": "A supplied closing price differs sharply from that ticker's own last recorded trade price; the source should be re-verified before the figure is trusted.",
-    "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete.",
-    "sizing_coverage": "Some positions have neither a live price nor a cost basis, so position sizing and the too-heavy check cover only the positions that could be valued.",
-    "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
-    "unpriced_exits": "Some positions left the record with no sale price, so those exits are excluded from win rate, payoff, and exit-discipline figures.",
-    "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
-    "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
-    "acct_perf_basis": "Account performance rests on an approximate basis — partial anchors, cost-line pricing, FX approximation, trade cash amounts estimated from quantity times price, or a period with no deposit or withdrawal on record — and remains uncertain.",
-    "accounting_reconciliation": "The imported transactions did not reproduce the snapshot-anchored current holdings, so current sizing, diversification, and unrealized P&L were not scored.",
-    "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
-    "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero.",
-    "prior_commitment_breach": "This period already recorded a breach of that same rule, before this review closed the books on it."
-  },
-  "instrument_tags": {
-    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct}{price_note} (confirm the thesis)",
-    "suspected_averaging_down_recovered": "likely averaged a loser, now green: {n_adds} adds only while losing — the recovery looks like luck, not discipline",
-    "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
-    "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
-    "deep_underwater": "down {cur_abs_pct}{price_note} and still held without a decision",
-    "too_heavy": "too heavy: {wpct_pct} of the portfolio",
-    "disciplined_hold": "disciplined hold: {cur_signed_pct}{price_note}",
-    "roughly_neutral": "roughly neutral"
-  },
-  "stress_test": {
-    "labels": {
-      "ai_thematic": "AI theme stocks (across sectors)",
-      "sector": "the {sector} sector",
-      "single_ticker": "a single name ({ticker})"
-    },
-    "line": "Your exposure to {label} is about {exposure} ({pct} of the portfolio); a 30% drawdown would mean −{drop30} on paper, a 50% drawdown −{drop50} — could you sit through that?"
-  },
-  "prescription_kinds": {
-    "amplify": "Amplify the edge",
-    "amplify_hypothesis": "Amplify (a hypothesis, still unverified)",
-    "selection_inconclusive": "Stock picking: not enough data to judge",
-    "outsource": "Outsource the weak side (gradually)",
-    "cut_loss": "Cut the leak"
-  },
-  "prescription_texts": {
-    "amplify_hypothesis": "Of your {excess_pp}pp lead over the benchmark, {alloc_pp}pp came from being in the right theme. That is still a hypothesis rather than proven skill — a right call on AI can simply be standing in the wind, and only the next few calls can tell.",
-    "selection_inconclusive": "Within sectors, stock selection contributed {sel_pp}pp (descriptive; that number stands). But {t_note}, so the data cannot yet separate skill from luck.",
-    "selection_inconclusive_t_wide": "the alpha 95% interval is still too wide (t={t})",
-    "selection_inconclusive_t_unstable": "the alpha statistic is still unstable",
-    "outsource_selection": "Net of theme exposure, your in-sector stock selection contributed {sel_pp}pp and the shortfall is statistically solid. That does not mean giving up stock picking — part of the money can sit in a passive base with stock picks as the satellite. (A process observation, not a ticker recommendation.)",
-    "amplify_selection_edge": "Net of theme tailwinds, your in-sector stock selection still contributed {sel_pp}pp with statistically significant alpha — a real edge.",
-    "cut_averaging_down": "Adding to losing positions {count} times is the biggest pure leak in this record — the first behavior to remove.",
-    "cut_oversize": "Your largest position {ticker} holds {max_pct_pct} of the portfolio — a single oversized bet."
-  },
-  "due_choices": {
-    "still_valid": "Still valid",
-    "modified": "Partly right",
-    "falsified": "Wrong call",
-    "skip": "Skip"
-  },
-  "rule_breach_choices": {
-    "keep_tracking": "I did not keep it",
-    "revise_rule": "The rule needs revision",
-    "exception": "This was a justified exception"
-  },
-  "rule_breach_decisions": {
-    "keep_tracking": "not kept; keep tracking",
-    "revise_rule": "marked for revision",
-    "exception": "recorded as a justified exception"
-  },
-  "horizons": {
-    "weeks": "weeks",
-    "quarters": "quarters",
-    "years": "years"
-  },
-  "problem_keys": {
-    "avgdown_breach": "Averaging-down boundary",
-    "sell_winner_early": "Winner exit opportunity cost",
-    "oversize": "Oversized position",
-    "concentration": "Shared-driver concentration",
-    "hold_inconsistency": "Holding-horizon inconsistency",
-    "exit_anxiety": "Anxiety-driven exit",
-    "fomo_entry": "FOMO entry",
-    "horizon_break": "Thesis-horizon break"
-  },
-  "trends": {
-    "worse": "worsening",
-    "flat": "flat",
-    "better": "improving"
-  },
-  "pnl_lines": {
-    "display": {
-      "total": "Total P&L was {total}: {realized} realized and {unrealized} unrealized.",
-      "realized_only": "Realized P&L was {realized}; current unrealized P&L was not scored.",
-      "unrealized_only": "Unrealized P&L was {unrealized}; realized P&L was unavailable."
-    },
-    "original": {
-      "both": "{currency} P&L was {total}: {realized} realized and {unrealized} unrealized.",
-      "realized_only": "{currency} realized P&L was {realized}.",
-      "unrealized_only": "{currency} unrealized P&L was {unrealized}."
-    }
-  },
-  "alpha_interval": {
-    "scope_suffix": " for {market} holdings",
-    "negative_caveat": " (The interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill.)",
-    "lead": "Risk-adjusted alpha{scope} was {alpha}% annualized, with a 95% interval from {low}% to {high}%; the interval controls how strong the conclusion may be.",
-    "tile_sub": "95% interval {low}% to {high}%",
-    "below_unreliable": "* The annualized α is not yet statistically credible.",
-    "below_negative": "The annualized α interval includes a negative value, meaning this period's stock-picking edge is not yet statistically confirmed as a durable skill."
-  },
-  "best_strength": {
-    "no_signal": "No positive behavior was strong enough to claim; keep attention on the largest leak.",
-    "exit_discipline": "you take profit without flinching: only {winner_early} of the winners you sold kept climbing afterwards, so you are not the kind who clings to a gain until it gives itself back",
-    "position_sizing": "single-position size is under control: even your heaviest name is only {max_pct}, so your net worth is not riding on one ticker",
-    "averaging_down": "you added down {count} times and still stayed inside your own position limit, never letting one name grow heavy on the way down{example}",
-    "averaging_down_example": " (for example {ticker})",
-    "diversification": "{n} names spread across different drivers, so you are not all-in on one story",
-    "holding_period": "your entries and exits keep a consistent rhythm: a median hold of {median_hold} days, not random buying and selling"
-  },
-  "reconciliation": {
-    "statement": "Last time you committed: \"{rule}\".",
-    "statement_with_metric": "Last time you committed: \"{rule}\" — the tracked number was {then} then, {now} now."
-  },
-  "snapshot": {
-    "overview": {
-      "subject_with_count": "{positions} supplied positions",
-      "subject_generic": "the supplied positions",
-      "opening": "This is an opening portfolio check of {subject}.",
-      "opening_as_of": "This is an opening portfolio check of {subject} as of {as_of}.",
-      "valuation_market_value": "Structural weights use the supplied market-value basis.",
-      "valuation_cost": "Structural weights use the supplied cost basis.",
-      "valuation_unavailable": "No reliable valuation basis was available, so weight-based structure remains unscored.",
-      "missing_avg_cost": "Average cost was missing for: {tickers}.",
-      "missing_fx": "Reliable FX coverage was missing for: {currencies}."
-    },
-    "strength": {
-      "weighted": "The supplied positions establish a structural baseline, and their weights are scored; missing inputs remain explicit rather than inferred.",
-      "baseline": "The supplied positions establish a structural baseline; weight-based strengths remain unscored."
-    },
-    "holes": {
-      "leading_risk": "The leading structural risk in the available snapshot was {label}.",
-      "clean_structure": "This position snapshot did not flag concentration or diversification as a structural risk.",
-      "no_weights": "This opening check establishes a structural baseline without treating unavailable weights as low risk."
-    }
-  },
-  "problems": {
-    "trend_line": "{name}: {recent} events in the recent window versus {prev} before ({trend}).",
-    "breach_decision": "Rule \"{rule}\": {label}.",
-    "breach_note": " Note: \"{note}\".",
-    "rule_held": "Rule \"{rule}\" was kept in the latest observable period."
-  },
-  "exit_followup": {
-    "position_fallback": "position",
-    "check": "{ticker}, {checkpoint}-day check: {label}.",
-    "note": " Note: \"{note}\".",
-    "as_of": " as of {as_of}",
-    "needs_prices": " Current prices are missing for {missing}{when}, so no outcome comparison was made.",
-    "replacement_fallback": "the replacement",
-    "frozen_lead": " Using prices frozen on {as_of},",
-    "frozen_lead_absent": "",
-    "swap": "{lead} the original moved {orig}; {swaps} moved {swap}; swap net {net}.",
-    "frozen_note": " using prices frozen on {as_of}",
-    "idle": " Proceeds stayed idle while the original moved {orig}{when}.",
-    "backlog": "Historical exit backlog: {count} unresolved exits ({full} full, {reduce} reductions)",
-    "backlog_span": " from {first} to {last}",
-    "backlog_top": "; most frequent: {top}",
-    "sentence_end": ".",
-    "backlog_priced": " Across {priced} price-covered exits, the average post-exit move was {avg}; {rose} later rose.",
-    "action_full": "full exit",
-    "action_reduce": "reduction",
-    "focus": "Backlog focus: {ticker}, {action} on {exit_date}.",
-    "focus_needs_prices": " No frozen-price comparison for {missing}{when}.",
-    "focus_swap": " The original moved {orig}{when}; the replacement moved {swap}; swap net {net}.",
-    "focus_idle": " Proceeds stayed idle while the original moved {orig}{when}.",
-    "focus_orig": " The original moved {orig}{when}."
-  },
-  "account_perf": {
-    "holdings_only": "Holdings-only cumulative return was {value}.",
-    "account_base": "Account-level cumulative return was {value}",
-    "annualized_suffix": "; annualized return was {value}",
-    "cash_drag_suffix": "; the gap versus the holdings pillar, {value}, is explained by holding cash — an observation, not a verdict",
-    "terminator": "."
+  "condition_state": {
+    "already_met": "This line is already crossed today, so it is a decision to make now rather than a tripwire to watch.",
+    "event_watch_started": "This one is a yes-or-no call: it is being watched from now on, and when something turns up you get asked — the call stays yours.",
+    "unmapped_no_adjudicator": "This one is recorded as a yes-or-no call, and it stays yours to make rather than something measured for you.",
+    "unmapped_no_baseline": "This one is recorded, but the figure behind it could not be found, so it is not being watched yet.",
+    "unmapped_no_threshold": "This one is recorded in your words; there is no measurable line in it, so it cannot be checked for you."
   },
   "currency_note": {
-    "cached_dated": "Display conversion uses the FX rate cached at the prior review ({when}).",
     "cached": "Display conversion uses the FX rate cached at the prior review.",
-    "portfolio_fx_gap": "At least one held-currency FX rate was unavailable; amounts remain in original currencies.",
-    "no_rate": "No reliable {currency} display rate was available; amounts remain in original currencies."
-  },
-  "benchmark_line": {
-    "line": "{subject} beat {comparator} by {excess} pp{beta}.",
-    "subject_market": "{market} holdings",
-    "subject_default": "The holdings",
-    "comparator_default": "their market benchmark",
-    "beta_suffix": "; β {beta}"
-  },
-  "split_lines": {
-    "line": "{subject} {excess} pp excess split into {allocation} pp from market/sector allocation and {selection} pp from security selection.",
-    "subject_market": "{market}'s",
-    "subject_default": "The portfolio's"
+    "cached_dated": "Display conversion uses the FX rate cached at the prior review ({when}).",
+    "no_rate": "No reliable {currency} display rate was available; amounts remain in original currencies.",
+    "portfolio_fx_gap": "At least one held-currency FX rate was unavailable; amounts remain in original currencies."
   },
   "decision_entries": {
     "line": "{ticker}: {label}. The decision and its evidence boundary were saved for the next review.",
     "ticker_default": "position"
   },
-  "motive_entries": {
-    "subject_default": "highlighted behavior",
-    "context": "Engine context: {fact}.",
-    "recorded": "Motive recorded for {subject}: {label}.",
-    "saved": "This recorded choice was saved for a later review.",
-    "terminator": "."
+  "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
+  "dimensions": {
+    "alpha_beta": "benchmark attribution",
+    "averaging_down": "averaging-down discipline",
+    "diversification": "portfolio diversification",
+    "entry_style": "entry style",
+    "exit_discipline": "exit discipline",
+    "holding_period": "holding-horizon consistency",
+    "position_sizing": "position sizing"
+  },
+  "due_choices": {
+    "falsified": "Wrong call",
+    "modified": "Partly right",
+    "skip": "Skip",
+    "still_valid": "Still valid"
+  },
+  "due_descriptions": {
+    "falsified": "The reason was wrong; record it as a lesson.",
+    "modified": "The reason was partly right and needs an adjustment.",
+    "skip": "Not saved as answered; the same checkpoint returns next review.",
+    "still_valid": "The reason holds; selling early can still be discipline."
+  },
+  "etf_classification": {
+    "allocation": "Diversified allocation ETFs were separated from single-name concentration: {list}.",
+    "concentrated": "Sector, thematic, or leveraged ETFs remained concentration risk: {list}."
+  },
+  "exit_choices": {
+    "full": {
+      "anxiety": "Locked in the gain",
+      "other": "Another reason",
+      "price_target": "The target was reached",
+      "skip": "Skip for now",
+      "swap": "Reallocated to a better opportunity",
+      "thesis_broken": "The original thesis failed"
+    },
+    "reduce": {
+      "anxiety": "Locked in part of the gain",
+      "other": "Another reason",
+      "price_target": "The planned reduction point was reached",
+      "skip": "Skip for now",
+      "swap": "Reallocated to a better opportunity",
+      "thesis_broken": "Confidence weakened"
+    }
+  },
+  "exit_consistency": {
+    "question": "Was that a consistent exit rule, an emotional reaction, or an external constraint?"
+  },
+  "exit_descriptions": {
+    "anxiety": "The main motive was protecting gains from a possible reversal.",
+    "other": "None of these fit; save a short explanation in your own words.",
+    "price_target": "A target or planned reduction condition was reached.",
+    "skip": "Save this as skipped so this exit's reason is not asked again.",
+    "swap": "Capital was reallocated to another position or use.",
+    "thesis_broken": "New facts broke or weakened the original thesis."
   },
   "exit_entries": {
-    "line": "{ticker}: you recorded the {action} reason as “{label}”. This preserves the reason at the time; it does not judge the outcome yet.",
-    "ticker_default": "position",
     "action_full": "exit",
-    "action_partial": "reduction"
+    "action_partial": "reduction",
+    "line": "{ticker}: you recorded the {action} reason as “{label}”. This preserves the reason at the time; it does not judge the outcome yet.",
+    "ticker_default": "position"
   },
-  "review_milestone": {
-    "line": "When this review started, you already had {completed} completed {noun}.",
-    "noun_one": "review",
-    "noun_many": "reviews"
+  "exit_followup": {
+    "action_full": "full exit",
+    "action_reduce": "reduction",
+    "as_of": " as of {as_of}",
+    "backlog": "Historical exit backlog: {count} unresolved exits ({full} full, {reduce} reductions)",
+    "backlog_priced": " Across {priced} price-covered exits, the average post-exit move was {avg}; {rose} later rose.",
+    "backlog_span": " from {first} to {last}",
+    "backlog_top": "; most frequent: {top}",
+    "check": "{ticker}, {checkpoint}-day check: {label}.",
+    "focus": "Backlog focus: {ticker}, {action} on {exit_date}.",
+    "focus_idle": " Proceeds stayed idle while the original moved {orig}{when}.",
+    "focus_needs_prices": " No frozen-price comparison for {missing}{when}.",
+    "focus_orig": " The original moved {orig}{when}.",
+    "focus_swap": " The original moved {orig}{when}; the replacement moved {swap}; swap net {net}.",
+    "frozen_lead": " Using prices frozen on {as_of},",
+    "frozen_lead_absent": "",
+    "frozen_note": " using prices frozen on {as_of}",
+    "idle": " Proceeds stayed idle while the original moved {orig}{when}.",
+    "needs_prices": " Current prices are missing for {missing}{when}, so no outcome comparison was made.",
+    "note": " Note: \"{note}\".",
+    "position_fallback": "position",
+    "replacement_fallback": "the replacement",
+    "sentence_end": ".",
+    "swap": "{lead} the original moved {orig}; {swaps} moved {swap}; swap net {net}."
   },
-  "horizon_entries": {
-    "ticker_default": "Position",
-    "voice_inferred": "inferred",
-    "voice_recorded": "recorded",
-    "exit_too_fast": "{ticker}: the {voice} thesis horizon was {horizon}, but it ended after {days} days; this is a timeline mismatch, not a verdict about the motive.",
-    "held_too_long": "{ticker}: the {voice} thesis horizon was {horizon}, but it is still open after {days} days; the horizon has drifted and needs clarification."
-  },
-  "public_band": {
-    "low": "low",
-    "moderate": "moderate",
-    "high": "high",
-    "very_high": "very high"
-  },
-  "public_performance": {
-    "line": "{subject}: {excess} pp versus its market benchmark; β {beta}.",
-    "subject_default": "Portfolio"
-  },
-  "payoff_lines": {
-    "sub_wrap": " ({sub})",
-    "original_currency": "Realized payoff ratio was {payoff}; average gain/loss amounts remain in original currencies.",
-    "drag_with_amount": "The largest realized drag was {ticker} at {drag}; without it, the payoff ratio would have been {after}.",
-    "drag_plain": "The largest realized drag was {ticker}; without it, the payoff ratio would have been {after}."
-  },
-  "cash_lines": {
-    "anchored_with_weight": "Anchored account cash was {cash}, {weight} of the account.",
-    "anchored": "Anchored account cash was {cash}.",
-    "by_currency": "Anchored account cash by original currency: {amounts}.",
-    "amount_joiner": ", "
-  },
-  "public_mirror": {
-    "structural_with_severity": "This opening portfolio check identified {dim} as the leading structural risk, with {severity} pressure.",
-    "structural": "This opening portfolio check identified {dim} as the leading structural risk.",
-    "structural_dim_default": "portfolio structure",
-    "snapshot_baseline": "This opening portfolio check establishes a structural baseline; transaction-history behavior remains unscored.",
-    "no_holes": "This review did not rank a leading behavior pattern from the available history.",
-    "behavioral": "This review found {severity} behavioral pressure in {dim}.",
-    "behavioral_dim_default": "the leading diagnostic dimension",
-    "structure": "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
-  },
-  "tag_values": {
-    "price_note": " (now {px} / cost {avg_cost})"
-  },
-  "sectors": {
-    "bonds": "bonds",
-    "crypto": "crypto",
-    "regional_etf": "regional ETFs",
-    "semiconductors": "semiconductors",
-    "commodities": "commodities",
-    "broad_market_etf": "broad-market ETFs",
-    "unclassified": "unclassified",
-    "consumer": "consumer",
-    "drones_defense": "drones and defense",
-    "rare_earth_materials": "rare-earth materials",
-    "datacenter_power": "data-center power",
-    "software_cloud": "software and cloud",
-    "fintech": "fintech",
-    "telecom": "telecom",
-    "ev_ai": "EV and AI"
-  },
-  "hole_lines": {
-    "joiner": "; ",
-    "ticker_joiner": ", ",
-    "exit_forward": "of {n_rt} decision exits ({n_scored} with forward data, {n_trunc} truncated), {early_rate} were higher {n_fwd} days later, climbing {avg_forgone} on average{winner_early}",
-    "exit_winner_early": "; {winner_early} of the winners you sold kept climbing (sold too early)",
-    "exit_holding": "winners held {hold_win} days / losers held {hold_lose} days (disposition gap {disp_gap})",
-    "position_sizing": "your largest single position {max_ticker} was {max_pct}, against a {avg_pct} average across the rest",
-    "diversification": "you hold {n} names that look diversified, but AI-capex exposure is {ai_pct}, the largest sector ({max_sector}) is {max_sector_pct} and the top three are {top3} — one and the same driver",
-    "holding_no_data": "no closed round trips yet, so holding-time statistics are still pending (positions bought and not yet sold are not counted)",
-    "holding_same_day": "all completed trades were same-day; no overnight holding",
-    "holding_base": "your holding periods run {min}–{max} days, median {median_hold} days",
-    "holding_inconsistent": "{base}; {n_incon} of {n_multi} names were both day-traded and held long ({tickers}) — no consistent framework within the same name",
-    "holding_consistent": "{base} (median {median_hold} days = your main framework; frameworks within a name are broadly consistent)",
-    "averaging_down": "you added to losing positions {count} times ({tickers}); {breach} of those adds put the position over 25% of cost basis at the moment of the add"
-  },
-  "add_descriptions": {
-    "planned_tranche": "The tranche schedule existed before the price move.",
-    "new_evidence": "Requires a claim and source that a later review can test.",
-    "valuation_change": "The thesis is unchanged, but price changed the odds or margin of safety.",
-    "price_only": "No new fact; the main motive was lowering the cost basis or getting back to even.",
-    "skip": "Leave the motive unclassified for now."
-  },
+  "footnote_label": "Data notes",
   "generic_choices": {
     "deliberate_plan": "Deliberate plan",
     "emotional_reaction": "Emotional reaction",
@@ -543,44 +274,326 @@
     "external_constraint": "Liquidity, tax, or another constraint drove it.",
     "skip": "Leave the motive unresolved for now."
   },
+  "headline_motive_choices": {
+    "deliberate_plan": "Deliberate plan",
+    "emotional_reaction": "Emotional reaction",
+    "external_constraint": "External constraint"
+  },
+  "hole_lines": {
+    "averaging_down": "you added to losing positions {count} times ({tickers}); {breach} of those adds put the position over 25% of cost basis at the moment of the add",
+    "diversification": "you hold {n} names that look diversified, but AI-capex exposure is {ai_pct}, the largest sector ({max_sector}) is {max_sector_pct} and the top three are {top3} — one and the same driver",
+    "exit_forward": "of {n_rt} decision exits ({n_scored} with forward data, {n_trunc} truncated), {early_rate} were higher {n_fwd} days later, climbing {avg_forgone} on average{winner_early}",
+    "exit_holding": "winners held {hold_win} days / losers held {hold_lose} days (disposition gap {disp_gap})",
+    "exit_winner_early": "; {winner_early} of the winners you sold kept climbing (sold too early)",
+    "holding_base": "your holding periods run {min}–{max} days, median {median_hold} days",
+    "holding_consistent": "{base} (median {median_hold} days = your main framework; frameworks within a name are broadly consistent)",
+    "holding_inconsistent": "{base}; {n_incon} of {n_multi} names were both day-traded and held long ({tickers}) — no consistent framework within the same name",
+    "holding_no_data": "no closed round trips yet, so holding-time statistics are still pending (positions bought and not yet sold are not counted)",
+    "holding_same_day": "all completed trades were same-day; no overnight holding",
+    "joiner": "; ",
+    "position_sizing": "your largest single position {max_ticker} was {max_pct}, against a {avg_pct} average across the rest",
+    "ticker_joiner": ", "
+  },
+  "honesty": {
+    "accounting_reconciliation": "The imported transactions did not reproduce the snapshot-anchored current holdings, so current sizing, diversification, and unrealized P&L were not scored.",
+    "acct_perf_basis": "Account performance rests on an approximate basis — partial anchors, cost-line pricing, FX approximation, trade cash amounts estimated from quantity times price, or a period with no deposit or withdrawal on record — and remains uncertain.",
+    "alpha_credibility": "The alpha sample or statistical strength is insufficient; it is not evidence of durable skill.",
+    "cash_reliability": "Cash lacks complete anchors, limiting account-level interpretation.",
+    "currency_mix": "The portfolio spans currencies; aggregate figures use a common currency and some FX may be approximate.",
+    "etf_metadata": "ETF expense-ratio or tracking-error data is incomplete; missing values were not treated as zero.",
+    "orphan_sells": "Some exits lack a known entry; their realized P&L was excluded.",
+    "price_plausibility": "A supplied closing price differs sharply from that ticker's own last recorded trade price; the source should be re-verified before the figure is trusted.",
+    "price_source": "Current prices did not come from the engine's own retrieval this period; they were either supplied from a named external source and date, or unavailable, and the card says which.",
+    "prior_commitment_breach": "This period already recorded a breach of that same rule, before this review closed the books on it.",
+    "sector_attribution": "Some positions lack sector benchmarks, so allocation-versus-selection attribution is incomplete.",
+    "sizing_coverage": "Some positions have neither a live price nor a cost basis, so position sizing and the too-heavy check cover only the positions that could be valued.",
+    "snapshot_reconciliation": "This declared snapshot was compared with the ledger-derived holdings; a match was marked reconciled, and any difference was recorded as an explicit adjustment with the newer declaration as the accounting anchor, without guessing why the numbers differ.",
+    "snapshot_scope": "Transaction-history dimensions — averaging down, exit discipline, holding behavior, win rate, payoff, alpha, and historical motives — are out of scope for this position-snapshot review.",
+    "unclassified_drivers": "Some positions are unclassified, so portfolio concentration may be understated.",
+    "unpriced_exits": "Some positions left the record with no sale price, so those exits are excluded from win rate, payoff, and exit-discipline figures.",
+    "unrealized_coverage": "Some positions lack current prices, so unrealized P&L is incomplete."
+  },
+  "horizon_entries": {
+    "exit_too_fast": "{ticker}: the {voice} thesis horizon was {horizon}, but it ended after {days} days; this is a timeline mismatch, not a verdict about the motive.",
+    "held_too_long": "{ticker}: the {voice} thesis horizon was {horizon}, but it is still open after {days} days; the horizon has drifted and needs clarification.",
+    "ticker_default": "Position",
+    "voice_inferred": "inferred",
+    "voice_recorded": "recorded"
+  },
+  "horizons": {
+    "quarters": "quarters",
+    "weeks": "weeks",
+    "years": "years"
+  },
+  "initial_thesis_choices": {
+    "external_call": "Someone recommended it",
+    "momentum_follow": "I chased the momentum",
+    "no_clear_thesis": "No clear thesis",
+    "planned_entry": "I had a planned thesis",
+    "skip": "Skip for now"
+  },
   "initial_thesis_descriptions": {
-    "planned_entry": "You had an explicit thesis before entering.",
-    "momentum_follow": "You chased price momentum or FOMO.",
     "external_call": "A KOL, friend, or research recommendation drove it.",
+    "momentum_follow": "You chased price momentum or FOMO.",
     "no_clear_thesis": "You are holding without a clear thesis.",
+    "planned_entry": "You had an explicit thesis before entering.",
     "skip": "Leave the entry motive unresolved for now."
   },
-  "exit_descriptions": {
-    "price_target": "A target or planned reduction condition was reached.",
-    "thesis_broken": "New facts broke or weakened the original thesis.",
-    "swap": "Capital was reallocated to another position or use.",
-    "anxiety": "The main motive was protecting gains from a possible reversal.",
-    "other": "None of these fit; save a short explanation in your own words.",
-    "skip": "Save this as skipped so this exit's reason is not asked again."
+  "instrument_tags": {
+    "adds_pending_confirmation": "{n_adds} adds to confirm: planned DCA or averaging a loser — your call",
+    "deep_underwater": "down {cur_abs_pct}{price_note} and still held without a decision",
+    "disciplined_hold": "disciplined hold: {cur_signed_pct}{price_note}",
+    "roughly_neutral": "roughly neutral",
+    "suspected_averaging_down_losing": "likely averaging a loser: {n_adds} adds only while losing, now down {cur_abs_pct}{price_note} (confirm the thesis)",
+    "suspected_averaging_down_recovered": "likely averaged a loser, now green: {n_adds} adds only while losing — the recovery looks like luck, not discipline",
+    "suspected_dca": "likely DCA: {n_adds} buys up and down, not averaging a loser",
+    "too_heavy": "too heavy: {wpct_pct} of the portfolio"
   },
-  "due_descriptions": {
-    "still_valid": "The reason holds; selling early can still be discipline.",
-    "modified": "The reason was partly right and needs an adjustment.",
-    "falsified": "The reason was wrong; record it as a lesson.",
-    "skip": "Not saved as answered; the same checkpoint returns next review."
+  "kpi": {
+    "alpha": "Annualized alpha",
+    "alpha_unreliable": "not yet statistically credible",
+    "curve": "Path this period",
+    "excess": "Benchmark excess",
+    "excess_sub": "β {beta}",
+    "payoff": "Realized payoff ratio",
+    "payoff_sub": "{win} win vs {loss} loss",
+    "pnl": "Total P&L",
+    "pnl_sub": "{realized}, {unrealized} unrealized",
+    "spark_caption": "peak {peak} · trough {trough}"
+  },
+  "language": "en",
+  "markdown_summary": {
+    "next": "Next rule",
+    "risk": "Key risk"
+  },
+  "motive_entries": {
+    "context": "Engine context: {fact}.",
+    "recorded": "Motive recorded for {subject}: {label}.",
+    "saved": "This recorded choice was saved for a later review.",
+    "subject_default": "highlighted behavior",
+    "terminator": "."
+  },
+  "patterns_panel": {
+    "label": "A pattern, not yet judged (no answer needed)",
+    "sold_winner_early": "{early} of the {total} positions you sold kept rising afterwards, most clearly {tickers}."
+  },
+  "payoff_lines": {
+    "drag_plain": "The largest realized drag was {ticker}; without it, the payoff ratio would have been {after}.",
+    "drag_with_amount": "The largest realized drag was {ticker} at {drag}; without it, the payoff ratio would have been {after}.",
+    "original_currency": "Realized payoff ratio was {payoff}; average gain/loss amounts remain in original currencies.",
+    "sub_wrap": " ({sub})"
+  },
+  "period": {
+    "as_of": "As of {end}",
+    "span": "Review period {start} → {end}",
+    "vix": "VIX {value}"
+  },
+  "pnl_lines": {
+    "display": {
+      "realized_only": "Realized P&L was {realized}; current unrealized P&L was not scored.",
+      "total": "Total P&L was {total}: {realized} realized and {unrealized} unrealized.",
+      "unrealized_only": "Unrealized P&L was {unrealized}; realized P&L was unavailable."
+    },
+    "original": {
+      "both": "{currency} P&L was {total}: {realized} realized and {unrealized} unrealized.",
+      "realized_only": "{currency} realized P&L was {realized}.",
+      "unrealized_only": "{currency} unrealized P&L was {unrealized}."
+    }
+  },
+  "prescription_kinds": {
+    "amplify": "Amplify the edge",
+    "amplify_hypothesis": "Amplify (a hypothesis, still unverified)",
+    "cut_loss": "Cut the leak",
+    "outsource": "Outsource the weak side (gradually)",
+    "selection_inconclusive": "Stock picking: not enough data to judge"
+  },
+  "prescription_texts": {
+    "amplify_hypothesis": "Of your {excess_pp}pp lead over the benchmark, {alloc_pp}pp came from being in the right theme. That is still a hypothesis rather than proven skill — a right call on AI can simply be standing in the wind, and only the next few calls can tell.",
+    "amplify_selection_edge": "Net of theme tailwinds, your in-sector stock selection still contributed {sel_pp}pp with statistically significant alpha — a real edge.",
+    "cut_averaging_down": "Adding to losing positions {count} times is the biggest pure leak in this record — the first behavior to remove.",
+    "cut_oversize": "Your largest position {ticker} holds {max_pct_pct} of the portfolio — a single oversized bet.",
+    "outsource_selection": "Net of theme exposure, your in-sector stock selection contributed {sel_pp}pp and the shortfall is statistically solid. That does not mean giving up stock picking — part of the money can sit in a passive base with stock picks as the satellite. (A process observation, not a ticker recommendation.)",
+    "selection_inconclusive": "Within sectors, stock selection contributed {sel_pp}pp (descriptive; that number stands). But {t_note}, so the data cannot yet separate skill from luck.",
+    "selection_inconclusive_t_unstable": "the alpha statistic is still unstable",
+    "selection_inconclusive_t_wide": "the alpha 95% interval is still too wide (t={t})"
+  },
+  "private_badge": "Review card; stored locally only",
+  "problem_keys": {
+    "avgdown_breach": "Averaging-down boundary",
+    "concentration": "Shared-driver concentration",
+    "exit_anxiety": "Anxiety-driven exit",
+    "fomo_entry": "FOMO entry",
+    "hold_inconsistency": "Holding-horizon inconsistency",
+    "horizon_break": "Thesis-horizon break",
+    "oversize": "Oversized position",
+    "sell_winner_early": "Winner exit opportunity cost"
+  },
+  "problems": {
+    "breach_decision": "Rule \"{rule}\": {label}.",
+    "breach_note": " Note: \"{note}\".",
+    "rule_held": "Rule \"{rule}\" was kept in the latest observable period.",
+    "trend_line": "{name}: {recent} events in the recent window versus {prev} before ({trend})."
+  },
+  "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
+  "public_band": {
+    "high": "high",
+    "low": "low",
+    "moderate": "moderate",
+    "very_high": "very high"
+  },
+  "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
+  "public_mirror": {
+    "behavioral": "This review found {severity} behavioral pressure in {dim}.",
+    "behavioral_dim_default": "the leading diagnostic dimension",
+    "no_holes": "This review did not rank a leading behavior pattern from the available history.",
+    "snapshot_baseline": "This opening portfolio check establishes a structural baseline; transaction-history behavior remains unscored.",
+    "structural": "This opening portfolio check identified {dim} as the leading structural risk.",
+    "structural_dim_default": "portfolio structure",
+    "structural_with_severity": "This opening portfolio check identified {dim} as the leading structural risk, with {severity} pressure.",
+    "structure": "Diversified allocation ETFs were separated from single-name risk; focused ETFs remained concentration risk."
+  },
+  "public_patterns": {
+    "alpha_beta": "The highlighted behavior concerned how benchmark-relative results were attributed between exposure and selection.",
+    "averaging_down": "The highlighted behavior concerned how additions to losing positions were bounded.",
+    "diversification": "The highlighted behavior concerned whether the portfolio represented distinct underlying risks.",
+    "entry_style": "The highlighted behavior concerned when entries occurred relative to recent price moves.",
+    "exit_discipline": "The highlighted behavior concerned how exit decisions were timed and evaluated.",
+    "holding_period": "The highlighted behavior concerned whether holding durations matched a consistent decision horizon.",
+    "holding_period_same_day": "All completed trades were same-day; no overnight holding.",
+    "position_sizing": "The highlighted behavior concerned how risk was distributed across position sizes."
+  },
+  "public_performance": {
+    "line": "{subject}: {excess} pp versus its market benchmark; β {beta}.",
+    "subject_default": "Portfolio"
+  },
+  "rationale_refresh": {
+    "stem": "On {stated_at} you said you hold {ticker} because: \"{statement}\". Is that still the reason?"
+  },
+  "rationale_refresh_choices": {
+    "changed": "The reason has changed",
+    "same": "Still the same reason",
+    "skip": "Leave it for now"
+  },
+  "rationale_refresh_choices_descriptions": {
+    "changed": "Write the reason as it stands now. The old wording is kept, not replaced.",
+    "same": "Recorded as confirmed on today's date. Your original wording stays exactly as you wrote it.",
+    "skip": "Leave it unanswered; what you said before stays in force."
+  },
+  "reconciliation": {
+    "statement": "Last time you committed: \"{rule}\".",
+    "statement_with_metric": "Last time you committed: \"{rule}\" — the tracked number was {then} then, {now} now."
+  },
+  "review_milestone": {
+    "line": "When this review started, you already had {completed} completed {noun}.",
+    "noun_many": "reviews",
+    "noun_one": "review"
+  },
+  "rule_breach_choices": {
+    "exception": "This was a justified exception",
+    "keep_tracking": "I did not keep it",
+    "revise_rule": "The rule needs revision"
+  },
+  "rule_breach_decisions": {
+    "exception": "recorded as a justified exception",
+    "keep_tracking": "not kept; keep tracking",
+    "revise_rule": "marked for revision"
   },
   "rule_breach_descriptions": {
+    "exception": "This was a justified exception; record why in the note while keeping the event in history.",
     "keep_tracking": "The rule still fits, but it was not kept; record it and keep tracking.",
-    "revise_rule": "The rule itself does not fit; note why it needs revision, then use the one final commitment for the replacement.",
-    "exception": "This was a justified exception; record why in the note while keeping the event in history."
+    "revise_rule": "The rule itself does not fit; note why it needs revision, then use the one final commitment for the replacement."
   },
-  "asked_because": {
-    "pnl_impact": "it is the position with the largest P&L impact this week",
-    "position_cost": "it is your largest position by cost this week",
-    "exit_notional": "it is one of your largest recent exits by amount"
+  "rule_grounding": {
+    "averaging_down": "This period: you averaged down {count} times into losing positions, including {tickers}.",
+    "diversification": "This period: your top positions {tickers} together hold {pct}.",
+    "holding_period": "This period: {tickers} mixed quick exits and long holds within the same position.",
+    "position_sizing": "This period: your largest single position {ticker} is {pct} of the portfolio."
   },
-  "breach_evidence": {
-    "none": "a recorded event",
-    "more": "; and {extra} more",
-    "joiner": "; "
+  "rule_targets": {
+    "count_unit": "x",
+    "line": "What this rule would catch this period: {items}",
+    "more_suffix": ", and {n} more"
   },
-  "candidate_comparison": {
-    "line": "{top} scored higher than {others} on this period's severity ranking -- that reflects which pattern showed up more strongly this period, not which rule is the right fit for you.",
-    "joiner": " and "
+  "rule_tradeoff": {
+    "sizing_vs_hypothesis": "The cap limits what a single position can cost you, and the sector call is still unverified — not something to back with a bigger single bet.",
+    "sizing_vs_proven_edge": "The cap limits what a single position can cost you; it does not contradict the stock-picking edge."
+  },
+  "rules": {
+    "averaging_down": "Before averaging down, write one piece of evidence you did not know at entry. If you cannot, do not add.",
+    "diversification": "Before adding a position, check whether it is still the same underlying driver. If that bet is already too large, do not add.",
+    "exit_discipline": "Before exiting, name the fact that completed or broke the thesis. Fear of giving back gains is not enough.",
+    "holding_period": "Label the trade as short-term, swing, or long-term at entry. Exit only for a reason from the same horizon.",
+    "position_sizing": "Cap any single position at {cap}. Trim if it goes over, and do not add."
+  },
+  "sections": {
+    "etf": "ETF and portfolio structure",
+    "hole": "The biggest behavioral leak",
+    "performance": "Relative performance",
+    "rule": "Change only this next time",
+    "strength": "One thing you did well"
+  },
+  "sectors": {
+    "bonds": "bonds",
+    "broad_market_etf": "broad-market ETFs",
+    "commodities": "commodities",
+    "consumer": "consumer",
+    "crypto": "crypto",
+    "datacenter_power": "data-center power",
+    "drones_defense": "drones and defense",
+    "ev_ai": "EV and AI",
+    "fintech": "fintech",
+    "rare_earth_materials": "rare-earth materials",
+    "regional_etf": "regional ETFs",
+    "semiconductors": "semiconductors",
+    "software_cloud": "software and cloud",
+    "telecom": "telecom",
+    "unclassified": "unclassified"
+  },
+  "snapshot": {
+    "holes": {
+      "clean_structure": "This position snapshot did not flag concentration or diversification as a structural risk.",
+      "leading_risk": "The leading structural risk in the available snapshot was {label}.",
+      "no_weights": "This opening check establishes a structural baseline without treating unavailable weights as low risk."
+    },
+    "overview": {
+      "missing_avg_cost": "Average cost was missing for: {tickers}.",
+      "missing_fx": "Reliable FX coverage was missing for: {currencies}.",
+      "opening": "This is an opening portfolio check of {subject}.",
+      "opening_as_of": "This is an opening portfolio check of {subject} as of {as_of}.",
+      "subject_generic": "the supplied positions",
+      "subject_with_count": "{positions} supplied positions",
+      "valuation_cost": "Structural weights use the supplied cost basis.",
+      "valuation_market_value": "Structural weights use the supplied market-value basis.",
+      "valuation_unavailable": "No reliable valuation basis was available, so weight-based structure remains unscored."
+    },
+    "strength": {
+      "baseline": "The supplied positions establish a structural baseline; weight-based strengths remain unscored.",
+      "weighted": "The supplied positions establish a structural baseline, and their weights are scored; missing inputs remain explicit rather than inferred."
+    }
+  },
+  "snapshot_hole": "The leading structural risk",
+  "snapshot_numbers": "Opening portfolio structure",
+  "snapshot_strength": "What this snapshot establishes",
+  "split_lines": {
+    "line": "{subject} {excess} pp excess split into {allocation} pp from market/sector allocation and {selection} pp from security selection.",
+    "subject_default": "The portfolio's",
+    "subject_market": "{market}'s"
+  },
+  "stress_test": {
+    "labels": {
+      "ai_thematic": "AI theme stocks (across sectors)",
+      "sector": "the {sector} sector",
+      "single_ticker": "a single name ({ticker})"
+    },
+    "line": "Your exposure to {label} is about {exposure} ({pct} of the portfolio); a 30% drawdown would mean −{drop30} on paper, a 50% drawdown −{drop50} — could you sit through that?"
+  },
+  "tag_values": {
+    "price_note": " (now {px} / cost {avg_cost})"
+  },
+  "title": "Review Card",
+  "trends": {
+    "better": "improving",
+    "flat": "flat",
+    "worse": "worsening"
   }
 }

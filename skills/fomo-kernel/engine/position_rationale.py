@@ -441,12 +441,6 @@ def append_locked(root, *, subject, act, capture_source, state_version,
 
     head = head_of(rows, cycle_id, aliases)
     head_id = (head or {}).get("event_id")
-    if expected_predecessor is not None and expected_predecessor != head_id:
-        raise PositionRationaleError(
-            f"expected predecessor {expected_predecessor or '(none)'} but the head is "
-            f"{head_id or '(none)'}; something was recorded in between. Re-read and retry "
-            "rather than forking the subject")
-
     row = build_event(subject=subject, act=act, stated_at=stated_at,
                       capture_source=capture_source, state_version=state_version,
                       supersedes=head_id, user_statement=user_statement,
@@ -469,6 +463,19 @@ def append_locked(root, *, subject, act, capture_source, state_version,
                 f"session {origin_id} already recorded a different rationale for {cycle_id} "
                 f"({prior['event_id']}); a re-finalize may not silently replace the user's "
                 "words. Record the correction as a new statement instead")
+
+    # After the session replay check, deliberately. A re-finalize reads a head
+    # that its own first run moved, so checking the caller's expected predecessor
+    # first would turn a documented-safe retry into a refusal — and "retrying the
+    # same session with identical content is a no-op" is a never-loosen
+    # invariant. Ordered this way, the stale-head guard still covers every case
+    # it exists for: a *different* writer landing between the caller's read and
+    # this append.
+    if expected_predecessor is not None and expected_predecessor != head_id:
+        raise PositionRationaleError(
+            f"expected predecessor {expected_predecessor or '(none)'} but the head is "
+            f"{head_id or '(none)'}; something was recorded in between. Re-read and retry "
+            "rather than forking the subject")
     if head is not None and _same_act(head, row):
         return {"path": path, "appended": 0, "status": "no-op",
                 "event_id": head["event_id"]}
