@@ -1487,10 +1487,28 @@ _S582_ALREADY_ADJUSTED = [["NVDA", 900, 15.00, "BUY", "2023-01-10"],
                           ["STOIC", 20, 500.00, "SELL", _S582_AS_OF]]
 
 
-def _s582_inputs(tmp, rows):
+def _s582_envelope_on_the_post_split_basis():
+    """The same envelope with NVDA's pre-split `history` typed on today's basis.
+
+    `references/price-feed.md` and the schema both say a `history` entry is a raw
+    observation as printed on its own session date, and `price_feed.parse`
+    rebases it by the declared splits. Typing the already-adjusted close there
+    instead divides it a second time. This is not a hostile input: it was built
+    by a careful reader of that contract during review of #582, which is the
+    argument for pinning what the check does with it.
+    """
+    envelope = json.loads(json.dumps(_S582_ENVELOPE))
+    for row in envelope["prices"]:
+        if row["ticker"] == "NVDA":
+            row["history"] = [[day, close / 10.0 if day < _S582_SPLIT[0] else close]
+                              for day, close in row["history"]]
+    return envelope
+
+
+def _s582_inputs(tmp, rows, envelope_payload=None):
     envelope = os.path.join(tmp, "prices.json")
     with open(envelope, "w", encoding="utf-8") as handle:
-        json.dump(_S582_ENVELOPE, handle)
+        json.dump(envelope_payload or _S582_ENVELOPE, handle)
     csv_path = os.path.join(tmp, "transactions.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -1500,8 +1518,8 @@ def _s582_inputs(tmp, rows):
     return csv_path, envelope
 
 
-def _s582_prepare(tmp, rows):
-    csv_path, envelope = _s582_inputs(tmp, rows)
+def _s582_prepare(tmp, rows, envelope_payload=None):
+    csv_path, envelope = _s582_inputs(tmp, rows, envelope_payload)
     return _route(tmp, "prepare", csv_path, "--prices", envelope, "--language", "en")
 
 
@@ -1595,12 +1613,65 @@ def test_one_row_on_each_basis_is_a_different_problem_and_stays_silent():
     """An export basis is a property of the whole file. One pre-split row
     reading as-executed beside one reading already-adjusted is not the defect
     this check names, so it reports nothing rather than the reading it happens
-    to be looking for."""
-    closes = {"NVDA": [[dt.date(2023, 1, 10), 152.0], [dt.date(2023, 11, 15), 486.0]]}
+    to be looking for.
+
+    `closes` here are **adjusted** closes, the basis this function is handed
+    (15.2 and 48.6 are the raw 152 and 486 divided by the ten-for-one) — stated
+    because getting that wrong is what made the first version of this test green
+    for the wrong reason: both of its rows read `unexplained`, so it proved the
+    unanimity rule only by accident and would have kept passing had the rule
+    been dropped. Caught by the mutation that collapses `unexplained` into the
+    finding.
+    """
+    closes = {"NVDA": [[dt.date(2023, 1, 10), 15.2], [dt.date(2023, 11, 15), 48.6]]}
     events = {"NVDA": [list(_S582_SPLIT)]}
     mixed = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10), "qty": 900.0, "price": 1.5},
              {"ticker": "NVDA", "date": dt.date(2023, 11, 15), "qty": 30.0, "price": 48.0}]
     assert split_policy.basis_disagreements(mixed, closes, events) == []
+    # Each half alone reads the way the mix says it does, which is what makes
+    # the silence above the unanimity rule rather than two unreadable rows.
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(mixed[:1], closes, events)] == ["NVDA"]
+    assert split_policy.basis_disagreements(mixed[1:], closes, events) == []
+
+
+def test_a_price_a_factor_above_its_close_is_the_third_outcome_and_stays_silent():
+    """The disagreement that is *not* this defect's signature buys silence.
+
+    Two readings are separable; a third is neither. A rebased row price a factor
+    **above** its close is as far from "as executed" as the defect is, and in the
+    opposite direction — so it is not a double-applied split and this check has
+    nothing to say about it. Only `already_adjusted`, unanimously, is a finding;
+    collapsing `unexplained` into it would turn every other price disagreement on
+    a split-carrying ticker into an accusation.
+
+    It is worth pinning because it is reachable by an ordinary mistake, not only
+    by a contrived one. Typing an already-adjusted close into a `history` entry —
+    which the schema defines as a raw observation, and `parse` therefore divides
+    by the split a second time — produces exactly this ratio. That happened
+    during review of #582, to a reader of the contract, on a file that really was
+    already adjusted. The engine must run the review rather than accuse the user
+    of the wrong thing about the right file.
+    """
+    closes = {"NVDA": [[dt.date(2023, 1, 10), 15.2]]}
+    events = {"NVDA": [list(_S582_SPLIT)]}
+    ten_times_high = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10),
+                       "qty": 90.0, "price": 152.0}]
+    assert split_policy.basis_disagreements(ten_times_high, closes, events) == []
+    # The same magnitude in the other direction is the defect, so the silence
+    # above is about the direction and not about the size of the gap.
+    ten_times_low = [{"ticker": "NVDA", "date": dt.date(2023, 1, 10),
+                      "qty": 900.0, "price": 1.52}]
+    assert [row["ticker"] for row in
+            split_policy.basis_disagreements(ten_times_low, closes, events)] == ["NVDA"]
+    # And end to end: the whole envelope typed on the wrong basis reviews rather
+    # than raising, because the engine cannot tell a mistyped feed from a
+    # mispriced fill and may not pick (#416).
+    with tempfile.TemporaryDirectory() as tmp:
+        code, payload = _s582_prepare(tmp, _S582_AS_EXECUTED,
+                                      _s582_envelope_on_the_post_split_basis())
+        assert code == 0, ("a feed on the wrong basis must not become an accusation "
+                           "about the transaction file", payload)
 
 
 def test_a_post_split_trade_alone_can_never_raise_this():
