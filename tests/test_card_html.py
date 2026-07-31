@@ -1973,10 +1973,12 @@ def _pre_commitment_bundle(language, rule_dim="部位 sizing", prior_commitment=
     Default (``prior_commitment=None``) is a genuine first review: nothing was
     ever persisted to ``review_plan.state_snapshot.prior_commitment``, so
     (#546) Block 4 must use the pending-choice wrapper rather than claim a
-    standing rule "remains". Pass a dict (e.g. ``{"rule": "..."}"``) to build
-    a returning user's preview instead, which keeps the standing-rule
-    continuity wrapper — the same ``prior_commitment.rule`` predicate
-    ``_reconciliation_lines`` already reads for #292."""
+    standing rule "remains". Pass a dict to build a returning user's preview
+    instead — the same ``prior_commitment.rule`` predicate
+    ``_reconciliation_lines`` already reads for #292. #645: the continuity
+    wrapper additionally requires that dict to carry a ``dim`` naming the same
+    dimension as ``rule_dim``, so a returning fixture that wants the standing
+    copy passes e.g. ``{"rule": "...", "dim": "position_sizing"}``."""
     bundle = copy.deepcopy(_session(language)["bundle"])
     bundle["commitment"] = None
     answers = dict(bundle.get("answers") or {})
@@ -2054,11 +2056,13 @@ def test_first_review_preview_states_the_recommendation_as_pending_not_standing(
     first review, or any later one whose most recent finalize offered no
     candidate rule, confirmed against real personas by
     ``tests/persona_sweep.py --baseline``) must not claim otherwise; a
-    returning user with a real persisted commitment may still see the
-    standing-rule continuity copy. Both renderers share this branch through
-    ``_card_structure`` (Markdown's compact text-first scan quotes the same
-    panel via ``_read_first_panels``, and HTML's rule panel is scoped by the
-    ``sec keystep`` section, the card's last content section)."""
+    returning user with a real persisted commitment that agrees with this
+    period's prescription may still see the standing-rule continuity copy
+    (#645 narrowed "may" to that agreement — the test below owns it). Both
+    renderers share this branch through ``_card_structure`` (Markdown's
+    compact text-first scan quotes the same panel via ``_read_first_panels``,
+    and HTML's rule panel is scoped by the ``sec keystep`` section, the card's
+    last content section)."""
     continuity_markers = {"en": ("remain", "keep", "standing"), "zh-TW": ("維持",)}
     for language in ("zh-TW", "en"):
         markers = continuity_markers[language]
@@ -2074,7 +2078,8 @@ def test_first_review_preview_states_the_recommendation_as_pending_not_standing(
                 f"{language}: fresh-root HTML preview must not claim rule " \
                 f"continuity ({marker!r} found in Next step)"
 
-        returning = _pre_commitment_bundle(language, prior_commitment={"rule": "placeholder"})
+        returning = _pre_commitment_bundle(
+            language, prior_commitment={"rule": "placeholder", "dim": "position_sizing"})
         returning_md_block4 = _next_step_text(card_renderer.render_private(returning))
         returning_html = card_renderer.render_html(returning)
         returning_html_tail = returning_html[returning_html.index('<div class="sec keystep">'):]
@@ -2084,6 +2089,115 @@ def test_first_review_preview_states_the_recommendation_as_pending_not_standing(
         assert any(marker in returning_html_tail for marker in markers), \
             f"{language}: a returning user with a real prior commitment must keep " \
             f"the standing-rule continuity copy in HTML"
+
+
+def test_a_returning_users_standing_rule_is_the_one_they_committed_to():
+    """#645: the wrapper gate #546 added decided *whether* to claim continuity
+    and left the quoted rule resolved from ``state.rule_dim`` — this period's
+    fresh prescription — inside both wrappers. A returning user therefore read
+    "the standing rule remains" followed by a rule they never chose: both
+    halves of one sentence false at once, and the quoted half is the evidence
+    offered for the other.
+
+    The persisted commitment is the only record of what is standing, so it is
+    what gets quoted, and continuity is claimed only when the commitment's own
+    ``dim`` and ``state.rule_dim`` are *proven* to name the same dimension
+    (``review._candidate_rules`` stamps the canonical ``dimension_id`` on every
+    candidate row and ``_resolve_commitment`` carries it into the stored
+    commitment; both sides normalize through ``dimension_id`` because a stored
+    commitment holds the canonical id and ``rule_dim`` the legacy label).
+
+    Four cases, and the expectations are literal catalog sentences rather than
+    ``load_copy`` lookups — reading the expected value from the same source the
+    renderer reads makes the assertion a tautology that passes however the
+    wiring breaks:
+
+    - **Diverge** — the standing rule is quoted verbatim, the prescription is
+      named as a recommendation, and neither sibling wrapper's claim survives.
+    - **Agree** — the continuity copy returns, still quoting the *committed*
+      text; the catalog prescription for that same dimension must not be
+      substituted for it, which is the narrow form of the same defect.
+    - **Not comparable** — a commitment with no ``dim`` (a condition slot drops
+      it deliberately; a custom rule need not carry one) fails safe onto the
+      pending-choice wrapper: neither continuity nor divergence is asserted.
+    - **First review** — unchanged, owned by the #546 test above.
+
+    Markdown and HTML both, through the shared ``_card_structure`` path.
+    """
+    prescription = {
+        "zh-TW": "單筆部位上限定死 20%；超過就減，不新增。",
+        "en": "Cap any single position at 20%. Trim if it goes over, and do not add.",
+    }
+    committed = "Hold any new position at least 30 days before selling"
+
+    def surfaces(bundle):
+        html = card_renderer.render_html(bundle)
+        return (("Markdown", _next_step_text(card_renderer.render_private(bundle))),
+                ("HTML", html[html.index('<div class="sec keystep">'):]))
+
+    for language in ("zh-TW", "en"):
+        # The continuity claim itself, taken from the wrapper that makes it, so
+        # the ban cannot drift away from the sentence it bans. Deriving a
+        # *negative* expectation from the catalog is not the tautology the
+        # positive literals above avoid: it stays exactly as wrong as the copy.
+        wrappers = card_renderer.load_copy(language).get("block_missing") or {}
+        continuity_claim = wrappers["rule_standing"].split("{rule}")[0].strip("\"「“: ；;")
+        pending_claim = wrappers["rule_pending"].split("{rule}")[0].strip("\"「“: ；;")
+
+        # rule_dim is position_sizing; the standing commitment is not.
+        diverged = _pre_commitment_bundle(
+            language, prior_commitment={"rule": committed, "dim": "holding_period"})
+        for surface, text in surfaces(diverged):
+            assert committed in text, \
+                f"{language}/{surface}: the standing rule must be the one the " \
+                f"user committed to, quoted verbatim"
+            assert prescription[language] in text, \
+                f"{language}/{surface}: the divergence line still names this " \
+                f"period's prescription as a recommendation"
+            assert continuity_claim not in text, \
+                f"{language}/{surface}: a diverging period must not claim that " \
+                f"the rule did not change ({continuity_claim!r} found)"
+            assert pending_claim not in text, \
+                f"{language}/{surface}: a returning user has a standing rule; " \
+                f"the first-review wrapper must not absorb this case"
+
+        # Agreement proven: the continuity copy returns, quoting what the user
+        # actually wrote rather than the catalog text for that same dimension.
+        agreed = _pre_commitment_bundle(
+            language, prior_commitment={"rule": committed, "dim": "position_sizing"})
+        for surface, text in surfaces(agreed):
+            assert continuity_claim in text, \
+                f"{language}/{surface}: an agreeing period keeps the continuity copy"
+            assert committed in text, \
+                f"{language}/{surface}: the continuity line quotes the committed " \
+                f"rule, not the prescription that happens to share its dimension"
+            assert prescription[language] not in text, \
+                f"{language}/{surface}: this period's prescription must not be " \
+                f"substituted for the rule the user committed to"
+
+        # No comparable dimension: suppress the continuity claim rather than
+        # guess. The pending-choice wrapper asserts nothing about the past.
+        opaque = _pre_commitment_bundle(
+            language, prior_commitment={"rule": committed})
+        for surface, text in surfaces(opaque):
+            assert continuity_claim not in text, \
+                f"{language}/{surface}: a commitment the payload cannot compare " \
+                f"must not be presented as unchanged"
+            assert committed not in text, \
+                f"{language}/{surface}: a commitment the payload cannot compare " \
+                f"must not be presented as diverging either"
+            assert prescription[language] in text, \
+                f"{language}/{surface}: the fail-safe still states this " \
+                f"period's recommendation"
+
+    # Three locales move together (zh-CN has no persona run of its own, so the
+    # catalog is asserted directly): same key, same two placeholders.
+    for locale in ("en", "zh-TW", "zh-CN"):
+        line = (card_renderer.load_copy(locale).get("block_missing") or {}).get("rule_diverged")
+        assert isinstance(line, str) and line.strip(), \
+            f"{locale}: block_missing.rule_diverged is missing"
+        assert "{standing}" in line and "{recommendation}" in line, \
+            f"{locale}: the divergence line must carry both rules, not one"
 
 
 def test_standing_rule_placeholder_carries_the_user_cap_override():
@@ -2162,6 +2276,7 @@ def main():
         test_public_committed_rule_carries_the_user_cap_override,
         test_standing_rule_placeholder_resolves_copy_not_the_v1_literal,
         test_first_review_preview_states_the_recommendation_as_pending_not_standing,
+        test_a_returning_users_standing_rule_is_the_one_they_committed_to,
         test_standing_rule_placeholder_carries_the_user_cap_override,
         test_account_gate_sentence_names_the_actual_blocker,
         test_account_gate_degrades_instead_of_rendering_blank,
