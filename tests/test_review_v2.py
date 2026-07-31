@@ -9896,6 +9896,84 @@ def test_initial_thesis_consumption_maturity_gate_and_idempotency():
         assert again == projected, "an idempotent finalize retry must not duplicate rows"
 
 
+def test_planned_entry_capture_declared_by_the_contract_reaches_preview():
+    """#667: `planned_entry`'s own `question_opportunity.answer_contract` must
+    name what `_validate_thesis_completeness` will demand, so an agent that
+    follows the *declared* contract literally -- not one that already knows
+    the validator's cross-field rule -- can still submit a passing answer in
+    the same exchange.
+
+    This reads `requirements_by_choice["planned_entry"]` off the real plan
+    rather than assuming its shape, resolves it into `thesis_updates` fields,
+    and fills only those. Before #667's fix the declared requirement was `[]`
+    and this exact construction -- follow the contract, add nothing the
+    contract did not ask for -- reached preview's refusal instead."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        positions = {"AAA": _pos("AAA", 5000), "BBB": _pos("BBB", 4000)}
+        card, state = _density_artifacts(tmp, "contract", positions, thesis_questions=[])
+        run = _run("prepare", "--root", root, "--language", "en", "--route", "first_review",
+                   "--card-json", card, "--state-json", state)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _pending_plan(root, run.stdout)
+        aaa_q = next(q for q in plan["question_queue"]
+                     if q["kind"] == "initial_thesis" and q["ticker"] == "AAA")
+        bbb_q = next(q for q in plan["question_queue"]
+                     if q["kind"] == "initial_thesis" and q["ticker"] == "BBB")
+
+        contract = aaa_q["question_opportunity"]["answer_contract"]
+        required_paths = contract["requirements_by_choice"]["planned_entry"]
+        assert required_paths, \
+            "planned_entry must declare a requirement for this fixture to test anything (#667)"
+        fields = {path.split(".", 1)[1] for path in required_paths
+                  if path.startswith("thesis_updates.")}
+        assert fields, f"declared requirement must resolve into thesis_updates fields: {required_paths}"
+
+        base = {"session_id": plan["session_id"], "observations": [],
+                "commitment": {"choice": "candidate_0"},
+                "answers": [{"question_id": aaa_q["id"], "choice": "planned_entry"},
+                            {"question_id": bbb_q["id"], "choice": "no_clear_thesis"}]}
+        for q in plan["question_queue"]:
+            if q["kind"] != "initial_thesis":
+                base["answers"].append({"question_id": q["id"], "choice": "deliberate_plan"})
+        n_path = pathlib.Path(tmp) / "c-narrative.json"
+        n_path.write_text(json.dumps(_narrative("en"), ensure_ascii=False), encoding="utf-8")
+
+        # Literally the contract and nothing else: why/exit_trigger get real
+        # content, and maturity -- the one field that turns a real capture
+        # into a legal planned_entry record -- is any non-inferred value from
+        # the engine's own vocabulary, never invented by this test.
+        capture = {"ticker": "AAA", "cycle_id": aaa_q["cycle_id"],
+                   "why": "I bought after three quarters of accelerating backlog growth",
+                   "exit_trigger": "Backlog growth reverses for two consecutive quarters",
+                   "horizon": None}
+        if "maturity" in fields:
+            capture["maturity"] = sorted(thesis_engine.MATURITY_VALUES - {"inferred"})[0]
+        assert set(capture) >= fields, f"fixture must supply every declared field: {fields}"
+
+        # The gate stays strict first: the same cycle, contract-following on
+        # why/exit_trigger but left at the default inferred maturity, is still
+        # refused (#291's honesty rule is unchanged by this fix).
+        bad = json.loads(json.dumps(base))
+        bad["thesis_updates"] = [dict(capture, maturity="inferred"),
+                                 _thesis_update("BBB", maturity="inferred")]
+        bad_path = pathlib.Path(tmp) / "c-bad.json"
+        bad_path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
+        rejected = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                        "--answers", bad_path, "--narrative", n_path)
+        assert rejected.returncode == 2, rejected.stdout + rejected.stderr
+        assert "planned_entry" in json.loads(rejected.stdout)["error"]
+
+        # Now the declared contract, satisfied literally: preview succeeds.
+        good = json.loads(json.dumps(base))
+        good["thesis_updates"] = [capture, _thesis_update("BBB", maturity="inferred")]
+        good_path = pathlib.Path(tmp) / "c-good.json"
+        good_path.write_text(json.dumps(good, ensure_ascii=False), encoding="utf-8")
+        accepted = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                        "--answers", good_path, "--narrative", n_path)
+        assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+
 def test_question_density_matrix_selects_expected_counts_per_route():
     """#291: candidate counts of 1, 3, and 5 resolve to the per-route band —
     first review floors at three (backfilling), weekly caps at three."""

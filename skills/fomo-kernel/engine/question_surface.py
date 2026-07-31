@@ -58,8 +58,19 @@ _HEADLINE_REQUIREMENTS = {
     "external_constraint": [],
     "skip": [],
 }
+# #667: `planned_entry` asserts a real thesis existed at entry, and
+# `review.py` `_validate_thesis_completeness` refuses to record that assertion
+# against a silently-inferred update (#291). Before this, the declared
+# contract promised nothing further for this choice, so an agent that
+# collected exactly what the contract named still landed in that refusal --
+# a dead end the contract never predicted. The capture itself is not a new
+# object: it is the same `thesis_updates` row every `missing_thesis_positions`
+# entry already carries (`flows/first-review.md` step 3), named here so the
+# agent knows to make it a *real* capture -- non-placeholder `why`/
+# `exit_trigger` and a `maturity` other than `inferred` -- in this same
+# exchange, rather than the default inferred placeholder.
 _INITIAL_THESIS_REQUIREMENTS = {
-    "planned_entry": [],
+    "planned_entry": ["thesis_updates.why", "thesis_updates.exit_trigger", "thesis_updates.maturity"],
     "momentum_follow": [],
     "external_call": [],
     "no_clear_thesis": [],
@@ -111,7 +122,14 @@ def _requirement_copy(language, kind, choices):
             "skip": "",
         }
     if kind == "initial_thesis":
-        return {key: "" for key in _INITIAL_THESIS_REQUIREMENTS}
+        return {
+            "planned_entry": ("Requires your real reason for entering and what would prove "
+                              "it wrong, captured now rather than filled in as a placeholder."
+                              if en else
+                              "必須提供你進場時真正的理由，以及什麼情況會證明這個想法是錯的，"
+                              "現在就講清楚，不能只是先佔位的推測。"),
+            "momentum_follow": "", "external_call": "", "no_clear_thesis": "", "skip": "",
+        }
     if kind == "condition_crossing":
         # One map covers both vocabularies, keyed off this question's own
         # canonical choices — a numeric surface never advertises `yes`.

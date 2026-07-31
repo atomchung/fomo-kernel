@@ -155,6 +155,33 @@ def test_exit_consistency_opportunity_is_engine_owned_and_grounded():
     assert review_engine._exit_consistency_question({"ticker_diagnosis": []}, "en") is None
 
 
+def test_planned_entry_declares_its_thesis_capture_requirement_and_others_stay_empty():
+    """#667: `planned_entry` asserts a real thesis existed at entry, and
+    `review.py` `_validate_thesis_completeness` refuses to record that
+    assertion against a silently-inferred update (#291). Before this fix, the
+    declared contract promised nothing further for this choice -- an agent
+    that satisfied the *declared* contract could still land in that refusal, a
+    dead end the contract never predicted. The fix names the requirement here,
+    reusing `new_evidence`'s existing shape (a list of required field paths
+    plus non-empty requirement text) rather than inventing a parallel capture
+    object -- the paths resolve into the same `thesis_updates` row every
+    missing-thesis position already carries (`flows/first-review.md` step 3).
+    """
+    question = review_engine._initial_thesis_question(
+        "AAA", {"cycle_id": "AAA#2026-01-01#1", "currency": "USD"}, 5000,
+        {"ticker_diagnosis": []}, {"holdings": {"positions": {}}}, "en",
+    )
+    contract = question["question_opportunity"]["answer_contract"]
+    assert contract["requirements_by_choice"]["planned_entry"] == \
+        ["thesis_updates.why", "thesis_updates.exit_trigger", "thesis_updates.maturity"]
+    assert contract["requirement_text_by_choice"]["planned_entry"], \
+        "a declared requirement needs agent-facing requirement text"
+    for choice in ("momentum_follow", "external_call", "no_clear_thesis", "skip"):
+        assert contract["requirements_by_choice"][choice] == [], \
+            f"{choice} keeps an inferred record legal (#291) and must stay unrequired"
+        assert contract["requirement_text_by_choice"][choice] == ""
+
+
 def _grounded_headline(ticker, pct):
     raw = {"dim": "部位 sizing", "max_ticker": ticker, "max_pct": pct,
            "risk_weights": {ticker: pct}}
