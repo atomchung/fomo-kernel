@@ -127,7 +127,7 @@
         },
         "excluded_holdings": {
           "type": "array",
-          "description": "Held positions that could not be valued, and are therefore outside the denominator every number above is measured against (#515). Empty when the whole book was usable. The identities live here rather than inside `disclosures`, which is machine-readable keys and never carries data: `partial_book` says THAT something was excluded, this says WHAT. Any consumer stating a derived number must name these alongside it -- a partial denominator that does not say it is partial is worse than the refusal it replaced.",
+          "description": "Positions left out of the usable book, and therefore outside the denominator every number above is measured against (#515, #673). Empty when the whole book was usable. The identities live here rather than inside `disclosures`, which is machine-readable keys and never carries data: `partial_book` says THAT something was excluded, this says WHAT. Any consumer stating a derived number must name these alongside it -- a partial denominator that does not say it is partial is worse than the refusal it replaced. Nearly always a currently-held position; an `integrity_*` entry can also name a ticker the book records no position in, because a recorded zero is exactly what an unmatched sell puts in doubt (#673).",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -136,8 +136,8 @@
               "ticker": {"type": "string", "minLength": 1},
               "reason": {
                 "type": "string",
-                "enum": ["unusable_shares", "unavailable_cost"],
-                "description": "Which fact was missing. Engine-assigned; never a user or agent claim."
+                "enum": ["unusable_shares", "unavailable_cost", "integrity_oversell"],
+                "description": "Why this holding is outside the usable book, mirroring consequence.EXCLUSION_REASONS. Engine-assigned; never a user or agent claim. The first two are facts missing from the holding (#515). `integrity_oversell` is not a missing fact but an underivable one (#673): the ledger recorded a sell with no matching prior buy, so the replay clamped it and this holding's share count is not what the history can account for. That distinction is load-bearing -- a premise about an `integrity_*` holding is refused by name, while a holding with no cost on record is merely outside the denominator."
               }
             }
           }

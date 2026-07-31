@@ -6295,12 +6295,23 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
     different books, and the weight the user is shown would be measured
     against a denominator no other surface uses. That stays a refusal, because
     the alternative is a silently wrong percentage.
+
+    An *integrity* exclusion (#673) is the one exclusion the two readers are
+    expected to disagree about, and it is not a disagreement about valuation.
+    The projection can value the holding perfectly well — it has a price and a
+    cost; what the ledger's integrity record says is that the share count those
+    are multiplied by is not derivable from the supplied history. So the
+    agreement gate above is checked against the *valuation* half of the
+    excluded set only, and the integrity half is taken out of the denominator
+    here instead.
     """
     projected = projection.to_dict()
     coverage = projected["coverage"]
     if not projected["applicable"] or coverage["scope"] == "unavailable_mixed_currency":
         raise ReviewError("canonical PortfolioBasis has no usable current-book sizing projection")
     excluded_tickers = {row["ticker"] for row in excluded_holdings or ()}
+    integrity_excluded = consequence.integrity_excluded_tickers(excluded_holdings)
+    valuation_excluded = excluded_tickers - integrity_excluded
     projection_unavailable = set(coverage["unavailable"])
     # A holding the projection CAN value but this adapter cannot use: it has a
     # current price and no cost on record. The projection weighs it at market;
@@ -6312,18 +6323,18 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
     # denominators. Refusing here is narrow and actionable -- the two paths
     # below both work today -- and #528 tracks teaching the consequence engine
     # about value-only positions so it need not refuse at all.
-    priced_without_cost = sorted(excluded_tickers - projection_unavailable)
+    priced_without_cost = sorted(valuation_excluded - projection_unavailable)
     if priced_without_cost:
         raise ReviewError(
             f"{', '.join(priced_without_cost)} has a current price but no cost on record, and a "
             "consequence answer needs a cost for every position it reasons about. Add the "
             "average cost for it, or ask again without --prices to get the answer over the "
             "part of the book that has costs.")
-    if projection_unavailable != excluded_tickers:
+    if projection_unavailable != valuation_excluded:
         raise ReviewError(
             "canonical PortfolioBasis and the consider adapter disagree about which "
             "holdings cannot be valued: projection "
-            f"{sorted(projection_unavailable)} vs adapter {sorted(excluded_tickers)}")
+            f"{sorted(projection_unavailable)} vs adapter {sorted(valuation_excluded)}")
     try:
         before = consequence.portfolio_state(rows, last_px=last_px,
                                              max_pos_override=max_pos_override,
@@ -6344,8 +6355,25 @@ def _canonical_consider_before(rows, basis, projection, last_px, max_pos_overrid
         if (abs(held["shares"] - float(holding["shares"])) > 1e-6
                 or abs(held["cost"] - float(holding["cost_total"])) > 1e-6):
             raise ReviewError("canonical PortfolioBasis cost disagrees with consider adapter")
-    weights = {ticker: entry["weight"] for ticker, entry in projected["values"].items()
-               if entry["applicable"]}
+    # #673. The projection is the canonical *whole-book* denominator and stays
+    # that way -- it is the record, and nothing here rewrites it. What this
+    # builds is the denominator for the bounded book the answer is actually
+    # about, from the projection's own per-holding values, restricted to the
+    # holdings that survived. Re-dividing those values is deliberately not a
+    # second valuation: no price, cost, share count or FX rate is read here, so
+    # a value that reached this line came from `sizing_projection` and nowhere
+    # else. `math.fsum` is `value_partition`'s own summation, and it is exactly
+    # rounded, so with nothing integrity-excluded the sum is bit-for-bit the
+    # projection's denominator and every weight is the projection's weight --
+    # the pre-#673 answer, unchanged.
+    usable_values = {ticker: entry["value"] for ticker, entry in projected["values"].items()
+                     if entry["applicable"] and ticker not in integrity_excluded}
+    denominator = math.fsum(usable_values.values()) if usable_values else 0.0
+    if not math.isfinite(denominator) or denominator <= 0:
+        raise ReviewError(
+            "canonical PortfolioBasis has no holding left to size this answer against once "
+            f"{sorted(integrity_excluded)} is excluded for an integrity warning")
+    weights = {ticker: value / denominator for ticker, value in usable_values.items()}
     if set(weights) != set(before["held"]):
         raise ReviewError("canonical PortfolioBasis sizing coverage is incomplete")
     before = dict(before)
@@ -6372,9 +6400,10 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=Non
     says which one it used rather than implying a currency it does not have).
     Fails closed when neither source yields a usable row: an empty book
     cannot answer a pre-trade question, and inventing one would be worse than
-    refusing. A book where only *some* holding cannot be valued is not that
-    case (#515): those holdings come back in the fifth return value and must
-    be carried to wherever the derived numbers are stated.
+    refusing. A book where only *some* holding cannot be used is not that case
+    -- because it could not be valued (#515) or because the ledger's integrity
+    record names it (#673): those holdings come back in the fifth return value
+    and must be carried to wherever the derived numbers are stated.
 
     ``splits`` reaches both routes, because both accumulate share counts and a
     split is what makes two of them incomparable (#550/#558). The two apply it
