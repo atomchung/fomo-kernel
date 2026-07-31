@@ -2918,10 +2918,19 @@ def _normalized_position_cost(cost, currency, card):
     ``trade_recap.usd_view`` fails the whole review closed otherwise — so
     ``None`` here only guards a caller whose card/state did not go through
     that gate, which is exactly the shape a unit test exercises directly.
+
+    The aggregate currency itself has exactly one reader,
+    ``card_renderer._currency`` -- its ``or "USD"`` fallback is the review's
+    own convention for "no aggregate declared," not this function's caller's
+    currency. Resolving a missing ``aggregate_currency`` key to the position's
+    *own* currency would make every position trivially "already the
+    aggregate" and silently turn off normalization for the whole book instead
+    of naming the gap -- the same identity-factor failure #649 removed from
+    the aggregate reader itself, reintroduced one layer up.
     """
     meta = (card or {}).get("currency_meta") or {}
     currency = str(currency or "USD").upper()
-    aggregate = str(meta.get("aggregate_currency") or currency).upper()
+    aggregate = card_renderer._currency(card or {})
     if not meta.get("mixed") or currency == aggregate:
         return abs(float(cost or 0))
     factor = (meta.get("fx") or {}).get(currency)

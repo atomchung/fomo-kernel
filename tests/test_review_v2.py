@@ -6767,35 +6767,61 @@ def test_ticker_importance_ranking_uses_engine_fx_for_mixed_currency_amounts():
     native-currency face value -- directly across tickers, so a TWD position
     could outrank a larger USD one purely because TWD amounts carry more
     zeros. It must read `currency_meta.fx` (#649's already-resolved rate)
-    exactly like `_exit_importance` does, never the raw amount."""
-    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD",
-                              "fx": {"TWD": 0.0317}}, "ticker_diagnosis": []}
-    state = {"holdings": {"positions": {
+    exactly like `_exit_importance` does, never the raw amount.
+
+    Two `currency_meta` shapes, both must produce the identical answer. The
+    first carries no `aggregate_currency` key at all -- reachable through the
+    `--card-json`/`--state-json` adapter lane, or any future/differently
+    shaped producer. `_normalized_position_cost` must resolve the aggregate
+    through the one shared reader, `card_renderer._currency` (its own
+    documented `or "USD"` fallback), never by defaulting to the *position's
+    own* currency -- that would make every position trivially "already the
+    aggregate" and silently turn normalization off for the whole book, the
+    identity-factor failure #649 removed from the aggregate reader itself,
+    reintroduced one layer up. The second shape is the explicit key both of
+    the engine's two current real producers (`trade_recap.build_state`,
+    `snapshot_adapter`) always populate it with, pinned so the common case
+    stays covered too.
+    """
+    positions = {
         "TWX": {"cost": 900000.0, "currency": "TWD"},
         "USX": {"cost": 30000.0, "currency": "USD"},
-    }}}
-    tw_importance, tw_basis = review_engine._ticker_importance(card, state, "TWX")
-    us_importance, us_basis = review_engine._ticker_importance(card, state, "USX")
-    assert tw_basis == us_basis == "position_cost"
-    assert abs(tw_importance - 28530.0) < 1e-6, tw_importance
-    assert us_importance == 30000.0
-    assert us_importance > tw_importance, \
-        "a smaller USD position must outrank a larger raw-TWD one once normalized"
+    }
+    state = {"holdings": {"positions": positions}}
+    for label, meta in [
+        ("no aggregate_currency key", {"mixed": True, "currencies": ["TWD", "USD"],
+                                       "fx": {"TWD": 0.0317}}),
+        ("explicit aggregate_currency", {"mixed": True, "aggregate_currency": "USD",
+                                         "currencies": ["TWD", "USD"], "fx": {"TWD": 0.0317}}),
+    ]:
+        card = {"currency_meta": meta, "ticker_diagnosis": []}
+        tw_importance, tw_basis = review_engine._ticker_importance(card, state, "TWX")
+        us_importance, us_basis = review_engine._ticker_importance(card, state, "USX")
+        assert tw_basis == us_basis == "position_cost", (label, tw_basis, us_basis)
+        assert abs(tw_importance - 28530.0) < 1e-6, (label, tw_importance)
+        assert us_importance == 30000.0, (label, us_importance)
+        assert us_importance > tw_importance, \
+            f"{label}: a smaller USD position must outrank a larger raw-TWD one once normalized"
 
 
 def test_ticker_importance_refuses_rather_than_falls_back_to_raw_units_on_missing_fx():
     """#664: a missing rate must never resolve to an identity factor of 1.0 --
     the same "the identity factor is removed wherever currencies differ, not
     merely guarded upstream" discipline #649 holds for the aggregate reader.
+    Covers both `currency_meta` shapes -- no `aggregate_currency` key and the
+    explicit key -- since both must fail the same way once a rate is missing.
     This is exercised directly because the real pipeline cannot reach this
     state: a book the engine reports `mixed` already carries a complete `fx`
     map for every held currency, since `trade_recap.usd_view` refuses the
     whole review before a card/state with a gap could ever be built."""
-    card = {"currency_meta": {"mixed": True, "aggregate_currency": "USD", "fx": {}},
-           "ticker_diagnosis": []}
     state = {"holdings": {"positions": {"TWX": {"cost": 900000.0, "currency": "TWD"}}}}
-    importance, basis = review_engine._ticker_importance(card, state, "TWX")
-    assert importance is None and basis == "fx_unavailable", (importance, basis)
+    for label, meta in [
+        ("no aggregate_currency key", {"mixed": True, "fx": {}}),
+        ("explicit aggregate_currency", {"mixed": True, "aggregate_currency": "USD", "fx": {}}),
+    ]:
+        card = {"currency_meta": meta, "ticker_diagnosis": []}
+        importance, basis = review_engine._ticker_importance(card, state, "TWX")
+        assert importance is None and basis == "fx_unavailable", (label, importance, basis)
 
 
 def test_custom_exit_reason_requires_the_users_words():
@@ -9768,6 +9794,18 @@ def test_initial_thesis_native_currency_label_and_normalized_cost_ranking_on_mix
     both inside the USD positions' range. The normalized ranking must
     interleave them (USOPEN1 > 3001.TW > USOPEN2 > 3002.TW), never group
     every TWD position ahead of every USD one by raw magnitude alone.
+
+    This is the shape a real review actually produces: `trade_recap.main`'s
+    `currency_meta` literal always carries an explicit `aggregate_currency`
+    (verified below), so this test cannot by itself catch a card missing that
+    key -- `test_ticker_importance_ranking_uses_engine_fx_for_mixed_currency_amounts`
+    covers that shape directly. What only the real CLI proves is that
+    `build_state` actually threads `cur_map` end to end and that the
+    `position_cost` fallback -- not the already-normalized `ticker_diagnosis`
+    branch -- is the one doing the work: `_664_MIXED_BOOK_CLOSES` prices every
+    open position at exactly its own average cost, so realized+unrealized
+    impact is ~0 and `ticker_diagnosis` (which drops `abs(impact) < 1`) omits
+    all four of them, forced and asserted below rather than assumed.
     """
     with tempfile.TemporaryDirectory() as tmp:
         env = _offline_engine_env(tmp)
@@ -9781,6 +9819,15 @@ def test_initial_thesis_native_currency_label_and_normalized_cost_ranking_on_mix
         assert plan["route"] == "first_review"
         assert plan["engine_state"]["review_tier"]["tier"] == "behavioral", \
             "this fixture must actually clear the thin-file suppression (#306)"
+        assert plan["engine_card"]["currency_meta"].get("aggregate_currency") == "USD", \
+            "this fixture's own currency_meta carries the key -- the missing-key shape is covered separately"
+
+        diagnosed = {row["ticker"] for row in plan["engine_card"].get("ticker_diagnosis") or []}
+        for ticker in ("3001.TW", "3002.TW", "USOPEN1", "USOPEN2"):
+            assert ticker not in diagnosed, \
+                (f"{ticker} must be absent from ticker_diagnosis, or this test exercises the "
+                 f"already-normalized pnl_impact branch instead of the position_cost fallback "
+                 f"#664 fixes: {diagnosed}")
 
         initial = [q for q in plan["question_queue"] if q["kind"] == "initial_thesis"]
         assert initial, "a mixed-currency first review must still emit initial-thesis questions"
