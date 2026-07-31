@@ -3950,10 +3950,20 @@ def _cash_anchor_status(state, route, cadence):
                 "in that same message ask the user for the account's current cash balance in "
                 + (", ".join(unanchored) or "the account's own currency")
                 + " — stating what it unlocks and that skipping keeps the holdings-only view. "
-                "If they answer, run add-cash --session-id <id> --cash '{\"currency\":\"<CUR>\","
-                "\"amount\":<number>,\"as_of\":\"<date>\"}' and continue on the session it "
-                "returns; it reuses this session's frozen prices rather than fetching new ones, "
-                "and refuses if the facts underneath the card moved. Never guess a balance")}
+                "Accept either an absolute currency amount or a percentage of the account's "
+                "total value (cash plus current position market value — never position value "
+                "alone). If they answer with a percentage, state that denominator in plain "
+                "words and get it confirmed once before converting — never more than one "
+                "clarification round-trip for this ask, and never compute the dollar figure "
+                "yourself. Then run add-cash --session-id <id> --cash "
+                "'{\"currency\":\"<CUR>\",\"amount\":<number>,\"as_of\":\"<date>\"}' for an "
+                "absolute amount, or --cash '{\"currency\":\"<CUR>\",\"percent_of_total\":<0-100>,"
+                "\"as_of\":\"<date>\"}' for a percentage (#662) — the engine converts against "
+                "this session's own frozen position value and returns the derivation in "
+                "anchor_conversion, which you must show the user rather than silently apply. "
+                "Continue on the session add-cash returns; it reuses this session's frozen "
+                "prices rather than fetching new ones, and refuses if the facts underneath the "
+                "card moved. Never guess a balance")}
 
 
 def _build_plan(card, state, engine_meta, root, paths, route, language, fingerprint, nonce, persist,
@@ -5969,23 +5979,36 @@ def cmd_add_cash(args):
         # `preview`/`finalize` would happily commit.
         shutil.rmtree(session.pending_dir(root, args.session_id), ignore_errors=True)
     recomputed_plan = (session.load_pending(root, result["session_id"]).get("plan") or {})
-    _emit({"status": "anchored", "session_id": result["session_id"],
-           "superseded_session_id": args.session_id,
-           # #665: the gate has exactly two verdicts and both are stated. This is
-           # the allowed one — the anchor reached the account pillar and every
-           # fact underneath it held. The other is the refusal above, and the
-           # difference between them is what this command used to get wrong.
-           "recompute": {"outcome": "anchor_propagated",
-                         "market_frame": "reused",
-                         "source_facts_verified": [label for label, _read
-                                                   in CASH_RECOMPUTE_SOURCE_FACTS]},
-           "review_plan": _plan_for_agent(recomputed_plan),
-           "carried_forward": sorted(name for name, value in carried.items() if value is not None),
-           "next_action": (
-               "the account pillar is now computed. Every required answer, thesis and frozen "
-               "question surface carried over unchanged, and card_plan.required_honesty_keys "
-               "gained the account-basis key — write one sentence for it in narrative.honesty, "
-               "then rerun preview and finalize on this session id")})
+    # #662: present only when this --cash payload was a percentage (trade_recap's
+    # resolve_cash_anchor_input stamped it into engine_state); the absolute-amount
+    # path leaves this None, so the response below carries no new key at all --
+    # byte-identical to before the percentage format existed.
+    anchor_conversion = (recomputed_plan.get("engine_state") or {}).get("cash_anchor_conversion")
+    response = {"status": "anchored", "session_id": result["session_id"],
+                "superseded_session_id": args.session_id,
+                # #665: the gate has exactly two verdicts and both are stated. This is
+                # the allowed one — the anchor reached the account pillar and every
+                # fact underneath it held. The other is the refusal above, and the
+                # difference between them is what this command used to get wrong.
+                "recompute": {"outcome": "anchor_propagated",
+                              "market_frame": "reused",
+                              "source_facts_verified": [label for label, _read
+                                                        in CASH_RECOMPUTE_SOURCE_FACTS]},
+                "review_plan": _plan_for_agent(recomputed_plan),
+                "carried_forward": sorted(name for name, value in carried.items()
+                                          if value is not None),
+                "next_action": (
+                    "the account pillar is now computed. Every required answer, thesis and "
+                    "frozen question surface carried over unchanged, and "
+                    "card_plan.required_honesty_keys gained the account-basis key — write one "
+                    "sentence for it in narrative.honesty, then rerun preview and finalize on "
+                    "this session id"
+                    + (" — and show anchor_conversion's derivation to the user first: they "
+                       "answered a percentage, so the stored dollar amount must not reach them "
+                       "silently." if anchor_conversion else ""))}
+    if anchor_conversion:
+        response["anchor_conversion"] = anchor_conversion
+    _emit(response)
 
 
 def cmd_render(args):
@@ -7939,8 +7962,11 @@ def build_parser():
     add_cash.add_argument("--session-id", required=True)
     add_cash.add_argument("--root")
     add_cash.add_argument("--cash", required=True,
-                          help="TR_CASH JSON string: one {currency,amount,as_of} anchor, "
-                               "or a list of them for a multi-currency account")
+                          help="TR_CASH JSON string: one {currency,amount,as_of} anchor, one "
+                               "{currency,percent_of_total,as_of} anchor converted against this "
+                               "session's own frozen position value and disclosed in the "
+                               "response's anchor_conversion (#662), or a list of absolute-"
+                               "amount anchors for a multi-currency account")
     add_cash.add_argument("--prices",
                           help="the same agent-supplied price envelope this session was "
                                "prepared with; omit when prepare fetched its own")
