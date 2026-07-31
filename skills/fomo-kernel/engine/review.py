@@ -2917,9 +2917,11 @@ def _initial_thesis_question(ticker, pos, cost, card, state, language, recalled=
         "_importance": importance, "_importance_basis": basis, "_tie": 1,
     }
     if said:
-        # Provenance for the agent and the receipt: which stored statement the
-        # stem quoted, so a reader can check the quote against the source
-        # rather than trusting the rendered stem.
+        # Provenance for the agent and for anything reading the plan: which
+        # stored statement the stem quoted, so a reader can check the quote
+        # against its source rather than trusting the rendered stem. Not the
+        # receipt — `question_presented` accepts only source and digest, never
+        # content, and this must not be read as travelling there.
         row["recalled_statement"] = {
             "evaluation_id": recalled.get("evaluation_id"),
             "created": recalled["created"].isoformat(),
@@ -6504,38 +6506,56 @@ def _evaluation_recall(root):
     return recall
 
 
-def _cycle_start_date(cycle_id):
-    """The entry date encoded in a ``trade_recap`` cycle id, or None.
+def _cycle_entry(cycle_id):
+    """``(entry_date, sequence)`` for a canonical cycle id, else ``(None, None)``.
 
-    The contract is ``trade_recap.py``'s: ``"{ticker}#{start}#{seq}"``, with
-    ``"{ticker}#unknown"`` for a position whose opening trade is not in the
-    supplied history. The unknown form returns None rather than guessing — a
-    recalled statement must not attach to a cycle whose start nobody knows.
+    ``trade_recap.CYCLE_ID_RE`` is the single source of truth for the shape
+    (``"{ticker}#{start}#{seq}"``), with ``CYCLE_ID_UNKNOWN_RE`` covering the
+    two-segment ``"{ticker}#unknown"`` a CSV without opening holdings produces.
+    Matching against that regex rather than splitting on ``#`` matters: a split
+    accepts ``"AAA#2026-01-01#garbage"`` and fails open into a valid-looking
+    entry date, and every caller here is deciding whether to attribute the
+    user's own words to a position.
     """
-    parts = str(cycle_id or "").split("#")
-    if len(parts) < 2:
-        return None
+    if not trade_recap.CYCLE_ID_RE.match(str(cycle_id or "")):
+        return None, None
+    _ticker, start, seq = str(cycle_id).split("#")
     try:
-        return dt.date.fromisoformat(parts[1])
+        return dt.date.fromisoformat(start), int(seq)
     except ValueError:
-        return None
+        return None, None
 
 
 def _recalled_entry_statement(recall, ticker, cycle_id):
-    """The user's latest own-words statement recorded no later than this
-    cycle's entry, or None.
+    """The user's latest own-words statement recorded before this cycle opened,
+    or None.
 
-    "No later than the entry" is what makes this an *entry* thesis rather than
-    a later add: an evaluation recorded after the position opened describes a
-    decision the entry question is not asking about. Same-day counts — the
-    contemplation and the fill routinely land on one date.
+    Two bounds, and the repository has a rule behind each.
 
-    The latest qualifying statement wins. An earlier one it superseded is not
-    the user's current account of why they entered, and showing the oldest
-    would be the same memory-reconstruction problem in a new place.
+    *Upper*: no later than the cycle's entry. That is what makes this an
+    *entry* thesis rather than a later add — an evaluation recorded after the
+    position opened describes a decision this question is not asking about.
+    Same-day counts, because the contemplation and the fill routinely land on
+    one date.
+
+    *Lower*: only the position's **first** cycle. A ticker fully exited and
+    re-entered is a new position with its own reason (the owner's per-cycle
+    ruling on #636), and a cycle id carries no lower bound — every statement
+    made before the *first* entry also satisfies ``created <= start`` for the
+    second. Rather than quote the previous position's reason as this one's,
+    a re-entry recalls nothing. Bounding it properly needs the prior cycle's
+    exit date, which this layer does not have; failing closed is the honest
+    version until it does.
+
+    Among the eligible, the most recent is used. Note what that is *not*: two
+    evaluations for one ticker are two distinct decisions, not a revision
+    chain — ``_evaluation_id`` seeds on ``context``, so re-asking the same
+    premise with a different ``why_now`` mints a new evaluation rather than
+    superseding the old one. Taking the latest is a choice of the closest
+    statement to the entry, not a supersede semantic.
     """
-    start = _cycle_start_date(cycle_id)
-    if start is None:
+    start, seq = _cycle_entry(cycle_id)
+    if start is None or seq != 1:
         return None
     eligible = [item for item in (recall or {}).get(str(ticker), [])
                 if item["created"] <= start]
