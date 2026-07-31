@@ -4384,6 +4384,12 @@ def _validate_thesis_completeness(plan, answers):
     # it — that cycle must carry a real capture (maturity draft/testable). Every
     # other answer (momentum_follow/external_call/no_clear_thesis/skip) keeps
     # inferred legal, so different answers produce different downstream state.
+    # #667: this rule is enforced here, strictly, and unchanged by that fix — the
+    # defect it found was that `planned_entry`'s own declared answer contract
+    # (`question_surface._INITIAL_THESIS_REQUIREMENTS["planned_entry"]`) named
+    # none of this, so an agent could satisfy the contract and still land in the
+    # refusal below. Keep the two in sync (maintainer-guide.md mirrored-surfaces
+    # table) rather than loosening this check.
     answer_choice = {row.get("question_id"): row.get("choice")
                      for row in (answers.get("answers") or []) if isinstance(row, dict)}
     planned_entry_cycles = {q.get("cycle_id") for q in plan.get("question_queue") or []

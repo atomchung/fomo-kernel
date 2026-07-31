@@ -55,11 +55,13 @@ def _choice(question):
     The two routes this suite drives queue different kinds -- `initial_thesis`
     on the CSV first review, `headline_motive` on a test drive -- so the answer
     cannot be one literal. It is an explicit map rather than a read of the
-    plan's own `requirements_by_choice`, because that contract describes a
-    choice's own follow-up fields and not the cross-field rules layered on top
-    of it: `planned_entry` advertises no requirements and still needs a
-    captured thesis of maturity draft or testable. This suite owns the preview
-    precondition; the question contracts belong to the suites that own them.
+    plan's own `requirements_by_choice`, because a choice whose declared
+    requirement resolves to a `thesis_updates` capture (`planned_entry`, #667)
+    would still need this suite to construct one, and this suite is about
+    the preview/finalize precondition, not thesis-capture mechanics.
+    `no_clear_thesis` keeps every question here payload-free by construction;
+    the question contracts themselves belong to the suites that own them
+    (`test_question_surfaces.py`, `test_review_v2.py`).
     """
     return {
         "initial_thesis": "no_clear_thesis",
