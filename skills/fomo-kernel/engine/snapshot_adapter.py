@@ -131,12 +131,14 @@ def _normalize_provenance(raw, index, row):
     pair here is what makes "a derived start date is never rendered as an exact
     date" true at the storage layer rather than a habit each renderer must keep.
 
-    The stamp says who the date came from, and the set of answers to that lives
-    in ``ledger.SINCE_BASES`` rather than here: ``user_estimate`` is the user's
-    own approximation, ``recorded_book`` is a start the record already held and
-    this declaration did not restate (#539), and ``unknown`` carries no date at
-    all. Both dated bases are validated identically — the distinction is stored,
-    not enforced, because nothing downstream may treat either as exact.
+    The stamp says what the date is worth, and the set of answers lives in
+    ``ledger.SINCE_BASES`` rather than here: ``trade_event`` is exact (the ledger
+    watched that cycle open), ``snapshot_anchor`` is the day a declaration first
+    put the position on the books and is a lower bound, ``user_estimate`` is the
+    user's own approximation, and ``unknown`` carries no date at all. The three
+    dated bases are validated identically — the distinction is stored, not
+    enforced, because it is a claim about evidence rather than about shape, and
+    #539 keeps them separate precisely because nothing can recover it later.
     """
     basis = raw.get("since_basis")
     since = raw.get("since")

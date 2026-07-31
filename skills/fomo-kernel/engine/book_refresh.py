@@ -502,43 +502,56 @@ def _carried_start(row, recorded, derived, as_of):
     anchor's own date, ``cycle_id`` remints, and every memory keyed to that
     cycle — the user's thesis first — reads as belonging to nothing.
 
+    What is carried is the *basis*, not a marker saying the date was carried
+    (owner ruling, 2026-07-31). A single "this came from the record" stamp would
+    describe how the date was transported and destroy why it is believed — an
+    exact start the ledger watched open and a lower bound inferred from the day
+    a declaration first listed the position would become the same value, and
+    nothing could tell them apart afterwards. Not even ``origin``: once the book
+    is adopted, that describes the new snapshot writer rather than the original
+    evidence. So the four bases are the vocabulary and they travel unchanged.
+
     The cases, in the order they are decided.
 
     A row that already carries a stamp is left alone: it came from
     ``_appearance_stamp`` a few lines up, which is the position the user was
     just asked about, and this declaration *is* its first statement.
 
-    A start the user themselves gave is preserved as theirs. The stamp is read
-    from the last declaration's own row — the only place that says a start was
-    answered rather than assumed; a ``trades_derived`` restatement never stamps
-    one, so reading the newest recorded row instead would spend the user's #531
-    answer the first time they imported a CSV — and only while the record still
-    traces the position to that anchor (``origin == "snapshot"``). A position
-    sold and bought back reads ``origin == "trades"``, and inheriting the old
-    estimate would attach the user's words about the previous cycle to a new one.
+    A position the record still traces to its anchor keeps that anchor's own
+    stamp, whatever it says. The stamp is read from the last declaration's own
+    row — the only place that states a start rather than assuming one; a
+    ``trades_derived`` restatement never stamps one, so reading the newest
+    recorded row instead would spend the user's #531 answer the first time they
+    imported a CSV. This is also the branch that keeps a trade-proven start
+    trade-proven: once adopted, a position opened by a real buy sits in the
+    anchor and reads ``origin == "snapshot"`` like any other, so a basis
+    recomputed from origin here would quietly demote it to a lower bound on the
+    second declaration.
 
-    Everything else still held takes the start the *derived* book states, stamped
-    ``recorded_book``. Reading it from the derived book rather than from the
-    previous anchor's stamp is what makes this safe without a further gate: the
-    derived start of a rebought position is its rebuy date, and of a
-    trades-origin holding its real, ledger-proven open date, so there is no
-    previous cycle to inherit from — the value is simply what the record says
-    about the position that is held right now. It is also a fixpoint: carrying it
-    again yields the same date, so replay, ``repair-projections`` and an
-    idempotent finalize retry are stable by construction.
+    Everything else still held takes the start the *derived* book states, with
+    the basis that book's own evidence supports: ``trade_event`` for a cycle the
+    ledger watched open, ``snapshot_anchor`` for one a declaration first put on
+    the books. Reading it from the derived book is what makes this safe without
+    a further gate — the derived start of a rebought position is its rebuy date,
+    so there is no previous cycle to inherit from, and no old estimate can
+    follow the user's words onto a cycle they were not about. It is also a
+    fixpoint: carrying it again yields the same date and the same basis, so
+    replay, ``repair-projections`` and an idempotent finalize retry are stable
+    by construction.
 
     A ticker absent from the derived book is untouched. It is appearing, and
     #531 owns what happens to it.
 
-    Nothing is stamped when the start the record holds is not older than this
-    declaration's own ``as_of``. Equal means the stamp would restate what
-    ``_anchored_cycle_start`` already defaults to, and writing it anyway would
-    change the anchor's content address without changing a single fact — which
-    is what an idempotent replay of the same declaration is checked by. Later
-    means the declaration predates the record, and that is refused a few steps
-    on by the lane that owns the refusal; carrying a start into it here would
-    replace a plain "older than the current ledger anchor" with a validation
-    error about a field the user never supplied.
+    Two guards on writing at all. A start later than this declaration's own
+    ``as_of`` means the declaration predates the record, which is refused a few
+    steps on by the lane that owns that refusal; carrying one here would replace
+    a plain "older than the current ledger anchor" with a validation error about
+    a field the user never supplied. And a ``snapshot_anchor`` start equal to
+    ``as_of`` restates exactly what ``_anchored_cycle_start`` already defaults
+    to, so writing it would change the anchor's content address without changing
+    a fact — which is what an idempotent replay of the same declaration is
+    checked by. The equality guard is deliberately not extended to the other
+    bases: for them the stamp carries something the default does not.
     """
     if row.get("since_basis"):
         return row
@@ -557,11 +570,15 @@ def _carried_start(row, recorded, derived, as_of):
             return row
         since, basis = recorded[ticker].get("since"), stamp
     else:
-        since, basis = held.get("since"), "recorded_book"
-    # The date and the stamp are chosen together, deliberately: a start read off
+        since = held.get("since")
+        basis = ("trade_event" if held.get("origin") == "trades"
+                 else "snapshot_anchor")
+    # The date and the basis are decided together, deliberately: a start read off
     # the derived book labelled `user_estimate` would attribute a ledger fact to
     # the user, which is the same dishonesty as the reverse.
-    if not since or str(since) >= str(as_of):
+    if not since or str(since) > str(as_of):
+        return row
+    if str(since) == str(as_of) and basis == "snapshot_anchor":
         return row
     row["since"], row["since_basis"] = since, basis
     # The start alone is not the identity. Two cycles opened on one day differ

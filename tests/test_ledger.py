@@ -152,32 +152,39 @@ def test_an_unknown_start_becomes_the_cycle_id_the_engine_already_has():
     assert not out["integrity"]
 
 
-def test_a_start_carried_off_the_record_reads_exactly_like_an_answered_one():
-    """#539: the third basis is a statement about whose date it is, not a rule.
+def test_every_dated_basis_reads_the_same_and_says_something_different():
+    """#539: a basis states what a date is worth, and never changes the answer.
 
-    ``recorded_book`` says the start came from the book already on record rather
-    than from anything the user said this time. ``_anchored_cycle_start`` has to
-    read it identically to ``user_estimate`` -- same date, same cycle, no
-    integrity note -- because the distinction it carries is for the ledger's own
-    honesty, not for the arithmetic. Any divergence here would make the fix for
-    a reminted cycle land as a *differently* reminted one, which no test above
-    would catch.
+    Four evidence classes, three of them dated: a start the ledger watched open
+    (``trade_event``, exact), the day a declaration first put the position on the
+    books (``snapshot_anchor``, a lower bound), and the user's own approximation
+    (``user_estimate``). ``_anchored_cycle_start`` must read all three
+    identically -- same date, same cycle, no integrity note -- because the
+    difference between them is the ledger's honesty, not the arithmetic. Any
+    divergence would make the fix for a reminted cycle land as a *differently*
+    reminted one, which no test above would catch.
+
+    The stored distinction is the other half, and it is why one carried marker
+    was refused: after an adoption ``origin`` describes the snapshot writer, so
+    an exact start and a lower bound that had been collapsed could never be told
+    apart again.
     """
-    events = [_snap("2026-07-20", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
-                                    "since": "2026-06-30",
-                                    "since_basis": "recorded_book"}])]
-    out = lg.derive_holdings(events)
-    n = out["holdings"]["NVDA"]
-    assert n["since"] == "2026-06-30" and n["cycle_id"] == "NVDA#2026-06-30#1"
-    assert not out["integrity"]
-    answered = lg.derive_holdings([
-        _snap("2026-07-20", [{"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
-                              "since": "2026-06-30", "since_basis": "user_estimate"}])
-    ])["holdings"]["NVDA"]
-    assert {key: value for key, value in n.items()} == answered, (
-        "the two bases differ in what they claim about the date's source and in "
-        "nothing else; a reader that treated them differently would be deciding "
-        "arithmetic from provenance")
+    def _read(basis):
+        out = lg.derive_holdings([_snap("2026-07-20", [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 152.3,
+             "since": "2026-06-30", "since_basis": basis}])])
+        assert not out["integrity"], basis
+        return out["holdings"]["NVDA"]
+
+    dated = {basis: _read(basis)
+             for basis in ("trade_event", "snapshot_anchor", "user_estimate")}
+    for basis, holding in dated.items():
+        assert holding["since"] == "2026-06-30", basis
+        assert holding["cycle_id"] == "NVDA#2026-06-30#1", basis
+    assert len({json.dumps(row, sort_keys=True) for row in dated.values()}) == 1, (
+        "the three dated bases differ in what they claim about the date's "
+        "source and in nothing else; a reader that treated them differently "
+        "would be deciding arithmetic from provenance")
 
 
 def test_a_cycle_start_with_no_stamp_is_ignored_and_reported():

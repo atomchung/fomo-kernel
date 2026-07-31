@@ -321,6 +321,34 @@ def test_a_start_the_ledger_can_prove_is_not_overwritten_by_a_declaration():
             "NEWCO#2026-07-05#1", (
                 "the buy date is the start; a declaration states what is held, "
                 "never since when, so it may not overwrite one")
+        stamped = {row["ticker"]: row.get("since_basis")
+                   for row in lg.latest_anchor(events)["positions"]}
+        assert stamped["NEWCO"] == "trade_event", (
+            "and it is labelled by the evidence: the ledger watched this cycle "
+            "open, so the date is exact rather than a declaration's lower bound")
+        assert stamped["ACME"] == "snapshot_anchor"
+
+        # The second declaration is where a transport-only marker would have lost
+        # it. NEWCO now sits in the anchor and derives `origin == "snapshot"` like
+        # every other row, so a basis recomputed from origin here would silently
+        # demote a trade-proven date to a bookkeeping one -- and nothing
+        # downstream could ever tell that it had been exact.
+        third = _snapshot(tmp, [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+                                 "market": "US", "currency": "USD"},
+                                dict(KEPT[0], shares=47), KEPT[1],
+                                {"ticker": "NEWCO", "shares": 10, "avg_cost": 5.0,
+                                 "market": "US", "currency": "USD"}],
+                          as_of="2026-07-30")
+        again = _cli(root, third)
+        assert _cli(root, third, {"refresh_id": again["refresh_id"],
+                                  "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        row = [p for p in lg.latest_anchor(events)["positions"]
+               if p["ticker"] == "NEWCO"][0]
+        assert (row["since"], row["since_basis"]) == ("2026-07-05", "trade_event"), (
+            "a start's evidence survives every later adoption; it is not "
+            "recoverable afterwards, because by then `origin` describes the "
+            "snapshot writer rather than how the start was learned")
 
 
 def test_a_carried_start_never_hands_a_live_position_a_sold_cycles_identity():
@@ -376,6 +404,13 @@ def test_a_carried_start_never_hands_a_live_position_a_sold_cycles_identity():
         events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
         assert lg.derive_holdings(events)["holdings"]["ACME"]["cycle_id"] == \
             "ACME#2026-07-20#2"
+        stamped = {row["ticker"]: (row.get("since"), row.get("since_basis"))
+                   for row in lg.latest_anchor(events)["positions"]}
+        assert stamped["ACME"] == ("2026-07-20", "trade_event")
+        assert stamped["WIDGET"] == ("2026-06-30", "snapshot_anchor"), (
+            "a start the book only knows as a declaration date stays a lower "
+            "bound however many declarations it survives; surviving is not "
+            "evidence, and nothing may read it as a purchase date later")
 
 
 def test_a_stamp_never_survives_onto_a_different_cycle():
@@ -429,9 +464,10 @@ def test_a_stamp_never_survives_onto_a_different_cycle():
         assert out["status"] == "adopted", out
         events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
         row = [p for p in lg.latest_anchor(events)["positions"] if p["ticker"] == "NEWCO"][0]
-        assert row["since_basis"] == "recorded_book", (
+        assert row["since_basis"] == "trade_event", (
             "the estimate described the cycle that was sold; it must not be "
-            "reattached to the one the ledger can date itself")
+            "reattached to the one the ledger can date itself -- and the new "
+            "cycle's start is labelled by the evidence that supports it")
         assert row["since"] == "2026-07-20", (
             "the rebuy is the start the ledger can prove, and it is the only "
             "start this position may carry")
@@ -1007,12 +1043,13 @@ def test_a_stamped_position_keeps_the_canonical_current_book_usable():
         stamped = {row["ticker"]: row.get("since_basis")
                    for row in lg.latest_anchor(events)["positions"]}
         # #539: every adopted position states where its start came from, and the
-        # stamp says whose statement it is. The two the user was just asked about
-        # keep their own answers; the three already on record keep the start the
-        # record held, which is what stops their cycle ids reminting.
+        # basis says what the date is worth. The two the user was just asked
+        # about keep their own answers; the three already on record keep the
+        # start the record held -- which is what stops their cycle ids reminting
+        # -- labelled as the lower bound a declaration date is, not upgraded.
         assert stamped == {"NEWCO": "user_estimate", "OLDCO": "unknown",
-                           "ACME": "recorded_book", "WIDGET": "recorded_book",
-                           "BIGCO": "recorded_book"}
+                           "ACME": "snapshot_anchor", "WIDGET": "snapshot_anchor",
+                           "BIGCO": "snapshot_anchor"}
         for row in basis.current_book["anchor"]["positions"]:
             assert not {"since", "since_basis"} & set(row), (
                 "the anchor projection carries book-affecting facts only; "
@@ -1202,7 +1239,11 @@ def test_the_classification_enum_matches_the_engine_constant():
         assert not unknown, f"{kind} allows an undeclared classification: {sorted(unknown)}"
     answer = (schema["$defs"]["input"]["properties"]["answers"]["items"]["properties"])
     assert answer["held_months"]["maximum"] == br.HELD_MONTHS_MAX
-    assert set(lg.SINCE_BASES) == {"user_estimate", "unknown", "recorded_book"}
+    # #539: four evidence classes, kept separable rather than collapsed into one
+    # "carried" marker. What a carried date is worth cannot be recovered later --
+    # after adoption `origin` describes the snapshot writer, not the evidence.
+    assert set(lg.SINCE_BASES) == {"user_estimate", "unknown",
+                                   "trade_event", "snapshot_anchor"}
     assert lg.ENGINE_ASSIGNED_POSITION_KEYS <= lg.SNAPSHOT_POSITION_KEYS, (
         "an engine-assigned field still has to be a field a position may carry")
 

@@ -89,12 +89,18 @@ SNAPSHOT_POSITION_KEYS = frozenset({
 # snapshot_adapter.normalize_envelope 預設拒收它們;只有 book_refresh 採納自己剛問到的
 # 答案時才開鎖,而那一條路上的值是引擎自己算出來的。
 ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis", "cycle_seq"})
-# since_basis 的合法值。"user_estimate" = 從使用者給的月數換算(近似,±半個月);
-# "unknown" = 使用者說不知道,不編日期;"recorded_book"(#539)= 這個起點是帳本本來就
-# 記著的,這次宣告沒有重新陳述它——採納時由 book_refresh.carry_recorded_starts 蓋上。
-# 沒有它,一檔從沒被問過「抱多久」的持倉(第一次宣告裡的每一檔都是)在每次採納都會被
-# 退回成最新宣告日,cycle_id 跟著重鑄,使用者寫過的 thesis 就被重問一次。
-SINCE_BASES = ("user_estimate", "unknown", "recorded_book")
+# since_basis 說的是「這個日期憑什麼被相信」,不是「它是怎麼被搬過來的」
+# (#539 owner ruling 2026-07-31)。四個值各是一種證據強度,採納時原樣帶過去,不合併:
+#   "trade_event"     = 帳本親眼看著這個 cycle 開的,精確日期。
+#   "snapshot_anchor" = 某次宣告第一次把它記進帳本的那天,是下界,不是買進日。
+#   "user_estimate"   = 從使用者給的月數換算(近似,±半個月)。
+#   "unknown"         = 使用者說不知道,不編日期。
+# 後兩個是舊有的;前兩個是 #539 新增。一檔從沒被問過「抱多久」的持倉(第一次宣告裡
+# 的每一檔都是)本來沒有任何蓋章可帶,於是每次採納都被退回成最新宣告日,cycle_id 跟著
+# 重鑄,使用者寫過的 thesis 被重問一次。但用單一個「從帳本帶過來的」值蓋掉全部會抹掉
+# 精確度差異,而且事後補不回來:採納之後 origin 描述的是新的 snapshot 寫入者,不再是
+# 這個起點原本的證據。所以帶的是原本那個值本身。
+SINCE_BASES = ("user_estimate", "unknown", "trade_event", "snapshot_anchor")
 
 # A snapshot row's ``source`` says how the book it states was learned (#549).
 # It is recorded, never used to decide whether the row counts as the recorded
@@ -373,9 +379,9 @@ def _anchored_cycle_start(position, anchor_date, ticker, integrity):
     預設仍是錨點日 —— 一筆宣告出來的持倉,帳本只知道它「至少從這天起在帳上」。
     #531 之後,refresh 問過「大約抱多久」的持倉會帶 since/since_basis 蓋章:
     ``user_estimate`` 用蓋章的日期,``unknown`` 保持錨點日但把 cycle 標成 unknown。
-    #539 之後,採納一份新宣告時引擎會把帳本本來就記著的起點蓋成 ``recorded_book``
-    帶過來,讀法與 ``user_estimate`` 相同 —— 差別只在這個日期是誰說的,而那個差別
-    留在帳本上,不留在這裡的算法裡。
+    #539 之後,採納一份新宣告時引擎會把帳本本來就記著的起點連同它原本的證據強度
+    (``trade_event`` / ``snapshot_anchor``)一起帶過來。這裡對三個帶日期的值讀法
+    完全相同 —— 差別是「這個日期憑什麼被相信」,那屬於帳本的誠實,不屬於這裡的算法。
 
     本函式對壞值一律降級回錨點日並記 integrity,不 raise:ledger.jsonl 是可被手改的
     append-only 檔案,而 derive_holdings 對壞資料的既有契約是「照走、但看得見」
