@@ -431,6 +431,25 @@
           "basis_note": {
             "type": "string",
             "description": "condition_basis: why the agent believes the measurement basis changed underneath the frozen threshold."
+          },
+          "recalled_statement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["evaluation_id", "created", "quoted"],
+            "description": "initial_thesis only, and only when the user discussed this ticker through `consider` before entering it (#636): the stored statement this question's stem quotes back at them, instead of asking them to reconstruct an entry motive from memory. Provenance, not a second copy of the record -- `quoted` is the exact text already on that trade_evaluations.jsonl row, present so a reader can check the rendered stem against its source. States a fact and never a cause: the user said this, on this date. It is not a claim that the position was opened because of it, the same boundary `evaluation_reconciliation` draws around `status: matched`. Absent whenever nothing qualified, which includes a re-entry cycle -- review.py's _recalled_entry_statement fails closed there rather than attributing the previous position's reason to this one.",
+            "properties": {
+              "evaluation_id": {"type": "string", "minLength": 1},
+              "created": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                "description": "The evaluation's own `created` date, which the stem shows so the quote reads as a dated record rather than a present-tense claim."
+              },
+              "quoted": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The user's words, verbatim from schemas/decision-context.schema.json's `reason` (or `why_now` when only that is present). Never truncated, translated or paraphrased -- the same rule that schema puts on storing them."
+              }
+            }
           }
         },
         "additionalProperties": false
