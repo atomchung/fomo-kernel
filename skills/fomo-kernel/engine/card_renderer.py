@@ -1854,6 +1854,19 @@ def _metric_display(key, value):
     return f"{value}"
 
 
+def _commitment_direction(goal, then_value, now_value):
+    """Compare the two engine-owned readings against the stored rule goal."""
+    if goal not in {"up", "down"}:
+        return None
+    try:
+        if now_value == then_value:
+            return "unchanged"
+        better = now_value < then_value if goal == "down" else now_value > then_value
+    except TypeError:
+        return None
+    return "improved" if better else "worsened"
+
+
 def _condition_check_rows(bundle):
     return [row for row in bundle.get("condition_checks") or [] if isinstance(row, dict)]
 
@@ -2339,10 +2352,16 @@ def _reconciliation_lines(bundle, language):
         if condition_line:
             line = condition_line
         elif then_v is not None and now_v is not None:
-            # A-12: never print internal metric keys on the card — values only.
-            line = recon_copy["statement_with_metric"].format(
-                rule=prior["rule"], then=_metric_display(key, then_v),
-                now=_metric_display(key, now_v))
+            metric = (recon_copy.get("metric_labels") or {}).get(key)
+            direction = _commitment_direction(prior.get("goal"), then_v, now_v)
+            if metric and direction:
+                line = _format_copy(recon_copy.get("statement_with_metric"), rule=prior["rule"],
+                                    metric=metric, then=_metric_display(key, then_v),
+                                    now=_metric_display(key, now_v),
+                                    direction=(recon_copy.get("direction") or {}).get(direction))
+            else:
+                line = recon_copy["statement_with_metric"].format(
+                    rule=prior["rule"], then=_metric_display(key, then_v), now=_metric_display(key, now_v))
         else:
             line = recon_copy["statement"].format(rule=prior["rule"])
         breached = any(entry.get("key") == "prior_commitment_breach"

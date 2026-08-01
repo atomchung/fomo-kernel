@@ -282,7 +282,9 @@
   },
   "reconciliation": {
     "statement": "上次你承诺：“{rule}”。",
-    "statement_with_metric": "上次你承诺：“{rule}”——追踪的数字当时 {then}，这次 {now}。"
+    "statement_with_metric": "上次你承诺：“{rule}”——追踪的是{metric}，当时 {then}、这次 {now}：{direction}。",
+    "metric_labels": {"max_pos_pct": "最大单一仓位比重", "avgdown_count": "亏损仓位加码次数", "ai_pct": "AI 敞口比重", "max_sector_pct": "最大行业比重", "top3_pct": "前三大仓位比重", "exit_severity": "过早出场程度", "hold_severity": "持有周期不一致程度", "worst_cur_ret": "最差当前回报"},
+    "direction": {"improved": "改善", "worsened": "变差", "unchanged": "持平"}
   },
   "snapshot": {
     "overview": {
@@ -380,7 +382,7 @@
     "action_partial": "减仓"
   },
   "review_milestone": {
-    "line": "开始这次复盘时，你已有 {completed} 次完成纪录。",
+    "line": "开始这次复盘时，你已有 {completed} 次完成复盘。",
     "noun_one": "",
     "noun_many": ""
   },

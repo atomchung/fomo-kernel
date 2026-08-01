@@ -119,13 +119,14 @@ _RECONCILIATION_RULES = {
 }
 
 
-def _reconciliation(with_metric):
+def _reconciliation(metric=None):
     def build(language):
         prior = {"rule": _RECONCILIATION_RULES[language]}
         state = {}
-        if with_metric:
-            prior.update({"metric_key": "max_pos_pct", "metric_value": 0.51})
-            state = {"metrics": {"max_pos_pct": 0.42}}
+        if metric:
+            key, then, now, goal, dim = metric
+            prior.update({"metric_key": key, "metric_value": then, "goal": goal, "dim": dim})
+            state = {"metrics": {key: now}}
         return _bundle(language,
                        plan={"state_snapshot": {"prior_commitment": prior}},
                        engine_state=state)
@@ -685,8 +686,15 @@ SCENES = (
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))
       for status in ("no_prices", "short_price_series", "accounting_reconciliation",
                      "price_provenance", "a_status_added_later")],
-    ("reconciliation/with_metric", ("reconciliation",), _reconciliation(True)),
-    ("reconciliation/plain", (), _reconciliation(False)),
+    ("reconciliation/metric-improved", ("reconciliation",), _reconciliation(("max_pos_pct", 0.51, 0.42, "down", "position_sizing"))),
+    ("reconciliation/metric-worsened", (), _reconciliation(("avgdown_count", 2, 3, "down", "averaging_down"))),
+    ("reconciliation/metric-unchanged", (), _reconciliation(("ai_pct", 0.4, 0.4, "down", "diversification"))),
+    ("reconciliation/metric-sector", (), _reconciliation(("max_sector_pct", 0.5, 0.4, "down", "diversification"))),
+    ("reconciliation/metric-top3", (), _reconciliation(("top3_pct", 0.7, 0.6, "down", "diversification"))),
+    ("reconciliation/metric-exit", (), _reconciliation(("exit_severity", 0.4, 0.3, "down", "exit_discipline"))),
+    ("reconciliation/metric-hold", (), _reconciliation(("hold_severity", 0.4, 0.3, "down", "holding_period"))),
+    ("reconciliation/metric-return", (), _reconciliation(("worst_cur_ret", -0.3, -0.2, "up", "position_sizing"))),
+    ("reconciliation/plain", (), _reconciliation()),
     ("best_strength/no_signal", ("best_strength",), _best_strength(None)),
     *[(f"best_strength/{dimension}", (), _best_strength(dimension))
       for dimension in sorted(BEST_STRENGTH_DIMS)],

@@ -7409,13 +7409,13 @@ language: en
 This review did not rank a leading behavior pattern from the available history.
 
 ==========================================================================
-reconciliation/with_metric [zh-TW] private.md
+reconciliation/metric-improved [zh-TW] private.md
 ==========================================================================
 # Headline.
 
 > 復盤卡，只留在本機
 
-上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的數字當時 51%，這次 42%。
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最大單一部位比重，當時 51%、這次 42%：改善。
 
 Mirror.
 
@@ -7442,13 +7442,13 @@ Mirror.
 [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
 
 ==========================================================================
-reconciliation/with_metric [zh-TW] private.html
+reconciliation/metric-improved [zh-TW] private.html
 ==========================================================================
 復盤卡
 復盤卡
 Headline.
 復盤卡，只留在本機
-上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的數字當時 51%，這次 42%。
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最大單一部位比重，當時 51%、這次 42%：改善。
 Mirror.
 這期的績效
 本期算不出帳面損益：缺交易或估值基礎。
@@ -7464,7 +7464,7 @@ Mirror.
 session_id: corpus · language: zh-TW
 
 ==========================================================================
-reconciliation/with_metric [zh-TW] public.md
+reconciliation/metric-improved [zh-TW] public.md
 ==========================================================================
 ---
 privacy: public
@@ -7478,13 +7478,13 @@ language: zh-TW
 這次可用歷史不足以排序出主要行為模式。
 
 ==========================================================================
-reconciliation/with_metric [en] private.md
+reconciliation/metric-improved [en] private.md
 ==========================================================================
 # Headline.
 
 > Review card; stored locally only
 
-Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — the tracked number was 51% then, 42% now.
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — largest-position weight was 51% then and is 42% now: improved.
 
 Mirror.
 
@@ -7511,13 +7511,13 @@ No behavioral diagnosis this period: the engine scored no dimension.
 [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
 
 ==========================================================================
-reconciliation/with_metric [en] private.html
+reconciliation/metric-improved [en] private.html
 ==========================================================================
 Review Card
 Review Card
 Headline.
 Review card; stored locally only
-Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — the tracked number was 51% then, 42% now.
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — largest-position weight was 51% then and is 42% now: improved.
 Mirror.
 Performance
 Absolute P&L is not computable this period: no trades or valuation basis.
@@ -7533,7 +7533,973 @@ No new rule commitment this time; you can pick one at the next review.
 session_id: corpus · language: en
 
 ==========================================================================
-reconciliation/with_metric [en] public.md
+reconciliation/metric-improved [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-worsened [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是虧損部位加碼次數，當時 2、這次 3：變差。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-worsened [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是虧損部位加碼次數，當時 2、這次 3：變差。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-worsened [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-worsened [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — adds to losing positions was 2 then and is 3 now: worsened.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-worsened [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — adds to losing positions was 2 then and is 3 now: worsened.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-worsened [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-unchanged [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是AI 曝險比重，當時 40%、這次 40%：持平。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-unchanged [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是AI 曝險比重，當時 40%、這次 40%：持平。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-unchanged [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-unchanged [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — AI-exposure weight was 40% then and is 40% now: unchanged.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-unchanged [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — AI-exposure weight was 40% then and is 40% now: unchanged.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-unchanged [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-sector [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最大產業比重，當時 50%、這次 40%：改善。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-sector [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最大產業比重，當時 50%、這次 40%：改善。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-sector [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-sector [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — largest-sector weight was 50% then and is 40% now: improved.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-sector [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — largest-sector weight was 50% then and is 40% now: improved.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-sector [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-top3 [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是前三大部位比重，當時 70%、這次 60%：改善。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-top3 [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是前三大部位比重，當時 70%、這次 60%：改善。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-top3 [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-top3 [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — top-three weight was 70% then and is 60% now: improved.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-top3 [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — top-three weight was 70% then and is 60% now: improved.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-top3 [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-exit [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是過早出場程度，當時 0.4、這次 0.3：改善。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-exit [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是過早出場程度，當時 0.4、這次 0.3：改善。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-exit [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-exit [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — early-exit severity was 0.4 then and is 0.3 now: improved.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-exit [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — early-exit severity was 0.4 then and is 0.3 now: improved.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-exit [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-hold [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是持有週期不一致程度，當時 0.4、這次 0.3：改善。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-hold [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是持有週期不一致程度，當時 0.4、這次 0.3：改善。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-hold [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-hold [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — holding-horizon inconsistency was 0.4 then and is 0.3 now: improved.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-hold [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — holding-horizon inconsistency was 0.4 then and is 0.3 now: improved.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-hold [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+reconciliation/metric-return [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最差目前報酬，當時 -0.3、這次 -0.2：改善。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+reconciliation/metric-return [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+上次你承諾：「單筆部位上限定死 30%；超過就減，不新增。」——追蹤的是最差目前報酬，當時 -0.3、這次 -0.2：改善。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+reconciliation/metric-return [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+reconciliation/metric-return [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — worst current return was -0.3 then and is -0.2 now: improved.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+reconciliation/metric-return [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Last time you committed: "Cap any single position at 30%; trim if it goes over, and do not add." — worst current return was -0.3 then and is -0.2 now: improved.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+reconciliation/metric-return [en] public.md
 ==========================================================================
 ---
 privacy: public
@@ -10305,8 +11271,8 @@ This review did not rank a leading behavior pattern from the available history.
 ==========================================================================
 copy-key coverage
 ==========================================================================
-[zh-TW] reached 58 · unreached 0 · trivial 25
-[en] reached 79 · unreached 0 · trivial 4
+[zh-TW] reached 61 · unreached 0 · trivial 33
+[en] reached 90 · unreached 0 · trivial 4
 
 registers not claimed by any scene in this corpus (74):
   account_perf
