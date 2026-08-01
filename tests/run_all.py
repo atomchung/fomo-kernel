@@ -29,6 +29,7 @@ SUITES = [
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py"),
     ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py"),
     ("Synthetic consider QA walkthrough (#718)", "tests/test_synthetic_walk.py"),
+    ("No-book strategy-class framing (#715)", "tests/test_decision_framing.py"),
     ("Read-only current-book outlet (#561)", "tests/test_positions.py"),
     ("Answer provenance gate (#414, Wave A)", "tests/test_answer_provenance.py"),
     ("Visible evaluation challenge (#479 Wave B)", "tests/test_evaluation_challenge.py"),

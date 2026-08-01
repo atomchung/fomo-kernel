@@ -103,7 +103,8 @@ def check_fixture(path: pathlib.Path = DEFAULT_FIXTURE) -> list[str]:
         problems.extend(f"{scene_id}: {problem}" for problem in check_scene(scene))
     required = {
         "selling_comparison", "computed_consider", "no_book_framing",
-        "healthy_alignment", "concise_unsupported", "hard_evasion",
+        "healthy_alignment", "a01_strategy_class_map", "a07_sector_is_not_broad",
+        "a10_tactical_stop_not_long_horizon_policy", "concise_unsupported", "hard_evasion",
         "soft_evasion", "metric_dump", "question_outsourcing", "balanced_mush",
         "process_leakage", "manufactured_insight",
     }

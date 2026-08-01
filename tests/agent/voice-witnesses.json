@@ -43,6 +43,36 @@
       "forbidden": ["however", "you should"]
     },
     {
+      "id": "a01_strategy_class_map",
+      "kind": "positive",
+      "route": "decision_framing",
+      "rules": ["V1", "V2", "V7", "V8"],
+      "payload": "No recorded book. The user asks what strategies are available for a broad-market investment and has not chosen a policy.",
+      "answer": "The useful first decision is the policy class, not a stop rule. The available map is a long-horizon broad-market policy, predetermined staged deployment of already-available cash, a tactical/learning trade, or defer. Exit and governance follow the class rather than one generic rule. Which describes this decision best?",
+      "required": ["policy class", "long-horizon broad-market policy", "already-available cash", "tactical/learning trade", "defer", "Which describes"],
+      "forbidden": ["you should buy", "allocation", "moving average"]
+    },
+    {
+      "id": "a07_sector_is_not_broad",
+      "kind": "positive",
+      "route": "decision_framing",
+      "rules": ["V1", "V2", "V8"],
+      "payload": "No recorded book. The user calls a fictional semiconductor-sector ETF a broad diversified core holding.",
+      "answer": "An ETF label does not establish broad diversification here: a semiconductor-sector sleeve remains a concentration-shaped decision. The useful question is which concentration the user intends to accept, not whether the label makes it broad.",
+      "required": ["does not establish broad diversification", "concentration-shaped"],
+      "forbidden": ["broad diversified core", "you should buy"]
+    },
+    {
+      "id": "a10_tactical_stop_not_long_horizon_policy",
+      "kind": "positive",
+      "route": "decision_framing",
+      "rules": ["V1", "V2", "V8"],
+      "payload": "No recorded book. The user proposes a percentage stop for a tactical trade and wants to carry it into a long-horizon broad-market policy.",
+      "answer": "A tactical percentage stop governs a tactical premise; it does not become the governance rule for a long-horizon broad-market policy. Choose the policy class first, then name the goal, liquidity, target, or vehicle condition that can govern that class.",
+      "required": ["does not become", "Choose the policy class first"],
+      "forbidden": ["use a 10% stop", "you should buy"]
+    },
+    {
       "id": "hard_evasion",
       "kind": "negative",
       "failure": "hard_evasion",

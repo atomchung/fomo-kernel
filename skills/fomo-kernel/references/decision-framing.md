@@ -38,6 +38,33 @@ One bounded framing carrying four things:
 
 Ask at most three, and fewer when the user's opening message already answered one. Never re-ask a known answer. Offer concrete options plus `not sure / depends`; reserve free text for the user's own reason or exit condition. The design principle behind every branch below: **a different answer does not change the wording, it changes which challenge the answer is about.** A question whose answers produce the same visible output is a defect, not a reflection exercise.
 
+## When the user asks what strategy to use: classify before asking for an exit
+
+When a no-book user asks for available strategies rather than presenting one
+already-chosen trade policy, give the bounded map below before asking any exit
+question. This is not a recommendation or a default for beginners. It prevents
+the single-security Q1/Q3 branch from outsourcing the choice of governance
+model back to the user before the product has described the available models.
+
+| Strategy class | Bounded decision map | What governs a later exit or review |
+|---|---|---|
+| **Long-horizon broad-market policy** | A policy for owning a genuinely broad market exposure over a long horizon. It reduces individual-company selection risk; it does not remove equity, geography, currency, concentration, liquidity, or valuation risk. An ETF or index label alone is not proof of breadth. | The user's goal or liquidity need, an explicit multi-sleeve target if one exists, or a material change to the vehicle's intended exposure/cost/structure. Do not import a tactical price stop into this policy. |
+| **Predetermined staged deployment of already-available cash** | A policy for choosing how quickly cash already available becomes market exposure. It trades more immediate exposure against the user's stated adherence or regret concern; it does not claim that staging is mechanically superior. | The predeclared deployment policy and the same goal/liquidity/vehicle conditions as the exposure it funds. Future savings are not already-available cash. |
+| **Tactical or learning trade** | A separate, short-horizon policy whose premise, observation and exit condition must be coherent before it is treated as a long-horizon holding. | The premise-specific observable the user names. A tactical percentage stop is not a governance rule for a long-horizon policy. |
+| **Defer** | A valid choice when none of the above describes the decision yet. It avoids pretending that an unfinished policy has an exit rule. | No trade-policy claim is made until the user selects or states one. |
+
+Ask at most one discriminating question after the map:
+
+> Which describes this decision best: a long-horizon broad-market policy, a predetermined plan for already-available cash, a tactical/learning trade, or defer until the policy is clearer?
+
+If the user selects the broad-market class, first qualify the exposure. A
+sector, thematic, leveraged/inverse, narrow factor, concentrated country, or
+large-cap sleeve is not called broad diversification merely because it is an
+ETF or tracks an index; use the concentration-shaped branch unless its
+remaining concentration is made explicit. If the user did not ask for
+strategies and already supplied a concrete policy, do not show this menu; use
+the relevant question below without re-asking what is known.
+
 ### Q1 — how important is this position, and what size is intended
 
 | Answer | The challenge becomes |
