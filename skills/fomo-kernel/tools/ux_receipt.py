@@ -1099,6 +1099,7 @@ def _adapter_capability_errors(
 
 
 def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
+                require_recorded_owner_verdict: bool = False,
                 require_findings: bool = False) -> list[str]:
     """Return deterministic presentation-contract errors; an empty list means pass.
 
@@ -1563,6 +1564,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
         if findings and findings[0] > verdicts[0]:
             errors.append("findings_recorded must precede the owner verdict — a "
                           "disposition recorded after the run was judged is a backfill")
+    if require_recorded_owner_verdict and len(verdicts) != 1:
+        errors.append("archival verification requires exactly one owner_verdict")
     if require_owner_verdict:
         # Which axes must be affirmative is the route's contract, not a chain of
         # route tests: `card=pass` on a card route and `card=not_applicable` on
@@ -1592,6 +1595,7 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
 def verify_receipt(args: argparse.Namespace) -> None:
     rows = _read_rows(_receipt_path(args.session_id, args.state_root))
     errors = verify_rows(rows, require_owner_verdict=args.require_owner_verdict,
+                         require_recorded_owner_verdict=args.require_recorded_owner_verdict,
                          require_findings=args.require_findings)
     if errors:
         for error in errors:
@@ -1705,7 +1709,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser("verify", help="confirm each card actually reached the user")
     add_common(verify)
-    verify.add_argument("--require-owner-verdict", action="store_true")
+    verify.add_argument(
+        "--require-owner-verdict",
+        action="store_true",
+        help="strict pass gate: fail unless every route-required owner-verdict axis is affirmative",
+    )
+    verify.add_argument(
+        "--require-recorded-owner-verdict",
+        action="store_true",
+        help="archive gate: require one structurally valid owner verdict, whether it passed or failed",
+    )
     verify.add_argument("--require-findings", action="store_true",
                         help="gate 7: fail unless the run disposed of its misses")
     verify.add_argument(

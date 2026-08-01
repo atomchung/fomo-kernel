@@ -34,6 +34,7 @@ import re
 import sys
 
 HUMAN_LEVELS = ("owner_live", "agent_with_owner_verdict", "agent_simulated")
+VERDICT_DISPOSITIONS = ("passed", "failed", "not_assessed")
 # Every axis an owner verdict can carry. This is what the archived manifest
 # keeps of the verdict, so an axis missing here is an axis the archive silently
 # drops — for a card-free route that would be the only judgment it had (#523:
@@ -197,6 +198,9 @@ def _build_arg_parser():
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--state-mode", required=True, help="fresh|continued")
     parser.add_argument("--parent-run-id", default=None)
+    parser.add_argument("--verdict-disposition", required=True,
+                        choices=VERDICT_DISPOSITIONS,
+                        help="passed|failed for an archived owner verdict; not_assessed otherwise")
     return parser
 
 
@@ -247,6 +251,11 @@ def build(argv):
         "human_involvement": args.human,  # owner_live | agent_with_owner_verdict | agent_simulated
         "route": route,
         "owner_verdict": verdict or None,
+        # The verdict itself remains verbatim above. This is the archive's
+        # separate, route-aware answer to whether strict pass verification
+        # accepted it, so a failed owner judgment stays evidence rather than
+        # being discarded before the report can count it.
+        "owner_verdict_disposition": args.verdict_disposition,
         "receipt_path": args.archived_path,
     }
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -333,6 +342,13 @@ def report(argv):
             f"== main@{sha}  x  {human}  x  {client}/{model}  x  effort={effort} "
             f"[{trust}]  ({len(group)} run{plural})"
         )
+        dispositions = [run.get("owner_verdict_disposition") for run in group]
+        dispositions = [value for value in dispositions if value in ("passed", "failed")]
+        if dispositions:
+            passed = sum(1 for value in dispositions if value == "passed")
+            failed = len(dispositions) - passed
+            print(f"   {'owner verdict':20} {passed}/{len(dispositions)} pass "
+                  f"({passed} archived passed, {failed} archived failed)")
         for verdict_key in VERDICT_KEYS:
             vals = [(r.get("owner_verdict") or {}).get(verdict_key) for r in group]
             # not_applicable and None stay out of the denominator: a verdict the

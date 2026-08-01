@@ -201,13 +201,13 @@ Timing plausibility is a separate signal. Verification stays compatible with leg
 
 Human-graded QA adds `--require-timing-integrity`, which accepts only `credible` timing.
 
-For owner dogfood, append an `owner_verdict` event after the final card, then verify with both `--require-owner-verdict` and `--require-timing-integrity`. The verdict carries the owner's own three judgments — `--controls` (could they answer through real controls), `--card` (did the card actually appear), and `--memory` (did it remember the right context, or `not_applicable` on a first review) — and a weekly pass needs all three. When a validated dynamic surface was presented, add `--question-specificity` and `--answer-fit` for whether the question felt specific and whether an offered answer fit.
+For owner dogfood, append an `owner_verdict` event after the final card. `--require-owner-verdict` is the strict pass gate: it exits non-zero unless every route-required axis is affirmative. `--require-recorded-owner-verdict` is the archive gate: it requires one legal owner verdict but preserves a failed judgment for the QA ledger. Both pair with `--require-timing-integrity`. The verdict carries the owner's own three judgments — `--controls` (could they answer through real controls), `--card` (did the card actually appear), and `--memory` (did it remember the right context, or `not_applicable` on a first review) — and a weekly pass needs all three. When a validated dynamic surface was presented, add `--question-specificity` and `--answer-fit` for whether the question felt specific and whether an offered answer fit.
 
 ```bash
 python3 tools/ux_receipt.py event --session-id <id> --event owner_verdict \
   --controls pass --card pass --memory pass
 python3 tools/ux_receipt.py verify --session-id <id> \
-  --require-owner-verdict --require-timing-integrity
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity
 ```
 
 These owner judgments are product gates, not schema-derived claims: a timing warning limits how the receipt may be used but does not erase the owner's stated verdict.
@@ -227,5 +227,5 @@ python3 tools/ux_receipt.py event --session-id <id> --event findings_recorded \
   --finding episode:EP-009 \
   --finding 'not-episodable:#230:the card never reached the screen — a presentation trace question'
 python3 tools/ux_receipt.py verify --session-id <id> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```

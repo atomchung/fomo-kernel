@@ -85,10 +85,11 @@ once and they hold for every run that follows in the same conversation.
    Keep the original session id for the whole trace regardless. No outcome
    exists for "not asked" (#357).
 4. **Verdict and verification** — the session ended with an `owner_verdict`
-   event and `tools/ux_receipt.py verify` passing. Human-graded runs use both
-   `--require-owner-verdict` and `--require-timing-integrity`; only
-   `timing_integrity.status=credible` is eligible for fresh `owner_live` UX
-   ground truth.
+   event and structural `tools/ux_receipt.py verify` passing. Human-graded
+   archives use `--require-recorded-owner-verdict` and
+   `--require-timing-integrity`; strict pass verification additionally uses
+   `--require-owner-verdict`. Only `timing_integrity.status=credible` is
+   eligible for fresh `owner_live` UX ground truth.
 5. **Archived manifest** — the receipt was archived together with a manifest
    recording `engine_version` (the tested `main@<sha>`), `client`,
    `data_source`, `human_involvement`, a digest of the archived receipt, and
@@ -121,8 +122,8 @@ machine-enforced versus procedural:
 | 1. Version | — | record the sha yourself before starting (the owner's `/fomo-qa` skill automates this) |
 | 2. Isolation | `qa_preflight.py isolate-check` exits non-zero while `~/.trade-coach` resolves to anything, while `TRADE_COACH_HOME` is undeclared, or while it points into the account's own root — it reads the account's home from the password database, so a replaced `$HOME` cannot testify on its own behalf; `qa_env.sh` runs it before every command and refuses (#557). Engine CLIs + `ux_receipt.py` honor `TRADE_COACH_HOME` | establishing the isolated environment in each new shell, and not overriding either variable per-command. On a client without `qa_env.sh`, running `isolate-check` yourself |
 | 3. Receipt | `verify` fails on a missing/duplicated/out-of-order **card presentation sequence**, an undeclared mode, a silent widget degrade, a missing weekly opener, or a missing/duplicated/misordered `cash_anchor_checked` on a `first_review`/`weekly_review` trace (#357 — the check is tier-blind by design: a light-tier session writes no receipt at all, per the scope rule in `references/interaction-delivery.md`); it machine-reports timing plausibility separately. What a trace owes is read from its declared route, so the card-free `refresh` route (#523) is held to a **change surface** instead — and, symmetrically, `verify` refuses a refresh trace recording any card event, and refuses `change_presented` on a card-producing route; the card-free `consider` route (#544) is held to its evaluation pair instead — one inline challenge delivery carrying machine-computed fidelity evidence from a transient comparison file, then one resolution invitation — and `verify` symmetrically refuses a card or change-surface event on it, and refuses that evaluation pair on every other route | recording every event honestly, right after the user sees it |
-| 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` fails without a passing verdict or credible timestamp sequence. Which axes must be affirmative is the route's own contract: `card=pass` on a card route, `memory=pass` additionally on `weekly_review`, and on the card-free `refresh` route `change=pass` with `card=not_applicable` — a verdict that judges the change surface the user actually saw rather than a card nobody rendered. On the card-free `consider` route (#544) the axes instead are `comprehension=pass`, `usefulness=pass`, `friction=pass`, and `resolution=pass` with `card=not_applicable` — again a verdict that judges what the user actually saw rather than a card nobody rendered | running both flags on human-graded runs; auditing or re-running suspect timing |
-| 5. Manifest | the owner's `/fomo-qa` archive step refuses a non-verifying receipt, and refuses a run that names no campaign/`case_id`/state mode, or claims to continue a `parent_run_id` with no archived manifest behind it (#520) | on other clients, writing the manifest fields by hand; on every client, that the `case_id` is the one the run actually walked |
+| 4. Verdict | `verify --require-owner-verdict --require-timing-integrity` is the strict pass gate: it fails without an affirmative route-required verdict or credible timestamp sequence. `verify --require-recorded-owner-verdict --require-timing-integrity` is the archive gate: it requires one legal owner verdict and credible timing whether the verdict passed or failed. Which axes must be affirmative remains the route's own contract: `card=pass` on a card route, `memory=pass` additionally on `weekly_review`, and on the card-free `refresh` route `change=pass` with `card=not_applicable`; the `consider` route instead requires `comprehension`, `usefulness`, `friction`, and `resolution` to pass with `card=not_applicable` | recording the verdict honestly; auditing or re-running suspect timing |
+| 5. Manifest | the owner's `/fomo-qa` archive step refuses a structurally non-verifying receipt, missing verdict, bad timing, missing findings disposition, or missing campaign/`case_id`/state mode. It archives a legal failed verdict verbatim with a passed/failed disposition, and refuses a continued `parent_run_id` with no archived manifest behind it (#520) | on other clients, writing the manifest fields by hand; on every client, that the `case_id` is the one the run actually walked |
 | 6. Privacy | `privacy_lint.py` exits non-zero on reference matches | running it on every public-bound draft, and de-identifying what it cannot see (below) |
 | 7. Findings | `verify --require-findings` fails when the trace has no `findings_recorded` (or more than one), when that row sits *after* the owner verdict, when it omits `findings` or gives it a non-list, when it carries an unrecognized disposition or any field beyond the dispositions, or — **wherever `evals/episodes/` is reachable, which excludes a vendored skill directory** — when an `episode:EP-NNN` id is absent from it, a conversion claim with nothing behind it. Resolved on the write path and again on `verify`, so an edited receipt cannot carry one | judging honestly what counts as a miss; converting it while the wording is still in front of you; and, on a checkout with no bank beside it, that the id is real |
 | 3b. Grounding fidelity | `verify` fails when a `rule_choice_presented` event is missing its grounding-fidelity evidence, or reports a non-verbatim match, with no legacy exemption (#293) | authoring `--grounding-check-file` honestly (candidates + exact presented text) before recording the event |
@@ -299,7 +300,7 @@ python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded ..
 python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict --controls ... --card ... --memory ... \
   [--question-specificity ... --answer-fit ...]
 python3 tools/ux_receipt.py verify --session-id <ID> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 `--require-findings` is gate 7, and it is why step 6 below happens *before* the
@@ -321,8 +322,11 @@ under ordinary verification and report `not_assessed`; they are not evidence
 for a new `owner_live` claim.
 
 Archive the receipt with its manifest (tested sha, client, data source, human
-involvement, campaign and `case_id`, fresh-or-continued state lineage, and the
-receipt digest — gate 5). Claude Code sessions on the owner's machine use the
+involvement, campaign and `case_id`, fresh-or-continued state lineage, receipt
+digest, and passed/failed owner-verdict disposition — gate 5). A failed verdict
+remains archivable evidence and the report counts it in the same denominator as
+archived passes; rerun the strict flag above when the question is whether the
+run passed. Claude Code sessions on the owner's machine use the
 local `/fomo-qa` skill's `qa_env.sh archive-receipt` for this; other clients
 record the same manifest fields alongside the receipt file. Report the tested
 `main@<sha>`, data source, simulated user state, and the answers→card wait.
