@@ -43,6 +43,7 @@ def _build_argv(receipt_path, dest_path, receipt_dir, overrides=None, omit=()):
         "--campaign": "issue:#486",
         "--case-id": "M0-U01",
         "--state-mode": "fresh",
+        "--verdict-disposition": "passed",
     }
     if overrides:
         kwargs.update(overrides)
@@ -542,6 +543,36 @@ class ArchiveReceiptOrderingTest(unittest.TestCase):
         env["TRADE_COACH_HOME"] = str(root / "trade-coach-dogfood")
         return env
 
+    @staticmethod
+    def _archivable_failed_weekly_trace(path):
+        """One complete, synthetic owner-live weekly trace with card=fail."""
+        session_id = "weekly-failed"
+        timestamps = iter(
+            f"2026-08-01T00:00:{second:02d}Z"
+            for second in (0, 2, 4, 6, 8, 10, 12, 14, 16)
+        )
+
+        def event(kind, **values):
+            return {
+                "version": 2, "event": kind, "session_id": session_id,
+                "ts": next(timestamps), **values,
+            }
+
+        rows = [
+            event("capabilities_declared", client="codex", route="weekly_review",
+                  adapter="plain_text", question_modes=["plain_text"],
+                  card_modes=["markdown_inline"]),
+            event("memory_presented", memory_kind="prior_commitment"),
+            event("cash_anchor_checked", cash_outcome="found_in_source"),
+            event("artifact_generated", stage="preview", artifact_path="/tmp/preview.md"),
+            event("card_presented", stage="preview", mode="markdown_inline"),
+            event("artifact_generated", stage="final", artifact_path="/tmp/final.md"),
+            event("card_presented", stage="final", mode="markdown_inline"),
+            event("findings_recorded", findings=[]),
+            event("owner_verdict", controls="pass", card="fail", memory="pass"),
+        ]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
     def test_bad_state_mode_leaves_no_partial_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -564,6 +595,52 @@ class ArchiveReceiptOrderingTest(unittest.TestCase):
             self.assertIn("state-mode", result.stderr)
             self.assertEqual(list(receipts_dir.glob("*.jsonl")), [])
             self.assertEqual(list(receipts_dir.glob("*.manifest.json")), [])
+
+    def test_weekly_card_failure_is_archived_and_reported(self):
+        """#681: archive a real receipt shape even when strict pass is red."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            receipts_dir = root / "receipts"
+            receipts_dir.mkdir()
+            trace_dir = root / "ux"
+            trace_dir.mkdir()
+            trace = trace_dir / "weekly-failed.jsonl"
+            self._archivable_failed_weekly_trace(trace)
+
+            # The test worktree is detached at committed HEAD, whereas this
+            # test runs against the current source tree. Install only the
+            # receipt verifier under test into the throwaway dogfood worktree
+            # so qa_env.sh exercises the new archive gate without touching a
+            # shared checkout or asking this test to commit its own fixture.
+            source_tool = SKILL_DIR.parent / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
+            dogfood_tool = self.dogfood_wt / "skills" / "fomo-kernel" / "tools" / "ux_receipt.py"
+            shutil.copy2(source_tool, dogfood_tool)
+
+            result = subprocess.run(
+                [
+                    "bash", str(QA_ENV_SH), "archive-receipt", str(trace),
+                    "mock:weekly-failure", "owner_live",
+                    "--agent-model", "Claude Sonnet 5", "--effort", "high",
+                    "--campaign", "issue:#681", "--case-id", "W-FAIL",
+                    "--state-mode", "fresh",
+                ],
+                capture_output=True, text=True, env=self._env_for(root, receipts_dir), check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            manifest_files = list(receipts_dir.glob("*.manifest.json"))
+            self.assertEqual(len(manifest_files), 1)
+            manifest = json.loads(manifest_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(manifest["owner_verdict"], {
+                "controls": "pass", "card": "fail", "memory": "pass",
+            })
+            self.assertEqual(manifest["owner_verdict_disposition"], "failed")
+
+            report = subprocess.run(
+                [sys.executable, str(WRITER), "report", str(receipts_dir)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(report.returncode, 0, report.stderr)
+            self.assertIn("0/1 pass (0 archived passed, 1 archived failed)", report.stdout)
 
     def test_successful_archive_exits_zero_and_writes_artifacts(self):
         # Regression guard: an earlier version of the temp-file-first ordering

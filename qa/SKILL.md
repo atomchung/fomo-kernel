@@ -268,7 +268,7 @@ python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
 python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
   --controls pass --card pass --memory pass
 python3 tools/ux_receipt.py verify --session-id <ID> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 **That opener is memory continuity itself** — was the rule agreed last time actually brought back and reconciled? For `route == "weekly_review"`, `ux_receipt.py` hard-checks two things: exactly one opener, positioned before the first `question_presented` / `card_presented`. Wrong order still fails, because a row backfilled afterwards cannot prove the user saw it at the time.
@@ -330,7 +330,7 @@ python3 tools/ux_receipt.py event --session-id <ID> --event findings_recorded \
 python3 tools/ux_receipt.py event --session-id <ID> --event owner_verdict \
   --controls pass --card pass --memory not_applicable
 python3 tools/ux_receipt.py verify --session-id <ID> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 ### The `refresh` route: recording the book comes before reviewing it
@@ -398,7 +398,7 @@ python3 tools/ux_receipt.py event --session-id <refresh_id> --event findings_rec
 python3 tools/ux_receipt.py event --session-id <refresh_id> --event owner_verdict \
   --controls pass --card not_applicable --memory not_applicable --change pass
 python3 tools/ux_receipt.py verify --session-id <refresh_id> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 Archive the two receipts separately. The refresh and the review that follows it are one journey and one `--case-id`, so the second archive is `--state-mode continued --parent-run-id <the first run_id>` — a fresh review archived beside a refresh it actually continued would lose exactly the lineage #520 added.
@@ -449,9 +449,10 @@ This step ends **one route run**, not the conversation. Archive is not a stop si
      --controls pass --card pass --memory not_applicable \
      --question-specificity pass --answer-fit pass
 
-   # archive re-runs the same flags; hitting a failure here first is cheaper to fix (must be green)
+   # Strict pass check: a real owner failure is non-zero here, but remains
+   # archivable through the recorded-verdict gate and is reported as failed.
    python3 tools/ux_receipt.py verify --session-id <ID> \
-     --require-owner-verdict --require-timing-integrity --require-findings
+     --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
    ```
 
    ```bash
@@ -578,7 +579,7 @@ python3 tools/ux_receipt.py event --session-id <evaluation_id> --event owner_ver
   --comprehension pass --usefulness pass --friction pass --resolution pass
 
 python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
-  --require-owner-verdict --require-timing-integrity --require-findings
+  --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
 `--challenge-check-file` points at a transient JSON that never enters the trace, the same nature as `--grounding-check-file`. It pairs the `challenge` block **from the `consider` call's own stdout** with the exact answer text shown:

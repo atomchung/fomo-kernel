@@ -2147,6 +2147,19 @@ def test_manual_weekly_requires_memory_verdict():
     assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
 
+def test_structurally_complete_weekly_failure_is_archivable_but_not_a_strict_pass():
+    """#681: archive eligibility records the judgment; strict verification judges it."""
+    rows = weekly_rows()
+    rows.append(row("findings_recorded", findings=[]))
+    rows.append(row("owner_verdict", controls="pass", card="fail", memory="pass"))
+    assert ux_receipt.verify_rows(rows, require_recorded_owner_verdict=True,
+                                  require_findings=True) == []
+    assert_has(
+        ux_receipt.verify_rows(rows, require_owner_verdict=True, require_findings=True),
+        "weekly_review trace requires card=pass",
+    )
+
+
 # --- CLI end to end ----------------------------------------------------------
 
 def test_cli_writes_trace_into_protected_state_root():

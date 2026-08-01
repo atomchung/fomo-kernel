@@ -560,14 +560,15 @@ cmd_archive_receipt() {
     exit 1
   fi
   # Runbook gate (docs/qa-runbook.md): a receipt that does not verify is not a
-  # QA run — refuse to let it into the ledger. When the run claims any human
-  # involvement, the trace must also carry a passing owner_verdict, so a run
-  # labeled owner_live without a verdict cannot inflate the ground-truth count.
+  # QA run — refuse to let it into the ledger. Human-graded runs must carry an
+  # explicit, structurally valid owner verdict, but a failed verdict is still
+  # evidence and is archived with its separate strict-pass disposition.
   local receipt_tool="$DOGFOOD_WT/skills/fomo-kernel/tools/ux_receipt.py"
   if [ ! -f "$receipt_tool" ]; then
     echo "ERROR: ux_receipt.py not found in dogfood worktree; cannot verify receipt before archiving." >&2
     exit 1
   fi
+  local verdict_disposition="not_assessed"
   if [ "$(basename "$(dirname "$src")")" = "ux" ]; then
     local vsid vroot
     vsid="$(basename "$src" .jsonl)"
@@ -576,11 +577,16 @@ cmd_archive_receipt() {
     if [ "$human" != "agent_simulated" ]; then
       # Runbook gate 4 names *both* flags for a human-graded run, because only
       # timing_integrity.status=credible is eligible to become fresh owner_live
-      # UX ground truth. Archiving used to pass just --require-owner-verdict:
-      # verify still computed the timing warning and still printed it, but the
-      # archive succeeded anyway, so the public contract's bar was one flag
-      # higher than anything actually enforced it.
-      verify_args+=(--require-owner-verdict --require-timing-integrity)
+      # A human verdict must be present and timing-credible before it enters
+      # the ledger, but it need not be affirmative: otherwise the evidence
+      # ledger can record only wins. Keep an old tested checkout readable by
+      # falling back to its strict flag; current checkouts take the new gate.
+      if python3 "$receipt_tool" verify --help 2>/dev/null | grep -q -- --require-recorded-owner-verdict; then
+        verify_args+=(--require-recorded-owner-verdict --require-timing-integrity)
+      else
+        echo "WARNING: tested checkout predates --require-recorded-owner-verdict; failed owner verdicts cannot be archived there." >&2
+        verify_args+=(--require-owner-verdict --require-timing-integrity)
+      fi
     fi
     # Runbook gate 7 (#417). Every level of human involvement carries it: the
     # thing being gated is whether the run's misses became replayable, and an
@@ -603,6 +609,21 @@ cmd_archive_receipt() {
       echo "  ux_receipt.py event --event findings_recorded --finding episode:EP-NNN" >&2
       echo "  (or --no-findings, which is a declaration, not an omission). See Step 6." >&2
       exit 1
+    fi
+    if [ "$human" != "agent_simulated" ]; then
+      # Preserve the original, strict pass signal as a non-zero verification
+      # result while letting the already-verified trace archive either way.
+      # All structural/timing/finding gates have passed above, so this second
+      # call distinguishes only an affirmative owner verdict from a failure.
+      local strict_args=(--session-id "$vsid" --state-root "$vroot" --require-owner-verdict --require-timing-integrity)
+      if python3 "$receipt_tool" verify --help 2>/dev/null | grep -q -- --require-findings; then
+        strict_args+=(--require-findings)
+      fi
+      if python3 "$receipt_tool" verify "${strict_args[@]}" >/dev/null 2>&1; then
+        verdict_disposition="passed"
+      else
+        verdict_disposition="failed"
+      fi
     fi
   else
     echo "WARNING: receipt is not under <state-root>/ux/, verify gate skipped (archiving anyway)." >&2
@@ -647,6 +668,7 @@ cmd_archive_receipt() {
     --campaign "$campaign"
     --case-id "$case_id"
     --state-mode "$state_mode"
+    --verdict-disposition "$verdict_disposition"
   )
   if [ -n "$parent_run_id" ]; then
     build_args+=(--parent-run-id "$parent_run_id")
@@ -659,7 +681,7 @@ cmd_archive_receipt() {
   mv "$tmp_manifest" "$manifest"
   echo "Archived receipt  -> $dest"
   echo "Wrote manifest    -> $manifest"
-  echo "(main@$sha | data=$data_source | human=$human | agent=$agent_model | effort=$agent_effort | campaign=$campaign | case=$case_id | state=$state_mode)"
+  echo "(main@$sha | data=$data_source | human=$human | agent=$agent_model | effort=$agent_effort | campaign=$campaign | case=$case_id | state=$state_mode | verdict=$verdict_disposition)"
 }
 
 cmd_report() {
