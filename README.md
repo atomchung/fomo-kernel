@@ -20,11 +20,61 @@ Numbers, rankings, portfolio effects, and state transitions come from a determin
 
 | Your moment | Minimum input | First useful outcome |
 |---|---|---|
-| **“Should I buy, add, trim, or wait?”** | The contemplated action plus your current reason and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
-| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the key question your decision depends on, and an explicit statement of what was not checked. No invented portfolio numbers and nothing persisted by default. |
-| **“Review my recent trades.”** | A broker CSV or transaction export | One behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
+| **“Should I buy, add, trim, or wait?”** | The contemplated action, your current reason, and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
+| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing persisted by default. |
+| **“Review my recent trades.”** | A broker CSV or transaction export | One focused behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
 | **“I only have a holdings screenshot.”** | A position table or statement screenshot | An opening structural check: weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not invent transaction history. |
 | **“Show me the experience first.”** | No personal data | An isolated test drive using fictional data. It never writes to your real coach memory. |
+
+## What using FOMO Kernel feels like
+
+### 1. Start in plain language
+
+You do not choose an internal mode or learn a workflow first. State the decision you are facing, attach the record you have, or ask for a test drive.
+
+FOMO Kernel uses the narrowest useful path for that moment. A live decision stays a concise conversation. A transaction review earns a card. A holdings screenshot gets a structural check instead of historical claims it cannot support.
+
+### 2. The engine establishes the facts before the agent interprets them
+
+The engine owns portfolio math, ranking, rule collisions, identity, and durable state. The agent cannot quietly replace a missing price, recalculate a weight, or invent a trade history.
+
+That gives the conversation a stable footing: what the record says, what the agent thinks it means, and what remains unknown stay distinguishable.
+
+### 3. It asks only what code cannot know
+
+A suspicious add can be conviction or refusal to cut a loser. An early exit can be discipline or fear of giving back a gain. Code can identify the tension; only you can settle the motive.
+
+The questions therefore focus on why now, what changed, what would prove the thesis wrong, or what actually drove the action. They are not a generic investor-profile questionnaire.
+
+### 4. You see the useful result before making another commitment
+
+A pre-trade answer leads with the decision-relevant tension and strongest rebuttal, not with tool narration or a wall of caveats.
+
+A review shows the complete card in the conversation before asking you to choose a rule. A generated file is not treated as delivery; the result has to reach you.
+
+### 5. You keep the final action
+
+For a contemplated trade, FOMO Kernel can record what was considered, but never calls it executed. It does not issue a price target or decide which ticker to buy or sell.
+
+For a review, you may choose one proposed rule, write your own, or skip. The product does not manufacture a commitment merely to complete the flow.
+
+### 6. The next conversation starts from the last one
+
+On a later review, FOMO Kernel first checks the rule you chose and carries forward confirmed theses and the recorded portfolio. Re-uploading full transaction history is safe because overlapping rows are deduplicated. A newer holdings view is compared with the recorded portfolio instead of silently replacing it.
+
+The value is not a larger archive. It is continuity: **what you believed → what you did → what changed → what deserves to survive as a rule.**
+
+## What a review card looks like
+
+The committed demo uses fictional data:
+
+![fomo-kernel review card demo](docs/demo-card-en.png)
+
+Open the synchronized [English HTML demo](docs/demo-card-en.html) or [Traditional Chinese HTML demo](docs/demo-card.html).
+
+The image shows the result card. In the real review flow, the motive question comes first, and your answer can change the verdict. The mock is intentionally concentrated; its alpha figures are not a realistic performance claim.
+
+Pre-trade answers stay brief and textual unless you explicitly ask for more.
 
 ## Fastest path to value
 
@@ -66,51 +116,23 @@ You do not need to clean a broker export by hand. The agent maps it locally into
 
 Questions and cards support English, Traditional Chinese, and Simplified Chinese. Language changes the copy, not the engine facts.
 
-## What the product actually does
+## What each input can support
 
-### Before a trade: challenge the decision, not the ticker
+### A contemplated trade with a recorded portfolio
 
-When a recorded portfolio exists, FOMO Kernel computes the contemplated trade's consequence before the agent argues either side:
+FOMO Kernel computes the resulting position weight, concentration and overlap between positions that depend on the same driver, cash effect, rule collisions, and the portfolio basis behind those facts. The answer then argues the strongest case and strongest counter-case from that frozen result.
 
-- resulting position weight;
-- concentration and overlap between positions that depend on the same driver;
-- cash effect;
-- collisions with rules you already track;
-- the portfolio basis and limitations behind those facts.
+### A contemplated trade without a recorded portfolio
 
-The answer then leads with the key supported trade-off, gives the strongest counter-case, attaches limitations to the claims they qualify, and leaves the action to you.
+The conversation still advances, but it does not pretend to know weight, concentration, cash, or rule collisions. It asks only the few questions that change the framing and names the next piece of evidence that would buy a more specific answer. Nothing from this no-portfolio path is persisted by default.
 
-When no portfolio is recorded, the conversation still advances. FOMO Kernel asks only the few questions that change the framing, states which portfolio facts were not checked, and names the next piece of evidence that would buy a more specific answer. It does not fill missing numbers with generic investment advice.
+### Transaction history
 
-### After trades: turn behavior into one checkable change
+A transaction export can support behavior over time: sizing, averaging, exits, diversification, holding consistency, per-position diagnosis, and supported performance attribution. The engine narrows the few motives worth asking about; the finished review converges on one card and at most one user-chosen rule.
 
-A transaction-history review runs a deterministic diagnosis, asks the small number of motive questions the engine cannot answer, and renders one focused card.
+### A holdings snapshot
 
-The card converges on:
-
-1. one thing you did right;
-2. the largest supported behavioral leak;
-3. at most one rule you choose, write yourself, or skip.
-
-On the next review, FOMO Kernel starts by reconciling that prior rule instead of treating you like a new user.
-
-### Starting from a snapshot
-
-A position table or screenshot is a lighter onboarding route. The agent transcribes only broker-declared facts; the engine calculates weights, risk, cycle identity, and ETF treatment.
-
-A snapshot can support an opening structural check. It cannot honestly reveal prior averaging down, exit discipline, holding behavior, win rate, payoff, alpha, or historical motive. Add transaction history later to unlock those claims.
-
-## What a review card looks like
-
-The committed demo uses fictional data:
-
-![fomo-kernel review card demo](docs/demo-card-en.png)
-
-Open the synchronized [English HTML demo](docs/demo-card-en.html) or [Traditional Chinese HTML demo](docs/demo-card.html).
-
-The image shows the result card. In the real review flow, the motive question comes first, and your answer can change the verdict. The mock is intentionally concentrated; its alpha figures are not a realistic performance claim.
-
-Pre-trade answers stay brief and textual unless you explicitly ask for more.
+A position table or screenshot can support an opening structural check. It cannot honestly reveal prior averaging down, exit discipline, holding behavior, win rate, payoff, alpha, or historical motive. Add transaction history later to unlock those claims.
 
 ## Why this is different from ordinary chat
 
@@ -153,13 +175,7 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm
 
 `data-status` reports file metadata, not trade content. Treat an exported backup like a brokerage statement; `data-reset --confirm` is irreversible.
 
-Practical rules:
-
-- Re-exporting full transaction history next week is safe; overlapping rows are deduplicated.
-- A newer holdings view is reconciled against the recorded portfolio instead of silently replacing it.
-- After interruption, the agent resumes the pending session instead of refetching live facts.
-- If a canonical session committed but a projection failed, the projection can be rebuilt without re-questioning you.
-- Inferred theses remain marked as inferred until you confirm or revise them.
+After an interruption, the agent resumes the pending session instead of refetching facts you already answered against. If a canonical session committed but a derived projection failed, the projection can be rebuilt without re-questioning you.
 
 ## Other coding agents
 
