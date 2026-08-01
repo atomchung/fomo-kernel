@@ -1,0 +1,61 @@
+{
+  "id": "EP-011",
+  "title": "A single proposed trade refusal needs a tension or a bounded unavailable result, not diagnostics",
+  "source": {
+    "kind": "back_converted_issue",
+    "refs": ["#674", "#697"],
+    "date": "2026-08-01"
+  },
+  "moment": "post_card",
+  "fixture": {
+    "trades": "skills/fomo-kernel/mock/sample_ai_holder.csv",
+    "route": "first_review",
+    "locale": "en"
+  },
+  "question": {
+    "asked_by": "user",
+    "kind": "free_form",
+    "text": "I am considering adding to NVDA."
+  },
+  "refusal": {
+    "kind": "single_candidate",
+    "premise": "adding to NVDA",
+    "reason": "the fictional launch makes the product thesis stronger",
+    "why_now": "the fictional approval arrived today",
+    "countercondition": "your recorded concentration limit remains the countercondition",
+    "next_input": "a usable current-book basis"
+  },
+  "checks": ["single_candidate_refusal_shape"],
+  "answers": [
+    {
+      "id": "recorded_miss",
+      "expect": "fail",
+      "fails": ["single_candidate_refusal_shape"],
+      "refusal_outcome": "safe_tension",
+      "note": "The de-identified owner-live miss: a one-candidate refusal retold command, provider, and retry chronology instead of giving the nearest safe decision value.",
+      "prose": "The engine could not run the provider retry for adding to NVDA, even though the reason was the fictional launch makes the product thesis stronger and the why-now was the fictional approval arrived today. Review the payload and fix the product before retrying."
+    },
+    {
+      "id": "safe_tension",
+      "expect": "pass",
+      "refusal_outcome": "safe_tension",
+      "note": "The safe branch preserves every user input verbatim, leads with one tension and a frozen countercondition, says the portfolio-fit limit once, and names the exact next input without a recovery chronology.",
+      "prose": "The tension is adding to NVDA because the fictional launch makes the product thesis stronger now that the fictional approval arrived today, while your recorded concentration limit remains the countercondition. Portfolio fit was not verified, so this does not establish that the add suits the recorded book. The premise, reason, and timing are preserved; the next input is a usable current-book basis."
+    },
+    {
+      "id": "no_safe_value",
+      "expect": "pass",
+      "refusal_outcome": "unavailable",
+      "note": "The stable no-safe-value branch is exactly two sentences: what was not verified, then preserved inputs plus the precise system fact needed next.",
+      "prose": "Portfolio fit was not verified for adding to NVDA; whether the fictional launch makes the product thesis stronger still holds now that the fictional approval arrived today remains unverified. The premise, reason, and timing are preserved; the next input is a usable current-book basis."
+    },
+    {
+      "id": "diagnostic_narration",
+      "expect": "fail",
+      "fails": ["single_candidate_refusal_shape"],
+      "refusal_outcome": "unavailable",
+      "note": "Mutation witness: restoring process narration must turn the episode red even when the premise and the two-sentence unavailable shape remain present.",
+      "prose": "Portfolio fit was not verified for adding to NVDA; whether the fictional launch makes the product thesis stronger still holds now that the fictional approval arrived today remains unverified. The premise, reason, and timing are preserved; run the engine command after the provider retry with a usable current-book basis."
+    }
+  ]
+}

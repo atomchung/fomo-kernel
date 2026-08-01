@@ -27,7 +27,7 @@ free; the rubric judge is neither, and stays out (see **The two halves** below).
 |---|---|
 | `EP-NNN-*.json` | the episodes; ids are sequential, not issue numbers, because one issue can yield several episodes |
 | `episode.schema.json` | the readable field contract |
-| `../run_episodes.py` | the enforcement: fixture replay, the six checks, the interlocks |
+| `../run_episodes.py` | the enforcement: fixture replay, mechanical checks, and interlocks |
 | `../../tests/test_episode_checkers.py` | per-checker mutation probes, and the bank's structural gates |
 
 The schema is documentation; the loader in `run_episodes.py` enforces the same
@@ -158,6 +158,8 @@ current phrasing would report the improvement as a regression.
 | `locale_purity` | an `en` surface carries no CJK; a localized surface carries no English metric label that locale translates | #262, #356 |
 | `condition_integrity` | a user-authored condition survives the engine's own slot validator, reaches the user in their own words, and is described only as far as the evidence goes | #412 |
 | `condition_check_integrity` | a per-period result survives the engine's own check validator, every figure in the prose traces to the record, and a lookup that failed is spoken as one | #412 second half, #434 |
+| `usable_facts_grounding` | a non-recoverable multi-option refusal uses only its bounded frozen facts and frames at least two user-nominated options | #674, #697 |
+| `single_candidate_refusal_shape` | one proposed trade preserves the original context once and produces either a bounded tension or the stable two-sentence unavailable result, with no process leakage, arithmetic, recommendation, execution claim, or repeated question | #674 |
 
 Every ban list is derived at run time from an engine source — the copy
 catalogs' dimension keys, the plan's own canonical choice values,

@@ -145,7 +145,8 @@ HEX_TOKEN = re.compile(r"^[0-9a-f]{12,}$")
 
 CHECK_NAMES = ("number_provenance", "honesty_coverage", "privacy_trace",
                "surface_hygiene", "locale_purity", "condition_integrity",
-               "condition_check_integrity", "usable_facts_grounding")
+               "condition_check_integrity", "usable_facts_grounding",
+               "single_candidate_refusal_shape")
 ANSWER_PART_KEYS = ("prose", "presented_options", "discloses")
 
 # #674: mirrors review.CONSIDER_REFUSAL_CONCENTRATION_KEYS -- the same list a
@@ -362,7 +363,7 @@ def validate_episode(raw, rel):
         return problems
     unknown = set(raw) - {"id", "title", "source", "moment", "fixture", "question",
                           "blocked_on", "judge",
-                          "checks", "must_disclose", "answers"}
+                          "checks", "must_disclose", "refusal", "answers"}
     require(not unknown, f"unknown top-level field(s): {sorted(unknown)}")
     for field in ("id", "title", "moment"):
         require(isinstance(raw.get(field), str) and raw.get(field), f"{field} must be a non-empty string")
@@ -392,6 +393,23 @@ def validate_episode(raw, rel):
             "question.kind must be an engine question kind, commitment_choice, or free_form")
     require(isinstance(question.get("text"), str) and question.get("text"),
             "question.text must record what the user was actually asked")
+
+    # #674's one proposed-trade refusal is a distinct user moment from the
+    # existing multi-option comparison.  This is episode metadata only: it
+    # describes the frozen synthetic input the checker reads; it is neither a
+    # runtime response plan nor a persisted product object.
+    refusal = raw.get("refusal")
+    if "single_candidate_refusal_shape" in (raw.get("checks") or []):
+        require(isinstance(refusal, dict),
+                "single_candidate_refusal_shape requires a refusal object")
+        if isinstance(refusal, dict):
+            require(refusal.get("kind") == "single_candidate",
+                    "refusal.kind must be single_candidate")
+            for field in ("premise", "reason", "why_now", "countercondition", "next_input"):
+                require(isinstance(refusal.get(field), str) and refusal.get(field),
+                        f"refusal.{field} must be a non-empty string")
+    elif refusal is not None:
+        problems.append(f"{rel}: refusal is set without single_candidate_refusal_shape")
 
     # An episode with no checks is the honest `unmapped` state, not a mistake:
     # the miss is recorded and replayed, and nothing today can grade it. It has
@@ -455,7 +473,7 @@ def validate_episode(raw, rel):
         if not isinstance(answer, dict):
             problems.append(f"{tag} must be an object")
             continue
-        unknown = set(answer) - {"id", "expect", "fails", "note", "judge_fails",
+        unknown = set(answer) - {"id", "expect", "fails", "note", "judge_fails", "refusal_outcome",
                                  *ANSWER_PART_KEYS, *ANSWER_PAYLOAD_KEYS}
         if unknown:
             problems.append(f"{tag} unknown field(s): {sorted(unknown)}")
@@ -467,6 +485,11 @@ def validate_episode(raw, rel):
             seen_ids.add(answer["id"])
         if answer.get("expect") not in {"pass", "fail"}:
             problems.append(f"{tag} expect must be pass or fail")
+        if "single_candidate_refusal_shape" in (checks or []):
+            require(answer.get("refusal_outcome") in {"safe_tension", "unavailable"},
+                    f"{tag} refusal_outcome must be safe_tension or unavailable")
+        elif answer.get("refusal_outcome") is not None:
+            problems.append(f"{tag} refusal_outcome is set without single_candidate_refusal_shape")
         if not any(answer.get(key) for key in ANSWER_PART_KEYS):
             problems.append(f"{tag} carries no answer surface ({', '.join(ANSWER_PART_KEYS)})")
         if not checks and answer.get("fails"):
@@ -1096,6 +1119,79 @@ def check_usable_facts_grounding(answer, facts):
     return findings
 
 
+# #674: single-proposed-trade refusal checker.  The existing usable-facts
+# checker intentionally demands two user-nominated options; applying it here
+# is the exact #697-shaped regression this leaf fixes.  This checker is narrow
+# by design: it checks preservation, one attached portfolio-fit limitation,
+# the explicitly frozen countercondition/next input, and the product-facing
+# bans that deterministic text can settle.  It does not attempt to judge the
+# quality of the tension's prose.
+_REFUSAL_PROCESS_MARKERS = (
+    "engine", "provider", "retry", "qa", "payload", "schema", "gate", "command",
+    "json", "debug", "maintainer", "fix the product", "background work",
+)
+_REFUSAL_RECOMMENDATION_MARKERS = (
+    "you should", "buy it", "sell it", "execute", "place the trade", "i will trade",
+)
+
+
+def _sentence_count(text):
+    return len([part for part in SENTENCE.findall(text) if part.strip()])
+
+
+def check_single_candidate_refusal_shape(episode, answer, facts):
+    """#674's only new refusal shape: one proposed trade, no comparison list.
+
+    The frozen episode contract supplies the original premise/context and the
+    one safe countercondition.  A passing answer repeats each input verbatim
+    once, makes no numeric claim, and either offers that tension or uses the
+    stable two-sentence unavailable result.  No engine response is parsed and
+    no product state is inferred here.
+    """
+    refusal = episode.get("refusal") or {}
+    surfaces = _surfaces(answer)
+    text = "\n".join(value for _role, value in surfaces)
+    lowered = text.casefold()
+    findings = []
+    for field in ("premise", "reason", "why_now"):
+        value = refusal.get(field, "")
+        if text.count(value) != 1:
+            findings.append(f"single candidate: original {field} must reach the user exactly once")
+    fit_count = lowered.count("portfolio fit was not verified")
+    if fit_count != 1:
+        findings.append("single candidate: portfolio-fit limitation must appear exactly once")
+    if NUMBER.search(text):
+        findings.append("single candidate: no new number may enter a refusal answer")
+    leaked = sorted(marker for marker in _REFUSAL_PROCESS_MARKERS if marker in lowered)
+    if leaked:
+        findings.append(f"single candidate: process leakage reached the user: {leaked}")
+    recommended = sorted(marker for marker in _REFUSAL_RECOMMENDATION_MARKERS if marker in lowered)
+    if recommended:
+        findings.append(f"single candidate: recommendation or execution claim reached the user: {recommended}")
+    if "?" in text or "？" in text:
+        findings.append("single candidate: known premise/context must not be asked again")
+
+    outcome = answer.get("refusal_outcome")
+    if outcome == "safe_tension":
+        if not text.startswith("The tension is"):
+            findings.append("single candidate: safe value must lead with the decision tension")
+        countercondition = refusal.get("countercondition", "")
+        if text.count(countercondition) != 1:
+            findings.append("single candidate: safe value must state the frozen countercondition once")
+        if text.count(refusal.get("next_input", "")) != 1:
+            findings.append("single candidate: safe value must state the exact next input once")
+    elif outcome == "unavailable":
+        if _sentence_count(text) != 2:
+            findings.append("single candidate: no-safe-value result must be exactly two sentences")
+        if not text.startswith("Portfolio fit was not verified"):
+            findings.append("single candidate: unavailable result must first say what was not verified")
+        if text.count(refusal.get("next_input", "")) != 1:
+            findings.append("single candidate: unavailable result must state the exact next input once")
+    else:
+        findings.append("single candidate: answer has no recognized refusal outcome")
+    return findings
+
+
 def run_check(name, episode, answer, facts):
     """Return ``(findings, looked_at_something)``.
 
@@ -1123,6 +1219,9 @@ def run_check(name, episode, answer, facts):
                 answer.get("condition_check") is not None)
     if name == "usable_facts_grounding":
         return check_usable_facts_grounding(answer, facts), bool(_surfaces(answer))
+    if name == "single_candidate_refusal_shape":
+        return (check_single_candidate_refusal_shape(episode, answer, facts),
+                bool(_surfaces(answer)))
     raise AssertionError(f"unknown check {name}")
 
 
