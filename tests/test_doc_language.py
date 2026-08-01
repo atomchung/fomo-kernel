@@ -48,6 +48,13 @@ AGENT_RUNTIME_SURFACES = (
     SKILL_DIR / "flows",
     SKILL_DIR / "references",
 )
+# #666: the root floor is loaded before routed references, so it must defer the
+# private-surface gate to the engine projection rather than carry a kind list
+# that becomes stale as soon as the engine supports another opportunity.
+AGENT_QUESTION_OPPORTUNITY_RULE = (
+    "only when the engine projects `question_opportunity` on the queue row"
+)
+RETIRED_AGENT_QUESTION_SURFACE_ENUM = "only for `add_thesis` and `headline_motive`"
 NON_NEGOTIABLE_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
     Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
@@ -921,6 +928,23 @@ def markdown_section(text, heading):
     return text[content_start:] if next_heading < 0 else text[content_start:next_heading]
 
 
+def _agents_question_surface_drift_violations(text):
+    """Return root-floor violations without duplicating the engine's kinds.
+
+    The queue row's ``question_opportunity`` projection is the eligibility
+    gate. Keeping this helper deliberately ignorant of the set of kinds makes
+    a new engine-owned opportunity reachable without another prose update.
+    """
+    workflow = markdown_section(text, "## Workflow")
+    violations = []
+    if AGENT_QUESTION_OPPORTUNITY_RULE not in workflow:
+        violations.append("workflow does not defer private surfaces to question_opportunity")
+    retired_kinds = ("`add_thesis`", "`headline_motive`")
+    if any(kind in workflow for kind in retired_kinds):
+        violations.append("workflow reintroduced a private-surface kind enumeration")
+    return violations
+
+
 def test_implementation_markdown_is_english_only():
     violations = []
     for rel, path in implementation_markdown_files():
@@ -956,6 +980,26 @@ def test_review_py_is_a_non_negotiable_boundary():
         assert "import engine modules directly" in lowered, f"{rel}: direct imports are not forbidden"
         for command in REVIEW_COMMANDS:
             assert f"`{command}`" in section, f"{rel}: boundary omits {command}"
+
+
+def test_agents_private_surface_gate_uses_the_engine_projection():
+    """#666: root AGENTS.md must not decide eligibility from a prose kind list."""
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    violations = _agents_question_surface_drift_violations(text)
+    assert not violations, "AGENTS.md private-surface gate drifted:\n" + "\n".join(violations)
+
+
+def test_agents_private_surface_enum_revival_is_caught():
+    """Mutation proof: restoring the old enum makes the root-floor gate fail."""
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    mutated = text.replace(
+        AGENT_QUESTION_OPPORTUNITY_RULE, RETIRED_AGENT_QUESTION_SURFACE_ENUM, 1)
+    assert AGENT_QUESTION_OPPORTUNITY_RULE not in markdown_section(mutated, "## Workflow")
+    assert RETIRED_AGENT_QUESTION_SURFACE_ENUM in markdown_section(mutated, "## Workflow")
+    problems = _agents_question_surface_drift_violations(mutated)
+    assert any("kind enumeration" in problem for problem in problems), (
+        "restoring the retired question-kind enum left the drift regression green"
+    )
 
 
 def test_freeform_answer_shape_is_a_boundary_in_both_entry_points():
@@ -1518,6 +1562,8 @@ def main():
         test_demo_card_numbers_match_across_all_surfaces,
         test_readme_heading_structure_matches_across_languages,
         test_review_py_is_a_non_negotiable_boundary,
+        test_agents_private_surface_gate_uses_the_engine_projection,
+        test_agents_private_surface_enum_revival_is_caught,
         test_freeform_answer_shape_is_a_boundary_in_both_entry_points,
         test_the_card_invitation_rule_is_stated_and_routed_to_its_owner,
         test_card_invitation_rule_mutations_are_caught,
