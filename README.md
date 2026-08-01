@@ -7,7 +7,7 @@
 
 **English** · [繁體中文](README.zh-TW.md) · [简体中文](README.zh-CN.md)
 
-> **A local, evidence-bound trading decision partner.** Bring the trade you are considering or the trades you already made. FOMO Kernel reduces your decision burden without making the decision for you.
+> **A direct, evidence-bound trading decision partner that runs locally.** Bring the trade you are considering or the trades you already made. FOMO Kernel reduces your decision burden without making the decision for you.
 
 It is built for two moments:
 
@@ -181,6 +181,14 @@ After an interruption, the agent resumes the pending session instead of refetchi
 ## Other coding agents
 
 Claude Code provides the simplest slash-command installation. Codex, Cursor, and compatible coding agents can use the same host-neutral contract by opening the repository and following [`AGENTS.md`](AGENTS.md), which routes to [`skills/fomo-kernel/SKILL.md`](skills/fomo-kernel/SKILL.md).
+
+For a host-neutral test-drive plan:
+
+```bash
+python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language en
+```
+
+This command returns a Review Plan; the agent follows its selected flow to present and complete the experience.
 
 Current owner-live acceptance focuses on Claude Code and Codex. A compatible client is not automatically an accepted client.
 
