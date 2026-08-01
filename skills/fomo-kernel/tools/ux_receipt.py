@@ -619,6 +619,16 @@ def _challenge_fidelity(path: str | None) -> dict:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ReceiptError(f"--challenge-check-file is not valid JSON: {exc}") from exc
+    return _challenge_fidelity_payload(payload)
+
+
+def _challenge_fidelity_payload(payload: dict) -> dict:
+    """Apply the production delivery check to an already-loaded transient pair.
+
+    The path wrapper above remains the user-facing receipt entry point.  This
+    pure half is shared with offline evaluators so their candidate answers pass
+    the same deterministic delivery gate instead of a hand-copied approximation.
+    """
     if not isinstance(payload, dict):
         raise ReceiptError("--challenge-check-file must contain a JSON object")
     challenge = payload.get("challenge")
@@ -688,10 +698,14 @@ def _challenge_fidelity(path: str | None) -> dict:
         if topic in NUMERIC_FACT_TOPICS and isinstance(value, (int, float)) \
                 and not isinstance(value, bool):
             checked += 1
-            # cash is dollar-shaped, never fraction-shaped: a fifty-cent
-            # balance is not stated by "50%".
+            # A cash balance is dollar-shaped, while the separately emitted
+            # cash weight is fraction-shaped like every other weight. The
+            # anchor distinguishes them; treating every `cash` topic as a
+            # balance made a natural "8.7% cash" answer look missing.
+            percent_form = (topic != "cash" or
+                            str(entry.get("anchor", "")).endswith(".weight"))
             if not _number_present(presented_text, value,
-                                   percent_form=(topic != "cash")):
+                                   percent_form=percent_form):
                 missing_count += 1
         elif topic == "excluded_holding" and isinstance(value, str):
             checked += 1

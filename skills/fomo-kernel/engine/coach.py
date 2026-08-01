@@ -424,6 +424,7 @@ DATA_FILES = [
     ("projections", "dir", "canonical bundle 投影到舊資料檔的修復紀錄"),
     (".pending", "tree", "尚未 finalize 的可恢復 review plan/answers/preview"),
     ("ux", "dir", "cross-client 呈現軌跡(host capability 與卡片/問題呈現事件,不含交易內容)"),
+    ("judge", "dir", "本機 LLM judge 的逐次評估紀錄(可能含 answer 文字與判決理由)"),
     ("cache", "dir", "當日行情抓取快取(#235;值是公開行情,但鍵是你的持倉代號,故同樣可匯出/可清除)"),
 ]
 

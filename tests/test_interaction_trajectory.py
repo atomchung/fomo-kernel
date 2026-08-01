@@ -1786,6 +1786,11 @@ def test_a_dollar_value_does_not_match_its_percent_form():
                                       "anchor": "consequence.after.weights.SYNTH"}],
               "quote_verbatim": []}
     assert fidelity_of({"challenge": weight, "presented_text": text})["facts_missing"] == 0
+    cash_weight = {**base, "must_state": [{"topic": "cash", "value": 0.5,
+                                           "anchor": "consequence.after.cash.weight"}],
+                   "quote_verbatim": []}
+    assert fidelity_of(
+        {"challenge": cash_weight, "presented_text": text})["facts_missing"] == 0
 
 
 def test_evaluation_evidence_must_be_internally_consistent():
