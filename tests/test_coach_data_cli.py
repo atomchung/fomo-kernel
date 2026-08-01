@@ -157,6 +157,37 @@ def test_reset_and_status_cover_ux_trace_dir():
         assert not os.path.exists(os.path.join(tmp, "ux")), "reset --confirm must clear the ux/ trace"
 
 
+def test_judge_receipts_are_status_export_and_reset_managed():
+    """#590: opt-in LLM judge receipts can contain answer text and reasons,
+    so the whole judge/ directory must share the private data controls."""
+    with tempfile.TemporaryDirectory() as tmp:
+        judge_dir = os.path.join(tmp, "judge")
+        os.makedirs(judge_dir)
+        receipt_path = os.path.join(judge_dir, "trade-answer-runs.jsonl")
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            f.write('{"fixture":"TA-001","verdict":"pass"}\n')
+
+        status = json.loads(_run("data-status", "--root", tmp).stdout)
+        by_name = {entry["name"]: entry for entry in status["files"]}
+        assert status["present_count"] == 1
+        assert by_name["judge"]["exists"]
+        assert by_name["judge"]["kind"] == "dir"
+        assert by_name["judge"]["count"] == 1
+
+        out_zip = os.path.join(tmp, "backup.zip")
+        exported = _run("data-export", "--root", tmp, "--out", out_zip)
+        assert exported.returncode == 0, exported.stderr
+        payload = json.loads(exported.stdout)
+        assert payload["included"] == ["judge"]
+        with zipfile.ZipFile(out_zip) as zf:
+            assert zf.namelist() == ["judge/trade-answer-runs.jsonl"]
+
+        reset = _run("data-reset", "--root", tmp, "--confirm")
+        assert reset.returncode == 0, reset.stderr
+        assert json.loads(reset.stdout)["deleted"] == [judge_dir]
+        assert not os.path.exists(judge_dir)
+
+
 def test_headline_motive_projection_is_status_export_and_reset_managed():
     """#294: the durable motive projection is private user data, so every
     data-control operation must discover it from coach.DATA_FILES."""

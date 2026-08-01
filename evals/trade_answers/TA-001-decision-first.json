@@ -2,8 +2,8 @@
   "id": "TA-001",
   "title": "The same grounded challenge can be complete yet bury the decision",
   "source": {
-    "kind": "owner_observed_failure_shape",
-    "refs": ["#579", "#590", "#676"],
+    "kind": "agent_declared_synthetic_hypothesis",
+    "refs": ["#590"],
     "date": "2026-08-01"
   },
   "declared_by": "agent",
@@ -15,62 +15,252 @@
   ],
   "question": {
     "kind": "trade_evaluation",
-    "text": "I am considering adding FICTIONAL-A. My reason is that demand appears stronger, and I would fund it from cash. What does this decision change?"
+    "text": "I am considering adding FICTIONAL-A because customer demand appears stronger. What does this decision change?"
   },
-  "frozen_context": {
-    "lead_candidate": "The proposed add would cross the user's recorded single-position cap.",
-    "support": [
-      "The position would move from below the recorded cap to above it.",
-      "The user's why-now contains a demand claim, but that claim has not been independently checked."
+  "frozen_evaluation": {
+    "premise": {
+      "ticker": "FICTIONAL-A",
+      "side": "buy",
+      "qty": 95.8904,
+      "price": 100.0,
+      "date": "2026-08-01",
+      "currency": "USD"
+    },
+    "basis": {
+      "source": "snapshot_anchor",
+      "as_of": "2026-08-01",
+      "stale_days": 0,
+      "completeness": "declared_complete",
+      "cost_basis": "average_cost",
+      "valuation_basis": "priced",
+      "reconciliation_ref": {
+        "anchor_as_of": "2026-08-01",
+        "anchor_source": "synthetic_declared_snapshot",
+        "projection_sequence": null
+      },
+      "state_version": "pb-v1:0000000000000000000000000000000000000000000000000000000000000000",
+      "valuation_coverage": {
+        "scope": "full_current_book",
+        "total_holdings": 5,
+        "valued_holdings": 5,
+        "priced": [
+          "FICTIONAL-A",
+          "FICTIONAL-B",
+          "FICTIONAL-C",
+          "FICTIONAL-D",
+          "FICTIONAL-E"
+        ],
+        "cost_fallback": [],
+        "unavailable": [],
+        "currencies": ["USD"]
+      },
+      "price_observations": {
+        "as_of": "2026-08-01",
+        "by_ticker": {
+          "FICTIONAL-A": "2026-08-01",
+          "FICTIONAL-B": "2026-08-01",
+          "FICTIONAL-C": "2026-08-01",
+          "FICTIONAL-D": "2026-08-01",
+          "FICTIONAL-E": "2026-08-01"
+        }
+      }
+    },
+    "consequence": {
+      "before": {
+        "held": {
+          "FICTIONAL-A": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-B": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-C": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-D": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-E": {"shares": 200.0, "cost": 20000.0}
+        },
+        "weights": {
+          "FICTIONAL-A": 0.2,
+          "FICTIONAL-B": 0.2,
+          "FICTIONAL-C": 0.2,
+          "FICTIONAL-D": 0.2,
+          "FICTIONAL-E": 0.2
+        },
+        "max_ticker": "FICTIONAL-A",
+        "max_pct": 0.2,
+        "oversize_triggered": false,
+        "top3": 0.6,
+        "ai_pct": 0.2,
+        "max_sector": "Synthetic demand",
+        "max_sector_pct": 0.2,
+        "concentration_triggered": false,
+        "n_holdings": 5,
+        "cash": {
+          "balance": 20000.0,
+          "weight": 0.1666666667,
+          "source": "snapshot_anchor",
+          "reliable": true
+        },
+        "basis": "priced",
+        "mixed_currency": false,
+        "unclassified_holdings": [],
+        "undecomposed_etfs": []
+      },
+      "after": {
+        "held": {
+          "FICTIONAL-A": {"shares": 295.8904, "cost": 29589.04},
+          "FICTIONAL-B": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-C": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-D": {"shares": 200.0, "cost": 20000.0},
+          "FICTIONAL-E": {"shares": 200.0, "cost": 20000.0}
+        },
+        "weights": {
+          "FICTIONAL-A": 0.27,
+          "FICTIONAL-B": 0.1825,
+          "FICTIONAL-C": 0.1825,
+          "FICTIONAL-D": 0.1825,
+          "FICTIONAL-E": 0.1825
+        },
+        "max_ticker": "FICTIONAL-A",
+        "max_pct": 0.27,
+        "oversize_triggered": true,
+        "top3": 0.635,
+        "ai_pct": 0.27,
+        "max_sector": "Synthetic demand",
+        "max_sector_pct": 0.27,
+        "concentration_triggered": false,
+        "n_holdings": 5,
+        "cash": {
+          "balance": 10410.96,
+          "weight": 0.086758,
+          "source": "snapshot_anchor",
+          "reliable": true
+        },
+        "basis": "priced",
+        "mixed_currency": false,
+        "unclassified_holdings": [],
+        "undecomposed_etfs": []
+      },
+      "delta": {
+        "max_pct": 0.07,
+        "top3": 0.035,
+        "ai_pct": 0.07,
+        "max_sector_pct": 0.07,
+        "ticker_weight": 0.07,
+        "cash": {
+          "balance": -9589.04,
+          "weight": -0.0799086667
+        }
+      },
+      "disclosures": [],
+      "excluded_holdings": [],
+      "unclassified_holdings": [],
+      "undecomposed_etfs": []
+    },
+    "rule_collisions": [
+      {
+        "rule_id": "rule-fixture-cap",
+        "text": "Keep any single position at or below 25% of the recorded book.",
+        "metric_key": "max_pos_pct",
+        "problem_key": "oversize",
+        "state": "would_breach",
+        "worsens": null
+      }
     ],
-    "counter_case": "The add is small enough that the rest of the book changes little, and the user may deliberately accept a temporary cap exception if the new evidence is real.",
-    "limitations": [
-      "The recorded book is not a live broker view.",
-      "The demand claim was supplied by the user and was not independently verified."
-    ]
+    "context": {
+      "reason": "Customer demand appears stronger.",
+      "why_now": "The latest customer conversations sound more urgent.",
+      "evidence_refs": []
+    }
+  },
+  "agent_cases": {
+    "grounded_two_sided": {
+      "for": [
+        {
+          "claim": "If the user's unverified demand observation is real and durable, a temporary cap exception could be deliberate rather than accidental.",
+          "provenance": "agent_judgment"
+        }
+      ],
+      "against": [
+        {
+          "claim": "The recorded book used prices observed on 2026-08-01.",
+          "provenance": "engine_fact",
+          "anchor": "basis.price_observations.as_of"
+        },
+        {
+          "claim": "The proposed add would breach the recorded position cap.",
+          "provenance": "engine_fact",
+          "anchor": "rule_collisions.rule-fixture-cap.state"
+        }
+      ]
+    },
+    "promotes_user_why_now": {
+      "for": [
+        {
+          "claim": "The latest customer conversations sound more urgent.",
+          "provenance": "public_fact",
+          "source": "Synthetic market bulletin",
+          "as_of": "2026-08-01"
+        }
+      ],
+      "against": [
+        {
+          "claim": "The recorded book used prices observed on 2026-08-01.",
+          "provenance": "engine_fact",
+          "anchor": "basis.price_observations.as_of"
+        },
+        {
+          "claim": "The proposed add would breach the recorded position cap.",
+          "provenance": "engine_fact",
+          "anchor": "rule_collisions.rule-fixture-cap.state"
+        }
+      ]
+    }
   },
   "answers": [
     {
-      "id": "complete_but_flat",
-      "eligible_for_judge": true,
+      "id": "buried_but_synthesized",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": ["decision_focus"],
-      "prose": "The recorded book is not a live broker view. Your demand claim has not been independently verified. The position would move from below your recorded cap to above it. The rest of the book changes little. The case for the add is that stronger demand may justify accepting a temporary exception; the case against it is that the trade breaks a rule you previously chose. You can keep the decision open, modify the size, or decline it."
+      "prose": "On the 2026-08-01 recorded rather than live-broker snapshot, top-three concentration would be 63.5%, classified AI exposure and maximum-sector exposure would each be 27%, and cash would be $10,410.96. FICTIONAL-A would move from 20% to 27%, crossing the recorded 25% cap. The customer-demand change is the user's why-now and remains unverified. That makes the decision whether a still-unverified demand signal has earned a deliberate exception to the user's rule: the case for is that a real, durable change could justify one; the case against is that the add relaxes the rule before the change has been checked. The user can keep the trade open, resize it to avoid the breach, or decline it."
     },
     {
-      "id": "compact_but_unsupported",
-      "eligible_for_judge": false,
-      "ineligible_reason": "deterministic truth and coverage gate failed: it claims the demand evidence is confirmed, which the frozen context does not support",
-      "prose": "This is a good add because demand is confirmed and the small size keeps the position within your rule."
+      "id": "deterministic_reject_unsupported",
+      "agent_case_ref": "promotes_user_why_now",
+      "expect_eligible": false,
+      "judge_fails": [],
+      "prose": "The latest customer conversations confirm stronger demand, so moving FICTIONAL-A from 20% to 27% is a justified exception to the recorded 25% cap."
     },
     {
-      "id": "contextually_inconsistent",
-      "eligible_for_judge": true,
+      "id": "self_negating_rule_read",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": ["internal_consistency"],
-      "prose": "The main issue is that this add crosses the position cap you chose, so the trade conflicts with your recorded discipline. Still, because the rest of the book changes little, there is effectively no rule conflict here and the add is aligned with your plan. The demand claim remains unverified, and the book is not a live broker view."
+      "prose": "The decision tension is whether the user's unverified demand observation earns an exception: FICTIONAL-A would move from 20% to 27%, crossing the recorded 25% cap. If the demand change proves real and durable, accepting that exception could be deliberate; without verification, the exception rests on a claim that has not been established. Even so, the add creates no actual conflict with the recorded cap and can be treated as within the user's rule. Because the book is recorded rather than a live broker view, this frames the decision but does not prove the execution-time weight."
     },
     {
-      "id": "translated_fact_list",
-      "eligible_for_judge": true,
+      "id": "prioritized_fact_recap",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": ["decision_synthesis"],
-      "prose": "The position is currently below the cap. After the add it is above the cap. The rest of the book changes little. The demand claim was supplied by you. It has not been independently checked. The recorded book is not a live broker view."
+      "prose": "On the recorded rather than live-broker snapshot, the cap comparison is the main item: FICTIONAL-A is 20% before the add and 27% after it; the recorded maximum is 25%. The why-now field is the user's customer-demand observation, and it is unverified. Top-three concentration is 63.5%, classified AI exposure is 27%, maximum-sector exposure is 27%, and cash is $10,410.96. Those are the recorded fields."
     },
     {
-      "id": "disclaimer_dominant",
-      "eligible_for_judge": true,
+      "id": "lead_then_caveat_padding",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": ["caveat_discipline"],
-      "prose": "This is not investment advice. Markets can move unexpectedly. The recorded book may be stale. Your demand claim is unverified. Public information can be incomplete. The add crosses your recorded position cap, although the rest of the book changes little. The case for proceeding is that the claim could justify an exception; the case against is the rule break. The recorded book may be stale and the demand claim is unverified."
+      "prose": "The decision is whether an unverified demand observation warrants moving FICTIONAL-A from 20% to 27% and crossing the recorded 25% cap. A real and durable demand change could support a deliberate exception; otherwise the trade weakens the user's rule before the evidence has earned it. This is not investment advice, markets can move unexpectedly, and public information may be incomplete. The book is only a recorded snapshot, not a live broker view, and the demand observation is unverified. The recorded book may differ from the live account, the demand observation may still be wrong, and nothing here guarantees an outcome. The user can keep the trade open, resize it, or decline it."
     },
     {
-      "id": "supported_synthesis",
-      "eligible_for_judge": true,
+      "id": "all_axes_pass_compact",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": [],
-      "prose": "The decision is whether the demand change is strong enough to justify breaking the position cap you previously chose: the add crosses that line even though it barely changes the rest of the book. The strongest case for proceeding is a deliberate, temporary exception if the demand evidence is real; the strongest case against is that the evidence is still only your stated why-now, not an independently checked change. Because the recorded book is not a live broker view, treat the cap collision as a decision check rather than execution proof. Keep it open, reduce the size, or decline it."
+      "prose": "The decision is whether the user's unverified demand observation is strong enough to justify moving FICTIONAL-A from 20% to 27% and crossing the recorded 25% cap. A real, durable change could make a temporary exception deliberate; without verification, the trade instead relaxes the rule when it becomes inconvenient. Because the book is recorded rather than a live broker view, use this as the decision check—not proof of the execution-time weight—then keep the trade open, resize it, or decline it."
     },
     {
-      "id": "necessarily_longer_pass",
-      "eligible_for_judge": true,
+      "id": "all_axes_pass_expanded",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
       "judge_fails": [],
-      "prose": "Your proposed add creates one clear conflict: it moves this position through the cap you previously selected, while leaving the rest of the portfolio nearly unchanged. That makes the decision less about broad portfolio risk and more about whether this one exception has earned its way past your own rule. The case for the exception is specific: if the demand change is genuinely new and durable, a temporary breach may be intentional rather than careless. The case against is equally specific: the demand claim is currently your statement, not independently checked evidence, so the trade can also be a story used to relax a rule at the moment it becomes inconvenient. The book behind this comparison is recorded rather than a live broker view, so this identifies the conflict but does not prove current execution capacity or final weight. Keep the decision open, reduce the size until it no longer breaches the cap, or decline it."
+      "prose": "FICTIONAL-A would move from 20% to 27%, so the proposed add crosses the recorded 25% cap; the real decision is whether the user's still-unverified demand observation has earned that exception. The strongest case for the add is conditional: if the change is genuinely new and durable, accepting a temporary breach can be an explicit choice rather than an accidental drift. The strongest case against is the mirror image of that support: the customer conversations are the user's why-now, not independently verified evidence, so the same story may be doing the work of loosening the rule at the moment it binds. The book is a recorded snapshot rather than a live broker view, so the crossing identifies a decision conflict but does not certify the execution-time weight. The user can keep the trade open while checking the claim, resize it to avoid the breach, or decline it."
     }
   ]
 }

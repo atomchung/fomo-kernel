@@ -97,6 +97,11 @@ SUITES = [
     # wording change regenerates it with `--update`.
     ("Copy corpus golden (#402 knife 5)", "tests/copy_corpus.py"),
     ("Episode checker probes (#417)", "tests/test_episode_checkers.py"),
+    # #590: only the pure eligibility, blind-prompt, vote-report and durable
+    # receipt interlocks run here. The TradeEvaluation model calls stay opt-in
+    # exactly like the question-episode judge above.
+    ("TradeEvaluation answer judge interlocks (#590)",
+     "tests/test_trade_answer_judge.py"),
     # #417: the mechanical half of the question-episode bank. It belongs in the
     # default suite because it is offline, deterministic and free -- what
     # eval-design keeps out of CI is the non-deterministic, billable judge half,
