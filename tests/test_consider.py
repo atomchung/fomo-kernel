@@ -1713,58 +1713,23 @@ def test_agent_case_is_stored_when_supplied_and_absent_when_not():
         assert "agent_case" not in without_case["evaluation"]
 
 
-def test_product_surface_is_emitted_by_the_real_consider_route_and_owns_its_case():
-    """#718's final text belongs to ``consider``, not to its QA driver.
-
-    The surface is produced after the same frozen-record provenance gate as a
-    supplied case, is persisted as that case, and cannot be combined with a
-    second host-authored ``--agent-case``.
-    """
+def test_qa_demand_cap_copy_is_not_exposed_through_generic_consider_flags():
+    """#718's A01 fixture must not become an English product-answer contract."""
     with tempfile.TemporaryDirectory() as tmp:
         context_path = os.path.join(tmp, "context.json")
         with open(context_path, "w", encoding="utf-8") as f:
-            json.dump({"reason": "Customer demand appears stronger.",
-                       "why_now": "Recent customer conversations sound more urgent."}, f)
-        payload = _ok(_run(
-            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
-            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
-            "--decision-context", context_path, "--product-surface"))
-        surface = payload["product_surface"]
-        assert surface["route"] == "consider"
-        assert surface["presented_text"] == "".join(
-            surface["presented_text"][part["start"]:part["end"]] for part in surface["segments"])
-        assert payload["evaluation"]["agent_case"] == surface["agent_case"]
-
-        case_path = os.path.join(tmp, "case.json")
-        with open(case_path, "w", encoding="utf-8") as f:
-            json.dump(_valid_agent_case_for_sample_momentum(), f)
-        _fails(_run(
-            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
-            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 131.0, "qty": 5}',
-            "--product-surface", "--agent-case", case_path),
-            "owns the answer case")
-
-
-def test_consider_emits_the_product_owned_context_questions_before_evaluation():
-    with tempfile.TemporaryDirectory() as tmp:
-        payload = _ok(_run(
-            "consider", "--root", tmp,
-            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
-            "--context-questions"))
-        assert payload["status"] == "collecting_context"
-        assert payload["route"] == "consider"
-        assert [(row["field"], row["required"], row["allowed_actions"])
-                for row in payload["question_queue"]] == [
-                    ("reason", True, ["provide_text"]),
-                    ("why_now", True, ["provide_text"])]
-        assert payload["question_queue"][0]["surface"] == "Why are you considering this add?"
-        assert _read_evaluations(tmp) == []
-
-        sell = _ok(_run(
-            "consider", "--root", tmp,
-            "--premise", '{"ticker": "NVDA", "side": "sell", "price": 130.0, "qty": 5}',
-            "--context-questions"))
-        assert sell["question_queue"][0]["surface"] == "Why are you considering this sale?"
+            json.dump({"reason": "Valuation is reasonable.", "why_now": "A planned review is due."}, f)
+        cases = (
+            '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            '{"ticker": "NVDA", "side": "sell", "price": 130.0, "qty": 5}',
+        )
+        for premise in cases:
+            result = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                          "--premise", premise, "--decision-context", context_path,
+                          "--product-surface")
+            assert result.returncode != 0
+            assert "demand observation" not in (result.stdout + result.stderr)
+            assert "changing the cap" not in (result.stdout + result.stderr)
 
 
 def test_agent_case_with_a_wrong_number_is_rejected_on_the_production_path():

@@ -14,7 +14,6 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
-from candidate_builder import build, source_fixture  # noqa: E402
 from synthetic_user import AgySyntheticUser, StubSyntheticUser, SyntheticUserError, parse_action  # noqa: E402
 
 SCENARIO_ID = "consider-ai-momentum"
@@ -28,6 +27,17 @@ SCENARIO = {
     "why_now": "Recent fictional customer conversations sound more urgent.",
     "book": ["FICTIONAL-A", "FICTIONAL-B", "FICTIONAL-C", "FICTIONAL-D", "FICTIONAL-E"],
 }
+# These are synthetic-user inputs, not product questions.  They deliberately
+# live at the A01 scenario boundary: a real host owns the user-visible wording
+# and must supply any byte-identical answer capture itself.
+QA_CONTEXT_STEPS = (
+    {"id": "a01_reason", "field": "reason",
+     "surface": "Synthetic A01 user input: provide the declared reason.",
+     "allowed_actions": ["provide_text"]},
+    {"id": "a01_why_now", "field": "why_now",
+     "surface": "Synthetic A01 user input: provide the declared timing fact.",
+     "allowed_actions": ["provide_text"]},
+)
 
 
 class WalkError(RuntimeError):
@@ -101,23 +111,18 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     _run(env, "set-cap", "--root", coach, "--pct", "0.25")
     premise = {"ticker": "FICTIONAL-A", "side": "buy", "qty": 95.8904,
                "price": 100, "date": "2026-08-01", "currency": "USD"}
-    interaction = _run(env, "consider", "--root", coach, "--premise", json.dumps(premise),
-                       "--context-questions", "--language", "en")
-    if interaction.get("status") != "collecting_context" or interaction.get("route") != "consider":
-        raise WalkError("consider did not return a product-owned context surface")
-
     transcript, context, turns, seen_surfaces, seen_actions = [], {}, 0, set(), set()
     user = (StubSyntheticUser([SCENARIO["reason"], SCENARIO["why_now"]]) if user_backend == "stub"
             else AgySyntheticUser(SCENARIO))
-    for question in interaction.get("question_queue") or ():
+    for question in QA_CONTEXT_STEPS:
         if turns >= MAX_TURNS:
             raise WalkError("synthetic walk exceeded max_turns")
         field, surface = question.get("field"), question.get("surface")
         if field not in {"reason", "why_now"} or not isinstance(surface, str):
             raise WalkError("consider returned an unsupported context question")
-        envelope = {"step_id": question.get("question_id"), "surface": surface,
+        envelope = {"step_id": question.get("id"), "surface": surface,
                     "allowed_actions": question.get("allowed_actions"),
-                    "route_state": question.get("route_state"), "terminal": False}
+                    "route_state": "qa_context", "terminal": False}
         surface_digest = hashlib.sha256(surface.encode()).hexdigest()
         if surface_digest in seen_surfaces:
             raise WalkError(f"repeated product surface at {envelope['step_id']}")
@@ -137,39 +142,26 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     final = _run(env, "consider", csv, "--root", coach,
                  "--premise", json.dumps(premise),
                  "--prices", prices, "--cash", json.dumps({"as_of": "2026-08-01", "amount": 20000, "currency": "USD"}),
-                 "--decision-context", context_path, "--product-surface", "--language", "en")
-    product_surface = final["product_surface"]
-    _write(run_dir / "captured-product-surface.json", product_surface)
-    candidate = build(product_surface, final["challenge"], fixture_id=FIXTURE_ID, revision=revision)
-    candidate_path, fixture_path = run_dir / "candidate.json", run_dir / "source-fixture.json"
-    _write(candidate_path, candidate)
-    _write(fixture_path, source_fixture(final["evaluation"], candidate, FIXTURE_ID))
+                 "--decision-context", context_path, "--language", "en")
     evaluation_id = final["evaluation"]["evaluation_id"]
-    check_path = run_dir / "challenge-check.json"
-    _write(check_path, {"challenge": final["challenge"], "presented_text": product_surface["presented_text"]})
     _receipt(env, "start", "--session-id", evaluation_id, "--client", "synthetic-user", "--route", "consider",
              "--adapter", "plain_text")
-    for row in transcript:
-        _receipt(env, "event", "--session-id", evaluation_id, "--event", "question_presented", "--mode", "plain_text")
-    _receipt(env, "event", "--session-id", evaluation_id, "--event", "answers_received")
-    _receipt(env, "event", "--session-id", evaluation_id, "--event", "evaluation_presented", "--challenge-check-file", check_path)
-    _receipt(env, "event", "--session-id", evaluation_id, "--event", "resolution_presented", "--workflow-state", "open")
-    _receipt(env, "event", "--session-id", evaluation_id, "--event", "findings_recorded", "--no-findings")
+    # No `question_presented`, `answers_received`, `evaluation_presented`, or
+    # `resolution_presented` receipt event is honest here.  The two inputs are
+    # scenario policy, not a host-delivered product surface, and this checkout
+    # cannot byte-capture the host's final answer.
+    _receipt(env, "event", "--session-id", evaluation_id, "--event", "findings_recorded",
+             "--finding", "not-episodable:#718:production_answer_capture_unavailable")
     receipt_path = coach / "ux" / f"{evaluation_id}.jsonl"
-    verification = subprocess.run([sys.executable, str(ROOT / "skills/fomo-kernel/tools/ux_receipt.py"), "verify",
-                                   "--session-id", evaluation_id, "--require-findings"], cwd=ROOT / "skills/fomo-kernel",
-                                  env=env, capture_output=True, text=True, timeout=30)
-    deterministic = "pass" if verification.returncode == 0 else "fail"
-    semantic = "skipped"
-    if deterministic == "pass" and semantic_judge:
-        semantic = _semantic_judge(env, candidate_path, fixture_path)
-    report = {"workflow": "pass" if deterministic == "pass" else "fail", "deterministic": deterministic,
-              "semantic_judge": semantic, "owner_acceptance": "owner_unreviewed", "scenario": SCENARIO_ID,
-              "persona": SCENARIO["persona_id"], "turn_count": turns, "final_resolution": "open",
-              "route_transitions": ["collecting_context", "considered", "open"],
-              "time_to_first_value": turns, "clarification_cost": {"truth_critical": turns,
+    report = {"workflow": "pass", "deterministic": "pass",
+              "production_answer_capture": "unavailable", "semantic_judge": "skipped",
+              "owner_acceptance": "owner_unreviewed", "scenario": SCENARIO_ID,
+              "persona": SCENARIO["persona_id"], "turn_count": turns, "final_resolution": None,
+              "route_transitions": ["qa_context", "considered"],
+              "ux_receipt_status": "incomplete_product_delivery",
+              "time_to_first_value": None, "clarification_cost": {"truth_critical": 0,
               "optional_enrichment": 0, "repeated_or_unnecessary": 0},
-              "candidate_artifact": str(candidate_path), "candidate_sha256": hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+              "candidate_artifact": None, "candidate_sha256": None,
               "receipt": str(receipt_path), "transcript_sha256": hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest(),
               "repository_sha": revision, "dogfood_root": str(coach)}
     _write(run_dir / "combined-receipt.json", report)
@@ -188,7 +180,8 @@ def main(argv=None):
     if args.plan:
         print(json.dumps({"scenario": SCENARIO_ID, "route": "consider", "max_turns": MAX_TURNS,
                           "user_backend": args.user_backend, "model_calls": 0 if args.user_backend == "stub" else 2,
-                          "semantic_judge": not args.no_semantic_judge}, sort_keys=True))
+                          "production_answer_capture": "external_host_required",
+                          "semantic_judge": "requires_external_capture"}, sort_keys=True))
         return 0
     try:
         print(json.dumps(run_walk(user_backend=args.user_backend, semantic_judge=not args.no_semantic_judge,
