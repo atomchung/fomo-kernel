@@ -70,6 +70,13 @@ Converted misses live in [episodes/](episodes/README.md) and replay on every sui
 
 Prefer deterministic checks over an LLM judge, and an LLM judge over manual inspection. Use a judge only for narrative coherence, not for facts that code can assert. Prove each checker with both a known-good artifact and an intentional mutation.
 
+For a non-recoverable `consider` refusal, keep the user moment separate from
+the diagnostic trace. EP-010 covers the existing multi-option framing against
+the bounded frozen facts. EP-011 covers one proposed trade: exact
+premise/reason/why-now preservation, one portfolio-fit limit, a safe tension or
+the stable two-sentence unavailable result, and the ban on process narration,
+new arithmetic, recommendation, execution claims, and repeated questions.
+
 ## Regression record
 
 | Date | Change | Evidence | Result |

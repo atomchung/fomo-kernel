@@ -6,6 +6,17 @@ This file is the contract for that case: the user is deciding on one trade, has 
 
 Confidence rises with a book; it does not fall to zero without one. This route exists to be useful now and to make the next piece of evidence worth handing over, not to stand in for [trade-consequence.md](trade-consequence.md)'s computed answer.
 
+## Recorded book, but no safe consequence
+
+This is not the no-book route when `consider` has a recorded book but cannot
+safely compute its consequence. The route-specific refusal contract in
+[trade-consequence.md](trade-consequence.md) owns that result: if frozen facts
+support a tension, use them; if they do not, use its stable two-sentence
+unavailable result. Do not ask the three no-book questions again or treat the
+recorded book as absent. The user already supplied the premise, reason and
+why-now; preserve them and name only the exact missing system fact or next
+check.
+
 ## Voice authority
 
 Apply the global [output-voice contract](../../../docs/output-voice.md). It

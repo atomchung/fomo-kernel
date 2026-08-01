@@ -444,6 +444,66 @@ def test_usable_facts_grounding_abstains_when_the_answer_carries_no_surfaces():
     assert looked is False, "a check with nothing to inspect has abstained, not passed"
 
 
+# ── single_candidate_refusal_shape (#674) ───────────────────────────────────
+
+def _single_candidate_episode():
+    episodes, problems = R.load_bank({"EP-011"})
+    assert not problems, problems
+    assert len(episodes) == 1
+    return episodes[0]
+
+
+def test_single_candidate_refusal_shape_covers_safe_tension_and_two_sentence_unavailable():
+    """The production-shaped witness has both valid outcomes, not a generic
+    refusal paragraph that happens to mention the candidate."""
+    episode = _single_candidate_episode()
+    safe = next(answer for answer in episode["answers"] if answer["id"] == "safe_tension")
+    unavailable = next(answer for answer in episode["answers"] if answer["id"] == "no_safe_value")
+    for answer in (safe, unavailable):
+        findings = R.check_single_candidate_refusal_shape(episode, answer, _UF_FACTS)
+        assert findings == [], findings
+        prose = answer["prose"]
+        for key in ("premise", "reason", "why_now"):
+            assert prose.count(episode["refusal"][key]) == 1, key
+        assert prose.casefold().count("portfolio fit was not verified") == 1
+        assert not R.NUMBER.search(prose), "a refusal must not add a numeric claim"
+
+
+def test_single_candidate_refusal_branch_cannot_fall_back_to_multi_option_contract():
+    """Mutation evidence for deleting the single-candidate branch: #697's
+    two-option checker rejects the deliberately option-free valid answer."""
+    episode = _single_candidate_episode()
+    safe = next(answer for answer in episode["answers"] if answer["id"] == "safe_tension")
+    findings = R.check_usable_facts_grounding(safe, _UF_FACTS)
+    assert any("fewer than two" in finding for finding in findings), findings
+
+
+def test_single_candidate_refusal_contract_cannot_be_deleted_from_the_episode():
+    """A fixture that loses its named single-candidate input must not silently
+    exercise the multi-option path instead."""
+    loaded = _single_candidate_episode()
+    episode = dict(loaded)
+    episode["refusal"] = dict(loaded["refusal"])
+    del episode["refusal"]
+    problems = R.validate_episode(episode, "mutation.json")
+    assert any("requires a refusal object" in problem for problem in problems), problems
+
+
+def test_single_candidate_refusal_process_narration_and_repeat_are_rejected():
+    """Mutation evidence for the observed miss: putting command/retry prose
+    back, or padding the boundary twice, both redden the same narrow checker."""
+    episode = _single_candidate_episode()
+    diagnostic = next(answer for answer in episode["answers"]
+                      if answer["id"] == "diagnostic_narration")
+    findings = R.check_single_candidate_refusal_shape(episode, diagnostic, _UF_FACTS)
+    assert any("process leakage" in finding for finding in findings), findings
+
+    repeated = dict(next(answer for answer in episode["answers"] if answer["id"] == "safe_tension"))
+    repeated["prose"] += " Portfolio fit was not verified."
+    findings = R.check_single_candidate_refusal_shape(episode, repeated, _UF_FACTS)
+    assert any("exactly once" in finding for finding in findings), findings
+
+
 def test_consider_refusal_concentration_keys_matches_reviews_own_constant():
     """#674's mirrored-but-not-imported constant (see run_episodes.py's own
     comment on why review.py cannot be `_load_module`-loaded here): this is

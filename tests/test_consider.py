@@ -896,7 +896,8 @@ def test_a_no_usable_holding_refusal_carries_no_usable_facts_when_nothing_was_ev
     has no frozen state to draw from, and the refusal must say so plainly --
     `usable_facts: null` -- rather than the key being silently absent, which
     an agent could mistake for "not implemented" instead of "checked; empty".
-    Boundary 9's no-book framing contract is what a null value routes to."""
+    The recorded-book unavailable result is still bounded by #674; it does not
+    restart the no-book framing conversation."""
     with tempfile.TemporaryDirectory() as tmp:
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
             _snapshot_event("2026-01-01", [

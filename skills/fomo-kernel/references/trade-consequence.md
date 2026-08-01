@@ -111,15 +111,42 @@ The response is still `{"status": "error", "error": "<message>"}`, and it carrie
                   "metric_value": 0.42, "goal": "down"}}}
 ```
 
-`usable_facts` is never something this call computed. It is copied, unchanged, from whatever the *last finalized review* already froze — the same `last_state.json` a later `refresh` and split resolution already read forward — filtered to two bounded pieces: `concentration` (the whole-book weight and concentration reading: `max_pos_pct`/`max_pos_ticker`/`ai_pct`/`max_sector_pct`/`top3_pct`) and `commitment` (the rule the user is actually tracking: its own words, the metric it watches, the value frozen when it was chosen, and the direction that counts as a breach). Either half is omitted when that review never froze it; the whole field is `null` when no review has ever been finalized in this root, or when one was and froze neither. Never treat `null` as a smaller version of this contract — it means no computed fact exists, and the answer that follows is [decision-framing.md](decision-framing.md)'s no-book contract instead, with no computed or frozen portfolio number anywhere in it.
+`usable_facts` is never something this call computed. It is copied, unchanged, from whatever the *last finalized review* already froze — the same `last_state.json` a later `refresh` and split resolution already read forward — filtered to two bounded pieces: `concentration` (the whole-book weight and concentration reading: `max_pos_pct`/`max_pos_ticker`/`ai_pct`/`max_sector_pct`/`top3_pct`) and `commitment` (the rule the user is actually tracking: its own words, the metric it watches, the value frozen when it was chosen, and the direction that counts as a breach). Either half is omitted when that review never froze it; the whole field is `null` when no review has ever been finalized in this root, or when one was and froze neither. Never treat `null` as a smaller version of this contract — it means no frozen fact is safe to use. The recorded book is still present but its consequence is not computable, so use [No safe decision value](#no-safe-decision-value) below: no computed or frozen portfolio number, no no-book question sequence, and no process narration.
 
 **What the answer owes here is framing, not narration.** The bare refusal — "supply a source," "review your exit backlog," restate the error, ask the user to fix the book — is exactly the failure this leaf exists to close; declining to compute a consequence is not declining to help the user decide.
+
+#### Multiple user-nominated alternatives
 
 - The first visible sentence is a decision tension — what the trade-off actually is — never the engine's error message and never a request to restart the review.
 - Frame at least two of the user's own nominated options — the specific holdings *they* are weighing, gathered from the conversation, never invented. `usable_facts` carries no opinion on which tickers are on the table; that is the user's context, not the engine's.
 - For each option, state what selling (or keeping) it would commit the user to believing, and which fact in `usable_facts` it trades off — cite only fields the payload actually carries. Nothing here licenses recomputing a weight, a rule collision, or any other arithmetic the refusal could not produce; a fact absent from `usable_facts` is a fact this answer does not have, not one to estimate.
 - Never name which security to sell. This file's opening ruling — the engine computes, it never recommends — holds exactly as hard on a refusal as it does on a priced answer.
 - Say once, attached to the claim it qualifies, that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter.
+
+#### One proposed trade
+
+This is not a comparison with an invented sell candidate. Start with the core
+assumption in the user's original `reason` and `why_now`, unchanged, and state
+the strongest countercondition already supported by frozen facts. If no frozen
+countercondition is safe, name the single unchecked dimension that would decide
+the tension instead. Say once that portfolio fit was not verified; do not turn
+that limitation into the lead or repeat it as filler.
+
+Keep the premise and context intact. Name the precise next system fact or check
+that would let the same proposal answer — for example, a usable current-book
+basis — without asking the user to repeat any known reason, timing, premise, or
+candidate. Do not expose commands, gates, provider attempts, recovery/retry
+chronology, QA steps, payload/schema names, unrelated symbols, or maintainer
+work. Do not add arithmetic, choose or rank a security, claim execution, or
+promise background work.
+
+#### No safe decision value
+
+When neither a frozen countercondition nor a material unchecked dimension can
+be stated safely, stop at a stable two-sentence unavailable result: first what
+was not verified; then that the premise/context is preserved and the exact
+system fact needed next. This is a bounded completion, not an invitation to
+narrate the refusal process.
 
 This is a different posture from a declared price dead end (`--prices-unavailable`, [below](#which-market-session-priced-it)): that one refuses the question outright rather than answer on cost basis. This one is a bounded framing that still answers, built from facts already on record before this call was ever made.
 
