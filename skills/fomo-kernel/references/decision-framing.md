@@ -34,9 +34,74 @@ One bounded framing carrying four things:
 
 **It is never a thin `TradeEvaluation`.** No weight, no concentration figure, no cash consequence, no rule collision, no post-trade percentage — not as a zero, not as a placeholder, not as an empty section. A number that would have to be computed from a book is absent, and its absence is not narrated as a field.
 
+## Research-aware answer order
+
+When a user asks for a strategy before they have a book, do not make them
+invent an exit philosophy before supplying the bounded value available now.
+Use this order:
+
+```text
+research-backed baseline
+→ applicable strategy-class map
+→ at most one discriminating question, last
+```
+
+The baseline is the narrowly scoped authority in
+[research-priors.md](research-priors.md). Apply only the prior whose
+applicable decision class fits the user's own description; state any material
+exception beside that baseline. A prior never becomes a fund choice,
+allocation, suitability finding, forecast, or buy/sell verdict.
+
+For genuinely long-horizon risk capital with no supplied concentration edge,
+the available baseline is broad diversification and lower discretionary
+turnover. State the important limitation with it: a long label does not make
+equity safe, and an ETF or index wrapper alone does not prove genuinely broad
+exposure. Do not ask about liquidity or a stop before the user sees the
+baseline and map.
+
+Then provide only the strategy classes that fit the user moment; this is a
+bounded map, not a fixed questionnaire:
+
+- **Long-horizon broad-market policy.** Governance follows goal/liquidity
+  facts, an explicit multi-asset target when one exists, or a material change
+  to the vehicle/exposure — not an arbitrary price stop.
+- **Recurring future-savings policy.** This is primarily a savings/execution
+  policy, not a choice to leave already-available cash out of the market.
+- **Predetermined staging of already-available cash.** This exchanges more
+  immediate exposure for less timing regret or a plan the user can adhere to;
+  it is not a mechanically superior return or risk rule.
+- **Tactical or learning trade.** This is a different policy. Its governance
+  must be an observable condition the user defines; do not supply a percentage,
+  moving average, deadline, or earnings exit.
+- **Defer.** Valid when the liquidity horizon, intended exposure, or policy
+  class is still unknown.
+
+For a thematic, sector, leveraged, narrow-country, or concentrated large-cap
+index, do not apply the broad-market branch merely because it is an ETF or
+tracks an index. Explain the remaining exposure concentration and identify the
+index-composition fact that would settle classification. For a standing
+long-horizon policy, do not leak a tactical percentage stop into its governance;
+changed liquidity, goal, explicit allocation target, or vehicle facts are the
+relevant alternatives.
+
+Only after the baseline and map, ask one question that separates the remaining
+live branches, if one remains. For example: “Is this capital separated from a
+known spending need, or are you deliberately making a tactical learning
+trade?” Do not ask “what is your stop?” for a standing long-horizon policy.
+
+This research-aware strategy framing **replaces** the three-question sequence
+below. It asks zero or one discriminating question, and that question is last.
+No question is allowed before the strategy-class map.
+
 ## The three questions
 
-Ask at most three, and fewer when the user's opening message already answered one. Never re-ask a known answer. Offer concrete options plus `not sure / depends`; reserve free text for the user's own reason or exit condition. The design principle behind every branch below: **a different answer does not change the wording, it changes which challenge the answer is about.** A question whose answers produce the same visible output is a defect, not a reflection exercise.
+For an ordinary, non-research-aware single-trade framing, ask at most three,
+and fewer when the user's opening message already answered one. Never re-ask a
+known answer. Offer concrete options plus `not sure / depends`; reserve free
+text for the user's own reason or exit condition. The design principle behind
+every branch below: **a different answer does not change the wording, it
+changes which challenge the answer is about.** A question whose answers produce
+the same visible output is a defect, not a reflection exercise.
 
 ### Q1 — how important is this position, and what size is intended
 
