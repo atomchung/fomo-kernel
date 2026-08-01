@@ -1,111 +1,170 @@
 """A bounded, read-only companion brief for a prepared weekly review (#683).
 
-This module deliberately consumes the Review Plan rather than market_data: the
-weekly card has already frozen its market observations.  It therefore cannot
-start a second provider pass, change the card, or write canonical state.
+The brief never treats a broad market move as relevant merely because a book
+exists.  Its only first-slice connection is a settled engine diagnosis of an
+over-concentrated holding *and* a rising, already-frozen VIX observation.  If
+either fact is absent, the whole block is omitted rather than becoming a
+generic recap.
 """
 
 from __future__ import annotations
 
+import math
+
+
 MAX_HOLDINGS = 3
 MAX_WATCH_ITEMS = 2
-FOCUSES = ("business_evidence", "position_size", "price_behavior", "not_sure")
+FOCUSES = ("business_evidence", "position_size", "not_sure")
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and math.isfinite(value)
 
 
 def _as_of(row, fallback):
     return row.get("last_date") or fallback
 
 
-def _selected_holdings(plan):
+def _concentrated_holdings(plan):
+    """Return only held names that the existing engine marked too_heavy."""
     state = plan.get("engine_state") or {}
     card = plan.get("engine_card") or {}
     held = set(((state.get("holdings") or {}).get("positions") or {}))
     rows = []
-    # ticker_diagnosis is already an engine-ranked, card-facing fact.  Do not
-    # invent a parallel importance score or promote an arbitrary holding.
     for row in card.get("ticker_diagnosis") or []:
         ticker = row.get("ticker")
-        if ticker in held and ticker not in {x["ticker"] for x in rows}:
-            rows.append({"ticker": ticker, "engine_fact": "ticker_diagnosis",
-                         "tags": [x.get("code") for x in row.get("tags") or [] if x.get("code")]})
+        tags = [tag.get("code") for tag in row.get("tags") or [] if tag.get("code")]
+        if ticker in held and "too_heavy" in tags and ticker not in {item["ticker"] for item in rows}:
+            rows.append({"ticker": ticker, "engine_fact": "ticker_diagnosis.too_heavy"})
         if len(rows) == MAX_HOLDINGS:
             break
     return rows
 
 
+def _watch(ticker, focus, vix_fact):
+    shared = {
+        "condition": "VIX rose in the frozen review window",
+        "subject": "VIX",
+        "source": vix_fact["source"],
+        "as_of": vix_fact["as_of"],
+    }
+    checks = {
+        "business_evidence": "Before explaining a move with the market, check whether new company-specific evidence exists.",
+        "position_size": "Before treating a lower price as evidence, compare the recorded position size with the existing cap.",
+        "not_sure": "Before acting, decide whether company-specific evidence or the recorded position size is the relevant check.",
+    }
+    return {"subject": ticker, "check": checks[focus], "trigger": shared}
+
+
 def build(plan, *, focus=None):
     """Return a session-local WeeklyMarketRead, or an explicit omission.
 
-    ``focus`` is a user's optional attention answer.  It is neither validated
-    review input nor saved anywhere; it only changes this response's watch.
+    ``focus`` is a user answer only for the second, read-only presentation.  A
+    first read has ``selected: null`` and is already complete when skipped.
     """
     if plan.get("route") != "weekly_review":
         return {"status": "omitted", "reason": "not_weekly_review"}
+    if focus is not None and focus not in FOCUSES:
+        raise ValueError("weekly-market focus is not an offered value")
+
     snapshot = plan.get("state_snapshot") or {}
     context = snapshot.get("market_context") or {}
     window = {"start": context.get("start"), "end": context.get("end")}
     provenance = ((plan.get("input") or {}).get("price_feed") or {}).get("provenance") or {}
-    fallback_as_of = provenance.get("as_of")
-    benchmarks = context.get("benchmarks") or {}
-    facts = []
-    for name in ("SPY", "QQQ", "VIX"):
-        row = benchmarks.get(name) or {}
-        as_of = _as_of(row, fallback_as_of)
-        if row and as_of:
-            facts.append({"kind": "engine_fact", "subject": name,
-                          "source": "frozen_market_resolution", "as_of": as_of,
-                          "observation": row})
-    holdings = _selected_holdings(plan)
-    if not (window["start"] and window["end"] and facts and holdings):
+    vix = (context.get("benchmarks") or {}).get("VIX") or {}
+    as_of = _as_of(vix, provenance.get("as_of"))
+    holdings = _concentrated_holdings(plan)
+    # A valid connection needs both sides.  A missing/flat/falling VIX is not a
+    # reason to attach a market story to a book, so it omits the whole block.
+    if not (window["start"] and window["end"] and holdings and as_of and _finite(vix.get("delta")) and vix["delta"] > 0):
         return {"status": "omitted", "reason": "no_book_specific_connection"}
+
     chosen = holdings[0]
-    focus = focus or "not_sure"
-    if focus not in FOCUSES:
-        raise ValueError("weekly-market focus is not an offered value")
-    tags = set(chosen["tags"])
-    options = ["business_evidence", "price_behavior"]
-    if "too_heavy" in tags:
-        options[1] = "position_size"
-    if focus not in options and focus != "not_sure":
-        raise ValueError("weekly-market focus is not grounded in this brief")
-    watch = ({
-        "business_evidence": {"subject": chosen["ticker"], "check": "verify company-specific evidence before treating the move as a broad-market explanation"},
-        "position_size": {"subject": chosen["ticker"], "check": "compare the recorded position size with the existing cap before treating a lower price as new evidence"},
-        "price_behavior": {"subject": chosen["ticker"], "check": "separate the observed price move from a new evidence delta before acting"},
-        "not_sure": {"subject": chosen["ticker"], "check": "identify whether business evidence or the recorded position size is the relevant check before acting"},
-    })[focus]
-    return {"status": "available", "window": window, "market_facts": facts,
-            "selected_holdings": holdings, "connection": {"ticker": chosen["ticker"], "engine_fact": chosen["engine_fact"]},
-            "decision_risk": "do_not_infer_user_reason_from_market_context",
-            "next_week_watch": [watch], "optional_question": {
-                "required": False, "choices": options + ["not_sure"], "selected": focus,
-                "prompt": "Which observed tension should set next week's check?"},
-            "persistence": "none"}
+    vix_fact = {
+        "kind": "engine_fact",
+        "subject": "VIX",
+        "source": "frozen_market_resolution",
+        "as_of": as_of,
+        "observation": {"delta": vix["delta"], "last": vix.get("last"), "last_date": vix.get("last_date")},
+    }
+    selected = focus
+    effective_focus = focus or "not_sure"
+    return {
+        "status": "available",
+        "window": window,
+        "market_facts": [vix_fact],
+        "selected_holdings": holdings,
+        "connection": {
+            "ticker": chosen["ticker"],
+            "relation": "engine_diagnosed_overconcentration_during_rising_volatility",
+            "engine_facts": ["ticker_diagnosis.too_heavy", "market_context.VIX.delta_positive"],
+        },
+        "decision_risk": {
+            "kind": "concentration_blindness_during_rising_volatility",
+            "basis": "The engine marked this held name too_heavy while the frozen VIX observation rose.",
+        },
+        "next_week_watch": [_watch(chosen["ticker"], effective_focus, vix_fact)],
+        "optional_question": {
+            "required": False,
+            "choices": list(FOCUSES),
+            "selected": selected,
+            "prompt": "Which check would make next week's follow-up more useful?",
+        },
+        "persistence": "none",
+    }
 
 
 def render_zh_tw(brief):
-    """Small, auditable host fallback; hosts may phrase judgment around this plan."""
+    """Render the bounded companion without exposing engine process labels."""
     if brief.get("status") != "available":
         return ""
     window = brief["window"]
-    facts = brief["market_facts"]
-    fact_lines = []
-    for fact in facts:
-        obs = fact["observation"]
-        value = obs.get("window_ret", obs.get("delta", obs.get("last")))
-        fact_lines.append(f"{fact['subject']}: {value}（frozen engine fact；source: {fact['source']}；as_of: {fact['as_of']}）")
+    fact = brief["market_facts"][0]
     ticker = brief["connection"]["ticker"]
     watch = brief["next_week_watch"][0]
-    choices = "／".join(brief["optional_question"]["choices"])
-    return "\n".join([
-        "## 本周市場發生了什麼",
-        f"窗口：{window['start']} 至 {window['end']}。" + "；".join(fact_lines),
+    text = [
+        "## 本週市場發生了什麼",
+        f"{window['start']} 至 {window['end']}，VIX 上升 {fact['observation']['delta']}。市場資料截至 {fact['as_of']}。",
         "## 對你的組合意味著什麼",
-        f"{ticker} 是既有 engine ticker_diagnosis 選出的持倉；這是 engine fact，不是你的持有動機。",
-        "## 這周最容易犯的錯誤",
-        "把凍結的市場背景或公開觀察直接當成你的投資理由；這是 agent judgment，必須由你確認。",
-        "## 下周關注",
-        f"- {watch['subject']}：{watch['check']}。",
-        "## 可選問題",
-        f"{brief['optional_question']['prompt']}（{choices}；可跳過）",
-    ])
+        f"{ticker} 已被本次檢視標記為部位偏重；在波動上升時，先檢查既有集中度，比替價格變動找理由更重要。",
+        "## 這週最容易犯的錯誤",
+        "把波動中的價格變化直接當成新的投資證據，卻沒有先確認部位大小或公司基本面的新資訊。",
+        "## 下週關注",
+        f"- {ticker}：{watch['check']}（觸發條件：{watch['trigger']['condition']}；截至 {watch['trigger']['as_of']}）",
+    ]
+    if brief["optional_question"]["selected"] is None:
+        text.extend([
+            "## 可選問題",
+            "如果只選一個方向，下週先看公司新證據，還是先看部位大小？可跳過。",
+        ])
+    return "\n".join(text)
+
+
+def render_en(brief):
+    """English fallback for the same bounded, decision-first brief."""
+    if brief.get("status") != "available":
+        return ""
+    window = brief["window"]
+    fact = brief["market_facts"][0]
+    ticker = brief["connection"]["ticker"]
+    watch = brief["next_week_watch"][0]
+    text = [
+        "## What happened in markets this week",
+        f"From {window['start']} to {window['end']}, VIX rose by {fact['observation']['delta']}. Market data as of {fact['as_of']}.",
+        "## What it means for your portfolio",
+        f"{ticker} is already marked as an overweight position in this review. With volatility rising, check the existing concentration before explaining a price move.",
+        "## The easiest mistake this week",
+        "Treating a volatile price move as new investment evidence before checking position size or new company-specific information.",
+        "## Watch next week",
+        f"- {ticker}: {watch['check']} (trigger: {watch['trigger']['condition']}; as of {watch['trigger']['as_of']})",
+    ]
+    if brief["optional_question"]["selected"] is None:
+        text.extend([
+            "## Optional question",
+            "If you choose one direction, should next week start with new company evidence or position size? You can skip this.",
+        ])
+    return "\n".join(text)
+
+
+def render(brief, language):
+    return render_zh_tw(brief) if language == "zh-TW" else render_en(brief)
