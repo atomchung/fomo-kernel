@@ -43,10 +43,17 @@ If the host blocks the engine's own price retrieval, `prepare` still completes a
 
 Test drive (`prepare --test-drive`) runs in an isolated root: pass `--root <review_plan.state_root>` to every later command of that session.
 
+## Output voice
+
+All user-visible FOMO Kernel surfaces follow the global
+[output-voice contract](docs/output-voice.md). It owns the universal semantic
+rules; the selected route reference continues to own its facts, slots, and
+order. Host adapters may vary presentation, never those semantics.
+
 ## Non-negotiable boundaries
 
 1. Numbers, rankings, cycle IDs, metrics, weights, and ETF exemptions come from code. The agent may transcribe broker-declared position facts, but must not calculate, invent, or alter derived values.
-2. A trade the user is deciding on gets `consider`'s computed consequence, and the case for and against is built from that output — never from prose. Mark every claim you add as your own judgment, cite an engine fact through the anchor `references/trade-consequence.md` documents, and state everything the response's own `challenge` block says the answer owes — including the user's exact words, the rules this trade collides with, and what nobody checked. A case that misquotes the record, leaves an owed fact uncovered, or relabels the user's own words as an outside source is refused, not stored. Lead with one supported decision tension and attach each limitation to the claim it qualifies — the decision-first plan in `skills/fomo-kernel/references/trade-consequence.md` governs the answer's shape. Leave the decision to the user. Current market context enters only through the bounded lookup contract in `skills/fomo-kernel/references/market-lookup.md`, and a found public event never becomes the user's motive without their confirmation. Price targets and market forecasts stay out, and a review card's prescription still never names what to buy or sell.
+2. A trade the user is deciding on gets `consider`'s computed consequence, and the case for and against is built from that output — never from prose. Mark every claim you add as your own judgment, cite an engine fact through the anchor `references/trade-consequence.md` documents, and state everything the response's own `challenge` block says the answer owes — including the user's exact words, the rules this trade collides with, and what nobody checked. A case that misquotes the record, leaves an owed fact uncovered, or relabels the user's own words as an outside source is refused, not stored. Apply the global output-voice contract; `skills/fomo-kernel/references/trade-consequence.md` governs this route's answer shape. Current market context enters only through the bounded lookup contract in `skills/fomo-kernel/references/market-lookup.md`, and a found public event never becomes the user's motive without their confirmation. Price targets and market forecasts stay out, and a review card's prescription still never names what to buy or sell.
 3. Required motive questions cannot be skipped. A `new_evidence` decision requires both a claim and a source.
 4. Each card has at most one final rule, chosen by the user. Skipping is valid.
 5. Keep trade data and engine state local and out of cloud memory. The review card itself is private to the user, not public: local files, terminal output, and private-by-default in-client rendering (for example, a claude.ai Artifact) are permitted, but never publish, post, or send it to a third party. Never mix private-card content into a public card.

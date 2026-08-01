@@ -221,17 +221,17 @@ The block is emitted, never stored: it is a pure function of the premise, basis,
 
 Under maintainer QA, delivery of these obligations is proven rather than assumed. The receipt tool's card-free `consider` route ([ux-receipt.md](ux-receipt.md)) captures the challenge emitted on the call's own stdout into a transient comparison file, paired with the exact answer text shown to the user. The tool computes the coverage and verbatim fidelity itself rather than trusting a self-report, and persists only booleans, counts, and a hash — never the challenge or the presented text. The same trace also records one resolution invitation after it, whose recorded workflow state is the user's own word on what happened next, never proof that a trade was executed.
 
-## The decision-first answer
+## Route-specific synthesis
 
-The challenge block is the floor — what must be present. This section is the shape — what leads, and what attaches to what. On a representative book the block carries roughly seventeen owed facts and half a dozen unchecked items; stated as equal-weight bullets they are complete and communicate no judgment. Before writing the visible answer, make five bounded decisions, privately — this is a drafting discipline, not an engine object, a schema, or anything persisted:
+Apply the global [output-voice contract](../../../docs/output-voice.md). It
+owns the universal semantic rules; this section owns only the `consider`
+route's salience facts and answer slots.
 
-1. choose one **lead** — the single most decision-relevant tension;
-2. choose the smallest set of engine facts that supports it;
-3. state the strongest genuine counter-case;
-4. attach each limitation to the claim it qualifies, compressed;
-5. close by inviting the existing resolution without implying execution.
+The challenge block is the floor — what must be present. On a representative
+book it carries roughly seventeen owed facts and half a dozen unchecked items;
+the route slots below organize that fixed obligation without changing it.
 
-### What leads
+### Lead selection
 
 Unless a truth-critical disclosure changes how an earlier item can be understood, salience runs:
 
@@ -242,29 +242,13 @@ Unless a truth-critical disclosure changes how an earlier item can be understood
 
 Special cases: `already_over` with `worsens: false` is an improvement to an already-broken line, never framed as a new breach. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence, not in a footer. A stale or cost-basis book attaches to the conclusion it weakens, and leads only when it makes the apparent consequence unreliable enough to change the decision. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name what stays unchecked — never convert "not measured" into "no risk".
 
-### The visible shape
+### Answer slots
 
 Default to two compact paragraphs plus one resolution sentence — a shape, not a template; more or fewer sentences are allowed when the challenge requires them, and there is no word-count target.
 
 - **Paragraph 1 — answer first:** the lead, its key engine support, and any qualifier that changes how it reads.
 - **Paragraph 2 — the real trade-off:** the strongest case the other way, the user's exact `reason` / `why_now` where owed, and one grouped limitation clause.
 - **Resolution sentence:** keep it open, decline it, or modify it — the user's call, and never imply a broker action occurred.
-
-### Compression
-
-- Every owed fact appears once, not once per section.
-- Basis metadata is one clause; group unchecked items by the claim they qualify — no standalone disclaimer list by default, and no generic financial-advice warnings the challenge does not carry.
-- A caveat that can overturn the lead sits beside the lead, not at the end.
-- The counter-case must be a genuine rebuttal: at least one claim in it engages the lead's strongest support directly. A softened restatement — or a parallel list of unrelated facts that never touches the lead — does not count as the second side.
-
-### Self-check before sending
-
-Four questions, the same four the owner-live acceptance applies (#488; opt-in semantic evaluation is #590 — there is no runtime judge):
-
-1. Cover the limitation sentences — does the answer still stand on its own?
-2. Does it say at least one thing the user did not already know, or knew but had not connected?
-3. Does the counter-case directly engage the lead's strongest support?
-4. Is the user's next step more concrete than before reading?
 
 ### One payload, two renderings
 
