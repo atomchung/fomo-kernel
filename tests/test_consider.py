@@ -1713,6 +1713,38 @@ def test_agent_case_is_stored_when_supplied_and_absent_when_not():
         assert "agent_case" not in without_case["evaluation"]
 
 
+def test_product_surface_is_emitted_by_the_real_consider_route_and_owns_its_case():
+    """#718's final text belongs to ``consider``, not to its QA driver.
+
+    The surface is produced after the same frozen-record provenance gate as a
+    supplied case, is persisted as that case, and cannot be combined with a
+    second host-authored ``--agent-case``.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        context_path = os.path.join(tmp, "context.json")
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump({"reason": "Customer demand appears stronger.",
+                       "why_now": "Recent customer conversations sound more urgent."}, f)
+        payload = _ok(_run(
+            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            "--decision-context", context_path, "--product-surface"))
+        surface = payload["product_surface"]
+        assert surface["route"] == "consider"
+        assert surface["presented_text"] == "".join(
+            surface["presented_text"][part["start"]:part["end"]] for part in surface["segments"])
+        assert payload["evaluation"]["agent_case"] == surface["agent_case"]
+
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_valid_agent_case_for_sample_momentum(), f)
+        _fails(_run(
+            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 131.0, "qty": 5}',
+            "--product-surface", "--agent-case", case_path),
+            "owns the answer case")
+
+
 def test_agent_case_with_a_wrong_number_is_rejected_on_the_production_path():
     """#414 / #479 Wave B: engine/answer_provenance.py::validate_agent_case
     is wired into cmd_consider itself, not only exercised in that module's
