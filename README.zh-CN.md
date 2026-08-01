@@ -7,7 +7,7 @@
 
 [English](README.md) · [繁體中文](README.zh-TW.md) · **简体中文**
 
-> **一个本地、以证据为边界的交易决策伙伴。** 把你正在考虑的交易，或已经做过的交易带进来。FOMO Kernel 会降低你的决策负担，但不会替你做最后决定。
+> **一个直接、以证据为边界、在本地运行的交易决策伙伴。** 把你正在考虑的交易，或已经做过的交易带进来。FOMO Kernel 会降低你的决策负担，但不会替你做最后决定。
 
 它服务两个核心时刻：
 
@@ -181,6 +181,14 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --confirm
 ## 其他 coding agent
 
 Claude Code 提供最直接的 slash-command 安装。Codex、Cursor 与兼容的 coding agent 可以打开 repository，按照 [`AGENTS.md`](AGENTS.md) 进入同一份 host-neutral contract，再由它路由到 [`skills/fomo-kernel/SKILL.md`](skills/fomo-kernel/SKILL.md)。
+
+若要通过 host-neutral CLI 启动 test-drive plan：
+
+```bash
+python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language zh-CN
+```
+
+这个命令会返回 Review Plan；Agent 再按照它选择的 flow 呈现并完成体验。
 
 目前 owner-live acceptance 聚焦 Claude Code 与 Codex。能够兼容运行，不代表已经完成产品验收。
 
