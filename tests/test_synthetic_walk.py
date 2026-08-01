@@ -5,9 +5,14 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+import offline_posture  # noqa: E402
+offline_posture.apply()
+
 RUNNER = ROOT / "qa" / "run_synthetic_walk.py"
 JUDGE = ROOT / "evals" / "judge_trade_answers.py"
 
@@ -60,8 +65,18 @@ def test_invalid_synthetic_action_fails_before_route_or_judge():
     raise AssertionError("undeclared synthetic text was accepted")
 
 
+def test_semantic_timeout_preserves_a_combined_receipt_state():
+    sys.path.insert(0, str(ROOT / "qa"))
+    import run_synthetic_walk as runner
+    with mock.patch.object(runner.subprocess, "run",
+                           side_effect=subprocess.TimeoutExpired(cmd="judge", timeout=1)):
+        assert runner._semantic_judge({}, pathlib.Path("candidate.json"),
+                                      pathlib.Path("source.json")) == "unavailable"
+
+
 if __name__ == "__main__":
     test_plan_has_no_model_calls()
     test_stub_walk_uses_real_route_and_captures_exact_candidate()
     test_invalid_synthetic_action_fails_before_route_or_judge()
+    test_semantic_timeout_preserves_a_combined_receipt_state()
     print("synthetic walk tests: ok")

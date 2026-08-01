@@ -1745,6 +1745,21 @@ def test_product_surface_is_emitted_by_the_real_consider_route_and_owns_its_case
             "owns the answer case")
 
 
+def test_consider_emits_the_product_owned_context_questions_before_evaluation():
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _ok(_run(
+            "consider", "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            "--context-questions"))
+        assert payload["status"] == "collecting_context"
+        assert payload["route"] == "consider"
+        assert [(row["field"], row["required"], row["allowed_actions"])
+                for row in payload["question_queue"]] == [
+                    ("reason", True, ["provide_text"]),
+                    ("why_now", True, ["provide_text"])]
+        assert _read_evaluations(tmp) == []
+
+
 def test_agent_case_with_a_wrong_number_is_rejected_on_the_production_path():
     """#414 / #479 Wave B: engine/answer_provenance.py::validate_agent_case
     is wired into cmd_consider itself, not only exercised in that module's

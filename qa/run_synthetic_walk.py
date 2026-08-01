@@ -20,6 +20,7 @@ from synthetic_user import AgySyntheticUser, StubSyntheticUser, SyntheticUserErr
 SCENARIO_ID = "consider-ai-momentum"
 FIXTURE_ID = "synthetic-consider-ai-momentum"
 MAX_TURNS = 8
+SEMANTIC_JUDGE_TIMEOUT_SECONDS = 1000
 
 SCENARIO = {
     "persona_id": "ai-momentum-investor",
@@ -52,6 +53,26 @@ def _receipt(env, *args):
         raise WalkError(run.stdout or run.stderr or "ux receipt failed")
 
 
+def _semantic_judge(env, candidate_path, fixture_path):
+    """Run the existing #705 judge without losing a completed walkthrough.
+
+    The judge's own agy sample timeout is five minutes and it may take several
+    samples.  A shorter wrapper deadline would turn a judge infrastructure
+    timeout into a missing combined receipt after the product flow already
+    completed.  The semantic layer therefore records ``unavailable`` while
+    preserving the deterministic workflow result.
+    """
+    try:
+        judge = subprocess.run(
+            [sys.executable, str(ROOT / "evals/judge_trade_answers.py"), "--answer-file", candidate_path,
+             "--source-fixture", fixture_path],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+            timeout=SEMANTIC_JUDGE_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+    return "agreement" if judge.returncode == 0 else "disagreement"
+
+
 def _inputs(directory):
     csv = directory / "book.csv"
     csv.write_text("Symbol,Quantity,Price,Action,TradeDate,RecordType\n" + "\n".join(
@@ -78,16 +99,25 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     csv, prices = _inputs(run_dir)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     _run(env, "set-cap", "--root", coach, "--pct", "0.25")
+    premise = {"ticker": "FICTIONAL-A", "side": "buy", "qty": 95.8904,
+               "price": 100, "date": "2026-08-01", "currency": "USD"}
+    interaction = _run(env, "consider", "--root", coach, "--premise", json.dumps(premise),
+                       "--context-questions", "--language", "en")
+    if interaction.get("status") != "collecting_context" or interaction.get("route") != "consider":
+        raise WalkError("consider did not return a product-owned context surface")
 
     transcript, context, turns, seen_surfaces, seen_actions = [], {}, 0, set(), set()
     user = (StubSyntheticUser([SCENARIO["reason"], SCENARIO["why_now"]]) if user_backend == "stub"
             else AgySyntheticUser(SCENARIO))
-    for field, surface in (("reason", "Why are you considering this add?"),
-                           ("why_now", "What changed to make this decision timely?")):
+    for question in interaction.get("question_queue") or ():
         if turns >= MAX_TURNS:
             raise WalkError("synthetic walk exceeded max_turns")
-        envelope = {"step_id": f"consider-context-{field}", "surface": surface,
-                    "allowed_actions": ["provide_text"], "route_state": "collecting_context", "terminal": False}
+        field, surface = question.get("field"), question.get("surface")
+        if field not in {"reason", "why_now"} or not isinstance(surface, str):
+            raise WalkError("consider returned an unsupported context question")
+        envelope = {"step_id": question.get("question_id"), "surface": surface,
+                    "allowed_actions": question.get("allowed_actions"),
+                    "route_state": question.get("route_state"), "terminal": False}
         surface_digest = hashlib.sha256(surface.encode()).hexdigest()
         if surface_digest in seen_surfaces:
             raise WalkError(f"repeated product surface at {envelope['step_id']}")
@@ -105,8 +135,7 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     context_path = run_dir / "decision-context.json"
     _write(context_path, context)
     final = _run(env, "consider", csv, "--root", coach,
-                 "--premise", json.dumps({"ticker": "FICTIONAL-A", "side": "buy", "qty": 95.8904,
-                                            "price": 100, "date": "2026-08-01", "currency": "USD"}),
+                 "--premise", json.dumps(premise),
                  "--prices", prices, "--cash", json.dumps({"as_of": "2026-08-01", "amount": 20000, "currency": "USD"}),
                  "--decision-context", context_path, "--product-surface", "--language", "en")
     product_surface = final["product_surface"]
@@ -133,9 +162,7 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     deterministic = "pass" if verification.returncode == 0 else "fail"
     semantic = "skipped"
     if deterministic == "pass" and semantic_judge:
-        judge = subprocess.run([sys.executable, str(ROOT / "evals/judge_trade_answers.py"), "--answer-file", candidate_path,
-                                "--source-fixture", fixture_path], cwd=ROOT, env=env, capture_output=True, text=True, timeout=240)
-        semantic = "agreement" if judge.returncode == 0 else "disagreement"
+        semantic = _semantic_judge(env, candidate_path, fixture_path)
     report = {"workflow": "pass" if deterministic == "pass" else "fail", "deterministic": deterministic,
               "semantic_judge": semantic, "owner_acceptance": "owner_unreviewed", "scenario": SCENARIO_ID,
               "persona": SCENARIO["persona_id"], "turn_count": turns, "final_resolution": "open",
