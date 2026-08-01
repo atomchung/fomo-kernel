@@ -32,7 +32,7 @@ as a user-experience pass.
      --snapshot-json /tmp/fomo-kernel-positions.json --language en
    ```
 
-4. Read the returned `review_plan.flow_path` and shared references. Follow `references/interaction-delivery.md`: declare the host capabilities for the local presentation trace, validate and freeze private surfaces only for `add_thesis` and `headline_motive` through `review.py resume`, use the unchanged engine fallback otherwise, and ask only questions in `question_queue` with `required:true`.
+4. Read the returned `review_plan.flow_path` and shared references. Follow `references/interaction-delivery.md`: declare the host capabilities for the local presentation trace, validate and freeze a private surface only when the engine projects `question_opportunity` on the queue row through `review.py resume`, use the unchanged engine fallback otherwise, and ask only questions in `question_queue` with `required:true`.
 5. Produce schema-valid answers and a narrative with no digits, then call `preview`. Fix rejected artifacts instead of bypassing the validator.
 6. Show the review-card preview (`card-private-preview.md`) inline and record the actual delivery mode before asking the user to choose one candidate rule, supply a custom rule, or skip. Card delivery — preview and final — follows `references/card-delivery.md`; a generated file is not evidence that the user saw it. Write that choice to `answers.commitment` and call `finalize`.
 7. Deliver the review card at `sessions/<id>/card-private.md`. Deliver `card-public.md` only when the user asks for a share-safe artifact; there is no publishing feature yet.
