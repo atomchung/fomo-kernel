@@ -64,9 +64,38 @@ On a later review, FOMO Kernel first checks the rule you chose and carries forwa
 
 The value is not a larger archive. It is continuity: **what you believed → what you did → what changed → what deserves to survive as a rule.**
 
-## What a review card looks like
+## What it looks like
 
-The committed demo uses fictional data:
+The committed demo uses fictional data. The detailed text version stays collapsed so the product journey remains the first thing a new reader sees, while its values remain synchronized with the HTML and image assets.
+
+<details>
+<summary>Open the illustrative review card</summary>
+
+```text
+Review card · mock sample
+On paper you're up +$138k, but almost all of it is "held and never sold";
+your active trades are what need discipline, not luck.
+
+  Total P&L             +$138,058    (realized $19k + unrealized $119k)
+  Active win/loss ratio  2.9         (avg win $2,851 vs avg loss $1,000)
+  Beat the market +247pp · β 2.04 · AI exposure 98% (30% drawdown = −$50k)
+      └ splitting "beat the market" into luck vs skill: right sector +67pp + picking within the sector +181pp
+
+  Data notes:
+  - the α interval is still wide — can't yet tell skill from luck; don't take the demo literally.
+
+Per-position diagnosis (sorted by size; small lots not nitpicked):
+  PLTR  +$74,058   [v] likely DCA (buys up and down, not averaging a loser) · [!] too heavy 50%
+  NVDA  +$56,412   [v] likely DCA · [!] too heavy 46%
+  ORCL   +$1,658   [v] disciplined hold: +22%
+  AMD    -$1,000   --  roughly neutral
+
+[v] What you did right: you averaged down twice, but both times stayed within your position cap — no ticker got averaged into an oversized position
+[X] Biggest leak: position sizing — largest single lot PLTR is 50%, the rest average 17%
+[*] Change only this next time: hard-cap any single position at 20% — trim if it goes over
+```
+
+</details>
 
 ![fomo-kernel review card demo](docs/demo-card-en.png)
 
