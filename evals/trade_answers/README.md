@@ -19,12 +19,19 @@ candidate's captured challenge must also equal the challenge derived from the
 frozen fixture byte-for-JSON-value. Missing machine-checkable facts, missing
 verbatim user statements, invented numbers or dates, and a mismatched challenge
 fail before any model call. Candidate artifacts add one stricter presentation
-binding: `presented_claim_order` must reference every validated `agent_case`
-claim exactly once, and `presented_text` must be the newline-joined claims in
-that order. An unlabelled sentence therefore cannot borrow a valid structured
-case's provenance result. This does not pretend to solve general NLI: semantic
-mislabeling inside a submitted claim remains bounded by the production
-provenance contract itself.
+binding over the character-for-character complete answer. Ordered character-offset
+`segments` must partition all of `presented_text`: every validated `agent_case`
+claim appears exactly once as an exact `claim_ref`; limitations bind only to
+the fixture challenge's existing basis/disclosure/unchecked obligations; the
+connective lane is explicitly `agent_judgment`; the single final resolution
+declares the existing open/declined/modified workflow options and visibly names
+each option marker; and paragraph separators contain whitespace only. An
+unlabelled appended or overlapping
+sentence therefore cannot borrow a valid structured case's provenance result.
+This does not pretend to solve general NLI: whether a labelled limitation or
+connective faithfully realizes its declared role remains semantic evidence for
+the relevant judge axis, while whether a resolution honestly offers its named
+choices remains an owner-review boundary outside this four-axis judge.
 
 The semantic lane runs only for deterministically eligible answers. The judge
 sees one answer, the question, and the frozen evaluation facts. It does not see
@@ -78,7 +85,7 @@ Candidate artifact shape:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "fixture_id": "TA-001",
   "answer_id": "current-consider-output",
   "agent_case": {
@@ -86,21 +93,64 @@ Candidate artifact shape:
     "against": [{"claim": "Second exact surfaced claim.", "provenance": "engine_fact", "anchor": "rule_collisions.rule-fixture-cap.state"}]
   },
   "challenge": {"...": "the complete challenge emitted for this frozen evaluation"},
-  "presented_claim_order": [
-    {"side": "for", "index": 0},
-    {"side": "against", "index": 0}
+  "segments": [
+    {"kind": "claim_ref", "side": "for", "index": 0, "start": 0, "end": 27},
+    {"kind": "separator", "start": 27, "end": 28},
+    {"kind": "claim_ref", "side": "against", "index": 0, "start": 28, "end": 56},
+    {"kind": "separator", "start": 56, "end": 57},
+    {
+      "kind": "connective",
+      "provenance": "agent_judgment",
+      "start": 57,
+      "end": 125
+    },
+    {"kind": "separator", "start": 125, "end": 127},
+    {
+      "kind": "limitation",
+      "obligation_refs": [
+        "must_state[0]", "must_state[1]", "unchecked.liquidity",
+        "unchecked.valuation", "unchecked.tax", "unchecked.position_fit"
+      ],
+      "start": 127,
+      "end": 162
+    },
+    {"kind": "separator", "start": 162, "end": 164},
+    {
+      "kind": "resolution",
+      "workflow_options": ["open", "declined", "modified"],
+      "start": 164,
+      "end": 214
+    }
   ],
-  "presented_text": "First exact surfaced claim.\nSecond exact surfaced claim.",
+  "presented_text": "First exact surfaced claim. Second exact surfaced claim. That makes the choice depend on whether the exception is deliberate.\n\nThis is a recorded-book limitation.\n\nYour call: keep it open, decline it, or modify it.",
   "generator": {"host": "optional", "model": "optional", "revision": "optional"}
 }
 ```
 
+Offsets are Python/Unicode character indexes into the exact `presented_text`,
+not UTF-8 byte indexes. The example abbreviates the challenge. A real
+limitation segment may cite only obligations that exist in the complete derived
+challenge; overall answer coverage remains the production delivery gate. The loader
+rejects gaps, overlaps, empty/out-of-range spans, unknown fields or segment
+kinds, repeated/omitted claims, unknown limitation references, blank substantive
+segments, non-whitespace separators, missing/duplicate/non-final resolution
+segments, resolution metadata outside open/declined/modified, and resolution
+text that does not visibly name those three option markers. Marker presence is
+mechanical evidence, not proof that arbitrary prose offers the choices honestly.
+
 The artifact must stay outside the repository (for example under `/tmp`). It
 must contain synthetic fixture output only: `--answer-file` sends its text to
 the selected external judge, so it is not a route for a private real-decision
-answer. The exact claim-bound format is deliberate: this first slice evaluates
-free ordering and synthesis over validated claims, not arbitrary extra factual
-sentences that were never submitted to the production provenance gate.
+answer. The segmented format is deliberate: this first slice can replay a
+normal two-paragraph-plus-resolution answer character-for-character while
+refusing unlabelled extra text. A capture author can still misclassify an
+unsupported sentence as `connective`, claim that a limitation realizes the
+wrong obligation, or negate the choices inside a resolution span even though
+the required option words are present. That role laundering is not mechanically
+decidable without turning every sentence back into a provenance claim or adding
+an NLI gate. The relevant limitation/connective fit belongs to the semantic
+axes; resolution meaning remains outside those four axes and requires owner
+review.
 
 Backend, model, repeated-vote, fail-closed parsing, and ambiguity behavior are
 inherited from `evals/judge_episodes.py`. A tied vote is `ambiguous`; an
@@ -125,6 +175,9 @@ Receipt JSON uses reversible ASCII escapes so even malformed Unicode returned
 by an untrusted judge cannot erase an otherwise completed run.
 The receipt is appended and synced before any result text is written to stdout,
 so a closed pipe cannot erase evidence for model calls that already happened.
+Before real model calls, a locked store preflight also rejects torn, malformed,
+or already-unwritable history. It cannot predict a later filesystem failure;
+if final append or sync still fails, the run is explicitly non-evidence.
 History prints calibration state and compact per-axis counts rather than showing
 an uncalibrated `PASS` without its trust boundary.
 

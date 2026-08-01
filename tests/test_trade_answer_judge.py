@@ -42,84 +42,122 @@ def declared_sample(answer, axes):
     }
 
 
-def render_candidate_claims(payload):
-    return "\n".join(
-        payload["agent_case"][ref["side"]][ref["index"]]["claim"]
-        for ref in payload["presented_claim_order"])
+def candidate_payload(judge, fixture, *, answer_id="current-output",
+                      rule_before="20%", extra_against_claim=None):
+    # Define the ordinary user-visible answer first. The structured case and
+    # spans below annotate this exact surface; they do not render or rewrite it
+    # into a claim-only dialect for the evaluator.
+    lead = ("The decision is whether the user's still-unverified demand observation "
+            "justifies a temporary exception to the recorded cap.")
+    quoted_context = ("The user's exact premise and why-now are: Customer demand appears "
+                      "stronger. The latest customer conversations sound more urgent.")
+    synthesis = ("A real, durable change could make the exception deliberate; without "
+                 "verification, the trade instead relaxes the rule when it becomes "
+                 "inconvenient.")
+    price_basis = "The recorded book used prices observed on 2026-08-01."
+    collision = (f"FICTIONAL-A would move from {rule_before} to 27%, a 7% increase, so "
+                 "the proposed add crosses this rule: Keep any single position at or "
+                 "below 25% of the recorded book.")
+    consequence = ("The add also puts top-three concentration at 63.5%, classified AI and "
+                   "maximum-sector exposure at 27%, and cash at $10,410.96 or 8.6758%.")
+    limitation = (
+        "This is a declared-complete recorded snapshot rather than a live broker view, "
+        "so liquidity, valuation, tax, broader position fit, and whether the evidence "
+        "actually changed remain unchecked."
+    )
+    resolution = (
+        "Your call: keep it open, decline it, or modify the size; nothing has been executed."
+    )
+    first_paragraph = " ".join(
+        [lead, collision, *([extra_against_claim] if extra_against_claim else []), consequence])
+    second_paragraph = " ".join(
+        [price_basis, quoted_context, synthesis, limitation])
+    presented_text = f"{first_paragraph}\n\n{second_paragraph}\n\n{resolution}"
 
-
-def candidate_payload(judge, fixture, *, answer_id="current-output"):
     agent_case = {
         "for": [
             {
-                "claim": ("The decision is whether the user's still-unverified demand "
-                          "observation justifies a temporary exception to the recorded cap."),
+                "claim": lead,
                 "provenance": "agent_judgment",
             },
             {
-                "claim": ("The user's exact premise and why-now are: Customer demand appears "
-                          "stronger. The latest customer conversations sound more urgent."),
-                "provenance": "agent_judgment",
-            },
-            {
-                "claim": ("A real, durable change could make the exception deliberate; without "
-                          "verification, the trade instead relaxes the rule when it becomes "
-                          "inconvenient."),
-                "provenance": "agent_judgment",
-            },
-            {
-                "claim": ("The user can keep the trade open while checking the claim, resize it "
-                          "to avoid the breach, or decline it."),
+                "claim": quoted_context,
                 "provenance": "agent_judgment",
             },
         ],
         "against": [
             {
-                "claim": "The recorded book used prices observed on 2026-08-01.",
+                "claim": price_basis,
                 "provenance": "engine_fact",
                 "anchor": "basis.price_observations.as_of",
             },
             {
-                "claim": ("FICTIONAL-A would move from 20% to 27%, a 7% increase, so the proposed "
-                          "add crosses this rule: Keep any single position at or below 25% of the "
-                          "recorded book."),
+                "claim": collision,
                 "provenance": "engine_fact",
                 "anchor": "rule_collisions.rule-fixture-cap.state",
             },
             {
-                "claim": ("The add also puts top-three concentration at 63.5%, classified AI and "
-                          "maximum-sector exposure at 27%, and cash at $10,410.96 or 8.6758%."),
+                "claim": consequence,
                 "provenance": "engine_fact",
                 "anchor": "consequence.after.top3",
             },
-            {
-                "claim": ("Because this is not a live broker view, and liquidity, valuation, tax, "
-                          "broader position fit, and whether the evidence actually changed were "
-                          "not checked, the crossing identifies a decision conflict but does not "
-                          "certify execution-time conditions."),
-                "provenance": "agent_judgment",
-            },
         ],
     }
-    order = [
-        {"side": "for", "index": 0},
-        {"side": "against", "index": 0},
-        {"side": "against", "index": 1},
-        {"side": "against", "index": 2},
-        {"side": "for", "index": 1},
-        {"side": "for", "index": 2},
-        {"side": "against", "index": 3},
-        {"side": "for", "index": 3},
-    ]
+    if extra_against_claim is not None:
+        agent_case["against"].append({
+            "claim": extra_against_claim,
+            "provenance": "agent_judgment",
+        })
+
+    challenge = judge._challenge(judge._frozen(fixture))
+    segments = []
+    cursor = 0
+
+    def add(kind, text, **fields):
+        nonlocal cursor
+        start = presented_text.index(text, cursor)
+        assert start == cursor
+        cursor = start + len(text)
+        segments.append({"kind": kind, **fields, "start": start, "end": cursor})
+
+    def claim(side, index):
+        add("claim_ref", agent_case[side][index]["claim"], side=side, index=index)
+
+    claim("for", 0)
+    add("separator", " ")
+    claim("against", 1)
+    if extra_against_claim is not None:
+        add("separator", " ")
+        claim("against", len(agent_case["against"]) - 1)
+    add("separator", " ")
+    claim("against", 2)
+    add("separator", "\n\n")
+    claim("against", 0)
+    add("separator", " ")
+    claim("for", 1)
+    add("separator", " ")
+    add("connective", synthesis, provenance="agent_judgment")
+    add("separator", " ")
+    add("limitation", limitation,
+        obligation_refs=[
+            "must_state[0]", "must_state[3]",
+            *[f"unchecked.{key}" for key in challenge["unchecked"]],
+        ])
+    add("separator", "\n\n")
+    add("resolution", resolution,
+        workflow_options=["open", "declined", "modified"])
+    assert cursor == len(presented_text)
+    assert "".join(presented_text[item["start"]:item["end"]]
+                   for item in segments) == presented_text
+
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "fixture_id": fixture["id"],
         "answer_id": answer_id,
         "agent_case": agent_case,
-        "challenge": judge._challenge(judge._frozen(fixture)),
-        "presented_claim_order": order,
-        "presented_text": "\n".join(
-            agent_case[ref["side"]][ref["index"]]["claim"] for ref in order),
+        "challenge": challenge,
+        "segments": segments,
+        "presented_text": presented_text,
         "generator": {"host": "synthetic-test", "revision": "current"},
     }
 
@@ -518,6 +556,36 @@ def test_receipt_append_locks_and_refuses_an_incomplete_tail():
             os.environ["TRADE_COACH_HOME"] = previous
 
 
+def test_torn_or_malformed_receipt_history_stops_the_run_before_model_calls():
+    judge = load_module()
+    fixture = copy.deepcopy(loaded_bank(judge)[0])
+    fixture["answers"] = [next(
+        answer for answer in fixture["answers"]
+        if answer["id"] == "all_axes_pass_compact")]
+    previous = os.environ.get("TRADE_COACH_HOME")
+    calls = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["TRADE_COACH_HOME"] = tmp
+            path = judge.RECEIPTS.history_path()
+            path.parent.mkdir(parents=True)
+            for unsafe in ('{"status":"partial"', "not-json\n"):
+                path.write_text(unsafe, encoding="utf-8")
+                before = path.read_bytes()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = judge.run_judge(
+                        [fixture], backend="stub", model="stub",
+                        sample_one=lambda *_args: calls.append(True), filtered=True)
+                assert rc == 1
+                assert calls == []
+                assert path.read_bytes() == before
+    finally:
+        if previous is None:
+            os.environ.pop("TRADE_COACH_HOME", None)
+        else:
+            os.environ["TRADE_COACH_HOME"] = previous
+
+
 def test_receipt_fsync_failure_is_not_evidence():
     judge = load_module()
     previous_root = os.environ.get("TRADE_COACH_HOME")
@@ -649,7 +717,7 @@ def test_stdout_closing_after_model_calls_cannot_prevent_the_receipt():
     assert receipts[0]["status"] == "pass"
 
 
-def test_candidate_output_changes_the_result_without_editing_the_fixture():
+def test_normal_candidate_output_round_trips_exactly_and_changes_without_fixture_edits():
     judge = load_module()
     bank = loaded_bank(judge)
     fixture = bank[0]
@@ -668,6 +736,12 @@ def test_candidate_output_changes_the_result_without_editing_the_fixture():
     with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp) / "candidate.json"
         passing_payload = candidate_payload(judge, fixture)
+        assert "\n\n" in passing_payload["presented_text"]
+        assert passing_payload["presented_text"].endswith(
+            "Your call: keep it open, decline it, or modify the size; "
+            "nothing has been executed.")
+        assert {segment["kind"] for segment in passing_payload["segments"]} == {
+            "claim_ref", "connective", "limitation", "resolution", "separator"}
         write_candidate(path, passing_payload)
         cli_output = io.StringIO()
         with contextlib.redirect_stdout(cli_output):
@@ -676,6 +750,8 @@ def test_candidate_output_changes_the_result_without_editing_the_fixture():
         assert "CANDIDATE current-output" in cli_output.getvalue()
         passing, loaded, problems = judge.load_candidate(path, bank)
         assert not problems, problems
+        assert loaded["presented_text"] == passing_payload["presented_text"]
+        assert passing["answers"][0]["prose"] == passing_payload["presented_text"]
         assert judge.deterministic_eligibility(passing, passing["answers"][0]).eligible
         with contextlib.redirect_stdout(io.StringIO()):
             assert judge.run_judge(
@@ -687,15 +763,9 @@ def test_candidate_output_changes_the_result_without_editing_the_fixture():
                 append_receipt=lambda row: receipts.append(row) or pathlib.Path("/tmp/receipt"),
             ) == 0
 
-        changed_payload = copy.deepcopy(passing_payload)
-        changed_payload["answer_id"] = "current-output-contradiction"
-        changed_payload["agent_case"]["against"].append({
-            "claim": "Even so, the proposed add remains within the user's cap.",
-            "provenance": "agent_judgment",
-        })
-        changed_payload["presented_claim_order"].append({
-            "side": "against", "index": 4})
-        changed_payload["presented_text"] = render_candidate_claims(changed_payload)
+        changed_payload = candidate_payload(
+            judge, fixture, answer_id="current-output-contradiction",
+            extra_against_claim="Even so, the proposed add remains within the user's cap.")
         write_candidate(path, changed_payload)
         changed, loaded_changed, problems = judge.load_candidate(path, bank)
         assert not problems, problems
@@ -731,11 +801,7 @@ def test_candidate_runs_production_delivery_checks_before_any_model_call():
     judge = load_module()
     bank = loaded_bank(judge)
     fixture = bank[0]
-    payload = candidate_payload(judge, fixture)
-    payload["agent_case"]["against"][1]["claim"] = \
-        payload["agent_case"]["against"][1]["claim"].replace(
-        "from 20% to 27%", "from 2% to 27%")
-    payload["presented_text"] = render_candidate_claims(payload)
+    payload = candidate_payload(judge, fixture, rule_before="2%")
     calls, receipts = [], []
     with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp) / "candidate.json"
@@ -758,6 +824,25 @@ def test_candidate_runs_production_delivery_checks_before_any_model_call():
     assert receipts[0]["answers"][0]["answer_kind"] == "candidate_output"
 
 
+def test_candidate_accepts_the_display_magnitude_of_a_negative_engine_delta():
+    judge = load_module()
+    bank = loaded_bank(judge)
+    fixture = bank[0]
+    payload = candidate_payload(
+        judge, fixture,
+        extra_against_claim="The trade reduces recorded cash by $9,589.04.")
+    claim = payload["agent_case"]["against"][-1]
+    claim["provenance"] = "engine_fact"
+    claim["anchor"] = "consequence.delta.cash.balance"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "candidate.json"
+        write_candidate(path, payload)
+        candidate, _loaded, problems = judge.load_candidate(path, bank)
+    assert not problems, problems
+    eligibility = judge.deterministic_eligibility(candidate, candidate["answers"][0])
+    assert eligibility.eligible, eligibility.reason
+
+
 def test_candidate_cannot_append_an_unlabelled_claim_beside_a_valid_case():
     judge = load_module()
     bank = loaded_bank(judge)
@@ -771,7 +856,7 @@ def test_candidate_cannot_append_an_unlabelled_claim_beside_a_valid_case():
         write_candidate(path, payload)
         candidate, _loaded, problems = judge.load_candidate(path, bank)
         assert candidate is None
-        assert any("ordered validated case claims" in problem for problem in problems)
+        assert any("trailing text is unbound" in problem for problem in problems)
 
     direct = copy.deepcopy(fixture)
     direct["answers"] = [{
@@ -779,13 +864,196 @@ def test_candidate_cannot_append_an_unlabelled_claim_beside_a_valid_case():
         "kind": "candidate_output",
         "agent_case": payload["agent_case"],
         "captured_challenge": payload["challenge"],
-        "presented_claim_order": payload["presented_claim_order"],
+        "segments": payload["segments"],
         "judge_fails": [],
         "prose": payload["presented_text"],
     }]
     eligibility = judge.deterministic_eligibility(direct, direct["answers"][0])
     assert eligibility.eligible is False
-    assert "ordered validated case claims" in eligibility.reason
+    assert "trailing text is unbound" in eligibility.reason
+
+
+def test_candidate_receipt_binds_every_surface_the_model_will_see():
+    judge = load_module()
+    bank = loaded_bank(judge)
+    fixture = bank[0]
+    payload = candidate_payload(judge, fixture)
+    direct = copy.deepcopy(fixture)
+    answer = {
+        "id": payload["answer_id"],
+        "kind": "candidate_output",
+        "agent_case": payload["agent_case"],
+        "captured_challenge": payload["challenge"],
+        "segments": copy.deepcopy(payload["segments"]),
+        "judge_fails": [],
+        "prose": payload["presented_text"],
+        "presented_options": [{
+            "label": "", "description": "open, decline, or modify",
+        }],
+    }
+    # Make the direct candidate structurally eligible over its full visible
+    # surface while leaving the artifact's presented_text smaller. Before the
+    # exact-surface interlock, the receipt hashed only `prose` even though the
+    # judge input included this extra option description.
+    old_resolution = answer["segments"][-1]
+    old_resolution.pop("workflow_options")
+    old_resolution["kind"] = "connective"
+    old_resolution["provenance"] = "agent_judgment"
+    extra_start = len(answer["prose"])
+    extra_text = "open, decline, or modify"
+    answer["segments"].extend([
+        {"kind": "separator", "start": extra_start, "end": extra_start + 1},
+        {
+            "kind": "resolution",
+            "workflow_options": ["open", "declined", "modified"],
+            "start": extra_start + 1,
+            "end": extra_start + 1 + len(extra_text),
+        },
+    ])
+    direct["answers"] = [answer]
+    artifact = copy.deepcopy(payload)
+    artifact["segments"] = copy.deepcopy(answer["segments"])
+    assert judge.deterministic_eligibility(direct, answer).eligible
+
+    calls = []
+    try:
+        judge.run_judge(
+            [direct], backend="stub", model="stub",
+            sample_one=lambda *_args: calls.append(True), filtered=True,
+            run_kind="candidate_output", candidate_artifact=artifact,
+            append_receipt=lambda _row: pathlib.Path("/tmp/receipt"))
+    except ValueError as exc:
+        assert "presented_text" in str(exc)
+    else:
+        raise AssertionError("a smaller candidate artifact reached the model")
+    assert calls == []
+
+
+def test_candidate_answer_cannot_use_the_fixture_witness_run_kind():
+    judge = load_module()
+    bank = loaded_bank(judge)
+    payload = candidate_payload(judge, bank[0])
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "candidate.json"
+        write_candidate(path, payload)
+        candidate, _loaded, problems = judge.load_candidate(path, bank)
+    assert not problems, problems
+    calls = []
+    try:
+        judge.run_judge(
+            [candidate], backend="stub", model="stub",
+            sample_one=lambda *_args: calls.append(True), filtered=True,
+            append_receipt=lambda _row: pathlib.Path("/tmp/receipt"))
+    except ValueError as exc:
+        assert "run_kind=candidate_output" in str(exc)
+    else:
+        raise AssertionError("a candidate ran under fixture_witness receipt semantics")
+    assert calls == []
+
+
+def test_candidate_segments_reject_span_and_obligation_mutations():
+    judge = load_module()
+    bank = loaded_bank(judge)
+    fixture = bank[0]
+    original = candidate_payload(judge, fixture)
+
+    gap = copy.deepcopy(original)
+    gap["segments"][1]["start"] += 1
+    overlap = copy.deepcopy(original)
+    overlap["segments"][1]["start"] -= 1
+    out_of_range = copy.deepcopy(original)
+    out_of_range["segments"][-1]["end"] += 1
+    bool_offset = copy.deepcopy(original)
+    bool_offset["segments"][0]["start"] = False
+    unknown_kind = copy.deepcopy(original)
+    unknown_kind["segments"][1]["kind"] = "free_prose"
+    unknown_obligation = copy.deepcopy(original)
+    limitation = next(segment for segment in unknown_obligation["segments"]
+                      if segment["kind"] == "limitation")
+    limitation["obligation_refs"][0] = "unchecked.fabricated_fact"
+    bad_resolution = copy.deepcopy(original)
+    resolution = next(segment for segment in bad_resolution["segments"]
+                      if segment["kind"] == "resolution")
+    resolution["workflow_options"] = ["open", "acted", "modified"]
+    missing_resolution_markers = copy.deepcopy(original)
+    resolution = next(segment for segment in missing_resolution_markers["segments"]
+                      if segment["kind"] == "resolution")
+    replacement = "This paragraph merely ends the answer and gives no available choice."
+    missing_resolution_markers["presented_text"] = (
+        missing_resolution_markers["presented_text"][:resolution["start"]]
+        + replacement
+    )
+    resolution["end"] = len(missing_resolution_markers["presented_text"])
+    duplicate_claim = copy.deepcopy(original)
+    claim_segments = [segment for segment in duplicate_claim["segments"]
+                      if segment["kind"] == "claim_ref"]
+    claim_segments[1]["side"] = claim_segments[0]["side"]
+    claim_segments[1]["index"] = claim_segments[0]["index"]
+    omitted_claim = copy.deepcopy(original)
+    first_claim = next(segment for segment in omitted_claim["segments"]
+                       if segment["kind"] == "claim_ref")
+    first_claim.clear()
+    first_claim.update({
+        "kind": "connective", "provenance": "agent_judgment",
+        "start": 0, "end": original["segments"][0]["end"],
+    })
+    mismatched_claim = copy.deepcopy(original)
+    mismatched_claim["agent_case"]["for"][0]["claim"] += " Changed."
+    bad_connective = copy.deepcopy(original)
+    connective = next(segment for segment in bad_connective["segments"]
+                      if segment["kind"] == "connective")
+    connective["provenance"] = "engine_fact"
+
+    def blank_span(payload, kind):
+        segment = next(item for item in payload["segments"] if item["kind"] == kind)
+        text = payload["presented_text"]
+        payload["presented_text"] = (
+            text[:segment["start"]]
+            + " " * (segment["end"] - segment["start"])
+            + text[segment["end"]:]
+        )
+
+    blank_limitation = copy.deepcopy(original)
+    blank_span(blank_limitation, "limitation")
+    blank_resolution = copy.deepcopy(original)
+    blank_span(blank_resolution, "resolution")
+
+    nonfinal_resolution = copy.deepcopy(original)
+    limitation = next(segment for segment in nonfinal_resolution["segments"]
+                      if segment["kind"] == "limitation")
+    resolution = next(segment for segment in nonfinal_resolution["segments"]
+                      if segment["kind"] == "resolution")
+    refs = limitation.pop("obligation_refs")
+    options = resolution.pop("workflow_options")
+    limitation["kind"] = "resolution"
+    limitation["workflow_options"] = options
+    resolution["kind"] = "limitation"
+    resolution["obligation_refs"] = refs
+
+    mutations = {
+        "gap": gap,
+        "overlap": overlap,
+        "out_of_range": out_of_range,
+        "bool_offset": bool_offset,
+        "unknown_kind": unknown_kind,
+        "unknown_obligation": unknown_obligation,
+        "bad_resolution": bad_resolution,
+        "missing_resolution_markers": missing_resolution_markers,
+        "duplicate_claim": duplicate_claim,
+        "omitted_claim": omitted_claim,
+        "mismatched_claim": mismatched_claim,
+        "bad_connective": bad_connective,
+        "blank_limitation": blank_limitation,
+        "blank_resolution": blank_resolution,
+        "nonfinal_resolution": nonfinal_resolution,
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "candidate.json"
+        for name, payload in mutations.items():
+            write_candidate(path, payload)
+            candidate, _loaded, problems = judge.load_candidate(path, bank)
+            assert candidate is None, name
+            assert problems, name
 
 
 def test_runner_fails_if_receipt_cannot_be_persisted_and_records_api_errors():

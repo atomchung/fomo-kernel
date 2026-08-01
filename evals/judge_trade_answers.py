@@ -17,8 +17,9 @@ Usage:
 
 The production answer-provenance and presentation-fidelity validators run
 first. Fixture labels only say what those validators are expected to decide;
-they never decide whether an answer reaches the model. Every model-call run
-leaves a durable local receipt.
+they never decide whether an answer reaches the model. A real-store preflight
+rejects known-unreceiptable runs before any model call, and no verdict counts as
+evidence unless its final local receipt is durable.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import copy
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 from dataclasses import dataclass
 
@@ -181,59 +183,194 @@ def _presented_text(answer):
     return "\n".join(text for _role, text in BASE.R._surfaces(answer))
 
 
-def _claim_bound_presentation(agent_case, claim_order, presented_text):
-    """Prove every candidate surface byte came from its validated case.
+LIMITATION_TOPICS = {"basis", "price_basis", "disclosure", "excluded_holding"}
+RESOLUTION_OPTIONS = {"open", "declined", "modified"}
+RESOLUTION_OPTION_MARKERS = {
+    "open": re.compile(r"\bopen\b", re.IGNORECASE),
+    "declined": re.compile(r"\bdeclin(?:e|ed|ing)\b", re.IGNORECASE),
+    "modified": re.compile(r"\bmodif(?:y|ied|ying|ication)\b", re.IGNORECASE),
+}
 
-    Free prose cannot be mechanically checked for semantic entailment. The
-    candidate lane therefore accepts a stricter capture artifact: every case
-    claim is presented exactly once, in a declared order, separated only by a
-    newline. This prevents an unlabelled sentence from being appended beside a
-    valid case and borrowing that case's production provenance verdict.
+
+def _limitation_obligation_refs(challenge):
+    """The existing challenge facts a non-claim limitation may realize."""
+    if not isinstance(challenge, dict):
+        raise ValueError("candidate challenge must be an object")
+    must_state = challenge.get("must_state")
+    unchecked = challenge.get("unchecked")
+    if not isinstance(must_state, list) or not isinstance(unchecked, list):
+        raise ValueError("candidate challenge must carry must_state and unchecked lists")
+    refs = set()
+    for index, entry in enumerate(must_state):
+        if not isinstance(entry, dict) or not isinstance(entry.get("topic"), str):
+            raise ValueError(f"candidate challenge must_state[{index}] is malformed")
+        if entry["topic"] in LIMITATION_TOPICS:
+            refs.add(f"must_state[{index}]")
+    for index, key in enumerate(unchecked):
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"candidate challenge unchecked[{index}] must be non-empty text")
+        refs.add(f"unchecked.{key}")
+    return refs
+
+
+def _segmented_presentation(agent_case, challenge, segments, presented_text):
+    """Bind a character-for-character answer to its responsibilities.
+
+    Claims remain exact spans of the production-validated ``agent_case``.
+    Non-claim prose has three explicit semantic lanes: challenge limitations,
+    agent-authored connective judgment, and a declared user-owned resolution
+    invitation. Whitespace-only separators preserve paragraphs without
+    creating an unlabelled factual channel. The ordered spans must partition
+    the full Unicode text, so an appended or overlapping sentence cannot
+    borrow another segment's provenance verdict.
+
+    The labels are a capture contract, not general NLI: deterministic number,
+    date, quote, challenge, and structured-case gates still run independently,
+    while the LLM judge owns the remaining semantic fit.
     """
     if not isinstance(agent_case, dict):
         raise ValueError("candidate agent_case must be an object")
-    expected = []
+    claims = {}
     for side in ("for", "against"):
-        claims = agent_case.get(side)
-        if not isinstance(claims, list) or not claims:
+        side_claims = agent_case.get(side)
+        if not isinstance(side_claims, list) or not side_claims:
             raise ValueError(f"candidate agent_case.{side} must be a non-empty list")
-        for index, claim in enumerate(claims):
+        for index, claim in enumerate(side_claims):
             if not isinstance(claim, dict) or not isinstance(claim.get("claim"), str) \
                     or not claim["claim"].strip():
                 raise ValueError(
                     f"candidate agent_case.{side}[{index}].claim must be non-empty text")
-        expected.extend((side, index) for index in range(len(claims)))
-    if not isinstance(claim_order, list) or not claim_order:
-        raise ValueError("candidate presented_claim_order must be a non-empty list")
+            claims[(side, index)] = claim["claim"]
+    if not isinstance(presented_text, str) or not presented_text.strip():
+        raise ValueError("candidate presented_text must be non-empty text")
+    if not isinstance(segments, list) or not segments:
+        raise ValueError("candidate segments must be a non-empty list")
 
-    refs = []
-    for position, ref in enumerate(claim_order):
-        if not isinstance(ref, dict) or set(ref) != {"side", "index"}:
+    allowed_by_kind = {
+        "claim_ref": {"kind", "side", "index", "start", "end"},
+        "limitation": {"kind", "obligation_refs", "start", "end"},
+        "connective": {"kind", "provenance", "start", "end"},
+        "resolution": {"kind", "workflow_options", "start", "end"},
+        "separator": {"kind", "start", "end"},
+    }
+    expected_limitations = _limitation_obligation_refs(challenge)
+    seen_claims, seen_limitations = set(), set()
+    resolution_count = limitation_count = connective_count = 0
+    last_substantive_kind = None
+    cursor = 0
+    for position, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            raise ValueError(f"candidate segments[{position}] must be an object")
+        kind = segment.get("kind")
+        allowed = allowed_by_kind.get(kind)
+        if allowed is None:
+            raise ValueError(f"candidate segments[{position}].kind is unsupported")
+        if set(segment) != allowed:
             raise ValueError(
-                f"candidate presented_claim_order[{position}] must contain only side/index")
-        side, index = ref.get("side"), ref.get("index")
-        if side not in {"for", "against"}:
+                f"candidate segments[{position}] must contain exactly {sorted(allowed)}")
+        start, end = segment.get("start"), segment.get("end")
+        if isinstance(start, bool) or not isinstance(start, int) \
+                or isinstance(end, bool) or not isinstance(end, int):
             raise ValueError(
-                f"candidate presented_claim_order[{position}].side must be for or against")
-        if isinstance(index, bool) or not isinstance(index, int) or index < 0 \
-                or index >= len(agent_case[side]):
+                f"candidate segments[{position}] start/end must be integer character offsets")
+        if start != cursor:
             raise ValueError(
-                f"candidate presented_claim_order[{position}].index is out of range")
-        refs.append((side, index))
-    if len(refs) != len(set(refs)):
-        raise ValueError("candidate presented_claim_order repeats a case claim")
-    missing = sorted(set(expected) - set(refs))
-    if missing:
-        raise ValueError(
-            f"candidate presented_claim_order omits case claim(s) {missing}")
+                f"candidate segments must partition presented_text exactly; "
+                f"segment {position} starts at {start}, expected {cursor}")
+        if end <= start or end > len(presented_text):
+            raise ValueError(
+                f"candidate segments[{position}] has an empty or out-of-range span")
+        span = presented_text[start:end]
+        cursor = end
 
-    rendered = "\n".join(agent_case[side][index].get("claim", "")
-                         for side, index in refs)
-    if presented_text != rendered:
+        if kind == "claim_ref":
+            side, index = segment.get("side"), segment.get("index")
+            if side not in {"for", "against"}:
+                raise ValueError(
+                    f"candidate segments[{position}].side must be for or against")
+            if isinstance(index, bool) or not isinstance(index, int) \
+                    or (side, index) not in claims:
+                raise ValueError(
+                    f"candidate segments[{position}] claim reference is out of range")
+            ref = (side, index)
+            if ref in seen_claims:
+                raise ValueError("candidate segments repeat a case claim")
+            if span != claims[ref]:
+                raise ValueError(
+                    f"candidate segments[{position}] does not exactly reproduce its case claim")
+            seen_claims.add(ref)
+        elif kind == "limitation":
+            if not span.strip():
+                raise ValueError(
+                    f"candidate segments[{position}] limitation must contain visible text")
+            refs = segment.get("obligation_refs")
+            if not isinstance(refs, list) or not refs \
+                    or any(not isinstance(ref, str) or not ref for ref in refs):
+                raise ValueError(
+                    f"candidate segments[{position}].obligation_refs must be non-empty text")
+            if len(refs) != len(set(refs)):
+                raise ValueError(
+                    f"candidate segments[{position}].obligation_refs contains duplicates")
+            unknown = sorted(set(refs) - expected_limitations)
+            if unknown:
+                raise ValueError(
+                    f"candidate limitation references unknown obligation(s) {unknown}")
+            seen_limitations.update(refs)
+            limitation_count += 1
+        elif kind == "connective":
+            if not span.strip():
+                raise ValueError(
+                    f"candidate segments[{position}] connective must contain visible text")
+            if segment.get("provenance") != "agent_judgment":
+                raise ValueError(
+                    "candidate connective provenance must be agent_judgment")
+            connective_count += 1
+        elif kind == "resolution":
+            if not span.strip():
+                raise ValueError(
+                    f"candidate segments[{position}] resolution must contain visible text")
+            options = segment.get("workflow_options")
+            if not isinstance(options, list) or any(
+                    not isinstance(option, str) for option in options):
+                raise ValueError(
+                    f"candidate segments[{position}].workflow_options must be a list of text")
+            if len(options) != len(set(options)) or set(options) != RESOLUTION_OPTIONS:
+                raise ValueError(
+                    "candidate resolution workflow_options must declare open, declined, "
+                    "and modified exactly once")
+            missing_markers = sorted(
+                option for option, pattern in RESOLUTION_OPTION_MARKERS.items()
+                if pattern.search(span) is None)
+            if missing_markers:
+                raise ValueError(
+                    "candidate resolution text does not surface workflow option marker(s) "
+                    f"{missing_markers}")
+            resolution_count += 1
+        elif not span.isspace():
+            raise ValueError(
+                f"candidate segments[{position}] separator must contain only whitespace")
+        if kind != "separator":
+            last_substantive_kind = kind
+
+    if cursor != len(presented_text):
         raise ValueError(
-            "candidate presented_text must exactly equal the ordered validated case claims")
+            "candidate segments must partition presented_text exactly; trailing text is unbound")
+    missing_claims = sorted(set(claims) - seen_claims)
+    if missing_claims:
+        raise ValueError(f"candidate segments omit case claim(s) {missing_claims}")
+    if limitation_count < 1:
+        raise ValueError("candidate segments must contain a limitation segment")
+    if resolution_count != 1:
+        raise ValueError("candidate segments must contain exactly one resolution segment")
+    if last_substantive_kind != "resolution":
+        raise ValueError("candidate resolution must be the final substantive segment")
     return {
-        "claim_count": len(refs),
+        "segment_count": len(segments),
+        "claim_count": len(seen_claims),
+        "limitation_count": limitation_count,
+        "connective_count": connective_count,
+        "resolution_count": resolution_count,
+        "referenced_limitation_obligation_count": len(seen_limitations),
         "presented_text_digest": RECEIPTS.canonical_sha256(presented_text),
     }
 
@@ -247,9 +384,15 @@ def _number_fact_view(evaluation, challenge):
         if isinstance(value, (int, float)):
             number = float(value)
             numbers.add(number)
+            # The shared lexer reads displayed magnitudes. A negative delta is
+            # normally surfaced as "reduces by 9" rather than "changes by -9";
+            # direction remains structured-case/internal-consistency work.
+            numbers.add(abs(number))
             if abs(number) <= 1:
                 for places in range(5):
-                    numbers.add(round(number * 100, places))
+                    percent = round(number * 100, places)
+                    numbers.add(percent)
+                    numbers.add(abs(percent))
         elif isinstance(value, str):
             dates.update(BASE.R.DATE.findall(value))
             for match in BASE.R.NUMBER.finditer(value):
@@ -274,8 +417,8 @@ def _delivery_fidelity(fixture, answer, agent_case):
         answer, _number_fact_view(evaluation, derived))
     evidence["number_provenance_findings"] = number_findings
     if answer.get("kind") == "candidate_output":
-        evidence["claim_bound_presentation"] = _claim_bound_presentation(
-            agent_case, answer.get("presented_claim_order"), presented)
+        evidence["segmented_presentation"] = _segmented_presentation(
+            agent_case, derived, answer.get("segments"), presented)
     if evidence["facts_missing"]:
         raise ValueError(
             f"presented answer omits {evidence['facts_missing']} machine-checkable "
@@ -388,14 +531,14 @@ def load_candidate(path, fixtures):
         return None, None, [f"{path}: candidate answer must be a JSON object"]
     allowed = {
         "schema_version", "fixture_id", "answer_id", "agent_case", "challenge",
-        "presented_text", "presented_claim_order", "generator",
+        "presented_text", "segments", "generator",
     }
     problems = []
     unknown = sorted(set(payload) - allowed)
     if unknown:
         problems.append(f"{path}: candidate answer has unknown fields {unknown}")
-    if payload.get("schema_version") != 2:
-        problems.append(f"{path}: schema_version must be 2")
+    if payload.get("schema_version") != 3:
+        problems.append(f"{path}: schema_version must be 3")
     fixture_id = payload.get("fixture_id")
     answer_id = payload.get("answer_id")
     if not isinstance(fixture_id, str) or not fixture_id:
@@ -414,24 +557,29 @@ def load_candidate(path, fixtures):
     matches = [fixture for fixture in fixtures if fixture.get("id") == fixture_id]
     if not matches:
         problems.append(f"{path}: unknown fixture_id {fixture_id!r}")
-    if not problems:
+    source = matches[0] if matches else None
+    if not problems and source is not None:
         try:
-            _claim_bound_presentation(
-                payload["agent_case"], payload.get("presented_claim_order"),
+            derived = _challenge(_frozen(source))
+            if payload["challenge"] != derived:
+                raise ValueError(
+                    "candidate challenge does not exactly match the challenge derived "
+                    "from its fixture")
+            _segmented_presentation(
+                payload["agent_case"], derived, payload.get("segments"),
                 payload["presented_text"])
         except ValueError as exc:
             problems.append(f"{path}: {exc}")
     if problems:
         return None, payload, problems
 
-    source = matches[0]
     candidate = copy.deepcopy(source)
     candidate["answers"] = [{
         "id": answer_id,
         "kind": "candidate_output",
         "agent_case": payload["agent_case"],
         "captured_challenge": payload["challenge"],
-        "presented_claim_order": payload["presented_claim_order"],
+        "segments": payload["segments"],
         "judge_fails": [],
         "prose": payload["presented_text"],
     }]
@@ -660,6 +808,15 @@ def run_judge(fixtures, *, backend, model, sample_one, filtered=False,
               candidate_artifact=None, source_fixture_digest=None,
               append_receipt=RECEIPTS.append_receipt):
     """Execute one selected bank and persist its complete per-axis evidence."""
+    if run_kind not in {"fixture_witness", "candidate_output"}:
+        raise ValueError(f"unsupported run_kind {run_kind!r}")
+    answer_kinds = {
+        answer.get("kind", "fixture_witness")
+        for fixture in fixtures for answer in (fixture.get("answers") or [])
+    }
+    if "candidate_output" in answer_kinds and run_kind != "candidate_output":
+        raise ValueError(
+            "candidate_output answers require run_kind=candidate_output and an exact artifact")
     if run_kind == "candidate_output":
         if not isinstance(candidate_artifact, dict):
             raise ValueError(
@@ -672,8 +829,12 @@ def run_judge(fixtures, *, backend, model, sample_one, filtered=False,
             "answer_id": candidate_answer.get("id"),
             "agent_case": candidate_answer.get("agent_case"),
             "challenge": candidate_answer.get("captured_challenge"),
-            "presented_claim_order": candidate_answer.get("presented_claim_order"),
-            "presented_text": candidate_answer.get("prose"),
+            "segments": candidate_answer.get("segments"),
+            # The model sees every surface returned by ``_presented_text``, not
+            # just ``prose``. Bind the artifact digest to that same exact text
+            # so an internal/direct caller cannot smuggle an option or
+            # disclosure into the judge input beside a smaller receipt.
+            "presented_text": _presented_text(candidate_answer),
         }
         mismatched = sorted(
             key for key, value in expected.items()
@@ -686,6 +847,21 @@ def run_judge(fixtures, *, backend, model, sample_one, filtered=False,
         if candidate_digest is not None and candidate_digest != artifact_digest:
             raise ValueError("candidate_digest does not match candidate_artifact")
         candidate_digest = artifact_digest
+
+    # A known-torn, malformed, or unwritable real history must stop the run
+    # before the first billable call. Injected test stores remain isolated from
+    # the user's coach root and exercise final-append failure separately.
+    if append_receipt is RECEIPTS.append_receipt:
+        try:
+            RECEIPTS.preflight_append()
+        except RECEIPTS.ReceiptError as exc:
+            _emit_after_receipt([
+                f"FAIL  {exc}",
+                "",
+                "TradeEvaluation answer judge: FAIL — receipt store rejected "
+                "before model calls",
+            ])
+            return 1
 
     failures, observed = [], {}
     answer_reports = []

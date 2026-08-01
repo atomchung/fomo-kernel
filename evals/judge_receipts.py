@@ -74,6 +74,75 @@ def _missing_directory_chain(path: pathlib.Path) -> list[pathlib.Path]:
     return list(reversed(missing))
 
 
+def _validate_locked_history(fd: int, path: pathlib.Path) -> int:
+    """Validate every existing row under an exclusive lock; return its end."""
+    end = os.lseek(fd, 0, os.SEEK_END)
+    if not end:
+        return 0
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    remaining = end
+    while remaining:
+        chunk = os.read(fd, min(remaining, 1024 * 1024))
+        if not chunk:
+            raise ReceiptError(
+                f"judge receipt history at {path} became unreadable during validation")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    raw = b"".join(chunks)
+    if not raw.endswith(b"\n"):
+        raise ReceiptError(
+            f"judge receipt history at {path} ends with an incomplete row; "
+            "refusing to append")
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeError as exc:
+        raise ReceiptError(
+            f"judge receipt history at {path} is not valid UTF-8: {exc}") from exc
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ReceiptError(
+                f"malformed judge receipt at {path}:{line_number}: {exc.msg}") from exc
+        if not isinstance(row, dict):
+            raise ReceiptError(
+                f"malformed judge receipt at {path}:{line_number}: expected JSON object")
+    os.lseek(fd, end, os.SEEK_SET)
+    return end
+
+
+def preflight_append() -> pathlib.Path:
+    """Reject a receipt store already known to be unsafe before model calls."""
+    path = history_path()
+    fd = None
+    try:
+        created = _missing_directory_chain(path.parent)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for directory in created:
+            _fsync_dir(directory.parent)
+        if fcntl is None:
+            raise ReceiptError(
+                "judge receipt locking is unavailable on this platform; refusing model calls")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        _fsync_dir(path.parent)
+        _validate_locked_history(fd, path)
+    except OSError as exc:
+        raise ReceiptError(
+            f"judge receipt store is not appendable at {path}: {exc}") from exc
+    finally:
+        if fd is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+    return path
+
+
 def append_receipt(row: dict[str, Any]) -> pathlib.Path:
     """Append and sync one receipt, raising when durability is not proven."""
     if not isinstance(row, dict):
@@ -111,18 +180,10 @@ def append_receipt(row: dict[str, Any]) -> pathlib.Path:
         # Doing this first makes that failure leave only an empty file.
         _fsync_dir(path.parent)
 
-        # A process killed during its write can leave an unterminated JSON row.
-        # Never append a new receipt onto that fragment and then claim success:
-        # preserve the corruption for diagnosis and fail closed instead.
-        end = os.lseek(fd, 0, os.SEEK_END)
-        if end:
-            os.lseek(fd, -1, os.SEEK_END)
-            if os.read(fd, 1) != b"\n":
-                raise ReceiptError(
-                    f"judge receipt history at {path} ends with an incomplete row; "
-                    "refusing to append")
-        os.lseek(fd, 0, os.SEEK_END)
-        start = os.lseek(fd, 0, os.SEEK_CUR)
+        # Never append beside a torn or malformed prior row and then claim the
+        # new result is readable history. Preflight performs this same check
+        # before calls; repeat it under this append's lock to close the race.
+        start = _validate_locked_history(fd, path)
         payload = line.encode("utf-8")
         written = 0
         try:
