@@ -56,7 +56,9 @@ deterministic product truth.
   product's reasoning back to the user.
 - **V8 — user-owned action.** Explain the decision process and comparison;
   never impersonate the user's final trade, execution state, motive, or
-  certainty.
+  certainty. When the user asks between nominated securities, do not select,
+  rank, or call one candidate stronger; identify the commitments the user must
+  prioritize instead.
 - **V9 — clean stop.** When the evidence supports alignment or no further
   useful completion exists, confirm the result and stop. Do not manufacture a
   concern, summary, or invitation.
