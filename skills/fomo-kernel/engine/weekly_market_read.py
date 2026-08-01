@@ -140,6 +140,38 @@ def render_zh_tw(brief):
     return "\n".join(text)
 
 
+def render_zh_cn(brief):
+    """Simplified-Chinese rendering for the same bounded companion."""
+    if brief.get("status") != "available":
+        return ""
+    window = brief["window"]
+    fact = brief["market_facts"][0]
+    ticker = brief["connection"]["ticker"]
+    watch = brief["next_week_watch"][0]
+    focus = brief["optional_question"]["selected"] or "not_sure"
+    watch_checks = {
+        "business_evidence": "在用市场解释价格变动前，先确认是否出现新的公司特定证据。",
+        "position_size": "在把较低价格当成证据前，先将已记录的仓位大小与既有上限比较。",
+        "not_sure": "在行动前，先判断应检查公司特定证据，还是已记录的仓位大小。",
+    }
+    text = [
+        "## 本周市场发生了什么",
+        f"{window['start']} 至 {window['end']}，VIX 上升 {fact['observation']['delta']}。市场数据截至 {fact['as_of']}。",
+        "## 对你的组合意味着什么",
+        f"{ticker} 已被本次检视标记为仓位偏重；在波动上升时，先检查既有集中度，比替价格变化找理由更重要。",
+        "## 这周最容易犯的错误",
+        "把波动中的价格变化直接当成新的投资证据，却没有先确认仓位大小或公司基本面的新信息。",
+        "## 下周关注",
+        f"- {ticker}：{watch_checks[focus]}（触发条件：波动率指数在冻结复盘窗口内上升；截至 {watch['trigger']['as_of']}）",
+    ]
+    if brief["optional_question"]["selected"] is None:
+        text.extend([
+            "## 可选问题",
+            "如果只选一个方向，下周先看公司新证据，还是先看仓位大小？可跳过。",
+        ])
+    return "\n".join(text)
+
+
 def render_en(brief):
     """English fallback for the same bounded, decision-first brief."""
     if brief.get("status") != "available":
@@ -167,4 +199,8 @@ def render_en(brief):
 
 
 def render(brief, language):
-    return render_zh_tw(brief) if language == "zh-TW" else render_en(brief)
+    if language == "zh-TW":
+        return render_zh_tw(brief)
+    if language == "zh-CN":
+        return render_zh_cn(brief)
+    return render_en(brief)

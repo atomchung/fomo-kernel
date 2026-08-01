@@ -134,6 +134,10 @@ def test_positive_scene_is_complete_and_bounded():
         assert heading in text
     assert "engine fact" not in text and "agent judgment" not in text
     assert "## What happened in markets this week" in weekly.render_en(brief)
+    zh_cn = weekly.render_zh_cn(brief)
+    assert "## 本周市场发生了什么" in zh_cn
+    assert "## What happened in markets this week" not in zh_cn
+    assert "Before acting" not in zh_cn
 
 
 def test_generic_recap_is_omitted_without_existing_book_connection():
@@ -222,6 +226,32 @@ def test_cli_real_prepare_preview_trajectory_is_read_only_and_no_duplicate_fetch
         after = session.load_pending(root, plan["session_id"])
         assert after["plan"] == before_plan and after["answers"] == before_answers
         assert after["card-private-preview"] == before_preview
+
+
+def test_cli_zh_cn_lifecycle_renders_a_simplified_companion():
+    """The real weekly route keeps the companion in the selected locale."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "coach")
+        card, state = _lifecycle_artifacts(tmp)
+        prepared = _run("prepare", "--root", root, "--route", "weekly_review", "--language", "zh-CN",
+                        "--card-json", card, "--state-json", state)
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+        plan = json.loads(prepared.stdout)["review_plan"]
+        answers_path, narrative_path = os.path.join(tmp, "answers.json"), os.path.join(tmp, "narrative.json")
+        with open(answers_path, "w", encoding="utf-8") as handle:
+            json.dump(_answers(plan), handle)
+        with open(narrative_path, "w", encoding="utf-8") as handle:
+            json.dump(_narrative(plan), handle)
+        preview = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                       "--answers", answers_path, "--narrative", narrative_path)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        brief = _run("weekly-market-read", "--root", root, "--session-id", plan["session_id"])
+        assert brief.returncode == 0, brief.stdout + brief.stderr
+        text = json.loads(brief.stdout)["private_markdown"]
+        assert "## 本周市场发生了什么" in text
+        assert "## 对你的组合意味着什么" in text
+        assert "## What happened in markets this week" not in text
+        assert "Before acting" not in text
 
 
 def _main():

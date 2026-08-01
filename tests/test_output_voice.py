@@ -35,6 +35,12 @@ def test_actual_instruction_paths_load_the_authority():
         assert pointer in text, f"{path.relative_to(ROOT)} does not point to output voice"
 
 
+def test_skill_keeps_the_global_pointer_instead_of_the_retired_route_local_voice_copy():
+    text = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Apply the global output-voice contract to the route structure in `references/trade-consequence.md`." in text
+    assert "Shape the reply decision-first: one supported decision tension leads" not in text
+
+
 def test_stable_rule_registry_has_complete_unique_mappings():
     rows = _rows(VOICE.read_text(encoding="utf-8"))
     ids = [row[0] for row in rows]
@@ -77,6 +83,7 @@ def main():
     tests = [
         test_global_authority_and_route_boundaries,
         test_actual_instruction_paths_load_the_authority,
+        test_skill_keeps_the_global_pointer_instead_of_the_retired_route_local_voice_copy,
         test_stable_rule_registry_has_complete_unique_mappings,
         test_registry_mutations_are_caught,
         test_synthetic_witness_oracle_passes_and_covers_every_failure_class,
