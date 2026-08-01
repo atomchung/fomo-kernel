@@ -1,0 +1,76 @@
+{
+  "id": "TA-001",
+  "title": "The same grounded challenge can be complete yet bury the decision",
+  "source": {
+    "kind": "owner_observed_failure_shape",
+    "refs": ["#579", "#590", "#676"],
+    "date": "2026-08-01"
+  },
+  "declared_by": "agent",
+  "axes": [
+    "decision_focus",
+    "internal_consistency",
+    "decision_synthesis",
+    "caveat_discipline"
+  ],
+  "question": {
+    "kind": "trade_evaluation",
+    "text": "I am considering adding FICTIONAL-A. My reason is that demand appears stronger, and I would fund it from cash. What does this decision change?"
+  },
+  "frozen_context": {
+    "lead_candidate": "The proposed add would cross the user's recorded single-position cap.",
+    "support": [
+      "The position would move from below the recorded cap to above it.",
+      "The user's why-now contains a demand claim, but that claim has not been independently checked."
+    ],
+    "counter_case": "The add is small enough that the rest of the book changes little, and the user may deliberately accept a temporary cap exception if the new evidence is real.",
+    "limitations": [
+      "The recorded book is not a live broker view.",
+      "The demand claim was supplied by the user and was not independently verified."
+    ]
+  },
+  "answers": [
+    {
+      "id": "complete_but_flat",
+      "eligible_for_judge": true,
+      "judge_fails": ["decision_focus"],
+      "prose": "The recorded book is not a live broker view. Your demand claim has not been independently verified. The position would move from below your recorded cap to above it. The rest of the book changes little. The case for the add is that stronger demand may justify accepting a temporary exception; the case against it is that the trade breaks a rule you previously chose. You can keep the decision open, modify the size, or decline it."
+    },
+    {
+      "id": "compact_but_unsupported",
+      "eligible_for_judge": false,
+      "ineligible_reason": "deterministic truth and coverage gate failed: it claims the demand evidence is confirmed, which the frozen context does not support",
+      "prose": "This is a good add because demand is confirmed and the small size keeps the position within your rule."
+    },
+    {
+      "id": "contextually_inconsistent",
+      "eligible_for_judge": true,
+      "judge_fails": ["internal_consistency"],
+      "prose": "The main issue is that this add crosses the position cap you chose, so the trade conflicts with your recorded discipline. Still, because the rest of the book changes little, there is effectively no rule conflict here and the add is aligned with your plan. The demand claim remains unverified, and the book is not a live broker view."
+    },
+    {
+      "id": "translated_fact_list",
+      "eligible_for_judge": true,
+      "judge_fails": ["decision_synthesis"],
+      "prose": "The position is currently below the cap. After the add it is above the cap. The rest of the book changes little. The demand claim was supplied by you. It has not been independently checked. The recorded book is not a live broker view."
+    },
+    {
+      "id": "disclaimer_dominant",
+      "eligible_for_judge": true,
+      "judge_fails": ["caveat_discipline"],
+      "prose": "This is not investment advice. Markets can move unexpectedly. The recorded book may be stale. Your demand claim is unverified. Public information can be incomplete. The add crosses your recorded position cap, although the rest of the book changes little. The case for proceeding is that the claim could justify an exception; the case against is the rule break. The recorded book may be stale and the demand claim is unverified."
+    },
+    {
+      "id": "supported_synthesis",
+      "eligible_for_judge": true,
+      "judge_fails": [],
+      "prose": "The decision is whether the demand change is strong enough to justify breaking the position cap you previously chose: the add crosses that line even though it barely changes the rest of the book. The strongest case for proceeding is a deliberate, temporary exception if the demand evidence is real; the strongest case against is that the evidence is still only your stated why-now, not an independently checked change. Because the recorded book is not a live broker view, treat the cap collision as a decision check rather than execution proof. Keep it open, reduce the size, or decline it."
+    },
+    {
+      "id": "necessarily_longer_pass",
+      "eligible_for_judge": true,
+      "judge_fails": [],
+      "prose": "Your proposed add creates one clear conflict: it moves this position through the cap you previously selected, while leaving the rest of the portfolio nearly unchanged. That makes the decision less about broad portfolio risk and more about whether this one exception has earned its way past your own rule. The case for the exception is specific: if the demand change is genuinely new and durable, a temporary breach may be intentional rather than careless. The case against is equally specific: the demand claim is currently your statement, not independently checked evidence, so the trade can also be a story used to relax a rule at the moment it becomes inconvenient. The book behind this comparison is recorded rather than a live broker view, so this identifies the conflict but does not prove current execution capacity or final weight. Keep the decision open, reduce the size until it no longer breaches the cap, or decline it."
+    }
+  ]
+}
