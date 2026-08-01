@@ -3072,6 +3072,10 @@ def test_n_the_route_really_resolves_and_prices_the_book_it_reasons_about():
         assert asked, "the route made no provider request at all — it is not resolving"
         assert len(asked) == 1, f"one resolve per call, got {len(asked)}: {asked}"
         assert "NVDA" in asked[0]
+        provenance = payload["price_feed"]["provenance"]
+        assert provenance["mode"] == "engine_fetch", (
+            "a feed-shaped result from the engine resolver is not a --prices envelope: "
+            f"{provenance}")
         basis = payload["evaluation"]["basis"]
         assert basis["valuation_basis"] == "priced", (
             "the answer must be computed over a book valued at the retrieved prices; unpriced "
