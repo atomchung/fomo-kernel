@@ -286,6 +286,111 @@ def test_a_position_nobody_ever_asked_about_keeps_its_cycle_too():
             "a share count changing is not a position restarting")
 
 
+def test_a_continuous_cycle_keeps_its_engine_known_add_sequence_through_refresh():
+    """#660: #539 continuity carries the one record-relative add fact too.
+
+    The ledger recorded two additions after ACME's opening anchor.  The later
+    holdings view is routine (only WIDGET moves slightly), so the #539 carry
+    already proves ACME is that same active cycle.  Replacing the anchor must
+    not erase the count the engine itself learned; the next canonical BUY then
+    advances from two to three, not back to one.  A second adoption/retry does
+    not create an addition because adoption only carries this scalar.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        ledger_path = os.path.join(root, "ledger.jsonl")
+        lg.append_events(ledger_path, [
+            {"type": "trade", "date": "2026-07-03", "ticker": "ACME", "action": "buy",
+             "qty": 5, "price": 11.0, "market": "US", "currency": "USD"},
+            {"type": "trade", "date": "2026-07-05", "ticker": "ACME", "action": "buy",
+             "qty": 5, "price": 10.0, "market": "US", "currency": "USD"},
+        ])
+        events, _ = lg.load_ledger(ledger_path)
+        before = lg.derive_holdings(events)["holdings"]["ACME"]
+        assert (before["cycle_id"], before["add_count"], before["decision_cursor"]) == (
+            "ACME#2026-06-30#1", 2, "ACME#2026-06-30#1#add#2")
+
+        routine = _snapshot(tmp, [
+            {"ticker": "ACME", "shares": 110, "avg_cost": 12.0,
+             "market": "US", "currency": "USD"},
+            dict(KEPT[0], shares=48), KEPT[1],
+        ], as_of="2026-07-15")
+        receipt = _cli(root, routine)
+        assert receipt["pending_confirmations"] == []
+        adopted = _cli(root, routine, {"refresh_id": receipt["refresh_id"], "answers": []})
+        assert adopted["status"] == "adopted" and adopted["reconciliation"] == "adjusted"
+
+        events, _ = lg.load_ledger(ledger_path)
+        carried = lg.derive_holdings(events)["holdings"]["ACME"]
+        assert (carried["cycle_id"], carried["add_count"], carried["decision_cursor"]) == (
+            before["cycle_id"], 2, before["decision_cursor"]), carried
+        anchor = {row["ticker"]: row for row in lg.latest_anchor(events)["positions"]}
+        assert anchor["ACME"]["add_count"] == 2
+        assert "decision_cursor" not in anchor["ACME"], "the ledger remains cursor's only reader"
+
+        # The view is now reconciled. Running the normal adoption beat again is
+        # a no-op/reconciliation, not a third add hidden inside the retry.
+        retry = _cli(root, routine)
+        assert retry["pending_confirmations"] == []
+        retried = _cli(root, routine, {"refresh_id": retry["refresh_id"], "answers": []})
+        assert retried["status"] == "adopted"
+        events, _ = lg.load_ledger(ledger_path)
+        assert lg.derive_holdings(events)["holdings"]["ACME"]["add_count"] == 2
+
+        lg.append_events(ledger_path, [
+            {"type": "trade", "date": "2026-07-16", "ticker": "ACME", "action": "buy",
+             "qty": 2, "price": 9.0, "market": "US", "currency": "USD"},
+        ])
+        events, _ = lg.load_ledger(ledger_path)
+        later = lg.derive_holdings(events)["holdings"]["ACME"]
+        assert (later["add_count"], later["decision_cursor"]) == (
+            3, "ACME#2026-06-30#1#add#3")
+
+
+def test_a_rebought_cycle_does_not_inherit_the_prior_add_sequence():
+    """A sale/re-entry is the #539 counterweight: it opens a new cycle (#660)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        ledger_path = os.path.join(root, "ledger.jsonl")
+        lg.append_events(ledger_path, [
+            {"type": "trade", "date": "2026-07-03", "ticker": "ACME", "action": "buy",
+             "qty": 5, "price": 11.0, "market": "US", "currency": "USD"},
+            {"type": "trade", "date": "2026-07-05", "ticker": "ACME", "action": "buy",
+             "qty": 5, "price": 10.0, "market": "US", "currency": "USD"},
+            {"type": "trade", "date": "2026-07-18", "ticker": "ACME", "action": "sell",
+             "qty": 110, "price": 13.0, "market": "US", "currency": "USD"},
+            {"type": "trade", "date": "2026-07-20", "ticker": "ACME", "action": "buy",
+             "qty": 80, "price": 12.0, "market": "US", "currency": "USD"},
+        ])
+        events, _ = lg.load_ledger(ledger_path)
+        rebought = lg.derive_holdings(events)["holdings"]["ACME"]
+        assert (rebought["cycle_id"], rebought["add_count"], rebought["decision_cursor"]) == (
+            "ACME#2026-07-20#2", 0, None)
+
+        routine = _snapshot(tmp, [
+            {"ticker": "ACME", "shares": 80, "avg_cost": 12.0,
+             "market": "US", "currency": "USD"},
+            dict(KEPT[0], shares=48), KEPT[1],
+        ], as_of="2026-07-25")
+        receipt = _cli(root, routine)
+        assert receipt["pending_confirmations"] == []
+        assert _cli(root, routine, {"refresh_id": receipt["refresh_id"], "answers": []})["status"] == "adopted"
+        events, _ = lg.load_ledger(ledger_path)
+        carried = lg.derive_holdings(events)["holdings"]["ACME"]
+        assert (carried["cycle_id"], carried["add_count"], carried["decision_cursor"]) == (
+            "ACME#2026-07-20#2", 0, None)
+        assert "add_count" not in {row["ticker"]: row for row in lg.latest_anchor(events)["positions"]}["ACME"]
+
+        lg.append_events(ledger_path, [
+            {"type": "trade", "date": "2026-07-26", "ticker": "ACME", "action": "buy",
+             "qty": 2, "price": 11.0, "market": "US", "currency": "USD"},
+        ])
+        events, _ = lg.load_ledger(ledger_path)
+        assert (lg.derive_holdings(events)["holdings"]["ACME"]["add_count"],
+                lg.derive_holdings(events)["holdings"]["ACME"]["decision_cursor"]) == (
+                    1, "ACME#2026-07-20#2#add#1")
+
+
 def test_a_start_the_ledger_can_prove_is_not_overwritten_by_a_declaration():
     """#539, second symptom: the same defect where the engine knew the answer.
 
@@ -502,19 +607,25 @@ def test_an_appearance_now_routes_the_review_lane_here_too():
         assert _ledger_rows(root) == before, "the refusal happens before any append"
 
 
-def test_a_supplied_view_may_not_hand_the_engine_a_cycle_start():
+def test_a_supplied_view_may_not_hand_the_engine_cycle_or_add_metadata():
     """SKILL.md non-negotiable rule 1, enforced rather than documented.
 
-    The agent transcribes a month count and the engine derives the date. An
-    envelope that arrives with the date already in it is refused by name -- so
-    the derivation cannot be quietly relocated into whatever composed the file.
+    The agent transcribes facts and the engine derives every continuity field.
+    A supplied start, add count, or cursor is refused by name -- so either
+    derivation cannot be quietly relocated into whatever composed the file.
     """
     with tempfile.TemporaryDirectory() as tmp:
-        forged = [dict(row) for row in KEPT]
-        forged[0] = dict(forged[0], since="2019-01-01", since_basis="user_estimate")
-        out = _cli(_root(tmp), _snapshot(tmp, forged))
-        assert out["status"] == "error", out
-        assert "engine-assigned fields: since, since_basis" in out["error"], out
+        cases = [
+            ({"since": "2019-01-01", "since_basis": "user_estimate"}, "since, since_basis"),
+            ({"add_count": 2}, "add_count"),
+            ({"decision_cursor": "ACME#2019-01-01#1#add#2"}, "decision_cursor"),
+            ({"decision_cursor": None}, "decision_cursor"),
+        ]
+        for forged_fields, expected in cases:
+            forged = [dict(row) for row in KEPT]
+            forged[0] = dict(forged[0], **forged_fields)
+            out = _cli(_root(tmp), _snapshot(tmp, forged))
+            assert out["status"] == "error" and expected in out["error"], out
 
 
 def test_the_two_provenance_fields_are_one_fact_and_travel_together():

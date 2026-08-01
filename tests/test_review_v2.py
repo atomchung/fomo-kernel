@@ -1223,6 +1223,112 @@ def test_a_differing_second_declaration_is_recorded_first_then_reviewed():
             "an identical finalize replay appends neither a second mark nor a second anchor"
 
 
+def test_a_routine_adoption_does_not_reask_a_captured_add_decision():
+    """#660: the real prepare route reads the carried cursor after adoption.
+
+    An opening holdings review records the current cycle and its thesis.  A
+    normal CSV review then records two canonical adds and captures the second
+    add's reason.  When the user later refreshes an otherwise unchanged
+    holdings view, the next real ``review.py prepare`` must join that captured
+    reason to the same cursor, rather than treating the routine declaration as
+    a fresh zero-add anchor and asking the same question again.
+    """
+    initial = {
+        "as_of": "2026-06-30",
+        "positions": [{"ticker": "PLTR", "shares": 100, "avg_cost": 12,
+                       "market": "US", "currency": "USD"}],
+    }
+    refreshed = {
+        "as_of": "2026-07-15",
+        "positions": [{"ticker": "PLTR", "shares": 120, "avg_cost": 12,
+                       "market": "US", "currency": "USD"}],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        opening, _path = _snapshot_prepare(tmp, root, payload=initial, name="opening.json")
+        assert _finalize_snapshot_session(tmp, root, opening, "opening").returncode == 0
+
+        # Capture the existing add decision through review.py's two-step
+        # lifecycle.  The compact fixture supplies only presentation artifacts;
+        # the existing declared ledger is still the source for the overlaid
+        # holding, its cycle, and its count.  This keeps the test focused on
+        # continuity rather than market-data rendering.
+        card, state = _artifacts(tmp)
+        trades = pathlib.Path(tmp) / "post-anchor-adds.csv"
+        trades.write_text(
+            "Symbol,Action,Quantity,Price,TradeDate,RecordType,Market,Currency\n"
+            "PLTR,BUY,10,11,2026-07-02,Trade,US,USD\n"
+            "PLTR,BUY,10,10,2026-07-03,Trade,US,USD\n",
+            encoding="utf-8")
+        recorded = _run(
+            "prepare", trades, "--root", root, "--language", "en", "--card-json", card,
+            "--state-json", state, "--session-nonce", "capture-add")
+        assert recorded.returncode == 0, recorded.stdout + recorded.stderr
+        add_plan = _pending_plan(root, recorded.stdout)
+        add_questions = [q for q in add_plan["question_queue"] if q["kind"] == "add_thesis"]
+        assert add_questions
+        add_question = add_questions[0]
+        assert add_question["decision_cursor"] == "PLTR#2026-06-30#1#add#2"
+
+        answers = _answers(add_plan, commitment="skip")
+        answers["thesis_updates"] = []
+        answers_path = pathlib.Path(tmp) / "captured-add-answers.json"
+        narrative_path = pathlib.Path(tmp) / "captured-add-narrative.json"
+        answers_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        narrative_path.write_text(json.dumps(_narrative_for_plan(add_plan), ensure_ascii=False),
+                                  encoding="utf-8")
+        captured = _run_finalize("--root", root, "--session-id", add_plan["session_id"],
+                                 "--answers", answers_path, "--narrative", narrative_path)
+        assert captured.returncode == 0, captured.stdout + captured.stderr
+
+        before_refresh, _skipped = ledger_engine.load_ledger(str(root / "ledger.jsonl"))
+        held_before = ledger_engine.derive_holdings(before_refresh)["holdings"]["PLTR"]
+        assert held_before["add_count"] == 2
+        assert held_before["decision_cursor"] == add_question["decision_cursor"]
+
+        snapshot_path = _snapshot_json(tmp, payload=refreshed, name="routine-refresh.json")
+        receipt = _refresh(str(root), str(snapshot_path))
+        assert receipt["status"] == "ready" and receipt["pending_confirmations"] == []
+        adopted = _refresh(str(root), str(snapshot_path),
+                           {"refresh_id": receipt["refresh_id"], "answers": []})
+        assert adopted["status"] == "adopted"
+
+        # This final command is the production snapshot-review entry point,
+        # not a helper-level question builder.  Its canonical reader sees the
+        # retained count and rebuilds exactly the old cursor.
+        prepared = _run("prepare", "--route", "snapshot_review", "--snapshot-json", snapshot_path,
+                        "--root", root, "--language", "en")
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+        after = _pending_plan(root, prepared.stdout)
+        after_position = after["engine_state"]["holdings"]["positions"]["PLTR"]
+        assert after_position["add_count"] == 2
+        assert after_position["decision_cursor"] == add_question["decision_cursor"]
+        assert not any(q["kind"] == "add_thesis" for q in after["question_queue"])
+
+        # Snapshot cards intentionally have no historical add prompt of their
+        # own.  Feed the exact production-built state into the normal prepare
+        # queue with one synthetic card prompt: this remains the CLI/persisted
+        # plan path, while making the user-visible dedup branch observable.  If
+        # routine adoption had reset add_count, this question would reappear.
+        probe_card = dict(after["engine_card"])
+        probe_card["thesis_questions"] = [{
+            "ticker": "PLTR", "question": "Synthetic add-decision prompt",
+        }]
+        probe_card_path = pathlib.Path(tmp) / "after-refresh-card.json"
+        probe_state_path = pathlib.Path(tmp) / "after-refresh-state.json"
+        probe_card_path.write_text(json.dumps(probe_card, ensure_ascii=False), encoding="utf-8")
+        probe_state_path.write_text(json.dumps(after["engine_state"], ensure_ascii=False), encoding="utf-8")
+        deduped = _run("prepare", "--root", root, "--language", "en",
+                       "--card-json", probe_card_path, "--state-json", probe_state_path,
+                       "--session-nonce", "after-refresh-add-probe")
+        assert deduped.returncode == 0, deduped.stdout + deduped.stderr
+        queued = _pending_plan(root, deduped.stdout)
+        assert not any(q["kind"] == "add_thesis" for q in queued["question_queue"])
+        rejection = next(row for row in queued["card_plan"]["question_selection"]["rejected"]
+                         if row["kind"] == "add_thesis")
+        assert rejection["reason"] == "already_captured"
+
+
 def test_a_second_declaration_does_not_ask_for_theses_it_already_has():
     """#539's acceptance, end to end through the lane a user actually walks.
 
