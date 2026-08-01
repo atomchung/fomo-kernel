@@ -3834,8 +3834,8 @@ def _price_feed_status(source, *, supplied=None, unavailable_declared=None,
     return status
 
 
-def _consider_price_feed_status(*, requested, last_px, currencies, fx,
-                                supplied, unavailable_declared, bundle):
+def _consider_price_feed_status(*, requested, last_px, currencies, fx, feed,
+                                agent_supplied, unavailable_declared, bundle):
     """The same recovery kit, for the ``consider`` lane (#629).
 
     ``prepare`` has always reported a complete manifest when it could not price
@@ -3853,6 +3853,10 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx,
     second manifest is the mirrored surface docs/maintainer-guide.md forbids,
     and the wording would drift on the first edit to either.
 
+    ``agent_supplied`` records an actual ``--prices`` envelope.  The engine's
+    successful resolver also returns a feed-shaped mapping, but that must not
+    make engine-retrieved prices appear to have been supplied by an agent.
+
     ``requested`` is what *this answer* needed priced — the book's own held
     instruments plus the premise ticker — rather than a review's wider universe
     of benchmarks and history: naming a benchmark here would send the agent
@@ -3862,8 +3866,9 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx,
     unresolved_fx = [code for code in sorted(currencies or ())
                      if str(code).upper() != "USD" and code not in (fx or {})]
     provenance = price_feed.provenance(
-        mode=("agent_feed" if supplied else ("engine_fetch" if priced else "unavailable")),
-        feed=supplied,
+        mode=("agent_feed" if agent_supplied else
+              ("engine_fetch" if priced else "unavailable")),
+        feed=feed,
         # The bundle's own stated degradations, classified into the stable
         # reason code price_feed.classify_error owns. The raw text never enters
         # a record: `provenance` is emitted beside a content-addressed row and a
@@ -3874,15 +3879,16 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx,
         requested=requested, priced=priced,
         fx_mode=("not_needed" if not unresolved_fx and len(set(
             str(c).upper() for c in (currencies or ()))) <= 1 else
-            ("feed" if supplied else ("engine_fetch" if not unresolved_fx else "missing"))),
-        as_of=(supplied or {}).get("as_of"))
+            ("feed" if agent_supplied else
+             ("engine_fetch" if not unresolved_fx else "missing"))),
+        as_of=(feed or {}).get("as_of"))
     status_source = {"price_provenance": provenance}
     if provenance["coverage"]["missing"] or unresolved_fx:
         status_source["price_request"] = price_feed.build_request(
             tickers=requested, currencies=unresolved_fx,
             missing=provenance["coverage"]["missing"],
             reason=provenance["error"])
-    return _price_feed_status(status_source, supplied=supplied,
+    return _price_feed_status(status_source, supplied=feed,
                               unavailable_declared=unavailable_declared,
                               command="consider", request_path="price_feed.request")
 
@@ -7158,8 +7164,9 @@ def cmd_consider(args):
     declared_unavailable = _declared_prices_unavailable(args)
 
     last_px, fx, supplied_splits, market_bundle = None, None, None, None
+    agent_supplied = bool(args.prices)
     feed = None
-    if args.prices:
+    if agent_supplied:
         try:
             feed = price_feed.load(os.path.abspath(os.path.expanduser(args.prices)))
         except price_feed.PriceFeedError as exc:
@@ -7267,7 +7274,8 @@ def cmd_consider(args):
         requested=sorted(priced_universe), last_px=last_px,
         currencies={row.get("currency") or "USD" for row in rows
                     if row["ticker"] in priced_universe},
-        fx=fx, supplied=feed, unavailable_declared=declared_unavailable,
+        fx=fx, feed=feed, agent_supplied=agent_supplied,
+        unavailable_declared=declared_unavailable,
         bundle=market_bundle)
     # #618. Frozen onto the basis beside `valuation_basis`, where "was this
     # priced" already lives, and from the same `priced_universe` the kit above
