@@ -35,6 +35,7 @@ import horizon
 import instruments
 import ledger
 import market_data
+import weekly_market_read
 import price_feed
 import problems
 import portfolio_basis
@@ -7863,6 +7864,20 @@ def cmd_resolve_market_data(args):
     _emit(result)
 
 
+def cmd_weekly_market_read(args):
+    """Read-only #683 prototype companion; never refetches or saves state."""
+    root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
+    pending = session.load_pending(root, args.session_id)
+    plan = pending.get("plan") or {}
+    try:
+        brief = weekly_market_read.build(plan, focus=args.focus)
+    except ValueError as exc:
+        raise ReviewError(str(exc)) from exc
+    _emit({"status": brief.get("status"), "weekly_market_read": brief,
+           "private_markdown": weekly_market_read.render_zh_tw(brief),
+           "next_action": "show this only after the complete Review Card and before the existing closing choice; it is session-local and must not be finalized"})
+
+
 def cmd_doctor(args):
     """Report optional runtime dependencies and what each unlocks (#322).
 
@@ -7985,6 +8000,11 @@ def build_parser():
     render.add_argument("--format", choices=("json", "private-markdown", "public-markdown"),
                         default="json", help="emit JSON (default) or one canonical Markdown card")
     render.set_defaults(func=cmd_render)
+    weekly_market = sub.add_parser("weekly-market-read", help="read-only weekly market companion prototype (#683)")
+    weekly_market.add_argument("--session-id", required=True)
+    weekly_market.add_argument("--root")
+    weekly_market.add_argument("--focus", choices=weekly_market_read.FOCUSES)
+    weekly_market.set_defaults(func=cmd_weekly_market_read)
     repair = sub.add_parser("repair-projections")
     repair.add_argument("--root")
     repair.set_defaults(func=cmd_repair)
