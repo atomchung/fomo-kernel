@@ -21,7 +21,7 @@ import sys
 try:
     from dotenv import load_dotenv
     load_dotenv()
-except ImportError:
+except (ImportError, PermissionError, OSError):
     pass
 
 MODEL = os.environ.get("TR_JUDGE_MODEL", "claude-opus-5")

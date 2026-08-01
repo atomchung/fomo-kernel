@@ -1318,7 +1318,8 @@ def codex_discovery_violations(root):
             "instead of the AGENTS.md at that level, so this drops the shared "
             "instruction floor entirely. Put client mechanics in that client's own "
             "configuration, or in a nested AGENTS.md beside the code it governs.")
-    payload = sorted(root.rglob("AGENTS.md"))
+    payload = [path for path in sorted(root.rglob("AGENTS.md"))
+               if not any(part.startswith(".") for part in path.relative_to(root).parts[:-1])]
     if not payload:
         problems.append("no AGENTS.md found -- the enumeration is broken, not the tree")
     total = sum(path.stat().st_size for path in payload)
