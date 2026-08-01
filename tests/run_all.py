@@ -45,6 +45,7 @@ SUITES = [
     ("Persona end-to-end", "tests/test_sample_styles.py"),
     ("State-loop end-to-end", os.path.join("skills", "fomo-kernel", "engine", "test_state_loop.py")),
     ("Card and state checker probes", "tests/test_checkers_offline.py"),
+    ("Global output-voice contract (#676)", "tests/test_output_voice.py"),
     # The narrative judge itself stays out of this gate -- it is opt-in,
     # billable and non-deterministic. What belongs here is its pure logic: the
     # manifest gate that refuses a fixture set which could not catch a

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "privacy": "synthetic_only",
+  "scenes": [
+    {
+      "id": "selling_comparison",
+      "kind": "positive",
+      "route": "consider",
+      "rules": ["V1", "V2", "V8"],
+      "payload": "The user asks what to sell between ALP and BRV. A frozen refusal has usable facts: ALP is the largest holding and an existing concentration rule is already over; BRV is the only holding whose premise is no longer supported. Exact post-sale weights are unavailable.",
+      "answer": "The useful choice is between reducing the already-concentrated ALP bet and enforcing the unsupported BRV premise; this record cannot compute either post-sale weight. Selling ALP would prioritize risk reduction against a rule already over, while keeping it says its conviction still justifies that concentration. Selling BRV would enforce the premise test; keeping it says the missing support is temporary. Your call: compare those commitments before choosing either name.",
+      "required": ["useful choice", "ALP", "BRV", "Your call"],
+      "forbidden": ["sell ALP", "sell BRV", "you should sell"]
+    },
+    {
+      "id": "computed_consider",
+      "kind": "positive",
+      "route": "consider",
+      "rules": ["V1", "V3", "V4", "V5", "V6", "V8"],
+      "payload": "Frozen consequence: a buy raises FICT from 30% to 38% of the recorded book and widens an already-over position rule. The book is cost-priced and stale. The user says the price fell but gives no new business fact.",
+      "answer": "The decision tension is whether a lower price justifies widening a position that is already over your own rule: this buy moves FICT from 30% to 38% of the recorded book. That matters because the rule is already breached, not because 38% is a standalone score. Counter-case: the lead rests on a stale, cost-priced book, so the market-value weight could be lower; that uncertainty qualifies the 38% rather than erasing the existing rule. Your price-only reason still needs a business fact before you choose whether to proceed.",
+      "required": ["decision tension", "because", "Counter-case", "cost-priced", "Your"],
+      "forbidden": ["you should buy", "execute the trade"]
+    },
+    {
+      "id": "no_book_framing",
+      "kind": "positive",
+      "route": "decision_framing",
+      "rules": ["V1", "V2", "V7", "V8"],
+      "payload": "No recorded book. The user wants to add Widgetron after a price move, calls it a core holding, and says they would exit if the thesis breaks without naming a condition.",
+      "answer": "The tension is a core commitment triggered by price alone with no condition that could prove the premise wrong; that decision cannot be judged afterward yet. The strongest case for waiting is that a checkable exit would turn the idea into something you can revisit. What observable would tell you the thesis broke? Your final action remains yours.",
+      "required": ["tension", "price alone", "What observable", "yours"],
+      "forbidden": ["portfolio weight", "you should buy", "I cannot help"]
+    },
+    {
+      "id": "healthy_alignment",
+      "kind": "positive",
+      "route": "decision_framing",
+      "rules": ["V9"],
+      "payload": "No recorded book. A verified public fact is connected to a checkable exit condition. No other conflict is supplied.",
+      "answer": "The new fact and your exit condition test the same premise, so the decision is structurally aligned. Nothing else in the record creates a useful challenge.",
+      "required": ["structurally aligned", "Nothing else"],
+      "forbidden": ["however", "you should"]
+    },
+    {
+      "id": "hard_evasion",
+      "kind": "negative",
+      "failure": "hard_evasion",
+      "answer": "I cannot tell you what to sell without your complete portfolio. Upload it first."
+    },
+    {
+      "id": "soft_evasion",
+      "kind": "negative",
+      "failure": "soft_evasion",
+      "answer": "I cannot calculate the consequence. I cannot assess the book. I cannot give advice, so please upload more data."
+    },
+    {
+      "id": "metric_dump",
+      "kind": "negative",
+      "failure": "metric_evasion",
+      "answer": "ALP is 31%, BRV is 24%, cash is 10%, top three is 72%, and the rule is over."
+    },
+    {
+      "id": "question_outsourcing",
+      "kind": "negative",
+      "failure": "question_evasion",
+      "answer": "What is your thesis? What is your risk tolerance? What would you do if the price falls?"
+    },
+    {
+      "id": "balanced_mush",
+      "kind": "negative",
+      "failure": "balanced_mush",
+      "answer": "For: the price fell. Against: concentration is higher. For: conviction is strong. Against: cash may matter."
+    },
+    {
+      "id": "process_leakage",
+      "kind": "negative",
+      "failure": "process_leakage",
+      "answer": "The engine returned a challenge block after the tool completed its gate. Review the JSON before deciding."
+    },
+    {
+      "id": "manufactured_insight",
+      "kind": "negative",
+      "failure": "manufactured_insight",
+      "answer": "The fact and exit condition are aligned. Still, you should worry that every investment can fail and write a longer risk memo."
+    },
+    {
+      "id": "concise_unsupported",
+      "kind": "negative",
+      "failure": "concise_unsupported",
+      "answer": "Sell ALP. It is weak."
+    }
+  ]
+}

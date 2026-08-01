@@ -6,6 +6,12 @@ This file is the contract for that case: the user is deciding on one trade, has 
 
 Confidence rises with a book; it does not fall to zero without one. This route exists to be useful now and to make the next piece of evidence worth handing over, not to stand in for [trade-consequence.md](trade-consequence.md)'s computed answer.
 
+## Voice authority
+
+Apply the global [output-voice contract](../../../docs/output-voice.md). It
+owns universal output semantics; this reference owns the no-book facts,
+questions, and route order below.
+
 ## What the answer is
 
 One bounded framing carrying four things:
