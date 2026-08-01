@@ -162,10 +162,12 @@ This is a different fact from `basis.as_of`, which is the last row of the *recor
 
 `by_ticker` exists because a single frame date cannot say which session a given instrument's number came from — one fresh close otherwise makes every stale one look same-day. Where an instrument's own session matches `as_of`, the summary already covers it; where it does not, say so beside the number it qualifies.
 
-So the response also carries a `price_feed` block beside the evaluation, built by the same engine helper `prepare` uses:
+So the response carries a `price_feed` block beside the evaluation — or beside
+the recoverable refusal when no market-value denominator can yet be built —
+using the same engine helper `prepare` uses:
 
 - `provenance` — where the prices came from, and the stable reason code for why retrieval failed.
-- `request` — present only when coverage is incomplete: exactly which instruments still need a close. Scoped to the held book plus the premise's own ticker, so it never sends you after a closed position or a benchmark.
+- `request` — present only when coverage is incomplete: exactly which instruments still need a close and which currencies still need FX. Scoped to usable canonical current holdings plus the premise's own ticker; integrity, quantity and unmatched-history exclusions stay in disclosure/provenance and never become market-data work. An empty `tickers` list with a non-empty `currencies` list is an FX-only repair.
 - `recovery` — whether recovery was attempted at all, on the same three states [price-feed.md](price-feed.md) documents.
 - `next_action` — what to do, ending in `consider --prices <path>`.
 

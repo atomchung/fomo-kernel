@@ -3562,6 +3562,137 @@ def test_o_resolve_takes_no_dead_end_declaration():
                "--prices-unavailable")
 
 
+def _orphan_fx_book(tmp):
+    """A fictional current book plus an unmatched-history orphan.
+
+    ``ORPH`` has no current holding: its sell follows the snapshot without a
+    matching buy.  That integrity fact remains disclosed, but no close for
+    ORPH can repair the USD/TWD conversion missing from the two current
+    holdings.
+    """
+    _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+        _snapshot_event("2026-07-01", [
+            {"ticker": "USCO", "shares": 10, "avg_cost": 100.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "TWCO", "shares": 20, "avg_cost": 500.0,
+             "market": "TW", "currency": "TWD"},
+        ]),
+        _trade_event("2026-07-02", "ORPH", "sell", 3, 25.0),
+    ])
+
+
+def _orphan_fx_closes(path, *, fx=None):
+    return _fx_envelope(path, {
+        "USCO": (120.0, "USD"), "TWCO": (550.0, "TWD"),
+        "NEXT": (80.0, "USD"),
+    }, fx=fx)
+
+
+def test_o_fx_only_recovery_excludes_an_integrity_orphan_and_retries_once():
+    """#629 owner-live regression, entirely synthetic.
+
+    Every usable current close and the premise close are present.  Only TWD
+    conversion is absent, while an unmatched sell names ORPH in the integrity
+    disclosure.  The emitted repair must ask only for FX; then the same
+    premise and decision context completes, and an exact repeat remains one
+    append-only evaluation.
+    """
+    premise = '{"ticker": "NEXT", "side": "buy", "price": 80.0, "qty": 2, "currency": "USD"}'
+    context = {
+        "reason": "The fictional product launch changes the synthetic thesis.",
+        "why_now": "The fictional board vote is today.",
+        "evidence_refs": ["Synthetic board packet"],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        _orphan_fx_book(tmp)
+        closes = _orphan_fx_closes(os.path.join(tmp, "closes.json"))
+        initial = _fails(_run("consider", "--root", tmp, "--prices", closes,
+                              "--premise", premise,
+                              "--decision-context", json.dumps(context)),
+                         "no FX rate covers TWD")
+        kit = initial["price_feed"]
+        assert kit["request"]["tickers"] == [], kit
+        assert kit["request"]["currencies"] == ["TWD"], kit
+        assert "ORPH" not in json.dumps(kit), kit
+        action = kit["next_action"]
+        assert "price_feed.request.currencies" in action, action
+        assert "FX rate" in action, action
+        assert "benchmark" not in action.lower(), action
+        assert "close" not in action.lower(), action
+        assert _read_evaluations(tmp) == [], "the recoverable refusal must not persist a cost answer"
+
+        complete = _orphan_fx_closes(os.path.join(tmp, "complete.json"), fx={"TWD": 0.031})
+        args = ("consider", "--root", tmp, "--prices", complete,
+                "--premise", premise, "--decision-context", json.dumps(context))
+        first = _ok(_run(*args))
+        second = _ok(_run(*args))
+        assert first["evaluation"]["premise"]["ticker"] == "NEXT"
+        assert first["evaluation"]["context"] == context
+        assert first["evaluation"]["evaluation_id"] == second["evaluation"]["evaluation_id"]
+        assert len(_read_evaluations(tmp)) == 1, "an exact post-recovery retry duplicates no evaluation"
+        assert first["evaluation"]["consequence"]["excluded_holdings"] == [
+            {"ticker": "ORPH", "reason": "integrity_oversell"}], first["evaluation"]
+
+
+def test_o_single_currency_twd_sell_inherits_currency_and_requests_no_fx():
+    """One native currency needs no conversion, even when it is not USD."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-07-01", [
+                {"ticker": "TWCO", "shares": 20, "avg_cost": 500.0,
+                 "market": "TW", "currency": "TWD"},
+            ]),
+        ])
+        prices = _fx_envelope(os.path.join(tmp, "twd.json"), {
+            "TWCO": (550.0, "TWD"),
+        })
+        premise = '{"ticker": "TWCO", "side": "sell", "price": 550.0, "qty": 1}'
+        result = _ok(_run("consider", "--root", tmp, "--prices", prices,
+                          "--premise", premise))
+        assert result["evaluation"]["premise"]["currency"] == "TWD"
+        assert "request" not in (result.get("price_feed") or {}), result.get("price_feed")
+
+
+def test_o_fx_only_orphan_regression_reddens_under_the_legacy_union_mutation():
+    """The #629 mutation proof: held ∪ all_excluded ∪ premise is red.
+
+    The public E2E above proves the CLI wiring.  This focused mutation runs the
+    identical request builder with a temporary legacy scope and requires its
+    own assertion to fail, so the test cannot stay green if a future edit puts
+    excluded tickers back into the manifest.
+    """
+    rows = [
+        {"ticker": "USCO", "currency": "USD"},
+        {"ticker": "TWCO", "currency": "TWD"},
+    ]
+    excluded = [{"ticker": "ORPH", "reason": "integrity_oversell"}]
+    original = review_engine._consider_recovery_tickers
+
+    def manifest(tickers):
+        return review_engine._consider_price_feed_status(
+            requested=sorted(tickers),
+            last_px={"USCO": 120.0, "TWCO": 550.0, "NEXT": 80.0},
+            missing_fx={"TWD"}, fx_required=True, feed={"as_of": "2026-07-30"},
+            agent_supplied=True, unavailable_declared=None, bundle=None)["request"]
+
+    assert manifest(original(rows, "NEXT", excluded))["tickers"] == []
+
+    def legacy(rows, premise_ticker, excluded_holdings):
+        return (original(rows, premise_ticker, excluded_holdings)
+                | {row["ticker"] for row in excluded_holdings})
+
+    review_engine._consider_recovery_tickers = legacy
+    try:
+        try:
+            assert manifest(review_engine._consider_recovery_tickers(rows, "NEXT", excluded))["tickers"] == []
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("legacy held ∪ all_excluded ∪ premise mutation stayed green")
+    finally:
+        review_engine._consider_recovery_tickers = original
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

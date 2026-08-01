@@ -48,8 +48,8 @@ answer changes; it is still brief, still text.
 
 It is not a general loosening. It licenses no chart, artifact, or other
 multi-tool work, on this call or any other, and it applies only when
-`consider` actually returned a `price_feed` recovery kit naming unpriced
-instruments.
+`consider` actually returned a `price_feed` recovery kit naming missing closes
+and/or currency conversion.
 
 **Why the carve-out is worth its cost.** `consider` exists to answer what a
 trade does to the user's concentration. Computed without current prices, every
@@ -65,9 +65,11 @@ envelope, and the result is mechanically checked downstream, so this is
 bounded work rather than judgment.
 
 - **Count ceiling:** the instruments `price_feed.request.tickers` names and
-  nothing else — no benchmark, no index, no instrument the book does not hold.
-  **At most twenty instruments**, one attempt each. The engine already scopes
-  that manifest to the held book plus the premise's own ticker.
+  nothing else — no benchmark, no index, no integrity exclusion, and no
+  instrument the book does not hold. **At most twenty instruments**, one
+  attempt each. The engine already scopes that manifest to the held book plus
+  the premise's own ticker. When `tickers` is empty and
+  `request.currencies` is non-empty, look up only those FX rates.
 - **Timeout:** an instrument whose publisher page does not resolve is left out
   rather than retried. Supply whatever you found — partial coverage is
   accepted, and the answer names what it could not value.
