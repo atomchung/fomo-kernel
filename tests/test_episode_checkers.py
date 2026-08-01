@@ -922,12 +922,13 @@ def test_unusable_samples_are_reported_and_never_counted_as_agreement():
     assert any("unreadable" in message for message in failures), failures
     assert any("split" in message for message in failures), failures
     assert observed == {}, "an unreadable sample must not count toward coverage"
-    # One unusable among three still reports it, and the survivors still decide.
+    # One unusable among three still preserves the survivors' majority in the
+    # report, but the answer-axis is ambiguous for agreement/coverage purposes.
     failures, observed = J.grade_answer(
         episode, miss, ["two_sided"],
         [None] + _samples({"two_sided": "fail"}, runs=2))
     assert any("1/3 sample(s) came back unreadable" in m for m in failures), failures
-    assert observed == {"two_sided": {"fail"}}
+    assert observed == {}, "an axis with any unusable sample is not agreement evidence"
 
 
 def test_backend_resolution_names_both_routes_and_refuses_an_unknown_one():

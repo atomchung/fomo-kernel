@@ -67,6 +67,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
@@ -99,9 +100,30 @@ RUNS = int(os.environ.get("TR_JUDGE_RUNS", "3"))
 BACKEND = os.environ.get("TR_JUDGE_BACKEND", "auto")
 DEFAULT_MODELS = {"anthropic": "claude-opus-5", "agy": "gemini-3.1-pro-high"}
 MODEL = os.environ.get("TR_JUDGE_MODEL")  # resolved per backend in `resolve_backend`
-AGY_PATH = os.path.expanduser(
-    os.environ.get("TR_JUDGE_AGY_PATH", "~/.local/bin/agy"))
 AGY_ATTEMPTS = 3
+AGY_TIMEOUT_SECONDS = 300
+STRUCTURED_MAX_TOKENS = 16000
+STRUCTURED_TOOL_CHOICE = {"type": "tool", "name": "record_verdicts"}
+
+
+def _resolve_agy_path(configured=None, *, which=shutil.which):
+    """Resolve an executable override or the first ``agy`` on PATH.
+
+    The returned path is absolute so the executable probed by
+    ``installed_backends`` is the executable later handed to ``subprocess``.
+    An explicit override is authoritative: an invalid override does not quietly
+    fall through to a different installation on PATH.
+    """
+    candidate = os.path.expanduser(configured) if configured else which("agy")
+    if not candidate:
+        return None
+    candidate = os.path.abspath(candidate)
+    if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+        return None
+    return candidate
+
+
+AGY_PATH = _resolve_agy_path(os.environ.get("TR_JUDGE_AGY_PATH"))
 
 # ── the rubric ───────────────────────────────────────────────────────────────
 #
@@ -269,7 +291,7 @@ def _prompt(episode, answer, axes, *, rubric=None, material_fn=None):
 
 def installed_backends():
     """What this machine can actually reach. The only impure part of resolution."""
-    return {"agy": os.path.isfile(AGY_PATH) and os.access(AGY_PATH, os.X_OK),
+    return {"agy": AGY_PATH is not None,
             "anthropic": importlib.util.find_spec("anthropic") is not None}
 
 
@@ -351,8 +373,25 @@ def _agy_prompt(episode, answer, axes, *, system=None, rubric=None,
             + json.dumps(shape, indent=2))
 
 
+def agy_call_spec(model, episode, answer, axes, *, system=None, rubric=None,
+                  material_fn=None):
+    """Canonical description of the exact CLI call used for one sample."""
+    prompt = _agy_prompt(episode, answer, axes, system=system, rubric=rubric,
+                         material_fn=material_fn)
+    return {
+        "argv": [AGY_PATH, "-p", prompt, "--model", model,
+                 "--effort", EFFORT],
+        "subprocess_kwargs": {
+            "capture_output": True,
+            "text": True,
+            "timeout": AGY_TIMEOUT_SECONDS,
+        },
+        "max_attempts": AGY_ATTEMPTS,
+    }
+
+
 def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
-                   material_fn=None):
+                   material_fn=None, call_spec=None):
     """One sample through the Antigravity CLI. Returns verdicts or None.
 
     Three constraints, all load-bearing (`agy` 1.1.7): headless `agy` does not
@@ -362,17 +401,23 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
     timeout is mandatory, since a hung CLI would otherwise stall the run with
     no verdict and no error.
     """
-    prompt = _agy_prompt(episode, answer, axes, system=system, rubric=rubric,
-                         material_fn=material_fn)
+    call = call_spec or agy_call_spec(
+        model, episode, answer, axes, system=system, rubric=rubric,
+        material_fn=material_fn)
+    if not call.get("argv") or call["argv"][0] is None:
+        raise RuntimeError("agy judge call could not start: no executable was resolved")
     empty_retried = False
-    for attempt in range(AGY_ATTEMPTS):
+    for attempt in range(call["max_attempts"]):
         try:
             finished = subprocess.run(
-                [AGY_PATH, "-p", prompt, "--model", model,
-                 "--effort", EFFORT],
-                capture_output=True, text=True, timeout=300)
+                call["argv"], **call["subprocess_kwargs"])
         except subprocess.TimeoutExpired:
             continue
+        except OSError as exc:
+            # argv can exceed ARG_MAX, and an executable can disappear between
+            # discovery and launch. Both are failed samples that the caller
+            # must receipt, not process-level exits that erase the run.
+            raise RuntimeError(f"agy judge call could not start: {exc}") from exc
         if finished.returncode == 0:
             if finished.stdout.strip():
                 return _parse_verdicts(finished.stdout, axes)
@@ -389,26 +434,35 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
             return None
         # agy already applies backend backoff internally, but a surfaced
         # 502/503 remains retryable at the caller boundary (skill contract).
-        if attempt + 1 == AGY_ATTEMPTS:
+        if attempt + 1 == call["max_attempts"]:
             return None
     return None
 
 
-def judge_once(model, client, anthropic, episode, answer, axes, *, system=None,
-               rubric=None, material_fn=None):
-    """One sample. Returns ``{axis: {"verdict", "reason"}}``."""
+def structured_call_spec(model, episode, answer, axes, *, system=None,
+                         rubric=None, material_fn=None):
+    """Canonical kwargs handed to the structured-tool model client."""
     system = SYSTEM if system is None else system
+    return {
+        "model": model,
+        "max_tokens": STRUCTURED_MAX_TOKENS,
+        "system": system,
+        "output_config": {"effort": EFFORT},
+        "tools": [_tool(axes, rubric=rubric)],
+        "tool_choice": dict(STRUCTURED_TOOL_CHOICE),
+        "messages": [{"role": "user", "content": _prompt(
+            episode, answer, axes, rubric=rubric, material_fn=material_fn)}],
+    }
+
+
+def judge_once(model, client, anthropic, episode, answer, axes, *, system=None,
+               rubric=None, material_fn=None, request=None):
+    """One sample. Returns ``{axis: {"verdict", "reason"}}``."""
+    request = request or structured_call_spec(
+        model, episode, answer, axes, system=system, rubric=rubric,
+        material_fn=material_fn)
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=16000,
-            system=system,
-            output_config={"effort": EFFORT},
-            tools=[_tool(axes, rubric=rubric)],
-            tool_choice={"type": "tool", "name": "record_verdicts"},
-            messages=[{"role": "user", "content": _prompt(
-                episode, answer, axes, rubric=rubric, material_fn=material_fn)}],
-        )
+        response = client.messages.create(**request)
     except anthropic.APIError as exc:
         raise RuntimeError(f"judge call failed for {episode['id']}/{answer['id']}: {exc}") from exc
     # A refused request returns HTTP 200 with an empty or partial `content`, so
@@ -442,6 +496,14 @@ def vote(samples, axis):
     return tally[0][0], top
 
 
+def _usable_axis_entry(sample, axis):
+    entry = sample.get(axis) if isinstance(sample, dict) else None
+    reason = entry.get("reason") if isinstance(entry, dict) else None
+    return (entry if isinstance(entry, dict)
+            and entry.get("verdict") in {"pass", "fail"}
+            and isinstance(reason, str) and reason.strip() else None)
+
+
 def axis_report(samples, axis, expected):
     """Return the complete, auditable vote record for one axis.
 
@@ -452,14 +514,11 @@ def axis_report(samples, axis, expected):
     sample_rows = []
     usable = []
     for run, sample in enumerate(samples, start=1):
-        entry = sample.get(axis) if isinstance(sample, dict) else None
-        reason = entry.get("reason") if isinstance(entry, dict) else None
-        if (not isinstance(entry, dict)
-                or entry.get("verdict") not in {"pass", "fail"}
-                or not isinstance(reason, str)
-                or not reason.strip()):
+        entry = _usable_axis_entry(sample, axis)
+        if entry is None:
             sample_rows.append({"run": run, "usable": False})
             continue
+        reason = entry["reason"]
         row = {"run": run, "usable": True, "verdict": entry["verdict"],
                "reason": reason.strip()}
         sample_rows.append(row)
@@ -468,14 +527,18 @@ def axis_report(samples, axis, expected):
     verdict, count = vote(usable, axis)
     tally = collections.Counter(row["verdict"] for row in sample_rows
                                 if row["usable"])
+    unusable = sum(1 for row in sample_rows if not row["usable"])
+    classification = ("ambiguous" if verdict == "ambiguous" or unusable else
+                      "agreement" if verdict == expected else "disagreement")
     return {
         "expected": expected,
         "verdict": verdict,
         "majority_count": count,
         "tally": {name: tally.get(name, 0) for name in ("pass", "fail")},
-        "unusable": sum(1 for row in sample_rows if not row["usable"]),
+        "unusable": unusable,
         "samples": sample_rows,
-        "matched": verdict == expected,
+        "classification": classification,
+        "matched": classification == "agreement",
     }
 
 
@@ -505,10 +568,15 @@ def grade_answer_report(episode, answer, axes, samples):
     # read. Those samples are dropped, never guessed at, and their absence is
     # reported: an axis left with no verdict votes `ambiguous` below, which is a
     # failure. Silence from the judge must not read as agreement with it.
-    unusable = sum(1 for sample in original_samples if sample is None)
-    samples = [sample for sample in original_samples if sample is not None]
-    if unusable:
-        failures.append(f"{tag}: {unusable}/{runs} sample(s) came back unreadable — "
+    wholly_unreadable = sum(1 for sample in original_samples
+                            if not isinstance(sample, dict))
+    fully_usable = sum(
+        1 for sample in original_samples
+        if isinstance(sample, dict)
+        and all(_usable_axis_entry(sample, axis) is not None for axis in axes))
+    unusable = runs - fully_usable
+    if wholly_unreadable:
+        failures.append(f"{tag}: {wholly_unreadable}/{runs} sample(s) came back unreadable — "
                         f"a reply the harness cannot parse is not a verdict")
     axis_reports = {}
     for axis in axes:
@@ -516,14 +584,19 @@ def grade_answer_report(episode, answer, axes, samples):
         axis_reports[axis] = axis_report(original_samples, axis, want)
         verdict = axis_reports[axis]["verdict"]
         count = axis_reports[axis]["majority_count"]
-        partial = axis_reports[axis]["unusable"] - unusable
+        partial = axis_reports[axis]["unusable"] - wholly_unreadable
         if partial:
             failures.append(f"{tag}: {partial}/{runs} sample(s) omitted {axis} — "
                             "a partial reply is not a verdict")
+        classification = axis_reports[axis]["classification"]
         if verdict == "ambiguous":
             failures.append(
                 f"{tag}: {axis} split {count}/{runs} — the judge does not reproduce "
                 f"its own verdict, so it cannot grade this axis")
+            continue
+        if classification == "ambiguous":
+            # The majority is retained as evidence, but any unusable vote keeps
+            # this answer-axis out of both agreement and disagreement rates.
             continue
         observed.setdefault(axis, set()).add(verdict)
         if verdict != want:

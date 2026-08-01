@@ -14,6 +14,11 @@ import os
 import pathlib
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - supported maintainer hosts are POSIX
+    fcntl = None
+
 
 class ReceiptError(RuntimeError):
     """The judge receipt store could not be written or read faithfully."""
@@ -24,7 +29,9 @@ def canonical_sha256(value: Any) -> str:
     try:
         encoded = json.dumps(
             value,
-            ensure_ascii=False,
+            # ASCII escaping is reversible JSON and also makes untrusted model
+            # text containing an isolated surrogate safely content-addressable.
+            ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
@@ -74,7 +81,10 @@ def append_receipt(row: dict[str, Any]) -> pathlib.Path:
     try:
         line = json.dumps(
             row,
-            ensure_ascii=False,
+            # Judge text is untrusted. Python's JSON parser accepts isolated
+            # surrogate escapes; spelling every non-ASCII code point as JSON
+            # escapes prevents a later UTF-8 encode from losing the whole run.
+            ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
@@ -83,20 +93,66 @@ def append_receipt(row: dict[str, Any]) -> pathlib.Path:
         raise ReceiptError(f"judge receipt is not valid JSON: {exc}") from exc
 
     path = history_path()
+    fd = None
     try:
         created = _missing_directory_chain(path.parent)
         path.parent.mkdir(parents=True, exist_ok=True)
         for directory in created:
             _fsync_dir(directory.parent)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.flush()
-            os.fsync(handle.fileno())
-        # Needed when this append created the file; harmless and explicit on
-        # later appends, where it keeps one durability contract for all calls.
+        if fcntl is None:
+            raise ReceiptError(
+                "judge receipt locking is unavailable on this platform; refusing an unsafe append")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+        # Persist the file's directory entry before exposing any receipt row.
+        # A directory-fsync failure after the write left a readable PASS row
+        # behind even though append_receipt correctly reported non-evidence.
+        # Doing this first makes that failure leave only an empty file.
         _fsync_dir(path.parent)
+
+        # A process killed during its write can leave an unterminated JSON row.
+        # Never append a new receipt onto that fragment and then claim success:
+        # preserve the corruption for diagnosis and fail closed instead.
+        end = os.lseek(fd, 0, os.SEEK_END)
+        if end:
+            os.lseek(fd, -1, os.SEEK_END)
+            if os.read(fd, 1) != b"\n":
+                raise ReceiptError(
+                    f"judge receipt history at {path} ends with an incomplete row; "
+                    "refusing to append")
+        os.lseek(fd, 0, os.SEEK_END)
+        start = os.lseek(fd, 0, os.SEEK_CUR)
+        payload = line.encode("utf-8")
+        written = 0
+        try:
+            while written < len(payload):
+                count = os.write(fd, payload[written:])
+                if count <= 0:
+                    raise OSError("receipt append made no progress")
+                written += count
+            os.fsync(fd)
+        except OSError:
+            # Do not leave a fully readable but unproven PASS behind after a
+            # failed write/fsync. Under the exclusive lock, restore the exact
+            # pre-append boundary before reporting the failure.
+            try:
+                os.ftruncate(fd, start)
+                os.fsync(fd)
+            except OSError as rollback_exc:
+                raise ReceiptError(
+                    f"judge receipt append failed and rollback at {path} also failed: "
+                    f"{rollback_exc}") from rollback_exc
+            raise
     except OSError as exc:
         raise ReceiptError(f"judge receipt was not durably recorded at {path}: {exc}") from exc
+    finally:
+        if fd is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
     return path
 
 
@@ -108,18 +164,25 @@ def read_history() -> list[dict[str, Any]]:
     rows = []
     try:
         with path.open(encoding="utf-8") as handle:
-            for line_number, raw in enumerate(handle, 1):
-                if not raw.strip():
-                    continue
-                try:
-                    row = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    raise ReceiptError(
-                        f"malformed judge receipt at {path}:{line_number}: {exc.msg}") from exc
-                if not isinstance(row, dict):
-                    raise ReceiptError(
-                        f"malformed judge receipt at {path}:{line_number}: expected JSON object")
-                rows.append(row)
+            if fcntl is None:
+                raise ReceiptError(
+                    "judge receipt locking is unavailable on this platform; refusing an unsafe read")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            try:
+                for line_number, raw in enumerate(handle, 1):
+                    if not raw.strip():
+                        continue
+                    try:
+                        row = json.loads(raw)
+                    except json.JSONDecodeError as exc:
+                        raise ReceiptError(
+                            f"malformed judge receipt at {path}:{line_number}: {exc.msg}") from exc
+                    if not isinstance(row, dict):
+                        raise ReceiptError(
+                            f"malformed judge receipt at {path}:{line_number}: expected JSON object")
+                    rows.append(row)
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     except (OSError, UnicodeError) as exc:
         raise ReceiptError(f"judge receipt history is unreadable at {path}: {exc}") from exc
     return rows
