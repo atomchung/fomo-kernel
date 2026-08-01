@@ -1757,7 +1757,14 @@ def test_consider_emits_the_product_owned_context_questions_before_evaluation():
                 for row in payload["question_queue"]] == [
                     ("reason", True, ["provide_text"]),
                     ("why_now", True, ["provide_text"])]
+        assert payload["question_queue"][0]["surface"] == "Why are you considering this add?"
         assert _read_evaluations(tmp) == []
+
+        sell = _ok(_run(
+            "consider", "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "sell", "price": 130.0, "qty": 5}',
+            "--context-questions"))
+        assert sell["question_queue"][0]["surface"] == "Why are you considering this sale?"
 
 
 def test_agent_case_with_a_wrong_number_is_rejected_on_the_production_path():

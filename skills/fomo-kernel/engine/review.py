@@ -6867,7 +6867,7 @@ def _validate_decision_context(payload):
                 f"limit of {EVALUATION_EVIDENCE_REF_MAX}; name the source rather than pasting it")
 
 
-def _consider_context_question_queue():
+def _consider_context_question_queue(premise):
     """The product-owned bounded context beat for an interactive ``consider``.
 
     This is intentionally a route surface, rather than a host prompt: a
@@ -6875,9 +6875,11 @@ def _consider_context_question_queue():
     emitted, then submit the resulting decision-context envelope to the real
     consequence call.
     """
+    action = {"buy": "add", "sell": "sale"}.get(
+        premise.get("side") if isinstance(premise, dict) else None, "trade")
     return [
         {"question_id": "consider_context_reason", "field": "reason",
-         "surface": "Why are you considering this add?", "required": True,
+         "surface": f"Why are you considering this {action}?", "required": True,
          "allowed_actions": ["provide_text"], "route_state": "collecting_context"},
         {"question_id": "consider_context_why_now", "field": "why_now",
          "surface": "What changed to make this decision timely?", "required": True,
@@ -7302,7 +7304,7 @@ def cmd_consider(args):
         if conflicting:
             raise ReviewError("--context-questions only takes --premise; remove " + ", ".join(conflicting))
         _emit({"status": "collecting_context", "route": "consider",
-               "premise": premise_payload, "question_queue": _consider_context_question_queue()})
+               "premise": premise_payload, "question_queue": _consider_context_question_queue(premise_payload)})
         return
 
     # #479 Wave A. Validated here, before any book is read or any number is
