@@ -567,6 +567,7 @@ def _carried_start(row, recorded, derived, as_of):
             # No date to guard: the cycle is `ticker#unknown` either way, and
             # that identity is already stable across declarations.
             row["since_basis"] = "unknown"
+            _carry_add_count(row, held)
             return row
         since, basis = recorded[ticker].get("since"), stamp
     else:
@@ -587,7 +588,25 @@ def _carried_start(row, recorded, derived, as_of):
     seq = lg.cycle_sequence((held.get("cycle_id") or ""))
     if seq and seq > 1:
         row["cycle_seq"] = seq
+    _carry_add_count(row, held)
     return row
+
+
+def _carry_add_count(row, held):
+    """Carry a count only beside #539's proven same-cycle continuity (#660).
+
+    This helper intentionally has no ticker lookup or fallback of its own.  It
+    runs only from ``_carried_start`` after that single primitive established
+    the active cycle's start (and, when needed, its sequence).  A new position,
+    an appearance being answered, an older declaration, and a sold/rebought
+    cycle all bypass it; the latter receives its new cycle's derived zero.
+
+    ``decision_cursor`` does not travel through the envelope.  The ledger is
+    still the one reader that derives it from this count and the cycle id.
+    """
+    count = held.get("add_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        row["add_count"] = count
 
 
 def carry_recorded_starts(envelope, events, *, splits=None, today=None):

@@ -196,6 +196,29 @@ def _normalize_cycle_seq(raw, index, row):
     row["cycle_seq"] = seq
 
 
+def _normalize_add_count(raw, index, row):
+    """Accept one engine-carried add count, never a caller-supplied one (#660).
+
+    ``_normalize_position`` rejects the key before reaching here unless its
+    caller is ``book_refresh.carry_recorded_starts``.  That primitive only adds
+    the count while its #539 continuity proof carries the same active cycle;
+    this checker protects the durable representation on that privileged path.
+    ``decision_cursor`` deliberately has no companion input field: the ledger
+    remains its one reader and derives it from the carried count plus cycle id.
+    """
+    if "add_count" not in raw:
+        return
+    value = raw["add_count"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SnapshotError(
+            f"positions[{index}].add_count must be a non-negative integer")
+    # Zero is the legacy/default state and intentionally remains absent from
+    # the durable anchor.  Keeping the positive-only representation avoids
+    # changing every ordinary snapshot's content-addressed identity.
+    if value > 0:
+        row["add_count"] = value
+
+
 def _normalize_position(raw, index, *, allow_engine_provenance=False):
     if not isinstance(raw, dict):
         raise SnapshotError(f"positions[{index}] must be an object")
@@ -243,6 +266,7 @@ def _normalize_position(raw, index, *, allow_engine_provenance=False):
         if raw["carried"]:
             row["carried"] = True
     _normalize_provenance(raw, index, row)
+    _normalize_add_count(raw, index, row)
     return row
 
 
@@ -298,6 +322,13 @@ def _merge_positions(rows):
                                                           current.get("since_basis")):
             current.pop("since", None)
             current.pop("since_basis", None)
+        # A cycle's add history is one engine-owned scalar, never a number to
+        # sum across duplicate display rows. ``carry_recorded_starts`` stamps
+        # the same value on each row it can prove continuous; a disagreement
+        # therefore means a privileged caller tried to compose two cycles.
+        if row.get("add_count") != current.get("add_count"):
+            raise SnapshotError(
+                f"{ticker} has conflicting engine-derived add_count values")
         counts[ticker] += 1
     return [grouped[ticker] for ticker in sorted(grouped)], sum(counts.values()) - len(grouped)
 
@@ -506,6 +537,11 @@ def _anchor(snapshot):
             # the first, where the sequence states nothing the default does not.
             if (row.get("cycle_seq") or 1) > 1:
                 position["cycle_seq"] = row["cycle_seq"]
+        # #660: this is admitted only after book_refresh proved the #539
+        # continuity branch.  The cursor remains derived by ledger.py, so it
+        # is deliberately never serialized beside the count.
+        if row.get("add_count"):
+            position["add_count"] = row["add_count"]
         positions.append(position)
     event = {
         "type": "snapshot",
@@ -539,6 +575,13 @@ def _state_positions(snapshot, anchor):
             "cycle_id": fact.get("cycle_id"),
             "origin": "snapshot",
         }
+        # #660: a continuous refresh may carry a positive engine-known add
+        # count into its anchor.  Project it into the plan so review.py's
+        # existing single cursor reader can deduplicate a captured reason.  The
+        # zero/None legacy state stays absent to preserve prior snapshot hashes.
+        if fact.get("add_count"):
+            row["add_count"] = fact["add_count"]
+            row["decision_cursor"] = fact.get("decision_cursor")
         if raw["market_value"] is not None:
             row["market_value"] = raw["market_value"]
         out[ticker] = row

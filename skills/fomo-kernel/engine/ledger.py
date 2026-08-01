@@ -83,12 +83,12 @@ EVENT_TYPES = ("snapshot", "trade", "adjustment", "reconciliation", "position_ab
 # 所以帶了 since 卻不帶序號的採納會把還持有的部位配上「已經賣掉那個 cycle」的 id。
 SNAPSHOT_POSITION_KEYS = frozenset({
     "ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried",
-    "since", "since_basis", "cycle_seq",
+    "since", "since_basis", "cycle_seq", "add_count",
 })
 # 引擎指派、永遠不收 agent 供給的持倉欄位(SKILL.md 不可協商規則 1:數字來自引擎產物)。
 # snapshot_adapter.normalize_envelope 預設拒收它們;只有 book_refresh 採納自己剛問到的
 # 答案時才開鎖,而那一條路上的值是引擎自己算出來的。
-ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis", "cycle_seq"})
+ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis", "cycle_seq", "add_count"})
 # since_basis 說的是「這個日期憑什麼被相信」,不是「它是怎麼被搬過來的」
 # (#539 owner ruling 2026-07-31)。四個值各是一種證據強度,採納時原樣帶過去,不合併:
 #   "trade_event"     = 帳本親眼看著這個 cycle 開的,精確日期。
@@ -449,6 +449,25 @@ def _anchored_cycle_seq(position, ticker, integrity):
     return raw
 
 
+def _anchored_add_count(position, ticker, integrity):
+    """The engine-known add sequence an adopted anchor may carry (#660).
+
+    A snapshot never declares this number: ``snapshot_adapter`` admits it only
+    on ``book_refresh``'s engine-provenance path.  It is still a durable ledger
+    row, though, so a hand-edited legacy row must not turn a later derivation
+    into a type error or a fabricated cursor.  The established ledger posture
+    for a malformed carried field is to keep the book readable, name the
+    integrity gap, and fall back to the legacy zero-count behavior.
+    """
+    raw = position.get("add_count")
+    if raw is None:
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        integrity.append({"issue": "bad_add_count", "ticker": ticker})
+        return 0
+    return raw
+
+
 def _moved_basis(position, events, after, upto):
     """Record the newest split this rebase actually applied to ``position``.
 
@@ -552,7 +571,8 @@ def derive_holdings(events, splits=None, as_of=None):
             pos[t] = {"shares": sh, "cost_total": cost_total,
                       "currency": p.get("currency", "USD"), "market": p.get("market", "US"),
                       "origin": "snapshot", "since": since,
-                      "cycle_unknown": cycle_unknown, "add_count": 0,
+                      "cycle_unknown": cycle_unknown,
+                      "add_count": _anchored_add_count(p, t, integrity),
                       # A declaration states shares in its own as_of basis (#558).
                       "basis_date": anchor_date}
             # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)。錨點列帶得動它時

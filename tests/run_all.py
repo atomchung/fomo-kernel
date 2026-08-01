@@ -40,6 +40,7 @@ SUITES = [
     ("Independent book-refresh lane (#485 Slice C)", "tests/test_book_refresh.py"),
     ("Market context", "tests/test_market_context.py"),
     ("Weekly market-read prototype (#683)", "tests/test_weekly_market_read.py"),
+    ("Weekly market-read locale regression (#683)", "tests/test_weekly_market_read_locales.py"),
     ("Problem ledger", "tests/test_problems.py"),
     ("Narrative digit-ban", "tests/test_digit_ban.py"),
     ("Position-sizing literal gate (#477)", "tests/test_sizing_literal_gate.py"),
