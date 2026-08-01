@@ -114,7 +114,7 @@ With no file, choose the fictional test drive.
 
 You do not need to clean a broker export by hand. The agent maps it locally into the engine contract.
 
-Questions and cards support English, Traditional Chinese, and Simplified Chinese. Language changes the copy, not the engine facts.
+Questions and cards support English, Traditional Chinese, and Simplified Chinese (`--language en|zh-TW|zh-CN`). Language changes the copy, not the engine facts.
 
 ## What each input can support
 
