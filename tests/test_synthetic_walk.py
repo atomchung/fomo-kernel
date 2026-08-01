@@ -14,7 +14,6 @@ import offline_posture  # noqa: E402
 offline_posture.apply()
 
 RUNNER = ROOT / "qa" / "run_synthetic_walk.py"
-JUDGE = ROOT / "evals" / "judge_trade_answers.py"
 
 
 def run(*args):
@@ -30,7 +29,7 @@ def test_plan_has_no_model_calls():
     assert plan["route"] == "consider" and plan["model_calls"] == 0
 
 
-def test_stub_walk_uses_real_route_and_captures_exact_candidate():
+def test_stub_walk_keeps_the_real_route_but_reports_uncaptured_production_answer():
     with tempfile.TemporaryDirectory() as tmp:
         result = run("consider-ai-momentum", "--user-backend", "stub", "--no-semantic-judge", "--output-dir", tmp)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -38,20 +37,10 @@ def test_stub_walk_uses_real_route_and_captures_exact_candidate():
         assert {key: report[key] for key in ("workflow", "deterministic", "semantic_judge", "owner_acceptance")} == {
             "workflow": "pass", "deterministic": "pass", "semantic_judge": "skipped",
             "owner_acceptance": "owner_unreviewed"}
-        root = pathlib.Path(tmp)
-        candidate = json.loads((root / "candidate.json").read_text(encoding="utf-8"))
-        captured = json.loads((root / "captured-product-surface.json").read_text(encoding="utf-8"))
-        assert candidate["fixture_id"] == "synthetic-consider-ai-momentum"
-        assert candidate["presented_text"] == captured["presented_text"]
-        assert candidate["agent_case"] == captured["agent_case"]
-        assert candidate["presented_text"] == "".join(
-            candidate["presented_text"][part["start"]:part["end"]] for part in candidate["segments"])
-        # This is the existing #705 judge, now bound to the captured frozen
-        # evaluation rather than a second answer rubric.
-        judged = subprocess.run([sys.executable, str(JUDGE), "--answer-file", str(root / "candidate.json"),
-                                 "--source-fixture", str(root / "source-fixture.json"), "--plan"],
-                                cwd=ROOT, text=True, capture_output=True, timeout=60)
-        assert judged.returncode == 0, judged.stdout + judged.stderr
+        assert report["production_answer_capture"] == "unavailable"
+        assert report["ux_receipt_status"] == "incomplete_product_delivery"
+        assert report["candidate_artifact"] is None
+        assert not (pathlib.Path(tmp) / "captured-product-surface.json").exists()
 
 
 def test_invalid_synthetic_action_fails_before_route_or_judge():
@@ -76,7 +65,7 @@ def test_semantic_timeout_preserves_a_combined_receipt_state():
 
 if __name__ == "__main__":
     test_plan_has_no_model_calls()
-    test_stub_walk_uses_real_route_and_captures_exact_candidate()
+    test_stub_walk_keeps_the_real_route_but_reports_uncaptured_production_answer()
     test_invalid_synthetic_action_fails_before_route_or_judge()
     test_semantic_timeout_preserves_a_combined_receipt_state()
     print("synthetic walk tests: ok")
