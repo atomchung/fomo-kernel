@@ -6500,7 +6500,71 @@ def _usable_facts_snapshot(root):
     return facts
 
 
-def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=None):
+def _consider_valuation_frame(basis, feed, *, agent_supplied):
+    """Bind ``consider``'s already-normalized prices and FX to this exact book.
+
+    ``price_feed`` carries native closes plus USD-per-unit FX; PortfolioBasis'
+    typed frame is the canonical receipt that can safely aggregate those facts.
+    The holdings filter is load-bearing: a feed may also contain the premise
+    ticker or an already-closed instrument, while a valuation frame must exactly
+    partition the current book it sizes.
+    """
+    if feed is None or not (feed.get("prices") or {}):
+        return None
+    holdings = basis.current_book["holdings"]
+    # Keep the established single-currency receipt byte-for-byte. Its sizing
+    # lane already reads the legacy numeric map, while the typed native/FX
+    # frame is specifically what unlocks otherwise-inapplicable mixed-currency
+    # sizing. Narrowing this repair further also preserves the existing
+    # priced-without-cost refusal and evaluation identities on ordinary books.
+    if len({holding["currency"] for holding in holdings.values()}) <= 1:
+        return {"as_of": feed["as_of"],
+                "prices": {ticker: row["close"]
+                           for ticker, row in feed["prices"].items()}}
+    currency_by_ticker = {ticker: holding["currency"]
+                          for ticker, holding in holdings.items()}
+    conflicts = price_feed.currency_conflicts(feed, currency_by_ticker)
+    if conflicts:
+        details = ", ".join(
+            f"{row['ticker']} is {row['trades']} in the recorded holding but its "
+            f"close is {row['feed']}"
+            for row in conflicts)
+        raise ReviewError(
+            "current-book price currency conflict: " + details
+            + ". Correct the close currency and ask again; the trade was not evaluated.")
+    aggregate = "USD"  # price_feed.fx_rates' declared aggregate direction
+    prices = {ticker: feed["prices"].get(ticker, {}).get("close")
+              for ticker in holdings}
+    observations = {
+        ticker: {"observed_at": feed["prices"][ticker]["observed_date"],
+                 "basis_date": feed["prices"][ticker]["basis_date"]}
+        for ticker in holdings if ticker in feed["prices"]
+    }
+    rates = price_feed.fx_rates(feed)
+    needed_fx = {holding["currency"] for holding in holdings.values()} - {aggregate}
+    provenance = "agent_feed" if agent_supplied else "engine_fetch"
+    frame = portfolio_basis.build_valuation_frame(
+        as_of=feed["as_of"], positions=holdings, prices=prices,
+        price_observations=observations,
+        aggregate_currency=aggregate,
+        fx_to_aggregate={currency: rates[currency]
+                         for currency in needed_fx if currency in rates},
+        price_provenance=provenance, fx_provenance=provenance,
+    )
+    # PortfolioBasis deliberately preserves partial typed frames so other
+    # routes can report their coverage. A pre-trade answer cannot use that
+    # partial frame as permission to fall back to cost: when every native close
+    # is present and only FX is absent, name the exact repair and stop here.
+    missing_fx = frame.coverage["missing_fx"]
+    if missing_fx and not frame.coverage["missing_price"]:
+        raise ReviewError(
+            "this current book cannot be valued in USD because no FX rate covers "
+            f"{', '.join(missing_fx)}. Supply the missing rate through --prices, then "
+            "ask again; the trade was not evaluated on cost basis.")
+    return frame.to_dict()
+
+
+def _consider_rows(args, root, feed=None, last_px=None, splits=None, *, agent_supplied=False):
     """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
     a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
     #456 names this the ledger basis, distinct from a review's own CSV/FIFO
@@ -6576,28 +6640,46 @@ def _consider_rows(args, root, valuation_manifest=None, last_px=None, splits=Non
     # corrected argument away). Wrapped so every ReviewError raised inside --
     # whichever of the three fires -- carries the same bounded usable_facts
     # packet, attached once here rather than duplicated at each raise site.
+    # Learn the exact canonical holdings first, then bind the normalized native
+    # closes and FX to that same book. The #674 packet belongs only to a
+    # structurally unusable recorded book; a fixable close/FX problem must stay
+    # outside that catch so it never masquerades as a bounded final refusal.
     try:
         basis = portfolio_basis.query_current_book(
-            events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+            events, skipped_lines=skipped_lines,
             reference_as_of=dt.date.today().isoformat(),
             splits=splits)
         if basis is None:
             raise ReviewError(
                 f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
                 "separate historical transaction view")
-        basis_dict = basis.to_dict()
+        preliminary_basis = basis.to_dict()
         try:
-            rows, excluded_holdings = consequence.rows_from_portfolio_basis(basis_dict)
+            rows, excluded_holdings = consequence.rows_from_portfolio_basis(preliminary_basis)
         except consequence.ConsequenceError as exc:
             raise ReviewError(str(exc)) from exc
-        # Freeze only the portable fact identity/disclosure envelope.  The full
-        # current_book remains the canonical ledger query, not a copied second
-        # persisted book inside every evaluation.
-        projection = portfolio_basis.sizing_projection(basis)
-        if projection is None:
-            raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
     except ReviewError as exc:
         raise ReviewError(str(exc), payload_extra={"usable_facts": _usable_facts_snapshot(root)}) from exc
+
+    valuation_frame = _consider_valuation_frame(
+        basis, feed, agent_supplied=agent_supplied)
+    if valuation_frame is not None:
+        basis = portfolio_basis.query_current_book(
+            events, skipped_lines=skipped_lines, valuation_manifest=valuation_frame,
+            reference_as_of=dt.date.today().isoformat(), splits=splits)
+        if basis is None:  # defensive: identical validated events yielded the book above
+            raise ReviewError(
+                f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for "
+                "the separate historical transaction view")
+
+    basis_dict = basis.to_dict()
+    # Freeze only the portable fact identity/disclosure envelope.  The full
+    # current_book remains the canonical ledger query, not a copied second
+    # persisted book inside every evaluation. A sizing failure is a valuation
+    # refusal, never one of #674's three bounded structural refusal classes.
+    projection = portfolio_basis.sizing_projection(basis)
+    if projection is None:
+        raise ReviewError("canonical PortfolioBasis sizing projection is invalid")
     basis_meta = {key: basis_dict[key] for key in (
         "source", "as_of", "stale_days", "completeness", "cost_basis",
         "valuation_basis", "reconciliation_ref", "state_version")}
@@ -7229,12 +7311,9 @@ def cmd_consider(args):
         except ValueError as exc:
             raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
 
-    valuation_manifest = None
-    if last_px:
-        valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
     rows, basis, canonical_basis, canonical_projection, excluded_holdings = _consider_rows(
-        args, root, valuation_manifest=valuation_manifest, last_px=last_px,
-        splits=supplied_splits)
+        args, root, feed=feed, last_px=last_px, splits=supplied_splits,
+        agent_supplied=agent_supplied)
 
     agent_case = None
     if args.agent_case:

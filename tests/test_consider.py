@@ -1033,7 +1033,9 @@ def test_consider_refuses_mixed_usd_twd_current_book_before_any_verdict():
         _write_ledger(os.path.join(tmp, "ledger.jsonl"), events)
         run = _run("consider", "--root", tmp,
                    "--premise", '{"ticker": "USD", "side": "buy", "price": 15.0, "qty": 1}')
-        _fails(run, "no usable current-book sizing projection")
+        payload = _fails(run, "no usable current-book sizing projection")
+        assert "usable_facts" not in payload, (
+            "a sizing refusal is outside #674's three structural refusal classes")
         assert not os.path.exists(_evaluation_path(tmp))
 
 
@@ -3003,7 +3005,10 @@ import sys
 sys.path.insert(0, os.environ["ENGINE_DIR"])
 CLOSES = {"NVDA": 1000.0, "AMD": 200.0, "AVGO": 300.0, "MU": 50.0, "TSM": 100.0,
           "ARM": 60.0, "PLTR": 40.0, "MRVL": 70.0, "AMAT": 80.0, "SPY": 500.0,
-          "ZZZZ": 10.0}
+          "ZZZZ": 10.0,
+          # #712 mixed-currency current-book witness. Yahoo spells TWD/USD as
+          # TWD=X (TWD per USD), so market_data inverts 100 into 0.01 USD/TWD.
+          "AAA": 100.0, "2330.TW": 1000.0, "TWD=X": 100.0}
 
 
 def _fake_download(symbols, start, end=None):
@@ -3051,6 +3056,132 @@ def _with_fake_provider(tmp, *args):
     except OSError:
         asked = []
     return run, asked
+
+
+def _mixed_currency_ledger_case(root):
+    """One holdings-bound USD/TWD book whose aggregate weights are exact.
+
+    AAA is worth USD 1,000 (10 x 100). 2330.TW is worth TWD 100,000
+    (100 x 1,000), or USD 1,000 at 0.01 USD/TWD. Buying another 10 AAA shares
+    therefore moves the two-position aggregate from 1/2 : 1/2 to 2/3 : 1/3.
+    The 60% tracked cap makes that same move a fresh `would_breach`, so these
+    assertions cover both the canonical sizing projection and its rule reader.
+    """
+    _write_ledger(os.path.join(root, "ledger.jsonl"), [
+        _snapshot_event("2026-01-01", [
+            {"ticker": "AAA", "shares": 10, "avg_cost": 50.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "2330.TW", "shares": 100, "avg_cost": 500.0,
+             "market": "TW", "currency": "TWD"},
+        ]),
+    ])
+    with open(os.path.join(root, "rules.jsonl"), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "rule_id": "mixed-book-cap",
+            "text": "Keep any single position at or below 60% of the book.",
+            "metric_key": "max_pos_pct", "problem_key": "oversize",
+            "created": "2026-01-01",
+        }) + "\n")
+    _ok(_run("set-cap", "--root", root, "--pct", "0.60"))
+    return ('{"ticker": "AAA", "side": "buy", "price": 100.0, '
+            '"qty": 10, "currency": "USD"}')
+
+
+def _assert_mixed_currency_aggregate_sizing(payload):
+    row = payload["evaluation"]
+    coverage = row["basis"]["valuation_coverage"]
+    assert coverage["scope"] == "full_current_book", coverage
+    assert coverage["currencies"] == ["TWD", "USD"], coverage
+    assert coverage["priced"] == ["2330.TW", "AAA"], coverage
+
+    consequence = row["consequence"]
+    before, after = consequence["before"], consequence["after"]
+    assert abs(before["weights"]["AAA"] - 0.5) < 1e-12, before["weights"]
+    assert abs(before["weights"]["2330.TW"] - 0.5) < 1e-12, before["weights"]
+    assert abs(after["weights"]["AAA"] - (2.0 / 3.0)) < 1e-12, after["weights"]
+    assert abs(after["weights"]["2330.TW"] - (1.0 / 3.0)) < 1e-12, after["weights"]
+
+    cap = [collision for collision in row["rule_collisions"]
+           if collision["rule_id"] == "mixed-book-cap"]
+    assert len(cap) == 1, row["rule_collisions"]
+    assert cap[0]["state"] == "would_breach" and cap[0]["worsens"] is None, cap[0]
+
+
+def test_n_auto_resolved_mixed_currency_ledger_uses_the_aggregate_frame_end_to_end():
+    """#712: native closes and FX resolved in one pass must reach PortfolioBasis.
+
+    This is intentionally the real `consider` CLI over the ledger lane. Calling
+    either the resolver or `build_valuation_frame` directly would stay green if
+    the route later collapsed the typed frame back to `{as_of, prices}` at the
+    PortfolioBasis boundary -- the production defect this test owns.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _mixed_currency_ledger_case(tmp)
+        run, asked = _with_fake_provider(
+            tmp, "consider", "--root", tmp, "--premise", premise)
+        payload = _ok(run)
+        assert len(asked) == 1, asked
+        assert {"AAA", "2330.TW", "TWD=X"} <= set(asked[0]), asked
+        assert payload["price_feed"]["provenance"]["mode"] == "engine_fetch"
+        _assert_mixed_currency_aggregate_sizing(payload)
+
+
+def test_n_supplied_mixed_currency_ledger_uses_the_aggregate_frame_end_to_end():
+    """#712: the authoritative --prices lane must bind the same full FX frame."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _mixed_currency_ledger_case(tmp)
+        envelope = _fx_envelope(
+            os.path.join(tmp, "prices.json"),
+            {"AAA": (100.0, "USD"), "2330.TW": (1000.0, "TWD")},
+            fx={"TWD": 0.01})
+        payload = _ok(_run_env(
+            _offline_env(), "consider", "--root", tmp, "--prices", envelope,
+            "--premise", premise))
+        assert payload["price_feed"]["provenance"]["mode"] == "agent_feed"
+        _assert_mixed_currency_aggregate_sizing(payload)
+
+
+def test_n_supplied_mixed_currency_ledger_refuses_a_holding_currency_conflict():
+    """#712: a native close cannot be relabelled to match the ledger holding.
+
+    The canonical book declares 2330.TW in TWD.  A supplied USD close for that
+    exact holding must be rejected before PortfolioBasis can treat its numeric
+    value as TWD and then convert it a second time through the TWD FX rate.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _mixed_currency_ledger_case(tmp)
+        envelope = _fx_envelope(
+            os.path.join(tmp, "prices.json"),
+            {"AAA": (100.0, "USD"), "2330.TW": (1000.0, "USD")},
+            fx={"TWD": 0.01})
+        payload = _fails(_run_env(
+            _offline_env(), "consider", "--root", tmp, "--prices", envelope,
+            "--premise", premise), "2330.TW")
+        assert "USD" in payload["error"] and "TWD" in payload["error"], payload["error"]
+        assert "usable_facts" not in payload, (
+            "a correctable currency conflict is not a bounded final refusal")
+        assert _read_evaluations(tmp) == [], "a contradictory close must store no evaluation"
+
+
+def test_n_supplied_mixed_currency_ledger_names_the_missing_fx_and_refuses():
+    """#712: a typed partial frame owes the missing currency, not a generic error.
+
+    Both native closes agree with the canonical holdings, but without TWD FX
+    there is no aggregate denominator.  The route must name that one missing
+    fact and refuse before any cost-basis-backed evaluation can be appended.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _mixed_currency_ledger_case(tmp)
+        envelope = _fx_envelope(
+            os.path.join(tmp, "prices.json"),
+            {"AAA": (100.0, "USD"), "2330.TW": (1000.0, "TWD")})
+        payload = _fails(_run_env(
+            _offline_env(), "consider", "--root", tmp, "--prices", envelope,
+            "--premise", premise), "TWD")
+        assert "FX" in payload["error"], payload["error"]
+        assert "usable_facts" not in payload, (
+            "a correctable FX gap is not a bounded final refusal")
+        assert _read_evaluations(tmp) == [], "an unaggregatable book must store no evaluation"
 
 
 def test_n_the_route_really_resolves_and_prices_the_book_it_reasons_about():
