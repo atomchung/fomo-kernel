@@ -11,7 +11,7 @@
 
 It is built for two moments:
 
-- **Before a trade:** challenge what you are about to do against your actual recorded book.
+- **Before a trade:** see what the trade does to your recorded portfolio, then challenge the reason for doing it now.
 - **After trades:** review what your behavior says, then choose one rule worth checking next time.
 
 Numbers, rankings, portfolio effects, and state transitions come from a deterministic Python engine. The agent handles the bounded work code cannot settle: your motive, the strongest counter-case, and a direct explanation of what matters.
@@ -20,8 +20,8 @@ Numbers, rankings, portfolio effects, and state transitions come from a determin
 
 | Your moment | Minimum input | First useful outcome |
 |---|---|---|
-| **“Should I buy, add, trim, or wait?”** | The contemplated action plus your current reason and what changed now | With a recorded book: exact post-trade weight, concentration/driver overlap, cash effect, rule collisions, one lead tension, and a real rebuttal. |
-| **Same decision, but no book recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the key question your decision depends on, and an explicit statement of what was not checked. No invented portfolio numbers and nothing persisted by default. |
+| **“Should I buy, add, trim, or wait?”** | The contemplated action plus your current reason and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
+| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the key question your decision depends on, and an explicit statement of what was not checked. No invented portfolio numbers and nothing persisted by default. |
 | **“Review my recent trades.”** | A broker CSV or transaction export | One behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
 | **“I only have a holdings screenshot.”** | A position table or statement screenshot | An opening structural check: weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not invent transaction history. |
 | **“Show me the experience first.”** | No personal data | An isolated test drive using fictional data. It never writes to your real coach memory. |
@@ -64,21 +64,23 @@ With no file, choose the fictional test drive.
 
 You do not need to clean a broker export by hand. The agent maps it locally into the engine contract.
 
+Questions and cards support English, Traditional Chinese, and Simplified Chinese. Language changes the copy, not the engine facts.
+
 ## What the product actually does
 
 ### Before a trade: challenge the decision, not the ticker
 
-When a recorded book exists, FOMO Kernel computes the contemplated trade's consequence before the agent argues either side:
+When a recorded portfolio exists, FOMO Kernel computes the contemplated trade's consequence before the agent argues either side:
 
 - resulting position weight;
-- concentration and driver overlap;
+- concentration and overlap between positions that depend on the same driver;
 - cash effect;
 - collisions with rules you already track;
 - the portfolio basis and limitations behind those facts.
 
-The answer then leads with one supported decision tension, gives the strongest counter-case, attaches limitations to the claims they qualify, and leaves the action to you.
+The answer then leads with the key supported trade-off, gives the strongest counter-case, attaches limitations to the claims they qualify, and leaves the action to you.
 
-When no book exists, the conversation still advances. FOMO Kernel asks only the few questions that change the framing, states which portfolio facts were not checked, and names the next piece of evidence that would buy a more specific answer. It does not fill missing numbers with generic investment advice.
+When no portfolio is recorded, the conversation still advances. FOMO Kernel asks only the few questions that change the framing, states which portfolio facts were not checked, and names the next piece of evidence that would buy a more specific answer. It does not fill missing numbers with generic investment advice.
 
 ### After trades: turn behavior into one checkable change
 
@@ -106,7 +108,9 @@ The committed demo uses fictional data:
 
 Open the synchronized [English HTML demo](docs/demo-card-en.html) or [Traditional Chinese HTML demo](docs/demo-card.html).
 
-The image is the review route. Pre-trade answers stay brief and textual unless you explicitly ask for more.
+The image shows the result card. In the real review flow, the motive question comes first, and your answer can change the verdict. The mock is intentionally concentrated; its alpha figures are not a realistic performance claim.
+
+Pre-trade answers stay brief and textual unless you explicitly ask for more.
 
 ## Why this is different from ordinary chat
 
@@ -147,12 +151,12 @@ python3 skills/fomo-kernel/engine/coach.py data-reset --dry-run
 python3 skills/fomo-kernel/engine/coach.py data-reset --confirm
 ```
 
-Treat an exported backup like a brokerage statement.
+`data-status` reports file metadata, not trade content. Treat an exported backup like a brokerage statement; `data-reset --confirm` is irreversible.
 
 Practical rules:
 
 - Re-exporting full transaction history next week is safe; overlapping rows are deduplicated.
-- A newer holdings view is reconciled against the recorded book instead of silently replacing it.
+- A newer holdings view is reconciled against the recorded portfolio instead of silently replacing it.
 - After interruption, the agent resumes the pending session instead of refetching live facts.
 - If a canonical session committed but a projection failed, the projection can be rebuilt without re-questioning you.
 - Inferred theses remain marked as inferred until you confirm or revise them.
@@ -167,7 +171,7 @@ Current owner-live acceptance focuses on Claude Code and Codex. A compatible cli
 
 - Python 3.11+.
 - macOS and Linux support durable session finalization.
-- Windows can run the non-mutating preparation/preview path, but durable `finalize` currently fails closed before canonical state is changed because the implementation requires POSIX locking and directory `fsync`.
+- Windows can run `prepare` and `preview`, but durable `finalize` currently fails closed before committed canonical state is changed because the implementation requires POSIX locking and directory `fsync`.
 
 ## What FOMO Kernel is not
 
