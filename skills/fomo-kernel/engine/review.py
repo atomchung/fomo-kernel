@@ -3893,6 +3893,28 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx, feed,
                               command="consider", request_path="price_feed.request")
 
 
+def _consider_recovery_tickers(rows, premise_ticker, _excluded_holdings=()):
+    """The only tickers a ``consider`` recovery may ask the agent to price.
+
+    ``rows`` are the usable current holdings copied from the canonical
+    PortfolioBasis; the premise is the only prospective position this command
+    can add.  ``excluded_holdings`` deliberately does not widen that set.  An
+    integrity warning, unusable quantity, absent cost, or an unmatched-history
+    orphan is a disclosure/provenance fact, not a missing close a market-data
+    lookup can repair.
+
+    The unused third argument is intentional: the caller has both facts side
+    by side, and passing exclusions through this boundary makes the forbidden
+    legacy union directly mutation-testable without creating a second recovery
+    taxonomy or persistence surface.
+    """
+    tickers = {str(row.get("ticker") or "").strip()
+               for row in rows or () if isinstance(row, dict)}
+    if premise_ticker:
+        tickers.add(str(premise_ticker).strip())
+    return {ticker for ticker in tickers if ticker}
+
+
 # What answering the cash question buys, in engine vocabulary rather than
 # numbers. The agent turns these into one short sentence so the ask is informed
 # rather than blind (#357 owner note, 2026-07-29).
@@ -6551,16 +6573,9 @@ def _consider_valuation_frame(basis, feed, *, agent_supplied):
                          for currency in needed_fx if currency in rates},
         price_provenance=provenance, fx_provenance=provenance,
     )
-    # PortfolioBasis deliberately preserves partial typed frames so other
-    # routes can report their coverage. A pre-trade answer cannot use that
-    # partial frame as permission to fall back to cost: when every native close
-    # is present and only FX is absent, name the exact repair and stop here.
-    missing_fx = frame.coverage["missing_fx"]
-    if missing_fx and not frame.coverage["missing_price"]:
-        raise ReviewError(
-            "this current book cannot be valued in USD because no FX rate covers "
-            f"{', '.join(missing_fx)}. Supply the missing rate through --prices, then "
-            "ask again; the trade was not evaluated on cost basis.")
+    # Preserve the partial typed frame through the canonical reader.  The
+    # caller turns its exact missing-price/missing-FX coverage into the existing
+    # recovery payload before any consequence can use a cost denominator.
     return frame.to_dict()
 
 
@@ -7315,6 +7330,43 @@ def cmd_consider(args):
         args, root, feed=feed, last_px=last_px, splits=supplied_splits,
         agent_supplied=agent_supplied)
 
+    # #629: recovery names only the current positions this consequence can
+    # value plus its premise.  The ledger lane already has one row per usable
+    # canonical current holding here, before the frame-sensitive canonical
+    # `before` state can be built.  The CSV lane derives its current set below.
+    # Exclusions travel through disclosures and provenance, never through the
+    # price manifest: neither an integrity orphan nor an unusable quantity
+    # becomes repairable because a close was fetched for it.
+    premise_ticker = str(premise_payload.get("ticker") or "").strip()
+    premise_currency = str(premise_payload.get("currency") or "USD").strip() or "USD"
+    priced_universe = None
+    price_status = None
+    if canonical_basis is not None:
+        priced_universe = _consider_recovery_tickers(rows, premise_ticker, excluded_holdings)
+        currencies = {row.get("currency") or "USD" for row in rows
+                      if row.get("ticker") in priced_universe}
+        if premise_ticker:
+            currencies.add(premise_currency)
+        price_status = _consider_price_feed_status(
+            requested=sorted(priced_universe), last_px=last_px, currencies=currencies,
+            fx=fx, feed=feed, agent_supplied=agent_supplied,
+            unavailable_declared=declared_unavailable,
+            bundle=market_bundle)
+
+    # The typed valuation frame has already proved the book has all native
+    # closes, but it cannot aggregate a mixed-currency book without its named
+    # FX rate.  Surface the existing recovery kit instead of letting canonical
+    # sizing fall through to a cost-basis answer or a prose-only error.
+    request = (price_status or {}).get("request") or {}
+    if (canonical_basis is not None and canonical_projection is not None
+            and not canonical_projection.applicable
+            and request.get("currencies") and not request.get("tickers")):
+        raise ReviewError(
+            "this current book cannot be valued in USD because no FX rate covers "
+            f"{', '.join(request['currencies'])}. Supply the missing rate through --prices, then "
+            "ask again; the trade was not evaluated on cost basis.",
+            payload_extra={"price_feed": price_status})
+
     agent_case = None
     if args.agent_case:
         agent_case = _load_json(os.path.abspath(os.path.expanduser(args.agent_case)), "--agent-case")
@@ -7337,25 +7389,23 @@ def cmd_consider(args):
     except consequence.ConsequenceError as exc:
         raise ReviewError(str(exc)) from exc
 
-    # #629. Built from the positions this answer actually reasons about — the
-    # held book plus whatever it could not value plus the premise's own ticker —
-    # rather than from every ticker in the transaction file. A closed position
-    # needs no current close, and a manifest naming nine instruments for a
-    # three-position book sends the agent after six lookups no number here uses.
-    # Read twice below: once as the emitted recovery kit, once as the single
-    # statement of whether recovery was ever attempted.
-    premise_ticker = str(premise_payload.get("ticker") or "").strip()
-    priced_universe = (set(result["before"].get("held") or {})
-                       | {row["ticker"] for row in result.get("excluded_holdings") or ()
-                          if isinstance(row, dict) and row.get("ticker")}
-                       | ({premise_ticker} if premise_ticker else set()))
-    price_status = _consider_price_feed_status(
-        requested=sorted(priced_universe), last_px=last_px,
-        currencies={row.get("currency") or "USD" for row in rows
-                    if row["ticker"] in priced_universe},
-        fx=fx, feed=feed, agent_supplied=agent_supplied,
-        unavailable_declared=declared_unavailable,
-        bundle=market_bundle)
+    if price_status is None:
+        # The CSV lane has no PortfolioBasis.  `consequence` is its one reader
+        # of current holdings, so scope the same recovery helper to that result
+        # rather than every historical row in the supplied files.
+        current_tickers = set(result["before"].get("held") or {})
+        current_rows = [row for row in rows if row.get("ticker") in current_tickers]
+        priced_universe = _consider_recovery_tickers(
+            current_rows, premise_ticker, excluded_holdings)
+        currencies = {row.get("currency") or "USD" for row in current_rows}
+        if premise_ticker:
+            currencies.add(premise_currency)
+        price_status = _consider_price_feed_status(
+            requested=sorted(priced_universe), last_px=last_px, currencies=currencies,
+            fx=fx, feed=feed, agent_supplied=agent_supplied,
+            unavailable_declared=declared_unavailable,
+            bundle=market_bundle)
+
     # #618. Frozen onto the basis beside `valuation_basis`, where "was this
     # priced" already lives, and from the same `priced_universe` the kit above
     # is scoped to. Stamped here rather than inside `_consider_rows` because the
