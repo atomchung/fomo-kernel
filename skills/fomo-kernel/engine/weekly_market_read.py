@@ -122,6 +122,12 @@ def render_zh_tw(brief):
     fact = brief["market_facts"][0]
     ticker = brief["connection"]["ticker"]
     watch = brief["next_week_watch"][0]
+    focus = brief["optional_question"]["selected"] or "not_sure"
+    watch_checks = {
+        "business_evidence": "在用市場解釋價格變動前，先確認是否出現新的公司特定證據。",
+        "position_size": "在把較低價格當成證據前，先將已記錄的部位大小與既有上限比較。",
+        "not_sure": "在行動前，先判斷應檢查公司特定證據，還是已記錄的部位大小。",
+    }
     text = [
         "## 本週市場發生了什麼",
         f"{window['start']} 至 {window['end']}，VIX 上升 {fact['observation']['delta']}。市場資料截至 {fact['as_of']}。",
@@ -130,7 +136,7 @@ def render_zh_tw(brief):
         "## 這週最容易犯的錯誤",
         "把波動中的價格變化直接當成新的投資證據，卻沒有先確認部位大小或公司基本面的新資訊。",
         "## 下週關注",
-        f"- {ticker}：{watch['check']}（觸發條件：{watch['trigger']['condition']}；截至 {watch['trigger']['as_of']}）",
+        f"- {ticker}：{watch_checks[focus]}（觸發條件：波動率指數在凍結復盤窗口內上升；截至 {watch['trigger']['as_of']}）",
     ]
     if brief["optional_question"]["selected"] is None:
         text.extend([
