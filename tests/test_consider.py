@@ -3614,6 +3614,11 @@ def test_o_fx_only_recovery_excludes_an_integrity_orphan_and_retries_once():
         assert kit["request"]["tickers"] == [], kit
         assert kit["request"]["currencies"] == ["TWD"], kit
         assert "ORPH" not in json.dumps(kit), kit
+        action = kit["next_action"]
+        assert "price_feed.request.currencies" in action, action
+        assert "FX rate" in action, action
+        assert "benchmark" not in action.lower(), action
+        assert "close" not in action.lower(), action
         assert _read_evaluations(tmp) == [], "the recoverable refusal must not persist a cost answer"
 
         complete = _orphan_fx_closes(os.path.join(tmp, "complete.json"), fx={"TWD": 0.031})
@@ -3627,6 +3632,25 @@ def test_o_fx_only_recovery_excludes_an_integrity_orphan_and_retries_once():
         assert len(_read_evaluations(tmp)) == 1, "an exact post-recovery retry duplicates no evaluation"
         assert first["evaluation"]["consequence"]["excluded_holdings"] == [
             {"ticker": "ORPH", "reason": "integrity_oversell"}], first["evaluation"]
+
+
+def test_o_single_currency_twd_sell_inherits_currency_and_requests_no_fx():
+    """One native currency needs no conversion, even when it is not USD."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+            _snapshot_event("2026-07-01", [
+                {"ticker": "TWCO", "shares": 20, "avg_cost": 500.0,
+                 "market": "TW", "currency": "TWD"},
+            ]),
+        ])
+        prices = _fx_envelope(os.path.join(tmp, "twd.json"), {
+            "TWCO": (550.0, "TWD"),
+        })
+        premise = '{"ticker": "TWCO", "side": "sell", "price": 550.0, "qty": 1}'
+        result = _ok(_run("consider", "--root", tmp, "--prices", prices,
+                          "--premise", premise))
+        assert result["evaluation"]["premise"]["currency"] == "TWD"
+        assert "request" not in (result.get("price_feed") or {}), result.get("price_feed")
 
 
 def test_o_fx_only_orphan_regression_reddens_under_the_legacy_union_mutation():
@@ -3648,7 +3672,7 @@ def test_o_fx_only_orphan_regression_reddens_under_the_legacy_union_mutation():
         return review_engine._consider_price_feed_status(
             requested=sorted(tickers),
             last_px={"USCO": 120.0, "TWCO": 550.0, "NEXT": 80.0},
-            currencies={"USD", "TWD"}, fx={}, feed={"as_of": "2026-07-30"},
+            missing_fx={"TWD"}, fx_required=True, feed={"as_of": "2026-07-30"},
             agent_supplied=True, unavailable_declared=None, bundle=None)["request"]
 
     assert manifest(original(rows, "NEXT", excluded))["tickers"] == []

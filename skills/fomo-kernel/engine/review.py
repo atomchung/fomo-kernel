@@ -3817,25 +3817,39 @@ def _price_feed_status(source, *, supplied=None, unavailable_declared=None,
         else:
             recovery = {"attempted": False, "outcome": "not_attempted"}
         status["recovery"] = recovery
-        # Held instruments and benchmarks fail differently: unpriced holdings
-        # remove P&L itself, unpriced benchmarks only remove the vs-market
-        # segment. Saying which one is missing keeps the agent from treating an
-        # optional enrichment as a blocker, or the reverse.
-        blocking = bool(request.get("tickers"))
-        scope = (f"the instruments in {request_path}.tickers — without them there is no "
-                 "unrealized P&L or portfolio-level return" if blocking else
-                 f"the benchmark symbols in {request_path}.benchmarks — holdings are "
-                 "priced, but the benchmark comparison stays unavailable without them")
-        status["next_action"] = (
-            f"price coverage is incomplete for {scope}. Look those closes up in a recognized "
-            "market-data source, transcribe them into the envelope documented in "
-            f"references/price-feed.md, and rerun {command} with --prices <path>. Never invent a "
-            "price, and never read a missing price as a delisting or as a zero return")
+        # An empty ticker list means either an FX-only recovery or a benchmark
+        # gap.  Those are distinct actions: an FX-only request must not send an
+        # agent after an irrelevant close merely to make an envelope non-empty.
+        missing_tickers = request.get("tickers") or []
+        missing_currencies = request.get("currencies") or []
+        if missing_currencies and not missing_tickers and not request.get("benchmarks"):
+            status["next_action"] = (
+                "currency conversion coverage is incomplete for the FX rates in "
+                f"{request_path}.currencies. Look up only those FX rates in a recognized "
+                "market-data source, transcribe them into the `fx` block of the envelope "
+                f"documented in references/price-feed.md, and rerun {command} with --prices "
+                "<path>. Never invent a rate or treat a missing conversion as identity")
+        else:
+            # Held instruments and benchmarks fail differently: unpriced holdings
+            # remove P&L itself, unpriced benchmarks only remove the vs-market
+            # segment. Saying which one is missing keeps the agent from treating an
+            # optional enrichment as a blocker, or the reverse.
+            blocking = bool(missing_tickers)
+            scope = (f"the instruments in {request_path}.tickers — without them there is no "
+                     "unrealized P&L or portfolio-level return" if blocking else
+                     f"the benchmark symbols in {request_path}.benchmarks — holdings are "
+                     "priced, but the benchmark comparison stays unavailable without them")
+            status["next_action"] = (
+                f"price coverage is incomplete for {scope}. Look those closes up in a recognized "
+                "market-data source, transcribe them into the envelope documented in "
+                f"references/price-feed.md, and rerun {command} with --prices <path>. Never invent a "
+                "price, and never read a missing price as a delisting or as a zero return")
     return status
 
 
-def _consider_price_feed_status(*, requested, last_px, currencies, fx, feed,
-                                agent_supplied, unavailable_declared, bundle):
+def _consider_price_feed_status(*, requested, last_px, missing_fx=(),
+                                fx_required=False, feed, agent_supplied,
+                                unavailable_declared, bundle):
     """The same recovery kit, for the ``consider`` lane (#629).
 
     ``prepare`` has always reported a complete manifest when it could not price
@@ -3863,8 +3877,11 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx, feed,
     after closes no consequence figure uses.
     """
     priced = {ticker for ticker in (last_px or {}) if ticker in set(requested)}
-    unresolved_fx = [code for code in sorted(currencies or ())
-                     if str(code).upper() != "USD" and code not in (fx or {})]
+    # The canonical valuation frame has already decided whether an aggregate
+    # conversion is needed and, if it is, which rate is absent.  Recovery must
+    # surface that fact, not recreate a currency universe from all holdings or
+    # from an unnormalised premise (#629).
+    unresolved_fx = sorted({str(code).upper() for code in (missing_fx or ()) if code})
     provenance = price_feed.provenance(
         mode=("agent_feed" if agent_supplied else
               ("engine_fetch" if priced else "unavailable")),
@@ -3877,10 +3894,9 @@ def _consider_price_feed_status(*, requested, last_px, currencies, fx, feed,
             filter(None, (f"{gap['code']}: {gap.get('detail') or ''}"
                           for gap in (getattr(bundle, "gaps", None) or ())))) or None,
         requested=requested, priced=priced,
-        fx_mode=("not_needed" if not unresolved_fx and len(set(
-            str(c).upper() for c in (currencies or ()))) <= 1 else
-            ("feed" if agent_supplied else
-             ("engine_fetch" if not unresolved_fx else "missing"))),
+        fx_mode=("missing" if unresolved_fx else
+                 ("feed" if fx_required and agent_supplied else
+                  ("engine_fetch" if fx_required else "not_needed"))),
         as_of=(feed or {}).get("as_of"))
     status_source = {"price_provenance": provenance}
     if provenance["coverage"]["missing"] or unresolved_fx:
@@ -3913,6 +3929,25 @@ def _consider_recovery_tickers(rows, premise_ticker, _excluded_holdings=()):
     if premise_ticker:
         tickers.add(str(premise_ticker).strip())
     return {ticker for ticker in tickers if ticker}
+
+
+def _consider_canonical_fx_recovery(basis):
+    """Return the canonical frame's FX recovery facts, if that frame exists.
+
+    Single-currency books intentionally retain their legacy valuation receipt,
+    so the absence of a typed frame means no conversion request.  A typed
+    frame is the sole source for both whether conversion is applicable and
+    which rate is actually missing; recovery does not infer either from row
+    currencies or an omitted premise currency.
+    """
+    current_book = getattr(basis, "current_book", {}) if basis is not None else {}
+    frame = current_book.get("valuation_manifest") if isinstance(current_book, dict) else None
+    if not isinstance(frame, dict):
+        return False, []
+    coverage = frame.get("coverage")
+    if not isinstance(coverage, dict):
+        return False, []
+    return True, sorted({str(code).upper() for code in coverage.get("missing_fx", ()) if code})
 
 
 # What answering the cash question buys, in engine vocabulary rather than
@@ -7338,18 +7373,14 @@ def cmd_consider(args):
     # price manifest: neither an integrity orphan nor an unusable quantity
     # becomes repairable because a close was fetched for it.
     premise_ticker = str(premise_payload.get("ticker") or "").strip()
-    premise_currency = str(premise_payload.get("currency") or "USD").strip() or "USD"
     priced_universe = None
     price_status = None
     if canonical_basis is not None:
         priced_universe = _consider_recovery_tickers(rows, premise_ticker, excluded_holdings)
-        currencies = {row.get("currency") or "USD" for row in rows
-                      if row.get("ticker") in priced_universe}
-        if premise_ticker:
-            currencies.add(premise_currency)
+        fx_required, missing_fx = _consider_canonical_fx_recovery(canonical_basis)
         price_status = _consider_price_feed_status(
-            requested=sorted(priced_universe), last_px=last_px, currencies=currencies,
-            fx=fx, feed=feed, agent_supplied=agent_supplied,
+            requested=sorted(priced_universe), last_px=last_px, missing_fx=missing_fx,
+            fx_required=fx_required, feed=feed, agent_supplied=agent_supplied,
             unavailable_declared=declared_unavailable,
             bundle=market_bundle)
 
@@ -7397,12 +7428,9 @@ def cmd_consider(args):
         current_rows = [row for row in rows if row.get("ticker") in current_tickers]
         priced_universe = _consider_recovery_tickers(
             current_rows, premise_ticker, excluded_holdings)
-        currencies = {row.get("currency") or "USD" for row in current_rows}
-        if premise_ticker:
-            currencies.add(premise_currency)
         price_status = _consider_price_feed_status(
-            requested=sorted(priced_universe), last_px=last_px, currencies=currencies,
-            fx=fx, feed=feed, agent_supplied=agent_supplied,
+            requested=sorted(priced_universe), last_px=last_px, feed=feed,
+            agent_supplied=agent_supplied,
             unavailable_declared=declared_unavailable,
             bundle=market_bundle)
 
