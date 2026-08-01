@@ -21,7 +21,7 @@ Numbers, rankings, portfolio effects, and state transitions come from a determin
 | Your moment | Minimum input | First useful outcome |
 |---|---|---|
 | **“Should I buy, add, trim, or wait?”** | The contemplated action, your current reason, and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
-| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing persisted by default. |
+| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing is persisted. |
 | **“Review my recent trades.”** | A broker CSV or transaction export | One focused behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
 | **“I only have a holdings screenshot.”** | A position table or statement screenshot | An opening structural check: weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not invent transaction history. |
 | **“Show me the experience first.”** | No personal data | An isolated test drive using fictional data. It never writes to your real coach memory. |
@@ -124,7 +124,7 @@ FOMO Kernel computes the resulting position weight, concentration and overlap be
 
 ### A contemplated trade without a recorded portfolio
 
-The conversation still advances, but it does not pretend to know weight, concentration, cash, or rule collisions. It asks only the few questions that change the framing and names the next piece of evidence that would buy a more specific answer. Nothing from this no-portfolio path is persisted by default.
+The conversation still advances, but it does not pretend to know weight, concentration, cash, or rule collisions. It asks only the few questions that change the framing and names the next piece of evidence that would buy a more specific answer. Nothing from this path is persisted.
 
 ### Transaction history
 
@@ -151,6 +151,7 @@ That separation prevents the agent from quietly becoming a second source of port
 
 - **No FOMO Kernel backend.** The repository has no account service or upload endpoint, and nothing is sent to the author.
 - **Local files and state.** Source files, normalized snapshots, canonical sessions, private cards, and projections live on the machine running the skill.
+- **Public market data.** To calculate supported prices and returns, the engine may query public symbols and dates from market-data providers. It does not send broker rows, quantities, costs, motives, or cards.
 - **Your AI host still matters.** The model/client you choose may process content you explicitly provide under that host's own terms. FOMO Kernel does not add another server or silently publish the data.
 - **No cloud OCR path.** A screenshot is transcribed by the coding agent from the local attachment; the engine does not upload it to an OCR service.
 - **Private by default.** `card-private.*` is the normal output. Ask for a share-safe version to receive `card-public.md`, which removes amounts, dates, tickers, exact weights, session IDs, and agent free text. Nothing is published automatically.
