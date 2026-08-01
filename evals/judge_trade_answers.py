@@ -586,6 +586,26 @@ def load_candidate(path, fixtures):
     return candidate, payload, []
 
 
+def load_source_fixture(path):
+    """Load one captured synthetic route fixture without changing the witness bank.
+
+    The #718 walkthrough has a frozen evaluation produced by the real route,
+    not a hand-authored answer.  This keeps the existing candidate validator
+    and judge untouched while binding that candidate to its exact capture.
+    """
+    path = pathlib.Path(path).expanduser()
+    try:
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [], [f"{path}: unreadable source fixture: {exc}"]
+    # Reuse the ordinary bank validator by temporarily treating this object as
+    # the only fixture; its sentinel answer is deliberately ineligible.
+    required = {"id", "axes", "declared_by", "frozen_evaluation", "agent_cases", "answers"}
+    if not isinstance(fixture, dict) or required - set(fixture):
+        return [], [f"{path}: source fixture misses required candidate binding fields"]
+    return [fixture], []
+
+
 def episode_view(fixture):
     evaluation = _frozen(fixture)
     return {
@@ -1017,6 +1037,8 @@ def main(argv=None):
     parser.add_argument(
         "--answer-file", metavar="PATH",
         help="judge one exact candidate-output artifact instead of committed witnesses")
+    parser.add_argument("--source-fixture", metavar="PATH",
+                        help="captured frozen fixture for a synthetic route candidate; requires --answer-file")
     parser.add_argument("--history", nargs="?", type=int, const=20, default=None,
                         metavar="N", help="show recent receipts without model calls")
     args = parser.parse_args(argv)
@@ -1032,14 +1054,16 @@ def main(argv=None):
         print(f"FAIL  TR_JUDGE_RUNS must be >= 1 (got {BASE.RUNS})")
         return 1
 
+    if args.source_fixture and not args.answer_file:
+        parser.error("--source-fixture requires --answer-file")
     if args.answer_file and args.fixture:
         parser.error("--answer-file selects its fixture internally; do not pass fixture ids")
 
     candidate_digest = source_fixture_digest = None
     run_kind = "candidate_output" if args.answer_file else "fixture_witness"
     if args.answer_file:
-        bank, problems = load_fixtures()
-        if not problems:
+        bank, problems = (load_source_fixture(args.source_fixture) if args.source_fixture else load_fixtures())
+        if not problems and not args.source_fixture:
             problems.extend(validate_witness_bank(bank))
         candidate = payload = None
         if not problems:

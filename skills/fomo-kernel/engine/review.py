@@ -28,6 +28,7 @@ import tempfile
 import answer_provenance
 import book_refresh
 import card_renderer
+import consider_surface
 import conditions
 import consequence
 import evaluation_challenge
@@ -6866,6 +6867,26 @@ def _validate_decision_context(payload):
                 f"limit of {EVALUATION_EVIDENCE_REF_MAX}; name the source rather than pasting it")
 
 
+def _consider_context_question_queue(premise):
+    """The product-owned bounded context beat for an interactive ``consider``.
+
+    This is intentionally a route surface, rather than a host prompt: a
+    synthetic user (or a real host) may answer only the question the product
+    emitted, then submit the resulting decision-context envelope to the real
+    consequence call.
+    """
+    action = {"buy": "add", "sell": "sale"}.get(
+        premise.get("side") if isinstance(premise, dict) else None, "trade")
+    return [
+        {"question_id": "consider_context_reason", "field": "reason",
+         "surface": f"Why are you considering this {action}?", "required": True,
+         "allowed_actions": ["provide_text"], "route_state": "collecting_context"},
+        {"question_id": "consider_context_why_now", "field": "why_now",
+         "surface": "What changed to make this decision timely?", "required": True,
+         "allowed_actions": ["provide_text"], "route_state": "collecting_context"},
+    ]
+
+
 def _json_safe_premise(normalized):
     """consequence.validate_premise()'s normalized premise carries a real
     ``datetime.date`` for ``date``; every other field is already JSON-safe.
@@ -7255,6 +7276,8 @@ def cmd_consider(args):
             ("--driver-map", args.driver_map),
             ("--instrument-map", args.instrument_map), ("--cash", args.cash),
             ("--agent-case", args.agent_case),
+            ("--product-surface", getattr(args, "product_surface", False)),
+            ("--context-questions", getattr(args, "context_questions", False)),
             ("--decision-context", args.decision_context),
         ) if value]
         if conflicting:
@@ -7269,6 +7292,20 @@ def cmd_consider(args):
         raise ReviewError("consider requires --premise, or --resolve together with --decision")
 
     premise_payload = _load_json_arg(args.premise, "--premise")
+    if args.context_questions:
+        conflicting = [name for name, value in (
+            ("CSV paths", args.paths), ("--prices", args.prices),
+            ("--prices-unavailable", getattr(args, "prices_unavailable", None)),
+            ("--driver-map", args.driver_map), ("--instrument-map", args.instrument_map),
+            ("--cash", args.cash), ("--agent-case", args.agent_case),
+            ("--product-surface", args.product_surface),
+            ("--decision-context", args.decision_context),
+        ) if value]
+        if conflicting:
+            raise ReviewError("--context-questions only takes --premise; remove " + ", ".join(conflicting))
+        _emit({"status": "collecting_context", "route": "consider",
+               "premise": premise_payload, "question_queue": _consider_context_question_queue(premise_payload)})
+        return
 
     # #479 Wave A. Validated here, before any book is read or any number is
     # computed: a refusal costs the caller one round trip, where an envelope
@@ -7402,6 +7439,8 @@ def cmd_consider(args):
     if args.agent_case:
         agent_case = _load_json(os.path.abspath(os.path.expanduser(args.agent_case)), "--agent-case")
         _validate_agent_case(agent_case)
+    if args.product_surface and agent_case is not None:
+        raise ReviewError("--product-surface owns the answer case; remove --agent-case")
 
     max_pos_override = _position_cap_override(root)
 
@@ -7507,6 +7546,18 @@ def cmd_consider(args):
                           "unclassified_holdings": result["unclassified_holdings"],
                           "undecomposed_etfs": result["undecomposed_etfs"]}
 
+    # #718. This is an optional product-owned surface, not a host-generated
+    # answer. It is built only after the route has frozen all of the facts it
+    # may state, then its case takes the identical validation path as a host
+    # supplied case below.
+    challenge = evaluation_challenge.build_challenge(
+        premise=premise_stored, basis=basis, consequence=consequence_stored,
+        rule_collisions=collisions, context=decision_context)
+    product_surface = None
+    if args.product_surface:
+        product_surface = consider_surface.render(challenge)
+        agent_case = product_surface["agent_case"]
+
     # #414 / #479 Wave B: the semantic provenance gate. Runs here — after
     # consequence_stored and collisions exist, before the row is built,
     # appended, or emitted — because answer_provenance.validate_agent_case
@@ -7573,10 +7624,6 @@ def cmd_consider(args):
     # version (evaluation_challenge.py, "Emitted, not stored"). It is
     # likewise absent from _evaluation_id's seed above — the seed identifies
     # the subject evaluated, and a presentation obligation is not part of it.
-    challenge = evaluation_challenge.build_challenge(
-        premise=premise_stored, basis=basis, consequence=consequence_stored,
-        rule_collisions=collisions, context=decision_context)
-
     report = _append_evaluation_row(root, row)
     payload = {"status": "considered", "root": root, "language": language,
                "evaluation": row, "challenge": challenge, "append": report}
@@ -7597,6 +7644,8 @@ def cmd_consider(args):
                 "a brief, direct one. If those sources genuinely publish nothing for these "
                 "instruments, rerun consider --prices-unavailable '<the sources you checked>' "
                 "and the question is refused rather than answered on cost basis")
+    if product_surface is not None:
+        payload["product_surface"] = product_surface
     _emit(payload)
 
 
@@ -8226,6 +8275,10 @@ def build_parser():
                           help="optional path to a JSON file: the structured case for and "
                                "against, {for: [...], against: [...]} "
                                "(references/trade-consequence.md)")
+    consider.add_argument("--product-surface", action="store_true",
+                         help="emit the bounded final answer generated by the consider route")
+    consider.add_argument("--context-questions", action="store_true",
+                         help="emit the product-owned required context questions before evaluation")
     consider.add_argument("--decision-context",
                           help="optional: what the user said at the moment of deciding, as a "
                                "path to a JSON file or an inline JSON object — "
