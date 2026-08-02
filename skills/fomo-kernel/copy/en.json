@@ -348,7 +348,9 @@
   },
   "reconciliation": {
     "statement": "Last time you committed: \"{rule}\".",
-    "statement_with_metric": "Last time you committed: \"{rule}\" — the tracked number was {then} then, {now} now."
+    "statement_with_metric": "Last time you committed: \"{rule}\" — {metric} was {then} then and is {now} now: {direction}.",
+    "metric_labels": {"max_pos_pct": "largest-position weight", "avgdown_count": "adds to losing positions", "ai_pct": "AI-exposure weight", "max_sector_pct": "largest-sector weight", "top3_pct": "top-three weight", "exit_severity": "early-exit severity", "hold_severity": "holding-horizon inconsistency", "worst_cur_ret": "worst current return"},
+    "direction": {"improved": "improved", "worsened": "worsened", "unchanged": "unchanged"}
   },
   "snapshot": {
     "overview": {
@@ -446,7 +448,7 @@
     "action_partial": "reduction"
   },
   "review_milestone": {
-    "line": "When this review started, you already had {completed} completed {noun}.",
+    "line": "When this review started, you already had {completed} completed reviews.",
     "noun_one": "review",
     "noun_many": "reviews"
   },

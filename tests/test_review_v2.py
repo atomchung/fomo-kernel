@@ -4262,7 +4262,7 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
                 "review_plan": pending_plan,
                 "engine_state": pending_plan["engine_state"],
             }, "zh-TW")
-            assert "開始這次復盤時，你已有 1 次完成紀錄。" in opening[0], \
+            assert "開始這次復盤時，你已有 1 次完成復盤。" in opening[0], \
                 "multiple pending plans report the same truthful prepare-time history"
 
 
@@ -7355,7 +7355,8 @@ def test_english_is_same_contract_with_localized_questions_and_card():
 def test_reconciliation_opens_the_card_with_prior_commitment():
     import card_renderer
     bundle = {"review_plan": {"state_snapshot": {"prior_commitment": {
-                  "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct", "metric_value": 0.51}}},
+                  "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct",
+                  "metric_value": 0.51, "goal": "down"}}},
               "engine_state": {"metrics": {"max_pos_pct": 0.48}}}
     zh = card_renderer._reconciliation_lines(bundle, "zh-TW")
     assert zh and "上次你承諾" in zh[0] and "51%" in zh[0] and "48%" in zh[0], \
@@ -7364,6 +7365,8 @@ def test_reconciliation_opens_the_card_with_prior_commitment():
     assert en and "Last time you committed" in en[0] and "51%" in en[0]
     assert "max_pos_pct" not in zh[0] and "max_pos_pct" not in en[0], \
         "A-12: internal metric keys never appear on the card"
+    assert "最大單一部位比重" in zh[0] and "改善" in zh[0]
+    assert "largest-position weight" in en[0] and "improved" in en[0]
     assert card_renderer._reconciliation_lines({"review_plan": {}}, "en") == [], \
         "first review has no prior commitment and no reconciliation line"
 
@@ -7376,7 +7379,8 @@ def test_reconciliation_lines_appends_prior_commitment_breach_sentence():
     required (and separately gated) honesty wording."""
     import card_renderer
     base_bundle = {"review_plan": {"state_snapshot": {"prior_commitment": {
-                       "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct", "metric_value": 0.47}}},
+                       "rule": "下單前先檢查單一風險部位上限", "metric_key": "max_pos_pct",
+                       "metric_value": 0.47, "goal": "down"}}},
                    "engine_state": {"metrics": {"max_pos_pct": 0.48}}}
     unbreached_zh = card_renderer._reconciliation_lines(base_bundle, "zh-TW")
     unbreached_en = card_renderer._reconciliation_lines(base_bundle, "en")
@@ -7720,7 +7724,8 @@ def test_returning_private_card_shows_completed_history_snapshot_only_locally():
     bundle = {
         "review_plan": {"state_snapshot": {
             "prior_commitment": {"rule": "Keep the position bounded",
-                                 "metric_key": "max_pos_pct", "metric_value": 0.51},
+                                 "metric_key": "max_pos_pct", "metric_value": 0.51,
+                                 "goal": "down"},
             "review_progress": progress,
         }},
         "engine_state": {"metrics": {"max_pos_pct": 0.48}},
@@ -7732,7 +7737,7 @@ def test_returning_private_card_shows_completed_history_snapshot_only_locally():
     assert "completed reviews" not in public.lower(), "review progress remains local/private"
     without_rule = {"review_plan": {"state_snapshot": {"review_progress": progress}}}
     assert card_renderer._review_opening_lines(without_rule, "zh-TW") == [
-        "開始這次復盤時，你已有 3 次完成紀錄。"
+        "開始這次復盤時，你已有 3 次完成復盤。"
     ], \
         "a returning user still sees progress after previously skipping a commitment"
     first = {"review_plan": {"state_snapshot": {"review_progress": {
@@ -7740,6 +7745,21 @@ def test_returning_private_card_shows_completed_history_snapshot_only_locally():
     }}}}
     assert card_renderer._review_opening_lines(first, "en") == [], \
         "first reviews must not get a returner milestone"
+
+
+def test_reconciliation_legacy_or_unknown_metric_omits_unowned_semantics():
+    import card_renderer
+    for prior in (
+        {"rule": "Keep the position bounded", "metric_key": "max_pos_pct", "metric_value": 0.51},
+        {"rule": "Keep the position bounded", "metric_key": "unknown_metric", "metric_value": 0.51,
+         "goal": "down"},
+    ):
+        bundle = {"review_plan": {"state_snapshot": {"prior_commitment": prior}},
+                  "engine_state": {"metrics": {prior["metric_key"]: 0.48}}}
+        line = card_renderer._reconciliation_lines(bundle, "en")[0]
+        assert line == 'Last time you committed: "Keep the position bounded".'
+        assert "0.51" not in line and "0.48" not in line
+        assert "improved" not in line and "worsened" not in line
 
 
 def test_feedback_form_collects_review_stage_without_trade_details():
