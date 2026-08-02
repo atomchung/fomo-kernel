@@ -25,6 +25,7 @@ SKILL_DIR = ROOT / "skills" / "fomo-kernel"
 ENGINE = SKILL_DIR / "engine" / "trade_recap.py"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 MOCK_CSV = SKILL_DIR / "mock" / "mock_trades.csv"
+MIXED_CSV = SKILL_DIR / "mock" / "sample_tw_mixed.csv"  # #741/#759: TW+US persona
 
 sys.path.insert(0, str(ENGINE.parent))
 import trade_recap  # noqa: E402  # 只取常數(CYCLE_ID_RE),不跑 main
@@ -35,7 +36,8 @@ TR_JSON_KEYS = {
     "schema_version", "philosophy", "strength", "overview",
     "what_if", "ticker_diagnosis",
     "thesis_questions", "top_holes", "candidate_rules", "prescriptions",
-    "alpha_beta_breakdown", "payoff_attribution", "dims_raw", "data_integrity",
+    "alpha_beta_breakdown", "market_weights",           # #759:市場別權重彙總,分組同 alpha_beta_breakdown.by_market 的 market 來源
+    "payoff_attribution", "dims_raw", "data_integrity",
     "currency_meta",                                    # #51/#129 PR-2a:聚合幣別/fx/分幣桶
     "cash",                                             # #171 PR-1 呈現層:帳戶現金上卡(balance/weight/source/reliable/recent_net_deposit;None=未提供)
     "portfolio_structure",                              # skill v2 ETF P0:allocation vs concentrated ETF + metadata gaps
@@ -87,11 +89,12 @@ def ok(cond, label, detail=""):
     print(f"  ✅ {label}")
 
 
-def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None):
+def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None, extra_env=None):
     """跑一次 engine(TR_JSON + TR_STATE_OUT),注入假 yfinance 強制離線。
     TR_LEDGER 預設釘 os.devnull(#180 隱私防線:不釘會讀 ~/.trade-coach/ledger.jsonl 真帳本,
     owner 機一旦累積對不上的 cash snapshot → data_integrity 多鍵 → 契約在本機紅、CI 綠的鬼故事;
-    測殘差時顯式傳 ledger=fixture 路徑)。"""
+    測殘差時顯式傳 ledger=fixture 路徑)。extra_env 是可選的額外環境變數(例如混市場
+    fixture 需要的 TR_PRICES,見 #741/#759 mixed-market 契約段落),不影響既有呼叫端。"""
     shim = pathlib.Path(tmp) / "shim"
     if not shim.exists():
         shim.mkdir()
@@ -101,6 +104,8 @@ def run_engine_offline(tmp, csv=None, state_name="last_state.json", ledger=None)
     import os
     env = dict(os.environ, TR_JSON="1", TR_STATE_OUT=str(state_out),
                PYTHONPATH=str(shim), TR_LEDGER=(ledger or os.devnull))
+    if extra_env:
+        env.update(extra_env)
     # #605: this suite's own shim is the mechanism under test, so the runner's
     # TR_OFFLINE must not stand in for it — with the posture inherited, the
     # resolver short-circuits before the import and a broken shim would pass.
@@ -158,6 +163,17 @@ def main():
            "每維含 dim/severity/triggered/tier")
         ok(set(card["data_integrity"].keys()) == {"orphan_sells", "unclassified_drivers"},
            "data_integrity = {orphan_sells, unclassified_drivers}")
+
+        # ── market_weights 契約(#759)── mock 全美股(無 Market 欄) → 只有 US 一桶,
+        # 佔比恰為 dims_raw 的 d_size.weights 加總(離線 shim 下無現價,走成本近似仍適用)。
+        mw = card["market_weights"]
+        ok(isinstance(mw, dict) and mw, "market_weights 是非空 dict", repr(mw)[:120])
+        ok(set(mw.keys()) == {"US"}, "mock 全美股、無 Market 欄 → 只有 US 一桶(#759)", repr(mw))
+        ok(abs(mw["US"] - 1.0) < 1e-6, "單一市場彙總後恰為 100%", repr(mw))
+        size_dim = next(d for d in dims if d["dim"] == "部位 sizing")
+        ok(abs(mw["US"] - sum(size_dim["weights"].values())) < 1e-9,
+           "market_weights 與 dims_raw 的 d_size.weights 加總一致(同一份數字只是分組)",
+           f"mw={mw} sum(weights)={sum(size_dim['weights'].values())}")
 
         ov = card["overview"]
         need_ov = {"n_rt", "realized", "unrealized", "unrealized_coverage", "total_pnl",
@@ -265,6 +281,49 @@ def main():
         ok(isinstance(pc, dict), "pnl_curve 是 dict", repr(pc)[:120])
         ok("note" in pc and "無價格" in pc["note"],
            "離線無價格 → pnl_curve 誠實降級(note),不憑空生點", repr(pc))
+
+        # ── 1e. #741/#759:混市場(台股+美股)fixture 的 market_weights/分類契約。
+        #        供給價格檔(離線 shim 仍生效,價格改走 --prices 同款 agent-fed 路徑,
+        #        跟 test_consider.py 的 _fx_envelope 同一種信封,兩邊互不重複)。──
+        mixed_prices = pathlib.Path(tmp) / "mixed_prices.json"
+        mixed_prices.write_text(json.dumps({
+            "as_of": "2026-07-30", "source": "test",
+            "prices": [
+                {"ticker": "2330.TW", "close": 1100.0, "date": "2026-07-30", "currency": "TWD"},
+                {"ticker": "2454.TW", "close": 1400.0, "date": "2026-07-30", "currency": "TWD"},
+                {"ticker": "6488.TWO", "close": 900.0, "date": "2026-07-30", "currency": "TWD"},
+                {"ticker": "AAPL", "close": 230.0, "date": "2026-07-30", "currency": "USD"},
+                {"ticker": "MSFT", "close": 460.0, "date": "2026-07-30", "currency": "USD"},
+                {"ticker": "GOOG", "close": 190.0, "date": "2026-07-30", "currency": "USD"},
+                {"ticker": "AMD", "close": 170.0, "date": "2026-07-30", "currency": "USD"},
+            ],
+            "fx": [{"currency": "TWD", "usd_per_unit": 0.0317, "date": "2026-07-30"}],
+        }), encoding="utf-8")
+        r4, _ = run_engine_offline(tmp, csv=MIXED_CSV, state_name="mixed_state.json",
+                                   extra_env={"TR_PRICES": str(mixed_prices)})
+        ok(r4.returncode == 0, "混市場 fixture 供給價後 exit 0", r4.stderr[-300:])
+        mixed_card = json.loads(r4.stdout)
+        ok(set(mixed_card.keys()) == TR_JSON_KEYS, "混市場卡的頂層 key 集合同樣恰等於契約",
+           f"多了 {set(mixed_card.keys()) - TR_JSON_KEYS} / 少了 {TR_JSON_KEYS - set(mixed_card.keys())}")
+        # #741:2330.TW/2454.TW 現在都分得到,AAPL 是唯一還留著的缺口(與 #741 無關的
+        # 舊缺——它從來就不是外國掛牌,只是單純沒被收錄)。6488.TWO 已全數出清、不在
+        # 目前持倉裡,不會出現在這份缺口清單。
+        ok(mixed_card["data_integrity"]["unclassified_drivers"] == ["AAPL"],
+           "混市場 fixture:2330.TW/2454.TW 分類命中,只剩 AAPL 未分類(#741)",
+           repr(mixed_card["data_integrity"]))
+        # #759:market_weights 恰為 dims_raw 的 d_size.weights 按市場分組加總——同一份
+        # 數字只是分組,不是另外重算的第二份;且台股(TSMC 領銜)應為多數市場。
+        mixed_size = next(d for d in mixed_card["dims_raw"] if d["dim"] == "部位 sizing")
+        mw2 = mixed_card["market_weights"]
+        w2 = mixed_size["weights"]
+        tw_expected = w2.get("2330.TW", 0) + w2.get("2454.TW", 0)
+        us_expected = sum(v for t, v in w2.items() if t not in ("2330.TW", "2454.TW"))
+        ok(set(mw2.keys()) == {"TW", "US"}, "混市場 market_weights 恰有 TW/US 兩桶", repr(mw2))
+        ok(abs(mw2["TW"] - tw_expected) < 1e-9 and abs(mw2["US"] - us_expected) < 1e-9,
+           "market_weights 與 dims_raw 的 d_size.weights 依市場加總一致(#759)",
+           f"mw={mw2} tw_expected={tw_expected} us_expected={us_expected}")
+        ok(abs((mw2["TW"] + mw2["US"]) - 1.0) < 1e-9, "market_weights 加總恰為 100%", repr(mw2))
+        ok(mw2["TW"] > 0.60, "此人設台股(2330.TW 領銜)為多數市場,應 > 60%", repr(mw2))
 
         # ── 2. state 契約 ──
         st = json.loads(state_path.read_text(encoding="utf-8"))

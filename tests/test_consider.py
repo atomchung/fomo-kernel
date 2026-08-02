@@ -1565,12 +1565,19 @@ def test_a_partially_legible_book_says_so_on_the_row_and_in_what_the_answer_owes
         stored = payload["evaluation"]["consequence"]
         assert "unclassified_book" in stored["disclosures"]
         named = {row["ticker"]: row["weight"] for row in stored["unclassified_holdings"]}
-        # The defect in one line: the book's largest holding by far is a
-        # semiconductor company under its primary foreign listing, absent from
-        # a fallback table with no foreign entries at all, so max_sector_pct
-        # is measured without it.
-        assert "2330.TW" in named and named["2330.TW"] > 0.50, named
-        assert stored["after"]["max_sector_pct"] < named["2330.TW"]
+        # #741: 2330.TW (TSMC) and 2454.TW (MediaTek) are now built-in
+        # DRIVER_FALLBACK entries, so the book's dominant holding no longer
+        # falls into this gap. AAPL is what remains -- a plain pre-existing
+        # gap unrelated to #741 (never a foreign listing, simply never added)
+        # -- proving the fix did not also swallow a ticker it has no basis to
+        # classify.
+        assert "2330.TW" not in named, named
+        assert "AAPL" in named and 0.05 < named["AAPL"] < 0.20, named
+        # max_sector_pct now reads the semiconductor concentration the old
+        # fallback table was blind to (2330.TW + 2454.TW, plus AMD which was
+        # already classified pre-#741) -- comfortably over half the book,
+        # the opposite of the pre-fix reading this test used to pin.
+        assert stored["after"]["max_sector_pct"] > 0.65, stored["after"]["max_sector_pct"]
         challenge = payload["challenge"]
         assert any(entry["key"] == "unclassified_book"
                    for entry in challenge["required_coverage"]), challenge["required_coverage"]

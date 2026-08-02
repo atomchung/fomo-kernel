@@ -101,13 +101,45 @@ DRIVER_FALLBACK = {
     # ETF / 大盤 / 商品 / 債
     "SPY":("大盤ETF",0),"VT":("大盤ETF",0),"VOO":("大盤ETF",0),"EWY":("區域ETF",0),
     "IAU":("商品",0),"IEF":("債券",0),
+    # 國際雙重上市 / 台股主要掛牌(#741):key 存完整代碼(含交易所尾綴),driver() 正規化
+    # 尾綴後才查表(見下方 _driver_canonical_suffix)——不能把尾綴整個砍掉存裸數字碼,
+    # 台/港/日/韓股都用小整數代碼,砍尾綴等於把不相干市場的不同公司撞進同一把 key。
+    "2330.TW":("半導體",1),   # 台積電 TSMC,同一家公司的 ADR 即上面的「TSM」,分類對齊
+    "2454.TW":("半導體",1),   # 聯發科 MediaTek,IC 設計,無 ADR 但半導體本業無爭議
+    "0050.TW":("大盤ETF",0),  # 元大台灣50,對台股角色同 SPY 對美股(市值加權大盤代表)
+    "00878.TW":("區域ETF",0), # 國泰永續高股息,台股主題型基金而非大盤代表,故歸區域桶
 }
 _DRIVER_MAP = dict(DRIVER_FALLBACK)
 _DM_SKIPPED = 0                                    # 上次載入跳過的壞 entry 數(給 main 顯示)
 # 上次 load() 的計數(給 main 顯示,對齊 _DM_SKIPPED 範式,#50):輸入層每個靜默丟棄面都留痕,
 # 卡面數字少了幾筆要看得見,不然「你的數字」跟券商 app 對不上時用戶不可察覺。
 _LOAD_STATS = {}
-def driver(t): return _DRIVER_MAP.get(t, ("未分類", 0))
+
+# 國際掛牌尾綴正規化(#741 item 3)。這個引擎目前唯二支援到底的市場是 US(無尾綴)與
+# TW——TW 有兩個掛牌板(TWSE `.TW`、TPEx/OTC `.TWO`),同一檔股票用哪個尾綴回報可能
+# 因券商匯出習慣而異,兩者理應查到同一筆分類。設計成表格式對齊(未來加第三個市場 =
+# 多一列,不是多一個 if 分支),但**不**盲目砍尾綴變成裸數字碼:台/港/日/韓股都用
+# 小整數代碼,裸碼跨市場比對會把不相干的公司撞進同一把 key——所以只在兩個尾綴間
+# 互轉,絕不砍到只剩數字。
+_DRIVER_SUFFIX_ALIASES = {".TWO": ".TW"}
+
+def _driver_canonical_suffix(t):
+    """尾綴別名化:`.TWO` → `.TW`,其餘(含無尾綴的美股)原樣返回。"""
+    if t:
+        for suffix, canonical in _DRIVER_SUFFIX_ALIASES.items():
+            if t.endswith(suffix):
+                return t[:-len(suffix)] + canonical
+    return t
+
+def driver(t):
+    """ticker → (sector, thematic)。完整代碼(含尾綴)先比對 override/fallback 合併表;
+    找不到才試尾綴正規化後的形式(#741,例:若 6488.TW 曾建檔,6488.TWO 會在此接上)。
+    兩者都落空才是真的未分類——正規化只換一種寫法去比對,不會讓本來就沒建檔的標的
+    憑空冒出分類。"""
+    if t in _DRIVER_MAP:
+        return _DRIVER_MAP[t]
+    canon = _driver_canonical_suffix(t)
+    return _DRIVER_MAP.get(canon, ("未分類", 0)) if canon != t else ("未分類", 0)
 def load_driver_map(path):
     """載入 Claude 生成的 {ticker: [sector, thematic]} JSON 覆寫 fallback。讓冷門股也有正確 driver。
     逐筆容錯:一筆格式壞只跳過那一筆、其餘照收(舊版整包 try → 一顆老鼠屎丟掉整張 map)。"""
@@ -1484,6 +1516,26 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL, market_weights=None):
     out.update(by_market[top])                             # 頂層 = scope 市場的欄位(消費者相容;卡上必標「僅含 {scope} 部位」)
     return out
 
+def market_weight_rollup(weights, ticker_market):
+    """市場別權重彙總(#759):「台股/美股各佔多少」直接算成一個數字,不逼 agent
+    自己把 per-ticker 權重加總(AGENTS.md 邊界 1 禁止的正是這件事)。
+
+    分組鍵複用 dim_alpha_beta 的 by_market 拆帳同一份 per-row market 來源
+    (`r.get("market", "US")`,呼叫端傳入的 ticker_market 即那份對照表)——不是
+    從 ticker 字串另外猜一次市場,所以就算某檔外國掛牌沒有可辨識的交易所尾綴,
+    只要券商資料本身宣告了 Market 欄位就分得對。加總的值也直接複用 dim_size 已
+    算好的同一份 weights(dims_raw 卡面上已經在秀的那組數字),故這個彙總跟卡面
+    per-ticker 權重永遠加總一致,不會是另外重算、數值上「恰好」相符的第二份。
+
+    分母與 weights 本身相同(current_book_projection 已排除現金與無法估值的持倉,
+    #172 殘倉在這裡不額外過濾,對齊 dim_size 自己的 weights,不是 ticker_diagnosis
+    那份有殘倉/缺價過濾的版本)。weights 為空(無適用書)→ 回傳 {},與 dim_size
+    自己「不適用時 weights={}」的降級一致。"""
+    out = defaultdict(float)
+    for ticker, weight in (weights or {}).items():
+        out[(ticker_market or {}).get(ticker, "US")] += weight
+    return dict(out)
+
 def alpha_credible(ab):
     """α 可用「能力語氣」嗎:樣本 ≥1 年 且 |t|≥1.96(alpha_stat.grade == significant)。
     v2(#80):持倉檔數/集中度閘門退役——兩個舊閘門的意圖各自有了直接測量:
@@ -2775,7 +2827,7 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
 def build_card_data(dims, strength, overview, wi, rx, tdiag,
                     ab, pa, master, data_integrity=None, currency_meta=None, cash=None,
                     acct_perf=None, pnl_curve_data=None, portfolio_structure=None,
-                    price_provenance=None, price_request=None):
+                    price_provenance=None, price_request=None, market_weights=None):
     """組裝 SKILL Step 3「定論卡」要用的結構化資料(JSON,非給人看的卡)。
 
     Claude 拿這 dict 用敘事方式寫成一段連貫卡(SKILL.md Step 3 鐵律:連貫敘事 ≠ dashboard 拼接);
@@ -2831,6 +2883,7 @@ def build_card_data(dims, strength, overview, wi, rx, tdiag,
         "candidate_rules": candidate_rules,                 # 2-3 條候選,讓用戶挑/改一條
         "prescriptions": rx,                                # 完整處方層
         "alpha_beta_breakdown": ab,
+        "market_weights": market_weights,                   # #759:市場別權重彙總({} = 無適用書);分組同 alpha_beta_breakdown.by_market 的 market 來源
         "payoff_attribution": pa,
         "dims_raw": dims,                                   # 5 維 raw,Claude 用「一句人話」帶過其餘維
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
@@ -3014,6 +3067,9 @@ def main():
     d_size = dim_size(rows, held_u, lastpx_u, max_pos_override)
     d_exit = dim_exit(decision_rts, fwds, n_fwd); d_div = dim_diversify(held_dx, lastpx_u)
     portfolio_structure = instrument_policy.portfolio_analysis(d_size.get("weights"))
+    # #759:市場別權重彙總——複用 t_market(上面 #129 PR-2b per-market α/β 用的同一份
+    # per-row market 來源)分組 d_size 剛算好的同一份 weights。
+    market_weights = market_weight_rollup(d_size.get("weights"), t_market)
     d_hold = dim_hold(rts); d_avgdown = dim_avgdown(avg_down, held_u, lastpx_u, d_size)
     dims = [d_exit, d_size, d_div, d_hold, d_avgdown]
     strength = dim_strength(d_exit, d_size, d_avgdown, d_div, d_hold, decision_rts)  # 先給做對的(附案例)
@@ -3172,7 +3228,8 @@ def main():
                                currency_meta=currency_meta, cash=cash_data,
                                acct_perf=acct_perf, pnl_curve_data=pc,
                                portfolio_structure=portfolio_structure,
-                               price_provenance=price_provenance, price_request=price_request)
+                               price_provenance=price_provenance, price_request=price_request,
+                               market_weights=market_weights)
         print(json.dumps(card, ensure_ascii=False, indent=2, default=str))
     else:
         # 預設:乾淨人話卡(quickstart / fallback 用,#20 違規條目已砍)
