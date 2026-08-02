@@ -3965,7 +3965,7 @@ _HTML_WIDGET_CSS = """\
 .rc{--rc-surface-2:var(--surface-2,#ffffff);--rc-surface-1:var(--surface-1,#f5f4ef);
 --rc-surface-key:var(--surface-key,#f0eee6);
 --rc-text-primary:var(--text-primary,#1a1915);--rc-text-secondary:var(--text-secondary,#5f5e5a);
---rc-text-muted:var(--text-muted,#8a8980);--rc-text-success:var(--text-success,#3b6d11);
+--rc-text-muted:var(--text-muted,#6d6c65);--rc-text-success:var(--text-success,#3b6d11);
 --rc-text-danger:var(--text-danger,#a32d2d);--rc-text-accent:var(--text-accent,#185fa5);
 --rc-border:var(--border,rgba(0,0,0,0.10));--rc-border-key:var(--border-key,rgba(24,95,165,0.35));
 --rc-radius:var(--radius,8px);
@@ -3974,12 +3974,12 @@ _HTML_WIDGET_CSS = """\
 --rc-tx-figure:20px;
 --rc-r-sm:6px;--rc-r-md:var(--rc-radius);--rc-r-lg:12px}
 @media (prefers-color-scheme:dark){.rc{--rc-surface-2:var(--surface-2,#2b2a27);
---rc-surface-1:var(--surface-1,#232220);--rc-surface-key:var(--surface-key,#26282b);
+--rc-surface-1:var(--surface-1,#232220);--rc-surface-key:var(--surface-key,#1b1d20);
 --rc-text-primary:var(--text-primary,#f5f4ef);
---rc-text-secondary:var(--text-secondary,#b4b2a9);--rc-text-muted:var(--text-muted,#8a8980);
+--rc-text-secondary:var(--text-secondary,#b4b2a9);--rc-text-muted:var(--text-muted,#939289);
 --rc-text-success:var(--text-success,#a7be83);--rc-text-danger:var(--text-danger,#df8b84);
---rc-text-accent:var(--text-accent,#a9b5c2);--rc-border:var(--border,rgba(255,250,240,0.10));
---rc-border-key:var(--border-key,rgba(169,181,194,0.42))}}
+--rc-text-accent:var(--text-accent,#a8c8f0);--rc-border:var(--border,rgba(255,250,240,0.10));
+--rc-border-key:var(--border-key,rgba(168,200,240,0.42))}}
 .rc{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Noto Sans SC",sans-serif;font-weight:400;
 color:var(--rc-text-primary);background:var(--rc-surface-2);border:0.5px solid var(--rc-border);
 border-radius:var(--rc-r-lg);overflow:hidden;line-height:1.6;font-variant-numeric:tabular-nums}
