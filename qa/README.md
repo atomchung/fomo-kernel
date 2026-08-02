@@ -14,6 +14,11 @@ under `skills/` would imply there are two things to install, and there is exactl
 | `qa_env.sh` | Dogfood environment manager — pinned worktree, isolated coach root, reset. |
 | `receipts.py` | Reads and summarizes `ux_receipt` output across dogfood runs. |
 | `slice_csv.py` | Cuts a fixture CSV down to a date window, for staging a second review period. |
+| `run_synthetic_walk.py` | #718's one synthetic-user walk: drives the real `consider` route twice and records the three visible turns around it. |
+| `synthetic_user.py` | The bounded synthetic user — it may return an action, never an answer or a command. |
+| `turn_trace.py` | The ordered visible-turn trace, the surface classification, and the run ledger that keeps a failed run in the denominator. |
+| `candidate_builder.py` | Packages a byte-identical answer capture into the schema-v3 artifact the #705 judge reads. |
+| `scenarios/` | Committed fictional correction trajectories, including the controlled regression whose final turn narrates implementation work. |
 | `tests/test_receipts.py` | Unit tests for `receipts.py`, including the campaign/case/state-lineage rules an archived run must satisfy. |
 | `tests/test_skill_commands.py` | Drift gate: every `ux_receipt.py` command in `SKILL.md` must parse against the real CLI, and the documented event order must replay into a trace that verifies (#520). |
 | `tests/test_isolation_gate.py` | Refusal gate: `qa_env.sh` must stop every command while the account's own `~/.trade-coach` is still reachable, and what `isolate` prints must satisfy the check that refused (#557). |

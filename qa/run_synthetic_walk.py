@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""One bounded #718 synthetic-user walk through the real ``consider`` CLI."""
+"""One bounded #718 synthetic-user walk through the real ``consider`` CLI.
+
+The walk drives the real route twice -- once on the scenario's declared motive,
+once on the synthetic user's correction -- and records the three visible turns
+around it: the initial product answer, the correction that moves the route on,
+and the corrected answer. What the engine computes stays the engine's; what
+this file adds is the ordered record of what was shown, and an attempt count a
+later failure can re-bucket but never erase.
+
+Exit codes are part of the contract, because "the run failed" and "the run
+never finished" are different facts:
+
+    0  a terminal route run whose product surfaces passed
+    1  a terminal route run whose product surfaces failed
+    2  the run never reached a terminal verdict (harness_incomplete)
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,16 +25,33 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 from synthetic_user import AgySyntheticUser, StubSyntheticUser, SyntheticUserError, parse_action  # noqa: E402
+from turn_trace import (PRODUCT_PROVENANCE, RunLedger, TraceError, TurnTrace,  # noqa: E402
+                        build_report, classify_surface)
 
 SCENARIO_ID = "consider-ai-momentum"
 FIXTURE_ID = "synthetic-consider-ai-momentum"
 MAX_TURNS = 8
 SEMANTIC_JUDGE_TIMEOUT_SECONDS = 1000
+SURFACE_SCRIPTS = {
+    "baseline": HERE / "scenarios" / "consider-ai-momentum-correction.json",
+    "mutated": HERE / "scenarios" / "consider-ai-momentum-correction-mutated.json",
+}
+# The resolution vocabulary is the engine's, read from the product's own
+# schema. A script may declare a subset of it and nothing else -- otherwise a
+# fixture could invent a resolution word, put it in its final surface, and
+# manufacture a passing decision out of a word the route never had.
+DECISION_SCHEMA = ROOT / "skills/fomo-kernel/schemas/trade-evaluation.schema.json"
+# What the user is shown when the corrected evaluation does not complete. The
+# machine detail behind it goes to the separate diagnostics artifact, never
+# into a visible surface: raw tool output is not something a user ever saw.
+ROUTE_FAILURE_SURFACE = ("The corrected evaluation did not complete, so there is no updated "
+                         "decision result to show. Nothing was recorded for it.")
 
 SCENARIO = {
     "persona_id": "ai-momentum-investor",
@@ -27,6 +59,8 @@ SCENARIO = {
     "why_now": "Recent fictional customer conversations sound more urgent.",
     "book": ["FICTIONAL-A", "FICTIONAL-B", "FICTIONAL-C", "FICTIONAL-D", "FICTIONAL-E"],
 }
+PREMISE = {"ticker": "FICTIONAL-A", "side": "buy", "qty": 95.8904,
+           "price": 100, "date": "2026-08-01", "currency": "USD"}
 # These are synthetic-user inputs, not product questions.  They deliberately
 # live at the A01 scenario boundary: a real host owns the user-visible wording
 # and must supply any byte-identical answer capture itself.
@@ -45,7 +79,14 @@ class WalkError(RuntimeError):
 
 
 def _write(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    """Write via a temp file and rename, so a death mid-write cannot truncate.
+
+    The evidence this lane produces is rewritten on every turn. A partial file
+    is worse than a stale one: the stale file is an honest earlier state.
+    """
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _run(env, *args):
@@ -94,9 +135,92 @@ def _inputs(directory):
     return csv, prices
 
 
-def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, output_dir=None):
+def load_surface_script(name_or_path):
+    """Load the three-turn correction trajectory, refusing an unusable shape.
+
+    The script owns what a host would have shown; it never owns the verdict.
+    Every check here is structural, and no entry may label its own message
+    type -- that is classified from the surface itself -- so a fixture cannot
+    declare itself passing, nor smuggle a fourth turn or a missing correction
+    past the trace.
+    """
+    path = SURFACE_SCRIPTS.get(name_or_path) or pathlib.Path(name_or_path)
+    try:
+        script = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WalkError(f"unreadable surface script {path}: {exc}") from exc
+    turns = script.get("turns")
+    if not isinstance(turns, list) or len(turns) != 3:
+        raise WalkError("a correction trajectory is exactly three visible turns")
+    if [turn.get("role") for turn in turns] != ["assistant", "user", "assistant"]:
+        raise WalkError("trajectory must be assistant, user correction, assistant")
+    for turn in (turns[0], turns[2]):
+        if turn.get("provenance") not in PRODUCT_PROVENANCE:
+            raise WalkError("an assistant surface must declare a product provenance")
+        if not isinstance(turn.get("text"), str) or not turn["text"].strip():
+            raise WalkError("an assistant surface needs text")
+        if "message_type" in turn:
+            raise WalkError("a surface script may not label its own message type")
+    correction = turns[1]
+    allowed_text = correction.get("allowed_text")
+    context = correction.get("corrected_context")
+    if not isinstance(allowed_text, str) or not allowed_text.strip():
+        raise WalkError("the correction turn needs allowed_text")
+    if not isinstance(context, dict) or set(context) != {"reason", "why_now"}:
+        raise WalkError("the correction turn needs a corrected reason and why_now")
+    for value in context.values():
+        # The engine quotes the user verbatim.  If what is fed to the route is
+        # not literally inside what the user was shown saying, the challenge
+        # would quote words nobody said.
+        if not isinstance(value, str) or value not in allowed_text:
+            raise WalkError("corrected context must appear verbatim in the correction the user made")
+    options = (script.get("policy") or {}).get("terminal_options")
+    if not isinstance(options, list) or not options or not all(isinstance(o, str) for o in options):
+        raise WalkError("the script must declare terminal_options")
+    if not set(options) <= set(engine_decisions()):
+        raise WalkError("terminal_options must come from the engine's own decision vocabulary")
+    return script
+
+
+def engine_decisions():
+    """The product schema's decision enum -- the only resolution words allowed."""
+    try:
+        schema = json.loads(DECISION_SCHEMA.read_text(encoding="utf-8"))
+        return tuple(schema["properties"]["decision"]["enum"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise WalkError(f"cannot read the engine decision vocabulary: {exc}") from exc
+
+
+def _ask(user, envelope, *, allowed_text, seen_surfaces, seen_actions):
+    """One bounded synthetic-user step, with the loop guards #718 requires."""
+    surface_digest = hashlib.sha256(envelope["surface"].encode()).hexdigest()
+    if surface_digest in seen_surfaces:
+        raise WalkError(f"repeated product surface at {envelope['step_id']}")
+    seen_surfaces.add(surface_digest)
+    action = parse_action(user.choose(envelope), allowed_actions=envelope["allowed_actions"],
+                          allowed_text=allowed_text)
+    action_digest = hashlib.sha256(json.dumps(action.__dict__, sort_keys=True).encode()).hexdigest()
+    if action_digest in seen_actions:
+        raise WalkError(f"repeated synthetic-user action at {envelope['step_id']}")
+    seen_actions.add(action_digest)
+    return action
+
+
+def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None,
+             output_dir=None, surface_script="baseline", report_sink=None):
+    """Walk the route. ``report_sink`` receives the last *durable* report.
+
+    A caller that only sees the raised exception would have to invent counters
+    for a run that really started, and would report it as never having begun.
+    The sink is how the CLI tells the truth on stdout about a run that died.
+    """
+    ledger = RunLedger()
+    ledger.start_campaign()
+    trace = TurnTrace()
     if user_backend not in {"stub", "agy"}:
         raise WalkError("unknown synthetic user backend")
+    script = load_surface_script(surface_script)
+    resolutions = script["policy"]["terminal_options"]
     run_dir = pathlib.Path(output_dir or tempfile.mkdtemp(prefix="fomo-synthetic-walk-"))
     run_dir.mkdir(parents=True, exist_ok=True)
     coach = run_dir / "coach"
@@ -106,44 +230,95 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
         env["TR_JUDGE_BACKEND"] = judge_backend
     if pathlib.Path(os.path.expanduser("~/.trade-coach")).resolve() == coach.resolve():
         raise WalkError("dogfood root must not equal the real coach root")
-    csv, prices = _inputs(run_dir)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    base = {"scenario": SCENARIO_ID, "persona": SCENARIO["persona_id"],
+            "surface_script": script["id"],
+            "surface_provenance": sorted({turn["provenance"] for turn in script["turns"]
+                                          if turn["role"] == "assistant"}),
+            "deterministic": "fail", "semantic_judge": "skipped",
+            "semantic_judge_reason": "fixture_surfaces_are_not_a_product_capture",
+            "production_answer_capture": "unavailable",
+            "ux_receipt_status": "incomplete_product_delivery",
+            "owner_acceptance": "owner_unreviewed",
+            "route_transitions": [], "final_resolution": None,
+            "time_to_first_value": None,
+            "clarification_cost": {"truth_critical": 0, "optional_enrichment": 0,
+                                   "repeated_or_unnecessary": 0},
+            "surface_findings": [], "candidate_artifact": None, "candidate_sha256": None,
+            "receipt": None, "raw_trace": str(run_dir / "turn-trace.local.jsonl"),
+            "harness_diagnostics": None,
+            "repository_sha": revision, "dogfood_root": str(coach)}
+
+    def flush():
+        report = build_report(ledger=ledger, trace=trace, base=base)
+        _write(run_dir / "combined-receipt.json", report)
+        trace.write_raw(run_dir / "turn-trace.local.jsonl")
+        # Only after both writes land.  A report that never reached disk must
+        # not be the one the caller reports, or a settled verdict whose write
+        # failed would be announced as though it had been recorded.
+        if report_sink is not None:
+            report_sink["report"] = report
+        return report
+
+    def diagnose(detail):
+        """Machine detail lives here, in its own artifact -- never in a surface."""
+        path = run_dir / "harness-diagnostics.local.json"
+        _write(path, detail)
+        base["harness_diagnostics"] = str(path)
+
+    # The attempt is counted, and reads as incomplete on disk, before the first
+    # turn exists.  A hard crash from here on therefore leaves an honest run
+    # rather than no run at all.
+    ledger.start_route()
+    flush()
+    try:
+        report = _walk_body(env=env, run_dir=run_dir, coach=coach, script=script,
+                            resolutions=resolutions, user_backend=user_backend,
+                            ledger=ledger, trace=trace, base=base, flush=flush,
+                            diagnose=diagnose)
+    except BaseException as exc:  # noqa: BLE001 -- re-raised below; the point is the flush
+        ledger.stop_incomplete(f"harness_error:{type(exc).__name__}")
+        try:
+            diagnose({"stage": "walk", "error_type": type(exc).__name__, "error": str(exc),
+                      "traceback": traceback.format_exc()})
+            flush()
+        except Exception:  # noqa: BLE001
+            # Recording the fault must not replace it. The last durable report
+            # stands, and the original exception is what the caller sees.
+            pass
+        raise
+    return report
+
+
+def _walk_body(*, env, run_dir, coach, script, resolutions, user_backend,
+               ledger, trace, base, flush, diagnose):
+    csv, prices = _inputs(run_dir)
     _run(env, "set-cap", "--root", coach, "--pct", "0.25")
-    premise = {"ticker": "FICTIONAL-A", "side": "buy", "qty": 95.8904,
-               "price": 100, "date": "2026-08-01", "currency": "USD"}
-    transcript, context, turns, seen_surfaces, seen_actions = [], {}, 0, set(), set()
-    user = (StubSyntheticUser([SCENARIO["reason"], SCENARIO["why_now"]]) if user_backend == "stub"
-            else AgySyntheticUser(SCENARIO))
+    correction = script["turns"][1]
+    responses = [SCENARIO["reason"], SCENARIO["why_now"], correction["allowed_text"]]
+    user = (StubSyntheticUser(responses) if user_backend == "stub" else AgySyntheticUser(SCENARIO))
+    seen_surfaces, seen_actions = set(), set()
+
+    context = {}
     for question in QA_CONTEXT_STEPS:
-        if turns >= MAX_TURNS:
-            raise WalkError("synthetic walk exceeded max_turns")
-        field, surface = question.get("field"), question.get("surface")
-        if field not in {"reason", "why_now"} or not isinstance(surface, str):
+        field_name, surface = question.get("field"), question.get("surface")
+        if field_name not in {"reason", "why_now"} or not isinstance(surface, str):
             raise WalkError("consider returned an unsupported context question")
-        envelope = {"step_id": question.get("id"), "surface": surface,
-                    "allowed_actions": question.get("allowed_actions"),
+        envelope = {"step_id": question["id"], "surface": surface,
+                    "allowed_actions": question["allowed_actions"],
                     "route_state": "qa_context", "terminal": False}
-        surface_digest = hashlib.sha256(surface.encode()).hexdigest()
-        if surface_digest in seen_surfaces:
-            raise WalkError(f"repeated product surface at {envelope['step_id']}")
-        seen_surfaces.add(surface_digest)
-        action = parse_action(user.choose(envelope), allowed_actions=envelope["allowed_actions"],
-                              allowed_text={SCENARIO[field]})
-        action_digest = hashlib.sha256(json.dumps(action.__dict__, sort_keys=True).encode()).hexdigest()
-        if action_digest in seen_actions:
-            raise WalkError(f"repeated synthetic-user action at {envelope['step_id']}")
-        seen_actions.add(action_digest)
-        context[field] = action.text
-        transcript.append({"surface": envelope, "action": action.__dict__})
-        turns += 1
+        action = _ask(user, envelope, allowed_text={SCENARIO[field_name]},
+                      seen_surfaces=seen_surfaces, seen_actions=seen_actions)
+        context[field_name] = action.text
+        trace.record_setup(field_name=field_name, text=action.text)
     context["evidence_refs"] = []
-    context_path = run_dir / "decision-context.json"
-    _write(context_path, context)
-    final = _run(env, "consider", csv, "--root", coach,
-                 "--premise", json.dumps(premise),
-                 "--prices", prices, "--cash", json.dumps({"as_of": "2026-08-01", "amount": 20000, "currency": "USD"}),
-                 "--decision-context", context_path, "--language", "en")
-    evaluation_id = final["evaluation"]["evaluation_id"]
+    base["route_transitions"].append("qa_context")
+
+    first = _consider(env, run_dir, csv, prices, coach, context, name="decision-context.json")
+    evaluation_id = first["evaluation"]["evaluation_id"]
+    base["receipt"] = str(coach / "ux" / f"{evaluation_id}.jsonl")
+    base["route_transitions"].append("considered")
+    base["deterministic"] = "pass"
     _receipt(env, "start", "--session-id", evaluation_id, "--client", "synthetic-user", "--route", "consider",
              "--adapter", "plain_text")
     # No `question_presented`, `answers_received`, `evaluation_presented`, or
@@ -152,20 +327,80 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None, o
     # cannot byte-capture the host's final answer.
     _receipt(env, "event", "--session-id", evaluation_id, "--event", "findings_recorded",
              "--finding", "not-episodable:#718:production_answer_capture_unavailable")
-    receipt_path = coach / "ux" / f"{evaluation_id}.jsonl"
-    report = {"workflow": "pass", "deterministic": "pass",
-              "production_answer_capture": "unavailable", "semantic_judge": "skipped",
-              "owner_acceptance": "owner_unreviewed", "scenario": SCENARIO_ID,
-              "persona": SCENARIO["persona_id"], "turn_count": turns, "final_resolution": None,
-              "route_transitions": ["qa_context", "considered"],
-              "ux_receipt_status": "incomplete_product_delivery",
-              "time_to_first_value": None, "clarification_cost": {"truth_critical": 0,
-              "optional_enrichment": 0, "repeated_or_unnecessary": 0},
-              "candidate_artifact": None, "candidate_sha256": None,
-              "receipt": str(receipt_path), "transcript_sha256": hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest(),
-              "repository_sha": revision, "dogfood_root": str(coach)}
-    _write(run_dir / "combined-receipt.json", report)
-    return report
+    flush()
+
+    findings = base["surface_findings"]
+    opening = _turn(trace, script["turns"][0], resolutions, findings, flush, route_state="considered")
+    if opening["delivers_decision_result"]:
+        base["time_to_first_value"] = trace.turn_count
+
+    envelope = {"step_id": "correction", "surface": script["turns"][0]["text"],
+                "allowed_actions": ["provide_text"], "route_state": "considered", "terminal": False}
+    action = _ask(user, envelope, allowed_text={correction["allowed_text"]},
+                  seen_surfaces=seen_surfaces, seen_actions=seen_actions)
+    trace.record(role="user", message_type="correction", text=action.text,
+                 provenance="fixture", route_state="correction_received")
+    base["route_transitions"].append("correction_received")
+    flush()
+
+    corrected = dict(correction["corrected_context"], evidence_refs=[])
+    try:
+        second = _consider(env, run_dir, csv, prices, coach, corrected,
+                           name="decision-context-corrected.json")
+    except WalkError as exc:
+        diagnose({"stage": "corrected_evaluation", "error_type": type(exc).__name__, "error": str(exc)})
+        trace.record(role="assistant", message_type="process_error", provenance="harness",
+                     route_state="route_failed", text=ROUTE_FAILURE_SURFACE)
+        ledger.stop_incomplete("route_process_failed")
+        base["deterministic"] = "fail"
+        return flush()
+    # A real check, not a fixture's opinion: the route must now quote the words
+    # the synthetic user actually corrected it with.
+    quoted = {row.get("text") for row in second["challenge"]["quote_verbatim"]}
+    if [value for value in correction["corrected_context"].values() if value not in quoted]:
+        raise WalkError("the corrected evaluation did not quote the user's correction verbatim")
+    base["route_transitions"].append("reconsidered")
+    base["final_resolution"] = second["evaluation"]["decision"]
+    if trace.turn_count >= MAX_TURNS:
+        raise WalkError("synthetic walk exceeded max_turns")
+
+    _turn(trace, script["turns"][2], resolutions, findings, flush, route_state="reconsidered")
+    failed = [finding for finding in findings if finding["verdict"] == "product_fail"]
+    ledger.settle("product_fail" if failed else "product_pass",
+                  stop_reason=(failed[0]["reason"] if failed else "corrected_result_delivered"))
+    return flush()
+
+
+def _turn(trace, entry, resolutions, findings, flush, *, route_state):
+    """Classify one assistant surface, then record what it actually is.
+
+    The message type is derived, never declared: a surface that narrates the
+    system's own repair work is recorded as ``process_error`` even though it
+    arrived in the slot where a decision result was due.
+    """
+    finding = classify_surface(entry["text"], instrument=PREMISE["ticker"], resolutions=resolutions)
+    message_type = "decision_result" if finding["verdict"] == "product_pass" else "process_error"
+    turn = trace.record(role="assistant", message_type=message_type, text=entry["text"],
+                        provenance=entry["provenance"], route_state=route_state)
+    findings.append({"turn": turn.index, **finding})
+    flush()
+    return finding
+
+
+def _consider(env, run_dir, csv, prices, coach, context, *, name):
+    path = run_dir / name
+    _write(path, context)
+    return _run(env, "consider", csv, "--root", coach,
+                "--premise", json.dumps(PREMISE),
+                "--prices", prices,
+                "--cash", json.dumps({"as_of": "2026-08-01", "amount": 20000, "currency": "USD"}),
+                "--decision-context", path, "--language", "en")
+
+
+def _exit_code(report):
+    if report["harness_incomplete"]:
+        return 2
+    return 1 if report["product_failures"] else 0
 
 
 def main(argv=None):
@@ -176,22 +411,49 @@ def main(argv=None):
     parser.add_argument("--judge-backend")
     parser.add_argument("--no-semantic-judge", action="store_true")
     parser.add_argument("--output-dir")
+    parser.add_argument("--surface-script", default="baseline",
+                        help="baseline, mutated, or a path to a three-turn correction script")
     args = parser.parse_args(argv)
     if args.plan:
         print(json.dumps({"scenario": SCENARIO_ID, "route": "consider", "max_turns": MAX_TURNS,
-                          "user_backend": args.user_backend, "model_calls": 0 if args.user_backend == "stub" else 2,
+                          "user_backend": args.user_backend,
+                          "model_calls": 0 if args.user_backend == "stub" else 3,
+                          "surface_script": args.surface_script, "visible_turns": 3,
+                          "consider_invocations": 2,
                           "production_answer_capture": "external_host_required",
                           "semantic_judge": "requires_external_capture"}, sort_keys=True))
         return 0
+    sink = {}
     try:
-        print(json.dumps(run_walk(user_backend=args.user_backend, semantic_judge=not args.no_semantic_judge,
-                                  judge_backend=args.judge_backend,
-                                  output_dir=args.output_dir), sort_keys=True))
-    except (WalkError, SyntheticUserError) as exc:
-        print(json.dumps({"workflow": "fail", "deterministic": "fail", "semantic_judge": "skipped",
-                          "owner_acceptance": "owner_unreviewed", "error": str(exc)}))
-        return 1
-    return 0
+        report = run_walk(user_backend=args.user_backend, semantic_judge=not args.no_semantic_judge,
+                          judge_backend=args.judge_backend, output_dir=args.output_dir,
+                          surface_script=args.surface_script, report_sink=sink)
+    except Exception as exc:  # noqa: BLE001
+        # Deliberately every exception, not a named list.  Exit code 1 means
+        # "the product surfaces failed"; letting an unlisted error -- a
+        # malformed engine payload raising JSONDecodeError, say -- reach the
+        # interpreter would exit 1 too and misreport a harness fault as a
+        # product verdict.  KeyboardInterrupt and SystemExit still propagate.
+        report = sink.get("report")
+        if report is None:
+            # Nothing durable exists yet, so no route run may be claimed -- but
+            # the campaign started and is counted whatever happened next.
+            ledger = RunLedger()
+            ledger.start_campaign()
+            ledger.stop_incomplete(f"harness_error:{type(exc).__name__}")
+            report = build_report(ledger=ledger, trace=TurnTrace(),
+                                  base={"scenario": SCENARIO_ID, "deterministic": "fail",
+                                        "semantic_judge": "skipped",
+                                        "owner_acceptance": "owner_unreviewed"})
+        # `str(exc)` can carry raw engine stdout/stderr, so it goes to stderr
+        # and to the diagnostics artifact -- never into the receipt, which is
+        # the part that may be posted publicly.
+        report = dict(report, error_type=type(exc).__name__)
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        print(json.dumps(report, sort_keys=True))
+        return 2
+    print(json.dumps(report, sort_keys=True))
+    return _exit_code(report)
 
 
 if __name__ == "__main__":
