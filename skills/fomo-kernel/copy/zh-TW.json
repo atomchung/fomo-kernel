@@ -247,18 +247,18 @@
     "prior_commitment_breach": "這條規矩本期已經記到一筆違規事件，在這次復盤結算之前就已經發生。"
   },
   "instrument_tags": {
-    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}{price_note}(待你確認交易論述)",
-    "suspected_averaging_down_recovered": "⚠疑似凹單(現賺):只在虧損加碼 {n_adds} 次——賺回來像運氣，不是紀律",
+    "suspected_averaging_down_losing": "✗疑似凹單：只在虧損加碼 {n_adds} 次、現虧 {cur_pct}{price_note}（待你確認交易論述）",
+    "suspected_averaging_down_recovered": "⚠疑似凹單（現賺）：只在虧損加碼 {n_adds} 次——賺回來像運氣，不是紀律",
     "adds_pending_confirmation": "？加碼 {n_adds} 次待確認：是定投還是凹單，要你定",
     "suspected_dca": "✓疑似定投：漲跌都買/規律 {n_adds} 次，不是凹單",
-    "deep_underwater": "✗套牢:{cur_pct}{price_note} 還抱著沒處理",
+    "deep_underwater": "✗套牢：{cur_pct}{price_note} 還抱著沒處理",
     "too_heavy": "⚠押太重：佔組合 {wpct_pct}",
     "disciplined_hold": "✓紀律持有：賺 {cur_pct}{price_note}",
     "roughly_neutral": "— 大致中性"
   },
   "stress_test": {
     "labels": {
-      "ai_thematic": "AI 概念股(跨板塊)",
+      "ai_thematic": "AI 概念股（跨板塊）",
       "sector": "「{sector}」板塊",
       "single_ticker": "單檔 {ticker}"
     },
@@ -266,20 +266,20 @@
   },
   "prescription_kinds": {
     "amplify": "揚長",
-    "amplify_hypothesis": "揚長(假設，待驗證)",
+    "amplify_hypothesis": "揚長（假設，待驗證）",
     "selection_inconclusive": "選股：資料不足以判定",
-    "outsource": "外包短板(漸進)",
+    "outsource": "外包短板（漸進）",
     "cut_loss": "砍損耗"
   },
   "prescription_texts": {
-    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡，押對賽道佔 {alloc_pp}pp(拆帳)。那還只是假設，不是已證實的 edge——押對 AI 也可能只是站到風口，要靠下次的賽道判斷才驗得出來。",
-    "selection_inconclusive": "拆帳看，板塊內選股貢獻 {sel_pp}pp(描述性、這數字站得住);但 {t_note}，統計上還分不出選股是本事還是運氣。",
+    "amplify_hypothesis": "你贏大盤 {excess_pp}pp 裡，押對賽道佔 {alloc_pp}pp（拆帳）。那還只是假設，不是已證實的 edge——押對 AI 也可能只是站到風口，要靠下次的賽道判斷才驗得出來。",
+    "selection_inconclusive": "拆帳看，板塊內選股貢獻 {sel_pp}pp（描述性、這數字站得住）；但 {t_note}，統計上還分不出選股是本事還是運氣。",
     "selection_inconclusive_t_wide": "α 的 95% 區間還太寬(t={t})",
     "selection_inconclusive_t_unstable": "α 統計量還算不穩",
-    "outsource_selection": "扣掉賽道，你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差。這不是說『別選股』(你享受它、ETF 也會錯過妖股),而是可以撥一部分資金被動化托底，選股當衛星。(流程觀察，非標的建議)",
+    "outsource_selection": "扣掉賽道，你板塊內選股貢獻 {sel_pp}pp、α 統計上站得住地差。這不是說『別選股』（你享受它、ETF 也會錯過妖股），而是可以撥一部分資金被動化托底，選股當衛星。(流程觀察，非標的建議)",
     "amplify_selection_edge": "扣掉賽道紅利，你板塊內選股仍貢獻 {sel_pp}pp、α 統計上站得住——這是真 edge。",
     "cut_averaging_down": "虧損中加碼 {count} 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。",
-    "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct},單一押注過重。"
+    "cut_oversize": "最大一筆 {ticker} 佔 {max_pct_pct}，單一押注過重。"
   },
   "due_choices": {
     "still_valid": "還成立",
@@ -340,7 +340,7 @@
   "best_strength": {
     "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。",
     "exit_discipline": "該獲利了結時你不手軟：賣掉的賺錢單只有 {winner_early} 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」",
-    "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct},沒把身家壓在一檔上",
+    "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct}，沒把身家壓在一檔上",
     "averaging_down": "你往下加碼 {count} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重{example}",
     "averaging_down_example": "(例:{ticker})",
     "diversification": "{n} 檔分布在不同驅動因子，沒有全押在同一個故事上",
@@ -492,7 +492,7 @@
     "structure": "配置型 ETF 與單一標的風險分開計算；產業、主題與槓桿 ETF 仍保留集中風險。"
   },
   "tag_values": {
-    "price_note": "(現 {px}／均 {avg_cost})"
+    "price_note": "（現 {px}／均 {avg_cost}）"
   },
   "sectors": {
     "bonds": "債券",
@@ -519,7 +519,7 @@
     "exit_holding": "賺錢抱 {hold_win} 天 / 賠錢抱 {hold_lose} 天（處置缺口 {disp_gap}）",
     "position_sizing": "你最大一筆 {max_ticker} 佔 {max_pct}，其餘平均 {avg_pct}",
     "diversification": "你持有 {n} 檔看似分散，但 AI capex 暴險 {ai_pct}、最大板塊「{max_sector}」{max_sector_pct}、top3 {top3}——同一個驅動因子",
-    "holding_no_data": "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）",
+    "holding_no_data": "暫無已實現 round-trip，持有時間統計待生成（只看買進尚未賣出的不納入）",
     "holding_same_day": "所有已完成交易皆為當日進出，沒有隔夜持有",
     "holding_base": "你持有時間 {min}~{max} 天、中位 {median_hold} 天",
     "holding_inconsistent": "{base}；其中 {n_incon}/{n_multi} 檔同一檔又當沖又長抱（{tickers}）——同檔沒有一致框架",

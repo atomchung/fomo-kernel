@@ -98,8 +98,41 @@ _LITERAL_TAGS = ("(引擎產出)", "(供參)", "（引擎產出）", "（供參�
 _WINRATE = re.compile(r"勝率 *\d+ *%|\d+ *勝 *\d+ *負")
 
 # ── 卡面半形標點夾在中日文字之間(A-13;全形統一,數字格式除外)────────────────
-#    兩側都要 CJK,所以「$1,850,平均」(digit,CJK)不會誤判——數字格式天然被排除。
-_HALFWIDTH_PUNCT = re.compile(r"[一-鿿][,:;][一-鿿]")
+#    #671:舊版是 `[一-鿿][,:;][一-鿿]`——列舉三個字元、且要求標點「緊鄰」兩側都是
+#    CJK。兩個洞都被實際卡片踩到:半形括號根本不在字元類裡;而 `…站得住);但…` 裡
+#    `;` 的左鄰是 `)` 不是 CJK,那個半形括號等於幫半形分號擋掉了檢查。
+#    改成命名機制:任一個半形標點,只要「跨過中間其他半形標點與空白之後」左右都還
+#    在同一段 CJK 文字裡,就是違規。全形標點是句讀邊界——跨過它就是另一個子句了,
+#    不算同一段(否則整段中文裡任何一個英文括號都會被連坐)。
+#    數字格式仍天然豁免:兩側緊鄰都是數字的(千分位 1,850、時間 12:30)直接跳過。
+_HALFWIDTH_MARKS = ",;:!?()"
+_CJK_RUN_CHAR = re.compile(r"[一-鿿぀-ヿ㐀-䶿]")
+_CJK_RUN_STOPPERS = "。，、；：！？（）「」『』《》…\n"
+
+
+def _cjk_on_side(text, index, step):
+    """True when the nearest meaningful character on that side is CJK."""
+    i = index + step
+    while 0 <= i < len(text):
+        ch = text[i]
+        if _CJK_RUN_CHAR.match(ch):
+            return True
+        if ch in _CJK_RUN_STOPPERS:
+            return False
+        i += step
+    return False
+
+
+def halfwidth_in_cjk_run(text):
+    """The offending fragment, or None. Public: the catalog gate reads it too."""
+    for i, ch in enumerate(text or ""):
+        if ch not in _HALFWIDTH_MARKS:
+            continue
+        if text[i - 1:i].isdigit() and text[i + 1:i + 2].isdigit():
+            continue
+        if _cjk_on_side(text, i, -1) and _cjk_on_side(text, i, 1):
+            return text[max(0, i - 6):i + 7]
+    return None
 
 # ── 抽象規矩黑名單(B-7;「這 ChatGPT 也會講」的空泛句)──────────────────────────
 #    與 judge_narrative.py RUBRIC 第 3 條同源;改一邊要同步另一邊。
@@ -637,10 +670,10 @@ def check_card(text: str, context=None) -> list[Finding]:
                             m.group(0) if m else ""))
 
     # A-13 半形標點夾中日文字
-    m = _HALFWIDTH_PUNCT.search(text)
+    m = halfwidth_in_cjk_run(text)
     findings.append(Finding("A-13", m is None,
                             "中文字間標點全形統一(數字格式除外)",
-                            m.group(0) if m else ""))
+                            m or ""))
 
     # B-7 抽象規矩黑名單
     hit = next((p for p in _ABSTRACT_RULES if p in text), None)
