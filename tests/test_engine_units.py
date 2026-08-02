@@ -348,6 +348,45 @@ def test_classify_adds_below_min():
     assert tr.classify_adds(rows).get("X") is None, "1 次加碼(<2)不應分類"
 
 
+def test_classify_adds_pure_chase_is_not_suspected_dca():
+    """#753:純追高(每筆加碼都買在當時均價之上,loss_ratio==0)不該落進『疑似定投』——
+    那個分類的文案斷言「漲跌都買」,loss_ratio==0 代表加碼從沒買在均價之下,連一次都
+    沒有,兩個方向根本沒發生過『跌』的那一半,不是「漲跌都買」。
+
+    NVDA 140→155→175 單調上漲,3 筆買入 = 1 建倉 + 2 加碼;n_adds=2 時 gaps 只有 1 個,
+    regular 結構上不可能為真(len(gaps)>=2 才成立),所以這筆分類完全由 loss_ratio 決定
+    ——正是原始 bug repro(issue #753)的精確形狀。"""
+    rows = [_R("NVDA", "buy", 10, 140, "2024-01-01"),
+            _R("NVDA", "buy", 10, 155, "2024-02-01"),
+            _R("NVDA", "buy", 10, 175, "2024-03-01")]
+    out = tr.classify_adds(rows).get("NVDA")
+    assert out is not None
+    assert out["loss_ratio"] == 0.0, f"3 筆單調上漲,加碼應全數在均價之上,實得 {out}"
+    assert out["cls"] != "疑似定投", \
+        f"純追高不該被貼上『疑似定投:漲跌都買』——資料裡從沒發生過『跌』的那一半,實得 {out}"
+    assert out["cls"] == "待確認", f"loss_ratio=0 且非規律,應落待確認,實得 {out}"
+
+
+def test_classify_adds_pure_dip_buying_is_not_suspected_dca_even_if_regular():
+    """#753 對稱邊界:純只買在均價之下(loss_ratio==1.0)+ 時間規律,舊碼靠『or regular』
+    照樣落進『疑似定投』並印出「漲跌都買」——但這裡連一次『漲』(買在均價之上)都沒發生過,
+    跟純追高是同一種單方向謊言,只是方向相反。`regular` 是時間訊號,補不了『兩個方向都
+    買過』這句話的事實基礎。
+
+    每月買一次、價格單調下跌(100→90→80→70),3 次加碼、規律月度間隔 → regular=True,
+    loss_ratio=1.0。金額沒有加速(後兩筆均額 750 < 前兩筆均額 850×1.5),accel=False,
+    所以也不落疑似凹單,退到待確認——只要不是『疑似定投』就滿足這條回歸鎖的核心主張。"""
+    rows = [_R("DIP", "buy", 10, 100, "2024-01-01"),
+            _R("DIP", "buy", 10, 90, "2024-02-01"),
+            _R("DIP", "buy", 10, 80, "2024-03-01"),
+            _R("DIP", "buy", 10, 70, "2024-04-01")]
+    out = tr.classify_adds(rows).get("DIP")
+    assert out is not None
+    assert out["loss_ratio"] == 1.0, f"3 筆單調下跌,加碼應全數在均價之下,實得 {out}"
+    assert out["cls"] != "疑似定投", \
+        f"純買在均價之下不該被貼上『疑似定投:漲跌都買』——資料裡從沒發生過『漲』的那一半,實得 {out}"
+
+
 # ─────────────────────── E. overview_stats():金額總覽 ───────────────────────
 
 def test_overview_stats_payoff_and_pf():
@@ -929,6 +968,38 @@ def test_ticker_diagnosis_requires_sizing_weights():
         raise AssertionError("省略 sizing_weights 必須 raise,不准退回自算的第二分母")
 
 
+def test_ticker_diagnosis_no_tag_fallback_renders_nothing():
+    """#779:沒有任何規則命中時,tags 必須是空陣列,不能塞一個編造的『大致中性』——
+    『沒有標籤命中』只證明『機械沒偵測到什麼』,不能倒過來讀成『這個部位真的大致持平』。
+    deep_underwater 門檻是 cur<-0.40、disciplined_hold 門檻是 cur>0.20,MID 現虧 15%,
+    落在兩個門檻之間卻是真的在虧錢,不是『中性』——機械只是沒有其他話要說,答案是
+    『不印』,不是『編一句話填空』。PAD1-3 純粹拉大分母,讓 MID 不會意外撞上 too_heavy。"""
+    held = {"MID": (10.0, 1000.0), "PAD1": (10.0, 1000.0),
+            "PAD2": (10.0, 1000.0), "PAD3": (10.0, 1000.0)}
+    last_px = {"MID": 85.0, "PAD1": 100.0, "PAD2": 100.0, "PAD3": 100.0}   # MID 現虧 15%
+    d_size = tr.dim_size([], held, last_px)
+    tdiag = tr.ticker_diagnosis([], {}, held, last_px, sizing_weights=d_size["weights"])
+    mid = next(row for row in tdiag if row["ticker"] == "MID")
+    assert mid["tags"] == [], \
+        f"沒有規則命中時 tags 必須是空陣列,不能塞 roughly_neutral,實得 {mid['tags']}"
+
+
+def test_ticker_diagnosis_double_digit_loser_never_labeled_roughly_neutral():
+    """#779 驗收條款第 3 條:虧損超過一個具體門檻的部位絕不可能拿到 roughly_neutral
+    標籤。這裡現虧 25%(雙位數真實虧損,但還沒到 deep_underwater 的 -40% 門檻)——
+    修前會落進『沒有其他標籤命中 → 塞 roughly_neutral』的分支,把真實虧損講成中性;
+    修後 tags 應為空。"""
+    held = {"LOSER": (10.0, 1000.0), "PAD1": (10.0, 1000.0),
+            "PAD2": (10.0, 1000.0), "PAD3": (10.0, 1000.0)}
+    last_px = {"LOSER": 75.0, "PAD1": 100.0, "PAD2": 100.0, "PAD3": 100.0}   # LOSER 現虧 25%
+    d_size = tr.dim_size([], held, last_px)
+    tdiag = tr.ticker_diagnosis([], {}, held, last_px, sizing_weights=d_size["weights"])
+    loser = next(row for row in tdiag if row["ticker"] == "LOSER")
+    codes = [t["code"] for t in loser["tags"]]
+    assert "roughly_neutral" not in codes, f"現虧 25% 的部位絕不可以標『大致中性』,實得 {codes}"
+    assert codes == [], f"這個持倉沒有其他規則命中,tags 應為空陣列,實得 {codes}"
+
+
 def test_negative_cost_ticker_is_excluded_not_a_whole_book_veto():
     """壞資料(負成本)檔改為排除+具名揭露,其餘檔正常判斷——外部審查(Codex,
     2026-07-28)以 MAJOR 提出這是行為變化:舊碼把 -500 加進分母,總和 ≤0 → 整本帳
@@ -1122,11 +1193,80 @@ def test_dim_diversify_triggered_severity_thresholds_aligned():
     assert d["severity"] > 0, f"45% 也應貢獻正的 severity(同一套 40% 起算點),實得 severity={d['severity']}"
 
 
+def test_dim_diversify_top3_same_driver_false_when_top3_includes_unclassified():
+    """#754:top3 純按市值權重取前三,跟 driver 分類無關——當 top3 裡有檔落在『未分類』
+    桶時,不能宣稱『top3 是同一個驅動因子』。ZQXA 45% 是唯一被分類的(半導體),
+    ZQXB/ZQXC 各 15%/10% 都未分類卻擠進 top3(45+15+10=70%)——這正是 issue #754 的
+    精確形狀:ai_pct/max_sector_pct 剛好等於 ZQXA 自己的 45%,但 top3 混進了兩檔跟
+    半導體毫無關係的未分類部位。"""
+    held = {"ZQXA": (1.0, 4500.0), "ZQXB": (1.0, 1500.0), "ZQXC": (1.0, 1000.0),
+            "ZQXD": (1.0, 1000.0), "ZQXE": (1.0, 1000.0), "ZQXF": (1.0, 1000.0)}
+    orig_map = tr._DRIVER_MAP
+    try:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+        tr._DRIVER_MAP["ZQXA"] = ("半導體", 1)
+        # ZQXB/ZQXC/ZQXD/ZQXE/ZQXF 刻意不進 map → driver() fallback 到「未分類」
+        d = tr.dim_diversify(held, None)
+    finally:
+        tr._DRIVER_MAP = orig_map
+    assert abs(d["max_sector_pct"] - 0.45) < 1e-6 and abs(d["ai_pct"] - 0.45) < 1e-6, \
+        f"ai_pct 與 max_sector_pct 應同源(都只有 ZQXA 這一檔貢獻),實得 {d}"
+    assert abs(d["top3"] - 0.70) < 1e-6, f"top3 應為市值前三(45+15+10=70%),實得 {d['top3']}"
+    assert d["top3_same_driver"] is False, \
+        f"top3 裡的 ZQXB/ZQXC 都是未分類,不該宣稱『同一個驅動因子』,實得 {d}"
+
+    import card_renderer as cr
+    # 逐語言比對各自真正的字面(zh-CN 是簡體「驱动因子」,不是 zh-TW 的「驅動因子」——
+    # 拿錯字集比對會變成永遠比不中的偽陰性,測試看似綠但根本沒在驗證這個語言)。
+    same_driver_phrase = {"en": "one and the same driver",
+                          "zh-TW": "驅動因子", "zh-CN": "驱动因子"}
+    for language, phrase in same_driver_phrase.items():
+        line = cr._hole_line({"raw": d}, language)
+        assert "45%" in line or "70%" in line, f"洞的數字仍要出現在 {language} 卡面:{line}"
+        assert phrase not in line, f"{language} 不該印『同一個驅動因子』的斷言,實得:{line}"
+    v1_line = tr.number_line(d)
+    assert "驅動因子" not in v1_line, f"v1 number_line() 必須跟 v2 _hole_line() 同步不印,實得:{v1_line}"
+
+
+def test_dim_diversify_top3_same_driver_true_when_top3_all_share_dominant_sector():
+    """#754 正例:top3 三檔都真的落在同一個(主導)driver 桶時,『同一個驅動因子』的
+    斷言才成立——這裡 ZQXA/ZQXB/ZQXC 都分類進半導體(40+30+20=90%),第四檔 ZQXD
+    未分類但佔比太小擠不進 top3,不影響判斷。"""
+    held = {"ZQXA": (1.0, 4000.0), "ZQXB": (1.0, 3000.0), "ZQXC": (1.0, 2000.0),
+            "ZQXD": (1.0, 1000.0)}
+    orig_map = tr._DRIVER_MAP
+    try:
+        tr._DRIVER_MAP = dict(tr.DRIVER_FALLBACK)
+        tr._DRIVER_MAP["ZQXA"] = ("半導體", 1)
+        tr._DRIVER_MAP["ZQXB"] = ("半導體", 1)
+        tr._DRIVER_MAP["ZQXC"] = ("半導體", 1)
+        d = tr.dim_diversify(held, None)
+    finally:
+        tr._DRIVER_MAP = orig_map
+    assert abs(d["top3"] - 0.90) < 1e-6, f"top3 應為 40+30+20=90%,實得 {d['top3']}"
+    assert d["top3_same_driver"] is True, \
+        f"top3 三檔都在半導體桶內,『同一個驅動因子』的斷言應該成立,實得 {d}"
+
+    import card_renderer as cr
+    # 逐語言比對各自真正的字面(zh-CN 是簡體「驱动因子」,不是 zh-TW 的「驅動因子」)。
+    same_driver_phrase = {"en": "one and the same driver",
+                          "zh-TW": "驅動因子", "zh-CN": "驱动因子"}
+    for language, phrase in same_driver_phrase.items():
+        line = cr._hole_line({"raw": d}, language)
+        assert phrase in line, f"{language} 真的同一驅動因子時應該印出這句斷言,實得:{line}"
+    v1_line = tr.number_line(d)
+    assert "驅動因子" in v1_line, f"v1 number_line() 必須跟 v2 _hole_line() 同步印,實得:{v1_line}"
+
+
 def test_number_line_and_dim_strength_use_plain_driver_wording():
     """#314: 卡面 zh 文案不夾雜未翻譯的 driver 英文字；分散維的 number_line() 與
-    dim_strength() 兩處都改講「驅動因子」。"""
+    dim_strength() 兩處都改講「驅動因子」。
+
+    #754 後 number_line() 只有在 top3_same_driver 為真時才印「同一個驅動因子」——
+    這個 fixture 是 100% 集中在單一 sector(ai_pct=max_sector_pct=top3=1.0),真的
+    是同一個驅動因子,所以標 True 是這個情境該有的事實,不是為了湊測試通過。"""
     hole = {"dim": "分散", "n": 3, "ai_pct": 1.0, "max_sector": "半導體",
-            "max_sector_pct": 1.0, "top3": 1.0}
+            "max_sector_pct": 1.0, "top3": 1.0, "top3_same_driver": True}
     line = tr.number_line(hole)
     assert "驅動因子" in line and "driver" not in line, line
 

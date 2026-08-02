@@ -1335,11 +1335,20 @@ def _hole_line(hole, language):
                             max_pct=_pct(d.get("max_pct")),
                             avg_pct=_pct(d.get("avg_pct"))) or ""
     if dim == "diversification":
+        # #754: "one and the same driver" only holds when dim_diversify() has
+        # actually verified every top-3-by-weight ticker sits inside the
+        # dominant driver bucket (``top3_same_driver``) — top3 itself is a
+        # pure market-value ranking, independent of driver classification, so
+        # the claim must not be printed unconditionally onto it.
+        same_driver_note = ""
+        if d.get("top3_same_driver"):
+            same_driver_note = copy.get("diversification_same_driver") or ""
         return _format_copy(copy.get("diversification"), n=d.get("n", 0),
                             ai_pct=_pct(d.get("ai_pct")),
                             max_sector=localized_sector(d.get("max_sector"), language),
                             max_sector_pct=_pct(d.get("max_sector_pct")),
-                            top3=_pct(d.get("top3"))) or ""
+                            top3=_pct(d.get("top3")),
+                            same_driver_note=same_driver_note) or ""
     if dim == "holding_period":
         if d.get("no_data"):
             return copy.get("holding_no_data") or ""

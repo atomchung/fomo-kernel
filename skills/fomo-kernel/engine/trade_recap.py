@@ -572,7 +572,13 @@ def orphan_sells(rows):
 def classify_adds(rows, min_adds=2):   # min_adds 指「加碼」筆數(排除首筆);原「≥3 買入」≈「≥2 加碼」,改口徑後對齊(#41 review)
     """主從分類每個標的的加碼:疑似定投(漲跌都買/規律) vs 疑似凹單(只虧損買+金額加速) vs 待確認。
     codex+gemini review 定稿:主從不投票;『價格無關 + 時間規律』為主、金額一致性最易誤判只當輔助;
-    機械只下『疑似』,最終靠用戶確認 thesis / 標交易意圖(進場打標 = v2 更根本解)。"""
+    機械只下『疑似』,最終靠用戶確認 thesis / 標交易意圖(進場打標 = v2 更根本解)。
+
+    #753:『疑似定投』的文案斷言「漲跌都買」,這句話只有在加碼真的兩個方向都出現過
+    (0 < loss_ratio < 1)才成立——loss_ratio==0(每筆加碼都追在均價之上,純追高)或
+    ==1(每筆加碼都撿在均價之下)都是單一方向,`regular`(時間規律)不能替單方向的
+    加碼把這句「漲跌都買」變真。純追高者原本靠 loss_ratio<0.6 直接落進定投桶,拿到
+    ✓ 標籤,反而安撫了這個產品該抓的行為。"""
     pos = defaultdict(lambda: [0.0, 0.0])
     buys = defaultdict(list)                       # ticker -> [(date, amount, in_loss)]
     for r in rows:
@@ -595,7 +601,8 @@ def classify_adds(rows, min_adds=2):   # min_adds 指「加碼」筆數(排除�
         gaps = [(adds[i + 1][0] - adds[i][0]).days for i in range(n - 1)]
         mg = statistics.mean(gaps) if gaps else 0
         regular = len(gaps) >= 2 and mg > 0 and statistics.pstdev(gaps) < mg * 0.6   # 輔:加碼時間規律(間隔 CV 低);需≥2 間隔(≥3 加碼)—— 單一 gap 的 pstdev 恆=0 會誤判規律(#41 review)
-        if loss_ratio < 0.6 or regular:                             # 漲跌都買 或 時間規律 → 定投
+        mixed = 0 < loss_ratio < 1                                  # #753:「漲跌都買」的最低事實門檻;0/1 都是單一方向,不是雙向
+        if mixed and (loss_ratio < 0.6 or regular):                 # 漲跌都買 且(比例不極端 或 時間規律)→ 定投
             cls = "疑似定投"
         elif loss_ratio > 0.8 and accel:                            # 只虧損買 + 金額加速 → 凹單
             cls = "疑似凹單"
@@ -1614,23 +1621,29 @@ def dim_diversify(held, last_px):
         return dict(dim="分散", tier=2, applicable=False,
                     triggered=False, severity=0, n=None, n_risk=None,
                     max_sector=None, max_sector_pct=None, ai_pct=None,
-                    top3=None, sectors={}, allocation_etfs={})
+                    top3=None, top3_same_driver=False, sectors={}, allocation_etfs={})
     w = {t: e["weight"] for t, e in projection["values"].items() if e["applicable"]}
     risk_w = {t: wt for t, wt in w.items()
               if not instrument_policy.is_diversified_allocation(t)}
-    sec = defaultdict(float); ai = 0.0
+    sec = defaultdict(float); ai = 0.0; driver_of = {}
     for t, wt in risk_w.items():
-        s, is_ai = driver(t); sec[s] += wt; ai += wt * is_ai
+        s, is_ai = driver(t); sec[s] += wt; ai += wt * is_ai; driver_of[t] = s
     classified_sec = {s: v for s, v in sec.items() if s != "未分類"}   # 排除未分類桶,避免 driver_map 沒建好冒充集中度訊號(對齊 what_if() 既有作法)
     max_sec = max(classified_sec, key=classified_sec.get) if classified_sec else None
     max_sec_pct = classified_sec.get(max_sec, 0)
-    top3 = sum(sorted(risk_w.values(), reverse=True)[:3])
+    top3_tickers = [t for t, _ in sorted(risk_w.items(), key=lambda kv: kv[1], reverse=True)[:3]]
+    top3 = sum(risk_w[t] for t in top3_tickers)
+    # #754:「同一個驅動因子」是個獨立斷言,不能因為 ai_pct/max_sector_pct 剛好相等就
+    # 順手扣到 top3 頭上——top3 純按市值權重取前三,跟 driver 分類無關;true 的條件是
+    # top3 的每一檔都落在同一個(主導)driver 桶,而不是「top3 這個數字存在」。
+    top3_same_driver = bool(max_sec) and bool(top3_tickers) and \
+        all(driver_of.get(t) == max_sec for t in top3_tickers)
     sev = min(max((max(max_sec_pct, ai) - 0.40) / 0.40, 0), 1)
     trig = (len(risk_w) >= 8 and max_sec_pct > SECTOR_MAX_TH) or top3 > TOP3_MAX_TH or ai > AI_MAX_TH
     return dict(dim="分散", tier=2, applicable=True, triggered=trig, severity=sev, n=len(w),
                 n_risk=len(risk_w),
                 max_sector=max_sec, max_sector_pct=max_sec_pct, ai_pct=ai,
-                top3=top3, sectors=dict(sec),
+                top3=top3, top3_same_driver=top3_same_driver, sectors=dict(sec),
                 allocation_etfs={t: wt for t, wt in w.items()
                                  if instrument_policy.is_diversified_allocation(t)})
 
@@ -2033,8 +2046,17 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
             tags.append({"code": "too_heavy", "params": {"wpct": wpct}})
         if cur is not None and cur > 0.20 and cls not in ("疑似凹單", "待確認"):
             tags.append({"code": "disciplined_hold", "params": {"cur": cur, **px_cost}})
-        if not tags:
-            tags.append({"code": "roughly_neutral", "params": {}})
+        # #779: no fallback tag here on purpose. `roughly_neutral` used to fill
+        # an empty `tags` list, but "no other tag fired" is not evidence the
+        # position's return is actually near flat — every position between
+        # roughly -40% and +20% (the deep_underwater/disciplined_hold
+        # thresholds) fell through to it, including real double-digit losers.
+        # An empty list renders no tag for this ticker, which is the honest
+        # statement of "nothing notable was mechanically detected" rather than
+        # a fabricated neutral verdict. `instrument_tags.roughly_neutral`
+        # stays defined in copy/*.json — it is still a valid resolution target
+        # for any tag already persisted in older session state — the engine
+        # just never manufactures a new one.
         thesis_q = None                              # 只對疑似凹單/待確認問 thesis(定投不問;配置型 ETF 定投也不問)
         if cls in ("疑似凹單", "待確認") and n_adds >= 4 and cur is not None \
                 and not instrument_policy.is_diversified_allocation(t):
@@ -2064,7 +2086,13 @@ def number_line(d):
     if n == "部位 sizing":
         return f"你最大一筆 {d['max_ticker']} 佔 {d['max_pct']*100:.0f}%，其餘平均 {d['avg_pct']*100:.0f}%"
     if n == "分散":
-        return f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、top3 {d['top3']*100:.0f}%——同一個驅動因子"
+        # #754:top3 是純市值權重前三,跟 driver 分類無關——「同一個驅動因子」只在
+        # dim_diversify() 已驗過 top3 每一檔都落在同一個主導 driver 桶時才印;與
+        # card_renderer._hole_line() 讀同一個 top3_same_driver,兩份獨立實作維持同步。
+        same_driver_note = "——同一個驅動因子" if d.get("top3_same_driver") else ""
+        return (f"你持有 {d['n']} 檔看似分散，但 AI capex 暴險 {d['ai_pct']*100:.0f}%、"
+                f"最大板塊「{d['max_sector']}」{d['max_sector_pct']*100:.0f}%、"
+                f"top3 {d['top3']*100:.0f}%{same_driver_note}")
     if n == "持有時間":
         if d.get("no_data"):
             return "暫無已實現 round-trip,持有時間統計待生成（只看買進尚未賣出的不納入）"

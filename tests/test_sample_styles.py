@@ -252,10 +252,16 @@ def test_pyramid_top_hole_is_sizing_not_avgdown():
     assert s["avg"]["count"] == 0 and s["avg"]["breach"] == 0
     assert s["size"]["triggered"] and s["size"]["max_pct"] > 0.25
     assert len(s["rts"]) >= 3   # 足夠樣本,不落 insufficient_data 分支
-    # 加碼分類:應為「疑似定投」(漲跌都買/規律)而非「疑似凹單」(只虧損買)
+    # 加碼分類:不該是「疑似凹單」(只虧損買)。COST 兩筆加碼(600/650)都買在當時均價
+    # 之上(loss_ratio=0.0)——這正是 #753 的 bug 形狀:純追高不是「疑似定投」該講的
+    # 「漲跌都買」,#753 修完後這裡落「待確認」(而不是修前的「疑似定投」)。UNH 只有
+    # 1 次加碼(<min_adds=2),分類器直接不收,不出現在 adds 裡。
     rows = tr.load([os.path.join(MOCK, "sample_pyramid.csv")])
     adds = tr.classify_adds(rows)
     assert adds and all(v["cls"] != "疑似凹單" for v in adds.values())
+    assert adds["COST"]["cls"] == "待確認", \
+        f"金字塔式純追高(loss_ratio=0,只 2 次加碼、regular 結構上不可能為真)應落待確認,實得 {adds['COST']}"
+    assert "UNH" not in adds, "UNH 只有 1 次加碼,樣本太薄不分類"
 
 
 def test_insufficient_sample_blocks_commitment():
