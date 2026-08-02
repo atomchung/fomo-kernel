@@ -26,6 +26,9 @@ COACH = str(ROOT / "skills" / "fomo-kernel" / "engine" / "coach.py")
 
 sys.path.insert(0, str(AGENT_DIR))
 from check_card import check_card, check_ticker_diagnosis  # noqa: E402
+# #671: the module too — the catalog gates below call its A-13 mechanism
+# directly rather than restating the rule a second time.
+import check_card as check_card_module  # noqa: E402
 from check_state import check_state, differential, append_only  # noqa: E402
 
 _fails = []
@@ -66,6 +69,12 @@ def test_card_each_assertion_alive():
         ("A-6", "勝率 62% 是你的主數字", "盈虧比 0.24 是你的主數字"),
         ("A-12", "你的 max_pos_pct 到 31%", "你的最大單注到 31%"),
         ("A-13", "想分散,結果沒有", "想分散，結果沒有"),
+        # #671: the two holes a delivered card walked through. A half-width
+        # paren is not one of the three characters the old class enumerated;
+        # and in `站得住);但` the paren stood between the semicolon and the
+        # Chinese, shielding it from a rule that demanded CJK on both sides.
+        ("A-13", "貢獻 5pp(描述性、這數字站得住);但樣本不足", "貢獻 5pp（描述性、這數字站得住）；但樣本不足"),
+        ("A-13", "AI 概念股(跨板塊)佔比偏高", "AI 概念股（跨板塊）佔比偏高"),
         ("B-7", "下次規矩:控制風險", "下次規矩:INTC 虧損不再加碼"),
         ("B-9", "紀律不佳、風險偏高、需要注意", "INTC 這半年虧 $1,240"),
     ]
@@ -480,6 +489,60 @@ def test_card_b9_context_aware_ticker_gate_alive():
        "B-9 抓到:2330.TW 在 Block 2 池裡,但 hole 段落沒點名任何標的")
 
 
+
+def test_a13_covers_the_shipped_catalogs():
+    """The rule holds where the card's words actually come from (#671).
+
+    A-13 runs on rendered output; the sentences it judges are assembled from
+    `copy/<locale>.json`, so a catalog string carrying a half-width mark is a
+    violation waiting for the branch that renders it. Checking the catalog is
+    what makes the rule cover branches no persona reaches — the same reason
+    `tests/copy_corpus.py` exists.
+    """
+    for locale in ("zh-TW", "zh-CN", "en"):
+        path = ROOT / "skills" / "fomo-kernel" / "copy" / f"{locale}.json"
+        offenders = []
+
+        def walk(node, trail=""):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    walk(value, f"{trail}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    walk(value, f"{trail}[{index}]")
+            elif isinstance(node, str):
+                found = check_card_module.halfwidth_in_cjk_run(node)
+                if found:
+                    offenders.append((trail, found))
+
+        walk(json.loads(path.read_text(encoding="utf-8")))
+        ok(not offenders, f"{locale} 文案無 CJK 段落內的半形標點",
+           "; ".join(f"{t}: {f}" for t, f in offenders[:4]))
+
+
+def test_a13_pairs_brackets_in_the_catalogs():
+    """A converted bracket keeps its partner: half a pair is worse than none."""
+    for locale in ("zh-TW", "zh-CN", "en"):
+        path = ROOT / "skills" / "fomo-kernel" / "copy" / f"{locale}.json"
+        unbalanced = []
+
+        def walk(node, trail=""):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    walk(value, f"{trail}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    walk(value, f"{trail}[{index}]")
+            elif isinstance(node, str):
+                if (node.count("（") != node.count("）")
+                        or node.count("(") != node.count(")")):
+                    unbalanced.append((trail, node[:60]))
+
+        walk(json.loads(path.read_text(encoding="utf-8")))
+        ok(not unbalanced, f"{locale} 文案括號成對",
+           "; ".join(f"{t}: {s}" for t, s in unbalanced[:3]))
+
+
 def main():
     test_card_fixtures()
     test_card_each_assertion_alive()
@@ -487,6 +550,8 @@ def main():
     test_card_b1_and_b9_section_scoped_alive()
     test_card_b9_context_aware_ticker_gate_alive()
     test_state_oracle_good()
+    test_a13_covers_the_shipped_catalogs()
+    test_a13_pairs_brackets_in_the_catalogs()
     test_state_each_assertion_alive()
     test_state_differential_and_append()
     print()

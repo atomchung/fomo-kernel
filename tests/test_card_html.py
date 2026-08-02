@@ -325,7 +325,7 @@ _RICH_CARD_FIELDS = {
         {"ticker": "NVDA", "impact": 58524.0, "tags": ["✓紀律持有：賺 150%"]},
         {"ticker": "AMD", "impact": -1000.0, "tags": ["— 大致中性"]},
     ],
-    "what_if": {"label": "AI 概念股(跨板塊)", "mval": 170963.0, "pct": 0.983,
+    "what_if": {"label": "AI 概念股（跨板塊）", "mval": 170963.0, "pct": 0.983,
                 "drop30": 51289.0, "drop50": 85482.0},
     "prescriptions": [
         {"kind": "保留強項", "text": "保留研究流程，別讓集中度吃掉它。"},
@@ -1181,7 +1181,7 @@ def test_coded_fields_resolve_zh_prescriptions_from_copy():
     resolved = [card_renderer.localized_prescription(row, "zh-TW") for row in rows]
     assert resolved[0]["kind"] == "砍損耗"
     assert resolved[0]["text"] == "虧損中加碼 12 次是你操盤損耗的大宗——這是最該先砍的純扣分動作。"
-    assert resolved[1]["text"] == "最大一筆 PLTR 佔 49%,單一押注過重。"
+    assert resolved[1]["text"] == "最大一筆 PLTR 佔 49%，單一押注過重。"
 
 
 def test_coded_fields_render_localized_english_blocks():
@@ -1219,7 +1219,7 @@ def test_instrument_tag_price_note_stays_inline_without_growing_the_row():
     without it: Markdown line count and HTML element counts must be
     unchanged, and the only textual diff must be the inline parenthetical —
     proof this is an appendage to the existing tag, not a restructuring."""
-    for language, fragment in (("zh-TW", "(現 150.20／均 68.30)"),
+    for language, fragment in (("zh-TW", "（現 150.20／均 68.30）"),
                               ("en", " (now 150.20 / cost 68.30)")):
         def bundle_with(params):
             b = _coded_bundle(language)
