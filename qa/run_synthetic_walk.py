@@ -390,7 +390,13 @@ def main(argv=None):
         report = run_walk(user_backend=args.user_backend, semantic_judge=not args.no_semantic_judge,
                           judge_backend=args.judge_backend, output_dir=args.output_dir,
                           surface_script=args.surface_script)
-    except (WalkError, SyntheticUserError, TraceError, OSError, subprocess.SubprocessError) as exc:
+    except Exception as exc:  # noqa: BLE001
+        # Deliberately every exception, not a named list.  Exit code 1 means
+        # "the product surfaces failed"; letting an unlisted error -- a
+        # malformed engine payload raising JSONDecodeError, say -- reach the
+        # interpreter would exit 1 too and misreport a harness fault as a
+        # product verdict.  KeyboardInterrupt and SystemExit still propagate.
+        #
         # The campaign started, so it is counted.  Whether the route run itself
         # started is not knowable here, so this path never claims one did -- the
         # run_dir report it already flushed is the record of that.

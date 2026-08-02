@@ -187,6 +187,20 @@ def test_both_a_pass_and_a_failure_stay_in_the_denominator():
     assert result.returncode == 1, "a product failure must not exit like a pass"
 
 
+def test_an_unlisted_harness_error_never_exits_like_a_product_failure():
+    """Exit code 1 is reserved for a product verdict, so nothing else may take it."""
+    import contextlib
+    import io
+    captured = io.StringIO()
+    with mock.patch.object(runner, "run_walk", side_effect=json.JSONDecodeError("bad", "doc", 0)):
+        with contextlib.redirect_stdout(captured):
+            code = runner.main(["consider-ai-momentum", "--user-backend", "stub"])
+    assert code == 2, "an unlisted harness fault must not exit like a failing product"
+    report = json.loads(captured.getvalue())
+    assert report["stop_reason"] == "harness_error:JSONDecodeError"
+    assert report["campaigns_started"] == 1 and report["product_failures"] == 0
+
+
 def test_a_harness_error_before_the_route_still_reports_a_started_campaign():
     result = run("consider-ai-momentum", "--user-backend", "stub", "--surface-script",
                  str(SCENARIOS / "does-not-exist.json"))
