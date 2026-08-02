@@ -217,7 +217,12 @@ def _exit_followup(language):
                             "top_tickers": [["GGG", 2]], "priced": 2,
                             "avg_hindsight_pp": 5.5, "sold_before_rise": 1},
                 "items": [
+                    # #670: `impact` (engine-ranked money) is what the focus line
+                    # prints, in the instrument's own currency — non-USD here so
+                    # the golden shows the card never restates it as the
+                    # aggregate's.
                     {"ticker": "HHH", "kind": "full", "exit_date": "2026-02-03",
+                     "impact": -18400.0, "currency": "TWD",
                      "compare": {"swap_net_pp": 1.0, "orig_ret": 0.1, "swap_ret": 0.2}},
                     # Only two backlog rows render (`items[:2]`), so the
                     # idle-proceeds row lives in the fallback scene below.
@@ -248,6 +253,8 @@ def _exit_followup_fallback(language):
             "state_snapshot": {"exit_backlog": {
                 "summary": {"count": 1, "full": 1, "reduce": 0, "span": {}, "top_tickers": []},
                 "items": [{"ticker": None, "kind": "full", "exit_date": "2026-02-03",
+                           # no `impact`: a pre-#670 bundle degrades to the
+                           # original-move sentence rather than losing the line
                            "compare": {"orig_ret": 0.12}},
                           {"ticker": "III", "kind": "reduce", "exit_date": "2026-03-04",
                            "compare": {"idle_cash": True, "orig_ret": -0.05}}]}}},

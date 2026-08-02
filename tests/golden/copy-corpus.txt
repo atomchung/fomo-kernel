@@ -15445,8 +15445,8 @@ Mirror.
 - BBB，60 天複核：部分對，要調。 BBB, CCC 缺現價（截至 2026-07-20），本期不判結果。
 - DDD，90 天複核：看錯了。 以 2026-07-20 凍結現價計，原標的後續 -10.0%；EEE同期 +20.0%；swap 淨差 +400.0 pp。
 - FFF，30 天複核：還成立。 賣後資金閒置，原標的同期 +33.0%（以 2026-07-20 凍結現價計）。
-- 歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；最常出現：GGG ×2。 有現價可回看的 2 筆，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。
-- Backlog 優先回看：HHH，2026-02-03 清倉。 原標的後續 +10.0%（以 2026-07-20 凍結現價計）；換入標的同期 +20.0%；swap 淨差 +100.0 pp。
+- 歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；最常出現：GGG ×2。 有現價可回看的 2 筆清倉，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。
+- Backlog 優先回看：HHH，2026-02-03 清倉。 這個決策對帳戶的影響是 -TWD 18,400（以 2026-07-20 凍結現價計）。
 - Backlog 優先回看：JJJ，2026-04-05 清倉。 JJJ 缺凍結現價（截至 2026-07-20），不判結果。
 
 ## 風險與問題
@@ -15475,8 +15475,8 @@ AAA，30 天複核：還成立。 註記：「NOTE」。
 BBB，60 天複核：部分對，要調。 BBB, CCC 缺現價（截至 2026-07-20），本期不判結果。
 DDD，90 天複核：看錯了。 以 2026-07-20 凍結現價計，原標的後續 -10.0%；EEE同期 +20.0%；swap 淨差 +400.0 pp。
 FFF，30 天複核：還成立。 賣後資金閒置，原標的同期 +33.0%（以 2026-07-20 凍結現價計）。
-歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；最常出現：GGG ×2。 有現價可回看的 2 筆，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。
-Backlog 優先回看：HHH，2026-02-03 清倉。 原標的後續 +10.0%（以 2026-07-20 凍結現價計）；換入標的同期 +20.0%；swap 淨差 +100.0 pp。
+歷史出場 backlog 尚有 4 筆未複核（清倉 3、減倉 1），期間 2026-01-02 到 2026-05-06；最常出現：GGG ×2。 有現價可回看的 2 筆清倉，出場後平均走勢為 +550.0 pp；其中 1 筆後續上漲。
+Backlog 優先回看：HHH，2026-02-03 清倉。 這個決策對帳戶的影響是 -TWD 18,400（以 2026-07-20 凍結現價計）。
 Backlog 優先回看：JJJ，2026-04-05 清倉。 JJJ 缺凍結現價（截至 2026-07-20），不判結果。
 風險與問題
 本期沒有行為診斷：引擎沒有可評分的維度。
@@ -15526,8 +15526,8 @@ Mirror.
 - BBB，60 天复核：部分对，要调。 BBB, CCC 缺现价（截至 2026-07-20），本期不判结果。
 - DDD，90 天复核：看错了。 以 2026-07-20 冻结现价计，原标的后续 -10.0%；EEE同期 +20.0%；swap 净差 +400.0 pp。
 - FFF，30 天复核：还成立。 卖后资金闲置，原标的同期 +33.0%（以 2026-07-20 冻结现价计）。
-- 历史出场 backlog 尚有 4 笔未复核（清仓 3、减仓 1），期间 2026-01-02 到 2026-05-06；最常出现：GGG ×2。 有现价可回看的 2 笔，出场后平均走势为 +550.0 pp；其中 1 笔后续上涨。
-- Backlog 优先回看：HHH，2026-02-03 清仓。 原标的后续 +10.0%（以 2026-07-20 冻结现价计）；换入标的同期 +20.0%；swap 净差 +100.0 pp。
+- 历史出场 backlog 尚有 4 笔未复核（清仓 3、减仓 1），期间 2026-01-02 到 2026-05-06；最常出现：GGG ×2。 有现价可回看的 2 笔清仓，出场后平均走势为 +550.0 pp；其中 1 笔后续上涨。
+- Backlog 优先回看：HHH，2026-02-03 清仓。 这个决策对账户的影响是 -TWD 18,400（以 2026-07-20 冻结现价计）。
 - Backlog 优先回看：JJJ，2026-04-05 清仓。 JJJ 缺冻结现价（截至 2026-07-20），不判结果。
 
 ## 风险与问题
@@ -15556,8 +15556,8 @@ AAA，30 天复核：还成立。 注记：“NOTE”。
 BBB，60 天复核：部分对，要调。 BBB, CCC 缺现价（截至 2026-07-20），本期不判结果。
 DDD，90 天复核：看错了。 以 2026-07-20 冻结现价计，原标的后续 -10.0%；EEE同期 +20.0%；swap 净差 +400.0 pp。
 FFF，30 天复核：还成立。 卖后资金闲置，原标的同期 +33.0%（以 2026-07-20 冻结现价计）。
-历史出场 backlog 尚有 4 笔未复核（清仓 3、减仓 1），期间 2026-01-02 到 2026-05-06；最常出现：GGG ×2。 有现价可回看的 2 笔，出场后平均走势为 +550.0 pp；其中 1 笔后续上涨。
-Backlog 优先回看：HHH，2026-02-03 清仓。 原标的后续 +10.0%（以 2026-07-20 冻结现价计）；换入标的同期 +20.0%；swap 净差 +100.0 pp。
+历史出场 backlog 尚有 4 笔未复核（清仓 3、减仓 1），期间 2026-01-02 到 2026-05-06；最常出现：GGG ×2。 有现价可回看的 2 笔清仓，出场后平均走势为 +550.0 pp；其中 1 笔后续上涨。
+Backlog 优先回看：HHH，2026-02-03 清仓。 这个决策对账户的影响是 -TWD 18,400（以 2026-07-20 冻结现价计）。
 Backlog 优先回看：JJJ，2026-04-05 清仓。 JJJ 缺冻结现价（截至 2026-07-20），不判结果。
 风险与问题
 本期没有行为诊断：引擎没有可评分的维度。
@@ -15607,8 +15607,8 @@ No ranked instrument diagnosis this period.
 - BBB, 60-day check: Partly right. Current prices are missing for BBB, CCC as of 2026-07-20, so no outcome comparison was made.
 - DDD, 90-day check: Wrong call. Using prices frozen on 2026-07-20, the original moved -10.0%; EEE moved +20.0%; swap net +400.0 pp.
 - FFF, 30-day check: Still valid. Proceeds stayed idle while the original moved +33.0% using prices frozen on 2026-07-20.
-- Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from 2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered exits, the average post-exit move was +550.0 pp; 1 later rose.
-- Backlog focus: HHH, full exit on 2026-02-03. The original moved +10.0% using prices frozen on 2026-07-20; the replacement moved +20.0%; swap net +100.0 pp.
+- Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from 2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered full exits, the average post-exit move was +550.0 pp; 1 later rose.
+- Backlog focus: HHH, full exit on 2026-02-03. That decision moved the account by -TWD 18,400 using prices frozen on 2026-07-20.
 - Backlog focus: JJJ, full exit on 2026-04-05. No frozen-price comparison for JJJ as of 2026-07-20.
 
 ## Risks and problems
@@ -15637,8 +15637,8 @@ AAA, 30-day check: Still valid. Note: "NOTE".
 BBB, 60-day check: Partly right. Current prices are missing for BBB, CCC as of 2026-07-20, so no outcome comparison was made.
 DDD, 90-day check: Wrong call. Using prices frozen on 2026-07-20, the original moved -10.0%; EEE moved +20.0%; swap net +400.0 pp.
 FFF, 30-day check: Still valid. Proceeds stayed idle while the original moved +33.0% using prices frozen on 2026-07-20.
-Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from 2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered exits, the average post-exit move was +550.0 pp; 1 later rose.
-Backlog focus: HHH, full exit on 2026-02-03. The original moved +10.0% using prices frozen on 2026-07-20; the replacement moved +20.0%; swap net +100.0 pp.
+Historical exit backlog: 4 unresolved exits (3 full, 1 reductions) from 2026-01-02 to 2026-05-06; most frequent: GGG ×2. Across 2 price-covered full exits, the average post-exit move was +550.0 pp; 1 later rose.
+Backlog focus: HHH, full exit on 2026-02-03. That decision moved the account by -TWD 18,400 using prices frozen on 2026-07-20.
 Backlog focus: JJJ, full exit on 2026-04-05. No frozen-price comparison for JJJ as of 2026-07-20.
 Risks and problems
 No behavioral diagnosis this period: the engine scored no dimension.
@@ -15687,7 +15687,7 @@ Mirror.
 - 這筆部位，30 天複核：還成立。 原標的後續 +10.0%；換入標的同期 +30.0%；swap 淨差 +200.0 pp。
 - 歷史出場 backlog 尚有 1 筆未複核（清倉 1、減倉 0）。
 - Backlog 優先回看：這筆部位，2026-02-03 清倉。 原標的後續 +12.0%。
-- Backlog 優先回看：III，2026-03-04 減倉。 賣後資金閒置，原標的同期 -5.0%。
+- Backlog 優先回看：III，2026-03-04 減倉。 原標的後續 -5.0%。
 
 ## 風險與問題
 
@@ -15714,7 +15714,7 @@ Mirror.
 這筆部位，30 天複核：還成立。 原標的後續 +10.0%；換入標的同期 +30.0%；swap 淨差 +200.0 pp。
 歷史出場 backlog 尚有 1 筆未複核（清倉 1、減倉 0）。
 Backlog 優先回看：這筆部位，2026-02-03 清倉。 原標的後續 +12.0%。
-Backlog 優先回看：III，2026-03-04 減倉。 賣後資金閒置，原標的同期 -5.0%。
+Backlog 優先回看：III，2026-03-04 減倉。 原標的後續 -5.0%。
 風險與問題
 本期沒有行為診斷：引擎沒有可評分的維度。
 下一步
@@ -15762,7 +15762,7 @@ Mirror.
 - 这笔部位，30 天复核：还成立。 原标的后续 +10.0%；换入标的同期 +30.0%；swap 净差 +200.0 pp。
 - 历史出场 backlog 尚有 1 笔未复核（清仓 1、减仓 0）。
 - Backlog 优先回看：这笔部位，2026-02-03 清仓。 原标的后续 +12.0%。
-- Backlog 优先回看：III，2026-03-04 减仓。 卖后资金闲置，原标的同期 -5.0%。
+- Backlog 优先回看：III，2026-03-04 减仓。 原标的后续 -5.0%。
 
 ## 风险与问题
 
@@ -15789,7 +15789,7 @@ Mirror.
 这笔部位，30 天复核：还成立。 原标的后续 +10.0%；换入标的同期 +30.0%；swap 净差 +200.0 pp。
 历史出场 backlog 尚有 1 笔未复核（清仓 1、减仓 0）。
 Backlog 优先回看：这笔部位，2026-02-03 清仓。 原标的后续 +12.0%。
-Backlog 优先回看：III，2026-03-04 减仓。 卖后资金闲置，原标的同期 -5.0%。
+Backlog 优先回看：III，2026-03-04 减仓。 原标的后续 -5.0%。
 风险与问题
 本期没有行为诊断：引擎没有可评分的维度。
 下一步
@@ -15837,7 +15837,7 @@ No ranked instrument diagnosis this period.
 - position, 30-day check: Still valid. the original moved +10.0%; the replacement moved +30.0%; swap net +200.0 pp.
 - Historical exit backlog: 1 unresolved exits (1 full, 0 reductions).
 - Backlog focus: position, full exit on 2026-02-03. The original moved +12.0%.
-- Backlog focus: III, reduction on 2026-03-04. Proceeds stayed idle while the original moved -5.0%.
+- Backlog focus: III, reduction on 2026-03-04. The original moved -5.0%.
 
 ## Risks and problems
 
@@ -15864,7 +15864,7 @@ No ranked instrument diagnosis this period.
 position, 30-day check: Still valid. the original moved +10.0%; the replacement moved +30.0%; swap net +200.0 pp.
 Historical exit backlog: 1 unresolved exits (1 full, 0 reductions).
 Backlog focus: position, full exit on 2026-02-03. The original moved +12.0%.
-Backlog focus: III, reduction on 2026-03-04. Proceeds stayed idle while the original moved -5.0%.
+Backlog focus: III, reduction on 2026-03-04. The original moved -5.0%.
 Risks and problems
 No behavioral diagnosis this period: the engine scored no dimension.
 Next step
@@ -16981,9 +16981,9 @@ This review did not rank a leading behavior pattern from the available history.
 ==========================================================================
 copy-key coverage
 ==========================================================================
-[zh-TW] reached 61 · unreached 0 · trivial 33
-[zh-CN] reached 39 · unreached 0 · trivial 28
-[en] reached 90 · unreached 0 · trivial 4
+[zh-TW] reached 60 · unreached 0 · trivial 33
+[zh-CN] reached 38 · unreached 0 · trivial 28
+[en] reached 89 · unreached 0 · trivial 4
 
 registers not claimed by any scene in this corpus (74):
   account_perf

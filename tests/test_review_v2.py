@@ -8022,7 +8022,7 @@ def test_horizon_plan_join_ranks_full_exits_and_never_closes_a_reduction():
     assert "RED" not in by_ticker, "a reduction must remain active, never masquerade as a full exit"
 
 
-def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
+def test_weekly_memory_surfaces_render_private_only_with_impact_framing():
     import card_renderer
     with tempfile.TemporaryDirectory() as tmp:
         card_path, state_path = _artifacts(tmp)
@@ -8044,6 +8044,8 @@ def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
         "exit_backlog": {"total": 4, "items": [{
             "revisit_id": "FOCUSSECRET-RID", "ticker": "FOCUSSECRET",
             "exit_date": "2025-06-01", "kind": "full",
+            # #670: the focus line prints `impact` — the figure that ranked it
+            "impact": -4200.0, "currency": "USD",
             "compare": {"orig_ret": 0.25, "swap_ret": None, "swap_net_pp": None,
                         "idle_cash": True, "needs_prices": []}}], "summary": {
             "count": 4, "full": 3, "reduce": 1, "top_tickers": [["OLDSECRET", 2]],
@@ -8068,9 +8070,9 @@ def test_weekly_memory_surfaces_render_private_only_with_swap_framing():
     for fragment in ("VIX 17.2 (-1.8)", "inferred thesis horizon was weeks",
                      "prices frozen on 2026-07-15", "swap net -15.0 pp",
                      "Historical exit backlog: 4",
-                     "Across 3 price-covered exits, the average post-exit move was -3.0 pp; 1 later rose",
+                     "Across 3 price-covered full exits, the average post-exit move was -3.0 pp; 1 later rose",
                      "Backlog focus: FOCUSSECRET, full exit on 2025-06-01",
-                     "Proceeds stayed idle while the original moved +25.0% using prices frozen on 2026-07-15",
+                     "That decision moved the account by -$4,200 using prices frozen on 2026-07-15",
                      "Averaging-down boundary", "SECRET lesson"):
         assert fragment in private, fragment
     # #366: the benchmark's window return no longer renders on either surface.
@@ -11734,6 +11736,104 @@ def test_only_the_adapter_lane_skips_the_recorded_book_reconciliation():
         assert not ((adapter["engine_card"].get("data_integrity") or {})
                     .get("accounting_reconciliation")), \
             "the adapter lane asserts its own artifacts; reconciling them is out of scope"
+
+
+# ── #670: the card shows the magnitude that ranked the list ──────────────────
+# layout-constraints.md §6 ruling 3 — "everything ranks by size of money
+# impact, never by percentage return" — was implemented on the sort side and
+# violated on the render side: the focus line printed three rates and never
+# the figure that ordered it.
+
+
+def _backlog_bundle(items, language="en"):
+    return {"session_id": "backlog", "route": "weekly_review", "language": language,
+            "review_plan": {"question_queue": [], "state_snapshot": {"exit_backlog": {
+                "summary": {"count": len(items), "full": len(items), "reduce": 0,
+                            "span": {}, "top_tickers": []},
+                "items": items}}},
+            "engine_card": {}, "engine_state": {}}
+
+
+def _focus_lines(items, language="en"):
+    _pairs, lines = card_renderer._exit_followup_entries(
+        _backlog_bundle(items, language), card_renderer.load_copy(language))
+    return [line for line in lines if "Backlog focus" in line or "優先回看" in line]
+
+
+def test_backlog_focus_prints_the_magnitude_that_ranked_it_and_no_rate():
+    """The mechanism, not this call site: ruling 3 bans a rate as the figure.
+
+    Asserting the absence of any rate glyph is what generalizes — a future
+    template that reintroduces a return through some other copy key fails this
+    without the check having to name that key. `design-guidelines.md` §5 is
+    explicit that a rule naming a field only blocks one trigger, and naming a
+    field is exactly how ruling 3 came to be violated here.
+    """
+    line = _focus_lines([{"ticker": "AAA", "kind": "full", "exit_date": "2026-02-03",
+                          "impact": -18400.0, "currency": "TWD",
+                          "compare": {"swap_net_pp": 1.0, "orig_ret": 0.1, "swap_ret": 0.2}}])[0]
+    assert "TWD 18,400" in line, f"the ranked money figure must be on the line: {line}"
+    assert "%" not in line and "pp" not in line, \
+        f"ruling 3: the focus line must not carry a return rate: {line}"
+    assert "18,400" in line and "0.1" not in line, \
+        "the money figure is the engine's `impact`, not a rate restated"
+
+
+def test_the_focus_figure_is_measured_in_the_instruments_own_currency():
+    """A TWD parcel restated with the aggregate's symbol would be a false number."""
+    line = _focus_lines([{"ticker": "AAA", "kind": "full", "exit_date": "2026-02-03",
+                          "impact": -18400.0, "currency": "TWD", "compare": {}}])[0]
+    assert "TWD" in line and "$18,400" not in line, \
+        f"the parcel's own currency must survive to the card: {line}"
+
+
+def test_a_trim_and_a_full_exit_of_the_same_move_rank_and_read_differently():
+    """`impact = notional x net move`, so a small parcel of a large mover
+    reports a small figure without the line ever explaining the fraction."""
+    import revisit as revisit_engine
+    # Every checkpoint closed before this queue started tracking them, which is
+    # what makes an exit historical backlog rather than a due revisit (#170).
+    # Non-USD deliberately: the renderer falls back to "USD" for a missing
+    # currency, so a USD fixture cannot tell a carried currency from a dropped
+    # one — which is exactly what let the engine-side field go unproved.
+    common = {"exit_date": "2026-02-03", "cycle_id": "X#2026-01-01#1",
+              "exit_price": 100.0, "currency": "TWD", "swaps": [],
+              "enqueued_at": "2026-07-14",
+              # `idle_cash` is `not swaps` on the real enqueue path, so proceeds
+              # that bought nothing carry an opportunity cost the engine prices.
+              "idle_cash": True,
+              "due": {"30": "2026-03-05", "60": "2026-04-04", "90": "2026-05-04"}}
+    revisits = {
+        "full-rid": dict(common, revisit_id="full-rid", ticker="FULL",
+                         kind="full", shares_sold=100, shares_before=100),
+        "trim-rid": dict(common, revisit_id="trim-rid", ticker="TRIM",
+                         kind="reduce", shares_sold=5, shares_before=100),
+    }
+    items, summary, _total = revisit_engine.scan_backlog(
+        revisits, [], prices={"FULL": 200.0, "TRIM": 200.0})
+    by_ticker = {item["ticker"]: item for item in items}
+    assert by_ticker["FULL"]["impact"] is not None and by_ticker["TRIM"]["impact"] is not None
+    assert abs(by_ticker["TRIM"]["impact"]) < abs(by_ticker["FULL"]["impact"]), \
+        "the same underlying move on a 5% parcel must not price like the whole position"
+    assert items[0]["ticker"] == "FULL", "the larger money impact leads the list"
+    assert all(item["currency"] == "TWD" for item in items), \
+        "the engine must carry each parcel's own currency onto the item it ranks"
+    line = _focus_lines(items)[0]
+    assert "TWD" in line and "$" not in line, \
+        f"an engine-built item must reach the card in its own currency: {line}"
+    # The pooled hindsight figure is a full-exit statistic; a trim's post-exit
+    # move measures the parcel that left while the shares that stayed captured
+    # the same move, so pooling the two averages different quantities.
+    assert summary["priced"] == 1, \
+        f"only the full exit is price-covered for the pooled average: {summary}"
+
+
+def test_a_backlog_item_without_impact_still_renders():
+    """A bundle prepared before #670 degrades to the original-move sentence
+    rather than losing the line — the key is absent, not empty."""
+    line = _focus_lines([{"ticker": "AAA", "kind": "full", "exit_date": "2026-02-03",
+                          "compare": {"orig_ret": 0.12}}])[0]
+    assert "+12.0%" in line, f"the pre-#670 shape must still say something: {line}"
 
 
 def main():

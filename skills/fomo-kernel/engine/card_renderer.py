@@ -2710,17 +2710,21 @@ def _exit_followup_entries(bundle, copy):
                 exit_date=item.get("exit_date"))
             compare = item.get("compare") or {}
             needs = compare.get("needs_prices") or []
+            # #670: the magnitude printed here is `impact`, the same figure that
+            # ordered this list — layout-constraints.md §6 ruling 3 ("everything
+            # ranks by size of money impact, never by percentage return"). The
+            # rates it replaced could not explain the ranking, and priced a trim
+            # as if the whole position had gone; `impact` is notional x net move,
+            # so a small parcel of a large mover reports a small figure without
+            # the line ever having to explain the fraction. Engine-computed
+            # (revisit.py), never derived here (design-guidelines.md §5).
+            impact = item.get("impact")
             if needs:
                 detail += text["focus_needs_prices"].format(
                     missing=", ".join(needs), when=as_of)
-            elif compare.get("swap_net_pp") is not None:
-                detail += text["focus_swap"].format(
-                    orig=_signed_pct(compare.get("orig_ret")), when=frozen_note,
-                    swap=_signed_pct(compare.get("swap_ret")),
-                    net=_signed_pp(compare.get("swap_net_pp")))
-            elif compare.get("idle_cash") and compare.get("orig_ret") is not None:
-                detail += text["focus_idle"].format(
-                    orig=_signed_pct(compare.get("orig_ret")), when=frozen_note)
+            elif impact is not None:
+                detail += text["focus_impact"].format(
+                    impact=_money(impact, item.get("currency") or "USD"), when=frozen_note)
             elif compare.get("orig_ret") is not None:
                 detail += text["focus_orig"].format(
                     orig=_signed_pct(compare.get("orig_ret")), when=frozen_note)
