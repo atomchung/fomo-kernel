@@ -672,6 +672,84 @@ def _honesty(snapshot, currencies, fx_gaps, unclassified, portfolio_structure):
     return entries
 
 
+def _convert_to_aggregate(amount, currency, aggregate_currency, fx):
+    """One currency amount converted into the book's aggregate currency, or
+    ``None`` when the conversion cannot be made honestly.
+
+    Same convention ``_global_values`` already uses for positions: ``fx``
+    values are USD per unit of the original currency (module docstring). A
+    literal currency match needs no rate at all -- that branch is an
+    identity, not a stand-in for a missing one. Anything else needs both
+    sides' rates; #649's lesson is that a silently-defaulted 1.0 factor once
+    read a foreign balance as face-value USD and inflated a real account by
+    28x, so a missing rate on either side fails this one conversion closed
+    rather than approximating it.
+    """
+    if currency == aggregate_currency:
+        return amount
+    rate_from = fx.get(currency)
+    rate_to = fx.get(aggregate_currency)
+    if rate_from is None or rate_to is None:
+        return None
+    converted = amount * rate_from / rate_to
+    return converted if math.isfinite(converted) else None
+
+
+def _cash_summary(snapshot, aggregate_currency, weights_available, held_value_aggregate):
+    """A declared cash balance in the shape ``card_renderer.py`` already reads
+    for the trade lane's own ``trade_recap.cash_position()`` output --
+    ``balance`` / ``weight`` / ``source`` / ``reliable`` / ``by_currency`` --
+    so a renderer consuming this field works identically regardless of which
+    lane produced it (#771).
+
+    A snapshot's cash is a direct point-in-time declaration, not a ledger
+    anchor reconciled against subsequent flows: there is no "csv_sum vs
+    anchored" split to make, because there are no flows to be uncertain
+    about. Every declared currency is therefore equally reliable on its own.
+    What is *not* always available is the single aggregate ``balance``: it
+    exists only when every declared currency converts into the book's
+    aggregate currency (``_convert_to_aggregate``, the same identity-only-
+    for-a-literal-match rule ``_global_values`` enforces for positions). A
+    gap on that conversion suppresses the whole summary rather than silently
+    summing a subset (#649) -- the per-currency facts already live in the raw
+    ledger anchor (``state.snapshot_anchor.cash``) regardless of whether this
+    aggregate view can be built.
+    """
+    cash = snapshot["cash"]
+    if cash is None:
+        return None
+    fx = snapshot["fx"]
+    by_currency = {}
+    total = 0.0
+    for currency, balance in cash.items():
+        converted = _convert_to_aggregate(balance, currency, aggregate_currency, fx)
+        if converted is None:
+            return None
+        by_currency[currency] = {
+            "balance": balance,
+            "source": ledger.DECLARED_BOOK_SOURCE,
+            "reliable": True,
+        }
+        total += converted
+    weight = None
+    if weights_available:
+        denom = total + held_value_aggregate
+        if denom > 1e-9:
+            weight = total / denom
+    return {
+        "balance": round(total, 2),
+        "weight": weight,
+        "source": ledger.DECLARED_BOOK_SOURCE,
+        "reliable": True,
+        # A snapshot has no cash-flow history to measure a period's net
+        # deposit against -- unlike the trade lane's `cash_position()`, which
+        # derives this from `cash_flows`, this route genuinely cannot supply
+        # it, not merely chooses not to.
+        "recent_net_deposit": None,
+        "by_currency": by_currency,
+    }
+
+
 def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=None):
     """Return ``(card, state, meta)`` for one normalized local snapshot.
 
@@ -703,6 +781,11 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
         row["ticker"] for row in snapshot["positions"] if row["avg_cost"] is None
     )
 
+    what_if_result = None
+    ticker_diag = []
+    unrealized_total = None
+    unrealized_coverage = None
+    strength_text = None
     with _policy_context(driver_map, instrument_map) as (driver_result, instrument_result, philosophy):
         dimensions = []
         portfolio_structure = _portfolio_structure_without_weights(snapshot["positions"])
@@ -720,6 +803,93 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
             diversification = trade_recap.dim_diversify(held, {})
             dimensions = [size, diversification]
             portfolio_structure = instruments.portfolio_analysis(size.get("weights"))
+            # #771: "you did this right" is exactly as available as the sizing
+            # and diversification dimensions it is built from — both computed
+            # two lines up. Exit discipline, averaging-down and holding-period
+            # candidates all need transaction history a snapshot does not
+            # have; passing their inputs as empty dicts (rather than omitting
+            # the call) is what makes `dim_strength` skip those candidates on
+            # its own terms instead of this adapter re-deciding which
+            # candidates exist. `rts=None` similarly leaves the exit-discipline
+            # worked-example untouched (it is gated behind that same empty
+            # dict and never reached).
+            strength_text = trade_recap.dim_strength({}, size, {}, diversification, {})
+            if basis == "market_value":
+                # A snapshot carries no transaction history, so unlike the
+                # trade lane, `what_if` and the per-position P&L ranking below
+                # cannot get a current price from a live feed or a round-trip
+                # ledger. They do not need to: this route's own declared
+                # `market_value` supplies exactly that, needing neither a
+                # fetch nor history (#771). Gated on the real market-value
+                # basis (not merely `weights_available`, which also accepts a
+                # cost-basis proxy) because both readings below compare
+                # *against* cost — using cost as a stand-in for current value
+                # would manufacture a P&L of exactly zero, which is not
+                # "unknown", it is a fabricated number that happens to be 0.
+                #
+                # `last_px` is deliberately `global_values[ticker] / shares`,
+                # not `row["market_value"] / shares`: `global_values` is
+                # already in the book's one aggregate currency (identical to
+                # `held`'s own second element two lines up), while
+                # `row["market_value"]` is still in that position's native
+                # currency. A mixed-currency book (say TWD + USD) computing
+                # `shares * last_px` from the native figure would silently
+                # sum unconverted currencies into one "exposure" — precisely
+                # the #649 bug class this file exists to avoid.
+                last_px = {
+                    row["ticker"]: global_values[row["ticker"]] / row["shares"]
+                    for row in snapshot["positions"]
+                }
+                what_if_result = trade_recap.what_if(held, last_px)
+                # avg_cost is independently optional per position even on the
+                # market-value basis (`missing_avg_cost` may be non-empty
+                # here): a position's current value can be known without its
+                # cost ever having been supplied. Unrealized P&L needs both,
+                # so it is computed only over the priced-AND-costed subset,
+                # and that subset's shape is disclosed via
+                # `unrealized_coverage` rather than silently narrowing the
+                # sum (the same "unpriced" contract
+                # `trade_recap.overview_stats` uses for the trade lane, where
+                # the gap is a missing live price instead of a missing cost —
+                # `unrealized_is_measured` only reads the held_n/priced_n
+                # shape, not which fact was missing).
+                priced = [row for row in snapshot["positions"] if row["avg_cost"] is not None]
+                unrealized_coverage = {
+                    "held_n": len(snapshot["positions"]),
+                    "priced_n": len(priced),
+                    "unpriced": missing_avg_cost,
+                }
+                if priced:
+                    # Cost must travel through the same per-ticker conversion
+                    # `global_values` already applied to market value, or a
+                    # native-currency cost would be subtracted from an
+                    # aggregate-currency value (the other half of the #649
+                    # risk `last_px` above avoids). Dividing the ticker's own
+                    # already-converted value by its declared native value
+                    # recovers exactly that factor (1.0 on a single-currency
+                    # book) without a second currency lookup that could drift
+                    # from what `_global_values` did.
+                    cost_aggregate = {
+                        row["ticker"]: row["shares"] * row["avg_cost"]
+                        * (global_values[row["ticker"]] / row["market_value"])
+                        for row in priced
+                    }
+                    unrealized_total = round(sum(
+                        global_values[row["ticker"]] - cost_aggregate[row["ticker"]]
+                        for row in priced
+                    ), 2)
+                    held_pnl = {
+                        row["ticker"]: (row["shares"], cost_aggregate[row["ticker"]])
+                        for row in priced
+                    }
+                    last_px_pnl = {row["ticker"]: last_px[row["ticker"]] for row in priced}
+                    # sizing_weights must be the exact dict dim_size already
+                    # produced above — ticker_diagnosis refuses to recompute
+                    # it itself, precisely to stop a second denominator from
+                    # a differently-filtered `held` reappearing (#477).
+                    ticker_diag = trade_recap.ticker_diagnosis(
+                        [], {}, held_pnl, last_px_pnl,
+                        sizing_weights=size.get("weights") or {})
         unclassified = sorted(
             row["ticker"] for row in snapshot["positions"]
             if not instruments.is_diversified_allocation(row["ticker"])
@@ -744,6 +914,15 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
         "fx": ({key: value for key, value in snapshot["fx"].items() if key != "USD"} or None),
         "valuation_basis": basis,
     }
+    # #771: the declared cash balance is on the same object as the position
+    # facts that already reach the card (`snapshot["cash"]`) — it was zeroed
+    # here regardless, even though the user was asked for it and it was
+    # recorded on `state.snapshot_anchor.cash` the whole time. Needs no
+    # policy context (no driver/instrument lookups), so it is computed
+    # outside the `with` block above.
+    cash_summary = _cash_summary(
+        snapshot, currency_meta["aggregate_currency"], weights_available,
+        sum(global_values.values()) if weights_available else 0.0)
     data_integrity = {
         "source": "positions_snapshot",
         "missing_avg_cost": missing_avg_cost,
@@ -763,6 +942,19 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
             headline_metric = {"key": "max_pos_pct", "value": headline.get("max_pct")}
         elif headline.get("dim") == "分散":
             headline_metric = {"key": "top3_pct", "value": headline.get("top3")}
+
+    # #771: `realized`/`total_pnl` deliberately never appear here, not even as
+    # `None` placeholders — a snapshot has no transaction history, so
+    # "realized P&L" is not a fact this route has and reported zero of, it is
+    # a fact this route cannot state at all. `trade_recap.overview_stats`
+    # cannot be reused as-is for this: called with no round trips it would
+    # still compute `realized = win_sum + loss_sum == 0.0`, a real (if
+    # coincidentally correct-looking) zero rather than an absent fact, and
+    # `card_renderer._overview_lines` branches on that presence to choose
+    # between the full breakdown sentence and the unrealized-only one.
+    overview = {}
+    if unrealized_coverage is not None:
+        overview = {"unrealized": unrealized_total, "unrealized_coverage": unrealized_coverage}
 
     metrics = {
         "max_pos_pct": size.get("max_pct") if size else None,
@@ -804,7 +996,7 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
         },
         "currency_meta": currency_meta,
         "portfolio_structure": portfolio_structure,
-        "cash": None,
+        "cash": cash_summary,
         "price_snapshot": None,
         "market_context": None,
         "problem_events": [],
@@ -815,10 +1007,10 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
         "snapshot_only": True,
         "snapshot_summary": summary,
         "philosophy": philosophy,
-        "strength": None,
-        "overview": {},
-        "what_if": None,
-        "ticker_diagnosis": [],
+        "strength": strength_text,
+        "overview": overview,
+        "what_if": what_if_result,
+        "ticker_diagnosis": ticker_diag,
         "thesis_questions": [],
         "top_holes": top_holes,
         "candidate_rules": [],
@@ -829,7 +1021,7 @@ def prepare(path, driver_map=None, instrument_map=None, today=None, *, snapshot=
         "data_integrity": data_integrity,
         "currency_meta": currency_meta,
         "portfolio_structure": portfolio_structure,
-        "cash": None,
+        "cash": cash_summary,
         "acct_perf": {},
         "honesty_ledger": honesty,
         "pnl_curve": {"note": "snapshot_only"},
