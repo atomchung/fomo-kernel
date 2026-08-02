@@ -1459,9 +1459,10 @@ def test_cash_position_single_bucket_and_flowless_anchor_keep_the_identity():
 
     A single bucket — including a pure non-USD one — is the aggregate currency
     itself, so its factor is an identity and no rate was ever needed. And an
-    anchor in a currency no cash flow created is *dropped* by `_anchor_for`
-    rather than converted, so it can never widen what is added together;
-    refusing a review over it would block a book on an amount nothing reads.
+    anchor in a currency no cash flow created, with no fx rate available to
+    convert it either, still keeps `balance`/`by_currency` exactly as if it
+    had never been supplied — #688 changed what happens to the fact of that
+    anchor (see the tests below), never this arithmetic.
     """
     twd_only = [dict(date=dt.date(2025, 1, 10), amount=-100000.0, kind="trade", currency="TWD")]
     cp = tr.cash_position(twd_only, held_mv=500000.0,
@@ -1476,6 +1477,122 @@ def test_cash_position_single_bucket_and_flowless_anchor_keep_the_identity():
     cp2 = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchors)
     assert list(cp2["by_currency"]) == ["USD"], cp2["by_currency"]
     assert _approx(cp2["balance"], -15000.0), cp2["balance"]
+
+
+# ─────── #688: a flowless anchor is named rather than silently dropped ───────
+# The structural fixture trap this defect needs: a single-currency (e.g.
+# USD-only) book cannot tell "the anchor's currency is present" apart from
+# "the anchor's currency was silently dropped" -- both look identical from
+# the *outside*. Every test below anchors a currency that appears ONLY on the
+# anchor, never on a cash-flow row, which is the one shape that can actually
+# distinguish the two.
+
+def test_cash_position_names_a_flowless_anchor_it_cannot_convert():
+    """Before #688: the JPY anchor below was consulted by nothing -- not
+    added, not converted, not reported missing -- and `reliable` still read
+    back `False` here (USD itself has no matching anchor), so nothing about
+    the response even hinted a second currency had been declared. Two
+    assertions, deliberately both present: the arithmetic must stay exactly
+    what it was (a flowless anchor still may not distort the total), AND the
+    fact of it must now be named -- a checker that only proves one of the two
+    would pass a fix that silently drops the amount while merely flipping a
+    boolean, or one that reports the drop but also (wrongly) sums it in."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchor = {"as_of": "2025-01-05", "amount": 500000.0, "currency": "JPY"}
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchor)
+    # arithmetic: unchanged from the pre-#688 (silent-drop) behavior
+    assert _approx(cp["balance"], -20000.0), cp["balance"]
+    assert list(cp["by_currency"]) == ["USD"], cp["by_currency"]
+    assert cp["by_currency"]["USD"]["reliable"] is False, cp["by_currency"]
+    # disclosure: the new half #688 adds
+    assert cp["unmatched_anchors"] == [
+        {"currency": "JPY", "amount": 500000.0, "as_of": "2025-01-05"}], cp["unmatched_anchors"]
+
+
+def test_cash_position_folds_a_flowless_anchor_in_once_fx_already_knows_its_currency():
+    """The other branch of #688's fix: when the caller already resolved a
+    rate for the anchor's currency -- typically because it is also a *held*
+    currency, so a rate was requested for other reasons -- there is nothing
+    left to refuse and no new fetch to perform, so the anchor is folded in as
+    a genuine bucket instead of merely being named as excluded."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchor = {"as_of": "2025-01-05", "amount": 500000.0, "currency": "JPY"}
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchor,
+                          fx={"USD": 1.0, "JPY": 0.0067})
+    assert _approx(cp["balance"], -20000.0 + 500000.0 * 0.0067), cp["balance"]
+    assert cp["by_currency"]["JPY"] == {"balance": 500000.0, "source": "anchored",
+                                        "reliable": True}, cp["by_currency"]
+    assert cp["unmatched_anchors"] == [], \
+        "a currency fx already resolves must be converted, not also reported as unmatched"
+
+
+def test_cash_position_flowless_anchor_never_raises_the_missing_rate_error():
+    """A named anchor with no available rate must never turn into
+    MissingAggregateCurrencyRate: refusing the whole computation over a
+    balance nothing else in the book reads is exactly what
+    aggregate_currencies's own docstring already rejects for #649/#612, and
+    turning a data-quality gap into a hard crash would be a worse regression
+    than the silent drop #688 reports -- the common real shape is a single-
+    currency book with one foreign cash anchor, and #688's fix must not make
+    that book fail to review at all."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchor = {"as_of": "2025-01-05", "amount": 500000.0, "currency": "JPY"}
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchor)  # must not raise
+    assert isinstance(cp, dict) and "unmatched_anchors" in cp
+
+
+def test_cash_position_multiple_flowless_anchors_are_each_named():
+    """Two named anchors, neither with a matching flow bucket nor a known fx
+    rate: both must be named, sorted by currency, and neither may leak into
+    `by_currency`/`balance`."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchors = [{"as_of": "2025-01-05", "amount": 500000.0, "currency": "JPY"},
+               {"as_of": "2025-01-06", "amount": 800.0, "currency": "EUR"}]
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchors)
+    assert _approx(cp["balance"], -20000.0), cp["balance"]
+    assert list(cp["by_currency"]) == ["USD"], cp["by_currency"]
+    assert cp["unmatched_anchors"] == [
+        {"currency": "EUR", "amount": 800.0, "as_of": "2025-01-06"},
+        {"currency": "JPY", "amount": 500000.0, "as_of": "2025-01-05"},
+    ], cp["unmatched_anchors"]
+
+
+def test_cash_position_flowless_anchor_beside_a_matched_one_does_not_borrow_its_reliability():
+    """The `reliable: true` trap #688's issue names directly: when a SECOND,
+    correctly-matched anchor covers the book's only flow currency, the
+    aggregate reads back fully healthy (`reliable: true`, `source:
+    "anchored"`) while the flowless one is completely invisible pre-#688 --
+    the most misleading shape, because nothing about the response looks
+    broken. This is the structural regression guard for
+    test_cash_position_single_bucket_and_flowless_anchor_keep_the_identity's
+    second scenario, now asserting the disclosure half that test predates."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchors = [{"as_of": "2025-01-01", "amount": 500.0, "currency": "TWD"},   # no TWD flow
+               {"as_of": "2025-01-01", "amount": 5000.0, "currency": "USD"}]
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchors)
+    assert cp["reliable"] is True and cp["source"] == "anchored", cp
+    assert cp["unmatched_anchors"] == [
+        {"currency": "TWD", "amount": 500.0, "as_of": "2025-01-01"}], cp["unmatched_anchors"]
+
+
+def test_a_legacy_currency_less_anchor_beside_a_flowless_named_one_stays_scoped_to_its_own_bucket():
+    """Regression guard for the internal refactor #688 required: widening the
+    per-currency loop to include a priceable flowless anchor's currency must
+    not let the *legacy* single-bucket match (`not ac and len(flow_currencies)
+    == 1`) fire for that newly-added currency too. Before this was guarded
+    with `c in flow_currencies`, the JPY bucket below silently inherited the
+    USD-implied legacy anchor's amount (9000) instead of its own named JPY
+    anchor (500000) -- caught only by pairing a currency-less anchor with a
+    flowless named one in the same fixture, which a single-anchor test cannot
+    exercise."""
+    usd_only = [dict(date=dt.date(2025, 1, 6), amount=-20000.0, kind="trade", currency="USD")]
+    anchors = [{"as_of": "2025-01-05", "amount": 9000.0},                       # legacy, no currency
+               {"as_of": "2025-01-05", "amount": 500000.0, "currency": "JPY"}]  # flowless, priceable
+    cp = tr.cash_position(usd_only, held_mv=100000.0, anchor=anchors,
+                          fx={"USD": 1.0, "JPY": 0.0067})
+    assert cp["by_currency"]["USD"]["balance"] == -11000.0, cp["by_currency"]   # 9000 - 20000
+    assert cp["by_currency"]["JPY"]["balance"] == 500000.0, cp["by_currency"]   # its own anchor, not 9000's
+    assert cp["unmatched_anchors"] == []
 
 
 def test_fetch_fx_usd_only_is_offline_noop():
@@ -1946,6 +2063,47 @@ def test_honesty_ledger_cash_reliability_trigger():
                  "reliable": False, "recent_net_deposit": 0})
     assert hit and hit[0]["status"] == "no_anchor" and hit[0]["data"]["source"] == "csv_sum", hit
     assert not fired(None), "無 cash 欄(None)不觸發"
+
+
+def test_honesty_ledger_cash_reliability_fires_on_an_unmatched_anchor_even_when_fully_reliable():
+    """#688's own failure shape, at the honesty-ledger layer: an account can
+    be fully anchored in every currency its cash flows touch (reliable=True,
+    source=anchored, weight computed) and STILL be sitting on a declared
+    balance that was excluded from every total. Before #688 this combination
+    -- cash_blind False, no residuals -- fired nothing at all, so a perfectly
+    healthy-looking ledger hid a real fact the user supplied. The mutation
+    this guards is a checker that keys only on `cash_blind`/`di_residuals`
+    and never inspects `unmatched_anchors` at all."""
+    def fired(cash, data_integrity=None):
+        hl = tr.build_honesty_ledger(overview={}, ab={}, data_integrity=data_integrity or {},
+                                     currency_meta={}, cash=cash)
+        return [e for e in hl if e["key"] == "cash_reliability"]
+
+    healthy_but_unmatched = {"balance": 19284.0, "weight": 0.29, "source": "anchored",
+                             "reliable": True, "recent_net_deposit": 0,
+                             "unmatched_anchors": [{"currency": "JPY", "amount": 500000.0,
+                                                    "as_of": "2025-01-05"}]}
+    hit = fired(healthy_but_unmatched)
+    assert hit, "a fully-anchored cash reading with an unmatched anchor must still trigger"
+    assert hit[0]["status"] == "unmatched_anchor", hit
+    assert hit[0]["data"]["unmatched_anchors"] == healthy_but_unmatched["unmatched_anchors"], hit
+    # a cash dict entirely without the key (a caller that predates #688, or a
+    # currency-free anchor state) must not be treated as carrying one
+    assert not fired({"balance": 19284.0, "weight": 0.29, "source": "anchored",
+                      "reliable": True, "recent_net_deposit": 0}), \
+        "no unmatched_anchors key at all must not be misread as an empty-but-present one"
+    assert not fired({"balance": 19284.0, "weight": 0.29, "source": "anchored",
+                      "reliable": True, "recent_net_deposit": 0, "unmatched_anchors": []}), \
+        "an empty unmatched_anchors list must not trigger"
+    # combined with the pre-existing no_anchor trigger, the status still names
+    # the cash_blind branch (existing behavior unchanged) but the identity
+    # still rides along in data so nothing is lost by the status collapsing
+    combined = {"balance": 8000.0, "weight": 0.14, "source": "csv_sum", "reliable": False,
+               "recent_net_deposit": 0,
+               "unmatched_anchors": [{"currency": "EUR", "amount": 10.0, "as_of": "2025-01-01"}]}
+    hit2 = fired(combined)
+    assert hit2[0]["status"] == "no_anchor", hit2
+    assert hit2[0]["data"]["unmatched_anchors"] == combined["unmatched_anchors"], hit2
 
 
 def test_honesty_ledger_aggregates_non_scope_market_attribution_gap():

@@ -143,8 +143,20 @@ SIDES = ("buy", "sell")
 # zero to `ai_pct` and dropped from `max_sector_pct`'s numerator entirely —
 # with nothing in the response saying the concentration figures were computed
 # over a partially-legible book.
+#
+# `cash_anchor_unmatched` (#688): distinct from `cash_unreliable` above, which
+# means "the computed balance has no anchor and is a running sum" — this means
+# the *opposite* problem, an anchor the user explicitly supplied that could
+# not be folded into that balance at all, because its currency matches no
+# cash-flow row in this book and no FX rate was available to convert it
+# either (`trade_recap.cash_position`'s `unmatched_anchors`). Before #688 this
+# was a pure silent drop: `balance`/`reliable` could read back a perfectly
+# healthy `true` while a user-declared sum sat nowhere in the response at
+# all — AGENTS.md boundary 6 requires this fail closed instead, the same way
+# an unusable holding is excluded-and-named rather than dropped-and-silent.
 DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver",
-               "unclassified_book", "etf_not_decomposed", "partial_book")
+               "unclassified_book", "etf_not_decomposed", "partial_book",
+               "cash_anchor_unmatched")
 
 # #751: a cash anchor states a real balance that, by construction, has never
 # seen a trade that has not happened yet — there is no `as_of` at which it
@@ -784,7 +796,16 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
         "concentration_triggered": diversify["triggered"],
         "n_holdings": len(held),
         "cash": {"balance": cash["balance"], "weight": cash["weight"],
-                 "source": cash["source"], "reliable": cash["reliable"]},
+                 "source": cash["source"], "reliable": cash["reliable"],
+                 # #688: named anchors trade_recap.cash_position could not fold
+                 # into balance/by_currency (no matching cash-flow currency and
+                 # no fx rate to convert one at) — forwarded so a caller can
+                 # name what was excluded rather than let it read as never
+                 # having been supplied. Independent of cash_anchor's shape
+                 # (single dict or per-currency list) and of the premise: an
+                 # anchor's own currency plays no part in what the premise
+                 # trade does, so before and after always carry the same list.
+                 "unmatched_anchors": cash["unmatched_anchors"]},
         "basis": "priced" if last_px else "cost",
         # True means these weights were converted into one currency at the
         # caller's supplied rates before being added — a fact about how the
@@ -923,10 +944,14 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     itself carries positions the concentration figures could not read — an
     unclassified single name (`unclassified_book`) or a fund nothing
     decomposes (`etf_not_decomposed`), both #598/#599 and both named in the
-    fields below; or a position was left out of the usable book these numbers
+    fields below; a position was left out of the usable book these numbers
     are measured against, because it could not be valued (#515) or because the
     integrity record names it (#673) — `partial_book` either way, with
-    `excluded_holdings[].reason` saying which.
+    `excluded_holdings[].reason` saying which; or a supplied cash anchor's
+    currency matched no cash-flow bucket and no fx rate could convert it
+    either (`cash_anchor_unmatched`, #688), with `after["cash"]["unmatched_anchors"]`
+    naming which currency, amount and as_of — the opposite condition from
+    `cash_unreliable`, and the two may fire independently of each other.
 
     `unclassified_holdings` and `undecomposed_etfs` are to their keys what
     `excluded_holdings` is to `partial_book`: the key says THAT the book was
@@ -969,6 +994,15 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
         disclosures.append("cost_basis")
     if not after["cash"]["reliable"]:
         disclosures.append("cash_unreliable")
+    # #688: independent of cash_unreliable above -- a book can be fully
+    # anchored (reliable: true) in every currency its cash flows touch and
+    # still have a separate, named anchor sitting outside all of them. Read
+    # off `after` for the same reason unclassified_holdings/undecomposed_etfs
+    # below are: cash_anchor is identical input to both portfolio_state calls,
+    # so before/after always agree, and `after` is the book every other number
+    # in this result already describes.
+    if after["cash"]["unmatched_anchors"]:
+        disclosures.append("cash_anchor_unmatched")
     sector, _is_ai = trade_recap.driver(normalized["ticker"])
     if sector == _UNCLASSIFIED_DRIVER:
         disclosures.append("unmapped_driver")

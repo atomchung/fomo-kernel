@@ -176,6 +176,7 @@
           "key": {
             "enum": ["cost_basis", "cash_unreliable", "unmapped_driver",
                      "unclassified_book", "etf_not_decomposed", "partial_book",
+                     "cash_anchor_unmatched",
                      "stale", "unverified", "stale_and_unverified",
                      "price_observed",
                      "new_breach", "worsened_existing_breach",

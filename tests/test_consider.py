@@ -4051,11 +4051,12 @@ def test_consider_without_cash_uses_the_last_finalized_reviews_anchor():
                                             '"price": 100.0, "qty": 5}'))
         cash = payload["evaluation"]["consequence"]
         assert cash["before"]["cash"] == {"balance": 5000.0, "reliable": True,
-                                          "source": "anchored",
+                                          "source": "anchored", "unmatched_anchors": [],
                                           "weight": cash["before"]["cash"]["weight"]}
         assert abs(cash["after"]["cash"]["balance"] - 4500.0) < 1e-9
         assert cash["after"]["cash"]["reliable"] is True
         assert "cash_unreliable" not in cash["disclosures"]
+        assert "cash_anchor_unmatched" not in cash["disclosures"]
 
 
 def test_consider_without_cash_still_deducts_when_the_fallback_lands_on_the_premise_date():
@@ -4108,7 +4109,42 @@ def test_consider_without_cash_or_any_prior_review_still_falls_back_to_csv_sum()
                                             '"price": 100.0, "qty": 5}'))
         before_cash = payload["evaluation"]["consequence"]["before"]["cash"]
         assert before_cash == {"balance": -1000.0, "reliable": False,
-                               "source": "csv_sum", "weight": None}
+                               "source": "csv_sum", "weight": None, "unmatched_anchors": []}
+
+
+def test_consider_end_to_end_names_a_cash_anchor_with_no_matching_currency(): # 688
+    """The real CLI, real argparse --cash JSON parsing, real `cmd_consider`
+    plumbing, end to end: a JPY anchor supplied on a ledger whose only trade
+    is USD must be named in the response rather than silently vanish, and the
+    coexisting USD anchor must still match and compute normally -- proving
+    the fix all the way from the CLI flag to the stored evaluation row, not
+    only at the engine functions the other tests in this file call directly."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _one_holding_ledger(tmp)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--premise", '{"ticker": "AAA", "side": "buy", '
+                                            '"price": 100.0, "qty": 5}',
+                               "--cash", '[{"currency": "USD", "amount": 9000, '
+                                         '"as_of": "2026-01-06"}, '
+                                         '{"currency": "JPY", "amount": 500000, '
+                                         '"as_of": "2026-01-06"}]'))
+        consequence = payload["evaluation"]["consequence"]
+        before_cash = consequence["before"]["cash"]
+        assert before_cash["balance"] == 9000.0, \
+            f"the matching USD anchor must still compute normally: {before_cash}"
+        assert before_cash["unmatched_anchors"] == [
+            {"currency": "JPY", "amount": 500000.0, "as_of": "2026-01-06"}], before_cash
+        assert "cash_anchor_unmatched" in consequence["disclosures"]
+        # the challenge block picks the new key up generically -- confirming
+        # the freeform-answer surface owes this fact too, with no bespoke
+        # per-key wiring (evaluation_challenge.py's disclosure topic is a
+        # plain loop over consequence["disclosures"])
+        challenge = payload["challenge"]
+        disclosure_values = [entry["value"] for entry in challenge["must_state"]
+                             if entry["topic"] == "disclosure"]
+        assert "cash_anchor_unmatched" in disclosure_values, challenge["must_state"]
+        assert any(entry.get("key") == "cash_anchor_unmatched"
+                  for entry in challenge["required_coverage"]), challenge["required_coverage"]
 
 
 def _tests():
