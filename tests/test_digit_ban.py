@@ -120,6 +120,14 @@ IDIOMS_OK = [
     "万一行情反转", "千万别追高", "进一步观察", "两难的处境", "两者之间的取舍",
     "数字只来自引擎", "几乎没有悬念", "统一的纪律", "一时冲动不是理由",
     "止损纪律", "一点也不意外的模式",
+    # #775: interrogative "which one" (哪一 + classifier) at a clause boundary
+    # — the numeral is part of the question word, not a count. Mid-sentence
+    # forms were already clean before #775 (the soft-unit boundary check
+    # treats a following Han character as heading a compound word); the bug
+    # was specifically this clause-final shape, where nothing follows the
+    # classifier to save it.
+    "你想問的是哪一次？", "這發生在哪一天。", "先想清楚是哪一個。",
+    "問題出在哪一年。", "先確認是哪一股。", "你說的是哪一檔。",
 ]
 
 # English prose that reuses risky tokens without a quantity.
@@ -164,12 +172,16 @@ V2_FIXTURE_STRINGS = [
     "A lower price is not automatically a stronger thesis",
     "The add only becomes deliberate when the reason can survive the next review.",
     "Without a new fact, the action would have been cost-basis repair.",
-    "This rule turns conviction into something falsifiable.",
+    # #773: "This rule turns conviction into something falsifiable." / its zh
+    # counterpart below were the rule_rationale entries in _narrative() — that
+    # field is no longer in ALLOWED_NARRATIVE (test_schema_dropped_divergent_
+    # pattern_and_points_at_code pins its removal) and the two strings were
+    # dropped from the live fixture with it, so they no longer belong in a
+    # list documented as "the exact strings authored in" that fixture.
     "The allocation ETF is missing expense-ratio data, and the gap was disclosed instead of treated as zero.",
     "價格變低，不等於 thesis 自動變強",
     "這次加碼只有在理由能被下次復盤驗證時，才算有意識的決策。",
     "如果沒有新事實，這個動作就只是修補成本。",
-    "這條規矩把信心變成可被推翻的判斷。",
     "配置型 ETF 缺費用率資料，這裡把缺口講明，而不是把缺值當成零。",
 ]
 
@@ -205,6 +217,16 @@ def test_schema_dropped_divergent_pattern_and_points_at_code():
     schema = json.loads(raw)
     for name in ("headline", "mirror", "counterfactual", "rule_rationale", "strength", "synthesis"):
         assert "pattern" not in schema["properties"][name], f"{name} still carries a digit pattern"
+    # #773: this file's `properties` set must equal ALLOWED_NARRATIVE exactly
+    # -- including rule_rationale, which stays accepted (a documented-safe
+    # `finalize` retry on an old committed session re-validates its *stored*
+    # narrative, and dropping the property would fail that retry for a
+    # session that recorded one) even though no renderer consumes it on any
+    # route. See test_authoring_contract_narrative_fields_match_what_each_
+    # route_renders in test_review_v2.py for that half of the contract.
+    assert set(schema["properties"]) == cr.ALLOWED_NARRATIVE, \
+        f"schema properties and ALLOWED_NARRATIVE must stay in lockstep: " \
+        f"{set(schema['properties'])!r} vs {cr.ALLOWED_NARRATIVE!r}"
     assert "pattern" not in schema["properties"]["honesty"]["additionalProperties"]
     # The schema now names the authoritative gate.
     assert "validate_narrative" in schema.get("$comment", ""), "schema must document the code gate"
@@ -277,6 +299,89 @@ def test_code_gate_catches_what_the_old_ascii_pattern_missed():
         assert "contains digits" in str(exc)
     else:
         raise AssertionError("code gate failed to reject full-width digits")
+
+
+# ─────────────── H. #775: the rejection message quotes the excerpt ─────────────
+# Before #775 a rejection named only the rule class ("CJK numeral with a
+# measure word (e.g. 成/股/次)"), leaving the author to guess which of several
+# dozen characters in a multi-sentence paragraph tripped it — a guess that
+# cost a full `preview` round trip per attempt. The message must now also
+# quote the matched excerpt with a little surrounding context.
+
+def test_numeric_claim_reason_quotes_the_matched_excerpt():
+    reason = cr.numeric_claim("這期表現不錯，佔了三成五的比重讓人擔心，但整體還算穩健。")
+    assert reason is not None
+    assert "三成五" in reason, f"reason must quote the matched excerpt, got: {reason}"
+
+
+def test_validate_narrative_message_quotes_the_excerpt_for_a_numeric_claim():
+    long_text = ("這是一段比較長的敘述，先講清楚背景，再提到佔了三成五的比重，"
+                 "最後收在整體的結論裡，避免一次講太多重點。")
+    try:
+        cr.validate_narrative(_narr(synthesis=long_text))
+    except cr.RenderError as exc:
+        assert "三成五" in str(exc), f"validate_narrative's message must name the excerpt: {exc}"
+    else:
+        raise AssertionError("expected a numeric-claim rejection")
+
+
+def test_validate_narrative_digit_message_also_quotes_the_excerpt():
+    """The plain ASCII/Unicode digit-ban path (re.search(r"\\d+", ...), not
+    numeric_claim) gets the same treatment — the acceptance criteria's "the
+    rejection message" is not scoped to spelled-out claims only."""
+    text = "這次報酬大約 30% 左右，算是不錯的結果，值得記錄下來。"
+    try:
+        cr.validate_narrative(_narr(mirror=text))
+    except cr.RenderError as exc:
+        assert "contains digits" in str(exc) and "30" in str(exc), \
+            f"digit-ban message must also name the excerpt: {exc}"
+    else:
+        raise AssertionError("expected a digit rejection")
+
+
+def test_excerpt_is_windowed_not_the_whole_field():
+    # A long field must not dump its entire text into the message — only a
+    # small window around the match, per the acceptance criteria ("a small
+    # amount of surrounding context").
+    padding = "填充文字。" * 40
+    text = f"{padding}佔了三成五的比重{padding}"
+    reason = cr.numeric_claim(text)
+    assert reason is not None
+    assert len(reason) < len(text), "the quoted excerpt must not repeat the entire field"
+    assert "三成五" in reason
+
+
+# ─────────────── I. #775: the two false positives the issue names ──────────────
+
+def test_which_one_interrogative_is_not_a_quantity_claim():
+    """哪一 + classifier ("which one") is part of a question word, not a
+    count — fixed by stripping the two-character stem before scanning
+    (_ZH_IDIOMS), which generalizes over every classifier it can pair with
+    rather than enumerating 哪一次/哪一天/哪一個/… one at a time."""
+    for text in ("你想問的是哪一次？", "這發生在哪一天。", "先想清楚是哪一個。",
+                 "問題出在哪一年。", "先確認是哪一股。", "你說的是哪一檔。"):
+        assert cr.numeric_claim(text) is None, f"false positive: {text!r}"
+        cr.validate_narrative(_narr(mirror=text))  # must not raise
+
+
+def test_together_adverb_stays_a_deliberate_rejection_not_an_idiom():
+    """一塊/一块 ("together") is the issue's other named false positive, but it
+    is NOT added to _ZH_IDIOMS: 塊/块 doubles as the money unit this table
+    must keep catching (賺了一塊 / CJK_CLAIMS' "两块" two numerals over), and
+    stripping the two-character form would silently reopen that false-
+    negative hole to fix a false positive — the wrong trade per this file's
+    own documented design bias. #775's actual fix for this construction is
+    the quoted excerpt: the message now names precisely what to reword,
+    turning a search into a one-glance read, rather than exempting it."""
+    for text in ("我們決定一塊。", "把責任攬在一塊。"):
+        reason = cr.numeric_claim(text)
+        assert reason is not None, \
+            f"{text!r} must stay rejected — it is a documented non-fix, not an exemption"
+        assert "一塊" in reason, f"the rejection must still name the excerpt: {reason}"
+    # The false-negative hole this non-fix protects against: a genuine money
+    # quantity using the same unit must still be caught.
+    assert cr.numeric_claim("賺了兩塊。") is not None, \
+        "一塊 staying unexempted must not accidentally exempt other numerals + 塊"
 
 
 # ─────────────────────────── runner ───────────────────────────
