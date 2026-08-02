@@ -337,40 +337,72 @@ Do not turn this into a universal cash, position-size, tier, or stop-loss
 threshold. The purpose is to test whether a bounded historical intervention
 changes the decision process.
 
-## 9. What the owner-live A/B test actually does
+## 9. Validation without a new harness
 
-This test happens **after** the required readback consumer exists. It is not a
+This feature does not justify a separate memory-evaluation framework. The
+validation surface should be the same surface the user will actually consume.
+
+Use, in order:
+
+1. **Focused unit and contract tests** for identity, provenance, bounded ordering,
+   truncation, idempotency, corruption, and fail-closed behavior.
+2. **One existing synthetic route fixture** proving the current review or
+   `consider` output changes because a bounded memory item is present. The
+   mutation is removal of that reader or memory row; the named historical
+   sentence/question must disappear.
+3. **One private owner-live trajectory** after the consumer exists, recording
+   only a non-sensitive verdict about whether the readback changed the decision
+   process.
+
+Do not build:
+
+- a separate multi-model comparison harness;
+- a memory-specific campaign runner, dashboard, or scoring framework;
+- a second route simulator beside the existing review/consider fixtures;
+- a durable `DecisionMemoryPacket` store merely so a harness can inspect it;
+- a generic profile benchmark before one real consumer exists;
+- a broad A/B platform for a one-slice product question.
+
+The current #718 QA front owns M1 correction-turn trace and accounting. This
+memory work must not extend, depend on, or compete with that harness. Reuse an
+existing trace/receipt only if it already fits after landing; otherwise one
+focused fixture plus one owner verdict is sufficient.
+
+The only evaluation question is:
+
+> Did correctly qualified history cause one useful, named difference in the
+> real route without adding false claims or extra ceremony?
+
+If not, remove or narrow the memory feature rather than expanding the harness.
+
+## 10. What the owner-live comparison actually does
+
+This check happens **after** the required readback consumer exists. It is not a
 request to run three models, not a request to copy a private repository, and not
 a prerequisite for this docs-only decision.
 
 Use one real, private decision locally and freeze the same current inputs for
-both arms:
+the two readings:
 
 - same recorded book and `PortfolioBasis`;
 - same contemplated action/premise;
 - same prices and public-fact allowance;
 - same model/host where practical.
 
-### Arm A — current route
+This does not require two automated arms. Read the current route once without
+the new memory input, then once with the bounded readback, or compare the
+pre-change synthetic fixture with the post-change fixture. Record only whether
+the new history caused a named difference.
 
-Normal `consider`/decision route using current state, current reason, current
-strategy/rule collisions, and no new historical packet.
+What matters:
 
-### Arm B — readback-enabled route
-
-The identical frozen evaluation plus the bounded `DecisionMemoryPacket`.
-
-### What to compare
-
-Do not score prose quality or answer length alone. Record whether Arm B:
-
-- correctly recalls a prior user statement without turning interpretation into verbatim;
-- surfaces one relevant prior outcome or unresolved verdict;
-- avoids re-asking a known question;
-- changes the key question or challenge;
-- changes a concrete decision-process action: proceed, cancel, delay, reduce,
+- correctly recalling a prior user statement without turning interpretation into verbatim;
+- surfacing one relevant prior outcome or unresolved verdict;
+- avoiding a repeated known question;
+- changing the key question or challenge;
+- changing a concrete decision-process action: proceed, cancel, delay, reduce,
   collect evidence, or revise the stated reason;
-- creates a later verdict that can determine whether the intervention helped.
+- creating a later verdict that can determine whether the intervention helped.
 
 Public GitHub evidence records only a synthetic fixture or a non-sensitive
 owner verdict. No real holding, amount, date, motive, or answer enters this
@@ -389,7 +421,7 @@ Revise or remove it when:
 - maintenance cost exceeds the observed decision value;
 - it turns a contextual pattern into a permanent personality label.
 
-## 10. Ordered rollout
+## 11. Ordered rollout
 
 The ordering below is architectural. It does not override #27's current M1
 repair queue.
@@ -397,7 +429,7 @@ repair queue.
 ### Cut 0 — this design record
 
 - define the object boundaries and ownership map;
-- no schema, engine, route, or persistence change.
+- no schema, engine, route, persistence, or harness change.
 
 ### Cut 1 — complete one self-report readback loop
 
@@ -405,20 +437,21 @@ After an owner decision reactivates M2:
 
 - finish the #403/#450 public writer-reader integration;
 - prove a prior rationale changes the next relevant review;
+- use focused tests on the existing review route;
 - keep `consider` unchanged in this cut.
 
 ### Cut 2 — give `verdicts.jsonl` its first reader
 
 - bounded query over replayable verdicts;
 - one user-visible sentence available only from cross-period history;
-- no profile claim yet.
+- no profile claim and no new harness.
 
 ### Cut 3 — one pre-trade DecisionMemoryPacket
 
 - consume the shared readback contracts;
-- one synthetic add/new-risk decision class;
+- one synthetic add/new-risk decision class in the existing route fixtures;
 - no generic profile onboarding or card section;
-- run the private owner-live A/B and record only a safe verdict.
+- run one private owner-live trajectory and record only a safe verdict.
 
 ### Cut 4 — optional `ProfileClaim` projection
 
@@ -436,7 +469,7 @@ Build on #650 and #475 only after opportunity denominators and outcome history
 exist. Report rule eligibility, adherence, and observed outcomes. Do not invent
 a full-portfolio counterfactual return.
 
-## 11. Ownership map
+## 12. Ownership map
 
 | Concern | Existing owner |
 |---|---|
@@ -447,11 +480,13 @@ a full-portfolio counterfactual return.
 | Standing user strategy/rule lifecycle | #650 |
 | Staged product scope and later rule learning | #475 |
 | Current implementation queue | #27 |
+| M1 QA trace/accounting harness | #718; not a dependency of this memory design |
 
-Do not open a parallel memory epic. New work belongs to these owners unless a
-measured failure proves a distinct user outcome has no home.
+Do not open a parallel memory epic or validation platform. New work belongs to
+these owners unless a measured failure proves a distinct user outcome has no
+home.
 
-## 12. Engine, agent, and user authority
+## 13. Engine, agent, and user authority
 
 ### Engine owns
 
@@ -482,7 +517,32 @@ verbatim, or promote its proposal into user strategy.
 - activation of an improvement focus;
 - whether a proposed memory interpretation is accepted as useful context.
 
-## 13. Non-goals
+## 14. Simplification rules
+
+This contract simplifies the system by preferring composition over new
+abstractions:
+
+- reuse canonical events; do not copy them into a profile biography;
+- reuse #650 standing rules before adding a Strategy store;
+- reuse one temporary rule/experiment before adding an ImprovementFocus store;
+- derive `DecisionMemoryPacket` ephemerally; never persist it;
+- add `ProfileClaim` only after direct readback proves repeated synthesis is
+  required;
+- one consumer before another writer;
+- one active improvement focus, not a program of concurrent interventions;
+- one focused fixture and one owner verdict, not a harness.
+
+Every proposed object or tool must answer:
+
+1. Which current user-visible failure does it solve?
+2. Why can the existing event, rule, reader, or route not solve it?
+3. Which real consumer reads it immediately?
+4. Which existing test surface proves the change?
+5. What can be deleted or avoided because this object exists?
+
+If the answer to question 2 or 3 is unclear, do not add the abstraction.
+
+## 15. Non-goals
 
 - no implicit reading, indexing, or mirroring of a private research repository;
 - no universal investment ontology or generic memory graph;
@@ -491,9 +551,10 @@ verbatim, or promote its proposal into user strategy.
 - no automatic strategy creation from observed behavior;
 - no automatic buy/sell verdict, target price, or market forecast;
 - no new store before a real reader and consumer are named;
+- no memory-specific harness, campaign runner, dashboard, or scoring system;
 - no activation of M2 while #27 keeps M1 repair as the only execution queue.
 
-## 14. Acceptance for this design decision
+## 16. Acceptance for this design decision
 
 This document is useful when a future contributor can answer, before coding:
 
@@ -503,7 +564,8 @@ This document is useful when a future contributor can answer, before coding:
 4. Which current route will read it?
 5. What user-visible behavior changes when the reader is present?
 6. How is the change later reconciled or retired?
-7. What privacy-safe evidence proves it worked?
+7. What existing test surface proves it without a new harness?
+8. What privacy-safe evidence proves it worked?
 
 If those questions cannot be answered, the proposed memory feature is not yet
 an executable slice.
