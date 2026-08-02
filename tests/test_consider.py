@@ -2067,9 +2067,22 @@ def test_a_different_cash_anchor_the_same_day_produces_a_different_evaluation_id
     superseding the first: a later --resolve naming that id would land on
     whichever row happened to be folded last, not necessarily the one the
     user meant. The anchor's as_of (2026-07-26) postdates every row in
-    sample_momentum.csv, so no other cash flow is counted after it and the
-    frozen cash balance equals the anchor amount exactly -- a clean,
-    unambiguous discriminator between the two calls."""
+    sample_momentum.csv, so no historical cash flow is counted after it and
+    the frozen cash balance is the anchor amount net of exactly the premise's
+    own cost (5 * $130 = $650) -- a clean, unambiguous discriminator between
+    the two calls.
+
+    The premise's own deduction landing here at all is #751: an anchor dated
+    on/after the premise -- as this one deliberately is, to isolate the
+    anchor from every other cash flow -- used to make
+    `trade_recap._cash_balance_one_ccy`'s date filter skip the hypothetical
+    trade's own flow too, so `after.cash.balance` came back as the anchor
+    amount verbatim (0.0 / 1000.0) instead of net of the buy. That silent
+    non-deduction is exactly what #751 fixed; this test's own fixture was
+    unknowingly relying on the bug for a "clean" number, and the two
+    literals below are what the same scenario now correctly produces -- see
+    tests/test_consequence.py's `_premise_row` cases for the fix's direct
+    coverage."""
     with tempfile.TemporaryDirectory() as tmp:
         premise = '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'
         first = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
@@ -2079,8 +2092,8 @@ def test_a_different_cash_anchor_the_same_day_produces_a_different_evaluation_id
                           "--premise", premise,
                           "--cash", '{"as_of": "2026-07-26", "amount": 1000, "currency": "USD"}'))
 
-        assert first["evaluation"]["consequence"]["after"]["cash"]["balance"] == 0.0
-        assert second["evaluation"]["consequence"]["after"]["cash"]["balance"] == 1000.0
+        assert first["evaluation"]["consequence"]["after"]["cash"]["balance"] == -650.0
+        assert second["evaluation"]["consequence"]["after"]["cash"]["balance"] == 350.0
         id_1 = first["evaluation"]["evaluation_id"]
         id_2 = second["evaluation"]["evaluation_id"]
         assert id_1 != id_2, \
@@ -3786,6 +3799,187 @@ def test_sector_display_is_absent_rather_than_empty_when_there_is_no_sector():
         # "there was one and it was not localized".
         payload = _sector_consider(tmp, "en")
         assert payload["sector_display"], "this fixture does have a largest sector"
+
+
+# ───── P. cash anchor default from the last finalized review (#756) ─────
+#
+# Without --cash, `cmd_consider` used to leave `cash_anchor` at None no matter
+# what the last finalized review in this root already anchored, so the very
+# next call after a user declared their balance forgot it and fell back to an
+# unanchored csv_sum guess -- on a snapshot-derived book that guess is the
+# negative of the account's entire cost basis. `_fallback_cash_anchor` reads
+# `last_state.json`'s own `cash` (never the writer -- `_write_last_state`
+# mirrors its real shape, the same split `_FROZEN_STATE`'s tests above take)
+# and restates it "as of `date_end`", which is exact rather than approximate:
+# every cash flow up to `date_end` is already folded into that balance.
+#
+# `_write_last_state` seeds `last_state.json` directly with the anchored
+# `cash` shape `trade_recap.cash_position` actually produces (verified against
+# a real prepare/add-cash/finalize run, not guessed) -- {balance, by_currency,
+# recent_net_deposit, reliable, source, weight}. None of these tests need a
+# CSV; the ledger alone gives `consider` a usable current book.
+
+_ANCHORED_CASH_STATE = {
+    "date_end": "2026-01-05",
+    "cash": {"balance": 5000.0,
+            "by_currency": {"USD": {"balance": 5000.0, "reliable": True, "source": "anchored"}},
+            "recent_net_deposit": 0.0, "reliable": True, "source": "anchored", "weight": 0.333},
+}
+
+
+def _one_holding_ledger(tmp):
+    _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+        _trade_event("2026-01-05", "AAA", "buy", 10, 100.0),
+    ])
+
+
+def test_fallback_cash_anchor_is_none_with_no_finalized_review():
+    """The base case: nothing to fall back to, so the function must say so
+    plainly rather than fabricating a zero anchor."""
+    with tempfile.TemporaryDirectory() as tmp:
+        assert review_engine._fallback_cash_anchor(tmp) is None
+
+
+def test_fallback_cash_anchor_is_none_when_the_last_reviews_cash_was_itself_unreliable():
+    """The last review's own cash reading being an unanchored csv_sum guess
+    is not a firmer fact than this call would derive on its own -- promoting
+    it into a synthetic anchor would misrepresent an approximation as a
+    recorded one, which is the opposite of #756's fix (AGENTS.md boundary 6:
+    fail closed rather than answer with false confidence)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = dict(_ANCHORED_CASH_STATE,
+                    cash={"balance": -1234.0,
+                          "by_currency": {"USD": {"balance": -1234.0, "reliable": False,
+                                                  "source": "csv_sum"}},
+                          "recent_net_deposit": 0.0, "reliable": False, "source": "csv_sum",
+                          "weight": None})
+        _write_last_state(tmp, state)
+        assert review_engine._fallback_cash_anchor(tmp) is None
+
+
+def test_fallback_cash_anchor_is_none_when_only_the_aggregate_flag_says_unreliable():
+    """Isolates the aggregate `cash.reliable` gate from the per-currency
+    filter below it: every currency bucket here individually claims
+    `reliable: true`, so only the top-level flag can be the reason this
+    returns None. `trade_recap.cash_position` never actually produces this
+    combination (the aggregate is an AND over every currency's own flag,
+    matching the sibling test below), but a `partial` multi-currency read or
+    a last_state.json from a different writer might, and the aggregate gate
+    must refuse on its own rather than depend on the per-currency filter to
+    quietly catch what it missed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = dict(_ANCHORED_CASH_STATE, cash={
+            "balance": 5000.0,
+            "by_currency": {"USD": {"balance": 5000.0, "reliable": True, "source": "anchored"}},
+            "recent_net_deposit": 0.0, "reliable": False, "source": "partial", "weight": None})
+        _write_last_state(tmp, state)
+        assert review_engine._fallback_cash_anchor(tmp) is None
+
+
+def test_fallback_cash_anchor_reshapes_the_anchored_balance_with_date_end_as_of():
+    """The positive case: a genuinely anchored last review reshapes into the
+    {currency, amount, as_of} list --cash itself accepts, dated at the
+    review's own date_end rather than the anchor's original (unstored)
+    as_of."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_last_state(tmp, _ANCHORED_CASH_STATE)
+        assert review_engine._fallback_cash_anchor(tmp) == [
+            {"currency": "USD", "amount": 5000.0, "as_of": "2026-01-05"}]
+
+
+def test_fallback_cash_anchor_only_carries_forward_reliable_currency_buckets():
+    """Defense in depth: `trade_recap.cash_position` never actually produces
+    an aggregate `reliable: true` beside a per-currency `reliable: false`
+    (the aggregate is an AND over every currency's own flag), but this reader
+    does not lean on that invariant holding forever across every writer that
+    has ever touched last_state.json -- it re-checks per currency and drops
+    any bucket that, on its own, was never anchored."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = dict(_ANCHORED_CASH_STATE, cash={
+            "balance": 5000.0,
+            "by_currency": {
+                "USD": {"balance": 5000.0, "reliable": True, "source": "anchored"},
+                "TWD": {"balance": 3000.0, "reliable": False, "source": "csv_sum"},
+            },
+            "recent_net_deposit": 0.0, "reliable": True, "source": "anchored", "weight": 0.5})
+        _write_last_state(tmp, state)
+        assert review_engine._fallback_cash_anchor(tmp) == [
+            {"currency": "USD", "amount": 5000.0, "as_of": "2026-01-05"}]
+
+
+def test_consider_without_cash_uses_the_last_finalized_reviews_anchor():
+    """End-to-end repro of #756 itself, through the real CLI: a ledger with
+    one $1000 buy and a last_state.json anchored at $5000 (as if add-cash had
+    just run). Without --cash, `before.cash` must read the anchored $5000 --
+    not the csv_sum -$1000 the ledger alone would produce -- and `after.cash`
+    must (thanks to #751, fixed in the same change) correctly deduct the
+    premise's own $500 cost: 5000 - 500 = 4500."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _one_holding_ledger(tmp)
+        _write_last_state(tmp, _ANCHORED_CASH_STATE)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--premise", '{"ticker": "AAA", "side": "buy", '
+                                            '"price": 100.0, "qty": 5}'))
+        cash = payload["evaluation"]["consequence"]
+        assert cash["before"]["cash"] == {"balance": 5000.0, "reliable": True,
+                                          "source": "anchored",
+                                          "weight": cash["before"]["cash"]["weight"]}
+        assert abs(cash["after"]["cash"]["balance"] - 4500.0) < 1e-9
+        assert cash["after"]["cash"]["reliable"] is True
+        assert "cash_unreliable" not in cash["disclosures"]
+
+
+def test_consider_without_cash_still_deducts_when_the_fallback_lands_on_the_premise_date():
+    """Where #751 and #756 actually meet: the fallback anchor is dated at
+    `date_end` (here 2026-01-05), and an agent who dates the hypothetical to
+    that same day -- the most careful reading, matching the book's own last
+    known instant -- lands exactly on #751's equal-dates trigger. Both fixes
+    must hold together: the anchor still resolves (#756) and the premise's
+    own cost is still deducted despite the exact-match date (#751).
+    5000 - 500 = 4500, not 5000."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _one_holding_ledger(tmp)
+        _write_last_state(tmp, _ANCHORED_CASH_STATE)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--premise", '{"ticker": "AAA", "side": "buy", "price": 100.0, '
+                                            '"qty": 5, "date": "2026-01-05"}'))
+        cash = payload["evaluation"]["consequence"]
+        assert cash["before"]["cash"]["balance"] == 5000.0
+        assert abs(cash["after"]["cash"]["balance"] - 4500.0) < 1e-9, (
+            "the fallback anchor landing exactly on the premise date must not silently "
+            f"reproduce #751: {cash['after']['cash']}")
+
+
+def test_an_explicit_cash_flag_still_overrides_the_fallback():
+    """A caller who does supply --cash is stating a fresher fact than
+    whatever the last review froze, and must win outright -- the fallback
+    must never blend with or be preferred over an explicit anchor."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _one_holding_ledger(tmp)
+        _write_last_state(tmp, _ANCHORED_CASH_STATE)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--premise", '{"ticker": "AAA", "side": "buy", '
+                                            '"price": 100.0, "qty": 5}',
+                               "--cash", '{"currency": "USD", "amount": 9999, '
+                                         '"as_of": "2026-01-06"}'))
+        before_cash = payload["evaluation"]["consequence"]["before"]["cash"]
+        assert before_cash["balance"] == 9999.0, \
+            f"explicit --cash must win over the last review's anchor, got {before_cash}"
+
+
+def test_consider_without_cash_or_any_prior_review_still_falls_back_to_csv_sum():
+    """Regression guard: a root nothing has ever been finalized in has no
+    fallback to offer, so the pre-#756 behavior -- an honestly unreliable
+    csv_sum guess, not a refusal -- must be exactly what a bare `consider`
+    still produces."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _one_holding_ledger(tmp)
+        payload = _ok(_run_env(_offline_env(), "consider", "--root", tmp,
+                               "--premise", '{"ticker": "AAA", "side": "buy", '
+                                            '"price": 100.0, "qty": 5}'))
+        before_cash = payload["evaluation"]["consequence"]["before"]["cash"]
+        assert before_cash == {"balance": -1000.0, "reliable": False,
+                               "source": "csv_sum", "weight": None}
 
 
 def _tests():
