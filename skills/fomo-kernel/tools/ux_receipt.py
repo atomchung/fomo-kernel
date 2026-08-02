@@ -58,6 +58,11 @@ one `resolution_presented` after it, whose `workflow_state` records the
 user's word and never a broker execution. `consider` creates no session, so
 the trace is keyed by the engine's own `evaluation_id`, the way a refresh
 trace is keyed by its `refresh_id`.
+
+Since #767, `--challenge-check-file` also carries the response's own
+`sector_display` (#746), and the fidelity evidence includes whether any
+canonical sector literal named in the presented answer agrees with it — see
+`_sector_fidelity` for the language-independent comparison this performs.
 """
 
 from __future__ import annotations
@@ -73,6 +78,19 @@ from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
+# Same relative-to-__file__ path computation design_bundle.py uses to find the
+# engine, then a plain sys.path insertion (development-guide.md: "prefer
+# generating a synchronized surface over hand-mirroring it" -- design_bundle.py
+# is the named precedent). #767 needs card_renderer.SECTOR_ID_BY_LEGACY_LABEL,
+# the single source of truth for which sector literals are canonical; hand-
+# copying a 15-entry table that grows as the classifier does is exactly the
+# drift risk that rule exists to prevent. card_renderer.py is itself stdlib-only
+# (no yfinance/pandas), so importing it adds no runtime dependency.
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent
+ENGINE_DIR = TOOLS_DIR.parent / "engine"
+sys.path.insert(0, str(ENGINE_DIR))
+import card_renderer  # noqa: E402
+
 
 VERSION = 2
 DEFAULT_STATE_ROOT = "~/.trade-coach"
@@ -81,9 +99,12 @@ DEFAULT_STATE_ROOT = "~/.trade-coach"
 def _default_state_root() -> str:
     """Mirror engine/session.default_root(): TRADE_COACH_HOME, else ~/.trade-coach.
 
-    This tool is deliberately stdlib-only, so the one-line resolution is
-    mirrored here instead of importing the engine. Resolved at invocation time
-    (not parser-build time) so the CLI honors the environment it runs in.
+    review.py itself stays unimported here -- it is the CLI-oriented engine
+    entry point with its own optional runtime dependencies, not a small
+    presentation table, so the one-line resolution is mirrored rather than
+    imported. (card_renderer above is a different case; see its own comment.)
+    Resolved at invocation time (not parser-build time) so the CLI honors the
+    environment it runs in.
     """
     return os.environ.get("TRADE_COACH_HOME", DEFAULT_STATE_ROOT)
 QUESTION_MODES = ("native_options", "plain_text")
@@ -576,6 +597,57 @@ def _number_present(text, value, percent_form=True):
     return False
 
 
+def _sector_fidelity(sector_display: object, presented_text: str) -> dict:
+    """Compute privacy-safe sector-naming evidence for `evaluation_presented` (#767).
+
+    `sector_display` is the check-file's own copy of the `sector_display`
+    block `cmd_consider` emits beside the row whenever the book has a largest
+    sector to name (#746) — `{}` when it did not. This performs the same kind
+    of comparison `_number_present`'s callers already make and never a lookup
+    against an external per-language table: does `presented_text` contain any
+    of `card_renderer.SECTOR_ID_BY_LEGACY_LABEL`'s own canonical (zh) sector
+    literals — the raw engine labels `trade_recap.SECTOR_MAP` stores, and the
+    exact strings `card_renderer.localized_sector` exists to keep out of a
+    localized answer — that is not one of `sector_display`'s own declared
+    values. A `zh-TW` answer whose `sector_display` legitimately *is* that
+    literal (zh-TW's own copy catalog maps a sector back to the same string)
+    passes; any other language whose answer leaked the raw label does not. A
+    label the engine does not recognize (a user-supplied driver-map category)
+    is never one of the canonical literals, so it can never mismatch —
+    `localized_sector`'s own passthrough rule is respected by construction,
+    not re-implemented here.
+
+    No comparison here is keyed on a caller-declared language: the canonical
+    literal set is fixed and this response's own `sector_display` is the only
+    thing a found literal is ever checked against.
+    """
+    if not isinstance(sector_display, dict):
+        raise ReceiptError("--challenge-check-file sector_display must be an object")
+    extra = sorted(set(sector_display) - {"before", "after"})
+    if extra:
+        raise ReceiptError(
+            "--challenge-check-file sector_display has unsupported keys: "
+            f"{', '.join(extra)}")
+    emitted = set()
+    for side in ("before", "after"):
+        if side not in sector_display:
+            continue
+        value = sector_display[side]
+        if not isinstance(value, str) or not value.strip():
+            raise ReceiptError(
+                f"--challenge-check-file sector_display.{side} must be non-empty "
+                "text when present")
+        emitted.add(value)
+    mismatches = sorted(
+        literal for literal in card_renderer.SECTOR_ID_BY_LEGACY_LABEL
+        if literal in presented_text and literal not in emitted
+    )
+    return {
+        "sector_display_expected": bool(emitted),
+        "sector_display_verbatim": not mismatches,
+    }
+
+
 def _challenge_fidelity(path: str | None) -> dict:
     """Compute privacy-safe challenge-delivery evidence for `evaluation_presented`.
 
@@ -585,7 +657,10 @@ def _challenge_fidelity(path: str | None) -> dict:
 
         {"challenge": {<the `challenge` block, verbatim from the stdout of
                         the `consider` call this trace records>},
-         "presented_text": "<the exact answer text shown to the user>"}
+         "presented_text": "<the exact answer text shown to the user>",
+         "sector_display": {<the `sector_display` block from that same
+                             stdout, verbatim -- {} when the response
+                             carried none>}}
 
     The challenge is emitted by `cmd_consider` and never stored, so the block
     here must be captured from that call's own stdout — there is no copy on
@@ -594,20 +669,25 @@ def _challenge_fidelity(path: str | None) -> dict:
     after the fact: the challenge is a pure function of the persisted
     evaluation row, so `challenge_hash` (sha256 of the block serialized with
     sorted keys, compact separators, ensure_ascii=False) can be recomputed
-    from `trade_evaluations.jsonl` by anyone holding the root.
+    from `trade_evaluations.jsonl` by anyone holding the root. `sector_display`
+    (#746) is the same kind of emitted-beside-the-row, never-stored value, for
+    the same reason — see `_consider_sector_display` in `review.py`.
 
     What is machine-checked, and what is not (#293's split, restated for this
     surface): the user's `quote_verbatim` sentences and every rule collision's
     own `detail.text` are owed verbatim, so containment decides them; the
     load-bearing numbers (NUMERIC_FACT_TOPICS) and excluded-holding tickers
-    are language-independent, so digit/containment scans decide those. An
-    engine-vocabulary string (`cost_basis`, `unverified`), a boolean trigger,
-    or an `unchecked` key reaches a human as prose in the conversation's own
-    language, which no offline containment can judge — that half is the owner
-    `comprehension` axis's job, and `must_state_total`/`unchecked_total` are
-    persisted so the verdict is given against a stated obligation size rather
-    than from memory. Only booleans, counts and one hash are returned; the
-    raw challenge and the raw presented text are read once and discarded.
+    are language-independent, so digit/containment scans decide those; and,
+    since #767, whether any canonical sector literal named in the answer
+    agrees with this response's own `sector_display` is decided the same
+    language-independent way — see `_sector_fidelity`. An engine-vocabulary
+    string (`cost_basis`, `unverified`), a boolean trigger, or an `unchecked`
+    key reaches a human as prose in the conversation's own language, which no
+    offline containment can judge — that half is the owner `comprehension`
+    axis's job, and `must_state_total`/`unchecked_total` are persisted so the
+    verdict is given against a stated obligation size rather than from memory.
+    Only booleans, counts and one hash are returned; the raw challenge, the
+    raw sector_display and the raw presented text are read once and discarded.
     """
     if not path:
         raise ReceiptError("evaluation_presented requires --challenge-check-file")
@@ -678,6 +758,22 @@ def _challenge_fidelity_payload(payload: dict) -> dict:
     presented_text = payload.get("presented_text")
     if not isinstance(presented_text, str) or not presented_text.strip():
         raise ReceiptError("--challenge-check-file presented_text must be a non-empty string")
+    # #767: required, not optional, the same "paste less of the stdout must
+    # never shrink what the answer owes" reasoning the challenge's own five
+    # keys already carry. A silently omitted key would read as "nothing to
+    # check" rather than as the missing evidence it actually is (#429, #480)
+    # -- so a check file that never mentions sector_display is refused here,
+    # not treated as a response that carried none. That legitimate case is
+    # instead spelled `"sector_display": {}`, mirroring `_consider_sector_display`
+    # (review.py)'s own empty-dict-means-no-largest-sector contract.
+    if "sector_display" not in payload:
+        raise ReceiptError(
+            "--challenge-check-file is missing sector_display; paste the "
+            "sector_display block from the consider call's own output "
+            "verbatim -- an empty object when this response named no largest "
+            "sector -- so a sector name the answer states can be checked "
+            "against what this response actually emitted")
+    sector_evidence = _sector_fidelity(payload["sector_display"], presented_text)
 
     quotes = []
     for entry in quote_verbatim:
@@ -727,6 +823,7 @@ def _challenge_fidelity_payload(payload: dict) -> dict:
         "facts_missing": missing_count,
         "must_state_total": len(must_state),
         "unchecked_total": len(challenge["unchecked"]),
+        **sector_evidence,
     }
 
 
@@ -1163,6 +1260,7 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 "version", "event", "session_id", "ts",
                 "challenge_hash", "quotes_expected", "quotes_verbatim",
                 "facts_checked", "facts_missing", "must_state_total", "unchecked_total",
+                "sector_display_expected", "sector_display_verbatim",
             }
             extra = sorted(set(row) - allowed)
             if extra:
@@ -1172,7 +1270,10 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 )
             # #544: like #293's grounding evidence, there is no grandfathered
             # legacy state — the route and the event were born together, so
-            # absent or false evidence both fail closed.
+            # absent or false evidence both fail closed. #767's sector-fidelity
+            # pair joins that same no-exemption contract rather than starting
+            # a new one: it is evidence on the event #544 already born
+            # fail-closed, not a separate feature with its own migration path.
             digest = row.get("challenge_hash")
             if not isinstance(digest, str) or not SURFACE_DIGEST.fullmatch(digest):
                 errors.append(
@@ -1187,6 +1288,17 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
                 errors.append(
                     f"row {index} evaluation_presented did not prove the user's own words "
                     "were reproduced verbatim (quotes_verbatim must be true)"
+                )
+            if not isinstance(row.get("sector_display_expected"), bool):
+                errors.append(
+                    f"row {index} evaluation_presented is missing sector-fidelity evidence "
+                    "(sector_display_expected must be recorded as true or false)"
+                )
+            if row.get("sector_display_verbatim") is not True:
+                errors.append(
+                    f"row {index} evaluation_presented did not prove the answer named no "
+                    "sector disagreeing with this response's own sector_display "
+                    "(sector_display_verbatim must be true)"
                 )
             counts = {key: row.get(key) for key in
                       ("facts_checked", "facts_missing", "must_state_total", "unchecked_total")}
@@ -1662,8 +1774,9 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument(
         "--challenge-check-file",
         help="evaluation_presented only: path to a transient JSON file pairing the "
-             "consider call's own emitted challenge block with the exact answer text "
-             "shown to the user (never persisted; see _challenge_fidelity)",
+             "consider call's own emitted challenge and sector_display blocks with "
+             "the exact answer text shown to the user (never persisted; see "
+             "_challenge_fidelity)",
     )
     event.add_argument(
         "--workflow-state", choices=WORKFLOW_STATES,

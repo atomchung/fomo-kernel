@@ -9,6 +9,7 @@ deliberately not re-tested here.
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import pathlib
@@ -233,11 +234,19 @@ SYNTHETIC_ANSWER = (
     "checked."
 )
 
+# #767: a plausible non-empty `sector_display`, shaped exactly like what a
+# live `consider` response emits beside SYNTHETIC_CHALLENGE (#746). SYNTHETIC_
+# ANSWER never names a sector, so the sector-fidelity comparison below is a
+# vacuous pass by default -- tests that exercise it build their own payload.
+SYNTHETIC_SECTOR_DISPLAY = {"before": "software and cloud", "after": "semiconductors"}
+
 
 def evaluation_row(**overrides):
     """An `evaluation_presented` row as `_challenge_fidelity` would emit it
-    for SYNTHETIC_CHALLENGE/SYNTHETIC_ANSWER: five machine-checkable facts
-    (two numeric, the cash magnitude, the rule text, the ticker), all found.
+    for SYNTHETIC_CHALLENGE/SYNTHETIC_ANSWER/SYNTHETIC_SECTOR_DISPLAY: five
+    machine-checkable facts (two numeric, the cash magnitude, the rule text,
+    the ticker), all found, and a non-empty sector_display no canonical
+    literal in the answer disagrees with (#767).
     """
     value = {
         "challenge_hash": "b" * 64,
@@ -247,6 +256,8 @@ def evaluation_row(**overrides):
         "facts_missing": 0,
         "must_state_total": 9,
         "unchecked_total": 5,
+        "sector_display_expected": True,
+        "sector_display_verbatim": True,
     }
     value.update(overrides)
     return row("evaluation_presented", **value)
@@ -1654,7 +1665,8 @@ def test_a_consider_trace_can_reach_credible_timing_integrity():
 
 def challenge_check_payload(**overrides):
     payload = {"challenge": json.loads(json.dumps(SYNTHETIC_CHALLENGE)),
-               "presented_text": SYNTHETIC_ANSWER}
+               "presented_text": SYNTHETIC_ANSWER,
+               "sector_display": json.loads(json.dumps(SYNTHETIC_SECTOR_DISPLAY))}
     payload.update(overrides)
     return payload
 
@@ -1723,7 +1735,8 @@ def test_challenge_fidelity_on_a_context_free_call():
     challenge = challenge_check_payload()["challenge"]
     challenge["quote_verbatim"] = []
     challenge["unchecked"] = ["liquidity", "valuation", "tax", "position_fit"]
-    evidence = fidelity_of({"challenge": challenge, "presented_text": SYNTHETIC_ANSWER})
+    evidence = fidelity_of({"challenge": challenge, "presented_text": SYNTHETIC_ANSWER,
+                            "sector_display": SYNTHETIC_SECTOR_DISPLAY})
     assert evidence["quotes_expected"] is False
     assert evidence["quotes_verbatim"] is True
     assert evidence["unchecked_total"] == 4
@@ -1764,12 +1777,14 @@ def test_a_bare_zero_token_does_not_state_a_nonzero_fact():
                                  "anchor": "consequence.after.weights.SYNTH"}],
                  "quote_verbatim": []}
     zero_only = "the trade leaves 0 room under your cap"
-    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only,
+                            "sector_display": {}})
     assert evidence["facts_missing"] == 1, evidence
     # A frozen zero is still stated by "0".
     challenge["must_state"] = [{"topic": "cash", "value": 0.0,
                                 "anchor": "consequence.after.cash.balance"}]
-    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only})
+    evidence = fidelity_of({"challenge": challenge, "presented_text": zero_only,
+                            "sector_display": {}})
     assert evidence["facts_missing"] == 0, evidence
 
 
@@ -1781,16 +1796,19 @@ def test_a_dollar_value_does_not_match_its_percent_form():
     cash = {**base, "must_state": [{"topic": "cash", "value": 0.5,
                                     "anchor": "consequence.after.cash.balance"}],
             "quote_verbatim": []}
-    assert fidelity_of({"challenge": cash, "presented_text": text})["facts_missing"] == 1
+    assert fidelity_of({"challenge": cash, "presented_text": text,
+                        "sector_display": {}})["facts_missing"] == 1
     weight = {**base, "must_state": [{"topic": "position", "value": 0.5,
                                       "anchor": "consequence.after.weights.SYNTH"}],
               "quote_verbatim": []}
-    assert fidelity_of({"challenge": weight, "presented_text": text})["facts_missing"] == 0
+    assert fidelity_of({"challenge": weight, "presented_text": text,
+                        "sector_display": {}})["facts_missing"] == 0
     cash_weight = {**base, "must_state": [{"topic": "cash", "value": 0.5,
                                            "anchor": "consequence.after.cash.weight"}],
                    "quote_verbatim": []}
     assert fidelity_of(
-        {"challenge": cash_weight, "presented_text": text})["facts_missing"] == 0
+        {"challenge": cash_weight, "presented_text": text,
+         "sector_display": {}})["facts_missing"] == 0
 
 
 def test_evaluation_evidence_must_be_internally_consistent():
@@ -1839,6 +1857,103 @@ def test_challenge_fidelity_refuses_a_truncated_challenge():
         except ux_receipt.ReceiptError:
             continue
         raise AssertionError(f"malformed payload was accepted: {broken}")
+
+
+# --- #767: the sector name in the answer must agree with what this response
+# itself emitted in sector_display, never with an external per-language table.
+# Move #746's guarantee off the documentation sentence in trade-consequence.md
+# and onto this machine-checked surface: a canonical zh sector literal
+# (`card_renderer.SECTOR_ID_BY_LEGACY_LABEL`'s own keys) found in the answer
+# but not among sector_display's own values is refused, and nothing here
+# branches on a caller-declared language. ---
+
+def test_challenge_fidelity_catches_a_disagreeing_sector_literal():
+    # The exact #746 counter-example this hardens: an `en` response naming
+    # the sector in the raw zh label the engine never localized.
+    payload = challenge_check_payload(
+        presented_text=SYNTHETIC_ANSWER + " Sector concentration is now 半導體.")
+    evidence = fidelity_of(payload)
+    assert evidence["sector_display_expected"] is True
+    assert evidence["sector_display_verbatim"] is False
+
+
+def test_challenge_fidelity_a_zh_tw_literal_matching_sector_display_passes():
+    # zh-TW's own copy catalog maps a sector back to the same canonical
+    # literal SECTOR_ID_BY_LEGACY_LABEL keys on, so naming it is not a leak —
+    # the comparison is against this response's own declared value, not
+    # against a fixed "never say this" list.
+    payload = challenge_check_payload(
+        sector_display={"before": "軟體雲", "after": "半導體"},
+        presented_text="這筆交易會把半導體集中度拉到27%。")
+    evidence = fidelity_of(payload)
+    assert evidence["sector_display_verbatim"] is True
+
+
+def test_challenge_fidelity_a_user_supplied_sector_category_passes_in_every_language():
+    # `localized_sector`'s passthrough rule (card_renderer.py): a label the
+    # engine does not recognize is a user-supplied driver-map category and is
+    # never one of the canonical literals, so it can never mismatch — in any
+    # language, because nothing here reads a language at all.
+    for tag, text in (
+            ("en", "This raises Fictional Widgets exposure to 27%."),
+            ("zh-TW", "這筆交易會把 Fictional Widgets 曝險拉到27%。"),
+    ):
+        payload = challenge_check_payload(
+            sector_display={"after": "Fictional Widgets"}, presented_text=text)
+        assert fidelity_of(payload)["sector_display_verbatim"] is True, tag
+
+
+def test_challenge_fidelity_refuses_a_missing_sector_display():
+    """Required, not optional: an omitted key is refused rather than read as
+    'nothing to check' (#429, #480's write-never-read shape)."""
+    payload = challenge_check_payload()
+    del payload["sector_display"]
+    try:
+        fidelity_of(payload)
+    except ux_receipt.ReceiptError as caught:
+        assert "missing sector_display" in str(caught)
+    else:
+        raise AssertionError("a check file missing sector_display was accepted")
+
+
+def test_challenge_fidelity_refuses_a_malformed_sector_display():
+    for broken in ({"sector_display": "半導體"},
+                   {"sector_display": ["半導體"]},
+                   {"sector_display": {"before": "軟體雲", "unexpected": "x"}},
+                   {"sector_display": {"after": ""}},
+                   {"sector_display": {"after": "  "}}):
+        payload = challenge_check_payload()
+        payload.update(broken)
+        try:
+            fidelity_of(payload)
+        except ux_receipt.ReceiptError:
+            continue
+        raise AssertionError(f"a malformed sector_display was accepted: {broken}")
+
+
+def test_sector_fidelity_takes_no_language_parameter():
+    """The comparison is keyed only on this response's own declared
+    sector_display, never on a caller-supplied language, so the function
+    cannot even accept one — a parameter named language/locale/lang would be
+    the shape of the conditional the issue forbids, whatever the body then
+    did with it."""
+    parameters = set(inspect.signature(ux_receipt._sector_fidelity).parameters)
+    assert not (parameters & {"language", "locale", "lang"}), parameters
+
+
+def test_evaluation_presented_fails_on_disagreeing_sector_evidence():
+    """The unit-level fidelity checks above prove what `_sector_fidelity`
+    computes; this proves the row it lands on actually fails verification —
+    the same no-legacy-exemption, fail-closed shape #544's original evidence
+    already holds quotes_verbatim and challenge_hash to."""
+    rows = consider_rows()
+    at(rows, EVALUATION)["sector_display_verbatim"] = False
+    assert_has(ux_receipt.verify_rows(rows),
+               "did not prove the answer named no sector disagreeing")
+
+    rows = consider_rows()
+    del at(rows, EVALUATION)["sector_display_expected"]
+    assert_has(ux_receipt.verify_rows(rows), "missing sector-fidelity evidence")
 
 
 def test_cli_writes_and_verifies_a_consider_trace():
@@ -1895,10 +2010,12 @@ def test_cli_writes_and_verifies_a_consider_trace():
         assert verified.returncode == 0, verified.stderr
 
         # The trace carries evidence, never content: neither the presented
-        # answer, nor a user sentence, nor the rule's text may reach disk.
+        # answer, nor a user sentence, nor the rule's text may reach disk —
+        # and, since #767, neither does the raw sector_display text.
         trace = (pathlib.Path(tmp) / "ux" / "eval-1a2b3c4d5e6f7a8b.jsonl").read_text(
             encoding="utf-8")
-        for leaked in ("34.3%", "highest-conviction", "fifth of the book", "9999.TT"):
+        for leaked in ("34.3%", "highest-conviction", "fifth of the book", "9999.TT",
+                       "semiconductors", "software and cloud"):
             assert leaked not in trace, leaked
 
 
