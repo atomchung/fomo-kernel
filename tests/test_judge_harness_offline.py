@@ -30,6 +30,7 @@ import io
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 import types
@@ -144,36 +145,49 @@ def test_manifest_gate_runs_before_spending():
         R.judge = original_judge
 
 
-def _run_main_with_cases(cases):
+PINNED_BACKEND = ("anthropic", "claude-opus-5")
+
+
+def _run_main_with_cases(cases, backend=PINNED_BACKEND):
     """跑 _main(),但讓它讀到我們給的 manifest——絕不動 committed 那份。
 
     做法是把 R.FIXTURES 指到暫存目錄,不是 monkeypatch json.loads:紀錄行本身也
     帶 "cases" 鍵,攔 json.loads 會連帶弄壞 _read_history()。
+
+    後端也釘死。CI 兩個後端一個都沒裝,真的去解析會 SystemExit——那是在斷言這台
+    機器裝了什麼,不是斷言程式碼決定了什麼(resolve_backend 自己的探針在
+    tests/test_episode_checkers.py,用注入的 available 測)。
     """
     import shutil
-    original = R.FIXTURES
+    original, original_resolve = R.FIXTURES, R.resolve_backend
     with tempfile.TemporaryDirectory() as tmp:
         (pathlib.Path(tmp) / "manifest.json").write_text(
             json.dumps({"cases": cases}, ensure_ascii=False), encoding="utf-8")
         for card in FIXTURES.glob("*.txt"):      # 真卡片內容,manifest 才是合成的
             shutil.copy(card, pathlib.Path(tmp) / card.name)
         R.FIXTURES = pathlib.Path(tmp)
+        R.resolve_backend = lambda: backend
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
                 rc = R._main([])
         finally:
-            R.FIXTURES = original
+            R.FIXTURES, R.resolve_backend = original, original_resolve
     return rc, buf.getvalue()
 
 
 # ── 2. judge() 的拒答與錯誤路徑 ─────────────────────────────────────────────
 
+def _anthropic(card="a card"):
+    """釘住後端叫 judge():這幾條驗的是 Anthropic 那條路的行為,不是誰被選中。"""
+    return J.judge(card, backend="anthropic", model=PINNED_BACKEND[1])
+
+
 def test_refusal_is_handled_before_content():
     _install_stub(_Resp("refusal", _ExplodingContent(),
                         types.SimpleNamespace(category="cyber")))
     try:
-        J.judge("a card")
+        _anthropic()
         ok(False, "拒答必須拋錯,不能回傳")
     except AssertionError as exc:                      # _ExplodingContent 炸了
         ok(False, f"拒答分支順序錯:{exc}")
@@ -184,7 +198,7 @@ def test_refusal_is_handled_before_content():
     # stop_details 可能是 None——不能因此變成 AttributeError
     _install_stub(_Resp("refusal", _ExplodingContent(), None))
     try:
-        J.judge("a card")
+        _anthropic()
         ok(False, "stop_details=None 的拒答仍要拋錯")
     except RuntimeError:
         ok(True, "stop_details=None 的拒答不會炸成 AttributeError")
@@ -193,7 +207,7 @@ def test_refusal_is_handled_before_content():
 def test_missing_tool_use_is_diagnosed():
     _install_stub(_Resp("max_tokens", [_Block("text")]))
     try:
-        J.judge("a card")
+        _anthropic()
         ok(False, "沒有 tool_use 區塊要拋錯")
     except RuntimeError as exc:
         ok("max_tokens" in str(exc),
@@ -203,7 +217,8 @@ def test_missing_tool_use_is_diagnosed():
 def test_ungraded_is_not_a_pass():
     """judge() 拋錯 = 這張 fixture 沒評到;沒評到不能算通過。"""
     original = R.judge
-    R.judge = lambda _text: (_ for _ in ()).throw(RuntimeError("judge 模型拒答了這張卡"))
+    R.judge = lambda _text, **_kw: (_ for _ in ()).throw(
+        RuntimeError("judge 模型拒答了這張卡"))
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             record = R._run_case({"file": "card_good.txt", "expect": "pass", "label": "x"})
@@ -238,13 +253,13 @@ def test_every_run_is_recorded_and_readable():
        "被擋下的跑也留一行(歷史空窗才分得出『沒人跑』和『跑了沒評到』)")
     ok(rows[-1].get("blocked") and rows[-1]["total"] == 0,
        "擋下的那行記得出原因、且 total=0")
-    ok(rows[-1].get("model") == J.MODEL,
-       "紀錄帶得出模型(換模型後舊紀錄不能跟新的混著讀)")
+    ok("backend" in rows[-1] and "model" in rows[-1],
+       "擋下的那行仍帶後端/模型欄位(讀歷史時欄位形狀一致,不用猜舊行缺什麼)")
 
     # 一次「評得出來」的跑:好卡 5 分、壞卡 1 分
     good = (FIXTURES / "card_good.txt").read_text(encoding="utf-8")
     original = R.judge
-    R.judge = lambda text: {"overall": 5 if text == good else 1}
+    R.judge = lambda text, **_kw: {"overall": 5 if text == good else 1}
     try:
         rc, out = _run_main_with_cases([
             {"file": "card_good.txt", "expect": "pass", "label": "x"},
@@ -254,6 +269,8 @@ def test_every_run_is_recorded_and_readable():
         R.judge = original
     row = R._read_history()[-1]
     ok(rc == 0 and row["verified"] == 2 and row["total"] == 2, "正常跑記下 2/2")
+    ok((row.get("backend"), row.get("model")) == PINNED_BACKEND,
+       "紀錄帶得出後端與模型(換後端或換模型後,舊紀錄不能跟新的混著讀漂移)")
     ok([c["scores"] for c in row["cases"]] == [[5, 5], [1, 1]],
        "每張 fixture 的實際分數都留著(漂移要看分數,不是只看 pass/fail)")
     ok("已記錄到" in out, "跑完會告訴人紀錄寫到哪")
@@ -295,7 +312,7 @@ def test_green_run_without_durable_history_is_not_evidence():
     """#466: a green judge result is not evidence until its audit row exists."""
     good = (FIXTURES / "card_good.txt").read_text(encoding="utf-8")
     original_judge, original_path, original_fsync = R.judge, R._history_path, R._fsync_dir
-    R.judge = lambda text: {"overall": 5 if text == good else 1}
+    R.judge = lambda text, **_kw: {"overall": 5 if text == good else 1}
     with tempfile.TemporaryDirectory() as tmp:
         R._history_path = lambda: pathlib.Path(tmp) / "new-root" / "judge" / "narrative-runs.jsonl"
         R._fsync_dir = lambda _path: (_ for _ in ()).throw(OSError("directory fsync failed"))
@@ -356,12 +373,13 @@ def test_history_on_empty_store_is_friendly():
 def test_request_shape():
     _sent.clear()
     _install_stub(_Resp("tool_use", [_Block("text"), _Block("tool_use", GOOD_INPUT)]))
-    ok(J.judge("a card") == GOOD_INPUT, "正常路徑回傳 tool_use.input")
+    ok(_anthropic() == GOOD_INPUT, "正常路徑回傳 tool_use.input")
     sent = _sent[-1]
 
-    ok(sent["model"] == J.MODEL, "request 的 model 來自 MODEL")
-    ok("-2025" not in J.MODEL and "-2024" not in J.MODEL,
-       f"模型 ID 沒有日期後綴(現在是 {J.MODEL})")
+    default_model = J.DEFAULT_MODELS["anthropic"]
+    ok(sent["model"] == PINNED_BACKEND[1], "request 的 model 是解析出來的那個")
+    ok("-2025" not in default_model and "-2024" not in default_model,
+       f"Anthropic 預設模型 ID 沒有日期後綴(現在是 {default_model})")
     ok(sent.get("output_config") == {"effort": J.EFFORT},
        "effort 放在 output_config 內,不是頂層")
     ok(sent["tool_choice"] == {"type": "tool", "name": "score_narrative"},
@@ -396,6 +414,132 @@ def test_tool_schema_is_strict_shaped():
        "overall 是 0–5 enum")
 
 
+# ── 5. agy 後端(#511):共用的解析決定 + CLI 沒有形狀保證時的 fail-closed ──────
+
+GOOD_AGY_REPLY = {axis: {"score": 4, "reason": "r"} for axis in AXES} | {"overall": 4}
+
+
+def test_backend_resolution_is_not_decided_twice():
+    """#511 的範圍句,用機制守:後端怎麼選,只能有一個地方說了算。
+
+    這條紅掉的唯一原因,是有人在這支自己又寫了一份 resolve/DEFAULT_MODELS。那份
+    複本不會馬上壞,它會在 judge_episodes 那邊改了後端規則的那一天才壞——而那天
+    沒有任何測試在看這裡。
+    """
+    ok(J.resolve_backend is J.BACKENDS.resolve_backend,
+       "resolve_backend 直接是 judge_episodes 的那個,不是複製一份")
+    ok(J.DEFAULT_MODELS is J.BACKENDS.DEFAULT_MODELS,
+       "每個後端的預設模型也共用同一份")
+    ok(J.EFFORT == J.BACKENDS.EFFORT, "effort 也是同一個來源")
+
+
+def test_agy_reply_that_cannot_be_read_is_not_a_score():
+    """讀不出來 = 沒評到。半份評分比沒有評分更危險,所以整份丟掉。"""
+    ok(J._parse_scores(json.dumps(GOOD_AGY_REPLY), AXES) ==
+       {axis: {"score": 4, "reason": "r"} for axis in AXES} | {"overall": 4},
+       "乾淨的 JSON 回覆讀得出五軸 + overall")
+    ok(J._parse_scores("```json\n" + json.dumps(GOOD_AGY_REPLY) + "\n```", AXES)
+       is not None, "包在 code fence 裡也讀得出來(CLI 常常這樣回)")
+
+    # 以下每一條都是「不擋就會變成一個假分數」的回覆
+    broken = {
+        "整段不是 JSON": "抱歉,我覺得這張卡還行。",
+        "少一軸": json.dumps({k: v for k, v in GOOD_AGY_REPLY.items()
+                             if k != "plain_language"}),
+        "少 overall": json.dumps({k: v for k, v in GOOD_AGY_REPLY.items()
+                                  if k != "overall"}),
+        "分數超出 0–5": json.dumps(GOOD_AGY_REPLY | {"overall": 7}),
+        "分數是字串": json.dumps(GOOD_AGY_REPLY | {"overall": "4"}),
+        "分數是小數": json.dumps(GOOD_AGY_REPLY | {"overall": 4.5}),
+        "分數是 bool": json.dumps(GOOD_AGY_REPLY | {"overall": True}),
+        "理由是空白": json.dumps(GOOD_AGY_REPLY |
+                             {"coherent_story": {"score": 4, "reason": "   "}}),
+        "軸不是物件": json.dumps(GOOD_AGY_REPLY | {"coherent_story": 4}),
+    }
+    for label, raw in broken.items():
+        ok(J._parse_scores(raw, AXES) is None, f"_parse_scores 擋下「{label}」")
+
+
+def test_agy_path_goes_through_the_shared_cli_spec():
+    """argv/逾時/重試次數也只有一個來源——不是這支自己拼一份。"""
+    seen = {}
+    original = (J.BACKENDS.cli_call_spec, J.BACKENDS.run_cli_sample, J.BACKENDS.AGY_PATH)
+
+    def _spec(model, prompt):
+        seen["model"], seen["prompt"] = model, prompt
+        return original[0](model, prompt)
+
+    def _run(call, axes, parse=None):
+        seen.update(call=call, axes=axes, parse=parse)
+        return parse(json.dumps(GOOD_AGY_REPLY), axes)
+
+    J.BACKENDS.cli_call_spec, J.BACKENDS.run_cli_sample = _spec, _run
+    J.BACKENDS.AGY_PATH = "/fake/bin/agy"
+    try:
+        result = J.judge("這是待審的卡", backend="agy", model="gemini-test-high")
+    finally:
+        (J.BACKENDS.cli_call_spec, J.BACKENDS.run_cli_sample,
+         J.BACKENDS.AGY_PATH) = original
+
+    ok(seen.get("model") == "gemini-test-high", "解析出來的模型真的傳進 CLI spec")
+    ok("這是待審的卡" in seen.get("prompt", "") and "連貫敘事" in seen.get("prompt", ""),
+       "prompt 同時帶著卡片內容與 rubric(agy 沒有 system 欄位,要摺進同一段)")
+    argv = seen.get("call", {}).get("argv", [])
+    ok(argv[:2] == ["/fake/bin/agy", "-p"] and "--model" in argv and "--effort" in argv,
+       "argv 形狀來自共用的 cli_call_spec")
+    kwargs = seen.get("call", {}).get("subprocess_kwargs", {})
+    ok("input" not in kwargs and kwargs.get("timeout", 0) >= 180,
+       "不走 stdin、而且一定有逾時(headless agy 不讀 stdin;掛住的 CLI 會卡死整輪)")
+    ok(seen.get("parse") is J._parse_scores,
+       "用的是敘事 judge 自己的 0–5 解析,不是 episode 的 pass/fail 解析")
+    ok(result == {axis: {"score": 4, "reason": "r"} for axis in AXES} | {"overall": 4},
+       "agy 這條路回傳的形狀,跟 strict schema 保證的那份一致")
+
+
+def test_the_shared_runner_actually_uses_the_parser_it_is_given():
+    """上一條只證明「parser 有傳進去」,證明不了「傳進去的有被用」。
+
+    這個區別是被突變抓到的,不是想出來的:把 run_cli_sample 的 `parse` 參數收下卻
+    仍舊寫死 episode 的 pass/fail 解析,上一條照樣全綠——因為它把整支 runner 換掉了,
+    真正的 dispatch 從沒被執行。所以這條驅動真的 run_cli_sample,只換掉 subprocess。
+    後果不是崩潰:敘事 judge 會拿到 pass/fail 形狀的東西,或什麼都拿不到。
+    """
+    reply = json.dumps(GOOD_AGY_REPLY)
+
+    class _Finished:
+        returncode, stdout, stderr = 0, reply, ""
+
+    original = (J.BACKENDS.subprocess, J.BACKENDS.AGY_PATH)
+    J.BACKENDS.subprocess = types.SimpleNamespace(
+        run=lambda *a, **k: _Finished(), TimeoutExpired=subprocess.TimeoutExpired)
+    J.BACKENDS.AGY_PATH = "/fake/bin/agy"
+    try:
+        # 用錯 parser 的症狀是 judge() 拋錯,不是回傳錯的東西。接住它報成一條 ❌,
+        # 不然這條紅掉會用 traceback 中止 main(),後面每一條探針都不會跑到——
+        # 一條沒響的閘門和一條沒被執行的閘門，在輸出上長得一模一樣。
+        scored = J.judge("卡", backend="agy", model="m")
+    except RuntimeError as exc:
+        scored = f"judge() 拋錯:{exc}"
+    finally:
+        J.BACKENDS.subprocess, J.BACKENDS.AGY_PATH = original
+    ok(scored == {axis: {"score": 4, "reason": "r"} for axis in AXES} | {"overall": 4},
+       "共用 runner 真的用了呼叫端給的 0–5 解析,不是收下參數卻仍用 pass/fail 那份")
+
+
+def test_unreadable_agy_sample_is_ungraded_not_a_pass():
+    """CLI 回不出可讀評分時要拋錯,才會被 _run_case 記成 ungraded 而不是崩潰。"""
+    original = J.BACKENDS.run_cli_sample
+    J.BACKENDS.run_cli_sample = lambda *a, **k: None
+    try:
+        J.judge("a card", backend="agy", model="m")
+        ok(False, "讀不出評分時必須拋錯,不能回傳 None")
+    except RuntimeError as exc:
+        ok("沒評到不等於通過" in str(exc),
+           "錯誤訊息說得出「沒評到≠通過」(這是 _run_case 記成 ungraded 的那條路)")
+    finally:
+        J.BACKENDS.run_cli_sample = original
+
+
 def _keys(node):
     """遞迴吐出 schema 裡所有的 key 名。"""
     if isinstance(node, dict):
@@ -425,6 +569,11 @@ def main():
         test_directory_entries_are_synced_and_failure_is_not_success()
         test_record_success_is_durable_and_readable()
         test_history_on_empty_store_is_friendly()
+        test_backend_resolution_is_not_decided_twice()
+        test_agy_reply_that_cannot_be_read_is_not_a_score()
+        test_agy_path_goes_through_the_shared_cli_spec()
+        test_the_shared_runner_actually_uses_the_parser_it_is_given()
+        test_unreadable_agy_sample_is_ungraded_not_a_pass()
     finally:
         shutil.rmtree(_TMP_HOME, ignore_errors=True)
     print()

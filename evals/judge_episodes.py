@@ -331,13 +331,12 @@ def resolve_backend(name=BACKEND, available=None):
 FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.M)
 
 
-def _parse_verdicts(raw, axes):
-    """Verdicts from free text, or ``None`` when the text does not carry them.
+def extract_json_object(raw):
+    """The outermost JSON object in free CLI text, or ``None``.
 
-    Returns None rather than raising, and never guesses: a response this cannot
-    read is an unusable *sample*, which `grade_answer` folds into the same
-    `ambiguous` state a split vote produces — a failure. Inferring a verdict
-    from prose is how a judge harness starts agreeing with itself.
+    Shared with the narrative judge (#511): both stand in for a shape guarantee
+    the CLI cannot give, so both have to fail closed on the same inputs. What
+    the object must *contain* stays with each caller — this only finds it.
     """
     text = FENCE.sub("", raw or "").strip()
     start, end = text.find("{"), text.rfind("}")
@@ -347,7 +346,19 @@ def _parse_verdicts(raw, axes):
         parsed = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
         return None
-    if not isinstance(parsed, dict):
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_verdicts(raw, axes):
+    """Verdicts from free text, or ``None`` when the text does not carry them.
+
+    Returns None rather than raising, and never guesses: a response this cannot
+    read is an unusable *sample*, which `grade_answer` folds into the same
+    `ambiguous` state a split vote produces — a failure. Inferring a verdict
+    from prose is how a judge harness starts agreeing with itself.
+    """
+    parsed = extract_json_object(raw)
+    if parsed is None:
         return None
     verdicts = {}
     for axis in axes:
@@ -373,11 +384,14 @@ def _agy_prompt(episode, answer, axes, *, system=None, rubric=None,
             + json.dumps(shape, indent=2))
 
 
-def agy_call_spec(model, episode, answer, axes, *, system=None, rubric=None,
-                  material_fn=None):
-    """Canonical description of the exact CLI call used for one sample."""
-    prompt = _agy_prompt(episode, answer, axes, system=system, rubric=rubric,
-                         material_fn=material_fn)
+def cli_call_spec(model, prompt):
+    """The canonical CLI invocation for one sample, whatever the prompt says.
+
+    Every judge that reaches this backend goes through here, so the argv shape,
+    the timeout and the attempt budget are decided once (#511). A judge that
+    assembled its own argv would be a second place to keep the `agy` contract
+    below in sync.
+    """
     return {
         "argv": [AGY_PATH, "-p", prompt, "--model", model,
                  "--effort", EFFORT],
@@ -390,9 +404,16 @@ def agy_call_spec(model, episode, answer, axes, *, system=None, rubric=None,
     }
 
 
-def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
-                   material_fn=None, call_spec=None):
-    """One sample through the Antigravity CLI. Returns verdicts or None.
+def agy_call_spec(model, episode, answer, axes, *, system=None, rubric=None,
+                  material_fn=None):
+    """Canonical description of the exact CLI call used for one sample."""
+    return cli_call_spec(model, _agy_prompt(
+        episode, answer, axes, system=system, rubric=rubric,
+        material_fn=material_fn))
+
+
+def run_cli_sample(call, axes, parse=None):
+    """One sample through the Antigravity CLI. Returns parsed output or None.
 
     Three constraints, all load-bearing (`agy` 1.1.7): headless `agy` does not
     read stdin at all, so the prompt travels in the argument; the call goes
@@ -400,10 +421,12 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
     backticks and `$` a shell would expand into something else entirely; and a
     timeout is mandatory, since a hung CLI would otherwise stall the run with
     no verdict and no error.
+
+    `parse` is what the caller's own reply shape needs; it must fail closed by
+    returning None, never by guessing. The narrative judge grades 0–5 scores
+    rather than pass/fail verdicts, and shares everything above.
     """
-    call = call_spec or agy_call_spec(
-        model, episode, answer, axes, system=system, rubric=rubric,
-        material_fn=material_fn)
+    parse = _parse_verdicts if parse is None else parse
     if not call.get("argv") or call["argv"][0] is None:
         raise RuntimeError("agy judge call could not start: no executable was resolved")
     empty_retried = False
@@ -420,7 +443,7 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
             raise RuntimeError(f"agy judge call could not start: {exc}") from exc
         if finished.returncode == 0:
             if finished.stdout.strip():
-                return _parse_verdicts(finished.stdout, axes)
+                return parse(finished.stdout, axes)
             # The CLI contract asks for one retry on an empty success. Do not
             # spend all three attempts on a fluent but malformed JSON reply —
             # parsing that fail-closed output remains the vote interlock's job.
@@ -437,6 +460,15 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
         if attempt + 1 == call["max_attempts"]:
             return None
     return None
+
+
+def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
+                   material_fn=None, call_spec=None):
+    """One episode-bank sample through the CLI backend. Verdicts or None."""
+    call = call_spec or agy_call_spec(
+        model, episode, answer, axes, system=system, rubric=rubric,
+        material_fn=material_fn)
+    return run_cli_sample(call, axes)
 
 
 def structured_call_spec(model, episode, answer, axes, *, system=None,

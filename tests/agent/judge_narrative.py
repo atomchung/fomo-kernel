@@ -6,16 +6,26 @@ skills/fomo-kernel/card-spec.md 的敘事鐵律(先肯定再打 / 數字要髒�
 不講黑話 / 引言不當結語 / 連貫敘事不准標籤拼接)。judge 只看 rubric,不看
 範本答案 —— 改 card-spec.md 的敘事鐵律時,同步改這裡的 RUBRIC 常數。
 
+兩個後端,自動選(#511):Antigravity CLI(`agy`,吃訂閱、不用 API key)或 Anthropic
+SDK(可攜、強制 tool use 所以形狀有保證)。**選哪個後端這件事不在這裡決定**——
+evals/judge_episodes.py 的 resolve_backend() 已經擁有它,這支直接 import 那個決定。
+同一件事有兩個地方決定,就是兩個地方要維護 agy 契約。這支只提供它自己不同的部分:
+rubric、schema,以及 CLI 沒有形狀保證時的 fail-closed 解析。
+
 跑法:
-  export ANTHROPIC_API_KEY=sk-...          # 或放 .env(python-dotenv 會自動讀)
   python3 tests/agent/judge_narrative.py tests/agent/fixtures/card_good.txt
   cat some_card.txt | python3 tests/agent/judge_narrative.py -
+  TR_JUDGE_BACKEND=anthropic python3 tests/agent/judge_narrative.py ...   # 釘後端
   TR_JUDGE_MODEL=... TR_JUDGE_EFFORT=low python3 tests/agent/judge_narrative.py ...
 
-輸出:單行 JSON(每軸 0–5 分 + 一句理由 + overall)。
+走 Anthropic 後端時要 `pip install anthropic` + ANTHROPIC_API_KEY(或放 .env,
+python-dotenv 會自動讀);走 agy 後端兩者都不需要。
+
+輸出:JSON(每軸 0–5 分 + 一句理由 + overall)。
 """
 import json
 import os
+import pathlib
 import sys
 
 try:
@@ -24,8 +34,14 @@ try:
 except ImportError:
     pass
 
-MODEL = os.environ.get("TR_JUDGE_MODEL", "claude-opus-5")
-EFFORT = os.environ.get("TR_JUDGE_EFFORT", "high")
+# 後端解析的單一來源。judge_episodes 只在 main() 內才 import anthropic,所以這行
+# 不會把 SDK 依賴帶進離線測試;它自己 import 的 run_episodes 也是純 stdlib、不連網。
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "evals"))
+import judge_episodes as BACKENDS      # noqa: E402
+
+resolve_backend = BACKENDS.resolve_backend
+DEFAULT_MODELS = BACKENDS.DEFAULT_MODELS
+EFFORT = BACKENDS.EFFORT
 
 # 來源=skills/fomo-kernel/card-spec.md「卡片是一個故事,不是 dashboard」+ 🚫 清單。
 # 改那份檔的敘事鐵律時,這裡要跟著動(維護鐵律見該檔第 6 行)。
@@ -74,7 +90,61 @@ SCORE_TOOL = {
 }
 
 
-def judge(card_text: str) -> dict:
+def _is_score(value) -> bool:
+    """0–5 的整數,而且真的是整數。
+
+    Anthropic 那條路的分數形狀是 API 用 strict enum 保證的;CLI 這條路沒有保證,
+    所以這裡的嚴格程度必須跟那個 enum 一樣——替代品比被替代的鬆,等於換了後端就
+    悄悄降低了標準。bool 在 Python 是 int 的子類,`True` 會被當成 1,要擋掉。
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 5
+
+
+def _parse_scores(raw, axes=_AXES):
+    """從自由文字讀出評分,讀不出來就回 None(不猜)。
+
+    對照 evals/judge_episodes.py 的 _parse_verdicts:少一軸、分數不在 0–5、理由是
+    空字串——任何一項不合格就整份丟掉,不是留下半份。半份評分會變成「這一軸沒被
+    評到卻有分數」,那正是 judge harness 開始跟自己同意的起點。
+    """
+    parsed = BACKENDS.extract_json_object(raw)
+    if parsed is None:
+        return None
+    scored = {}
+    for axis in axes:
+        entry = parsed.get(axis)
+        if not isinstance(entry, dict):
+            return None
+        reason, score = entry.get("reason"), entry.get("score")
+        if not _is_score(score) or not isinstance(reason, str) or not reason.strip():
+            return None
+        scored[axis] = {"score": score, "reason": reason.strip()}
+    if not _is_score(parsed.get("overall")):
+        return None
+    scored["overall"] = parsed["overall"]
+    return scored
+
+
+def _agy_prompt(card_text: str) -> str:
+    shape = {axis: {"score": "0-5 integer", "reason": "one sentence"}
+             for axis in _AXES} | {"overall": "0-5 integer"}
+    return (RUBRIC + "\n\n" + "─" * 60 + f"\n\n待審的卡:\n\n{card_text}"
+            + "\n\nReturn ONLY a JSON object — no prose, no code fence — "
+              "shaped exactly:\n" + json.dumps(shape, indent=2, ensure_ascii=False))
+
+
+def _judge_agy(card_text: str, model: str) -> dict:
+    scored = BACKENDS.run_cli_sample(
+        BACKENDS.cli_call_spec(model, _agy_prompt(card_text)),
+        _AXES, parse=_parse_scores)
+    if scored is None:
+        raise RuntimeError(
+            "agy 這次沒回出讀得懂的評分(逾時、非 JSON、缺軸,或分數不是 0–5 整數)"
+            "—— 沒評到不等於通過,別拿這次結果當判決。")
+    return scored
+
+
+def _judge_anthropic(card_text: str, model: str) -> dict:
     # anthropic 延遲 import(對照 evals/judge_episodes.py):這支是 opt-in、要付費的
     # 工具,離線測試套件刻意不依賴 SDK。import 留在函式內,SCORE_TOOL 這些純邏輯才
     # 能被 tests/test_judge_harness_offline.py 免費驗活——只有拿得到 API key 的人
@@ -88,7 +158,7 @@ def judge(card_text: str) -> dict:
     client = anthropic.Anthropic()  # 讀 ANTHROPIC_API_KEY
     try:
         resp = client.messages.create(
-            model=MODEL,
+            model=model,
             # max_tokens 是「思考 + 回覆」的總上限,不是回覆的上限。這個模型預設會思考,
             # 舊的 1024 會在還沒吐出 tool_use 就被截斷(症狀是 stop_reason=max_tokens、
             # 沒有 tool_use 區塊),所以留足額度。
@@ -115,6 +185,19 @@ def judge(card_text: str) -> dict:
             f"judge() 的回應沒有 tool_use 區塊,即使已強制 tool_choice(stop_reason={resp.stop_reason!r})"
         ) from None
     return tool_use.input
+
+
+def judge(card_text: str, *, backend=None, model=None) -> dict:
+    """評一張卡。評不到就拋 RuntimeError——沒評到不等於通過。
+
+    後端不在 import 時解析:CI 兩個後端都沒裝,提前解析會讓「這台機器沒有可用模型」
+    變成整份離線測試載不進來。resolve_backend() 自己就是為了能被注入而寫的
+    (見 evals/judge_episodes.py 那支的 docstring)。
+    """
+    if backend is None or model is None:
+        backend, model = resolve_backend()
+    return _judge_agy(card_text, model) if backend == "agy" else \
+        _judge_anthropic(card_text, model)
 
 
 def _main():

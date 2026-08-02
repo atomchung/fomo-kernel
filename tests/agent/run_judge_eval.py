@@ -28,7 +28,7 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from judge_narrative import EFFORT, MODEL, judge  # noqa: E402
+from judge_narrative import EFFORT, judge, resolve_backend  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -137,7 +137,8 @@ def _show_history(limit: int) -> int:
             cells.append(f"{drift}{case['file'].replace('card_', '').replace('.txt', '')}"
                          f"={got}({scores})")
             previous[case["file"]] = got
-        print(f"{row.get('run_at', '?')}  {row.get('model', '?')}/{row.get('effort', '?')}  "
+        print(f"{row.get('run_at', '?')}  {row.get('backend', '?')}/{row.get('model', '?')}"
+              f"/{row.get('effort', '?')}  "
               f"{row.get('verified', '?')}/{row.get('total', '?')}  {' '.join(cells)}")
     return 0
 
@@ -150,13 +151,13 @@ def _verdict(overall: int) -> str:
     return "ambiguous"
 
 
-def _run_case(case: dict) -> dict:
+def _run_case(case: dict, *, backend=None, model=None) -> dict:
     """跑一張 fixture,回傳這一格的紀錄(ok 是「符不符合預期」)。"""
     text = (FIXTURES / case["file"]).read_text(encoding="utf-8")
     verdicts = []
     for _ in range(N_RUNS):
         try:
-            result = judge(text)
+            result = judge(text, backend=backend, model=model)
         except RuntimeError as e:
             # 拒答或 API 掛掉 = 這個 fixture 沒被評到。沒被評到不能算通過(也不能讓
             # traceback 吃掉整份總結),記成這條沒過並往下跑。
@@ -211,19 +212,28 @@ def _main(argv=None):
     manifest = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))
     cases = manifest.get("cases") or []
     row = {"run_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "model": MODEL, "effort": EFFORT, "n_runs": N_RUNS}
+           "effort": EFFORT, "n_runs": N_RUNS}
 
     blocked = _blocked(cases)
     if blocked:
         print(f"❌ {blocked}")
         # 擋掉的跑也要留一行:歷史裡出現空窗時,才分得出「沒人跑」和「跑了但沒評到」。
-        if not _record({**row, "blocked": blocked, "verified": 0, "total": 0, "cases": []}):
+        if not _record({**row, "backend": None, "model": None, "blocked": blocked,
+                        "verified": 0, "total": 0, "cases": []}):
             print("❌ 本次 run 未被記錄，因此不是可採信的 evidence。")
         return 1
 
-    # 判決是哪個模型給的要印出來:換模型後這份驗活結果就不能直接沿用。
-    print(f"model={MODEL}, effort={EFFORT}, {N_RUNS} run(s) per fixture\n")
-    results = [_run_case(c) for c in cases]
+    # 後端解析放在閘門之後:manifest 不合格是這支自己判得出來的事,不該因為這台機器
+    # 沒裝任何後端就變成另一種錯誤。而且閘門的意義是「在花錢之前擋住」,擋的路徑上
+    # 本來就不需要有模型。
+    backend, model = resolve_backend()
+    row |= {"backend": backend, "model": model}
+
+    # 判決是哪個後端/模型給的要印出來,也要記下來:換模型後這份驗活結果就不能直接沿用,
+    # 而 --history 的漂移是跨次比較的——把兩個模型的判決混著讀,漂移就沒有意義了。
+    print(f"backend={backend}, model={model}, effort={EFFORT}, "
+          f"{N_RUNS} run(s) per fixture\n")
+    results = [_run_case(c, backend=backend, model=model) for c in cases]
     n_ok, n_total = sum(r["ok"] for r in results), len(results)
     recorded = _record({**row, "verified": n_ok, "total": n_total, "cases": results})
     print(f"\n{n_ok}/{n_total} mutation case 符合預期")
