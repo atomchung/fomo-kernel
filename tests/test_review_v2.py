@@ -4532,12 +4532,23 @@ def test_preview_finalize_atomic_bundle_redaction_and_retry():
             }
             pending_plans.append(returning_plan)
         assert pending_plans[0]["session_id"] != pending_plans[1]["session_id"]
+        # #733: this used to pin the whole zh-TW sentence, which reads as
+        # asserting wording but is actually the only place that ever checked
+        # the *count* rendered correctly -- a wording-only revision could
+        # turn it red for no reason, and (the defect this issue is about)
+        # nothing here ever exercised the English side at all. Deriving the
+        # expected text from the current copy template, the same move
+        # `candidate["rule"] == card_renderer.localized_rule(...)` already
+        # makes a few lines above, keeps this test about the count and lets
+        # an intentional wording change pass without touching it.
+        expected_milestone = card_renderer._format_copy(
+            card_renderer.load_copy("zh-TW")["review_milestone"]["line"], completed=1, noun="")
         for pending_plan in pending_plans:
             opening = review_engine.card_renderer._review_opening_lines({
                 "review_plan": pending_plan,
                 "engine_state": pending_plan["engine_state"],
             }, "zh-TW")
-            assert "開始這次復盤時，你已有 1 次完成復盤。" in opening[0], \
+            assert expected_milestone in opening[0], \
                 "multiple pending plans report the same truthful prepare-time history"
 
 

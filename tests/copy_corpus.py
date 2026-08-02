@@ -127,6 +127,72 @@ def _hole_lines_position_sizing(language):
                                "max_pct": 0.25, "avg_pct": 0.11}}]})
 
 
+def _hole_lines_exit_discipline(language):
+    """#757: `exit_discipline`'s forward-return branch (`early_rate` set) is
+    the one that carried the untranslated `fwd` abbreviation into two zh
+    cards -- and #787's audit found it had literally zero fixture evidence
+    before this scene, in any locale, the same shape as `roughly_neutral`'s
+    vacuous byte-parity sweep. `early_rate` + `winner_early` together also
+    light `exit_winner_early` and `exit_holding` (always appended, per
+    `_hole_line`), which #787 separately found unclaimed."""
+    return _bundle(language, card={
+        "top_holes": [{"raw": {
+            "dim": "出場紀律", "n_rt": 5, "n_scored": 4, "n_trunc": 1,
+            "early_rate": 0.75, "n_fwd": 20, "avg_forgone": 0.083,
+            "winner_early": 0.4,
+            "hold_win": 12, "hold_lose": 30, "disp_gap": -18,
+        }}]})
+
+
+# #757: `selection_inconclusive`'s `t_note` sub-line is the other carrier of
+# an untranslated abbreviation (`pp`, `t=`) two zh cards shipped -- #787's
+# audit found this branch, like the one above, had never been rendered by
+# any fixture. `t` present selects `selection_inconclusive_t_wide`;
+# `t` absent selects `selection_inconclusive_t_unstable` (`localized_
+# prescription`'s own branch, card_renderer.py), so one parameter reaches
+# both sub-templates.
+def _prescription_selection_inconclusive(t_present):
+    def build(language):
+        params = {"selection": 0.018}
+        if t_present:
+            params["t"] = 1.1
+        return _bundle(language, card={
+            "dims_raw": [{"dim": "加碼攤平", "triggered": True, "severity": 0.8}],
+            "prescriptions": [{"kind": "selection_inconclusive",
+                               "code": "selection_inconclusive", "params": params}]})
+    return build
+
+
+def _stress_test_single_ticker(language):
+    """#787: caught live, one commit after this checker shipped. Main@7baca94
+    (#741) reclassified 2330.TW from unclassified into `ai_thematic`, so the
+    one mock persona whose dominant position used to drive a `single_ticker`
+    stress scenario now drives an `ai_thematic` one instead --
+    `stress_test.labels.single_ticker` lost its only fixture evidence as a
+    side effect of an unrelated sector-classification fix, exactly the
+    "which key is a persona still touching" question #787 exists to answer
+    rather than leave to be noticed the next time this string breaks."""
+    return _bundle(language, card={"what_if": {
+        "scenario": {"kind": "single_ticker", "ticker": "AAPL"},
+        "mval": 50000.0, "drop30": 15000.0, "drop50": 25000.0, "pct": 0.3,
+    }})
+
+
+def _review_milestone(completed):
+    """#733: `review_milestone.line` had no scene here and no literal in any
+    test other than a single zh-TW string pinned inside
+    `test_preview_finalize_atomic_bundle_redaction_and_retry` -- the corpus
+    never saw the English side at all, which is how `en` hardcoding the
+    plural (`completed reviews` with no `{noun}` slot) shipped invisibly.
+    `completed == 1` reproduces the exact article-agreement defect (`1
+    completed reviews`); `completed > 1` is the branch that was already
+    correct, pinned here so a regression on either count is caught."""
+    def build(language):
+        return _bundle(language, plan={"state_snapshot": {"review_progress": {
+            "completed_reviews_before_start": completed, "returning": True}}})
+    return build
+
+
 _RECONCILIATION_RULES = {
     "zh-TW": "單筆部位上限定死 30%；超過就減，不新增。",
     "zh-CN": "单一仓位上限固定为 30%；超过就减，不新增。",
@@ -713,6 +779,15 @@ SCENES = (
     # exercise, and claiming it would report every one of them unreached.
     # Same posture as `annualized_gap` above -- a pin, not a coverage claim.
     ("hole_lines/position_sizing", (), _hole_lines_position_sizing),
+    # #757: same posture -- averaging_down/diversification/holding_period
+    # still have no scene of their own.
+    ("hole_lines/exit_discipline_forward", (), _hole_lines_exit_discipline),
+    # #757: not claimed -- amplify/amplify_hypothesis/cut_*/outsource_* still
+    # have no scene of their own (#787 tracks them as a named, reasoned gap).
+    ("prescription/selection_inconclusive_t_wide", (),
+     _prescription_selection_inconclusive(t_present=True)),
+    ("prescription/selection_inconclusive_t_unstable", (),
+     _prescription_selection_inconclusive(t_present=False)),
     ("reconciliation/metric-improved", ("reconciliation",), _reconciliation(("max_pos_pct", 0.51, 0.42, "down", "position_sizing"))),
     ("reconciliation/metric-worsened", (), _reconciliation(("avgdown_count", 2, 3, "down", "averaging_down"))),
     ("reconciliation/metric-unchanged", (), _reconciliation(("ai_pct", 0.4, 0.4, "down", "diversification"))),
@@ -733,6 +808,16 @@ SCENES = (
     ("alpha_interval/per_market_scope", (), _alpha_interval(True, (0.07, 0.54), scope="TW")),
     ("exit_followup/all_branches", ("exit_followup",), _exit_followup),
     ("exit_followup/fallbacks", (), _exit_followup_fallback),
+    # #733: `noun_one`/`noun_many` are too short to count as evidence under
+    # MIN_EVIDENCE (both locales, all three keys) -- claiming the register
+    # only holds `line` itself to a coverage bar, which these two scenes
+    # (completed == 1 and completed > 1) both satisfy.
+    ("review_milestone/first_count", ("review_milestone",), _review_milestone(1)),
+    ("review_milestone/later_count", (), _review_milestone(2)),
+    # #787: not claimed -- ai_thematic/sector and stress_test.line remain
+    # persona-only coverage; this scene pins only the branch that just lost
+    # its persona evidence.
+    ("stress_test/single_ticker", (), _stress_test_single_ticker),
     # #477: not claimed as a register -- "honesty" is not otherwise exercised
     # anywhere in this corpus (persona_sweep/test_review_v2 own that
     # lifecycle coverage for the other honesty keys), and claiming it here

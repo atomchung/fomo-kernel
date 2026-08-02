@@ -193,7 +193,9 @@ The `challenge` block's `rule_effects` array is the product-safe projection of t
 `basis` names what the consequence was computed against and how current it was:
 
 - `source: "transactions"` — you supplied one or more CSV paths, read the same way a review reads them.
-- `source: "ledger"` — no CSV was supplied, so the book was reconstructed from the local ledger: the latest complete snapshot anchor, plus every trade after it.
+- `source: "snapshot_anchor"` — no CSV was supplied, so the book was reconstructed from the local ledger: the latest declared holdings snapshot, plus every trade after it.
+- `source: "transaction_replay"` — no CSV was supplied and no snapshot anchor exists, so the book was replayed purely from the ledger's trade history.
+- `source: "empty"` — no CSV was supplied and the ledger has neither a snapshot anchor nor any trades.
 - `as_of` — the date of the record's own latest row.
 - `stale_days` — how many days between `as_of` and today. This is disclosed, never gated on: a large value does not block the answer, because no threshold for interrupting the user over it has been set. State it rather than act on it.
 

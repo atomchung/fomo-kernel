@@ -4,7 +4,7 @@
   "private_badge": "复盘卡，只留在本机",
   "public_badge": "可分享版，已移除金额、日期、标的与精确部位",
   "public_custom_rule": "已承诺一条自订流程规矩；内容只留在复盘卡。",
-  "demo_badge": "示范资料／演练，不是你的真实交易，也不写入正式教练记忆",
+  "demo_badge": "示范资料／演练，不是你的真实交易，也不写入正式教练记忆。下次带你自己的交易记录来，就能复盘你的真实交易。",
   "markdown_summary": {
     "risk": "主要风险",
     "next": "下次规则"
@@ -48,7 +48,7 @@
     "rule_snapshot": "这次开场检查先保留结构基线，不强迫设定承诺。",
     "rule_structural": "这次是开场结构检查：先立基线、不硬塞承诺。已平仓的交易还太少，还看不出你的卖出是不是比买进更伤你；补上对应的卖出纪录就能回答这一题。",
     "rule_insufficient_data": "样本仍短，这次不硬塞承诺；先把它当基线。",
-    "snapshot_unlock": "这次只看得到你手上有什么，看不到你是怎么走到这里的。交易纪录能回答它唯一答不了的那一题：你的卖出是不是比买进更伤你。",
+    "snapshot_unlock": "这次只看得到你手上有什么，看不到你是怎么走到这里的。交易纪录能回答它唯一答不了的那一题——你的卖出是不是比买进更伤你——下次复盘带交易纪录来，就能解锁这题。",
     "annualized_short_series": "本期算不出年化报酬：价格序列不足两天，没有可衡量的变化。",
     "annualized_reconciliation": "本期算不出年化报酬：汇入的交易纪录推不出快照锚定的持仓，没有可用的账户估值基础。把你目前的持仓画面给我，这个差异就能对清楚。"
   },
@@ -206,12 +206,12 @@
     "cut_loss": "砍损耗"
   },
   "prescription_texts": {
-    "amplify_hypothesis": "你赢大盘 {excess_pp}pp 里，押对赛道占 {alloc_pp}pp（拆帐）。那还只是假设，不是已证实的 edge——押对 AI 也可能只是站到风口，要靠下次的赛道判断才验得出来。",
-    "selection_inconclusive": "拆帐看，板块内选股贡献 {sel_pp}pp（描述性、这数字站得住）；但 {t_note}，统计上还分不出选股是本事还是运气。",
-    "selection_inconclusive_t_wide": "α 的 95% 区间还太宽(t={t})",
+    "amplify_hypothesis": "你赢大盘 {excess_pp} 个百分点里，押对赛道占 {alloc_pp} 个百分点（拆帐）。那还只是假设，不是已证实的 edge——押对 AI 也可能只是站到风口，要靠下次的赛道判断才验得出来。",
+    "selection_inconclusive": "拆帐看，板块内选股贡献 {sel_pp} 个百分点（描述性、这数字站得住）；但 {t_note}，统计上还分不出选股是本事还是运气。",
+    "selection_inconclusive_t_wide": "α 的 95% 区间还太宽",
     "selection_inconclusive_t_unstable": "α 统计量还算不稳",
-    "outsource_selection": "扣掉赛道，你板块内选股贡献 {sel_pp}pp、α 统计上站得住地差。这不是说‘别选股’（你享受它、ETF 也会错过妖股），而是可以拨一部分资金被动化托底，选股当卫星。(流程观察，非标的建议)",
-    "amplify_selection_edge": "扣掉赛道红利，你板块内选股仍贡献 {sel_pp}pp、α 统计上站得住——这是真 edge。",
+    "outsource_selection": "扣掉赛道，你板块内选股贡献 {sel_pp} 个百分点、α 统计上站得住地差。这不是说‘别选股’（你享受它、ETF 也会错过妖股），而是可以拨一部分资金被动化托底，选股当卫星。（流程观察，非标的建议）",
+    "amplify_selection_edge": "扣掉赛道红利，你板块内选股仍贡献 {sel_pp} 个百分点、α 统计上站得住——这是真 edge。",
     "cut_averaging_down": "亏损中加码 {count} 次是你操盘损耗的大宗——这是最该先砍的纯扣分动作。",
     "cut_oversize": "最大一笔 {ticker} 占 {max_pct_pct}，单一押注过重。"
   },
@@ -375,7 +375,7 @@
     "terminator": "。"
   },
   "exit_entries": {
-    "line": "{ticker}：你把这次{action}记为“{label}”。这里只保存当时的理由，尚未判断决策结果。",
+    "line": "{ticker}：你把这次{action}记为“{label}”——这里只保存当时的理由，尚未判断决策结果。",
     "ticker_default": "这笔部位",
     "action_full": "清仓",
     "action_partial": "减仓"
@@ -461,7 +461,7 @@
   "hole_lines": {
     "joiner": "；",
     "ticker_joiner": ", ",
-    "exit_forward": "{n_rt} 笔决策卖出（{n_scored} 有 fwd、{n_trunc} 截断）中 {early_rate} 在 {n_fwd} 天后更高、平均续涨 {avg_forgone}{winner_early}",
+    "exit_forward": "{n_rt} 笔决策卖出（{n_scored} 有后续价格可查、{n_trunc} 截断）中 {early_rate} 在 {n_fwd} 天后更高、平均续涨 {avg_forgone}{winner_early}",
     "exit_winner_early": "；卖掉赚钱的有 {winner_early} 续涨（卖太早）",
     "exit_holding": "赚钱抱 {hold_win} 天 / 赔钱抱 {hold_lose} 天（处置缺口 {disp_gap}）",
     "position_sizing": "你最大一笔 {max_ticker} 占 {max_pct}，其余平均 {avg_pct}",
