@@ -2217,6 +2217,74 @@ def test_standing_rule_placeholder_carries_the_user_cap_override():
             f"{language}: an invalid override is fail-closed to the universal cap"
 
 
+# ── #672: ruling 8 enforced by value, not only by class presence ─────────────
+# `test_next_step_is_the_cards_only_emphasis_ground` asserts the keystep class
+# is present exactly once and no ordinary section follows it. Dark mode passed
+# that and still delivered the regression ruling 8 exists to prevent: the class
+# was there, the emphasis was not. These read the token table itself.
+
+
+def _theme_tokens():
+    """(light, dark) token -> #rrggbb, parsed from the widget CSS itself.
+
+    Parsed rather than restated: a hand-copied table would be one more mirrored
+    surface to drift, and the values these assertions must hold against are the
+    ones the card actually ships.
+    """
+    css = card_renderer._HTML_WIDGET_CSS
+    dark_at = css.index("@media (prefers-color-scheme:dark)")
+    def grab(chunk):
+        return {name: value.lower() for name, value in
+                re.findall(r"--rc-([a-z0-9-]+):var\(--[a-z0-9-]+,(#[0-9a-fA-F]{6})\)", chunk)}
+    light = grab(css[:dark_at])
+    dark = dict(light)
+    dark.update(grab(css[dark_at:]))
+    return light, dark
+
+
+def _relative_luminance(color):
+    channels = (int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(a, b):
+    high, low = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_smallest_card_text_meets_aa_on_every_ground_it_lands_on():
+    """`--text-muted` is the colour of every 11-12px element on the card."""
+    for theme, tokens in zip(("light", "dark"), _theme_tokens()):
+        for ground in ("surface-1", "surface-2", "surface-key"):
+            ratio = _contrast(tokens["text-muted"], tokens[ground])
+            assert ratio >= 4.5, (
+                f"{theme}: muted text on {ground} is {ratio:.2f}:1; none of these elements "
+                "is large text, so AA is 4.5:1 on every ground the card puts them on")
+
+
+def test_the_one_action_outranks_the_diagnosis_ground_in_both_themes():
+    """Ruling 8: exactly one L1, and it is Block 4.
+
+    The invariant is a hierarchy, not a magic number: Block 4's ground must
+    separate from an ordinary section by *more* than Block 3's panel ground
+    does. Light already satisfies it (1.16 vs 1.10) and is the only theme a
+    designer has reviewed (layout-constraints.md section 7), so light is the
+    baseline rather than a threshold picked here.
+    """
+    for theme, tokens in zip(("light", "dark"), _theme_tokens()):
+        section = tokens["surface-2"]
+        keystep = _contrast(tokens["surface-key"], section)
+        panel = _contrast(tokens["surface-1"], section)
+        assert keystep > panel, (
+            f"{theme}: the action's ground separates by {keystep:.3f} and the diagnosis panel's "
+            f"by {panel:.3f} — the diagnosis outranks the action, which is the regression "
+            "ruling 8 exists to prevent")
+        accent = _contrast(tokens["text-accent"], tokens["surface-key"])
+        assert accent >= 4.5, (
+            f"{theme}: the rule's own accent reads at {accent:.2f}:1 on the ground it sits on")
+
+
 def main():
     tests = [
         test_finalize_html_is_structured_not_a_pre_dump,
@@ -2282,6 +2350,8 @@ def main():
         test_account_gate_degrades_instead_of_rendering_blank,
         test_annualized_gap_note_names_the_actual_blocker,
         test_alpha_below_grid_notes_are_two_independent_triggers,
+        test_smallest_card_text_meets_aa_on_every_ground_it_lands_on,
+        test_the_one_action_outranks_the_diagnosis_ground_in_both_themes,
     ]
     for test in tests:
         test()
