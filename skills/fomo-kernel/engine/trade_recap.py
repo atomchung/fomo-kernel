@@ -1957,7 +1957,7 @@ def prescribe(ab, dims, overview, max_pos_override=None):
     return rx
 
 def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_n=7,
-                     sizing_weights=None):
+                     sizing_weights=None, orig_held=None, orig_last_px=None):
     """標的層診斷(對事不對人):每檔金額影響(已實現+未實現)+ 行為標籤,按 |金額| 排序只取 top。
     加碼用主從分類器(classify_adds)分疑似定投/凹單/待確認,不再用純結果判(避 outcome bias);
     出場叫『賣後機會成本』不叫『賣太早』(去事後諸葛審判語氣)。max_pos_override:too_heavy
@@ -1969,8 +1969,17 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
     rows, held_u, last_px, ...)["weights"],讓兩個讀者永遠讀同一個數字。不提供 fallback
     ——留一條「省略就自己重算」的路,等於留一條可以吃到不同 held(如殘倉過濾後子集)的
     第二分母路徑,外部審查已給出重現(全帳 A=90%/B=10%,對過濾後 {A} 重算得 A=100%),
-    正是 #477 要消滅的病。"""
+    正是 #477 要消滅的病。
+
+    orig_held/orig_last_px(#750):`held`/`last_px` 在混幣呼叫端是 usd_view() 換算過的
+    聚合視圖——impact/mval/cur_ret 排序/门槛跨 ticker 比較,本就該在共同幣別上做,合法。
+    但 #347 揭露的 px/avg_cost 是單一 ticker 自己的事實(使用者實際成交的價格),不是跨檔
+    比較,套用聚合換算違反 usd_view() 自己文件字串的契約("per-ticker 呈現...一律用原幣原
+    物件")——一檔 590 TWD 買的股票印出「均 18.53」,旁邊卻是正確的 TWD 總額,兩個數字互相
+    矛盾。省略時預設回退到 held/last_px 自己(單幣呼叫端/既有測試因此逐位元組不變)。"""
     last_px = last_px or {}                # 無 yfinance/下載失敗 → last_px=None,降級成只用已實現,不 crash
+    orig_held = held if orig_held is None else orig_held
+    orig_last_px = last_px if orig_last_px is None else orig_last_px
     if sizing_weights is None:
         raise ValueError(
             "ticker_diagnosis requires sizing_weights (feed dim_size(...)['weights']); "
@@ -1991,8 +2000,14 @@ def ticker_diagnosis(rts, adds_class, held, last_px, max_pos_override=None, top_
             a["unreal"] = sh * px - cost
             a["cur_ret"] = (px - cost / sh) / (cost / sh) if sh else 0
             a["mval"] = sh * px
-            a["px"] = px                                    # #347:現價,供 cur_ret 旁的原始數字揭露
-            a["avg_cost"] = cost / sh if sh else None        # #347:均成本(每股),同上
+            # #750: px/avg_cost ride the *original*-currency objects, never the
+            # usd_view() aggregate — see the orig_held/orig_last_px docstring
+            # paragraph above. orig_sh comes from orig_held too (not the
+            # possibly-converted `sh`) so a caller that ever passed a genuinely
+            # different share count there is still divided by its own basis.
+            orig_sh, orig_cost = orig_held.get(t, (sh, cost))
+            a["px"] = orig_last_px.get(t, px)               # #347/#750:現價(原幣),供 cur_ret 旁的原始數字揭露
+            a["avg_cost"] = orig_cost / orig_sh if orig_sh else None  # #347/#750:均成本(原幣,每股),同上
     # #477:too_heavy 的觸發線併入 #324 的單一事實源——這裡曾是獨立硬編的 0.25,跟 dim_size
     # 同一張卡各吹各的號;現在跟 dim_size/prescribe 讀同一條 effective_oversize_trigger,
     # 用戶覆寫上限時三處一起動,不再只有 sizing 維度聽用戶的。
@@ -2930,9 +2945,12 @@ def main():
     adds_class = classify_adds(rows)                       # 主從分類:疑似定投 vs 凹單 vs 待確認
     # 標的層:按金額排序,對事不對人。排序/佔比是跨 ticker 比較 → 混幣必須在聚合幣別(USD 視圖)上做,
     # 否則 TWD 名目大數霸榜(review 2026-07-06);比率欄(cur_ret/fwd)無因次不受縮放影響。
+    # #750:但 px/avg_cost(#347 揭露)是單檔自己的事實,不是跨檔比較——餵 orig_held/orig_last_px
+    # (usd_view 換算前的原幣物件)讓 ticker_diagnosis 兩者分流,不再讓單價繼承聚合換算。
     tdiag = ticker_diagnosis(rts_u, adds_class, held_dx, lastpx_u,   # #172 殘倉不列 per-ticker 診斷
                              max_pos_override=max_pos_override,      # #477:too_heavy 觸發線比照 dim_size/prescribe,吃同一份用戶覆寫
-                             sizing_weights=d_size.get("weights"))   # #477:佔比也比照 dim_size 同一份 current_book_projection,不再各吹各的號
+                             sizing_weights=d_size.get("weights"),   # #477:佔比也比照 dim_size 同一份 current_book_projection,不再各吹各的號
+                             orig_held=held, orig_last_px=last_px)   # #750:px/avg_cost 原幣原物件,見 usd_view() 文件字串的契約
 
     # 資料完整性(賣超 / 未分類 driver)— 影響數據可信度,JSON 與人話卡共用同一份
     orphans = orphan_sells(rows)
