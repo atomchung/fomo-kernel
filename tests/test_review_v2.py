@@ -466,7 +466,19 @@ def test_snapshot_prepare_builds_narrow_plan_without_writing_ledger():
         for key in ("avgdown_count", "avgdown_breach", "payoff", "exit_severity",
                     "hold_severity", "beta", "alpha_ann", "alpha_t", "alpha_credible"):
             assert state["metrics"][key] is None, key
-        assert card["overview"] == {} and card["ticker_diagnosis"] == []
+        # #771: this fixture has both avg_cost and market_value on every
+        # position (basis "market_value"), so unrealized P&L and the
+        # per-position money ranking are both genuinely supportable and must
+        # reach the card rather than being zeroed regardless of what the
+        # snapshot actually supports.
+        assert card["overview"] == {
+            "unrealized": 1460.0,
+            "unrealized_coverage": {"held_n": 3, "priced_n": 3, "unpriced": []},
+        }
+        assert [row["ticker"] for row in card["ticker_diagnosis"]] == \
+            ["2330.TW", "QQQ", "SPY"], "ranked by |impact| descending, same as the trade lane"
+        impacts = {row["ticker"]: row["impact"] for row in card["ticker_diagnosis"]}
+        assert impacts == {"2330.TW": 1320.0, "QQQ": 100.0, "SPY": 40.0}
         assert card["thesis_questions"] == [] and card["alpha_beta_breakdown"] == {}
         assert {row["dim"] for row in card["dims_raw"]} <= {"部位 sizing", "分散"}
         assert not (root / "ledger.jsonl").exists(), "prepare cannot leave an orphan anchor"
@@ -690,6 +702,73 @@ def test_snapshot_card_states_scope_once_and_leads_with_both_structural_holes():
         assert "unavailable weights as low risk" not in clean_md, \
             "weights ARE available here; the no-data fallback must not misreport them as unavailable"
         assert clean_md.count(markers["en"][1]) == 1, "unlock hint still renders exactly once"
+
+
+def test_snapshot_finalize_preserves_the_five_previously_zeroed_facts():
+    """#771 regression: cash, what_if, ticker_diagnosis, overview.unrealized
+    and strength were unconditionally zeroed by the adapter regardless of
+    what the snapshot actually supported. This asserts each is populated
+    right out of `prepare` on a fixture that genuinely supports it, and that
+    a full finalize of the session does not re-zero any of them -- so a
+    later refactor of either path cannot silently regress this."""
+    payload = {
+        "as_of": "2026-07-16",
+        "positions": [
+            {"ticker": "SPY", "shares": 2, "avg_cost": 600, "market_value": 1240,
+             "market": "US", "currency": "USD"},
+            {"ticker": "QQQ", "shares": 10, "avg_cost": 500, "market_value": 5100,
+             "market": "US", "currency": "USD"},
+            {"ticker": "2330.TW", "shares": 1000, "avg_cost": 1000,
+             "market_value": 1040000, "market": "TW", "currency": "TWD"},
+        ],
+        "cash": {"USD": 500},
+        "fx": {"USD": 1, "TWD": 0.033},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
+        card = plan["engine_card"]
+        assert card["cash"]["balance"] == 500.0, card["cash"]
+        assert card["what_if"]["scenario"] == {"kind": "single_ticker", "ticker": "2330.TW"}
+        assert [row["ticker"] for row in card["ticker_diagnosis"]] == \
+            ["2330.TW", "QQQ", "SPY"]
+        assert card["overview"]["unrealized"] == 1460.0
+        # 2330.TW alone is 84% of this three-position book -- nothing here
+        # supports a positive sizing/diversification claim, and `strength`
+        # staying `None` is the honest answer, not a gap.
+        assert card["strength"] is None
+
+        answers = pathlib.Path(tmp) / "answers.json"
+        narrative = pathlib.Path(tmp) / "narrative.json"
+        answers.write_text(json.dumps(_snapshot_answers(plan, commitment="skip")), encoding="utf-8")
+        narrative.write_text(json.dumps(_snapshot_narrative(plan), ensure_ascii=False), encoding="utf-8")
+        final = _run_finalize("--root", root, "--session-id", plan["session_id"],
+                     "--answers", answers, "--narrative", narrative)
+        assert final.returncode == 0, final.stdout + final.stderr
+
+        bundle = json.loads(
+            (root / "sessions" / plan["session_id"] / "bundle.json").read_text()
+        )
+        finalized_card = bundle["engine_card"]
+        assert finalized_card["cash"] == card["cash"]
+        assert finalized_card["what_if"] == card["what_if"]
+        assert finalized_card["ticker_diagnosis"] == card["ticker_diagnosis"]
+        assert finalized_card["overview"] == card["overview"]
+        assert bundle["engine_state"]["cash"] == card["cash"]
+
+        # The delivered private card exists on disk. Its *content* does not
+        # yet include these five facts: card_renderer._card_facts's
+        # route == "snapshot_review" gate and the `if snapshot:` branches in
+        # _performance_block/_risks_block bypass card["cash"]/what_if/
+        # ticker_diagnosis/strength/overview["unrealized"] independently of
+        # what this adapter supplies (confirmed by injecting fully-populated
+        # values into a snapshot bundle and finding no change in
+        # render_private/render_html output). That renderer wiring is a
+        # separate change from this adapter fix; what this test locks is
+        # that the engine artifact a renderer would read from stops being
+        # zeroed regardless of what the snapshot supports.
+        card_path = root / "sessions" / plan["session_id"] / "card-private.md"
+        assert card_path.exists() and card_path.read_text().strip()
 
 
 def test_a_view_covering_part_of_an_account_records_the_book_like_any_other():

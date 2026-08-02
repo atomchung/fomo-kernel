@@ -60,6 +60,11 @@ SUITES = [
     ("Local data-control CLI", "tests/test_coach_data_cli.py"),
     ("Skill dependency preflight (doctor)", "tests/test_deps_doctor.py"),
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py"),
+    # #771: the snapshot adapter's own card/state field contract -- which of
+    # the trade lane's fields a position snapshot can honestly support,
+    # asserted directly on `prepare()`'s return value rather than through the
+    # full CLI lifecycle `test_review_v2.py` covers.
+    ("Snapshot adapter card/state field contract (#771)", "tests/test_snapshot_adapter.py"),
     ("Skill v2 session, ETF, and E2E", "tests/test_review_v2.py"),
     ("Validated private question surfaces", "tests/test_question_surfaces.py"),
     # #628: the preview precondition on finalize. It lives in its own suite
