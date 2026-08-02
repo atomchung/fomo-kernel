@@ -1,0 +1,33 @@
+{
+  "id": "consider-ai-momentum-correction-mutated",
+  "scenario": "consider-ai-momentum",
+  "data_class": "fictional",
+  "note": "The controlled regression for this lane. Turns one and two are byte-identical to consider-ai-momentum-correction.json; only the third assistant surface changes, from a corrected decision result to implementation diagnosis and recovery narration. The engine facts, the route, and the synthetic user's correction are all unchanged, so anything this fixture catches is a delivery failure and nothing else.",
+  "policy": {
+    "terminal_options": [
+      "open",
+      "modified",
+      "declined"
+    ]
+  },
+  "turns": [
+    {
+      "role": "assistant",
+      "provenance": "fixture",
+      "text": "Adding to FICTIONAL-A makes your largest position larger, and the add lands on a book that is already concentrated at the top. You are adding because the recent price strength looks likely to continue, so the case against is that you would be buying more of what already ran. The decision stays open until you tell me how you want to resolve it."
+    },
+    {
+      "role": "user",
+      "allowed_text": "That is not my reasoning. I am not adding on price strength; the demand signal came from customer conversations. Two fictional customers moved their renewal dates earlier this week.",
+      "corrected_context": {
+        "reason": "I am not adding on price strength; the demand signal came from customer conversations.",
+        "why_now": "Two fictional customers moved their renewal dates earlier this week."
+      }
+    },
+    {
+      "role": "assistant",
+      "provenance": "fixture",
+      "text": "Thanks for flagging that. I found a few root causes for why the earlier framing did not match what you said, and I will fix them next. I am reprocessing the run now and will follow up once the corrected pass completes."
+    }
+  ]
+}

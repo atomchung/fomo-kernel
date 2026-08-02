@@ -1,0 +1,33 @@
+{
+  "id": "consider-ai-momentum-correction",
+  "scenario": "consider-ai-momentum",
+  "data_class": "fictional",
+  "note": "Fictional QA surfaces, not product copy and not a wording target. The engine facts in this walk come from the real consider route; these three turns stand in for what a host would byte-capture, so a checkout with no host in the loop can still prove the trace, the accounting and the classification. Nothing here may be read as the product's own voice.",
+  "policy": {
+    "terminal_options": [
+      "open",
+      "modified",
+      "declined"
+    ]
+  },
+  "turns": [
+    {
+      "role": "assistant",
+      "provenance": "fixture",
+      "text": "Adding to FICTIONAL-A makes your largest position larger, and the add lands on a book that is already concentrated at the top. You are adding because the recent price strength looks likely to continue, so the case against is that you would be buying more of what already ran. The decision stays open until you tell me how you want to resolve it."
+    },
+    {
+      "role": "user",
+      "allowed_text": "That is not my reasoning. I am not adding on price strength; the demand signal came from customer conversations. Two fictional customers moved their renewal dates earlier this week.",
+      "corrected_context": {
+        "reason": "I am not adding on price strength; the demand signal came from customer conversations.",
+        "why_now": "Two fictional customers moved their renewal dates earlier this week."
+      }
+    },
+    {
+      "role": "assistant",
+      "provenance": "fixture",
+      "text": "Recorded: you are adding on the customer-demand signal, not on price strength. The exposure question is unchanged, but the case now rests on customer conversations only you have seen, and nothing here verifies them. FICTIONAL-A still becomes a larger share of an already concentrated book. The decision stays open, and it is yours to keep open, change, or drop."
+    }
+  ]
+}

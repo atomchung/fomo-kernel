@@ -14,13 +14,36 @@ this document.
 
 ## Choose the evidence lane deliberately
 
-Maintainers may choose the inexpensive automated lane or the owner-live lane,
+Maintainers may choose an inexpensive automated lane or the owner-live lane,
 but the results are intentionally not interchangeable.
 
 | Lane | Command | Result | What it proves |
 |---|---|---|---|
 | Contract preflight | `python3 skills/fomo-kernel/tools/qa_preflight.py run` | `engine_contract_pass` | The deterministic regression suite and artifact contracts passed. It creates no attributable dogfood session or receipt, and makes no UX claim. |
+| Synthetic turn trace (#718) | `python3 qa/run_synthetic_walk.py consider-ai-momentum --user-backend stub` | `combined-receipt.json` | One `consider` route run left an ordered visible-turn trace and a counted attempt. It makes no user-experience claim at all: the surfaces are fictional, so what it proves is that a multi-turn failure can be *seen*, not that the product answered well. |
 | Formal dogfood | This runbook's full flow | archived owner/agent receipt | The named host walked the product lifecycle with attributable presentation evidence. Only an `owner_live` run can support a user-experience claim. |
+
+The synthetic lane exists because the other two cannot show a multi-turn
+failure. A preflight has no conversation, and a receipt is content-free by
+design, so a run where the product answered, was corrected, and then narrated
+its own repair work instead of re-answering left nothing behind to look at.
+This lane records the three visible turns around a real double invocation of
+the `consider` route, keeps their order in `ordered_surface_digest`, and counts
+the attempt the moment it starts — `campaigns_started` and `route_runs_started`
+are written to disk *before* the first turn exists, and an unsettled run reads
+`harness_incomplete` until a terminal verdict replaces it. A run therefore
+cannot leave the denominator by failing. Its exit codes say which happened:
+`0` product surfaces passed, `1` product surfaces failed, `2` the run never
+reached a verdict. Raw surface text stays in the local `turn-trace.local.jsonl`
+and machine detail in `harness-diagnostics.local.json`; the combined receipt
+carries counts, labels and digests only, which is what may be posted publicly.
+
+What it does not buy: the assistant surfaces come from a committed fictional
+script rather than a host capture (`production_answer_capture` stays
+`unavailable`), the classification is a delivery check calibrated for
+`--language en` and not an answer-quality judgment, and `owner_acceptance`
+stays `owner_unreviewed`. It is not a QA run under the gates below, and must
+never be archived as one.
 
 `qa_preflight.py` is deliberately content-free: it accepts no trade CSV, never
 records a maintainer `card_presented`, and always reports `formal_qa:false`,
