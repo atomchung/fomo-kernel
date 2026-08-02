@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -33,6 +34,16 @@ VISIBLE_ROLES = ("assistant", "user")
 # #718's taxonomy for what a visible message *is*. The first four are the
 # owner's categories for a product-visible surface; ``correction`` is the user
 # reply that moves the route to its next state.
+#
+# This slice derives only three of them: an assistant surface is classified
+# ``decision_result`` or ``process_error``, and the user's reply is a
+# ``correction``. ``question`` and ``limitation`` are held here because the
+# taxonomy is the contract, but nothing assigns them yet, and the cost of that
+# is real and worth stating: on this fixed trajectory the third turn owes a
+# decision result, so an assistant surface that asks a question instead is
+# recorded as ``process_error`` -- correctly a failure, but under a label that
+# says the wrong thing about why. Deriving the other two needs a surface
+# classifier this slice does not have.
 MESSAGE_TYPES = ("decision_result", "question", "limitation", "process_error", "correction")
 # ``harness`` is the honest provenance for text this QA lane wrote itself -- an
 # abnormal process surface is not a product surface and must never be counted
@@ -191,9 +202,12 @@ class TurnTrace:
         return {"setup": list(self._setup), "turns": [turn.raw() for turn in self._turns]}
 
     def write_raw(self, path):
+        """Rewrite the whole trace atomically -- a truncated trace is a lie."""
         rows = list(self._setup) + [turn.raw() for turn in self._turns]
         lines = [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        os.replace(temporary, path)
 
 
 def classify_surface(text, *, instrument, resolutions):

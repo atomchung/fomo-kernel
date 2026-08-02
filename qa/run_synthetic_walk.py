@@ -42,6 +42,11 @@ SURFACE_SCRIPTS = {
     "baseline": HERE / "scenarios" / "consider-ai-momentum-correction.json",
     "mutated": HERE / "scenarios" / "consider-ai-momentum-correction-mutated.json",
 }
+# The resolution vocabulary is the engine's, read from the product's own
+# schema. A script may declare a subset of it and nothing else -- otherwise a
+# fixture could invent a resolution word, put it in its final surface, and
+# manufacture a passing decision out of a word the route never had.
+DECISION_SCHEMA = ROOT / "skills/fomo-kernel/schemas/trade-evaluation.schema.json"
 # What the user is shown when the corrected evaluation does not complete. The
 # machine detail behind it goes to the separate diagnostics artifact, never
 # into a visible surface: raw tool output is not something a user ever saw.
@@ -74,7 +79,14 @@ class WalkError(RuntimeError):
 
 
 def _write(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    """Write via a temp file and rename, so a death mid-write cannot truncate.
+
+    The evidence this lane produces is rewritten on every turn. A partial file
+    is worse than a stale one: the stale file is an honest earlier state.
+    """
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _run(env, *args):
@@ -165,7 +177,18 @@ def load_surface_script(name_or_path):
     options = (script.get("policy") or {}).get("terminal_options")
     if not isinstance(options, list) or not options or not all(isinstance(o, str) for o in options):
         raise WalkError("the script must declare terminal_options")
+    if not set(options) <= set(engine_decisions()):
+        raise WalkError("terminal_options must come from the engine's own decision vocabulary")
     return script
+
+
+def engine_decisions():
+    """The product schema's decision enum -- the only resolution words allowed."""
+    try:
+        schema = json.loads(DECISION_SCHEMA.read_text(encoding="utf-8"))
+        return tuple(schema["properties"]["decision"]["enum"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise WalkError(f"cannot read the engine decision vocabulary: {exc}") from exc
 
 
 def _ask(user, envelope, *, allowed_text, seen_surfaces, seen_actions):
@@ -184,7 +207,13 @@ def _ask(user, envelope, *, allowed_text, seen_surfaces, seen_actions):
 
 
 def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None,
-             output_dir=None, surface_script="baseline"):
+             output_dir=None, surface_script="baseline", report_sink=None):
+    """Walk the route. ``report_sink`` receives the last *durable* report.
+
+    A caller that only sees the raised exception would have to invent counters
+    for a run that really started, and would report it as never having begun.
+    The sink is how the CLI tells the truth on stdout about a run that died.
+    """
     ledger = RunLedger()
     ledger.start_campaign()
     trace = TurnTrace()
@@ -224,6 +253,11 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None,
         report = build_report(ledger=ledger, trace=trace, base=base)
         _write(run_dir / "combined-receipt.json", report)
         trace.write_raw(run_dir / "turn-trace.local.jsonl")
+        # Only after both writes land.  A report that never reached disk must
+        # not be the one the caller reports, or a settled verdict whose write
+        # failed would be announced as though it had been recorded.
+        if report_sink is not None:
+            report_sink["report"] = report
         return report
 
     def diagnose(detail):
@@ -244,9 +278,14 @@ def run_walk(*, user_backend="stub", semantic_judge=False, judge_backend=None,
                             diagnose=diagnose)
     except BaseException as exc:  # noqa: BLE001 -- re-raised below; the point is the flush
         ledger.stop_incomplete(f"harness_error:{type(exc).__name__}")
-        diagnose({"stage": "walk", "error_type": type(exc).__name__, "error": str(exc),
-                  "traceback": traceback.format_exc()})
-        flush()
+        try:
+            diagnose({"stage": "walk", "error_type": type(exc).__name__, "error": str(exc),
+                      "traceback": traceback.format_exc()})
+            flush()
+        except Exception:  # noqa: BLE001
+            # Recording the fault must not replace it. The last durable report
+            # stands, and the original exception is what the caller sees.
+            pass
         raise
     return report
 
@@ -384,27 +423,33 @@ def main(argv=None):
                           "production_answer_capture": "external_host_required",
                           "semantic_judge": "requires_external_capture"}, sort_keys=True))
         return 0
-    ledger = RunLedger()
-    ledger.start_campaign()
+    sink = {}
     try:
         report = run_walk(user_backend=args.user_backend, semantic_judge=not args.no_semantic_judge,
                           judge_backend=args.judge_backend, output_dir=args.output_dir,
-                          surface_script=args.surface_script)
+                          surface_script=args.surface_script, report_sink=sink)
     except Exception as exc:  # noqa: BLE001
         # Deliberately every exception, not a named list.  Exit code 1 means
         # "the product surfaces failed"; letting an unlisted error -- a
         # malformed engine payload raising JSONDecodeError, say -- reach the
         # interpreter would exit 1 too and misreport a harness fault as a
         # product verdict.  KeyboardInterrupt and SystemExit still propagate.
-        #
-        # The campaign started, so it is counted.  Whether the route run itself
-        # started is not knowable here, so this path never claims one did -- the
-        # run_dir report it already flushed is the record of that.
-        ledger.stop_incomplete(f"harness_error:{type(exc).__name__}")
-        report = build_report(ledger=ledger, trace=TurnTrace(),
-                              base={"scenario": SCENARIO_ID, "deterministic": "fail",
-                                    "semantic_judge": "skipped", "owner_acceptance": "owner_unreviewed",
-                                    "error": str(exc)})
+        report = sink.get("report")
+        if report is None:
+            # Nothing durable exists yet, so no route run may be claimed -- but
+            # the campaign started and is counted whatever happened next.
+            ledger = RunLedger()
+            ledger.start_campaign()
+            ledger.stop_incomplete(f"harness_error:{type(exc).__name__}")
+            report = build_report(ledger=ledger, trace=TurnTrace(),
+                                  base={"scenario": SCENARIO_ID, "deterministic": "fail",
+                                        "semantic_judge": "skipped",
+                                        "owner_acceptance": "owner_unreviewed"})
+        # `str(exc)` can carry raw engine stdout/stderr, so it goes to stderr
+        # and to the diagnostics artifact -- never into the receipt, which is
+        # the part that may be posted publicly.
+        report = dict(report, error_type=type(exc).__name__)
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         print(json.dumps(report, sort_keys=True))
         return 2
     print(json.dumps(report, sort_keys=True))

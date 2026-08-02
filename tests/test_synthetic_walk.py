@@ -288,6 +288,101 @@ def test_a_crash_after_the_correction_keeps_a_partial_trace_and_stays_incomplete
         assert [turn["message_type"] for turn in turns] == ["decision_result", "correction"]
 
 
+def test_the_cli_reports_the_real_ledger_of_a_run_that_died_mid_trajectory():
+    """stdout is the record. It may not say a run that started never began."""
+    import contextlib
+    import io
+    captured = io.StringIO()
+    with tempfile.TemporaryDirectory() as tmp:
+        with mock.patch.object(runner, "_consider", _raise_on_second_consider(RuntimeError("died"))):
+            with contextlib.redirect_stdout(captured):
+                code = runner.main(["consider-ai-momentum", "--user-backend", "stub",
+                                    "--output-dir", tmp])
+        assert code == 2
+        report = json.loads(captured.getvalue())
+        _accounting_holds(report)
+        assert report["route_runs_started"] == 1, "the CLI reported a started run as never begun"
+        assert report["harness_incomplete"] == 1 and report["turn_count"] == 2
+        assert report["stop_reason"] == "harness_error:RuntimeError"
+        on_disk = json.loads((pathlib.Path(tmp) / "combined-receipt.json").read_text(encoding="utf-8"))
+        assert on_disk["stop_reason"] == report["stop_reason"], "stdout and disk disagree"
+
+
+def test_a_verdict_whose_write_failed_is_never_announced_as_recorded():
+    """The reported state must be a state that reached disk, not one that tried."""
+    real = runner._write
+
+    def fails_on_the_settled_report(path, value):
+        if isinstance(value, dict) and value.get("product_passes"):
+            raise OSError("disk went away")
+        return real(path, value)
+    with tempfile.TemporaryDirectory() as tmp:
+        sink = {}
+        with mock.patch.object(runner, "_write", fails_on_the_settled_report):
+            try:
+                runner.run_walk(user_backend="stub", output_dir=tmp,
+                                surface_script="baseline", report_sink=sink)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the failing write did not propagate")
+        report = sink["report"]
+        _accounting_holds(report)
+        assert report["product_passes"] == 0, "a verdict that never reached disk was announced"
+        assert report["harness_incomplete"] == 1 and report["route_runs_started"] == 1
+        on_disk = json.loads((pathlib.Path(tmp) / "combined-receipt.json").read_text(encoding="utf-8"))
+        assert on_disk["product_passes"] == 0
+
+
+def test_the_public_error_report_never_carries_engine_output():
+    import contextlib
+    import io
+    captured = io.StringIO()
+    secret = "PRIVATE-ENGINE-STDERR-abc123"
+    with tempfile.TemporaryDirectory() as tmp:
+        with mock.patch.object(runner, "_consider",
+                               _raise_on_second_consider(RuntimeError(secret))):
+            with contextlib.redirect_stdout(captured):
+                runner.main(["consider-ai-momentum", "--user-backend", "stub", "--output-dir", tmp])
+        assert secret not in captured.getvalue(), "raw engine output reached the public receipt"
+        report = json.loads(captured.getvalue())
+        assert report["error_type"] == "RuntimeError"
+        detail = pathlib.Path(report["harness_diagnostics"]).read_text(encoding="utf-8")
+        assert secret in detail, "the detail was dropped instead of routed"
+
+
+def test_a_script_cannot_invent_a_resolution_word_the_engine_never_had():
+    assert set(runner.engine_decisions()) >= {"open", "declined", "modified"}
+    baseline = json.loads((SCENARIOS / "consider-ai-momentum-correction.json").read_text(encoding="utf-8"))
+    forged = json.loads(json.dumps(baseline))
+    forged["policy"]["terminal_options"] = ["banana"]
+    forged["turns"][2]["text"] = "FICTIONAL-A banana"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "forged.json"
+        path.write_text(json.dumps(forged), encoding="utf-8")
+        try:
+            runner.load_surface_script(str(path))
+        except runner.WalkError:
+            return
+    raise AssertionError("a fixture manufactured a passing decision from an invented word")
+
+
+def test_the_walk_invokes_the_real_route_twice():
+    """The --plan count is a constant; this is the one that would notice."""
+    calls = []
+    real = runner._consider
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get("name"))
+        return real(*args, **kwargs)
+    with tempfile.TemporaryDirectory() as tmp:
+        with mock.patch.object(runner, "_consider", counted):
+            runner.run_walk(user_backend="stub", output_dir=tmp, surface_script="baseline")
+    assert calls == ["decision-context.json", "decision-context-corrected.json"], calls
+    plan = json.loads(run("consider-ai-momentum", "--user-backend", "stub", "--plan").stdout)
+    assert plan["consider_invocations"] == len(calls)
+
+
 def test_machine_detail_goes_to_its_own_artifact_and_never_into_a_visible_surface():
     with tempfile.TemporaryDirectory() as tmp:
         with mock.patch.object(runner, "_consider",
