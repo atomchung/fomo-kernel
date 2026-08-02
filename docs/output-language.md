@@ -183,7 +183,7 @@ the prior review, which is where a zh literal has the most room to hide).
 
 ## 5. New-locale checklist
 
-1. `copy/<locale>.json` — full key parity with `en.json` (25 top-level keys).
+1. `copy/<locale>.json` — full key parity with `en.json` (86 top-level keys as of #739; this count drifts as keys are added, so treat "parity with en.json" as the actual rule and this figure as a last-verified snapshot, not a target to keep hand-updating).
 2. Number/currency format rules for the locale (digit grouping, percent
    style; digit-ban quantifier rules are zh-specific — decide the locale's
    equivalent or mark n/a).

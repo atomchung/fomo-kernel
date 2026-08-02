@@ -327,11 +327,28 @@ def _position_entries(record, premise, consequence):
     """What this trade does to the position itself — the question the user
     actually asked. `before` only when the ticker is already held: a weight
     of zero for a name they do not own is arithmetic, not a fact worth a
-    sentence."""
+    sentence.
+
+    The premise's own price leads this topic when it was defaulted (#777,
+    owner ruling 2026-08-02): `price_basis: "observed"` means the caller
+    stated no price and consequence.validate_premise filled it from the
+    engine's own observed close rather than asking for one. "Priced at the
+    last close" is the fact the owner ruling requires the user see -- an
+    unstated assumption silently promoted to a market fact is exactly what
+    the *required* field existed to prevent, so the one thing that keeps the
+    default honest is saying, every time it fires, that it fired. No anchor:
+    `premise` is not one of `answer_provenance._ANCHOR_ROOTS`, so this fact
+    is stated but not citable by path, like every other unaddressable entry
+    this module already returns (see the module docstring's anchor
+    guarantee). Silent when the user supplied their own price -- that is the
+    ordinary case and states nothing new about it here."""
     ticker = premise.get("ticker") if isinstance(premise, Mapping) else None
     if not ticker:
         return []
     out = []
+    if isinstance(premise, Mapping) and premise.get("price_basis") == "observed":
+        out.append(_entry(record, "position", None, premise.get("price"),
+                          detail={"price_basis": "observed"}))
     before = (consequence.get("before") or {}).get("weights") or {}
     after = (consequence.get("after") or {}).get("weights") or {}
     if ticker in before:

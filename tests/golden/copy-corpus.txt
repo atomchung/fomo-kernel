@@ -16985,7 +16985,7 @@ copy-key coverage
 [zh-CN] reached 38 · unreached 0 · trivial 28
 [en] reached 89 · unreached 0 · trivial 4
 
-registers not claimed by any scene in this corpus (76):
+registers not claimed by any scene in this corpus (77):
   account_perf
   add_choices
   add_descriptions
@@ -17007,6 +17007,7 @@ registers not claimed by any scene in this corpus (76):
   decision_entries
   demo_badge
   dimensions
+  disclosures
   due_choices
   due_descriptions
   etf_classification

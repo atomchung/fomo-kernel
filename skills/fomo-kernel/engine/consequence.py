@@ -579,7 +579,7 @@ def rows_from_portfolio_basis(basis):
 
 # ─────────────────────────────── validation ───────────────────────────────
 
-def validate_premise(premise, rows):
+def validate_premise(premise, rows, last_px=None):
     """Validate one hypothetical trade into a normalized dict.
 
     Mirrors trade-premise.schema.json's rules in code — this offline suite
@@ -596,10 +596,26 @@ def validate_premise(premise, rows):
     assumes (trade_recap.load sorts once, at the boundary; round_trips,
     positions, and dim_size do not re-sort).
 
-    Returns a normalized dict with exactly {ticker, side, qty, price, date,
-    currency}. `notional`, when supplied, is consumed here and converted to
-    qty — it never appears on the normalized form, so nothing downstream of
-    validation has to handle both shapes of the same fact.
+    `price` is optional (#777, owner ruling 2026-08-02: "if the discussion
+    doesn't state a price, use the transaction price ... the market
+    transaction price"). When the caller states none, `last_px` — exactly
+    the map `cmd_consider` already resolved before this call, the same one
+    `portfolio_state` prices every holding from — supplies the engine's own
+    observed close for this ticker, so a defaulted premise prices at the
+    identical close the rest of the answer is computed at, never a second,
+    independent lookup. Refused, naming the ticker, when neither a stated
+    price nor an observed one is available: the acceptance criterion this
+    default must not weaken is that a premise this engine cannot price is
+    still refused, never silently answered on an invented number.
+
+    Returns a normalized dict with exactly {ticker, side, qty, price,
+    price_basis, date, currency}. `price_basis` is `"user_stated"` or
+    `"observed"` and is never a caller-supplied field (`_FIELDS` excludes
+    it) — it is what lets a later reader, including the evaluation's own
+    stored row, tell which of the two happened. `notional`, when supplied,
+    is consumed here and converted to qty — it never appears on the
+    normalized form, so nothing downstream of validation has to handle both
+    shapes of the same fact.
     """
     if not isinstance(premise, dict):
         raise ConsequenceError("premise must be an object")
@@ -611,7 +627,18 @@ def validate_premise(premise, rows):
     side = premise.get("side")
     if side not in SIDES:
         raise ConsequenceError("premise.side must be one of " + ", ".join(SIDES))
-    price = _positive_number(premise.get("price"), "price")
+    if premise.get("price") is not None:
+        price = _positive_number(premise["price"], "price")
+        price_basis = "user_stated"
+    else:
+        observed = (last_px or {}).get(ticker)
+        if observed is None:
+            raise ConsequenceError(
+                f"premise.price was not supplied and the engine has no observed close for "
+                f"{ticker} to default to; state a price, or supply --prices with a close for "
+                f"{ticker}")
+        price = _positive_number(observed, "price")
+        price_basis = "observed"
 
     has_qty = premise.get("qty") is not None
     has_notional = premise.get("notional") is not None
@@ -652,7 +679,7 @@ def validate_premise(premise, rows):
                 f"{current_shares:g} currently held")
 
     return {"ticker": ticker, "side": side, "qty": qty, "price": price,
-            "date": date, "currency": currency}
+            "price_basis": price_basis, "date": date, "currency": currency}
 
 
 def _premise_row(normalized):
@@ -952,9 +979,17 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     rather than answered over the bounded book (#673) — see
     `_refuse_premise_on_integrity` for why that one case is not a bounded
     answer at all.
+
+    `last_px` is forwarded into `validate_premise` (#777) so an unstated
+    `premise.price` can default to this same map's own observed close for
+    the ticker — the identical price every other number below prices that
+    instrument at, never a second lookup. `rule_collision` never calls
+    `validate_premise` a second time; it reads this function's own returned
+    `premise` back (see that function), so the default is resolved exactly
+    once per `consider` call.
     """
     _refuse_premise_on_integrity(premise, excluded_holdings)
-    normalized = validate_premise(premise, rows)
+    normalized = validate_premise(premise, rows, last_px=last_px)
     premise_row = _premise_row(normalized)
 
     before = before_override or portfolio_state(rows, last_px=last_px,

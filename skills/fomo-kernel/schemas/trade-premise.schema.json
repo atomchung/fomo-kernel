@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/trade-premise.schema.json",
   "title": "Fomo Kernel Trade Premise",
-  "description": "One hypothetical trade the model or user supplies mid-decision ('I'm thinking of buying NVDA — what does that do to my book?'). This is Layer 2 (docs/decision-fomo-kernel-shape.md §3): deterministic arithmetic over a premise, never a recommendation. The readable contract; skills/fomo-kernel/engine/consequence.py's validate_premise holds the enforcement, because the offline suite carries no jsonschema dependency. The envelope's field rules are stated once, here — consequence.py does not restate them, only enforces them.",
+  "description": "One hypothetical trade the model or user supplies mid-decision ('I'm thinking of buying NVDA — what does that do to my book?'). This is Layer 2 (docs/decision-fomo-kernel-shape.md §3): deterministic arithmetic over a premise, never a recommendation. The readable contract; skills/fomo-kernel/engine/consequence.py's validate_premise holds the enforcement, because the offline suite carries no jsonschema dependency. The envelope's field rules are stated once, here — consequence.py does not restate them, only enforces them. Also documents validate_premise's normalized OUTPUT shape (ticker/side/qty/price/price_basis/date/currency): every field the schema requires must be present on it, and it may carry no field the schema does not declare (tests/test_consequence.py's own structural-drift check) — price_basis is exactly such a field, engine-assigned and never caller-supplied (consequence._FIELDS excludes it from the input allowlist independently of this file).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ticker", "side", "price"],
+  "required": ["ticker", "side"],
   "properties": {
     "ticker": {
       "type": "string",
@@ -19,7 +19,11 @@
     "price": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "The hypothetical execution price, in the instrument's own trading currency. Required even when notional is given, because notional is converted to a share count by dividing through this price — the engine's downstream arithmetic is share-based, matching how the ledger itself is recorded."
+      "description": "The hypothetical execution price, in the instrument's own trading currency. Optional (#777, owner ruling 2026-08-02): when the caller states no price, consequence.validate_premise defaults it to the engine's own observed close for this ticker (the same last_px map every other number in the answer is priced from) rather than asking for one or refusing outright, and stamps price_basis 'observed' so the two remain distinguishable downstream. Refused, naming the ticker, when neither a stated price nor an observed one is available -- a premise this engine cannot price is still never answered on an invented number. When notional is given instead of qty, this is also what notional divides through to become a share count -- the stated or the defaulted value, either way -- because the engine's downstream arithmetic is share-based, matching how the ledger itself is recorded."
+    },
+    "price_basis": {
+      "enum": ["user_stated", "observed"],
+      "description": "Engine-assigned, never a field the caller may send (consequence._FIELDS does not include it, independently of this schema's own additionalProperties:false). Present only on validate_premise's normalized OUTPUT and therefore on a stored trade-evaluation row's premise, never on the input envelope a caller constructs. 'user_stated' when the caller supplied price; 'observed' when it was left out and the engine filled it from its own observed close -- the fact evaluation_challenge.py's must_state now states under the position topic whenever it is 'observed', so 'priced at the last close' reaches the user rather than reading as an ordinary chosen price."
     },
     "qty": {
       "type": "number",

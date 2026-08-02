@@ -2267,6 +2267,120 @@ def test_add_cash_carries_a_declared_price_dead_end_forward():
         assert "reachable from this host" in recovery["checked"], recovery
 
 
+# ── #758: set-cap and add-cash are one message beat (flows/first-review.md ──
+# ── step 6), and set-cap rewrites profile.json immediately -- both orders ──
+# ── of the two same-beat actions must succeed. ──
+
+def test_add_cash_after_set_cap_in_the_same_beat_succeeds_and_freezes_the_original_cap():
+    """The exact repro in the issue. Before this fix, `set-cap` (which
+    rewrites profile.json synchronously) run just before `add-cash` made the
+    recompute below read the NEW cap live, `card_plan.candidate_rules`
+    changed under a card the user had already been shown, and
+    `_cash_recompute_drift` correctly-by-its-own-contract refused on "the
+    rules the user was offered" -- confirmed by reverting just the
+    `_run_engine`/`cmd_add_cash` fix and rerunning this exact sequence, which
+    reproduces the issue's own error text verbatim.
+
+    `add-cash` now freezes the cap this pending session was actually
+    prepared with (`plan["engine_state"]["max_position_pct"]`, echoed back by
+    trade_recap.py), the same "reuse the frame" posture already proven for
+    market data above. Both the ordering and the frozen-not-live value are
+    asserted: the recompute must succeed, and its sizing rule must still
+    read the DEFAULT cap the user was shown (20%), never the 30% they just
+    stated -- data-contract.md's own words are that a stated cap reconciles
+    against the *next* review, not the one already on screen."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+        original_rule = plan["card_plan"]["candidate_rules"][0]["rule"]
+        assert "20%" in original_rule, original_rule   # the universal default
+
+        cap_run = _run("set-cap", "--root", root, "--pct", "0.30")
+        assert cap_run.returncode == 0, cap_run.stdout + cap_run.stderr
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        out = json.loads(run.stdout)
+        assert out["status"] == "anchored"
+
+        recomputed_rule = out["review_plan"]["card_plan"]["candidate_rules"][0]["rule"]
+        assert recomputed_rule == original_rule, (
+            "the recompute must keep the candidates already shown, not silently re-derive "
+            f"them under the cap the user just stated: {recomputed_rule!r}")
+        assert "20%" in recomputed_rule and "30%" not in recomputed_rule, recomputed_rule
+
+        internal = session_engine.load_pending(str(root), out["session_id"])["plan"]
+        assert internal["engine_state"]["max_position_pct"] is None, (
+            "None means the universal default was frozen through -- the same value the "
+            "original plan carried, not the 0.30 now sitting in profile.json")
+
+
+def test_add_cash_freezes_the_original_sessions_own_cap_not_the_default_or_the_live_one():
+    """Sharper than the test above on purpose: that one's session was
+    prepared under the universal default (None), so a wiring bug that
+    hardcoded `frozen_position_cap=None` instead of actually reading
+    `plan["engine_state"]["max_position_pct"]` would have produced an
+    identical result and gone undetected (caught during this fix's own
+    mutation verification). Preparing under an already-nonstandard cap
+    (0.22) makes three different outcomes -- the frozen original (22%), the
+    live profile.json value at add-cash time (30%), and a wrong hardcoded
+    default (20%) -- mutually distinguishable, so a wiring regression to any
+    of the other two shows up as a wrong percentage rather than a
+    coincidental match."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env = _offline_env(tmp)
+
+        first_cap = _run("set-cap", "--root", root, "--pct", "0.22")
+        assert first_cap.returncode == 0, first_cap.stdout + first_cap.stderr
+
+        prep = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en", env=env)
+        assert prep.returncode == 0, prep.stdout + prep.stderr
+        plan = json.loads(prep.stdout)["review_plan"]
+        original_rule = plan["card_plan"]["candidate_rules"][0]["rule"]
+        assert "22%" in original_rule, original_rule
+
+        second_cap = _run("set-cap", "--root", root, "--pct", "0.30")
+        assert second_cap.returncode == 0, second_cap.stdout + second_cap.stderr
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        recomputed_rule = json.loads(run.stdout)["review_plan"]["card_plan"]["candidate_rules"][0]["rule"]
+        assert "22%" in recomputed_rule, (
+            f"must freeze the 22% this session was actually prepared with: {recomputed_rule!r}")
+        assert "30%" not in recomputed_rule and "20%" not in recomputed_rule, recomputed_rule
+
+
+def test_set_cap_after_add_cash_still_succeeds_and_still_reaches_the_next_review():
+    """The order that already worked must keep working (no regression), and
+    the deferred half of #758's fix must be provably true rather than merely
+    implied by the code shape: `set-cap` run after `add-cash` is untouched by
+    this fix (`cmd_set_cap` and `_position_cap_override` are not part of it)
+    and its write still reaches a later, ordinary `prepare` -- the cap is
+    deferred to the next review, never dropped."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        env, plan = _prepared_without_an_anchor(tmp, root)
+
+        run = _run("add-cash", "--root", root, "--session-id", plan["session_id"],
+                   "--cash", '{"currency":"USD","amount":8200,"as_of":"2026-07-30"}', env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        cap_run = _run("set-cap", "--root", root, "--pct", "0.30")
+        assert cap_run.returncode == 0, cap_run.stdout + cap_run.stderr
+
+        # A later, ordinary prepare (`amending_session` unset, so the live
+        # `_position_cap_override` path is what must answer, not a frozen
+        # one) is the next review this cap was always meant to reach.
+        later = _run("prepare", _OFFLINE_MOCK, "--root", root, "--language", "en",
+                     "--session-nonce", "next-review-probe", env=env)
+        assert later.returncode == 0, later.stdout + later.stderr
+        later_rule = json.loads(later.stdout)["review_plan"]["card_plan"]["candidate_rules"][0]["rule"]
+        assert "30%" in later_rule, later_rule
+
+
 # ── the card-beat answer has to be recordable on a priced review (#665) ──
 #
 # Everything above runs price-degraded, and that is why it stayed green through

@@ -598,5 +598,13 @@
   "candidate_comparison": {
     "line": "{top} scored higher than {others} on this period's severity ranking -- that reflects which pattern showed up more strongly this period, not which rule is the right fit for you.",
     "joiner": " and "
+  },
+  "disclosures": {
+    "cost_basis": "No current price was supplied, so these weights are computed on cost, not market value.",
+    "cash_unreliable": "The cash balance has no anchor; it is a running total from cash flows alone.",
+    "unmapped_driver": "This ticker has no sector or AI classification yet, so concentration does not count it.",
+    "unclassified_book": "At least one holding has no sector or AI classification, so the AI share and the largest-sector share are measured over less than the whole book.",
+    "etf_not_decomposed": "At least one holding is a fund whose constituents were not decomposed.",
+    "partial_book": "At least one position falls outside the usable book this answer measures, so every percentage here is over the remaining partial book."
   }
 }
