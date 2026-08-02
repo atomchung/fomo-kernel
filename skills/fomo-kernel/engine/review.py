@@ -3909,6 +3909,34 @@ def _consider_price_feed_status(*, requested, last_px, missing_fx=(),
                               command="consider", request_path="price_feed.request")
 
 
+def _consider_sector_display(consequence, language):
+    """The user-facing name of each snapshot's largest sector (#746).
+
+    ``consequence.before/after.max_sector`` is the engine's own label, and
+    ``trade_recap.SECTOR_MAP`` stores those as zh literals. The card has
+    localized them since #387 through ``card_renderer.localized_sector``; the
+    ``consider`` response never did, so an ``--language en`` answer obliged to
+    state ``max_sector_pct`` had no English name for the sector that figure
+    measures.
+
+    Emitted beside the evaluation row rather than onto it: this is a pure
+    function of a value the row already freezes plus the caller's language, and
+    the row seeds ``_evaluation_id``. Putting it on the row would make one trade
+    evaluated in two languages two different evaluations.
+
+    A label with no mapping is a user-supplied driver-map category and passes
+    through unchanged — ``localized_sector`` owns that rule, and this function
+    does not second-guess it. A snapshot with no largest sector contributes no
+    key, so an empty result means "no sector to name", never "not localized".
+    """
+    display = {}
+    for side in ("before", "after"):
+        sector = (consequence.get(side) or {}).get("max_sector")
+        if sector:
+            display[side] = card_renderer.localized_sector(sector, language)
+    return display
+
+
 def _consider_recovery_tickers(rows, premise_ticker, _excluded_holdings=()):
     """The only tickers a ``consider`` recovery may ask the agent to price.
 
@@ -7578,6 +7606,19 @@ def cmd_consider(args):
     report = _append_evaluation_row(root, row)
     payload = {"status": "considered", "root": root, "language": language,
                "evaluation": row, "challenge": challenge, "append": report}
+    sector_display = _consider_sector_display(consequence_stored, language)
+    if sector_display:
+        # #746. `max_sector` is a canonical engine label — `trade_recap.SECTOR_MAP`
+        # stores zh literals — and it stays that way on the row: `_evaluation_id`
+        # is seeded on the row, so the same trade evaluated in two languages has
+        # to be one evaluation, not two. The name the user reads therefore goes
+        # beside the row, for the same reason `challenge` and `price_feed` do.
+        #
+        # It is not optional politeness. `max_sector_pct` is on `must_state`, and
+        # the natural way to state a sector weight is to name the sector, so
+        # without this the only sector name in the response is the one an English
+        # answer must not contain.
+        payload["sector_display"] = sector_display
     if price_status:
         # #629. Beside the row, never on it — the same place and for the same
         # reason as `challenge`: the row is content-addressed and this is a

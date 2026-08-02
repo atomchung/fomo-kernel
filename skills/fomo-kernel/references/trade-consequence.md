@@ -60,6 +60,8 @@ Sending a context changes what the call *is*, not what it computes. The conseque
 
 The response carries `before` and `after` — the book's own state without and with the hypothetical trade — plus `delta` (only the readings that actually moved) and `disclosures` (see below). Weight, concentration (`ai_pct`, `max_sector_pct`, `top3`), whether the position-size cap or the concentration line is triggered, cash balance and weight, and how many holdings the book would carry are all in both snapshots, so a before/after comparison never has to be recomputed by hand.
 
+`max_sector` inside those snapshots is the engine's own canonical label, and it stays that way whatever language you asked in — it is part of the stored evaluation, and the same trade evaluated in two languages has to be one evaluation. **Name the sector from `sector_display`, never from `consequence.*.max_sector`.** `sector_display` arrives beside the evaluation, carries `before` and `after` — they genuinely differ when the trade is what changes which sector leads — and is already in the language you asked for. A category the user invented in their own driver map has nothing to translate to and comes back unchanged. The key is absent when the book has no largest sector to name; absent means there is none, never that one went untranslated.
+
 `disclosures` is a list of machine-readable keys, not prose — read them as gaps in the numbers, not failures:
 
 | Key | What it means |
