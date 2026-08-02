@@ -91,12 +91,27 @@ mechanically (pure dict/list traversal, no interpretation).
 
 Design decision — number extraction and comparison
 -----------------------------------------------------
-``conditions.numbers_in`` (conditions.py:203) is reused directly and
-unchanged — never reimplemented — for the reason its own module docstring
-gives for existing at all: "the check and the gate must not disagree about
-what a number is." It extracts every standalone number in a text as a set
-of floats (comma-stripped, decimal-aware); this module never writes its own
+``conditions.numbers_in`` (conditions.py:211) is reused directly — never
+reimplemented — for the reason its own module docstring gives for existing
+at all: "the check and the gate must not disagree about what a number is."
+It extracts every standalone number in a text as a set of floats
+(comma-stripped, decimal-aware, and — since #752 — correctly stripped of an
+adjacent CJK character rather than reading it as glue the way an ASCII
+letter fused onto a digit is); this module never writes its own
 number-scanning regex.
+
+``_quoted_numbers`` calls it once per claim and the result feeds two
+different checks with two different failures (#752): a claim whose text
+carries no number at all is refused for that — the scanner found nothing to
+compare — before the claim is ever compared against the frozen value, so
+that refusal is never worded as though the wrong number had been quoted.
+Only a claim that *does* quote at least one number reaches the magnitude
+comparison below, and only that comparison may fail with "does not match".
+Collapsing the two into one message was the bug #752 reports: a claim whose
+number the scanner could not see at all — the common case for a natural
+zh-TW/zh-CN claim before that issue's fix to ``conditions.py`` — was told
+its number was wrong, which sends whoever reads the message toward
+rechecking arithmetic that was never the problem.
 
 The frozen value a claim is checked against is compared at the single
 display scale this codebase's own numbers are actually written in. Every
@@ -324,14 +339,25 @@ def resolve_anchor(record, anchor):
 
 # ─────────────────────────── number matching ───────────────────────────
 
-def _numeric_claim_matches(value, text):
-    """True when `text` (via conditions.numbers_in) quotes a number that
-    equals `value` -- at `value`'s own scale, and at x100 percent scale
-    when `value` is fraction-shaped. See the module docstring's number
-    extraction and comparison design note."""
-    quoted = conditions.numbers_in(text)
-    if not quoted:
-        return False
+def _quoted_numbers(text):
+    """Every standalone number `text` quotes, via `conditions.numbers_in` --
+    this module writes no number-scanning regex of its own (see the module
+    docstring's number extraction and comparison design note). Split out
+    from `_numeric_claim_matches` below so a caller can tell "the claim
+    quotes no number at all" apart from "the claim quotes a number, and it
+    does not match" -- two different failures with two different repairs
+    (#752): the first means the claim's own prose carries no figure the
+    scanner could see at all, the second means the wrong figure was cited."""
+    return conditions.numbers_in(text)
+
+
+def _numeric_claim_matches(value, quoted):
+    """True when `quoted` (every standalone number a claim's text quotes,
+    already extracted by `_quoted_numbers`) contains one that equals `value`
+    -- at `value`'s own scale, and at x100 percent scale when `value` is
+    fraction-shaped. See the module docstring's number extraction and
+    comparison design note. Assumes `quoted` is non-empty; an empty set is
+    the caller's "no number at all" case, handled separately."""
     magnitude = abs(float(value))
     candidates = {magnitude}
     if magnitude <= _FRACTION_MAGNITUDE:
@@ -370,7 +396,16 @@ def _check_engine_fact_claim(claim, label, record):
     if isinstance(resolved, bool):
         pass  # a bare boolean fact: nothing to number-match (see docstring)
     elif isinstance(resolved, (int, float)):
-        if not _numeric_claim_matches(resolved, claim["claim"]):
+        quoted = _quoted_numbers(claim["claim"])
+        # Two different failures, two different repairs (#752). An agent
+        # told "does not match" reaches for the arithmetic; an agent told
+        # "quotes no number at all" reaches for the sentence itself -- the
+        # scanner found nothing there to compare in the first place.
+        if not quoted:
+            raise AnswerProvenanceError(
+                f"{label} is anchored at {anchor!r}, a number, but its claim quotes no number "
+                "at all")
+        if not _numeric_claim_matches(resolved, quoted):
             raise AnswerProvenanceError(
                 f"{label} quotes a number that does not match the frozen value at {anchor!r}")
 
