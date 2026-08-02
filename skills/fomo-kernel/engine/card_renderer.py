@@ -1708,6 +1708,37 @@ def _exit_entries(bundle, copy):
 # always uses the full ``text``, exactly as before this change.
 
 
+def _cash_line_text(card, context, language):
+    """The declared/anchored cash sentence built from ``card["cash"]``.
+
+    Shared by the trade lane's ``_performance_items`` and the snapshot
+    route's Block 1 (#771): both read the identical ``balance``/``weight``/
+    ``source``/``reliable``/``by_currency`` shape — ``trade_recap.
+    cash_position()`` for the trade lane, ``snapshot_adapter._cash_summary``
+    for the snapshot lane, which documents this exact contract on itself so a
+    renderer consuming the field cannot tell which lane produced it. One
+    sentence-building implementation instead of two keeps it that way.
+    Returns ``None`` when the card carries no reliable balance to state."""
+    cash = card.get("cash") or {}
+    if not (cash.get("reliable") and cash.get("balance") is not None):
+        return None
+    cash_copy = load_copy(language).get("cash_lines") or {}
+    display_cash = _display_money(cash.get("balance"), context)
+    if display_cash is not None:
+        if cash.get("weight") is not None:
+            return _format_copy(cash_copy.get("anchored_with_weight"),
+                                cash=display_cash, weight=_pct(cash.get("weight")))
+        return _format_copy(cash_copy.get("anchored"), cash=display_cash)
+    original = []
+    for currency, row in sorted((cash.get("by_currency") or {}).items()):
+        if (row or {}).get("balance") is not None:
+            original.append(_money((row or {}).get("balance"), currency))
+    if not original:
+        return None
+    joiner = cash_copy.get("amount_joiner") or ", "
+    return _format_copy(cash_copy.get("by_currency"), amounts=joiner.join(original))
+
+
 def _performance_items(card, language):
     """Block-1 indicator lines as tagged items, in the contract §2 order:
     ① absolute P&L (KPI-mirror line) → payoff/drag → ② annualized/account →
@@ -1833,26 +1864,9 @@ def _performance_items(card, language):
             text = gate_copy.get(status) or gate_copy.get("default") or ""
             if text:
                 line("account_gate", text)
-    cash = card.get("cash") or {}
-    if cash.get("reliable") and cash.get("balance") is not None:
-        display_cash = _display_money(cash.get("balance"), display)
-        cash_copy = copy.get("cash_lines") or {}
-        if display_cash is not None:
-            if cash.get("weight") is not None:
-                line("cash", _format_copy(cash_copy.get("anchored_with_weight"),
-                                          cash=display_cash,
-                                          weight=_pct(cash.get("weight"))))
-            else:
-                line("cash", _format_copy(cash_copy.get("anchored"), cash=display_cash))
-        else:
-            original = []
-            for currency, row in sorted((cash.get("by_currency") or {}).items()):
-                if (row or {}).get("balance") is not None:
-                    original.append(_money((row or {}).get("balance"), currency))
-            if original:
-                joiner = cash_copy.get("amount_joiner") or ", "
-                line("cash", _format_copy(cash_copy.get("by_currency"),
-                                          amounts=joiner.join(original)))
+    cash_text = _cash_line_text(card, display, language)
+    if cash_text:
+        line("cash", cash_text)
     # ③ vs market: benchmark rows, the winning split, the alpha interval, then
     # the alternative comparators the HTML bars show (md keeps them as one line).
     # Monthly cadence (#284, contract §3): a prepare-time gate suppresses the
@@ -3139,14 +3153,25 @@ def _card_facts(bundle, copy):
     ``cut_loss`` rows are already carried by the rule the engine derived from
     them, so listing them again in Block 4 only produced competing imperatives.
     The v1 rich card (``rich_card.py``) still renders the full prescription
-    layer through ``localized_prescription``."""
+    layer through ``localized_prescription``.
+
+    #771: this used to short-circuit to all-empty for ``snapshot_review``
+    before calling any of the four functions below — a leftover from when
+    ``snapshot_adapter.py`` zeroed every field wholesale, so there was
+    genuinely nothing here to find. The adapter now fills what a position
+    snapshot supports (``ticker_diagnosis``, ``what_if``) and leaves the rest
+    absent for real reasons (``alpha_beta_breakdown`` is ``{}``, ``overview``
+    carries no ``total_pnl``/``payoff`` — a snapshot has no transaction
+    history to compute either from). One computation is therefore correct for
+    every route: each function below already drops what its own inputs
+    cannot support (see their own docstrings), so ``kpi``/``attribution`` come
+    out empty on this route because the engine gave them nothing, not because
+    this function special-cased the route — the distinction the short-circuit
+    used to erase, in violation of "a module that has the data to render must
+    actually render" (docs/layout-constraints.md §3, checker S-2)."""
     card = bundle.get("engine_card") or {}
     language = copy["language"]
     context = _display_context(card, language)
-    if bundle.get("route") == "snapshot_review":
-        # Snapshot cards intentionally suppress history-performance panels; the
-        # rich layout has nothing honest to add there yet.
-        return {"kpi": [], "instruments": [], "stress": [], "attribution": None}
     # #344: the market backdrop _performance_block prints as Block 1's line
     # folds into the excess tile's sub here too — both call sites read the one
     # _market_backdrop so the two never drift apart. The review span is not
@@ -3173,12 +3198,24 @@ def _performance_block(bundle, card, copy, facts, honesty, snapshot):
     ``(items, footnote_texts)``."""
     language = copy["language"]
     if snapshot:
-        # Snapshot route: position-structure baseline only (§3 last row); the
-        # agent-authored limitation sentences have no indicator hosts here and
-        # collapse into the footnote instead of a caveat wall.
+        # Snapshot route (#771): position-structure baseline, then declared
+        # cash, then concentration stress — the same relative order the trade
+        # lane uses (baseline facts, cash, stress last), minus everything a
+        # snapshot has no transaction history for (payoff, annualized/account
+        # return, vs-market comparison), which stay out entirely rather than
+        # rendering a partial or estimated version. The agent-authored
+        # limitation sentences have no indicator hosts here and collapse into
+        # the footnote instead of a caveat wall.
+        context = _display_context(card, language)
         items = [{"kind": "line", "tag": None, "text": text}
                  for text in _snapshot_overview_lines(card, copy)]
+        cash_text = _cash_line_text(card, context, language)
+        if cash_text:
+            items.append({"kind": "line", "tag": "cash", "text": cash_text})
+        for text in facts["stress"]:
+            items.append({"kind": "line", "tag": "stress", "text": text})
         footnote = [honesty.pop(key) for key in list(honesty)]
+        items = [item for item in items if item.get("text")]
         return items, footnote
     missing = copy.get("block_missing") or {}
     # #289: name the actual blocker. When the host could not retrieve prices at
@@ -3394,7 +3431,23 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     #301: the ``[v]`` panel also carries the ``amplify`` prescription rows.
     They describe what the period proved, not an action, so listing them beside
     the one committed rule in Block 4 made the card read as several competing
-    orders. Here they sit next to the strength they qualify."""
+    orders. Here they sit next to the strength they qualify.
+
+    #771: ``card["strength"]`` — the pre-rendered zh sentence
+    ``trade_recap.dim_strength``/the snapshot adapter emit — is not read on
+    either route here, and that is pre-existing, not a snapshot gap. The trade
+    lane's own ``[v]`` panel already ignores it in favor of recomputing
+    ``_best_strength`` from ``dims_raw`` (a locale-neutral computation two
+    lines below); consuming the raw field directly would both violate the
+    zh-only-legacy-literal boundary ``_instrument_rows`` documents and
+    duplicate a fact ``dims_raw`` already answers. The snapshot branch below
+    mirrors that shape with ``_snapshot_strength_line`` (which reads
+    ``snapshot_summary.weights_available``, the axis #549 ratified) rather
+    than ``_best_strength`` itself, because a snapshot's ``dims_raw`` never
+    carries the exit-discipline/averaging-down/holding-period candidates that
+    function's ``no_signal`` fallback is worded for ("no positive behavior")
+    — wording that fits a transaction history, not a point-in-time holdings
+    check with none to judge."""
     language = copy["language"]
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}

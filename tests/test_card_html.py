@@ -1462,6 +1462,130 @@ def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
 # each and none of them had a pin before.
 
 
+def test_snapshot_route_renders_cash_stress_and_instrument_facts_the_adapter_supplies():
+    """#771 second half (renderer side; the adapter side landed in #788/09f9bd7).
+
+    ``snapshot_adapter.prepare()`` stopped zeroing ``card["cash"]``/
+    ``state["cash"]``, ``card["what_if"]``, and ``card["ticker_diagnosis"]``
+    wholesale, but ``_card_facts`` still short-circuited to
+    ``{"kpi": [], "instruments": [], "stress": [], "attribution": None}`` for
+    ``snapshot_review`` before ever calling the functions that would have read
+    them, and ``_performance_block``'s snapshot branch never called the
+    stress/cash renderers at all. Verified empirically before this fix:
+    injecting fully populated values for all five fields into a snapshot
+    bundle produced byte-identical ``render_private``/``render_html`` output
+    to the all-zeroed case -- the gap that let the adapter half ship with an
+    all-green suite (#787 names the same shape: a fixture that never reaches
+    the changed code looks identical to one that does and finds nothing
+    wrong). This test renders real cards and asserts the facts are readable
+    in the output text, not that some intermediate fact dict came back
+    non-empty -- a structure-only assertion is exactly the fake-green type
+    this repository has shipped before (docs/development-guide.md §2 type 1).
+    """
+    payload = {
+        "as_of": "2026-07-20",
+        "positions": [
+            {"ticker": "NVDA", "shares": 40, "avg_cost": 100.0, "market": "US",
+             "currency": "USD", "market_value": 8000},
+            {"ticker": "PLTR", "shares": 200, "avg_cost": 15.0, "market": "US",
+             "currency": "USD", "market_value": 4000},
+            {"ticker": "MSFT", "shares": 10, "avg_cost": 550.0, "market": "US",
+             "currency": "USD", "market_value": 5000},
+        ],
+        "cash": {"USD": 5000},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = v2._snapshot_prepare(tmp, root, payload=payload, language="en",
+                                           name="positions.json")
+        card = plan["engine_card"]
+        # Fixture sanity: the three adapter-honestly-filled fields the short
+        # circuit used to discard must actually carry data here, or a pass
+        # below would prove nothing (#787: a fixture that never reaches the
+        # code under test renders identically whether the code is right or
+        # wrong).
+        assert card.get("cash", {}).get("balance") == 5000.0, \
+            "fixture must declare a reliable cash balance"
+        assert card.get("what_if"), \
+            "fixture must be on the market-value basis so what_if computes"
+        assert len(card.get("ticker_diagnosis") or []) >= 2, \
+            "fixture needs >=2 non-zero-impact tickers to clear _instrument_rows's own gate"
+
+        bundle = v2._snapshot_render_bundle(plan, "en", session_id="cash-stress-trades")
+        md = card_renderer.render_private(bundle)
+        html_card = html.unescape(card_renderer.render_html(bundle))
+        surfaces = ((md, "Markdown"), (html_card, "HTML"))
+
+        # 1. Declared cash reaches the card (acceptance criterion #2).
+        for surface, label in surfaces:
+            assert "$5,000" in surface, f"{label}: declared cash balance missing from snapshot card"
+            assert "23%" in surface, f"{label}: cash weight-of-account missing from snapshot card"
+
+        # 2. The concentration stress row renders from snapshot-derived
+        # per-share prices (acceptance criterion #3).
+        for surface, label in surfaces:
+            assert "$17,000" in surface, f"{label}: stress exposure amount missing"
+            assert "$5,100" in surface, f"{label}: stress 30% drawdown amount missing"
+            assert "$8,500" in surface, f"{label}: stress 50% drawdown amount missing"
+
+        # 3. The empty ranked section carries the real per-position money
+        # ranking instead of its apology (acceptance criterion #5).
+        for surface, label in surfaces:
+            assert "No ranked instrument diagnosis" not in surface, \
+                f"{label}: empty-state trades note must not coexist with real rows"
+        assert "NVDA +$4,000" in md, "Markdown: NVDA's ranked row (ticker+amount) is missing"
+        assert "PLTR +$1,000" in md, "Markdown: PLTR's ranked row (ticker+amount) is missing"
+        assert "MSFT -$500" in md, "Markdown: MSFT's ranked row (ticker+amount) is missing"
+        for ticker, amount in (("NVDA", "+$4,000"), ("PLTR", "+$1,000"), ("MSFT", "-$500")):
+            assert ticker in html_card, f"HTML: {ticker} row missing"
+            assert amount in html_card, f"HTML: {ticker}'s ranked amount {amount} missing"
+
+    # Reverse (the other half of the same acceptance criteria, and #771's own
+    # framing: "the zeroing is not wrong per field — it is wrong as a
+    # default"): a field the adapter honestly leaves absent must still render
+    # as absent. A cost-basis-only snapshot (no market_value on any position)
+    # cannot support what_if or ticker_diagnosis -- both are gated on
+    # ``basis == "market_value"`` in snapshot_adapter.py, which this fix does
+    # not touch -- while cash still renders, because a declared balance does
+    # not depend on the valuation basis of the positions beside it.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach-cost"
+        cost_payload = {
+            "as_of": "2026-07-20",
+            "positions": [
+                {"ticker": "NVDA", "shares": 40, "avg_cost": 100.0, "market": "US",
+                 "currency": "USD"},
+                {"ticker": "PLTR", "shares": 200, "avg_cost": 15.0, "market": "US",
+                 "currency": "USD"},
+                {"ticker": "MSFT", "shares": 10, "avg_cost": 550.0, "market": "US",
+                 "currency": "USD"},
+            ],
+            "cash": {"USD": 5000},
+        }
+        plan, _path = v2._snapshot_prepare(tmp, root, payload=cost_payload, language="en",
+                                           name="positions.json")
+        card = plan["engine_card"]
+        assert card["currency_meta"]["valuation_basis"] == "cost", \
+            "fixture must land on the cost basis to exercise the negative case"
+        assert card.get("what_if") is None, "fixture must leave what_if unset (adapter's own gate)"
+        assert card.get("ticker_diagnosis") == [], \
+            "fixture must leave ticker_diagnosis unset (adapter's own gate)"
+        assert card.get("cash", {}).get("balance") == 5000.0, \
+            "fixture must still declare cash -- cash does not depend on valuation basis"
+
+        bundle = v2._snapshot_render_bundle(plan, "en", session_id="cost-basis-no-stress")
+        md = card_renderer.render_private(bundle)
+        html_card = html.unescape(card_renderer.render_html(bundle))
+        for surface, label in ((md, "Markdown"), (html_card, "HTML")):
+            assert "$5,000" in surface, \
+                f"{label}: cash must still render on a cost-basis snapshot"
+            assert "could you sit through" not in surface, \
+                f"{label}: stress row must not render when the adapter left what_if absent"
+            assert "No ranked instrument diagnosis this period." in surface, \
+                (f"{label}: trades section must fall back to the plain empty-state note, "
+                 "not invent a ranking the adapter never computed")
+
+
 def test_alpha_below_grid_notes_are_two_independent_triggers():
     """#363: the not-yet-credible legend and the negative-interval caveat fire
     on separate conditions, and the tile's `*` suffix tracks `credible` alone.
@@ -2324,6 +2448,7 @@ def main():
         test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
         test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output,
+        test_snapshot_route_renders_cash_stress_and_instrument_facts_the_adapter_supplies,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
         test_card_template_is_deorphaned,
