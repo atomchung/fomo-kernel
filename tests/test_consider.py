@@ -3713,6 +3713,81 @@ def test_o_fx_only_orphan_regression_reddens_under_the_legacy_union_mutation():
         review_engine._consider_recovery_tickers = original
 
 
+# --- #746: the largest sector needs a name the answer's own language can use ---
+#
+# `max_sector_pct` is on `must_state`, and the natural way to state a sector
+# weight is to name the sector. Before this, the only sector name in a
+# `consider` response was `trade_recap.SECTOR_MAP`'s zh literal, on every
+# language — so an English answer that named its sector was pasting Chinese in.
+
+_SECTOR_PREMISE = '{"ticker": "NVDA", "side": "buy", "price": 200.75, "qty": 40}'
+
+
+def _sector_consider(tmp, language):
+    return _ok(_run("consider", str(MOCK / "sample_ai_holder.csv"), "--root", tmp,
+                    "--premise", _SECTOR_PREMISE, "--language", language))
+
+
+def test_sector_display_names_both_snapshots_in_the_callers_language():
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _sector_consider(tmp, "en")
+        display = payload["sector_display"]
+        # Both sides, because they genuinely differ on this book: the buy is
+        # what makes semiconductors overtake software and cloud. Localizing
+        # only `after` would leave the before/after comparison half-translated.
+        assert display == {"before": "software and cloud", "after": "semiconductors"}, display
+        for side, value in display.items():
+            assert value.isascii(), f"{side} is not English: {value!r}"
+
+
+def test_the_row_keeps_the_canonical_sector_label_whatever_the_language():
+    with tempfile.TemporaryDirectory() as tmp:
+        consequence = _sector_consider(tmp, "en")["evaluation"]["consequence"]
+        # The row is canonical state and is content-addressed. A localized value
+        # here would make the stored evaluation depend on how it was asked.
+        assert consequence["before"]["max_sector"] == "軟體雲"
+        assert consequence["after"]["max_sector"] == "半導體"
+
+
+def test_one_trade_in_three_languages_is_one_evaluation():
+    ids, displays = set(), []
+    for language in ("en", "zh-TW", "zh-CN"):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _sector_consider(tmp, language)
+            ids.add(payload["evaluation"]["evaluation_id"])
+            displays.append(payload["sector_display"]["after"])
+    # This is the whole reason the label is emitted beside the row rather than
+    # onto it: `_evaluation_id` is seeded on the row, so a localized field on
+    # the row would split one evaluation into three.
+    assert len(ids) == 1, f"language changed the evaluation identity: {ids}"
+    assert len(set(displays)) == 3, f"languages did not differ: {displays}"
+
+
+def test_a_user_supplied_sector_category_passes_through_untranslated():
+    with tempfile.TemporaryDirectory() as tmp:
+        driver_map = os.path.join(tmp, "driver_map.json")
+        with open(driver_map, "w", encoding="utf-8") as f:
+            json.dump({"NVDA": ["Fictional Widgets", 1], "MSFT": ["Fictional Widgets", 1],
+                       "GOOGL": ["Fictional Widgets", 1], "AVGO": ["Fictional Widgets", 1],
+                       "PLTR": ["Fictional Widgets", 1], "TSM": ["Fictional Widgets", 1]}, f)
+        payload = _ok(_run("consider", str(MOCK / "sample_ai_holder.csv"), "--root", tmp,
+                           "--premise", _SECTOR_PREMISE, "--language", "en",
+                           "--driver-map", driver_map))
+        # The engine cannot localize a name the user invented, and must not try.
+        assert payload["sector_display"]["after"] == "Fictional Widgets"
+
+
+def test_sector_display_is_absent_rather_than_empty_when_there_is_no_sector():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert review_engine._consider_sector_display({"before": {}, "after": {}}, "en") == {}
+        assert review_engine._consider_sector_display(
+            {"before": {"max_sector": None}, "after": {"max_sector": None}}, "en") == {}
+        # An absent key means "no sector to name". It must never be readable as
+        # "there was one and it was not localized".
+        payload = _sector_consider(tmp, "en")
+        assert payload["sector_display"], "this fixture does have a largest sector"
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]
