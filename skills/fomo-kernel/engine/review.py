@@ -176,7 +176,7 @@ def _emit(obj):
 _ENGINE_VERSION = None
 
 
-def _engine_version():
+def _engine_version(repo_root=None):
     """Provenance stamp: which build produced this artifact.
 
     Pure metadata — it never enters narrative, numeric facts, or the public
@@ -187,7 +187,20 @@ def _engine_version():
       2. the git short SHA plus a dirty flag;
       3. ``unknown``.
 
+    ``dirty`` reflects tracked-file state only — staged or unstaged changes
+    to a file git already knows about — never an untracked one. This is
+    `git describe --dirty`'s own convention, and it exists here because an
+    untracked file is not a reliable signal either way: an environment that
+    cannot reach the account's global excludes file (the QA runbook's HOME
+    replacement, for one — #747) surfaces an otherwise locally-ignored file
+    as untracked, and a real repo routinely collects scratch files no one
+    ever ran ``git add`` on. Neither describes the tracked tree diverging
+    from ``HEAD``, which is the only claim this flag makes. An actual edit —
+    modifying a tracked file, or staging a new one — still flips it.
+
     Cached per process so repeated prepare/preview/finalize calls agree.
+    ``repo_root`` is test-only: every production call site omits it and gets
+    this skill's own checkout, below.
     """
     global _ENGINE_VERSION
     if _ENGINE_VERSION is not None:
@@ -199,7 +212,8 @@ def _engine_version():
     # tests/test_coach_data_cli.py's DATA_FILES-registry completeness check
     # (#452) walks exactly that convention, so the distinct name is load-bearing
     # for that check's precision, not a style preference.
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo_root is None:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         with open(os.path.join(repo_root, "VERSION"), encoding="utf-8") as handle:
             tag = handle.read().strip()
@@ -214,8 +228,11 @@ def _engine_version():
             capture_output=True, text=True, timeout=2,
         )
         if head.returncode == 0 and head.stdout.strip():
+            # --untracked-files=no: see the docstring's `dirty` paragraph.
+            # Tracked modifications (staged or not) still show here; only an
+            # untracked file's `??` line is excluded.
             status = subprocess.run(
-                ["git", "-C", repo_root, "status", "--porcelain"],
+                ["git", "-C", repo_root, "status", "--porcelain", "--untracked-files=no"],
                 capture_output=True, text=True, timeout=2,
             )
             _ENGINE_VERSION = {
