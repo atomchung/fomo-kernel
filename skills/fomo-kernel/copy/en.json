@@ -4,7 +4,7 @@
   "private_badge": "Review card; stored locally only",
   "public_badge": "Shareable version; amounts, dates, tickers, and exact weights removed",
   "public_custom_rule": "One self-authored process rule was committed; its wording stays on the review card.",
-  "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory",
+  "demo_badge": "Demo data and rehearsal only; not your trades and not written to formal coach memory. Add your own transaction history next time to review your real trades.",
   "markdown_summary": {
     "risk": "Key risk",
     "next": "Next rule"
@@ -48,7 +48,7 @@
     "rule_snapshot": "This opening check keeps the structural baseline without forcing a commitment.",
     "rule_structural": "This is an opening structural check: it sets a baseline without forcing a commitment. Too few closed trades here to say yet whether your selling costs you more than your buying; a file carrying the matching sells would settle that one question.",
     "rule_insufficient_data": "The sample is still short, so this review sets a baseline without forcing a commitment.",
-    "snapshot_unlock": "This check can see what you hold, not how you got here. Your transaction history would answer the one question it cannot: whether your selling costs you more than your buying.",
+    "snapshot_unlock": "This check can see what you hold, not how you got here. Your transaction history would answer the one question it cannot — whether your selling costs you more than your buying — so bring it to a future review to unlock that.",
     "annualized_short_series": "Annualized return is not computable this period: the price series covers fewer than two days, so there is no change to measure.",
     "annualized_reconciliation": "Annualized return is not computable this period: the imported transactions did not reproduce the snapshot-anchored holdings, so no account valuation basis exists. Share your current holdings view and the difference can be settled."
   },
@@ -441,13 +441,13 @@
     "terminator": "."
   },
   "exit_entries": {
-    "line": "{ticker}: you recorded the {action} reason as “{label}”. This preserves the reason at the time; it does not judge the outcome yet.",
+    "line": "{ticker}: you recorded the {action} reason as “{label}” — this preserves the reason at the time; it does not judge the outcome yet.",
     "ticker_default": "position",
     "action_full": "exit",
     "action_partial": "reduction"
   },
   "review_milestone": {
-    "line": "When this review started, you already had {completed} completed reviews.",
+    "line": "When this review started, you already had {completed} completed {noun}.",
     "noun_one": "review",
     "noun_many": "reviews"
   },

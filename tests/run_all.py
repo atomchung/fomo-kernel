@@ -104,6 +104,12 @@ SUITES = [
     # belong in the default gate: the golden is committed, and an intended
     # wording change regenerates it with `--update`.
     ("Copy corpus golden (#402 knife 5)", "tests/copy_corpus.py"),
+    # #787: names which card-reachable copy keys neither the golden above nor
+    # a fresh persona render can see, instead of a maintainer discovering the
+    # gap one shipped defect at a time (#733, #766, #779 were three in two
+    # days). Builds its own persona bundles rather than reusing #402's
+    # rendered corpus text, so it costs roughly one more persona-sweep run.
+    ("Copy key coverage (#787)", "tests/copy_key_coverage.py"),
     ("Episode checker probes (#417)", "tests/test_episode_checkers.py"),
     # #590: only the pure eligibility, blind-prompt, vote-report and durable
     # receipt interlocks run here. The TradeEvaluation model calls stay opt-in

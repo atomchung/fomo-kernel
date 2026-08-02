@@ -11189,6 +11189,645 @@ language: en
 This review found low behavioral pressure in position sizing. The highlighted behavior concerned how risk was distributed across position sizes.
 
 ==========================================================================
+hole_lines/exit_discipline_forward [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **主要風險**
+>
+> [X] 最大的行為漏洞：5 筆決策賣出（4 有後續價格可查、1 截斷）中 75% 在 20 天後更高、平均續漲 +8.3%；賣掉賺錢的有 40% 續漲（賣太早）；賺錢抱 12 天 / 賠錢抱 30 天（處置缺口 -18）
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+[v] 你做對的一件事：這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+
+[X] 最大的行為漏洞：5 筆決策賣出（4 有後續價格可查、1 截斷）中 75% 在 20 天後更高、平均續漲 +8.3%；賣掉賺錢的有 40% 續漲（賣太早）；賺錢抱 12 天 / 賠錢抱 30 天（處置缺口 -18）
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+hole_lines/exit_discipline_forward [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+你做對的一件事
+這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+最大的行為漏洞
+5 筆決策賣出（4 有後續價格可查、1 截斷）中 75% 在 20 天後更高、平均續漲 +8.3%；賣掉賺錢的有 40% 續漲（賣太早）；賺錢抱 12 天 / 賠錢抱 30 天（處置缺口 -18）
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+hole_lines/exit_discipline_forward [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次復盤在「出場紀律」看見低程度的行為壓力。 這次浮現的模式，關乎出場決策如何被安排與檢驗。
+
+==========================================================================
+hole_lines/exit_discipline_forward [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+Mirror.
+
+> **主要风险**
+>
+> [X] 最大的行为漏洞：5 笔决策卖出（4 有后续价格可查、1 截断）中 75% 在 20 天后更高、平均续涨 +8.3%；卖掉赚钱的有 40% 续涨（卖太早）；赚钱抱 12 天 / 赔钱抱 30 天（处置缺口 -18）
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+[v] 你做对的一件事：这期没有足够强的正向讯号；先把注意力留给最大的洞。
+
+[X] 最大的行为漏洞：5 笔决策卖出（4 有后续价格可查、1 截断）中 75% 在 20 天后更高、平均续涨 +8.3%；卖掉赚钱的有 40% 续涨（卖太早）；赚钱抱 12 天 / 赔钱抱 30 天（处置缺口 -18）
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+hole_lines/exit_discipline_forward [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+你做对的一件事
+这期没有足够强的正向讯号；先把注意力留给最大的洞。
+最大的行为漏洞
+5 笔决策卖出（4 有后续价格可查、1 截断）中 75% 在 20 天后更高、平均续涨 +8.3%；卖掉赚钱的有 40% 续涨（卖太早）；赚钱抱 12 天 / 赔钱抱 30 天（处置缺口 -18）
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+hole_lines/exit_discipline_forward [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次复盘在“出场纪律”看见低程度的行为压力。 这次浮现的模式，关乎出场决策如何被安排与检验。
+
+==========================================================================
+hole_lines/exit_discipline_forward [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Key risk**
+>
+> [X] The biggest behavioral leak: of 5 decision exits (4 with forward data, 1 truncated), 75% were higher 20 days later, climbing +8.3% on average; 40% of the winners you sold kept climbing (sold too early); winners held 12 days / losers held 30 days (disposition gap -18)
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+[v] One thing you did well: No positive behavior was strong enough to claim; keep attention on the largest leak.
+
+[X] The biggest behavioral leak: of 5 decision exits (4 with forward data, 1 truncated), 75% were higher 20 days later, climbing +8.3% on average; 40% of the winners you sold kept climbing (sold too early); winners held 12 days / losers held 30 days (disposition gap -18)
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+hole_lines/exit_discipline_forward [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+One thing you did well
+No positive behavior was strong enough to claim; keep attention on the largest leak.
+The biggest behavioral leak
+of 5 decision exits (4 with forward data, 1 truncated), 75% were higher 20 days later, climbing +8.3% on average; 40% of the winners you sold kept climbing (sold too early); winners held 12 days / losers held 30 days (disposition gap -18)
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+hole_lines/exit_discipline_forward [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review found low behavioral pressure in exit discipline. The highlighted behavior concerned how exit decisions were timed and evaluated.
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+[v] 你做對的一件事：這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+拆帳看，板塊內選股貢獻 +2 個百分點（描述性、這數字站得住）；但 α 的 95% 區間還太寬，統計上還分不出選股是本事還是運氣。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+你做對的一件事
+這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+拆帳看，板塊內選股貢獻 +2 個百分點（描述性、這數字站得住）；但 α 的 95% 區間還太寬，統計上還分不出選股是本事還是運氣。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+Mirror.
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+[v] 你做对的一件事：这期没有足够强的正向讯号；先把注意力留给最大的洞。
+拆帐看，板块内选股贡献 +2 个百分点（描述性、这数字站得住）；但 α 的 95% 区间还太宽，统计上还分不出选股是本事还是运气。
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+你做对的一件事
+这期没有足够强的正向讯号；先把注意力留给最大的洞。
+拆帐看，板块内选股贡献 +2 个百分点（描述性、这数字站得住）；但 α 的 95% 区间还太宽，统计上还分不出选股是本事还是运气。
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次可用历史不足以排序出主要行为模式。
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+[v] One thing you did well: No positive behavior was strong enough to claim; keep attention on the largest leak.
+Within sectors, stock selection contributed +2pp (descriptive; that number stands). But the alpha 95% interval is still too wide (t=1.1), so the data cannot yet separate skill from luck.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+One thing you did well
+No positive behavior was strong enough to claim; keep attention on the largest leak.
+Within sectors, stock selection contributed +2pp (descriptive; that number stands). But the alpha 95% interval is still too wide (t=1.1), so the data cannot yet separate skill from luck.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+prescription/selection_inconclusive_t_wide [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+[v] 你做對的一件事：這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+拆帳看，板塊內選股貢獻 +2 個百分點（描述性、這數字站得住）；但 α 統計量還算不穩，統計上還分不出選股是本事還是運氣。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+你做對的一件事
+這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+拆帳看，板塊內選股貢獻 +2 個百分點（描述性、這數字站得住）；但 α 統計量還算不穩，統計上還分不出選股是本事還是運氣。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+Mirror.
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+[v] 你做对的一件事：这期没有足够强的正向讯号；先把注意力留给最大的洞。
+拆帐看，板块内选股贡献 +2 个百分点（描述性、这数字站得住）；但 α 统计量还算不稳，统计上还分不出选股是本事还是运气。
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+你做对的一件事
+这期没有足够强的正向讯号；先把注意力留给最大的洞。
+拆帐看，板块内选股贡献 +2 个百分点（描述性、这数字站得住）；但 α 统计量还算不稳，统计上还分不出选股是本事还是运气。
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次可用历史不足以排序出主要行为模式。
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+[v] One thing you did well: No positive behavior was strong enough to claim; keep attention on the largest leak.
+Within sectors, stock selection contributed +2pp (descriptive; that number stands). But the alpha statistic is still unstable, so the data cannot yet separate skill from luck.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+One thing you did well
+No positive behavior was strong enough to claim; keep attention on the largest leak.
+Within sectors, stock selection contributed +2pp (descriptive; that number stands). But the alpha statistic is still unstable, so the data cannot yet separate skill from luck.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+prescription/selection_inconclusive_t_unstable [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
 reconciliation/metric-improved [zh-TW] private.md
 ==========================================================================
 # Headline.
@@ -15887,6 +16526,624 @@ language: en
 This review did not rank a leading behavior pattern from the available history.
 
 ==========================================================================
+review_milestone/first_count [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+開始這次復盤時，你已有 1 次完成復盤。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+review_milestone/first_count [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+開始這次復盤時，你已有 1 次完成復盤。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+review_milestone/first_count [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+review_milestone/first_count [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+开始这次复盘时，你已有 1 次完成复盘。
+
+Mirror.
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+本期没有行为诊断：引擎没有可评分的维度。
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+review_milestone/first_count [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+开始这次复盘时，你已有 1 次完成复盘。
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+本期没有行为诊断：引擎没有可评分的维度。
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+review_milestone/first_count [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次可用历史不足以排序出主要行为模式。
+
+==========================================================================
+review_milestone/first_count [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+When this review started, you already had 1 completed review.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+review_milestone/first_count [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+When this review started, you already had 1 completed review.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+review_milestone/first_count [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+review_milestone/later_count [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+開始這次復盤時，你已有 2 次完成復盤。
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+review_milestone/later_count [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+開始這次復盤時，你已有 2 次完成復盤。
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+review_milestone/later_count [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+review_milestone/later_count [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+开始这次复盘时，你已有 2 次完成复盘。
+
+Mirror.
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+本期没有行为诊断：引擎没有可评分的维度。
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+review_milestone/later_count [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+开始这次复盘时，你已有 2 次完成复盘。
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+本期没有行为诊断：引擎没有可评分的维度。
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+review_milestone/later_count [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次可用历史不足以排序出主要行为模式。
+
+==========================================================================
+review_milestone/later_count [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+When this review started, you already had 2 completed reviews.
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+review_milestone/later_count [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+When this review started, you already had 2 completed reviews.
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+review_milestone/later_count [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+stress_test/single_ticker [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+- 你 單檔 AAPL 暴險約 $50,000（佔 30%）；回檔 30% → 帳面 −$15,000、回檔 50% → −$25,000，撐得住嗎？
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+本期沒有行為診斷：引擎沒有可評分的維度。
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+stress_test/single_ticker [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+你 單檔 AAPL 暴險約 $50,000（佔 30%）；回檔 30% → 帳面 −$15,000、回檔 50% → −$25,000，撐得住嗎？
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+本期沒有行為診斷：引擎沒有可評分的維度。
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+stress_test/single_ticker [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次可用歷史不足以排序出主要行為模式。
+
+==========================================================================
+stress_test/single_ticker [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+Mirror.
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+- 你 单档 AAPL 暴险约 $50,000（占 30%）；回档 30% → 账面 −$15,000、回档 50% → −$25,000，撑得住吗？
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+本期没有行为诊断：引擎没有可评分的维度。
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+stress_test/single_ticker [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+你 单档 AAPL 暴险约 $50,000（占 30%）；回档 30% → 账面 −$15,000、回档 50% → −$25,000，撑得住吗？
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+本期没有行为诊断：引擎没有可评分的维度。
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+stress_test/single_ticker [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次可用历史不足以排序出主要行为模式。
+
+==========================================================================
+stress_test/single_ticker [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+- Your exposure to a single name (AAPL) is about $50,000 (30% of the portfolio); a 30% drawdown would mean −$15,000 on paper, a 50% drawdown −$25,000 — could you sit through that?
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+No behavioral diagnosis this period: the engine scored no dimension.
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+stress_test/single_ticker [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Your exposure to a single name (AAPL) is about $50,000 (30% of the portfolio); a 30% drawdown would mean −$15,000 on paper, a 50% drawdown −$25,000 — could you sit through that?
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+No behavioral diagnosis this period: the engine scored no dimension.
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+stress_test/single_ticker [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
 sizing_coverage/bounded [zh-TW] private.md
 ==========================================================================
 # Headline.
@@ -16981,11 +18238,11 @@ This review did not rank a leading behavior pattern from the available history.
 ==========================================================================
 copy-key coverage
 ==========================================================================
-[zh-TW] reached 60 · unreached 0 · trivial 33
-[zh-CN] reached 38 · unreached 0 · trivial 28
-[en] reached 89 · unreached 0 · trivial 4
+[zh-TW] reached 61 · unreached 0 · trivial 35
+[zh-CN] reached 39 · unreached 0 · trivial 30
+[en] reached 90 · unreached 0 · trivial 6
 
-registers not claimed by any scene in this corpus (77):
+registers not claimed by any scene in this corpus (76):
   account_perf
   add_choices
   add_descriptions
@@ -17044,7 +18301,6 @@ registers not claimed by any scene in this corpus (77):
   public_mirror
   public_patterns
   public_performance
-  review_milestone
   rule_breach_choices
   rule_breach_decisions
   rule_breach_descriptions
