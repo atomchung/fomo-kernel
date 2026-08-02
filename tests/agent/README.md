@@ -5,7 +5,7 @@ Implementation authority is [docs/eval-design.md](../../docs/eval-design.md). Th
 ## Layers
 
 - **Offline deterministic checks**: regular-expression and JSON assertions over card/state artifacts. These run in `tests/run_all.py`.
-- **LLM narrative judge**: optional and non-deterministic. It evaluates prose quality rather than mechanical contract violations and requires an API key.
+- **LLM narrative judge**: optional and non-deterministic. It evaluates prose quality rather than mechanical contract violations. It reaches a model through the same two backends `evals/judge_episodes.py` resolves between (#511) — the Antigravity CLI (`agy`, no API key) or the Anthropic SDK — so an API key is one route, not a precondition.
 - **Headless card generation**: optional, non-deterministic, and billable. It runs the skill and feeds resulting artifacts into the two layers above.
 
 ## Files
@@ -15,9 +15,9 @@ Implementation authority is [docs/eval-design.md](../../docs/eval-design.md). Th
 - `../../skills/fomo-kernel/tools/ux_receipt.py`: local presentation trace — host capability plus generated-versus-presented card evidence, stored in the protected state dir (`~/.trade-coach/ux/`).
 - `../test_checkers_offline.py`: mutation probes that prove known-good artifacts pass and intentionally broken artifacts fail.
 - `../test_interaction_trajectory.py`: deterministic native-control, text-fallback, card-delivery, and weekly-memory presentation-trace probes.
-- `judge_narrative.py`: optional narrative-quality rubric.
+- `judge_narrative.py`: optional narrative-quality rubric. It owns its rubric, its 0–5 schema, and the fail-closed parser the CLI route needs; it does not decide which backend to use — `evals/judge_episodes.py`'s `resolve_backend` is imported, not copied, so both judges cannot drift on the same `agy` contract.
 - `run_judge_eval.py`: mutation probes for the judge fixtures. Each run appends one line to `judge/narrative-runs.jsonl` inside the protected state directory (`--state-root` conventions: `TRADE_COACH_HOME`, else `~/.trade-coach`), never into this repository. A single run only says whether the judge passed today; the record is what makes gradual blunting visible — a bad card drifting from 1 to 4 still reads as a pass on any one run. `--history` is the reader, and flags a fixture whose verdict changed since the previous recorded run.
-- `../test_judge_harness_offline.py`: the two files above have interlocks that are pure logic — the manifest gate, the refusal branch, and the request and schema shape. This probes them offline, so they are re-verified without an API key and run inside `tests/run_all.py`.
+- `../test_judge_harness_offline.py`: the two files above have interlocks that are pure logic — the manifest gate, the refusal branch, the request and schema shape, the CLI route's fail-closed score parser, and the single-source check on backend resolution. This probes them offline, so they are re-verified without an API key or an `agy` install, and run inside `tests/run_all.py`.
 - `fixtures/`: known-good and intentionally broken card examples.
 - `personas.md`: scripted users and differential pairs.
 - `cases/*.yaml`: input, persona, run mode, and assertion declarations.
@@ -30,9 +30,10 @@ python3 tests/test_checkers_offline.py
 python3 tests/agent/check_card.py tests/agent/fixtures/card_good.txt
 python3 tests/agent/run_case.sh --check my_card.md ~/.trade-coach
 
-export ANTHROPIC_API_KEY=...
+# Backend is resolved automatically: agy if installed (no key), else the SDK.
 python3 tests/agent/run_judge_eval.py
-python3 tests/agent/run_judge_eval.py --history   # recorded runs, no API call
+TR_JUDGE_BACKEND=anthropic ANTHROPIC_API_KEY=... python3 tests/agent/run_judge_eval.py
+python3 tests/agent/run_judge_eval.py --history   # recorded runs, no model call
 tests/agent/run_case.sh --headless tests/agent/cases/washer.yaml
 
 # B-1 (#542): case-declared subject ticker + tag codes, checked directly
