@@ -265,6 +265,11 @@
               "null"
             ]
           },
+          "answer_effect": {
+            "type": "string",
+            "minLength": 1,
+            "$comment": "#714: the visible consequence answering buys — distinct from asked_because, which is why the row ranked in. Present only for kinds whose answer provably reaches the card or the next review's state (review.ANSWER_EFFECT_KINDS, pinned against evals/run_episodes.py QUESTION_CONSUMERS). Absent on initial_thesis and exit_consistency because nothing reads their answers (#429) — an effect sentence there would promise a consequence the product cannot deliver."
+          },
           "asked_because": {
             "type": [
               "string",
@@ -464,6 +469,37 @@
     "authoring_contract": {
       "type": "object",
       "$comment": "Engine-derived authoring vocabulary (#251). The single source of truth is thesis.MATURITY_VALUES, thesis.INFERENCE_ENUMS, and card_renderer.ALLOWED_NARRATIVE; a contract test pins the equivalence. Optional so plans prepared before #251 stay readable."
+    },
+    "opening_value": {
+      "type": "object",
+      "$comment": "#714: the leading engine finding, projected before question 1 so a first-time user is not asked to complete an interview before learning whether the engine found anything. Built by card_renderer.build_opening_value from the same engine card the renderer reads — it carries rendered sentences only, never raw card fields, which is why it survives _plan_for_agent. Optional: absent when the engine has no applicable hole to lead with, and absent on any plan prepared before this contract.",
+      "required": ["schema_version", "finding", "questions_required"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": 1},
+        "label": {"type": "string"},
+        "finding": {
+          "type": "object",
+          "required": ["line"],
+          "additionalProperties": false,
+          "properties": {
+            "dimension": {"type": ["string", "null"]},
+            "line": {"type": "string", "minLength": 1}
+          }
+        },
+        "boundary": {
+          "type": "object",
+          "$comment": "The honesty ledger's first triggered limitation, in the ledger's own order — deliberately not re-selected for relevance to the finding, which would be a second ranking truth beside the engine's.",
+          "required": ["key", "line"],
+          "additionalProperties": false,
+          "properties": {
+            "key": {"type": "string"},
+            "line": {"type": "string", "minLength": 1}
+          }
+        },
+        "questions_required": {"type": "integer", "minimum": 0},
+        "questions_line": {"type": "string"}
+      }
     },
     "card_plan": {
       "type": "object",

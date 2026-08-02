@@ -451,6 +451,20 @@
     "noun_one": "review",
     "noun_many": "reviews"
   },
+  "answer_effect": {
+    "add_thesis": "Your answer decides how this card reads the add — a planned tranche or a reaction — and it is what the next review compares your reasoning against.",
+    "headline_motive": "Your answer decides how this card reads the period's leading behavior, and the next review reads that record back before it asks again.",
+    "revisit": "Your answer closes this checkpoint on the card and decides whether it returns on the next review's due list.",
+    "due_revisit": "Your answer closes this checkpoint on the card and decides whether it returns on the next review's due list.",
+    "rule_breach": "Your answer decides how this card records the breach, and whether it counts toward the problem the next review tracks.",
+    "condition_crossing": "Your answer decides whether this line counts as crossed on the card, and whether it stays on the next review's due checks.",
+    "condition_basis": "Your answer fixes the criterion itself, so the next review checks this line against the standard you state here."
+  },
+  "opening_value": {
+    "label": "Preliminary — read from your records, before you answer anything.",
+    "questions_one": "One question follows, and it states what your answer changes.",
+    "questions_many": "{count} questions follow, and each states what your answer changes."
+  },
   "horizon_entries": {
     "ticker_default": "Position",
     "voice_inferred": "inferred",

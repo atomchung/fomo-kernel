@@ -2917,6 +2917,30 @@ def _asked_because(basis, language):
     return table.get(basis) or None
 
 
+# #714: what answering changes, per question kind. `asked_because` above says
+# why this row ranked into the queue; this says what the user's answer buys.
+# Two different questions, and only the second one earns the turn.
+#
+# The set is deliberately not "every kind". It is the wired half of
+# evals/run_episodes.py's QUESTION_CONSUMERS — the kinds whose answer provably
+# reaches the card or the next review's state. `initial_thesis` and
+# `exit_consistency` are absent because nothing reads their answers at all
+# (QUESTION_CONSUMERS' KNOWN_UNWIRED, owned by #429); writing them an effect
+# sentence would be the product promising a consequence it cannot deliver,
+# which is worse than the silence. tests/test_review_v2.py pins this set
+# against QUESTION_CONSUMERS so the two cannot drift apart.
+ANSWER_EFFECT_KINDS = ("add_thesis", "headline_motive", "revisit", "due_revisit",
+                       "rule_breach", "condition_crossing", "condition_basis")
+
+
+def _answer_effect(kind, language):
+    """Localized sentence naming the visible consequence of answering (#714)."""
+    if kind not in ANSWER_EFFECT_KINDS:
+        return None
+    table = (card_renderer.load_copy(language).get("answer_effect") or {})
+    return table.get(kind) or None
+
+
 def _exit_question(item, language, card=None, prior=None):
     ticker = item.get("ticker") or "position"
     kind = item.get("kind") or "full"
@@ -4186,6 +4210,20 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         evaluation_recall=_evaluation_recall(root))
     question_selection["rejected"].extend(condition_deferred)
     candidate_rules = _candidate_rules(card, state, language)
+    # #714: stamped here rather than inside each of _question_queue's builders.
+    # `asked_because` is assigned at four separate sites already, and a fifth
+    # per-kind assignment is how one branch silently ships without it.
+    for row in question_queue:
+        effect = _answer_effect(row.get("kind"), language)
+        if effect:
+            row["answer_effect"] = effect
+    # #714: the leading engine finding, projected before question 1. Built from
+    # `card` — the same object the renderer reads — so the opening and the card
+    # cannot disagree about which finding leads. It survives _plan_for_agent by
+    # construction: it carries rendered sentences, never the raw card.
+    opening_value = card_renderer.build_opening_value(
+        {"engine_card": card}, language,
+        questions_required=sum(1 for row in question_queue if row.get("required")))
     plan = {
         "schema_version": 2,
         "engine_version": _engine_version(),
@@ -4255,6 +4293,10 @@ def _build_plan(card, state, engine_meta, root, paths, route, language, fingerpr
         "question_queue": question_queue,
         "missing_thesis_positions": missing,
         "authoring_contract": _authoring_contract(route),
+        # Omitted, never emitted empty, when the engine has no applicable hole
+        # to lead with. An absent key and a blank block read the same to the
+        # agent; only one of them is honest about having found nothing.
+        **({"opening_value": opening_value} if opening_value else {}),
         "card_plan": {"candidate_rules": candidate_rules,
                       # #302(c): engine-authored, interaction-layer-only sentence
                       # explaining why the other candidates rank lower; None when
