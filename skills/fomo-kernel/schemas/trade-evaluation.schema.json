@@ -197,11 +197,25 @@
           },
           "state": {
             "enum": ["would_breach", "already_over", "clear", "unjudged", "unmapped"],
-            "description": "Mirrors consequence.COLLISION_STATES. would_breach: this trade is what freshly crosses the line. already_over: the book was already over the line and stays there, with or without this trade being the cause -- never read as this trade breaking the rule. unjudged: a metric this module cannot evaluate from one hypothetical trade (exit_severity, hold_severity). unmapped: problem_key is null."
+            "description": "Mirrors consequence.COLLISION_STATES. would_breach: this trade is what freshly crosses the line. already_over: the book was already over the line and stays there, with or without this trade being the cause -- never read as this trade breaking the rule. unjudged: a metric this module cannot evaluate from one hypothetical trade (exit_severity, hold_severity). unmapped: problem_key is null. DIAGNOSTIC since #579: this is where the book stands, not what the transaction does. rule_effect below is the transaction's verdict, and no decision-facing surface may substitute this field for it."
           },
           "worsens": {
             "type": ["boolean", "null"],
-            "description": "Set only when state is already_over: whether this trade moves the relevant reading in the bad direction. null everywhere else -- a boolean that means nothing outside one state is worse than an absent one."
+            "description": "Set only when state is already_over: whether this trade moves the relevant reading in the bad direction. null everywhere else -- a boolean that means nothing outside one state is worse than an absent one. NOT a sufficient direction on its own: consequence._worsened is a strict >, so a reading that fell and a reading that did not move are the same false, which is why #579 added rule_effect below rather than a second boolean."
+          },
+          "rule_effect": {
+            "enum": ["new_breach", "worsened_existing_breach", "improved_but_still_over",
+                     "resolved_existing_breach", "unchanged_existing_breach", "compliant",
+                     "unjudged", "unmapped"],
+            "description": "What THIS TRANSACTION does to the rule, mirroring consequence.RULE_EFFECTS and derived by consequence.classify_rule_effect from the reading before, the reading after and the line (#579). This is the field every decision-facing consumer reads; `state` above stays the book's absolute position and is never the transaction's verdict. Reading the state as the verdict is what failed owner-live acceptance on 2026-08-02: a sell taking a position from 80% to 75% against a self-authored 20% cap emits already_over + worsens:false, arithmetically correct, and was described back to the user as breaking the rule. OPTIONAL rather than required, and the asymmetry is deliberate: every row this engine writes now carries it, and a row recorded before it existed must still validate and still replay. A reader that finds it absent falls back to state (answer_provenance._LEGACY_COVERED_STATES, evaluation_challenge._LEGACY_SPEAKING_STATES) rather than inventing an effect. A row carrying an effect its own state cannot accompany is rejected by consequence.effect_disagrees_with_state before either field reaches an answer."
+          },
+          "limit": {
+            "type": ["number", "null"],
+            "description": "The line rule_effect was classified against, as a fraction. null for avgdown_count -- whose reading is a count of breaching events attributable to this trade rather than a level -- and for unjudged/unmapped. Present because the correct sentence names the number ('still above your 20% rule') and no other field in this row carries it."
+          },
+          "limit_source": {
+            "enum": ["user_cap", "engine_default", null],
+            "description": "Whose line `limit` is, mirroring consequence.LIMIT_SOURCES; null exactly when limit is. user_cap only for max_pos_pct when trade_recap.valid_position_cap accepted the user's own override -- every other threshold this engine compares against is a constant it picked, and handing one back as the user's own rule would put a product default under their name."
           }
         }
       }

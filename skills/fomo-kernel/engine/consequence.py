@@ -69,6 +69,17 @@ concentration trio) moved in the bad direction — and is `None` everywhere
 `already_over` does not apply, because a boolean that means nothing outside
 one state is worse than an absent one.
 
+`state` and `worsens` are both *diagnostics about the book*, and #579 is the
+receipt for what happens when a decision-facing surface is left to compose a
+verdict out of them: an owner asked about a sell that took a position from
+80% to 75% against a self-authored 20% cap and was told the trade violated
+the rule. `rule_effect` is the third field and the one every decision-facing
+consumer reads — what this *transaction* does to the rule, derived by
+`classify_rule_effect` from the same readings and the same line the state
+beside it was judged on, never composed downstream. See RULE_EFFECTS for the
+six transitions and for the two of them `state`/`worsens` cannot express at
+all.
+
 The concentration trio (ai_pct / max_sector_pct / top3_pct) shipped a third
 bug of the same shape, caught by external review after this file's own
 mutation suite passed clean: causality was judged on dim_diversify's shared
@@ -197,6 +208,79 @@ _INTEGRITY_EXCLUSION_REASON = {"oversell": "integrity_oversell"}
 # broke, and a user cutting an oversized position gets told the cut breaks
 # their own rule (see the module docstring).
 COLLISION_STATES = ("would_breach", "already_over", "clear", "unjudged", "unmapped")
+
+# What the *transaction* does to the rule, which is a different question from
+# COLLISION_STATES' "where does the book stand right now" (#579).
+#
+# The two were never the same question, and owner-live evidence on
+# 2026-08-02 is what proved that composing them at prose time is not a
+# reliable invariant: a book 80% in one name against a self-authored 20% cap,
+# asked about a sell that takes it to 75%, emits `already_over` with
+# `worsens: false` — arithmetically correct, and still described back to the
+# user as a rule the trade violates or worsens. `already_over` is an absolute
+# state and reads as an accusation; the direction was a nullable boolean one
+# level down.
+#
+# Two of these six transitions are additionally *not derivable* from
+# `state`/`worsens` at all, whatever the prompt says, which is why this is a
+# code fix rather than a wording one:
+#
+#   improved_but_still_over   already_over + worsens:false
+#   unchanged_existing_breach already_over + worsens:false   <- same payload
+#   resolved_existing_breach  clear
+#   compliant                 clear                          <- same payload
+#
+# `_worsened` is a strict `>`, so "reduced" and "did not move" collapse into
+# one boolean; and `clear` cannot say whether the line was crossed before.
+# `unjudged`/`unmapped` are carried through unchanged from COLLISION_STATES:
+# an effect vocabulary that could not say "not evaluated" would have to
+# invent a verdict for a rule the engine never judged, which is the one
+# outcome the collision vocabulary exists to prevent.
+RULE_EFFECTS = ("new_breach", "worsened_existing_breach", "improved_but_still_over",
+                "resolved_existing_breach", "unchanged_existing_breach", "compliant",
+                "unjudged", "unmapped")
+
+# The effects that describe a transition of a real threshold — the ones a
+# reversed reading can misstate. `compliant` is the true non-event and
+# `unjudged`/`unmapped` are the absence of a judgment, so neither can be
+# reversed into its opposite.
+DIRECTIONAL_RULE_EFFECTS = ("new_breach", "worsened_existing_breach",
+                            "improved_but_still_over", "resolved_existing_breach",
+                            "unchanged_existing_breach")
+
+# Which `state` each effect may legally accompany. This is the "validators
+# must reject disagreement with the recomputed effect" clause of #579, stated
+# once so a hand-built or replayed row carrying an effect that contradicts its
+# own state fails closed rather than reaching an answer. It is deliberately a
+# many-to-many table rather than a bijection, because the two vocabularies
+# genuinely answer different questions:
+#
+#   `new_breach` accompanies `already_over` as well as `would_breach`. A sell
+#   shrinks the denominator, so a *different* position's weight can cross the
+#   line on a trade whose own ticker did not — `_max_pos_pct_collision`'s
+#   second branch calls that `already_over` even though the book was under the
+#   line before. The state vocabulary cannot express it; the effect can, and
+#   saying `new_breach` there is the more truthful of the two readings.
+#
+#   `already_over` covers three effects because `worsens` collapses two of
+#   them (above), and `clear` covers two because it says nothing about before.
+_EFFECT_STATES = {
+    "new_breach": ("would_breach", "already_over"),
+    "worsened_existing_breach": ("already_over",),
+    "improved_but_still_over": ("already_over",),
+    "unchanged_existing_breach": ("already_over",),
+    "resolved_existing_breach": ("clear",),
+    "compliant": ("clear",),
+    "unjudged": ("unjudged",),
+    "unmapped": ("unmapped",),
+}
+
+# Where the line this rule was judged against came from. The user's own cap
+# when they set one (`trade_recap.valid_position_cap` accepted it), otherwise
+# a threshold this engine picked. Carried rather than inferred because the
+# answer says "your 20% rule" out loud, and a product default wearing the
+# user's name is a claim they never made.
+LIMIT_SOURCES = ("user_cap", "engine_default")
 
 # Tolerance for "did this reading move", below which a delta is float noise
 # rather than a real direction — the same role trade_recap's own 1e-9/1e-6
@@ -921,8 +1005,63 @@ def _worsened(before_value, after_value):
     return (after_value - before_value) > _EPSILON
 
 
+def classify_rule_effect(before_reading, after_reading, limit):
+    """The single deterministic derivation of what this trade does to one
+    upper-bound rule (#579), from three facts and nothing else: the reading
+    before, the reading after, and the line.
+
+    One function, so every decision-facing consumer reads one verdict instead
+    of composing `state` and `worsens` for itself. Composing them at prose
+    time is what failed owner-live acceptance on 2026-08-02, and two of the
+    six transitions below cannot be composed from those two fields at all —
+    see RULE_EFFECTS.
+
+    ``limit`` is an upper bound: over means strictly greater, the same
+    comparison ``dim_size``/``dim_diversify`` already make against their own
+    thresholds, so this function and the state it accompanies cannot disagree
+    about which side of the line a reading is on. Movement uses the same
+    ``_EPSILON`` noise floor ``_worsened`` uses, so "reduced" and "did not
+    move" are told apart at exactly one tolerance rather than two.
+
+    Returns one of the six real transitions in RULE_EFFECTS; never
+    ``unjudged``/``unmapped``, which describe a rule this module could not
+    evaluate at all and therefore have no readings to classify.
+    """
+    before_over = before_reading > limit
+    after_over = after_reading > limit
+    if not after_over:
+        return "resolved_existing_breach" if before_over else "compliant"
+    if not before_over:
+        return "new_breach"
+    if _worsened(before_reading, after_reading):
+        return "worsened_existing_breach"
+    if _worsened(after_reading, before_reading):
+        return "improved_but_still_over"
+    return "unchanged_existing_breach"
+
+
+def effect_disagrees_with_state(state, effect):
+    """The message naming why this pair cannot both be true, or None.
+
+    #579's compatibility clause: a stored or hand-built row may carry an
+    effect that contradicts its own state, and a validator has to reject that
+    rather than let one of the two reach an answer. Stated here, beside the
+    table it reads, so the challenge surface and the provenance gate ask one
+    question rather than two.
+    """
+    if effect is None:
+        return None  # a legacy row recorded before rule_effect existed
+    if effect not in _EFFECT_STATES:
+        return f"rule_effect {effect!r} is not one of {list(RULE_EFFECTS)}"
+    allowed = _EFFECT_STATES[effect]
+    if state not in allowed:
+        return (f"rule_effect {effect!r} cannot accompany state {state!r} "
+                f"(expected one of {list(allowed)})")
+    return None
+
+
 def _max_pos_pct_collision(ticker, before, after, max_pos_override):
-    """(state, worsens) for a max_pos_pct rule.
+    """(state, worsens, effect, limit) for a max_pos_pct rule.
 
     Causality is judged on the *premise ticker's own* weight against
     effective_oversize_trigger — not the book's max_ticker/max_pct, which can
@@ -940,15 +1079,24 @@ def _max_pos_pct_collision(ticker, before, after, max_pos_override):
     docstring: a user already over the cap is asking whether this trade digs
     deeper or climbs out, a book-level question even when the premise ticker
     is not the one currently driving max_pct.
+
+    `effect` (#579) is classified from *the readings this branch judged*, not
+    from a third, independently chosen pair: the premise ticker's own weight
+    where causality was decided on it, the book's max_pct where it was not.
+    Classifying both branches off one reading would produce the contradiction
+    this pairing exists to avoid — a fresh cross of the ticker's own line
+    reading as an improvement because the book's largest position happened to
+    shrink on the same trade.
     """
     line = trade_recap.effective_oversize_trigger(max_pos_override)
-    ticker_before_over = before["weights"].get(ticker, 0.0) > line
-    ticker_after_over = after["weights"].get(ticker, 0.0) > line
-    if (not ticker_before_over) and ticker_after_over:
-        return "would_breach", None
+    ticker_before = before["weights"].get(ticker, 0.0)
+    ticker_after = after["weights"].get(ticker, 0.0)
+    if (not ticker_before > line) and ticker_after > line:
+        return "would_breach", None, classify_rule_effect(ticker_before, ticker_after, line), line
     if after["oversize_triggered"]:
-        return "already_over", _worsened(before["max_pct"], after["max_pct"])
-    return "clear", None
+        return ("already_over", _worsened(before["max_pct"], after["max_pct"]),
+                classify_rule_effect(before["max_pct"], after["max_pct"], line), line)
+    return "clear", None, classify_rule_effect(before["max_pct"], after["max_pct"], line), line
 
 
 def _concentration_line(metric_key):
@@ -976,7 +1124,7 @@ def _concentration_line(metric_key):
 
 
 def _concentration_collision(metric_key, before, after):
-    """(state, worsens) for ai_pct / max_sector_pct / top3_pct.
+    """(state, worsens, effect, limit) for ai_pct / max_sector_pct / top3_pct.
 
     Judged against this metric_key's OWN reading and OWN line
     (_concentration_line) — never dim_diversify's shared `triggered` flag.
@@ -998,25 +1146,35 @@ def _concentration_collision(metric_key, before, after):
 
     `worsens` (already_over only) reads the same metric_key's own field —
     already guaranteed consistent with `state`, since both now come from the
-    same before/after/line comparison rather than two different signals.
+    same before/after/line comparison rather than two different signals. So
+    does `effect` (#579): one reading pair, one line, three consumers.
     """
     field = _CONCENTRATION_READING_FIELD[metric_key]
     line = _concentration_line(metric_key)
+    effect = classify_rule_effect(before[field], after[field], line)
     before_over = before[field] > line
     after_over = after[field] > line
     if (not before_over) and after_over:
-        return "would_breach", None
+        return "would_breach", None, effect, line
     if after_over:
-        return "already_over", _worsened(before[field], after[field])
-    return "clear", None
+        return "already_over", _worsened(before[field], after[field]), effect, line
+    return "clear", None, effect, line
 
 
 def _avgdown_collision(ticker, before_events, after_events):
-    """would_breach / clear for the avgdown_count metric, mirroring
+    """(state, effect) for the avgdown_count metric, mirroring
     build_problem_events' own avgdown_breach condition
     (`weight_then > AVGDOWN_BREACH_W`) exactly — same constant, same event
     shape positions() already produces, not a second threshold chosen
     independently.
+
+    The reading pair here is a *count of breaching average-down events
+    attributable to this trade*, against a limit of zero — which is why the
+    only two effects this branch can produce are `new_breach` and
+    `compliant`. There is no already-over axis to separate out (below), so
+    there is no improving or worsening transition either, and the row carries
+    no `limit`: the engine's weight threshold is not a line the answer can
+    quote a before and an after against.
 
     `before_events`/`after_events` are positions()'s own avg_down list for
     `rows` and `rows` plus the premise. positions() is a single causal left-
@@ -1027,11 +1185,12 @@ def _avgdown_collision(ticker, before_events, after_events):
         # Allocation ETFs are exempt from avgdown_breach — the same exemption
         # build_problem_events applies (a low-price add to a diversified
         # allocation instrument is rebalancing, not concentration risk).
-        return "clear"
+        return "clear", "compliant"
     if len(after_events) <= len(before_events):
-        return "clear"  # the premise did not qualify as an average-down at all
+        return "clear", "compliant"  # the premise did not qualify as an average-down at all
     new_event = after_events[-1]
-    return "would_breach" if new_event.get("weight_then", 0) > trade_recap.AVGDOWN_BREACH_W else "clear"
+    breached = new_event.get("weight_then", 0) > trade_recap.AVGDOWN_BREACH_W
+    return ("would_breach", "new_breach") if breached else ("clear", "compliant")
 
 
 def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=None,
@@ -1052,11 +1211,20 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
     conditions.py states at lines 66-72 for an analogous case).
 
     Returns a list of `{rule_id, text, metric_key, problem_key, state,
-    worsens}`, one per tracked rule, in `tracking`'s own order. `worsens` is
-    `True`/`False` only when `state` is `already_over` and `None` otherwise
-    — see the module docstring for why the book's pre-existing condition and
-    this trade's own effect are carried as two fields rather than folded into
-    one.
+    worsens, rule_effect, limit, limit_source}`, one per tracked rule, in
+    `tracking`'s own order. `worsens` is `True`/`False` only when `state` is
+    `already_over` and `None` otherwise — see the module docstring for why
+    the book's pre-existing condition and this trade's own effect are carried
+    as two fields rather than folded into one.
+
+    `rule_effect` (#579) is the third and the one every decision-facing
+    consumer reads: what this *transaction* does to the rule, classified by
+    `classify_rule_effect` from the same readings and the same line the state
+    beside it was judged on. `state` remains the absolute position of the
+    book and is kept for compatibility; it is never the transaction's
+    verdict. `limit` is the line that classification used, and `limit_source`
+    says whether the user set it — both `None` for a rule with no threshold
+    reading (avgdown_count) or none at all (unjudged/unmapped).
 
     When `excluded_holdings` is non-empty the book these states were judged
     against is a bounded subset, and every row additionally carries
@@ -1080,31 +1248,44 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
     _, avg_down_before = trade_recap.positions(rows)
     _, avg_down_after = trade_recap.positions(rows + [premise_row])
 
+    # Only max_pos_pct's line can be the user's own; every other threshold
+    # this module compares against is an engine constant. Read once, from the
+    # same helper the line itself comes from, so the line and its attribution
+    # cannot disagree about whose number it is.
+    position_limit_source = ("user_cap" if trade_recap.valid_position_cap(max_pos_override)
+                             else "engine_default")
+
     out = []
     for rule in tracking:
         metric_key = rule.get("metric_key")
         problem_key = rule.get("problem_key")
         worsens = None
+        limit = None
+        limit_source = None
         if problem_key is None:
-            state = "unmapped"
+            state = effect = "unmapped"
         elif metric_key not in EVALUABLE_METRIC_KEYS:
             # exit_severity / hold_severity: realized selling/holding
             # behaviour across history, which one hypothetical trade cannot
             # settle. Any future metric_key this module has not been taught
             # to evaluate falls here too, never silently as "clear".
-            state = "unjudged"
+            state = effect = "unjudged"
         elif metric_key == "max_pos_pct":
-            state, worsens = _max_pos_pct_collision(ticker, before, after, max_pos_override)
+            state, worsens, effect, limit = _max_pos_pct_collision(
+                ticker, before, after, max_pos_override)
+            limit_source = position_limit_source
         elif metric_key == "avgdown_count":
             # Already event-based and already attributed to the premise —
             # positions() only adds an event for this specific trade, so
             # there is no book-wide "already over" state to separate out.
-            state = _avgdown_collision(ticker, avg_down_before, avg_down_after)
+            state, effect = _avgdown_collision(ticker, avg_down_before, avg_down_after)
         else:
-            state, worsens = _concentration_collision(metric_key, before, after)
+            state, worsens, effect, limit = _concentration_collision(metric_key, before, after)
+            limit_source = "engine_default"
         row = {"rule_id": rule.get("rule_id"), "text": rule.get("text"),
                "metric_key": metric_key, "problem_key": problem_key,
-               "state": state, "worsens": worsens}
+               "state": state, "worsens": worsens, "rule_effect": effect,
+               "limit": limit, "limit_source": limit_source}
         if result["excluded_holdings"]:
             row["partial_book"] = True
         out.append(row)

@@ -41,6 +41,7 @@ sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import offline_posture  # noqa: E402
 offline_posture.apply()
+import consequence as consequence_engine  # noqa: E402
 import price_feed as price_feed_engine  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
 import portfolio_basis as portfolio_basis_engine  # noqa: E402
@@ -2605,6 +2606,25 @@ def _check_challenge_shape(challenge):
         assert required["key"] in set(coverage_props["key"]["enum"])
         assert required["path"]
 
+    # #579's product-safe projection, checked on the real emission rather
+    # than only on hand-built fixtures.
+    effect_item = props["rule_effects"]["items"]
+    effect_props = effect_item["properties"]
+    for projected in challenge["rule_effects"]:
+        assert set(effect_item["required"]) <= set(projected), sorted(projected)
+        assert set(projected) <= set(effect_props), sorted(projected)
+        assert projected["effect"] in set(effect_props["effect"]["enum"])
+        assert "state" not in projected and "worsens" not in projected, (
+            "the user-facing projection must carry no machine diagnostic")
+        for key in ("must_convey", "must_not_convey"):
+            assert projected[key], f"{key} may not be empty"
+            assert set(projected[key]) <= set(effect_props[key]["items"]["enum"])
+        assert not (set(projected["must_convey"]) & set(projected["must_not_convey"]))
+        assert ("limit" in projected) == ("limit_source" in projected), (
+            "a line and whose line it is travel together or not at all")
+        if "limit_source" in projected:
+            assert projected["limit_source"] in set(effect_props["limit_source"]["enum"])
+
 
 def _collision_root(tmp, cap_text="Cap any single position at 25%."):
     """A ledger-backed root holding three equal positions plus one tracked
@@ -2635,9 +2655,14 @@ def _claim_citing(entry, collisions):
         text = f"That reading is {value}."
     claim = {"claim": text, "provenance": "engine_fact", "anchor": entry["anchor"]}
     parts = entry["anchor"].split(".")
-    if parts[0] == "rule_collisions" and parts[-1] in ("state", "worsens"):
+    if parts[0] == "rule_collisions" and parts[-1] in ("state", "worsens", "rule_effect"):
         row = next((r for r in collisions if r.get("rule_id") == parts[1]), None)
-        if row and row.get("state") == "already_over" and row.get("worsens") is not None:
+        if row and row.get("rule_effect") in consequence_engine.DIRECTIONAL_RULE_EFFECTS:
+            # #579: the transition, declared as a six-way assertion. The
+            # `worsens` boolean below is the pre-#579 arm, still checked on a
+            # row that carries no effect.
+            claim["rule_effect"] = row["rule_effect"]
+        elif row and row.get("state") == "already_over" and row.get("worsens") is not None:
             claim["worsens"] = row["worsens"]
     return claim
 
@@ -2682,6 +2707,110 @@ def test_a_considered_trade_puts_the_whole_challenge_in_front_of_the_caller():
         assert challenge["case_required"] == {"for": 1, "against": 1}
         assert challenge["required_coverage"], (
             "this book is stale and carries disclosures; the case owes something")
+
+
+def _over_cap_root(tmp):
+    """A ledger-backed root that is already far over a self-authored cap:
+    one position at 80% of the book against a 20% rule the user wrote. The
+    2026-08-02 owner-live scene, in fictional numbers."""
+    _write_ledger(os.path.join(tmp, "ledger.jsonl"), [
+        _snapshot_event("2026-01-01", [
+            {"ticker": "AAA", "shares": 80, "avg_cost": 100.0, "market": "US",
+             "currency": "USD"},
+            {"ticker": "BBB", "shares": 10, "avg_cost": 100.0, "market": "US",
+             "currency": "USD"},
+            {"ticker": "CCC", "shares": 10, "avg_cost": 100.0, "market": "US",
+             "currency": "USD"}])])
+    with open(os.path.join(tmp, "rules.jsonl"), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "type": "rule", "rule_id": "r1", "date": "2026-01-01",
+            "text": "Cap any single position at 20%.",
+            "metric_key": "max_pos_pct", "problem_key": "oversize",
+            "status": "tracking"}) + "\n")
+    # The cap the user actually set, recorded the way they would set it.
+    _ok(_run("set-cap", "--root", tmp, "--pct", "0.20"))
+    return '{"ticker": "AAA", "side": "sell", "qty": 20, "price": 100.0, "currency": "USD"}'
+
+
+def test_a_trade_that_reduces_an_over_cap_position_is_never_delivered_as_a_breach():
+    """The failed owner-live scene, run end to end on the production path.
+
+    80% -> 75% against a 20% cap. Before #579 every decision-facing field in
+    this payload said `already_over`, and the answer built from it told the
+    owner the sell broke their own rule. This asserts the delivered
+    semantics, positively and negatively, on the real CLI rather than on the
+    pure function -- the composition step is where the failure happened."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _over_cap_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        collision = payload["evaluation"]["rule_collisions"][0]
+        assert collision["rule_effect"] == "improved_but_still_over", collision
+        assert collision["state"] == "already_over", (
+            "the diagnostic is unchanged and still on the row -- this is a separation, "
+            "not a replacement")
+
+        challenge = payload["challenge"]
+        stated = [e for e in challenge["must_state"] if e["topic"] == "rule_collision"]
+        assert [e["value"] for e in stated] == ["improved_but_still_over"], (
+            "the fact the answer is told to state must be the transaction effect, not the "
+            f"book's absolute state: {stated}")
+
+        projected = challenge["rule_effects"]
+        assert [row["effect"] for row in projected] == ["improved_but_still_over"]
+        assert set(projected[0]["must_convey"]) == {
+            "over_before_this_trade", "moved_toward_the_line", "over_after"}, (
+            "the correct statement carries both truths: it reduces the position, and the "
+            "position is still above the line")
+        assert "crossed_by_this_trade" in projected[0]["must_not_convey"]
+        assert "moved_further_over" in projected[0]["must_not_convey"]
+        assert projected[0]["limit"] == 0.20
+        assert projected[0]["limit_source"] == "user_cap", (
+            "the user set this cap, so the answer may call it their rule")
+        assert projected[0]["text"] == "Cap any single position at 20%."
+
+        required = [r for r in challenge["required_coverage"] if r["owes"] == "rule_collision"]
+        assert [r["key"] for r in required] == ["improved_but_still_over"], (
+            "the obligation names what the trade did, not where the book stands")
+
+
+def test_a_case_asserting_the_improving_trade_broke_the_rule_is_refused_end_to_end():
+    """And the answer built on the wrong transition never reaches the user:
+    the production path refuses it before the row is written."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _over_cap_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        case = _case_from_challenge(payload["challenge"],
+                                    payload["evaluation"]["rule_collisions"])
+        cited = [claim for claim in case["against"] if claim.get("rule_effect")]
+        assert cited, "the case built from the challenge must declare the transition at all"
+        for claim in cited:
+            claim["rule_effect"] = "worsened_existing_breach"
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as handle:
+            json.dump(case, handle)
+        result = _run("consider", "--root", tmp, "--premise", premise,
+                      "--agent-case", case_path)
+        assert result.returncode != 0, "a reversed transition must not be storable"
+        assert "improved_but_still_over" in json.loads(result.stdout)["error"]
+
+
+def test_a_delivered_claim_may_not_narrate_the_engines_own_vocabulary():
+    """The other half of the same owner-live failure, on the same surface:
+    implementation-shaped calculation language reaching the user."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _over_cap_root(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        case = _case_from_challenge(payload["challenge"],
+                                    payload["evaluation"]["rule_collisions"])
+        case["for"].append({"claim": "The engine returned already_over for this rule.",
+                            "provenance": "agent_judgment"})
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as handle:
+            json.dump(case, handle)
+        result = _run("consider", "--root", tmp, "--premise", premise,
+                      "--agent-case", case_path)
+        assert result.returncode != 0, "an internal token in a delivered claim must be refused"
+        assert "internal vocabulary" in json.loads(result.stdout)["error"]
 
 
 def test_the_challenge_names_the_rule_this_trade_collides_with():

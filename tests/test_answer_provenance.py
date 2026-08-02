@@ -66,7 +66,19 @@ def _consequence(**overrides):
 
 def _rule_collisions():
     return [{"rule_id": "rule-1", "text": "Cap NVDA at 25%.", "metric_key": "max_pos_pct",
-             "problem_key": "oversize", "state": "already_over", "worsens": True}]
+             "problem_key": "oversize", "state": "already_over", "worsens": True,
+             "rule_effect": "worsened_existing_breach", "limit": 0.25,
+             "limit_source": "user_cap"}]
+
+
+def _legacy_rule_collisions():
+    """The same row as it was written before #579 added `rule_effect` -- a
+    row already sitting on a user's trade_evaluations.jsonl. The gate has to
+    keep checking the direction it does carry rather than reading a missing
+    field as no obligation."""
+    return [{key: value for key, value in row.items()
+             if key not in ("rule_effect", "limit", "limit_source")}
+            for row in _rule_collisions()]
 
 
 def _max_pct_claim(**overrides):
@@ -76,7 +88,20 @@ def _max_pct_claim(**overrides):
     return claim
 
 
+def _effect_claim(**overrides):
+    """#579: the transition, declared as a six-way assertion beside the
+    prose. Nothing offline can read a sentence for direction, so the claim
+    carries the frozen effect and it is checked exactly."""
+    claim = {"claim": "NVDA is already over your 25% cap, and this trade makes it worse.",
+             "provenance": "engine_fact", "anchor": "rule_collisions.rule-1.rule_effect",
+             "rule_effect": "worsened_existing_breach"}
+    claim.update(overrides)
+    return claim
+
+
 def _worsens_claim(**overrides):
+    """The pre-#579 two-way version, for a stored row that carries no
+    effect."""
     claim = {"claim": "NVDA is already over your 25% cap, and this trade makes it worse.",
              "provenance": "engine_fact", "anchor": "rule_collisions.rule-1.worsens",
              "worsens": True}
@@ -105,6 +130,16 @@ def _valid_case():
     the open disclosure and the material staleness -- so acceptance is
     proven on a case that actually exercises every check, not one that
     passes only because nothing applicable was said."""
+    return {
+        "for": [_judgment_claim()],
+        "against": [_max_pct_claim(), _effect_claim(), _disclosure_claim(), _staleness_claim()],
+    }
+
+
+def _legacy_case():
+    """The same case against a row recorded before `rule_effect` existed:
+    the direction is declared as the old boolean, and the gate still checks
+    it."""
     return {
         "for": [_judgment_claim()],
         "against": [_max_pct_claim(), _worsens_claim(), _disclosure_claim(), _staleness_claim()],
@@ -290,18 +325,100 @@ def test_agent_case_over_a_declared_incomplete_basis_without_a_basis_claim_is_re
              basis=_basis(stale_days=0, completeness="unverified"))
 
 
-# ───────────────────────── 7. reversed / omitted worsens direction ─────────────────────────
+# ───────────── 7. reversed / omitted rule transition (#579) ─────────────
+#
+# The direction a case is built on is the thing that failed owner-live
+# acceptance, and free prose has no mechanical encoding of "this trade
+# improves it" a validator could check without scoring sentiment. So the
+# transition rides beside the prose and is checked exactly -- the same shape
+# source/as_of already impose on a public_fact claim.
 
-def test_reversed_already_over_worsens_direction_is_rejected():
+def test_reversed_rule_effect_is_rejected():
+    """The exact untruth #579 owns, in the direction the owner received it:
+    the frozen transition is a worsening and the case declares the opposite.
+    A boolean could not have caught the reverse of this -- both
+    `improved_but_still_over` and `unchanged_existing_breach` are
+    `worsens: false`."""
     case = _valid_case()
-    case["against"][1]["worsens"] = False
-    _rejects("worsens is reversed", case)
+    case["against"][1]["rule_effect"] = "improved_but_still_over"
+    _rejects("must declare rule_effect 'worsened_existing_breach'", case)
 
 
-def test_omitted_already_over_worsens_direction_is_rejected():
+def test_an_improving_transition_claimed_as_a_breach_is_rejected():
+    """The owner's own direction. The frozen row says this trade reduced an
+    over-cap position; a case asserting it created or worsened the breach is
+    refused before it is stored or shown."""
+    collisions = [{"rule_id": "rule-1", "text": "Cap NVDA at 20%.",
+                   "metric_key": "max_pos_pct", "problem_key": "oversize",
+                   "state": "already_over", "worsens": False,
+                   "rule_effect": "improved_but_still_over", "limit": 0.20,
+                   "limit_source": "user_cap"}]
+    for wrong in ("new_breach", "worsened_existing_breach"):
+        case = _valid_case()
+        case["against"][1] = _effect_claim(
+            claim="This puts NVDA over the 20% line you set.", rule_effect=wrong)
+        _rejects("must declare rule_effect 'improved_but_still_over'", case,
+                 rule_collisions=collisions)
+    # ... and the truthful declaration on the same frozen row is accepted, so
+    # the check above is a direction test rather than a blanket refusal.
     case = _valid_case()
-    del case["against"][1]["worsens"]
-    _rejects("omits the worsens direction", case)
+    case["against"][1] = _effect_claim(
+        claim="This cuts NVDA back toward the 20% line you set without reaching it.",
+        rule_effect="improved_but_still_over")
+    _validate(case, rule_collisions=collisions)
+
+
+def test_omitted_rule_effect_is_rejected():
+    case = _valid_case()
+    del case["against"][1]["rule_effect"]
+    _rejects("declares none", case)
+
+
+def test_rule_effect_outside_a_collision_anchor_is_rejected():
+    """The inverse strictness check: a transition declared about something
+    that is not a rule collision has nothing to be checked against."""
+    case = _valid_case()
+    case["against"][0]["rule_effect"] = "new_breach"  # anchored at consequence.after.max_pct
+    _rejects("carries rule_effect outside a rule collision anchor", case)
+
+
+def test_a_row_whose_effect_contradicts_its_own_state_is_refused_by_the_gate():
+    """#579's compatibility clause on the gate's side: the frozen row itself
+    is refused, before any claim about it is judged."""
+    collisions = [{"rule_id": "rule-1", "text": "Cap NVDA at 25%.",
+                   "metric_key": "max_pos_pct", "problem_key": "oversize",
+                   "state": "clear", "worsens": None,
+                   "rule_effect": "worsened_existing_breach", "limit": 0.25,
+                   "limit_source": "user_cap"}]
+    _rejects("cannot accompany state", _valid_case(), rule_collisions=collisions)
+
+
+def test_a_legacy_row_still_has_its_direction_checked():
+    """A row recorded before rule_effect existed carries the direction only
+    as `worsens`, and the older gate still runs on it -- dropping it the
+    moment a newer one exists would leave a replayed row unguarded."""
+    _validate(_legacy_case(), rule_collisions=_legacy_rule_collisions())
+
+    reversed_case = _legacy_case()
+    reversed_case["against"][1]["worsens"] = False
+    _rejects("worsens is reversed", reversed_case, rule_collisions=_legacy_rule_collisions())
+
+    omitted = _legacy_case()
+    del omitted["against"][1]["worsens"]
+    _rejects("omits the worsens direction", omitted,
+             rule_collisions=_legacy_rule_collisions())
+
+
+def test_worsens_beside_a_rule_effect_is_accepted_but_still_checked():
+    """The same fact said less precisely. Accepted alongside the effect on a
+    row that has a direction, and never believed over the frozen one."""
+    case = _valid_case()
+    case["against"][1]["worsens"] = True
+    _validate(case)
+
+    reversed_case = _valid_case()
+    reversed_case["against"][1]["worsens"] = False
+    _rejects("worsens is reversed", reversed_case)
 
 
 def test_worsens_field_outside_a_material_anchor_is_rejected():
@@ -310,6 +427,45 @@ def test_worsens_field_outside_a_material_anchor_is_rejected():
     case = _valid_case()
     case["against"][0]["worsens"] = True  # anchored at consequence.after.max_pct, not a rule
     _rejects("carries worsens outside a material already_over anchor", case)
+
+
+# ───────────── 7b. the engine's own vocabulary is not the answer ─────────────
+
+def test_a_claim_that_narrates_an_internal_token_is_rejected():
+    """#674/#676's half of the same owner-live failure, on the same surface.
+    An implementation identifier is not a limitation the user can act on."""
+    for token in ("already_over", "improved_but_still_over", "cash_unreliable",
+                  "partial_book", "unavailable_cost"):
+        case = _valid_case()
+        case["against"].append({"claim": f"The engine reports {token} for this book.",
+                                "provenance": "agent_judgment"})
+        _rejects("narrates the engine's internal vocabulary", case)
+
+
+def test_the_leak_check_does_not_fire_on_ordinary_language():
+    """The check is deliberately snake_case-only, the same discipline
+    question_surface._assert_no_internal_leak already uses: a rule that
+    rejected the words 'cost basis' or 'clear' would reject correct copy
+    rather than a leak."""
+    case = _valid_case()
+    case["against"].append({
+        "claim": "These weights are computed on cost basis, not on current prices, and "
+                 "one holding sits outside that denominator entirely.",
+        "provenance": "agent_judgment"})
+    _validate(case)
+
+
+def test_the_leak_universe_is_the_engines_own_enums():
+    """Drift discipline: the tokens refused are read off consequence.py's
+    vocabularies, so a new disclosure key or effect is covered the day it is
+    added rather than the day someone remembers this list."""
+    import consequence as consequence_engine
+    declared = set(consequence_engine.COLLISION_STATES + consequence_engine.RULE_EFFECTS
+                   + consequence_engine.DISCLOSURES + consequence_engine.EXCLUSION_REASONS
+                   + consequence_engine.LIMIT_SOURCES)
+    assert set(answer_provenance._INTERNAL_TOKENS) == {t for t in declared if "_" in t}
+    assert "clear" not in answer_provenance._INTERNAL_TOKENS, \
+        "a single word that is also ordinary language is deliberately not checked"
 
 
 # ───────────────────────── 8. user statement promoted to public_fact ─────────────────────────

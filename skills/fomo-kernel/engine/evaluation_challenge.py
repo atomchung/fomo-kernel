@@ -90,6 +90,25 @@ stated reason — and a presentation obligation is not part of that subject.
 Because the block is derived from seeded inputs, adding it would not even
 change which calls converge; it would only move every existing id.
 
+The rule-effect split (#579)
+-----------------------------
+``must_state``'s rule-collision entry used to state the *collision state* —
+``already_over`` — as the fact the answer owed. That is where the book
+stands, and the user asked what this trade does. On 2026-08-02 an owner
+asked about a sell taking a position from 80% to 75% against a self-authored
+20% cap and was told the trade violated the rule; the payload said
+``already_over`` with ``worsens: false`` and the composition happened at
+prose time, which is exactly where a truth-critical distinction cannot live.
+
+So the stated fact is now ``consequence``'s deterministic ``rule_effect``,
+and the state and its direction stay on the entry one level down, as machine
+diagnostics a QA run reconciles against. Beside it, ``rule_effects`` is the
+product-safe projection: per rule, the effect, the line it was judged
+against, whose line that is, and the meanings the answer must and must not
+attach to it. Those two halves — the complete diagnostics on the stored row,
+the bounded product meaning in this block — are #713's repair step 4, and
+repairing either alone re-opens the other.
+
 The anchor guarantee
 ---------------------
 Every ``anchor`` this module emits has been resolved against the frozen
@@ -113,6 +132,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import answer_provenance
+import consequence as consequence_engine
 
 
 # Presentation order for `must_state`. The basis comes first because every
@@ -157,12 +177,74 @@ UNCHECKED_WITH_EVIDENCE = ("evidence_refs_unverified",)
 # side; this is the same number said where the agent is reading.
 CASE_REQUIRED = {"for": 1, "against": 1}
 
-# A collision that needs saying. `clear` is the only state that may pass in
-# silence: every other one, including the two that mean "not evaluated",
-# must be named rather than absent — an unevaluated rule presented as no
-# issue tells the user something the engine never checked
-# (references/trade-consequence.md, "Reading a rule collision").
-_SPEAKING_STATES = ("would_breach", "already_over", "unjudged", "unmapped")
+# A collision that needs saying, keyed on the *transaction effect* rather
+# than on the book's absolute state (#579). `compliant` is the only effect
+# that may pass in silence — the true non-event. Every other one, including
+# the two that mean "not evaluated", must be named rather than absent: an
+# unevaluated rule presented as no issue tells the user something the engine
+# never checked (references/trade-consequence.md, "Reading a rule
+# collision").
+#
+# The old key was `state`, and `clear` was the silent one. That silenced
+# `resolved_existing_breach` too: a trade that takes a self-authored line
+# from broken back to held said nothing at all, because the state vocabulary
+# cannot tell it apart from a book that was never over. Reading the effect
+# is what makes the difference expressible.
+_SILENT_EFFECT = "compliant"
+
+# The pre-#579 rule, kept for a row recorded before `rule_effect` existed.
+# Such a row never reaches here from `cmd_consider`, which always computes a
+# fresh collision; this is the defensive half of #579's compatibility clause
+# and it exists so the floor and the gate stay one list on an old row too --
+# `answer_provenance._LEGACY_COVERED_STATES` is its counterpart, and a
+# challenge that silently dropped what that gate still requires would make
+# every case on such a book unsubmittable.
+_LEGACY_SPEAKING_STATES = ("would_breach", "already_over", "unjudged", "unmapped")
+
+# What the answer must and must not convey about each effect — semantic
+# slots, never wording, in the same spirit as `must_state` being facts rather
+# than sentences. This is the product-safe projection #579 section 3 asks
+# for: the minimum meaning the agent may realize, derived from the
+# deterministic effect, and the meanings it may not attach to it.
+#
+# It is a fixed six-row table over one route's rule effect, deliberately not
+# a general response-plan vocabulary (#713's scope guard). The negative half
+# is the load-bearing one: PR #608 stated the same rule as prose and an
+# improving trade was still described as a breach, so what an answer may
+# *not* say is data here rather than a paragraph to remember.
+_SLOT_CROSSED = "crossed_by_this_trade"
+_SLOT_OVER_BEFORE = "over_before_this_trade"
+_SLOT_TOWARD = "moved_toward_the_line"
+_SLOT_FURTHER = "moved_further_over"
+_SLOT_UNCHANGED = "unchanged_by_this_trade"
+_SLOT_OVER_AFTER = "over_after"
+_SLOT_UNDER_AFTER = "under_after"
+_SLOT_NOT_EVALUATED = "not_evaluated"
+_SLOT_RULE_HELD = "rule_held"
+
+RULE_EFFECT_SLOTS = (_SLOT_CROSSED, _SLOT_OVER_BEFORE, _SLOT_TOWARD, _SLOT_FURTHER,
+                     _SLOT_UNCHANGED, _SLOT_OVER_AFTER, _SLOT_UNDER_AFTER,
+                     _SLOT_NOT_EVALUATED, _SLOT_RULE_HELD)
+
+_MUST_CONVEY = {
+    "new_breach": (_SLOT_CROSSED, _SLOT_OVER_AFTER),
+    "worsened_existing_breach": (_SLOT_OVER_BEFORE, _SLOT_FURTHER, _SLOT_OVER_AFTER),
+    "improved_but_still_over": (_SLOT_OVER_BEFORE, _SLOT_TOWARD, _SLOT_OVER_AFTER),
+    "unchanged_existing_breach": (_SLOT_OVER_BEFORE, _SLOT_UNCHANGED, _SLOT_OVER_AFTER),
+    "resolved_existing_breach": (_SLOT_OVER_BEFORE, _SLOT_UNDER_AFTER),
+    "unjudged": (_SLOT_NOT_EVALUATED,),
+    "unmapped": (_SLOT_NOT_EVALUATED,),
+}
+
+_MUST_NOT_CONVEY = {
+    "new_breach": (_SLOT_OVER_BEFORE, _SLOT_TOWARD),
+    "worsened_existing_breach": (_SLOT_CROSSED, _SLOT_TOWARD),
+    "improved_but_still_over": (_SLOT_CROSSED, _SLOT_FURTHER),
+    "unchanged_existing_breach": (_SLOT_CROSSED, _SLOT_FURTHER, _SLOT_TOWARD),
+    "resolved_existing_breach": (_SLOT_CROSSED, _SLOT_OVER_AFTER),
+    "unjudged": (_SLOT_RULE_HELD,),
+    "unmapped": (_SLOT_RULE_HELD,),
+}
 
 
 def _entry(record, topic, anchor, value, detail=None):
@@ -323,12 +405,44 @@ def _cash_entries(record, consequence):
     return out
 
 
+def _speaking_effect(row):
+    """The transaction effect this row owes the user, or None when the row is
+    not a collision that needs saying.
+
+    `rule_effect` is the value read, never `state`: the absolute state cannot
+    tell an improving trade from a worsening one, nor a resolved line from
+    one that was never crossed (consequence.RULE_EFFECTS). A row recorded
+    before that field existed has no effect to return, so this says so and
+    the one caller that must still speak about such a row —
+    `_rule_collision_entries` — falls back explicitly rather than having a
+    missing field quietly reinterpreted here."""
+    if not isinstance(row, Mapping):
+        return None
+    effect = row.get("rule_effect")
+    if effect is None or effect == _SILENT_EFFECT:
+        return None
+    disagreement = consequence_engine.effect_disagrees_with_state(row.get("state"), effect)
+    if disagreement:
+        # #579's compatibility clause. A row whose two vocabularies contradict
+        # each other cannot be projected as either, so the answer is refused
+        # rather than composed from whichever field was read first.
+        raise ValueError(f"rule_collisions row {row.get('rule_id')!r}: {disagreement}")
+    return effect
+
+
 def _rule_collision_entries(record, rule_collisions):
     """Every rule of the user's own this trade collides with, plus every one
     that could not be judged. The rule's own text rides along in `detail` so
-    the answer can quote what they wrote rather than paraphrase it, and
-    `worsens` rides along because an `already_over` line that this trade
-    *improves* reads identically without it (references/trade-consequence.md).
+    the answer can quote what they wrote rather than paraphrase it.
+
+    The stated `value` is the **transaction effect**, not the book's absolute
+    state (#579). `already_over` as the headline fact is what owner-live
+    acceptance failed on: a sell taking a position from 80% to 75% against a
+    20% cap owes the user "this reduces it and it is still above your line",
+    and the state alone says only "over", which reads as an accusation. The
+    absolute state and its `worsens` direction stay on the entry as machine
+    diagnostics — they are what a QA run reconciles against — but they are no
+    longer the fact the answer is told to state.
 
     A row with no `rule_id` cannot be addressed by anchor at all — the
     schema allows the null defensively and problems.py does not produce one
@@ -336,13 +450,54 @@ def _rule_collision_entries(record, rule_collisions):
     would turn a defensive null into a silently unmentioned rule."""
     out = []
     for row in rule_collisions or ():
-        if not isinstance(row, Mapping) or row.get("state") not in _SPEAKING_STATES:
+        if not isinstance(row, Mapping):
+            continue
+        effect = _speaking_effect(row)
+        if effect is not None:
+            field, value = "rule_effect", effect
+        elif row.get("rule_effect") is None and row.get("state") in _LEGACY_SPEAKING_STATES:
+            field, value = "state", row["state"]
+        else:
             continue
         detail = {"rule_id": row.get("rule_id"), "text": row.get("text"),
-                  "worsens": row.get("worsens")}
+                  "state": row.get("state"), "worsens": row.get("worsens")}
         out.append(_entry(record, "rule_collision",
-                          f"rule_collisions.{row.get('rule_id')}.state",
-                          row.get("state"), detail=detail))
+                          f"rule_collisions.{row.get('rule_id')}.{field}",
+                          value, detail=detail))
+    return out
+
+
+def _rule_effect_projection(rule_collisions):
+    """The product-safe projection of every speaking collision (#579 section
+    3, #713 repair step 4): what the answer must convey about this rule and
+    what it may not, derived from the deterministic effect.
+
+    Deliberately carries no `state`, no `worsens`, and no retrieval or
+    recovery chronology. Those remain complete on the evaluation row, which
+    is what QA and a later replay read; this block is the half a user-facing
+    answer is built from, and the separation is the point — the repair for a
+    wrong rule meaning and the repair for internal diagnostics reaching the
+    user are one cut on one surface, not two competing ones.
+
+    `limit` is the line the effect was classified against and `limit_source`
+    says whose line it is. Both are here because the correct sentence names
+    the number ("still above your 20% rule") and because a threshold this
+    engine picked must never be handed back to the user as a rule they
+    wrote."""
+    out = []
+    for row in rule_collisions or ():
+        effect = _speaking_effect(row)
+        if effect is None:
+            continue  # compliant, or a legacy row with no deterministic effect
+        entry = {"rule_id": row.get("rule_id"), "text": row.get("text"),
+                 "effect": effect,
+                 "must_convey": list(_MUST_CONVEY[effect]),
+                 "must_not_convey": list(_MUST_NOT_CONVEY[effect])}
+        limit = row.get("limit")
+        if isinstance(limit, (int, float)) and not isinstance(limit, bool):
+            entry["limit"] = limit
+            entry["limit_source"] = row.get("limit_source")
+        out.append(entry)
     return out
 
 
@@ -419,6 +574,11 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
         Ordered owed facts, each ``{topic, value}`` plus ``anchor`` when the
         fact is addressable. Facts, not sentences — see the module
         docstring on rule 8.
+    ``rule_effects``
+        The product-safe projection of what this trade does to each of the
+        user's own rules: the deterministic effect, the line it was judged
+        against, and the meanings the answer must and must not attach to it.
+        Empty when no rule speaks.
     ``quote_verbatim``
         The user's own words, to be reproduced rather than summarized.
     ``unchecked``
@@ -448,6 +608,7 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
 
     return {
         "must_state": must_state,
+        "rule_effects": _rule_effect_projection(rule_collisions),
         "quote_verbatim": _quote_verbatim(context),
         "unchecked": _unchecked(context),
         "case_required": dict(CASE_REQUIRED),

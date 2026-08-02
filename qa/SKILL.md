@@ -591,9 +591,15 @@ python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
       {"topic": "basis", "value": "ledger", "anchor": "basis.source"},
       {"topic": "position", "value": 0.2731, "anchor": "consequence.after.weights.SYNTH"},
       {"topic": "cash", "value": 8400.0, "anchor": "consequence.after.cash.balance"},
-      {"topic": "rule_collision", "value": "would_breach", "anchor": "rule_collisions.rule-1.state",
-       "detail": {"rule_id": "rule-1", "text": "One name never above a quarter of the book", "worsens": null}},
+      {"topic": "rule_collision", "value": "new_breach", "anchor": "rule_collisions.rule-1.rule_effect",
+       "detail": {"rule_id": "rule-1", "text": "One name never above a quarter of the book", "state": "would_breach", "worsens": null}},
       {"topic": "disclosure", "value": "cost_basis", "anchor": "consequence.disclosures.0"}
+    ],
+    "rule_effects": [
+      {"rule_id": "rule-1", "text": "One name never above a quarter of the book",
+       "effect": "new_breach", "limit": 0.25, "limit_source": "user_cap",
+       "must_convey": ["crossed_by_this_trade", "over_after"],
+       "must_not_convey": ["over_before_this_trade", "moved_toward_the_line"]}
     ],
     "quote_verbatim": [{"field": "reason", "text": "Best setup I have seen this year."}],
     "unchecked": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta"],
