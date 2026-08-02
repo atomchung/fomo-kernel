@@ -16985,10 +16985,11 @@ copy-key coverage
 [zh-CN] reached 38 · unreached 0 · trivial 28
 [en] reached 89 · unreached 0 · trivial 4
 
-registers not claimed by any scene in this corpus (74):
+registers not claimed by any scene in this corpus (76):
   account_perf
   add_choices
   add_descriptions
+  answer_effect
   asked_because
   benchmark_line
   block_missing
@@ -17028,6 +17029,7 @@ registers not claimed by any scene in this corpus (74):
   language
   markdown_summary
   motive_entries
+  opening_value
   patterns_panel
   payoff_lines
   period

@@ -63,6 +63,10 @@ Show the full question and one complete option set, accept the reply, confirm th
 
 Each question needs its own visible turn. Do not leave a required question buried in an earlier message and follow it with a bare "reply now" prompt, and do not repeat an option set the user is already looking at. The engine can see that an answer is missing; it cannot see that the question was hard to find, and a user who scrolls back to work out what is being asked is answering a different question than the one the queue ranked.
 
+Two engine-owned sentences ride the row and are shown with it, never merged into one: `asked_because` says why this question ranked into the queue, and `answer_effect` says what the user's answer changes — the conclusion, classification, or later reader it reaches. Both are already rendered and localized; state them rather than paraphrasing. `answer_effect` is absent on a kind whose answer nothing currently reads, and an absent one is left absent: a question that cannot name what it changes has a real problem, and writing it a sentence hides that problem instead of fixing it.
+
+Where a route projects `opening_value` (today `first_review` — `flows/first-review.md` owns the beat), it precedes question 1. It is what makes each `answer_effect` legible as a next step rather than a form field: the user has already seen what the engine found, so what an answer changes is a change to something they are looking at.
+
 `native_options` and `plain_text` present the same frozen surface and write the same canonical answer, so both record the same `surface_digest` — that digest is how copy drift stays visible without the trace ever holding the question text itself.
 
 `none_of_above` is not a new canonical choice. Preserve the user's exact words in `response_provenance.user_statement`. A mapped interpretation requires `summary_author=ai_interpretation`, a confidence, and explicit user confirmation. If the mapping stays ambiguous, write `choice=skip`, keep the exact statement in `note`, and mark the provenance low-confidence and unresolved — an honest gap is recoverable next review, a forced classification is not.

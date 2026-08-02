@@ -1507,6 +1507,68 @@ def _honesty_lines(bundle, copy):
     return lines
 
 
+# ── Opening value, stated before the first question (#714) ───────────────────
+# The route asks three to five questions before anything the engine found is
+# visible, so a first-time user completes an interview to learn whether the
+# product found anything at all. This block is the engine's own leading finding
+# projected *before* answers exist.
+#
+# It computes nothing. Both sentences are the ones the card would print anyway:
+# the leading hole's number narration through `_hole_line`, and the first
+# limitation the ledger already ordered through `_honesty_lines`. That is the
+# whole point — a second ranking here would be a parallel truth about which
+# finding leads, and the card and the opening could then disagree.
+OPENING_VALUE_SCHEMA_VERSION = 1
+
+
+def build_opening_value(bundle, language, *, questions_required):
+    """The leading engine finding, before the first question is asked.
+
+    Returns None when the engine has no applicable hole to lead with — an
+    honest absence, not an invented sentence. The caller omits the key rather
+    than emitting an empty block, so a resumed pending session written before
+    this contract is indistinguishable from a run that had nothing to say.
+
+    `boundary` is the ledger's first triggered limitation, in the ledger's own
+    order. It is deliberately *not* selected for relevance to the finding: the
+    ledger order is the engine's, and picking "the limitation that qualifies
+    this finding" would be exactly the parallel ranking the block exists to
+    avoid. It is absent when nothing is triggered.
+    """
+    card = bundle.get("engine_card") or {}
+    copy = load_copy(language)
+    opening_copy = copy.get("opening_value") or {}
+    line = ""
+    dim_id = None
+    for hole in card.get("top_holes") or []:
+        if not isinstance(hole, dict):
+            continue
+        line = _hole_line(hole, language)
+        if line:
+            dim_id = dimension_id((hole.get("raw") or {}).get("dim"))
+            break
+    if not line:
+        return None
+    count = max(int(questions_required or 0), 0)
+    # Singular/plural through copy rather than a hardcoded noun: #682 shipped
+    # "1 completed reviews" by dropping exactly this slot, and no gate saw it.
+    template = opening_copy.get("questions_one" if count == 1 else "questions_many")
+    value = {
+        "schema_version": OPENING_VALUE_SCHEMA_VERSION,
+        "label": opening_copy.get("label") or "",
+        "finding": {"dimension": dim_id, "line": line},
+        "questions_required": count,
+        "questions_line": _format_copy(template, count=count) or "",
+    }
+    honesty = _honesty_lines(bundle, copy)
+    for entry in card.get("honesty_ledger") or []:
+        key = (entry or {}).get("key")
+        if key in honesty:
+            value["boundary"] = {"key": key, "line": honesty[key]}
+            break
+    return value
+
+
 def _etf_lines(card, language):
     """Each triggered ETF classification as one sentence: which tickers, and
     the rule that explains why they were split into that bucket. Wording is

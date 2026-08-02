@@ -11836,6 +11836,134 @@ def test_a_backlog_item_without_impact_still_renders():
     assert "+12.0%" in line, f"the pre-#670 shape must still say something: {line}"
 
 
+# ── #714: value before the first question ────────────────────────────────────
+# The route asked three to five questions before anything the engine had found
+# was visible, so a first-time user completed an interview to learn whether the
+# product found anything at all. These pin both halves of the repair: the
+# opening the user reads first, and the per-question statement of what
+# answering buys.
+
+
+def test_opening_value_leads_a_first_review_before_any_question():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        card_path, state_path = _artifacts(tmp)
+        run = _run("prepare", _trade_csv(tmp), "--root", root, "--language", "en",
+                   "--card-json", card_path, "--state-json", state_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        projected = json.loads(run.stdout)["review_plan"]
+        assert projected["route"] == "first_review"
+        opening = projected.get("opening_value")
+        assert opening, \
+            "a first review must state what the engine already found before it interviews the user"
+        assert opening["schema_version"] == 1
+        assert opening["finding"]["line"].strip(), "the finding must carry a real sentence"
+        assert opening["label"].strip(), "the opening must be visibly labelled preliminary"
+        required = [q for q in projected["question_queue"] if q.get("required")]
+        assert opening["questions_required"] == len(required), \
+            "the stated count is the queue's own required rows, never a separate guess"
+        assert opening["questions_line"].strip()
+        # A second route with a different band: this fixture selects three
+        # required rows, so `== len(required)` alone still passes a hardcoded 3.
+        drive = _run("prepare", "--test-drive", "--language", "en")
+        assert drive.returncode == 0, drive.stdout + drive.stderr
+        drive_plan = json.loads(drive.stdout)["review_plan"]
+        drive_opening = drive_plan["opening_value"]
+        drive_required = [q for q in drive_plan["question_queue"] if q.get("required")]
+        assert drive_opening["questions_required"] == len(drive_required) \
+            and drive_opening["questions_required"] != opening["questions_required"], \
+            "the count must track each route's own queue, not one route's number twice"
+        # The opening exists so the agent never needs the card it came from.
+        assert "engine_card" not in projected and "engine_state" not in projected, \
+            "showing value early must not become a reason to hand the agent the raw card"
+
+
+def test_opening_value_repeats_the_cards_own_leading_finding():
+    """It projects facts the renderer already ranked; a second pick could disagree."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _csv, _card, _state = _prepare_with_trades(tmp, root, language="en")
+        opening = plan["opening_value"]
+        expected = ""
+        for hole in plan["engine_card"].get("top_holes") or []:
+            expected = card_renderer._hole_line(hole, "en")
+            if expected:
+                break
+        assert opening["finding"]["line"] == expected, \
+            "the opening must quote the leading hole the card would print, not rank its own"
+        ledger = plan["engine_card"].get("honesty_ledger") or []
+        honesty = card_renderer._honesty_lines({"engine_card": plan["engine_card"]},
+                                               card_renderer.load_copy("en"))
+        # Not `if "boundary" in opening`: a mutation that drops the leading
+        # entry would delete the block and pass. State the expectation for
+        # both outcomes instead.
+        speakable = [entry["key"] for entry in ledger if entry.get("key") in honesty]
+        if speakable:
+            assert opening.get("boundary"), \
+                "a triggered, speakable ledger entry must reach the opening"
+            assert opening["boundary"]["key"] == speakable[0], \
+                "the boundary follows the ledger's own order, not a relevance judgment"
+        else:
+            assert "boundary" not in opening, \
+                "with nothing triggered the opening states no limitation at all"
+
+
+def test_opening_value_is_localized_in_every_supported_locale():
+    seen = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for language in ("en", "zh-TW", "zh-CN"):
+            root = pathlib.Path(tmp) / f"coach-{language}"
+            plan, _csv, _card, _state = _prepare_with_trades(tmp, root, language=language)
+            opening = plan["opening_value"]
+            assert opening["label"].strip() and opening["questions_line"].strip(), \
+                f"{language}: the opening must not fall back to an empty catalog entry"
+            seen[language] = (opening["label"], opening["questions_line"])
+    assert len(set(seen.values())) == 3, \
+        "each locale carries its own wording, not one language's copy rendered three times"
+
+
+def test_answer_effect_reaches_every_wired_required_question():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _csv, _card, _state = _prepare_with_trades(tmp, root, language="en")
+        wired = [q for q in plan["question_queue"]
+                 if q.get("required") and q["kind"] in review_engine.ANSWER_EFFECT_KINDS]
+        assert wired, "this fixture must select at least one wired required question"
+        for question in wired:
+            effect = question.get("answer_effect")
+            assert effect and effect.strip(), \
+                f"{question['kind']}: a required question must state what answering changes"
+            assert effect != question.get("asked_because"), \
+                f"{question['kind']}: why it was asked and what it changes are different facts"
+
+
+def test_answer_effect_kinds_are_exactly_the_wired_question_consumers():
+    """#714/#429: an effect sentence is a promise, so only a wired kind may make it."""
+    import ast
+    tree = ast.parse((ROOT / "evals" / "run_episodes.py").read_text(encoding="utf-8"))
+    found = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if getattr(target, "id", None) in ("QUESTION_CONSUMERS", "KNOWN_UNWIRED"):
+                    found[target.id] = {ast.literal_eval(k) for k in node.value.keys}
+    assert set(found) == {"QUESTION_CONSUMERS", "KNOWN_UNWIRED"}, \
+        "both registers must stay readable from run_episodes.py source"
+    assert set(review_engine.ANSWER_EFFECT_KINDS) == found["QUESTION_CONSUMERS"] - found["KNOWN_UNWIRED"], \
+        ("answer_effect must cover exactly the kinds whose answer provably reaches a surface: "
+         "a kind that becomes wired earns a sentence, one that stops being read loses it")
+
+
+def test_no_answer_effect_where_nothing_reads_the_answer():
+    for kind in ("initial_thesis", "exit_consistency"):
+        assert review_engine._answer_effect(kind, "en") is None, \
+            f"{kind}: #429 says nothing reads this answer; promising an effect would be a lie"
+    for language in ("en", "zh-TW", "zh-CN"):
+        table = card_renderer.load_copy(language).get("answer_effect") or {}
+        assert set(table) == set(review_engine.ANSWER_EFFECT_KINDS), \
+            f"{language}: the catalog carries a sentence for every wired kind and no other"
+
+
 def main():
     tests = sorted((name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn))
     failed = 0
