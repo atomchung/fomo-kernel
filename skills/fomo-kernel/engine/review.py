@@ -791,6 +791,57 @@ def _previous_state(root):
         return None
 
 
+def _fallback_cash_anchor(root):
+    """The last finalized review's own anchored cash balance, reshaped into
+    the ``{currency, amount, as_of}`` (or per-currency list) form ``--cash``
+    accepts, for a ``consider`` call that supplied no ``--cash`` of its own
+    (#756).
+
+    ``last_state.json``'s ``cash`` field never carries the original anchor's
+    own ``as_of`` — only ``trade_recap.cash_position``'s aggregated result
+    survives ``finalize``. But that result already has every cash flow up to
+    the review's own ``date_end`` folded in, so restating it "as of
+    ``date_end``" is exact, not an approximation: nothing this account has
+    recorded moved that balance between the true (unstored) ``as_of`` and
+    ``date_end``, because everything in between is already inside the sum —
+    and ``consider``'s own ledger reconstruction cannot see anything past
+    ``date_end`` that this state does not already know about either.
+
+    Built per currency from ``by_currency`` rather than from the blended
+    aggregate ``balance``, because the aggregate's own currency is whichever
+    one ``fx`` happened to convert into (USD for a mixed-currency book) and
+    is not safe to re-declare as a single-currency anchor.
+
+    Returns ``None`` — "no fallback, behave exactly as before `--cash`
+    existed" — when no review has ever been finalized here, when the last
+    one's cash reading was never itself genuinely anchored
+    (``source: csv_sum``/``partial``), or when a currency bucket was
+    individually unreliable even though the account overall read reliable.
+    Promoting an unreliable running sum into a synthetic anchor would
+    misrepresent an approximation as a recorded fact — the opposite of this
+    fix, and the same fail-closed rule AGENTS.md boundary 6 states everywhere
+    else in this product.
+    """
+    state = _previous_state(root)
+    if not isinstance(state, dict):
+        return None
+    cash = state.get("cash")
+    if not isinstance(cash, dict) or not cash.get("reliable"):
+        return None
+    as_of = state.get("date_end")
+    if not as_of:
+        return None
+    by_currency = cash.get("by_currency")
+    if not isinstance(by_currency, dict) or not by_currency:
+        return None
+    anchors = [
+        {"currency": currency, "amount": entry["balance"], "as_of": as_of}
+        for currency, entry in sorted(by_currency.items())
+        if isinstance(entry, dict) and entry.get("reliable") and entry.get("balance") is not None
+    ]
+    return anchors or None
+
+
 def _recorded_splits(root):
     """The split map the last review froze, for lanes that have no review of
     their own (#558).
@@ -7446,6 +7497,12 @@ def cmd_consider(args):
             cash_anchor = json.loads(args.cash)
         except ValueError as exc:
             raise ReviewError(f"--cash is not valid JSON: {exc}") from exc
+    else:
+        # #756: without an explicit --cash, fall back to the balance the
+        # last finalized review in this root already anchored, rather than
+        # silently dropping it and falling through to an unanchored
+        # csv_sum guess on the very next call after the user declared it.
+        cash_anchor = _fallback_cash_anchor(root)
 
     rows, basis, canonical_basis, canonical_projection, excluded_holdings = _consider_rows(
         args, root, feed=feed, last_px=last_px, splits=supplied_splits,
@@ -8319,7 +8376,9 @@ def build_parser():
     consider.add_argument("--driver-map")
     consider.add_argument("--instrument-map")
     consider.add_argument("--cash", help="TR_CASH-shaped JSON string: a single "
-                                        "{as_of,amount,currency} anchor, or a list of them")
+                                        "{as_of,amount,currency} anchor, or a list of them. "
+                                        "Omitting this falls back to the last finalized "
+                                        "review's own anchored balance, if it had one (#756)")
     consider.add_argument("--agent-case",
                           help="optional path to a JSON file: the structured case for and "
                                "against, {for: [...], against: [...]} "

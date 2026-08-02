@@ -21,6 +21,13 @@ What this file settles:
      concentration figures could not read and at what weight, stay disjoint,
      respect #172's residual floor, and are both silent on a book that is
      fully legible.
+  D3. portfolio_state / consequence (#751): the hypothetical premise's own
+     cash flow is deducted (or credited, for a sell) from an anchored balance
+     regardless of how the cash anchor's as_of relates to the premise's own
+     date — before, on, or after it — closing the silent non-deduction a
+     postdated or same-day anchor produced. The unanchored csv_sum path and
+     every caller that does not opt in via `premise_row` are pinned as
+     unaffected.
   E. rule_collision: would_breach / already_over / clear real verdicts for
      the five evaluable metric keys (including the avgdown_count pair of
      qualifying-average-down plus weight breach), unjudged for
@@ -581,6 +588,117 @@ def test_a_residual_position_does_not_buy_the_answer_a_sentence_about_dust():
     # is not passing because the list is simply never populated.
     bigger = cq.consequence(_dollar_book([("NVDA", 100.0), ("CPRT", 50.0)]), premise)
     assert [row["ticker"] for row in bigger["unclassified_holdings"]] == ["CPRT"]
+
+
+# ─────── D3. cash anchor vs. the hypothetical trade's own date (#751) ───────
+# A cash anchor states a real balance that, by construction, has never seen a
+# trade that has not happened yet. trade_recap._cash_balance_one_ccy sums cash
+# flows dated strictly after the anchor's as_of; before #751, the appended
+# hypothetical row was just one more dated flow, so an anchor whose as_of
+# landed on or after the premise's own date made the filter skip the
+# hypothetical's cash effect too -- after.cash.balance came back identical to
+# before's, reliable:true, with no disclosure anywhere saying so. The four
+# consequence()-level tests below build the same one-holding book and vary
+# only the anchor's as_of relative to the premise's date, which is what
+# isolates the mechanism; the last test pins the fix's own opt-in parameter
+# one level below consequence().
+
+def _one_holding_book():
+    """AAA bought for $1000 on 2024-01-01. A premise with no explicit `date`
+    defaults to 2024-01-02 (validate_premise: last row + 1 day)."""
+    return _dollar_book([("AAA", 1000.0)], date="2024-01-01")
+
+
+def test_an_anchor_strictly_before_the_premise_date_deducts_correctly():
+    """Regression guard for the case that already worked: anchor as_of
+    (2023-12-31) is before both the historical AAA buy and the premise, so
+    both flow into the balance in the ordinary way. 10000 - 1000 (AAA) - 500
+    (premise) = 8500."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2023-12-31", "amount": 10000.0, "currency": "USD"}
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)
+    assert result["premise"]["date"].isoformat() == "2024-01-02"
+    assert _close(result["before"]["cash"]["balance"], 9000.0)
+    assert _close(result["after"]["cash"]["balance"], 8500.0)
+    assert result["after"]["cash"]["reliable"] is True
+    assert _close(result["delta"]["cash"]["balance"], -500.0)
+
+
+def test_an_anchor_dated_the_same_day_as_the_premise_still_deducts():
+    """The exact regression the issue's own follow-up pinned: anchor as_of
+    (2024-01-02) equals the premise's defaulted date. Before #751 this was
+    silently unreduced (after == before == 10000.0, reliable:true, no
+    disclosure); the fix must deduct the premise's own $500 cost regardless."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2024-01-02", "amount": 10000.0, "currency": "USD"}
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)
+    assert result["premise"]["date"].isoformat() == "2024-01-02"
+    assert _close(result["before"]["cash"]["balance"], 10000.0)
+    assert _close(result["after"]["cash"]["balance"], 9500.0), \
+        "the premise's own cost must be deducted even when the anchor postdates it exactly"
+    assert result["after"]["cash"]["reliable"] is True
+    assert "cash_unreliable" not in result["disclosures"]
+    assert _close(result["delta"]["cash"]["balance"], -500.0)
+
+
+def test_an_anchor_dated_after_the_premise_still_deducts():
+    """The issue's original repro shape: anchor as_of (2024-01-05) is later
+    still than the premise's defaulted date. Same fix, same expectation."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2024-01-05", "amount": 10000.0, "currency": "USD"}
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)
+    assert _close(result["before"]["cash"]["balance"], 10000.0)
+    assert _close(result["after"]["cash"]["balance"], 9500.0)
+    assert result["after"]["cash"]["reliable"] is True
+
+
+def test_a_sell_premise_still_credits_proceeds_against_a_postdated_anchor():
+    """Sign correctness the other direction: a sell's proceeds must be added,
+    not skipped, under the same postdated-anchor condition. AAA is held (1
+    share, cost basis $1000 here since _dollar_book's qty is 1.0); selling it
+    at $1200 credits the cash balance by exactly $1200."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2024-01-02", "amount": 10000.0, "currency": "USD"}
+    premise = {"ticker": "AAA", "side": "sell", "price": 1200.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)
+    assert _close(result["after"]["cash"]["balance"], 11200.0)
+    assert _close(result["delta"]["cash"]["balance"], 1200.0)
+
+
+def test_no_anchor_still_sums_the_premises_own_flow_regardless_of_date():
+    """The unanchored csv_sum path never date-filtered at all, so it was
+    never the #751 bug's carrier -- pinned here so the premise_row branch
+    added for the anchored path cannot silently stop covering this one."""
+    rows = _one_holding_book()
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise)   # no cash_anchor
+    assert result["before"]["cash"]["source"] == "csv_sum"
+    assert _close(result["before"]["cash"]["balance"], -1000.0)
+    assert _close(result["after"]["cash"]["balance"], -1500.0)
+    assert "cash_unreliable" in result["disclosures"]
+
+
+def test_portfolio_state_premise_row_parameter_is_opt_in():
+    """Direct mechanism pin, one level below `consequence()`: passing the
+    same appended row back as `premise_row` is what turns the fix on. Every
+    caller that does not pass it -- every `portfolio_state` call above this
+    section, and review.py's own plain snapshot reads -- must keep seeing
+    exactly the pre-#751 arithmetic for a postdated anchor, so the parameter
+    is additive, never a change to the default path."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2024-01-02", "amount": 10000.0, "currency": "USD"}
+    normalized = cq.validate_premise(
+        {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}, rows)
+    premise_row = cq._premise_row(normalized)
+    unfixed = cq.portfolio_state(rows + [premise_row], cash_anchor=anchor)
+    fixed = cq.portfolio_state(rows + [premise_row], cash_anchor=anchor,
+                               premise_row=premise_row)
+    assert _close(unfixed["cash"]["balance"], 10000.0), \
+        "without premise_row, the pre-fix arithmetic must still reproduce exactly"
+    assert _close(fixed["cash"]["balance"], 9500.0)
 
 
 # ───────────────── E. rule_collision ─────────────────

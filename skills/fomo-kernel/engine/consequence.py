@@ -135,6 +135,16 @@ SIDES = ("buy", "sell")
 DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver",
                "unclassified_book", "etf_not_decomposed", "partial_book")
 
+# #751: a cash anchor states a real balance that, by construction, has never
+# seen a trade that has not happened yet — there is no `as_of` at which it
+# could legitimately already include a still-hypothetical premise's cash
+# flow. `trade_recap._cash_balance_one_ccy` sums flows dated strictly after
+# the anchor's `as_of`; stamping the premise's own synthetic flow with a date
+# no real anchor will ever reach guarantees it is always counted, regardless
+# of what `premise.date` says for every other purpose (position dating,
+# holding period, splits). See `portfolio_state`'s `premise_row` parameter.
+_PREMISE_CASH_FLOW_DATE = dt.date.max
+
 # Keys no code path emits any more, kept valid on a *stored* row so an
 # evaluation written before the change still validates and still replays. The
 # declaration lives here rather than only in the schema so the drift test
@@ -576,7 +586,8 @@ def _premise_row(normalized):
 
 # ─────────────────────────────── state ───────────────────────────────
 
-def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None, fx=None):
+def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None, fx=None,
+                     premise_row=None):
     """The book as of the end of `rows`. Every number here is trade_recap's own
     function output, unmodified — this assembles a snapshot, it does not
     compute anything new. Calling it once on `rows` and once on `rows` plus
@@ -592,6 +603,19 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     cover one of them (#600). Cost basis is a *different* denominator that is
     still internally consistent; an unconverted currency is not a denominator
     at all.
+
+    `premise_row` (#751): pass the same row object appended onto the tail of
+    `rows` when this state is the "after" side of one hypothetical trade —
+    `consequence()` is the one caller that does. Every other caller leaves it
+    at the default `None` and sees no change at all. When supplied, this
+    row's own cash flow is computed separately from the rest of `rows` and
+    stamped with `_PREMISE_CASH_FLOW_DATE` before reaching
+    `trade_recap.cash_position`, so a `cash_anchor` whose `as_of` happens to
+    fall on or after `premise_row`'s own date can no longer make the anchor's
+    date-filtered sum skip it — the silent non-deduction #751 reported.
+    Historical rows keep exactly the flow dates they always had; only the one
+    hypothetical row's date is ever overridden, and only for this purpose —
+    `held`/`weights`/round-trips below still read `premise_row`'s real date.
     """
     last_px = last_px or {}
     fx = dict(fx or {})
@@ -642,7 +666,18 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     # trade_rows given makes load_cash_flows estimate qty x price per row,
     # #375's fallback path), so an appended hypothetical buy/sell flows
     # through the cash balance automatically.
-    cash_flows = trade_recap.load_cash_flows([], trade_rows=rows)
+    if premise_row is None:
+        cash_flows = trade_recap.load_cash_flows([], trade_rows=rows)
+    else:
+        # #751. Identity, not equality: `_premise_row` builds a fresh dict
+        # every call, so this isolates exactly the one appended row even
+        # when a historical row happens to share the same ticker/date/price.
+        historical_rows = [row for row in rows if row is not premise_row]
+        cash_flows = trade_recap.load_cash_flows([], trade_rows=historical_rows)
+        premise_flows = trade_recap.load_cash_flows([], trade_rows=[premise_row])
+        for flow in premise_flows:
+            flow["date"] = _PREMISE_CASH_FLOW_DATE
+        cash_flows = cash_flows + premise_flows
     held_mv = sum((sh * lastpx_v[t]) if lastpx_v.get(t) else c for t, (sh, c) in held_v.items())
     cash = trade_recap.cash_position(cash_flows, held_mv, anchor=cash_anchor, fx=fx)
     unclassified_holdings, undecomposed_etfs = book_legibility(held, size["weights"])
@@ -842,7 +877,8 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
                                                 max_pos_override=max_pos_override,
                                                 cash_anchor=cash_anchor, fx=fx)
     after = portfolio_state(rows + [premise_row], last_px=last_px,
-                            max_pos_override=max_pos_override, cash_anchor=cash_anchor, fx=fx)
+                            max_pos_override=max_pos_override, cash_anchor=cash_anchor, fx=fx,
+                            premise_row=premise_row)
 
     disclosures = []
     if after["basis"] == "cost":

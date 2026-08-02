@@ -91,6 +91,8 @@ There is no disclosure key for a book whose currencies could not be converted. `
 
 Pass `--prices` (an envelope in the shape [price-feed.md](price-feed.md) describes) to price the book on current market value instead of cost, and `--cash` (a `{as_of, amount, currency}` object, or a list of them for a multi-currency book) to anchor the cash balance. `--driver-map` and `--instrument-map` carry the same local classification files a review accepts.
 
+Omitting `--cash` is not the same as declaring no anchor exists (#756). When the last finalized review in this root anchored its own cash reading, that balance is reused automatically — restated as of the review's own `date_end`, which is exact rather than approximate, because every cash flow up to that date is already folded into the number the review froze. An explicit `--cash` on this call always overrides it. The fallback is offered only when the last review's own cash was itself genuinely anchored; a last review that fell back to `csv_sum` leaves nothing firmer to reuse, and this call computes its own unanchored running sum exactly as before, still disclosed through `cash_unreliable`.
+
 ## When the whole book refuses (#674)
 
 Everything above is the recoverable case: some holding is excluded, the rest of the book still answers. Sometimes nothing is left to compute a consequence against at all, and that refusal is a different shape, not a bigger version of the one above. It fires for exactly three reasons, all genuinely non-recoverable — no corrected premise and no different ticker fixes any of them:
