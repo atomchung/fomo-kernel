@@ -729,7 +729,11 @@ def test_snapshot_finalize_preserves_the_five_previously_zeroed_facts():
         plan, _path = _snapshot_prepare(tmp, root, payload=payload, language="en")
         card = plan["engine_card"]
         assert card["cash"]["balance"] == 500.0, card["cash"]
-        assert card["what_if"]["scenario"] == {"kind": "single_ticker", "ticker": "2330.TW"}
+        # #741: 2330.TW (TSMC) is now a built-in DRIVER_FALLBACK entry
+        # ("半導體", thematic=1) rather than falling into "未分類", so the
+        # stress candidate this book's dominant position drives is
+        # AI-thematic, not a bare single-ticker concentration.
+        assert card["what_if"]["scenario"] == {"kind": "ai_thematic"}
         assert [row["ticker"] for row in card["ticker_diagnosis"]] == \
             ["2330.TW", "QQQ", "SPY"]
         assert card["overview"]["unrealized"] == 1460.0

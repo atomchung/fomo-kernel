@@ -176,7 +176,11 @@ def test_what_if_reaches_the_card_on_the_market_value_basis():
         card, _state, _meta = _prepare(tmp, dict(_MIXED_PRICED))
         wi = card["what_if"]
         assert wi is not None
-        assert wi["scenario"] == {"kind": "single_ticker", "ticker": "2330.TW"}
+        # #741: 2330.TW (TSMC) is now a built-in DRIVER_FALLBACK entry
+        # ("半導體", thematic=1), so the stress candidate this book's sole
+        # sizable position drives is AI-thematic, not a bare single-ticker
+        # concentration -- the same 2330.TW dollar amount, correctly labeled.
+        assert wi["scenario"] == {"kind": "ai_thematic"}
         # mval = shares * (global_value / shares) = the ticker's own
         # aggregate-currency market value: 1,040,000 TWD * 0.033 = 34,320 USD.
         assert wi["mval"] == 34320.0, wi

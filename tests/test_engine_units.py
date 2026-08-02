@@ -245,6 +245,70 @@ def test_driver_state_isolation_restores_after_failure():
     assert tr._DM_SKIPPED == original_skipped
 
 
+# ── A2. driver() 國際掛牌 / market_weight_rollup() 市場彙總(#741 / #759) ──
+
+def test_driver_classifies_taiwan_dual_listing_same_as_its_us_adr():
+    """#741:2330.TW(台積電)與其 ADR「TSM」是同一家公司,分類必須一致——但這只是
+    分類一致,不是把兩檔倉位合併成一檔(合併權重是另一件事,driver() 純粹回傳
+    (sector, thematic),不碰任何持倉聚合,合併與否不在這題範圍內)。"""
+    assert tr.driver("2330.TW") == ("半導體", 1)
+    assert tr.driver("2330.TW") == tr.driver("TSM"), \
+        "雙重上市分類要對齊,但仍是兩個獨立 key(driver() 不做任何倉位合併)"
+    assert tr.driver("2454.TW") == ("半導體", 1), "聯發科 MediaTek,IC 設計,無 ADR 但半導體本業無爭議"
+    assert tr.driver("0050.TW")[1] == 0 and tr.driver("00878.TW")[1] == 0, \
+        "台股 ETF 是配置決策,不是跨產業主題暴險,thematic 必須是 0"
+
+
+def test_driver_normalizes_tw_otc_suffix_onto_a_registered_twse_entry():
+    """#741 item 3:同一檔股票的兩個台股掛牌尾綴(TWSE `.TW` / TPEx/OTC `.TWO`)要
+    查到同一筆分類。用臨時 entry 直接驗正規化機制本身,不依賴任何真實個股湊巧
+    同時有兩種尾綴掛牌。"""
+    with preserve_driver_state(tr):
+        tr._DRIVER_MAP["9999.TW"] = ("測試賽道", 1)
+        assert tr.driver("9999.TWO") == ("測試賽道", 1), \
+            ".TWO 應正規化成 .TW 接上同一筆 entry"
+        assert tr.driver("9999.TWX") == ("未分類", 0), \
+            "正規化只認 .TWO 這個明確尾綴,不是任何以 9999 開頭都放行——機制要有邊界"
+
+
+def test_driver_still_refuses_a_genuinely_unmapped_taiwan_ticker():
+    """反向案例(#741 的邊界):這次修的是「有依據就該分對」,不是「放寬到什麼都算
+    分類」。6488.TWO(環球晶,sample_tw_mixed.csv 裡真實出現的台股尾綴)刻意沒被
+    這次收錄,必須仍然落在未分類桶——這條測試若紅燈,代表正規化機制被寫得太寬鬆,
+    把本來就沒依據的標的也一併放行了。"""
+    assert tr.driver("6488.TWO") == ("未分類", 0)
+    assert tr.driver("NOTATICKER.TW") == ("未分類", 0)
+    assert tr.driver(None) == ("未分類", 0) and tr.driver("") == ("未分類", 0)
+
+
+def test_market_weight_rollup_groups_by_the_caller_supplied_market_not_the_ticker_string():
+    """#759:分組鍵必須是呼叫端傳入的 ticker→market(dim_alpha_beta 的 by_market
+    拆帳同一份 per-row market 來源,即 CSV 的 Market 欄位),不是自己從 ticker
+    字串猜市場——一檔沒有可辨識交易所尾綴的 ticker,只要傳入的對照表說它是 TW,
+    照樣要分進 TW 桶。"""
+    weights = {"2330.TW": 0.60, "AAPL": 0.25, "WEIRDNOSUFFIX": 0.15}
+    ticker_market = {"2330.TW": "TW", "AAPL": "US", "WEIRDNOSUFFIX": "TW"}
+    rollup = tr.market_weight_rollup(weights, ticker_market)
+    assert rollup == {"TW": 0.75, "US": 0.25}
+    assert abs(sum(rollup.values()) - sum(weights.values())) < 1e-9, \
+        "彙總後總和必須跟傳入的 per-ticker 權重總和一致,不是另外重算的第二份數字"
+
+
+def test_market_weight_rollup_defaults_missing_ticker_to_us_like_the_csv_loader_does():
+    """呼叫端的市場對照表沒有某 ticker 時退回 'US'——跟 load() 對 CSV 缺 Market 欄
+    的預設值同一個慣例(trade_recap.py 的 load(),`market=(r.get("Market") or "US")`),
+    不是另外發明一個預設。"""
+    assert tr.market_weight_rollup({"X": 1.0}, {}) == {"US": 1.0}
+    assert tr.market_weight_rollup({"X": 0.4, "Y": 0.6}, {"Y": "TW"}) == {"US": 0.4, "TW": 0.6}
+
+
+def test_market_weight_rollup_empty_book_returns_empty_dict_not_none():
+    """空 weights(無適用書,同 dim_size 自己 weights={} 的降級)→ 彙總也是 {},
+    不是 None、也不是灌 0 進某個市場桶(那會讓「無適用書」讀成「US 佔 0%」的假事實)。"""
+    assert tr.market_weight_rollup({}, {"AAPL": "US"}) == {}
+    assert tr.market_weight_rollup(None, None) == {}
+
+
 # ─────────────────────── B. round_trips():FIFO 配對 ───────────────────────
 
 def test_round_trips_fifo_partial():
