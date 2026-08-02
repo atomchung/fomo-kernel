@@ -389,21 +389,66 @@ def cash_position(cash_flows, held_mv, anchor=None, prev_end=None, fx=None):
     a balance 28x its real size on the card, under ``source: "anchored"``.
     Whether the *holdings* are in the same currency as these buckets is one
     question up — :func:`aggregate_currencies` owns it, because only the caller
-    sees both sides."""
+    sees both sides.
+
+    ``unmatched_anchors`` (#688): a *named* anchor — one carrying its own
+    ``currency`` — whose currency matches none of the buckets above (no
+    cash-flow row of that currency exists) used to be invisible to this whole
+    function: ``_anchor_for`` can only pair an anchor into a bucket already
+    built from ``cash_flows``, so it was never consulted at all — not added,
+    not converted, not reported missing, while the account could still read
+    back ``reliable: true`` if every *other* bucket happened to be anchored.
+    Two things happen to such an anchor now, neither a new hard refusal:
+    when ``fx`` already carries a rate for its currency (it is also a *held*
+    currency, or the caller supplied it through ``--prices``), it is folded
+    in as a genuine bucket — nothing new needs to be fetched, so there is no
+    reason to leave a fact on the table the caller can already price.
+    Otherwise it contributes nothing to ``balance``/``by_currency`` (there is
+    still no rate to convert it at) but is named here, in
+    ``{currency, amount, as_of}`` form, so a caller can disclose it rather
+    than let it vanish. Deliberately never raises
+    :class:`MissingAggregateCurrencyRate` for an anchor-only currency:
+    refusing this whole computation over a balance nothing else in the book
+    reads is the exact outcome :func:`aggregate_currencies`'s own docstring
+    already rejected for #649/#612."""
     if isinstance(prev_end, str):
         prev_end = dt.date.fromisoformat(prev_end) if prev_end else None
     fx = fx or {}
     anchors = [anchor] if isinstance(anchor, dict) else list(anchor or [])
-    currencies = sorted({cf.get("currency", "USD") for cf in cash_flows}) or ["USD"]
-    gaps = missing_aggregate_fx_rates(currencies, fx)
+    flow_currencies = sorted({cf.get("currency", "USD") for cf in cash_flows}) or ["USD"]
+    gaps = missing_aggregate_fx_rates(flow_currencies, fx)
     if gaps:
-        raise MissingAggregateCurrencyRate(currencies, gaps)
+        raise MissingAggregateCurrencyRate(flow_currencies, gaps)
+
+    # #688: named anchors with no cash-flow bucket of their own. `dict`
+    # preserves first-listed-wins on a (malformed) duplicate currency, the
+    # same scan order `_anchor_for` below already uses.
+    flowless = {}
+    for a in anchors:
+        ac = (a.get("currency") or "").strip().upper()
+        if ac and ac not in flow_currencies:
+            flowless.setdefault(ac, a)
+    priceable = sorted(c for c in flowless if c in fx)
+    unmatched_anchors = [
+        {"currency": c, "amount": flowless[c].get("amount"), "as_of": flowless[c].get("as_of")}
+        for c in sorted(flowless) if c not in fx
+    ]
+    # Only a currency `fx` already resolves widens the loop below; an
+    # unpriceable one stays out so it can never reach `missing_aggregate_fx_rates`
+    # above through some future refactor and refuse the whole book over it.
+    currencies = sorted(set(flow_currencies) | set(priceable)) if priceable else flow_currencies
 
     def _anchor_for(c):
-        # 帶 currency 的錨點按幣別配對；無 currency 的錨點只在單一幣別時對應（向後相容舊單桶格式）。
+        # 帶 currency 的錨點按幣別配對；無 currency 的錨點只在單一幣別時對應（向後相容舊單桶格式，
+        # 比對基準刻意用 flow_currencies 而非可能被 #688 加寬的 currencies——一個沒 currency 欄的舊式
+        # 錨點語意是「帳戶只有一種現金幣別」，加寬後的桶數不該讓它從「單桶匹配」變成「誰都配不到」）。
+        # `c in flow_currencies` 是 #688 加寬後才需要的第三個條件：沒有它,一個沒 currency 的舊式
+        # 錨點會在 len(flow_currencies)==1 時對*任何* c 都判定匹配——包括加寬後才進迴圈的
+        # priceable 幣別(如 JPY)——把它的餘額誤配給那個新桶,讓 JPY 自己帶 currency 的錨點反而
+        # 配不到（實測見 #688 PR 的 mutation note）。
         for a in anchors:
             ac = (a.get("currency") or "").strip().upper()
-            if ac == c or (not ac and len(currencies) == 1):
+            if ac == c or (not ac and len(flow_currencies) == 1 and c in flow_currencies):
                 return a
         return None
 
@@ -430,7 +475,7 @@ def cash_position(cash_flows, held_mv, anchor=None, prev_end=None, fx=None):
         weight = total / denom
     return dict(balance=round(total, 2), weight=weight, source=source,
                 reliable=all_reliable, recent_net_deposit=round(recent, 2),
-                by_currency=by_ccy)
+                by_currency=by_ccy, unmatched_anchors=unmatched_anchors)
 
 
 def _load_skip_note():
@@ -693,11 +738,20 @@ def aggregate_currencies(cur_map, cash_flows=None):
     * **The display currency.** ``fx_request_currencies`` widens the *request*
       with the renderer's target, which the account never converts; a missing
       display rate stays a rendering degradation, exactly as #612 requires.
-    * **A cash anchor in a currency with no flow.** ``cash_position`` buckets
-      by cash-flow currency and ``_anchor_for`` pairs anchors into those
-      buckets, so such an anchor is dropped rather than converted — it cannot
-      widen what gets added together, and treating it as if it could would
-      refuse a review over an amount nothing reads.
+    * **A cash anchor in a currency with no flow.** Still never widens *this*
+      builder's own domain, and therefore never widens the market-data fetch
+      request either — an anchor cannot change what the acquisition layer
+      asks a provider for, which is what keeps ``add-cash``'s frozen-frame
+      recompute (#665, PR #684) exact-request compatible. Whether that anchor
+      still reaches the account total is a narrower, later question
+      ``cash_position`` alone answers (#688): it folds the anchor in when
+      ``fx`` already happens to carry a rate for its currency (e.g. the same
+      currency is also held, so a rate was requested anyway), and otherwise
+      excludes it from every total but names it in ``unmatched_anchors``
+      rather than the silent drop this used to be. Forcing this builder's own
+      *fetch* domain to cover such a currency, so an unpriceable one always
+      converts, would refuse a review over an amount nothing else in the book
+      reads — the outcome this docstring already rejects two paragraphs up.
 
     ``cash_flows`` is :func:`load_cash_flows` output. Passing it without its
     ``trade_rows`` estimate cannot narrow the answer: that fallback derives each
@@ -2492,7 +2546,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
             # 的資格，帳本從此靜默不動。derived_from 已經誠實說了這份是從交易推算的。
             "positions": holdings,
         },
-        "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露)
+        "cash": cash,                                       # #171 PR-1:帳戶現金地基(balance/weight/source/reliable/recent_net_deposit/by_currency/unmatched_anchors)。None=未提供;source=csv_sum+reliable=False=無錨點靠 Σamount 近似(honesty 揭露);unmatched_anchors 非空=有宣告錨點配不到現金流桶(#688,honesty 揭露)
         # #662:僅在這次傳入的 --cash 是百分比(percent_of_total)時非 None——換算揭露
         # (percent/position_value/currency/formula/amount),供 cmd_add_cash 轉呈給 agent。
         # 不參與 review._cash_recompute_drift 比對(該 gate 的鍵表本就不含 cash)。
@@ -2657,23 +2711,33 @@ def build_honesty_ledger(overview, ab, data_integrity, currency_meta, cash=None,
                   "data": {"currencies": cm.get("currencies"),
                            "aggregate_currency": cm.get("aggregate_currency"),
                            "fx_gaps": di.get("fx_gaps")}})
-    # 現金可信度(#171 無/部分錨點盲算 + #180 多錨點對帳殘差):兩種缺陷對用戶都是「現金這塊多準」的
-    # 同一段話,共用 cash_reliability key(#82:key=敘事段落非誠實點)。
+    # 現金可信度(#171 無/部分錨點盲算 + #180 多錨點對帳殘差 + #688 錨點配不到桶):三種缺陷對用戶
+    # 都是「現金這塊多準」的同一段話,共用 cash_reliability key(#82:key=敘事段落非誠實點)。
     #   ① 盲算:weight 非 None 但 reliable=False(假設開戶 $0,可能偏差)→ 邀補現金餘額。weight=None
     #      (算不出、不上卡)沒有可誤導的數字,不進 ledger。
     #   ② 殘差:有錨點但錨點間現金史對不上(data_integrity.cash_residuals)→ 錨點可信時也要揭露,
     #      故不綁 acct_twr 出不出數(有別於 acct_perf_basis)。殘差細節進 data.residuals 讓 Claude 講。
+    #   ③ 錨點配不到桶(#688):使用者宣告了某幣別現金餘額,但帳本裡沒有那個幣別的現金流列、
+    #      也沒有可換算的匯率 —— cash_position 把它記進 unmatched_anchors,不進 balance。這跟①②
+    #      是不同缺陷:①②是「算出來的餘額不可信」,這是「使用者給的事實根本沒被採計」,即使其餘
+    #      幣別全數錨定、reliable=True,也必須觸發 —— 這正是 #688 回報的缺口:健康的 reliable:true
+    #      背後藏著一筆完全沒被算進去的宣告餘額。
     di_residuals = di.get("cash_residuals")
     cash_blind = isinstance(cash, dict) and cash.get("weight") is not None and not cash.get("reliable")
-    if cash_blind or di_residuals:
-        cd = cash if isinstance(cash, dict) else {}
+    cd = cash if isinstance(cash, dict) else {}
+    unmatched_anchors = cd.get("unmatched_anchors") or []
+    if cash_blind or di_residuals or unmatched_anchors:
         missing = sorted(c for c, v in (cd.get("by_currency") or {}).items() if not v.get("reliable"))
         status = ("partial" if cash_blind and cd.get("source") == "partial"
-                  else "no_anchor" if cash_blind else "residual")
+                  else "no_anchor" if cash_blind
+                  else "residual" if di_residuals
+                  else "unmatched_anchor")
         data = {"balance": cd.get("balance"), "source": cd.get("source"),
                 "unanchored_currencies": missing}
         if di_residuals:
             data["residuals"] = di_residuals
+        if unmatched_anchors:
+            data["unmatched_anchors"] = unmatched_anchors
         L.append({"key": "cash_reliability", "status": status, "data": data})
     # 帳戶級績效地基有洞(#171):帳戶 TWR 有出數、但算在部分錨點 / 缺價檔成本平線 / fx 即期
     # 近似之上 → 數字可用但地基要交代(哪個幣別盲算、哪些檔平線零報酬、匯損益是近似)。
@@ -2772,7 +2836,7 @@ def build_card_data(dims, strength, overview, wi, rx, tdiag,
         "data_integrity": data_integrity or {},             # 賣超/未分類 driver — 影響數據可信度,Claude 該主動提
         "currency_meta": currency_meta,                     # #51/#129 PR-2a:聚合幣別/fx/分幣桶;None=單幣 USD 舊行為
         "portfolio_structure": portfolio_structure,         # ETF P0:配置型豁免、集中 ETF 仍計風險、metadata 誠實缺口
-        "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露
+        "cash": cash,                                        # #171 PR-1:帳戶現金(balance/weight/source/reliable/recent_net_deposit/by_currency/unmatched_anchors);reliable 才上 weight/入金判讀,無錨點靠 honesty 揭露;unmatched_anchors 見 #688
         "acct_perf": acct_perf,                              # #171 B 路線:帳戶級 TWR/cash drag/IRR(daily 鏈式;{note} = 沒算,acct_twr=None+hold_twr 有值 = 現金 gate 只出持倉柱)
         "price_provenance": price_provenance,                # #289:這次的價格從哪來(engine_fetch / agent_feed / unavailable)
         "price_request": price_request,                      # #289:還缺哪些價的機讀清單;None=無缺口

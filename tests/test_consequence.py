@@ -28,6 +28,13 @@ What this file settles:
      postdated or same-day anchor produced. The unanchored csv_sum path and
      every caller that does not opt in via `premise_row` are pinned as
      unaffected.
+  D4. portfolio_state / consequence (#688): a cash anchor in a currency no
+     cash flow created is named in unmatched_anchors and the new
+     cash_anchor_unmatched disclosure fires, rather than being silently
+     consulted by nothing — distinct from cash_unreliable, which fires on the
+     opposite condition (no anchor at all). Converts instead of disclosing
+     once fx already covers the anchor's currency, and never refuses the
+     whole evaluation over a currency nothing else in the book reads.
   E. rule_collision: would_breach / already_over / clear real verdicts for
      the five evaluable metric keys (including the avgdown_count pair of
      qualifying-average-down plus weight breach), unjudged for
@@ -699,6 +706,87 @@ def test_portfolio_state_premise_row_parameter_is_opt_in():
     assert _close(unfixed["cash"]["balance"], 10000.0), \
         "without premise_row, the pre-fix arithmetic must still reproduce exactly"
     assert _close(fixed["cash"]["balance"], 9500.0)
+
+
+# ─── D4. a cash anchor in a currency no cash flow created (#688) ───
+# `_one_holding_book()` is a USD-only book (every row from `_dollar_book`
+# fixes `currency="USD"`), which is exactly the structural fixture this
+# defect needs: the anchor's own currency (JPY below) appears NOWHERE else in
+# the book, so before #688 `trade_recap.cash_position` never even reached the
+# branch that could consult it -- `_anchor_for` can only pair an anchor into a
+# bucket built from cash-flow currencies, and JPY built no bucket. Before this
+# fix, `after["cash"]["reliable"]` still read back `True` (USD's own anchor,
+# supplied alongside, matched normally) with the JPY amount sitting nowhere in
+# the response and no disclosure key naming it -- the exact "looks completely
+# healthy" trap #688's issue describes, distinct from the D3 date-filtering
+# bug and from `cash_unreliable` (which fires on the *opposite* condition: no
+# anchor at all, not an anchor that could not be used).
+
+def test_a_flowless_cash_anchor_is_disclosed_not_silently_dropped():
+    """The core repro: a USD anchor matches normally (balance/reliable are
+    exactly what they would be without the JPY anchor at all -- proving the
+    drop doesn't distort arithmetic, only that it disappears), while the JPY
+    anchor is named in both before.cash and after.cash and the new disclosure
+    key fires. Both halves are asserted deliberately: a fix that only flips
+    `cash_anchor_unmatched` into `disclosures` without actually carrying the
+    currency/amount into `unmatched_anchors` would still leave the user
+    unable to tell WHICH declared balance vanished."""
+    rows = _one_holding_book()
+    anchor = [{"as_of": "2024-01-05", "amount": 10000.0, "currency": "USD"},
+              {"as_of": "2024-01-05", "amount": 500000.0, "currency": "JPY"}]
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)
+    # arithmetic: identical to the USD-anchor-only case (test_an_anchor_dated_after_the_premise_still_deducts)
+    assert _close(result["before"]["cash"]["balance"], 10000.0)
+    assert _close(result["after"]["cash"]["balance"], 9500.0)
+    assert result["after"]["cash"]["reliable"] is True
+    # disclosure: the JPY anchor is named, not vanished
+    expected_unmatched = [{"currency": "JPY", "amount": 500000.0, "as_of": "2024-01-05"}]
+    assert result["before"]["cash"]["unmatched_anchors"] == expected_unmatched
+    assert result["after"]["cash"]["unmatched_anchors"] == expected_unmatched
+    assert "cash_anchor_unmatched" in result["disclosures"]
+    # cash_unreliable must NOT also fire: the computed balance genuinely is
+    # anchored (USD's own anchor matched) -- these are two different facts
+    assert "cash_unreliable" not in result["disclosures"]
+
+
+def test_a_flowless_cash_anchor_converts_once_fx_already_covers_its_currency():
+    """The other branch of #688's fix, exercised through `consequence()`: when
+    the caller already supplied an fx rate for the anchor's currency (e.g. it
+    is also a held currency elsewhere, or the caller passed --prices' fx
+    block), there is nothing left to disclose -- the anchor is folded into
+    balance/by_currency instead. Both currencies anchored here (matching
+    test_an_anchor_dated_after_the_premise_still_deducts's USD-only shape,
+    plus JPY) so this isolates the JPY conversion alone rather than mixing it
+    with the separately-covered "no anchor for a bucket" case."""
+    rows = _one_holding_book()
+    anchor = [{"as_of": "2024-01-05", "amount": 10000.0, "currency": "USD"},
+              {"as_of": "2024-01-05", "amount": 500000.0, "currency": "JPY"}]
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor, fx={"USD": 1.0, "JPY": 0.0067})
+    # USD: 10000 - 500 (premise, stamped past any real anchor date) = 9500, exactly
+    # test_an_anchor_dated_after_the_premise_still_deducts's math. JPY: 500000 *
+    # 0.0067 = 3350, folded in as its own bucket. Total: 9500 + 3350 = 12850.
+    assert _close(result["after"]["cash"]["balance"], 12850.0)
+    assert result["after"]["cash"]["reliable"] is True
+    assert result["after"]["cash"]["unmatched_anchors"] == []
+    assert "cash_anchor_unmatched" not in result["disclosures"]
+    assert "cash_unreliable" not in result["disclosures"]
+
+
+def test_a_flowless_cash_anchor_never_refuses_the_whole_evaluation():
+    """AGENTS.md boundary 6 requires either an honest conversion or a named
+    exclusion, never a silent drop -- but it does not require refusing the
+    entire computation, and this fixture is the reason: nothing else in this
+    one-holding USD book reads JPY at all, so raising
+    MissingAggregateCurrencyRate over it would block the whole evaluation on
+    an amount nothing else in the book needs. consequence() must still return
+    a usable result with every other reading present."""
+    rows = _one_holding_book()
+    anchor = {"as_of": "2024-01-05", "amount": 500000.0, "currency": "JPY"}
+    premise = {"ticker": "BBB", "side": "buy", "price": 500.0, "qty": 1.0}
+    result = cq.consequence(rows, premise, cash_anchor=anchor)  # must not raise
+    assert result["after"]["max_pct"] is not None, "the rest of the book must still be usable"
 
 
 # ───────────────── E. rule_collision ─────────────────

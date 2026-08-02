@@ -175,7 +175,8 @@
           "description": "Machine-readable limitation keys, mirroring consequence.DISCLOSURES. Locale wording belongs in renderer copy, never here (docs/maintainer-guide.md, \"Honesty decisions belong in code\"). `mixed_currency_no_fx` is no longer emitted by any code path -- #600 replaced it with a refusal in portfolio_state, because a currency summed at a 1.0 factor does not make the aggregate incomplete, it inverts it -- and survives in this enum only so rows written before that refusal still validate, the same replay-compatibility posture #549's `declared_partial` has.",
           "items": {
             "enum": ["cost_basis", "cash_unreliable", "unmapped_driver", "mixed_currency_no_fx",
-                     "unclassified_book", "etf_not_decomposed", "partial_book"]
+                     "unclassified_book", "etf_not_decomposed", "partial_book",
+                     "cash_anchor_unmatched"]
           }
         }
       }
