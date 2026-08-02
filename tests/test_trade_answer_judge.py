@@ -95,6 +95,11 @@ def candidate_payload(judge, fixture, *, answer_id="current-output",
                 "claim": collision,
                 "provenance": "engine_fact",
                 "anchor": "rule_collisions.rule-fixture-cap.state",
+                # #579: a claim anchored at a rule collision declares the
+                # frozen transition beside the prose, which is what the
+                # provenance gate checks -- prose direction is unreadable
+                # offline.
+                "rule_effect": "new_breach",
             },
             {
                 "claim": consequence,

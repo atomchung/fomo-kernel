@@ -928,9 +928,240 @@ def test_the_ai_pct_boundary_agrees_with_dim_diversifys_own_strict_comparison():
 
     # rule_collision must draw would_breach exactly where dim_diversify's own
     # trig flips, not one increment before or after it.
-    state, worsens = cq._concentration_collision("ai_pct", at, over)
+    state, worsens, effect, limit = cq._concentration_collision("ai_pct", at, over)
     assert state == "would_breach"
     assert worsens is None
+    # The effect is classified off the same boundary, so it flips there too.
+    assert effect == "new_breach"
+    assert limit == tr.AI_MAX_TH
+
+
+# ─────────── H. rule_effect — the full transition matrix (#579) ───────────
+#
+# Owner-live acceptance failed on 2026-08-02 because `already_over` — an
+# absolute statement about the book — was read as the transaction's verdict,
+# so a sell that took a position from 80% to 75% against a self-authored 20%
+# cap was described back as breaking the rule. `state` and `worsens` cannot
+# carry that distinction even in principle: `_worsened` is a strict `>`, so
+# an improvement and a stall are the same `false`, and `clear` cannot say
+# whether the line was crossed before.
+#
+# Every row below is a fictional book run through the real engine, and the
+# matrix is pinned as one table so that a mutation collapsing two effects
+# into one, or dropping a branch, fails on the row that distinguishes them
+# rather than on a single representative case.
+
+# (name, holdings, premise, cap override, metric_key, expected state,
+#  expected effect, expected limit_source)
+_TRANSITION_MATRIX = (
+    ("a book under its cap stays under it",
+     [("NVDA", 10.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+     {"ticker": "NVDA", "side": "buy", "price": 10.0, "qty": 0.2},
+     0.50, "max_pos_pct", "clear", "compliant", "user_cap"),
+    ("this trade is what crosses the line",
+     [("NVDA", 25.0), ("MSFT", 25.0), ("AAPL", 25.0), ("AMD", 25.0)],
+     {"ticker": "NVDA", "side": "buy", "price": 25.0, "qty": 0.4},
+     0.30, "max_pos_pct", "would_breach", "new_breach", "user_cap"),
+    ("already over, and this trade digs deeper",
+     [("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+     {"ticker": "NVDA", "side": "buy", "price": 80.0, "qty": 0.125},
+     0.20, "max_pos_pct", "already_over", "worsened_existing_breach", "user_cap"),
+    # The owner's own case, in fictional numbers: 80% -> 75% against a 20% cap.
+    ("already over, and this trade climbs toward the line",
+     [("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+     {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.25},
+     0.20, "max_pos_pct", "already_over", "improved_but_still_over", "user_cap"),
+    ("this trade puts the book back inside the line",
+     [("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+     {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.75},
+     0.60, "max_pos_pct", "clear", "resolved_existing_breach", "user_cap"),
+    # Three holdings are always 100% of the top three, so buying more of one
+    # of them moves the reading by exactly nothing while it stays over the
+    # line -- the transition `worsens: false` cannot tell from an improvement.
+    ("already over, and this trade does not move the reading",
+     [("NVDA", 40.0), ("MSFT", 30.0), ("AAPL", 30.0)],
+     {"ticker": "NVDA", "side": "buy", "price": 40.0, "qty": 0.25},
+     None, "top3_pct", "already_over", "unchanged_existing_breach", "engine_default"),
+    # A sell shrinks the denominator, so a DIFFERENT position crosses the cap
+    # on a trade whose own ticker did not. The state vocabulary calls that
+    # `already_over` even though the book was under the line before it; the
+    # effect says what actually happened.
+    ("a fresh cross the state vocabulary calls already_over",
+     [("AAA", 30.0), ("BBB", 29.0), ("CCC", 29.0), ("DDD", 12.0)],
+     {"ticker": "DDD", "side": "sell", "price": 12.0, "qty": 0.9},
+     0.30, "max_pos_pct", "already_over", "new_breach", "user_cap"),
+)
+
+
+def _matrix_row(holdings, premise, cap, metric_key):
+    rows = _dollar_book(holdings)
+    last_px = {ticker: amount for ticker, amount in holdings}
+    return cq.rule_collision(rows, premise, ([_rule(metric_key)], [], 0),
+                             last_px=last_px, max_pos_override=cap)[0]
+
+
+def test_every_rule_transition_is_classified_from_before_after_and_the_line():
+    """The matrix, end to end through `rule_collision`.
+
+    Not `classify_rule_effect` alone: that function is trivially correct on
+    numbers handed to it, and the defect this closes is about which readings
+    and which line reach it. Each row asserts the effect *and* the state
+    beside it, so a mutation that makes the effect agree with the state by
+    construction -- reading `state` and mapping it -- fails on the two rows
+    where the two legitimately differ."""
+    seen = {}
+    for name, holdings, premise, cap, metric_key, state, effect, source in _TRANSITION_MATRIX:
+        row = _matrix_row(holdings, premise, cap, metric_key)
+        assert row["state"] == state, f"{name}: state {row['state']!r}, wanted {state!r}"
+        assert row["rule_effect"] == effect, \
+            f"{name}: rule_effect {row['rule_effect']!r}, wanted {effect!r}"
+        assert row["limit_source"] == source, \
+            f"{name}: limit_source {row['limit_source']!r}, wanted {source!r}"
+        seen.setdefault(effect, []).append(name)
+
+    # Every effect a real book can produce is exercised. `unjudged`/`unmapped`
+    # have their own tests in section E; they have no readings to classify.
+    expected = set(cq.RULE_EFFECTS) - {"unjudged", "unmapped"}
+    assert set(seen) == expected, \
+        f"the matrix no longer covers every transition: missing {sorted(expected - set(seen))}"
+
+
+def test_an_improving_trade_is_never_reported_as_causing_or_worsening_the_breach():
+    """The exact owner-live failure, stated as the thing that must not happen.
+
+    Pinned separately from the matrix and phrased negatively on purpose: the
+    matrix says what the effect *is*, and this says what it may never be, so
+    a mutation that returns a plausible-but-wrong member of the vocabulary is
+    caught by name rather than by a table lookup."""
+    row = _matrix_row([("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+                      {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.25},
+                      0.20, "max_pos_pct")
+    assert row["rule_effect"] == "improved_but_still_over"
+    assert row["rule_effect"] not in ("new_breach", "worsened_existing_breach"), \
+        "a trade that reduces an over-cap position must never read as breaking or worsening the rule"
+    # And the two facts the correct sentence needs are both on the row.
+    assert row["limit"] == 0.20 and row["limit_source"] == "user_cap", \
+        "the answer says 'your 20% rule', so the line and whose line it is are both owed"
+
+
+def test_a_stalled_breach_is_not_reported_as_an_improvement():
+    """The other half of the collapsed boolean. `already_over + worsens:false`
+    covers both this and the row above; only the effect tells them apart, and
+    calling a stalled breach an improvement is the same class of untruth in
+    the opposite direction."""
+    row = _matrix_row([("NVDA", 40.0), ("MSFT", 30.0), ("AAPL", 30.0)],
+                      {"ticker": "NVDA", "side": "buy", "price": 40.0, "qty": 0.25},
+                      None, "top3_pct")
+    assert row["state"] == "already_over" and row["worsens"] is False, \
+        "the fixture must reproduce the exact payload the improving case also produces"
+    assert row["rule_effect"] == "unchanged_existing_breach"
+
+
+def test_a_resolved_breach_is_told_apart_from_a_book_that_was_never_over():
+    """`clear` covers both, so under the state vocabulary a trade that puts a
+    broken line back inside said exactly nothing. Both rows below are
+    `clear`; only the effect distinguishes them."""
+    resolved = _matrix_row([("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+                           {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.75},
+                           0.60, "max_pos_pct")
+    never = _matrix_row([("NVDA", 10.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+                        {"ticker": "NVDA", "side": "buy", "price": 10.0, "qty": 0.2},
+                        0.50, "max_pos_pct")
+    assert resolved["state"] == never["state"] == "clear", \
+        "the fixtures must share the state that hides the difference"
+    assert resolved["rule_effect"] == "resolved_existing_breach"
+    assert never["rule_effect"] == "compliant"
+
+
+def test_a_threshold_the_engine_picked_is_never_attributed_to_the_user():
+    """`limit_source` exists so an answer cannot say 'your 60% rule' about a
+    line this engine chose. The concentration trio has no user override at
+    all, and a position cap the user did not set falls back to the engine's
+    own trigger."""
+    concentration = _matrix_row([("NVDA", 40.0), ("MSFT", 30.0), ("AAPL", 30.0)],
+                                {"ticker": "NVDA", "side": "buy", "price": 40.0, "qty": 0.25},
+                                None, "top3_pct")
+    assert concentration["limit"] == tr.TOP3_MAX_TH
+    assert concentration["limit_source"] == "engine_default"
+
+    no_override = _matrix_row([("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+                              {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.25},
+                              None, "max_pos_pct")
+    assert no_override["limit"] == tr.OVERSIZE_TRIGGER
+    assert no_override["limit_source"] == "engine_default", \
+        "an unset cap is the engine's default line, not a rule the user wrote"
+
+    # A rejected override is the same case: valid_position_cap refuses it, so
+    # the line falls back and the attribution must fall back with it, rather
+    # than reading "the caller passed something" as "the user chose this".
+    rejected = _matrix_row([("NVDA", 80.0), ("MSFT", 10.0), ("AAPL", 10.0)],
+                           {"ticker": "NVDA", "side": "sell", "price": 80.0, "qty": 0.25},
+                           1.5, "max_pos_pct")
+    assert rejected["limit"] == tr.OVERSIZE_TRIGGER
+    assert rejected["limit_source"] == "engine_default"
+
+
+def test_a_rule_the_engine_cannot_evaluate_carries_no_effect_verdict():
+    """`unjudged`/`unmapped` pass straight through. An effect vocabulary that
+    had to invent a transition for a rule the engine never judged would be
+    the exact failure the collision vocabulary's own unmapped tier exists to
+    prevent."""
+    rows = _dollar_book([("NVDA", 50.0), ("MSFT", 50.0)])
+    premise = {"ticker": "NVDA", "side": "buy", "price": 50.0, "qty": 0.1}
+    tracking = [_rule("exit_severity"), _rule("made_up_metric"),
+                _rule(None, rule_id="rule-no-metric")]
+    out = cq.rule_collision(rows, premise, (tracking, [], 0))
+    assert [row["rule_effect"] for row in out] == ["unjudged", "unmapped", "unmapped"]
+    assert [row["state"] for row in out] == ["unjudged", "unmapped", "unmapped"]
+    assert all(row["limit"] is None and row["limit_source"] is None for row in out), \
+        "a rule with no evaluated line has no line to quote"
+
+
+def test_classify_rule_effect_reads_the_line_as_a_strict_upper_bound():
+    """Exactly at the line is not over it -- the same strict `>` dim_size and
+    dim_diversify already use, so the classification and the state it
+    accompanies cannot disagree about which side a reading is on. Pinned at
+    the endpoints because a `>=` mutation is invisible everywhere else."""
+    assert cq.classify_rule_effect(0.20, 0.20, 0.20) == "compliant"
+    assert cq.classify_rule_effect(0.20, 0.2001, 0.20) == "new_breach"
+    assert cq.classify_rule_effect(0.2001, 0.20, 0.20) == "resolved_existing_breach"
+    # Float noise is not a direction, on the same epsilon `_worsened` uses.
+    assert cq.classify_rule_effect(0.80, 0.80 + 1e-12, 0.20) == "unchanged_existing_breach"
+    assert cq.classify_rule_effect(0.80, 0.80 - 1e-12, 0.20) == "unchanged_existing_breach"
+
+
+def test_an_effect_that_contradicts_its_own_state_is_named_as_a_disagreement():
+    """#579's compatibility clause: a stored or hand-built row can carry a
+    pair that cannot both be true, and the readers of that row have to refuse
+    it rather than believe whichever field they read first."""
+    assert cq.effect_disagrees_with_state("already_over", "compliant"), \
+        "a book over the line cannot be compliant"
+    assert cq.effect_disagrees_with_state("clear", "worsened_existing_breach")
+    assert cq.effect_disagrees_with_state("would_breach", "improved_but_still_over")
+    assert cq.effect_disagrees_with_state("clear", "not_an_effect")
+    # The pairs the engine really produces all agree, including the two where
+    # state and effect legitimately differ.
+    for name, holdings, premise, cap, metric_key, state, effect, _src in _TRANSITION_MATRIX:
+        assert cq.effect_disagrees_with_state(state, effect) is None, name
+    # A legacy row carries no effect at all and is not a disagreement.
+    assert cq.effect_disagrees_with_state("already_over", None) is None
+
+
+def test_the_effect_vocabulary_matches_the_stored_schemas_enum():
+    """The same drift discipline every other vocabulary in this module has:
+    a value the schema publishes that no code path emits, and one the code
+    emits that the schema does not admit, are both invisible to the
+    behavioral tests above."""
+    schema = _schema("trade-evaluation.schema.json")
+    row = schema["properties"]["rule_collisions"]["items"]
+    assert set(row["properties"]["rule_effect"]["enum"]) == set(cq.RULE_EFFECTS)
+    assert set(row["properties"]["limit_source"]["enum"]) == set(cq.LIMIT_SOURCES) | {None}
+    assert "rule_effect" not in row["required"], (
+        "rule_effect must stay optional on a stored row: a row written before it existed "
+        "has to keep validating (#579 compatibility)")
+    assert set(cq.DIRECTIONAL_RULE_EFFECTS) <= set(cq.RULE_EFFECTS)
+    assert "compliant" not in cq.DIRECTIONAL_RULE_EFFECTS, \
+        "the non-event has no direction to reverse"
 
 
 def _tests():

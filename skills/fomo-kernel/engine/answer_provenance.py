@@ -10,7 +10,7 @@ a list of objects carrying at least ``claim``/``provenance``,
 ``provenance`` one of ``review.AGENT_CASE_PROVENANCE``, ``claim`` a
 non-empty string. It deliberately stops there and does not pin the exact
 field set a claim may carry — that is provenance-dependent (``anchor``/
-``worsens`` for ``engine_fact``, ``source``/``as_of`` for ``public_fact``)
+``rule_effect``/``worsens`` for ``engine_fact``, ``source``/``as_of`` for ``public_fact``)
 and belongs to this module alone (#479 Wave B). That check has no opinion
 on whether a claim labelled
 ``engine_fact`` actually describes the frozen consequence it claims to,
@@ -149,27 +149,58 @@ day someone reads both schemas side by side — exactly the mirrored-surface
 drift docs/maintainer-guide.md forbids — so this module uses the pair the codebase already
 committed to.
 
-Design decision — the already_over / worsens direction (case 7)
+Design decision — the declared rule transition (case 7)
 ---------------------------------------------------------------------
-``worsens`` is a boolean the engine computes (consequence.py's
-``_worsened``); free prose has no reliable, mechanical way to encode "this
-trade makes it worse" versus "this trade improves it" that a validator
-could check without scoring sentiment — exactly the "general NLI/
-factuality scoring" the issue defers. So a claim whose anchor targets a
-``rule_collisions[...].state`` or ``.worsens`` field, where the frozen row
-is ``already_over`` and ``worsens`` is not null (both axes are
-independently material — see consequence.py's own module docstring on why
-``state`` and ``worsens`` are two fields, never folded into one), must carry
-its own ``worsens`` boolean matching the frozen one exactly. This is the
-same shape ``source``/``as_of`` already impose on ``public_fact`` — a small
-piece of structured metadata riding alongside the prose, checked exactly,
-rather than an attempt to read the prose itself. Reading the prose was
-considered and rejected for a second, independent reason:
-``question_surface._assert_no_internal_leak`` (question_surface.py:275)
-already prohibits echoing an internal snake_case token like
-``already_over`` into user-facing text, so a check that required the word
-"worsens" or "already_over" to literally appear in the claim would fight an
+Free prose has no reliable, mechanical way to encode "this trade makes it
+worse" versus "this trade improves it" that a validator could check without
+scoring sentiment — exactly the "general NLI/factuality scoring" the issue
+defers. So the transition rides *beside* the prose as structured metadata
+and is checked exactly. This is the same shape ``source``/``as_of`` already
+impose on ``public_fact``, rather than an attempt to read the prose itself.
+Reading the prose was considered and rejected for a second, independent
+reason: an internal snake_case token like ``already_over`` may not appear in
+user-facing text at all (``_assert_no_internal_leak`` below), so a check
+that required the word to literally appear in the claim would fight an
 existing rule instead of agreeing with it.
+
+What is declared changed with #579. It was ``worsens``, a boolean the engine
+computes (consequence.py's ``_worsened``), required exactly where the frozen
+row was ``already_over`` with ``worsens`` not null. Owner-live evidence on
+2026-08-02 showed that boolean is not enough: it is a strict ``>``, so an
+improving trade and a stalled one are the same ``false``, and a case that
+declared it correctly could still be built on the wrong transition — which
+is what the owner received. So a claim anchored at a
+``rule_collisions[...].rule_effect``, ``.state`` or ``.worsens`` field must
+now carry its own ``rule_effect`` string matching the frozen one exactly,
+whenever that frozen effect is one of
+``consequence.DIRECTIONAL_RULE_EFFECTS``: a six-way assertion in place of a
+two-way one.
+
+``worsens`` is not dropped. A row recorded before ``rule_effect`` existed
+carries the direction only as that boolean, and the older check still runs
+on it — dropping the earlier gate the moment a newer one exists would leave
+a replayed row unguarded. Beside a row that does carry an effect, ``worsens``
+is optional, and still compared exactly when supplied: it is the same fact
+said less precisely, never a second opinion.
+
+Design decision — the engine's vocabulary is not the answer
+---------------------------------------------------------------------
+``_assert_no_internal_leak`` refuses a claim whose prose contains a
+snake_case token out of the engine's own enums. This is the second half of
+the same owner-live failure #579 owns — the rule meaning was wrong *and*
+implementation-shaped calculation language reached the user — and both land
+on this one ``consider`` answer surface, so both are refused here rather
+than in two competing changes (#713's scope guard).
+
+The mechanism is ``question_surface._assert_no_internal_leak``'s (#305),
+applied to the surface that never had it, and the vocabulary is read off
+``consequence``'s own constants rather than hand-kept here, so a new
+disclosure key or effect is covered the day it is added. Only a snake_case
+member is checked: that shape is what makes a value unmistakably an
+identifier rather than ordinary language, so "computed on cost basis" passes
+and ``cost_basis`` does not, and single words that are also ordinary English
+(``clear``, ``unjudged``) are excluded by the same rule rather than by an
+exception.
 
 Design decision — a user statement promoted to public_fact (case 8)
 ------------------------------------------------------------------------
@@ -222,6 +253,7 @@ import re
 from collections.abc import Mapping
 
 import conditions
+import consequence as consequence_engine
 
 
 class AnswerProvenanceError(ValueError):
@@ -264,7 +296,7 @@ _FRACTION_MAGNITUDE = 1.0 + 1e-9
 
 _JUDGMENT_FIELDS = frozenset({"claim", "provenance"})
 _PUBLIC_FACT_REQUIRED = frozenset({"claim", "provenance", "source", "as_of"})
-_ENGINE_FACT_ALLOWED = frozenset({"claim", "provenance", "anchor", "worsens"})
+_ENGINE_FACT_ALLOWED = frozenset({"claim", "provenance", "anchor", "worsens", "rule_effect"})
 
 # Sentinel distinct from any real frozen value (including None, which this
 # module deliberately treats as "nothing there" -- see resolve_anchor).
@@ -352,6 +384,27 @@ def _restates_a_user_statement(text, user_statements):
 
 # ─────────────────────────── per-claim checks ───────────────────────────
 
+def _assert_no_internal_leak(text, label):
+    """Refuse a claim that narrates the engine's own vocabulary back at the
+    user (#674/#676, the other half of the same owner-live failure).
+
+    The mechanism is `question_surface._assert_no_internal_leak`'s, applied
+    to the surface that never had it: only a snake_case token is checked,
+    because that shape is what makes a value unmistakably an internal
+    identifier rather than ordinary language. "computed on cost basis" is
+    ordinary English and passes; "cost_basis" is a payload key and does not.
+
+    A claim is prose the user reads. This says nothing about how long it is
+    — SKILL.md rule 8 owns that — only that a limitation has to be described
+    rather than named by its field."""
+    folded = str(text).casefold()
+    for token in _INTERNAL_TOKENS:
+        if token in folded:
+            raise AnswerProvenanceError(
+                f"{label}.claim narrates the engine's internal vocabulary: {token!r}; "
+                "state what it means for this decision instead")
+
+
 def _check_engine_fact_claim(claim, label, record):
     extra = set(claim) - _ENGINE_FACT_ALLOWED
     if extra:
@@ -374,15 +427,40 @@ def _check_engine_fact_claim(claim, label, record):
             raise AnswerProvenanceError(
                 f"{label} quotes a number that does not match the frozen value at {anchor!r}")
 
-    # Case 7: a claim describing a material already_over collision must
-    # carry its own worsens direction, matching the frozen one exactly.
+    # Case 7: a claim describing what this trade does to one of the user's
+    # own rules must declare the transition it believes, and it must be the
+    # frozen one. `rule_effect` is a six-way assertion where `worsens` was a
+    # two-way one, which is the whole of #579 seen from the gate's side: the
+    # boolean cannot tell an improving trade from a stalled one, so a case
+    # asserting it correctly could still be built on the wrong transition.
     parts = anchor.split(".")
     row = None
     if len(parts) >= 2 and parts[0] == "rule_collisions":
         row = record["rule_collisions"].get(parts[1])
-    material = (row is not None and parts[-1] in ("state", "worsens")
-               and row.get("state") == "already_over" and row.get("worsens") is not None)
-    if material:
+    on_collision = row is not None and parts[-1] in ("state", "worsens", "rule_effect")
+    frozen_effect = _collision_effect(row) if on_collision else None
+    material_effect = on_collision and frozen_effect in consequence_engine.DIRECTIONAL_RULE_EFFECTS
+    # The legacy arm: a row recorded before rule_effect existed carries the
+    # direction only as `worsens`, and a claim about it is still checked --
+    # dropping the older gate the moment a newer one exists would leave a
+    # replayed row unguarded.
+    material_worsens = (on_collision and frozen_effect is None
+                        and row.get("state") == "already_over"
+                        and row.get("worsens") is not None)
+
+    if material_effect:
+        asserted = claim.get("rule_effect")
+        if asserted != frozen_effect:
+            raise AnswerProvenanceError(
+                f"{label} must declare rule_effect {frozen_effect!r} for {anchor!r}"
+                + (f", not {asserted!r}" if asserted is not None else
+                   " and declares none; the direction of a rule transition may not be left "
+                   "to the prose"))
+    elif "rule_effect" in claim:
+        raise AnswerProvenanceError(
+            f"{label} carries rule_effect outside a rule collision anchor")
+
+    if material_worsens:
         asserted = claim.get("worsens")
         if not isinstance(asserted, bool):
             raise AnswerProvenanceError(
@@ -391,8 +469,16 @@ def _check_engine_fact_claim(claim, label, record):
             raise AnswerProvenanceError(
                 f"{label}.worsens is reversed against the frozen direction at {anchor!r}")
     elif "worsens" in claim:
-        raise AnswerProvenanceError(
-            f"{label} carries worsens outside a material already_over anchor")
+        # Still accepted alongside rule_effect on a row that carries one --
+        # it is the same fact said less precisely -- but never invented where
+        # the frozen row has no direction to match it against.
+        if not (material_effect and row.get("state") == "already_over"
+                and row.get("worsens") is not None):
+            raise AnswerProvenanceError(
+                f"{label} carries worsens outside a material already_over anchor")
+        if claim["worsens"] != row["worsens"]:
+            raise AnswerProvenanceError(
+                f"{label}.worsens is reversed against the frozen direction at {anchor!r}")
 
     return anchor, resolved
 
@@ -444,6 +530,7 @@ def _check_claim(claim, side, index, record, user_statements):
     text = claim.get("claim")
     if not isinstance(text, str) or not text.strip():
         raise AnswerProvenanceError(f"{label}.claim must be non-empty text")
+    _assert_no_internal_leak(text, label)
     provenance = claim.get("provenance")
     # Case 1: unlabeled (provenance missing/None) and multiply-labelled
     # (provenance supplied as a list rather than one of the three strings)
@@ -464,17 +551,82 @@ def _check_claim(claim, side, index, record, user_statements):
 
 # ─────────────────────────── cross-claim checks ───────────────────────────
 
-# The collision states a case must actually cite. Deliberately not every
-# state `references/trade-consequence.md` requires an *answer* to name:
-# `unjudged`/`unmapped` mean "this rule could not be evaluated", which the
-# answer owes the user in prose (evaluation_challenge's `must_state` carries
-# them for exactly that reason) but which does not belong on either side of a
-# case for or against the trade. A book with eight behavioral rules would
-# otherwise need eight claims saying nothing was measured, and an answer
-# padded to satisfy a checker is the failure mode `docs/eval-design.md`
-# already names. `would_breach` and `already_over` are the two where silence
-# reads as approval, so they are the two that are enforced.
-_COVERED_STATES = ("would_breach", "already_over")
+# The collision *effects* a case must actually cite (#579). Deliberately not
+# every effect `references/trade-consequence.md` requires an *answer* to
+# name: `unjudged`/`unmapped` mean "this rule could not be evaluated", which
+# the answer owes the user in prose (evaluation_challenge's `must_state`
+# carries them for exactly that reason) but which does not belong on either
+# side of a case for or against the trade. A book with eight behavioral rules
+# would otherwise need eight claims saying nothing was measured, and an
+# answer padded to satisfy a checker is the failure mode `docs/eval-design.md`
+# already names. `compliant` is the non-event, and `resolved_existing_breach`
+# is the one outcome where silence cannot mislead in the dangerous direction
+# — a line the trade puts back inside is good news the answer still states,
+# not a risk a missing claim could hide.
+#
+# The four below are exactly the old `("would_breach", "already_over")` set
+# re-expressed as transitions: every `would_breach` row is `new_breach`, and
+# every `already_over` row is one of the other three or `new_breach`. The
+# gate's *width* is unchanged by #579 on purpose; what changed is that the
+# obligation now names what the trade did rather than where the book stands.
+_COVERED_EFFECTS = ("new_breach", "worsened_existing_breach",
+                    "improved_but_still_over", "unchanged_existing_breach")
+
+# The same set for a row recorded before `rule_effect` existed. A legacy row
+# has to stay readable, and reading it as "no obligation" would silently
+# shrink the gate on exactly the books that already had rules.
+_LEGACY_COVERED_STATES = ("would_breach", "already_over")
+
+# Internal vocabulary that must never be narrated back to the user. The
+# universe is the engine's own enums rather than a hand-kept list that could
+# drift from them, and only a snake_case member is checked — the same rule
+# `question_surface._assert_no_internal_leak` (#305) already applies on the
+# question surface, and for the same reason: an underscore standing in for a
+# space is what makes a token unmistakably an identifier rather than ordinary
+# language, in English or Chinese. `unjudged`/`unmapped`/`clear` are single
+# words that can legitimately appear in a sentence, so they are excluded by
+# that rule rather than by an exception.
+#
+# This is the second half of the same owner-live failure #579 owns: the rule
+# meaning was wrong *and* implementation-shaped calculation vocabulary
+# reached the user. Both land on this one `consider` answer surface, so both
+# are refused here rather than in two competing changes (#713 scope guard).
+_INTERNAL_TOKENS = tuple(sorted({
+    token for token in (consequence_engine.COLLISION_STATES
+                        + consequence_engine.RULE_EFFECTS
+                        + consequence_engine.DISCLOSURES
+                        + consequence_engine.EXCLUSION_REASONS
+                        + consequence_engine.LIMIT_SOURCES)
+    if "_" in token
+}))
+
+
+def _collision_effect(row):
+    """This row's transaction effect, refusing a row whose effect and state
+    contradict each other (#579's compatibility clause, asked through
+    `consequence_engine.effect_disagrees_with_state` so this gate and the challenge
+    surface read one table). `None` for a legacy row that predates the
+    field."""
+    if not isinstance(row, Mapping):
+        return None
+    effect = row.get("rule_effect")
+    disagreement = consequence_engine.effect_disagrees_with_state(row.get("state"), effect)
+    if disagreement:
+        raise AnswerProvenanceError(
+            f"rule_collisions row {row.get('rule_id')!r}: {disagreement}")
+    return effect
+
+
+def _covered_collision_key(row):
+    """What this collision obliges a case to cite, or None when it obliges
+    nothing. Reads the effect; falls back to the absolute state only for a
+    row recorded before effects existed."""
+    if not isinstance(row, Mapping):
+        return None
+    effect = _collision_effect(row)
+    if effect is None:
+        return row.get("state") if row.get("state") in _LEGACY_COVERED_STATES else None
+    return effect if effect in _COVERED_EFFECTS else None
 
 
 def required_coverage(basis, consequence, rule_collisions=()):
@@ -532,7 +684,8 @@ def required_coverage(basis, consequence, rule_collisions=()):
                     "key": "price_observed"})
 
     for row in rule_collisions or ():
-        if not isinstance(row, Mapping) or row.get("state") not in _COVERED_STATES:
+        key = _covered_collision_key(row)
+        if key is None:
             continue
         # A row with no rule_id is not addressable by anchor at all, so it
         # cannot be required -- requiring an uncitable fact would make every
@@ -540,7 +693,7 @@ def required_coverage(basis, consequence, rule_collisions=()):
         if not row.get("rule_id"):
             continue
         out.append({"path": f"rule_collisions.{row['rule_id']}",
-                    "owes": "rule_collision", "key": row["state"]})
+                    "owes": "rule_collision", "key": key})
     return tuple(out)
 
 

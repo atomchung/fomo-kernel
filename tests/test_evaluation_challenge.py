@@ -75,6 +75,33 @@ own mutation is not evidence (docs/maintainer-guide.md).
      which is what plain prefix matching did before #618
        -> test_a_case_covering_exactly_what_the_challenge_asked_for_is_accepted
           and test_a_price_day_citation_does_not_also_pay_the_staleness_obligation
+
+#579's own mutations, run the same way (cp backup, clear __pycache__, read
+the exit code, restore, re-verify green):
+
+ 13. `_rule_collision_entries` states `row["state"]` again, restoring the
+     status-only interpretation that failed owner-live acceptance
+       -> test_the_stated_fact_is_the_transaction_effect_and_the_state_is_
+          demoted, and test_consider's a_trade_that_reduces_an_over_cap_
+          position_is_never_delivered_as_a_breach
+ 14. `_MUST_NOT_CONVEY["improved_but_still_over"]` loses
+     `crossed_by_this_trade`, so an improving trade may be called a breach
+       -> test_the_improving_case_owes_both_truths_and_forbids_the_breach_
+          reading, and the same test_consider case
+ 15. `_rule_effect_projection` carries `state`/`worsens` into the
+     user-facing block (raw diagnostic narration)
+       -> test_the_projection_carries_no_machine_diagnostic_field
+ 16. `answer_provenance._COVERED_EFFECTS` loses `improved_but_still_over`,
+     so the gate stops requiring what the block still states
+       -> test_the_improving_case_owes_both_truths_and_forbids_the_breach_
+          reading
+ 17. the legacy fallback in `_rule_collision_entries` is removed, so a row
+     recorded before `rule_effect` stops speaking while the gate still
+     requires it
+       -> test_a_legacy_row_still_states_what_the_gate_still_requires
+
+Eight more, on `consequence.py` and `answer_provenance.py`, are recorded in
+the PR description; every one of the twelve turned its named suite red.
 """
 import copy
 import json
@@ -86,6 +113,7 @@ REPO = os.path.dirname(HERE)
 ENGINE_DIR = os.path.join(REPO, "skills", "fomo-kernel", "engine")
 sys.path.insert(0, ENGINE_DIR)
 import answer_provenance  # noqa: E402
+import consequence as consequence_engine  # noqa: E402
 import evaluation_challenge  # noqa: E402
 
 
@@ -155,13 +183,40 @@ def _consequence(**overrides):
 def _rule_collisions():
     return [
         {"rule_id": "rule-1", "text": "Cap NVDA at 25%.", "metric_key": "max_pos_pct",
-         "problem_key": "oversize", "state": "already_over", "worsens": True},
+         "problem_key": "oversize", "state": "already_over", "worsens": True,
+         "rule_effect": "worsened_existing_breach", "limit": 0.25,
+         "limit_source": "user_cap"},
         {"rule_id": "rule-2", "text": "Never sell a winner inside a month.",
          "metric_key": "hold_days", "problem_key": "exit_timing",
-         "state": "unjudged", "worsens": None},
+         "state": "unjudged", "worsens": None, "rule_effect": "unjudged",
+         "limit": None, "limit_source": None},
         {"rule_id": "rule-3", "text": "Stay clear at all times.", "metric_key": "max_pos_pct",
-         "problem_key": "oversize", "state": "clear", "worsens": None},
+         "problem_key": "oversize", "state": "clear", "worsens": None,
+         "rule_effect": "compliant", "limit": 0.25, "limit_source": "user_cap"},
     ]
+
+
+def _legacy_rule_collisions():
+    """The same three rows as they were written before #579 added
+    `rule_effect` -- a row already on a user's `trade_evaluations.jsonl`.
+    Every reader here has to keep working on one of these, and the floor and
+    the gate have to keep agreeing about it, or the case a legacy row still
+    requires becomes one no case can be built for."""
+    rows = []
+    for row in _rule_collisions():
+        rows.append({key: value for key, value in row.items()
+                     if key not in ("rule_effect", "limit", "limit_source")})
+    return rows
+
+
+def _improving_collision():
+    """The owner's own 2026-08-02 case in fictional numbers: a position over
+    a self-authored 20% cap, and a trade that reduces it without clearing
+    the line."""
+    return [{"rule_id": "rule-1", "text": "Cap NVDA at 20%.", "metric_key": "max_pos_pct",
+             "problem_key": "oversize", "state": "already_over", "worsens": False,
+             "rule_effect": "improved_but_still_over", "limit": 0.20,
+             "limit_source": "user_cap"}]
 
 
 def _context(**overrides):
@@ -211,13 +266,16 @@ def _claim_for(entry, collisions):
     else:
         text = f"This reading is {value}."
     claim = {"claim": text, "provenance": "engine_fact", "anchor": entry["anchor"]}
-    # answer_provenance case 7: a claim anchored at a material already_over
-    # rule's state/worsens must carry the frozen direction. Read off the
-    # entry's own detail rather than restated here.
+    # answer_provenance case 7: a claim anchored at a rule collision must
+    # declare the frozen transition -- `rule_effect` since #579, and the
+    # pre-#579 `worsens` boolean on a row that predates it. Read off the
+    # frozen row rather than restated here.
     parts = entry["anchor"].split(".")
-    if parts[0] == "rule_collisions" and parts[-1] in ("state", "worsens"):
+    if parts[0] == "rule_collisions" and parts[-1] in ("state", "worsens", "rule_effect"):
         row = next((r for r in collisions if r.get("rule_id") == parts[1]), None)
-        if row and row.get("state") == "already_over" and row.get("worsens") is not None:
+        if row and row.get("rule_effect") in consequence_engine.DIRECTIONAL_RULE_EFFECTS:
+            claim["rule_effect"] = row["rule_effect"]
+        elif row and row.get("state") == "already_over" and row.get("worsens") is not None:
             claim["worsens"] = row["worsens"]
     return claim
 
@@ -668,6 +726,25 @@ def test_module_vocabularies_match_the_schemas_enums():
     assert set(evaluation_challenge.CASE_REQUIRED) == set(
         schema["case_required"]["properties"])
 
+    # #579's own vocabularies. Both directions: an effect the schema
+    # publishes that no table row supplies, and a slot a table row emits
+    # that the schema does not admit, are equally invisible to the
+    # behavioral tests above.
+    effects = schema["rule_effects"]["items"]["properties"]
+    assert set(effects["effect"]["enum"]) == (
+        set(consequence_engine.RULE_EFFECTS) - {"compliant"}), (
+        "the projected effect enum must be every effect that speaks, and only those")
+    assert set(effects["limit_source"]["enum"]) == set(consequence_engine.LIMIT_SOURCES)
+    for key in ("must_convey", "must_not_convey"):
+        assert set(effects[key]["items"]["enum"]) == set(
+            evaluation_challenge.RULE_EFFECT_SLOTS), f"{key} slot vocabulary drift"
+    declared = {slot for effect in effects["effect"]["enum"]
+                for slot in evaluation_challenge._MUST_CONVEY[effect]
+                + evaluation_challenge._MUST_NOT_CONVEY[effect]}
+    assert declared == set(evaluation_challenge.RULE_EFFECT_SLOTS), (
+        "a slot in the vocabulary that no effect ever uses is a value the contract "
+        f"publishes and nothing produces: {sorted(set(evaluation_challenge.RULE_EFFECT_SLOTS) - declared)}")
+
 
 def test_required_coverage_vocabulary_matches_the_schemas_enums():
     """`required_coverage` is answer_provenance's, so its vocabulary is
@@ -685,11 +762,163 @@ def test_required_coverage_vocabulary_matches_the_schemas_enums():
     emitted = {entry["key"] for entry in answer_provenance.required_coverage(
         _basis(), _consequence(), _rule_collisions())}
     assert emitted <= keys, f"required_coverage emits a key the schema does not publish: {emitted - keys}"
-    assert set(answer_provenance._COVERED_STATES) <= keys, (
-        "a collision state the gate enforces is missing from the schema's key enum")
+    assert set(answer_provenance._COVERED_EFFECTS) <= keys, (
+        "a rule effect the gate enforces is missing from the schema's key enum")
+    assert set(answer_provenance._LEGACY_COVERED_STATES) <= keys, (
+        "the pre-#579 fallback still emits a collision state the schema does not publish")
     import consequence as consequence_engine
     assert set(consequence_engine.DISCLOSURES) <= keys, (
         "consequence.py grew a disclosure the challenge schema does not publish")
+    assert set(answer_provenance._COVERED_EFFECTS) <= set(consequence_engine.RULE_EFFECTS), (
+        "the gate enforces an effect consequence.py does not produce")
+
+
+# ─────────── 6. the product-safe rule-effect projection (#579) ───────────
+#
+# The block that carries what the answer may say about a rule collision, and
+# what it may not. PR #608 said the same thing in prose and the next
+# owner-live walk still described an improving trade as a breach, so the
+# negative half is data here.
+
+def _projected(challenge, rule_id):
+    return next((row for row in challenge["rule_effects"] if row["rule_id"] == rule_id), None)
+
+
+def test_the_improving_case_owes_both_truths_and_forbids_the_breach_reading():
+    """The exact 2026-08-02 failure, expressed as the projection that must
+    replace it. Three positive slots, because the correct statement carries
+    the improvement AND that the line is still crossed AND that it was
+    crossed before this trade -- and two negative ones naming the reading
+    the owner actually received."""
+    challenge = _build(rule_collisions=_improving_collision())
+    row = _projected(challenge, "rule-1")
+    assert row is not None, "an improving collision must still speak"
+    # And the floor and the gate agree about it: the line is still crossed
+    # after this trade, so silence about it would read as approval.
+    assert [(entry["path"], entry["key"]) for entry in challenge["required_coverage"]
+            if entry["owes"] == "rule_collision"] == [
+        ("rule_collisions.rule-1", "improved_but_still_over")], (
+        "an improving collision that leaves the line crossed must still be a claim the "
+        "case is refused for dropping")
+    assert row["effect"] == "improved_but_still_over"
+    assert set(row["must_convey"]) == {"over_before_this_trade", "moved_toward_the_line",
+                                       "over_after"}
+    assert "crossed_by_this_trade" in row["must_not_convey"], \
+        "a trade that reduces an over-cap position did not cross the line"
+    assert "moved_further_over" in row["must_not_convey"], \
+        "and it did not move against the rule either"
+    # The line and whose line it is, so the answer can say "your 20% rule"
+    # without either inventing the number or attributing an engine default.
+    assert row["limit"] == 0.20 and row["limit_source"] == "user_cap"
+
+
+def test_every_effect_that_speaks_gets_a_projection_and_the_two_halves_are_disjoint():
+    """One row per speaking effect, and no slot both required and forbidden.
+    A table that let the same meaning sit on both sides would be satisfiable
+    and refusable at once, which is a contract that says nothing."""
+    speaking = [effect for effect in consequence_engine.RULE_EFFECTS if effect != "compliant"]
+    for effect in speaking:
+        collisions = [{"rule_id": "r", "text": "A rule.", "metric_key": "max_pos_pct",
+                       "problem_key": "oversize",
+                       "state": consequence_engine._EFFECT_STATES[effect][0],
+                       "worsens": True if effect == "worsened_existing_breach" else None,
+                       "rule_effect": effect, "limit": None, "limit_source": None}]
+        row = _projected(_build(rule_collisions=collisions), "r")
+        assert row is not None, f"{effect} must be projected"
+        assert row["effect"] == effect
+        assert row["must_convey"], f"{effect} owes at least one meaning"
+        assert row["must_not_convey"], f"{effect} forbids at least one meaning"
+        assert not (set(row["must_convey"]) & set(row["must_not_convey"])), \
+            f"{effect} both requires and forbids the same slot"
+        assert set(row["must_convey"]) <= set(evaluation_challenge.RULE_EFFECT_SLOTS)
+        assert set(row["must_not_convey"]) <= set(evaluation_challenge.RULE_EFFECT_SLOTS)
+        assert "limit" not in row, "no line was judged, so none is quoted"
+
+
+def test_a_compliant_rule_is_the_only_one_that_passes_in_silence():
+    challenge = _build()
+    projected = {row["rule_id"] for row in challenge["rule_effects"]}
+    assert projected == {"rule-1", "rule-2"}, (
+        "rule-3 is compliant and must not be projected; rule-2 is unjudged and must be, "
+        f"got {sorted(projected)}")
+
+
+def test_the_projection_carries_no_machine_diagnostic_field():
+    """#713 repair step 4: the complete diagnostics stay on the evaluation
+    row for QA and replay, and the block the answer is built from carries the
+    consequence and nothing about how the engine reached it."""
+    for row in _build()["rule_effects"]:
+        assert "state" not in row and "worsens" not in row, (
+            f"the product projection leaks a machine diagnostic: {sorted(row)}")
+        assert set(row) <= {"rule_id", "text", "effect", "limit", "limit_source",
+                            "must_convey", "must_not_convey"}, sorted(row)
+
+
+def test_the_stated_fact_is_the_transaction_effect_and_the_state_is_demoted():
+    """`must_state`'s rule_collision entry used to state `already_over` as
+    the fact owed. That is the accusation the owner received. The state is
+    still carried -- a QA run reconciles against it -- but as detail, not as
+    the fact."""
+    entry = next(e for e in _build(rule_collisions=_improving_collision())["must_state"]
+                 if e["topic"] == "rule_collision")
+    assert entry["value"] == "improved_but_still_over"
+    assert entry["value"] not in consequence_engine.COLLISION_STATES, \
+        "the stated fact must not be a collision state at all"
+    assert entry["anchor"] == "rule_collisions.rule-1.rule_effect"
+    assert entry["detail"]["state"] == "already_over" and entry["detail"]["worsens"] is False, \
+        "the diagnostics are kept, one level down, not deleted"
+
+
+def test_a_resolved_breach_is_stated_but_not_required_in_the_case():
+    """Under the state vocabulary a resolved breach was `clear` and said
+    nothing at all. It speaks now -- and it is deliberately not on
+    `required_coverage`: silence about good news cannot hide a risk, and the
+    floor is allowed to be wider than the gate."""
+    collisions = [{"rule_id": "rule-1", "text": "Cap NVDA at 20%.",
+                   "metric_key": "max_pos_pct", "problem_key": "oversize",
+                   "state": "clear", "worsens": None,
+                   "rule_effect": "resolved_existing_breach", "limit": 0.20,
+                   "limit_source": "user_cap"}]
+    challenge = _build(rule_collisions=collisions)
+    assert _projected(challenge, "rule-1")["effect"] == "resolved_existing_breach"
+    assert any(e["topic"] == "rule_collision" for e in challenge["must_state"])
+    assert not [entry for entry in challenge["required_coverage"]
+                if entry["owes"] == "rule_collision"], \
+        "a resolved breach is stated, never demanded as a claim"
+
+
+def test_a_row_whose_effect_contradicts_its_own_state_is_refused():
+    """#579's compatibility clause, on the surface that reads the row. A
+    hand-built or corrupted pair cannot be projected as either half."""
+    collisions = [{"rule_id": "rule-1", "text": "Cap NVDA at 20%.",
+                   "metric_key": "max_pos_pct", "problem_key": "oversize",
+                   "state": "clear", "worsens": None,
+                   "rule_effect": "worsened_existing_breach", "limit": 0.20,
+                   "limit_source": "user_cap"}]
+    try:
+        _build(rule_collisions=collisions)
+    except ValueError as exc:
+        assert "cannot accompany state" in str(exc), str(exc)
+        return
+    raise AssertionError("a contradictory rule_effect/state pair must not be projected")
+
+
+def test_a_legacy_row_still_states_what_the_gate_still_requires():
+    """A row written before #579 carries no effect. It must not vanish from
+    the floor while the gate still requires it -- that combination makes
+    every case on such a book unsubmittable, which is the failure the
+    floor-and-gate tests above exist to catch, arriving through the
+    compatibility path instead."""
+    challenge = _build(rule_collisions=_legacy_rule_collisions())
+    required = {entry["path"] for entry in challenge["required_coverage"]
+                if entry["owes"] == "rule_collision"}
+    assert required == {"rule_collisions.rule-1"}
+    stated = {e["anchor"] for e in _anchored(challenge, "rule_collision")}
+    assert stated == {"rule_collisions.rule-1.state", "rule_collisions.rule-2.state"}, (
+        "a legacy row falls back to stating its collision state, and the unjudged rule is "
+        f"still named: {sorted(stated)}")
+    assert challenge["rule_effects"] == [], \
+        "a legacy row has no deterministic effect, so nothing is projected for it"
 
 
 def _tests():

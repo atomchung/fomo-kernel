@@ -42,9 +42,14 @@
           "pattern": "^(basis|consequence|rule_collisions)\\.",
           "description": "Dot-separated path into the frozen {basis, consequence, rule_collisions} bundle an evaluation freezes (schemas/trade-evaluation.schema.json's own basis/consequence/rule_collisions properties). rule_collisions is addressed by rule_id, e.g. 'rule_collisions.rule-1.worsens', not by list position. Must resolve to exactly one scalar fact -- a path naming a container (an object or array) does not resolve."
         },
+        "rule_effect": {
+          "enum": ["new_breach", "worsened_existing_breach", "improved_but_still_over",
+                   "resolved_existing_breach", "unchanged_existing_breach"],
+          "description": "Required, and must equal the frozen value exactly, when anchor targets a rule_collisions[...].rule_effect, .state or .worsens field whose frozen rule_effect is one of consequence.DIRECTIONAL_RULE_EFFECTS (#579). Forbidden on every other engine_fact claim. A six-way assertion where `worsens` below is a two-way one, and that is the point: the boolean cannot tell an improving trade from a stalled one, so a case that declared it correctly could still be built on the wrong transition -- which is what an owner-live walk saw when a sell reducing an over-cap position was described as breaking the rule. Free prose has no mechanical encoding of 'this trade improves it' a validator could check without scoring sentiment, so the direction rides beside the prose as structured metadata and is checked exactly, the same shape source/as_of already impose on a public_fact claim."
+        },
         "worsens": {
           "type": "boolean",
-          "description": "Required, and must equal the frozen value exactly, exactly when anchor targets a rule_collisions[...].state or .worsens field whose frozen state is already_over and whose worsens is not null (both already_over and worsens != null must hold; see consequence.py's own module docstring on why the two are independent axes). Forbidden on every other engine_fact claim."
+          "description": "The pre-#579 direction. Required, and must equal the frozen value exactly, exactly when anchor targets a rule_collisions[...].state or .worsens field on a row recorded BEFORE rule_effect existed, whose frozen state is already_over and whose worsens is not null (both must hold; see consequence.py's own module docstring on why the two are independent axes). On a row that carries rule_effect it is optional -- the same fact said less precisely -- and still checked against the frozen value when supplied. Forbidden on every other engine_fact claim."
         }
       }
     },

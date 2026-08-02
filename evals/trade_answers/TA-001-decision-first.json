@@ -159,7 +159,10 @@
         "metric_key": "max_pos_pct",
         "problem_key": "oversize",
         "state": "would_breach",
-        "worsens": null
+        "worsens": null,
+        "rule_effect": "new_breach",
+        "limit": 0.25,
+        "limit_source": "user_cap"
       }
     ],
     "context": {
@@ -185,7 +188,8 @@
         {
           "claim": "The proposed add would breach the recorded position cap.",
           "provenance": "engine_fact",
-          "anchor": "rule_collisions.rule-fixture-cap.state"
+          "anchor": "rule_collisions.rule-fixture-cap.state",
+          "rule_effect": "new_breach"
         }
       ]
     },
@@ -207,7 +211,8 @@
         {
           "claim": "The proposed add would breach the recorded position cap.",
           "provenance": "engine_fact",
-          "anchor": "rule_collisions.rule-fixture-cap.state"
+          "anchor": "rule_collisions.rule-fixture-cap.state",
+          "rule_effect": "new_breach"
         }
       ]
     }
