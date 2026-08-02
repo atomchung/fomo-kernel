@@ -7,36 +7,69 @@
 
 **English** · [繁體中文](README.zh-TW.md) · [简体中文](README.zh-CN.md)
 
-> A local, agent-assisted trade-review skill for Claude Code, Codex, Cursor, and compatible coding agents. It turns your real trades into **one review card** through deterministic diagnosis and a short judgment dialogue —
-> the one thing you did right + your biggest leak (in your own numbers) + one checkable rule you choose. On the next review, it starts by reconciling whether you kept that rule.
+> **A direct, evidence-bound trading decision partner that runs locally.** Bring the trade you are considering or the trades you already made. FOMO Kernel reduces your decision burden without making the decision for you.
 
-Not another stats report. It does what a report can't: **first it computes the behavioral leaks you can't see, then it asks the motive you won't admit, then it converges on one checkable change you choose and checks it next review.**
+It is built for two moments:
 
-> 📝 **Language.** The same review contract renders in Traditional Chinese, Simplified Chinese, or English (`--language zh-TW|zh-CN|en`); any other language tag falls back to English. Translation changes the questions and card copy, not the engine facts or analysis policy.
+- **Before a trade:** see what the trade does to your recorded portfolio, then challenge the reason for doing it now.
+- **After trades:** review what your behavior says, then choose one rule worth checking next time.
 
-## Quick start
+Numbers, rankings, portfolio effects, and state transitions come from a deterministic Python engine. The agent handles the bounded work code cannot settle: your motive, the strongest counter-case, and a direct explanation of what matters.
 
-**The full flow (this is the actual product) — inside Claude Code:**
-```
-/fomo-kernel ~/Downloads/my.csv   # review your own trades (CSV from any broker)
-/fomo-kernel <attached position table or statement screenshot>   # opening portfolio check
-/fomo-kernel                      # no file → asks you for one, or offers a "test drive" on built-in fake data (nothing written to coach memory)
-```
-The card's value is in step ② — the engine flags a suspicious position and asks *"averaging down on conviction, or refusing to cut a loser?"*; your one-sentence answer is what turns the raw diagnosis into a verdict. **You can't see that layer from the engine's raw output alone.** Install steps under [Install](#install).
+## Start from the moment you are in
 
-A position table or screenshot takes the narrower snapshot route. It creates an opening portfolio check from cost or value weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not pretend that one snapshot reveals prior averaging down, exits, holding behavior, win rate, payoff, alpha, or historical motives. Add transaction history later to unlock supported historical diagnostics; it does not by itself reconcile a fresh broker view, so ledger-derived current holdings remain canonical.
+| Your moment | Minimum input | First useful outcome |
+|---|---|---|
+| **“Should I buy, add, trim, or wait?”** | The contemplated action, your current reason, and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
+| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing is persisted. |
+| **“Review my recent trades.”** | A broker CSV or transaction export | One focused behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
+| **“I only have a holdings screenshot.”** | A position table or statement screenshot | An opening structural check: weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not invent transaction history. |
+| **“Show me the experience first.”** | No personal data | An isolated test drive using fictional data. It never writes to your real coach memory. |
 
-**Want zero-install, just to see the stable flow start:**
-```bash
-git clone https://github.com/atomchung/fomo-kernel && cd fomo-kernel
-pip install -r requirements.txt      # if it errors with externally-managed-environment → see the venv steps under Install
-cd skills/fomo-kernel && python3 engine/review.py prepare --test-drive --language en
-# emits a resumable Review Plan; required motive questions come before preview/finalize
-```
+## What using FOMO Kernel feels like
+
+### 1. Start in plain language
+
+You do not choose an internal mode or learn a workflow first. State the decision you are facing, attach the record you have, or ask for a test drive.
+
+FOMO Kernel uses the narrowest useful path for that moment. A live decision stays a concise conversation. A transaction review earns a card. A holdings screenshot gets a structural check instead of historical claims it cannot support.
+
+### 2. The engine establishes the facts before the agent interprets them
+
+The engine owns portfolio math, ranking, rule collisions, identity, and durable state. The agent cannot quietly replace a missing price, recalculate a weight, or invent a trade history.
+
+That gives the conversation a stable footing: what the record says, what the agent thinks it means, and what remains unknown stay distinguishable.
+
+### 3. It asks only what code cannot know
+
+A suspicious add can be conviction or refusal to cut a loser. An early exit can be discipline or fear of giving back a gain. Code can identify the tension; only you can settle the motive.
+
+The questions therefore focus on why now, what changed, what would prove the thesis wrong, or what actually drove the action. They are not a generic investor-profile questionnaire.
+
+### 4. You see the useful result before making another commitment
+
+A pre-trade answer leads with the decision-relevant tension and strongest rebuttal, not with tool narration or a wall of caveats.
+
+A review shows the complete card in the conversation before asking you to choose a rule. A generated file is not treated as delivery; the result has to reach you.
+
+### 5. You keep the final action
+
+For a contemplated trade, FOMO Kernel can record what was considered, but never calls it executed. It does not issue a price target or decide which ticker to buy or sell.
+
+For a review, you may choose one proposed rule, write your own, or skip. The product does not manufacture a commitment merely to complete the flow.
+
+### 6. The next conversation starts from the last one
+
+On a later review, FOMO Kernel first checks the rule you chose and carries forward confirmed theses and the recorded portfolio. Re-uploading full transaction history is safe because overlapping rows are deduplicated. A newer holdings view is compared with the recorded portfolio instead of silently replacing it.
+
+The value is not a larger archive. It is continuity: **what you believed → what you did → what changed → what deserves to survive as a rule.**
 
 ## What it looks like
 
-Running the built-in mock, the **illustrative card** looks like this (below is a simplified quick-view; the finished review card is rendered only after the required motive questions and one-rule choice):
+The committed demo uses fictional data. The detailed text version stays collapsed so the product journey remains the first thing a new reader sees, while its values remain synchronized with the HTML and image assets.
+
+<details>
+<summary>Open the illustrative review card</summary>
 
 ```text
 Review card · mock sample
@@ -62,169 +95,163 @@ Per-position diagnosis (sorted by size; small lots not nitpicked):
 [*] Change only this next time: hard-cap any single position at 20% — trim if it goes over
 ```
 
-A synchronized dark-card mock is available as [English HTML](docs/demo-card-en.html) and [Traditional Chinese HTML](docs/demo-card.html).
+</details>
 
 ![fomo-kernel review card demo](docs/demo-card-en.png)
 
-> In real use, the engine also flags positions that are "large + being averaged down while underwater" and asks you, *before* the card is issued, "is this a dip-buy or refusing to cut a loser?" — the motive a machine can't tell apart, settled by your one sentence, is what lets the card reach a verdict.
-> ⚠️ The mock's α numbers are distorted (too concentrated, too narrow a cross-section) — don't take them literally; real α needs a genuinely diversified book.
+Open the synchronized [English HTML demo](docs/demo-card-en.html) or [Traditional Chinese HTML demo](docs/demo-card.html).
 
----
+The image shows the result card. In the real review flow, the motive question comes first, and your answer can change the verdict. The mock is intentionally concentrated; its alpha figures are not a realistic performance claim.
 
-## How it differs from "pasting your statement into ChatGPT"
+Pre-trade answers stay brief and textual unless you explicitly ask for more.
 
-ChatGPT can't compute the real FIFO-matched α/β, can't tell "DCA" from "averaging a loser," and has none of your history. This skill layers three passes:
+## Fastest path to value
 
-1. **Mechanical layer (Python, deterministic)** — computes what ChatGPT only estimates:
-   - 5-dimension behavioral diagnosis: position sizing / averaging down / exit / diversification / holding consistency
-   - **Per-position diagnosis**: every ticker ranked **by dollar size** (small lots not nitpicked), with a classifier splitting "likely DCA vs likely averaging-a-loser vs unclear"
-   - **Return attribution**: splits "beat the market" into "right sector (luck / direction)" vs "stock picking (skill)" — so you see whether the gains were edge or nerve
-2. **Judgment-dialogue layer (engine signals × your intent)** — the "why" a machine can't infer, asked before the card is issued:
-   - Thesis check: "MSTR — you kept adding and it's still down. Do you still believe the thesis, or just won't book the loss?"
-   - Motive: "You sold a winner early — was the thesis at target, or were you afraid of giving back the gain?"
-   - **The engine picks the few positions worth asking about; your answer sets the read** — the machine is always guessing, your one sentence decides
-3. **One-rule layer** — turns the verdict into a small candidate set. You choose one candidate, write a custom rule, or skip; the next review checks the same rule instead of starting from zero.
-
-→ It all converges into **one card**: one leak, one checkable rule for next time. Come back a second time and it first reconciles "did you keep that rule?"
-
-## 🔒 Privacy: no backend upload, the author can't see it
-
-- The skill runs your CSV or normalized position snapshot **on your own machine** — **no upload to any backend, no storage anywhere else, nothing sent to the author**. For weekly reconciliation it does save review-derived state **locally** under `~/.trade-coach/` (never sent anywhere) — see the next section for exactly what that is and how to inspect, export, or wipe it.
-- The author can't see your trade detail. The only (voluntary) thing collected back is a single "was this card useful?" — no trade content — via the [card feedback form](https://github.com/atomchung/fomo-kernel/issues/new?template=card-feedback.yml), 30 seconds if you're willing.
-- `.gitignore` is set so **no `.csv` is ever committed**, with only the mock/sample fixtures excepted.
-- Precisely: the local Python engine reads a normalized trade CSV or snapshot JSON envelope. The coding agent you invoke may read a source table or screenshot locally to transcribe broker-declared facts, but it does not use engine OCR or a cloud OCR/upload path. It keeps the temporary normalized JSON outside the repository (for example under `/tmp`) and never calculates weights or hand-builds card/state artifacts. Nothing is sent to the author. This differs from handing a statement to a SaaS whose retained data you cannot inspect.
-- If your AI client offers an in-chat rich-rendering surface (for example, Claude's Artifact feature), the agent may use it to display your private card. That surface is private by default under the client's own terms — visible only to you unless you choose to share it — so using it is not the same as publishing your data. The rule that never changes: your trade content is never posted, published, or sent to a third party (a public GitHub issue, a shared link, a chat channel) by the skill or the author.
-
-## 📁 Where your coach memory lives / how to maintain it
-
-On your second visit, the card first reconciles "did you keep last time's rule?" The canonical record is one immutable directory per review:
+### 1. Install
 
 ```bash
-ls ~/.trade-coach/sessions/       # bundle + state + answers + cards + hash manifest
+git clone https://github.com/atomchung/fomo-kernel
+cd fomo-kernel
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python3 skills/fomo-kernel/engine/review.py doctor
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel
 ```
 
-Legacy tools remain compatible through rebuildable projections:
+Launch Claude Code from a terminal where the virtual environment is active.
 
-```bash
-cat ~/.trade-coach/log.jsonl       # one line per review (thin metrics + the rule you committed to); empty = first time
-cat ~/.trade-coach/theses.jsonl    # per-position "why I hold + what would prove me wrong" (append-only, never overwritten)
-cat ~/.trade-coach/profile.md      # your trading goals + 3 personal principles (the baseline each review compares against)
-cat ~/.trade-coach/last_state.json # the thin state the engine last computed (per-position shares/cost, for reconciliation; overwritten each run)
-```
-
-The engine keeps a handful of other derived files there too (a trade ledger, an exit-tracking queue, a problem/rule log, your saved review cards) — rather than trusting a prose list to stay complete, the CLI below is the single source of truth for exactly what's on disk right now:
-
-```bash
-python3 skills/fomo-kernel/engine/coach.py data-status               # every known path: exists? size? line count? (never prints your trade content)
-python3 skills/fomo-kernel/engine/coach.py data-export --out backup.zip   # bundle everything that exists into one zip (contains sensitive trade-derived data — treat it like a brokerage statement)
-python3 skills/fomo-kernel/engine/coach.py data-reset --dry-run      # preview what a reset would delete
-python3 skills/fomo-kernel/engine/coach.py data-reset --confirm      # actually delete it all (not reversible)
-```
-
-- **Coming back next week — which CSV do I import?** Just export your **full history** again and hand it over — you never track increments by hand. Rows that overlap with earlier imports are auto-deduplicated (that's exactly what the dedup is for), so **dumping the whole statement every week is safe**; the engine uses last review's cutoff to tell what's new, and the card opens by reconciling against the rule you committed to last time.
-- **What does a snapshot anchor?** Every source records the book at the time it arrives — a holdings view, and a transaction export once its trades are ingested. Nothing has to qualify first, and the record notes which kind of source it came from without that deciding anything. Later transaction files can unlock supported historical analysis while ledger-derived holdings stay canonical. A newer holdings view is compared with the recorded book through `review.py refresh`, which shows the narrow diff and asks about the differences only you can settle before adopting anything.
-- **See past reviews** → `cat ~/.trade-coach/log.jsonl`.
-- **Start over / reset the reconciliation baseline** → `coach.py data-reset --confirm` (or delete/rename `~/.trade-coach/` by hand — either way, next time is a fresh first visit).
-- **Wrote a thesis wrong** → correct it in the next review; the new event points to the earlier thesis. Do not hand-edit `theses.jsonl`: it is now a rebuildable projection of canonical sessions.
-- **Privacy, self-verifiable**: coach memory is just the files `data-status` lists above, all on your machine; there isn't a single row on the author's side.
-- **Want to preview the multi-week loop first** (runs entirely in a temp directory, **never touches** your real `~/.trade-coach/`) → `python3 skills/fomo-kernel/engine/demo_weeks.py`: slices the built-in mock into 3 time windows to simulate "first visit → reconcile → reconcile", so you can watch the second card cite last week's commitment and `log.jsonl` grow line by line.
-
-> 💡 **Want to share with a community?** Each committed review creates `card-public.md`, a separately rendered artifact. A transaction-history review may keep a de-identified behavior pattern plus engine-owned beta and benchmark-excess percentage points; a snapshot review keeps only fixed structural-baseline copy and does not imply historical behavior. Both remove amounts, dates, tickers, exact weights, and agent free text. The review card remains the default response. This is a local file for manual sharing; there is no upload or publishing feature yet.
-
-## Install
-
-**Prerequisite:** Python 3.11+. Durable session finalization currently requires POSIX `flock` and directory `fsync` (macOS/Linux); Windows fails closed with a controlled CLI error before canonical session storage is mutated. Claude Code users can install the slash-command skill below; Codex, Cursor, and other agents can use the repo directly through `AGENTS.md` and `engine/review.py` without a Claude subscription.
-
-Needs Python 3.11+. **On recent macOS (Homebrew / system Python) a bare `pip install` is blocked by PEP 668** (`externally-managed-environment`); use a venv:
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt                            # yfinance + pandas + rich
-python3 -c "import yfinance, pandas, rich; print('ok')"    # verify: only 'ok' means it installed
-```
-Hook the skill into Claude Code (pick one):
-```bash
-ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel   # A. symlink (recommended)
-cp -r skills/fomo-kernel ~/.claude/skills/                         # B. copy (to hand to someone)
-```
-> ⚠️ If you installed via venv, Claude Code needs those dependencies on its path when it runs the engine: launch `claude` from a **terminal with the venv activated**, or when the engine reports `ModuleNotFoundError`, swap `python3` for `.venv/bin/python3` and re-run (SKILL.md has this fallback built in).
-
-## Usage
+### 2. Bring one real decision or one real record
 
 Inside Claude Code:
+
+```text
+/fomo-kernel I'm considering adding 20 shares of NVDA.
+My current reason is ..., and what changed now is ...
+
+/fomo-kernel ~/Downloads/trades.csv
+
+/fomo-kernel
+Then attach a holdings table or statement screenshot.
+
+/fomo-kernel
+With no file, choose the fictional test drive.
 ```
-/fomo-kernel ~/Downloads/my.csv   # transaction-history review
-/fomo-kernel <attached position table or statement screenshot>   # opening portfolio check
-/fomo-kernel                      # no file → asks you for one, or a "test drive" through all four steps on built-in fake data (labeled as demo, nothing written to coach memory)
-```
-Your CSV can come from **any broker** — Claude reads and maps it into the columns the engine needs (`Symbol / Action(BUY|SELL) / Quantity / Price / TradeDate`, plus optional `Market / Currency` for non-US stocks — e.g. `2330.TW / TW / TWD`; omitted = US/USD); you don't hand-clean anything.
 
-For a position table or screenshot, the agent locally transcribes only the displayed facts into a normalized JSON envelope (`as_of`, `positions`, and optional cash and FX), keeps that temporary file outside the repository, and sends it through `review.py`. The engine, not the agent, calculates weights, cycle IDs, risk metrics, and ETF treatment. The opening snapshot initializes inferred theses for uncovered positions and records the book. Later transaction history can unlock supported behavioral diagnostics, but does not claim that ledger holdings match a newer broker view.
+You do not need to clean a broker export by hand. The agent maps it locally into the engine contract.
 
-> 🏷️ For **obscure tickers**, the agent may propose a local driver map for sector/theme exposure. For obscure ETFs it may also propose an instrument map, but the code grants an allocation exemption only to explicit broad-market, regional, bond, or commodity classifications; unknowns remain concentrated by default.
+Questions and cards support English, Traditional Chinese, and Simplified Chinese (`--language en|zh-TW|zh-CN`). Language changes the copy, not the engine facts.
 
-**What happens**: ① `prepare` runs the deterministic diagnosis and builds a question queue → ② the agent asks every returned question and creates any required inferred theses (a snapshot may return no motive questions) → ③ `preview` validates the artifacts and renders a card → ④ you choose at most one rule, or skip, and `finalize` commits the session atomically.
+## What each input can support
 
-## Using it from other coding agents
+### A contemplated trade with a recorded portfolio
 
-You don't need Claude Code's skill system. Codex, Cursor, and other agents use the same orchestration contract:
+FOMO Kernel computes the resulting position weight, concentration and overlap between positions that depend on the same driver, cash effect, rule collisions, and the portfolio basis behind those facts. The answer then argues the strongest case and strongest counter-case from that frozen result.
+
+### A contemplated trade without a recorded portfolio
+
+The conversation still advances, but it does not pretend to know weight, concentration, cash, or rule collisions. It asks only the few questions that change the framing and names the next piece of evidence that would buy a more specific answer. Nothing from this path is persisted.
+
+### Transaction history
+
+A transaction export can support behavior over time: sizing, averaging, exits, diversification, holding consistency, per-position diagnosis, and supported performance attribution. The engine narrows the few motives worth asking about; the finished review converges on one card and at most one user-chosen rule.
+
+### A holdings snapshot
+
+A position table or screenshot can support an opening structural check. It cannot honestly reveal prior averaging down, exit discipline, holding behavior, win rate, payoff, alpha, or historical motive. Add transaction history later to unlock those claims.
+
+## Why this is different from ordinary chat
+
+A general chat can discuss a thesis. FOMO Kernel adds an enforced decision contract:
+
+| Layer | Owner |
+|---|---|
+| Portfolio math, rankings, rules, identities, and state transitions | Deterministic engine |
+| Motive questions, bounded interpretation, strongest counter-case, plain-language explanation | Agent |
+| Final action, confirmation, and whether a rule should be kept | User |
+| Durable history and replay | Local canonical session bundles |
+
+That separation prevents the agent from quietly becoming a second source of portfolio truth.
+
+## Privacy and truth boundaries
+
+- **No FOMO Kernel backend.** The repository has no account service or upload endpoint, and nothing is sent to the author.
+- **Local files and state.** Source files, normalized snapshots, canonical sessions, private cards, and projections live on the machine running the skill.
+- **Public market data.** To calculate supported prices and returns, the engine may query public symbols and dates from market-data providers. It does not send broker rows, quantities, costs, motives, or cards.
+- **Your AI host still matters.** The model/client you choose may process content you explicitly provide under that host's own terms. FOMO Kernel does not add another server or silently publish the data.
+- **No cloud OCR path.** A screenshot is transcribed by the coding agent from the local attachment; the engine does not upload it to an OCR service.
+- **Private by default.** `card-private.*` is the normal output. Ask for a share-safe version to receive `card-public.md`, which removes amounts, dates, tickers, exact weights, session IDs, and agent free text. Nothing is published automatically.
+- **Public repository evidence is synthetic only.** Never post real trades, holdings, motives, or cards to a public issue or PR.
+
+## Local memory, repeat use, and recovery
+
+Completed reviews are stored as immutable canonical sessions:
 
 ```bash
-cd skills/fomo-kernel
-python3 engine/review.py prepare ~/Downloads/my.csv --language en
-python3 engine/review.py prepare --route snapshot_review \
-  --snapshot-json /tmp/fomo-kernel-positions.json --language en
-# follow review_plan.flow_path, answer question_queue, then call preview and finalize
+ls ~/.trade-coach/sessions/
 ```
 
-Point the agent at [`AGENTS.md`](AGENTS.md). `SKILL.md` is now a thin entry; mode-specific flows, JSON schemas, deterministic validators, and renderers hold the detailed contract.
-
-## Style samples (runnable — see how different styles surface different leaks)
-
-`mock/` holds **12 sample sets** (3 retail-style baselines + 4 investor-persona extensions + 5 engine edge-case fixtures) plus `mock_trades`, all **fictional**, each triggering one archetypal leak or engine boundary. Four representatives below; the full twelve and their design intent are in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md):
+Useful controls:
 
 ```bash
-cd skills/fomo-kernel
-TR_DRIVER_MAP=mock/sample_fundamental.driver_map.json python3 engine/trade_recap.py mock/sample_fundamental.csv
-TR_DRIVER_MAP=mock/sample_momentum.driver_map.json    python3 engine/trade_recap.py mock/sample_momentum.csv
-TR_DRIVER_MAP=mock/sample_value.driver_map.json       python3 engine/trade_recap.py mock/sample_value.csv
-python3 engine/trade_recap.py                          # no args = mock_trades.csv
+python3 skills/fomo-kernel/engine/coach.py data-status
+python3 skills/fomo-kernel/engine/coach.py data-export --out backup.zip
+python3 skills/fomo-kernel/engine/coach.py data-reset --dry-run
+python3 skills/fomo-kernel/engine/coach.py data-reset --confirm
 ```
 
-| sample | style | the leak it should surface |
-|---|---|---|
-| `sample_fundamental` | fundamental stock-picking | exit discipline (rides a winner 120 days then bails, holds a loser 378 days waiting to break even) |
-| `sample_momentum` | chase-the-momentum | position all-in + fake diversification (mistaking beta for alpha) |
-| `sample_value` | only-buy-cheap | averaging down (the lower it goes the more you add, averaging INTC into a single dominant position) |
-| `mock_trades` | methodology-building phase | FOMO all-AI fake diversification + PLTR averaging down |
+`data-status` reports file metadata, not trade content. Treat an exported backup like a brokerage statement; `data-reset --confirm` is irreversible.
 
-> Four more investor-persona extensions (`sample_ai_holder` / `sample_oldecon` / `sample_swing` / `sample_day_trader` — from an AI believer holding for a year and a half to a same-day in-and-out day trader) — how to run them and their design intent in [`mock/SAMPLES.md`](skills/fomo-kernel/mock/SAMPLES.md).
-> ⚠️ The engine uses yfinance to pull real historical prices for α/β, market cap, and how far each position is underwater — so **absolute numbers drift with the current share price on each rerun**; but the headline leak each set is designed to trigger is stable (it's set by the trading behavior, not by any particular price).
+After an interruption, the agent resumes the pending session instead of refetching facts you already answered against. If a canonical session committed but a derived projection failed, the projection can be rebuilt without re-questioning you.
 
-## Layout
+## Other coding agents
 
-```
-skills/fomo-kernel/
-  SKILL.md                  ← thin public entry and invariants
-  flows/                    ← first / weekly / snapshot / test-drive contracts
-  references/               ← agent boundaries, thesis, card, and recovery policies
-  schemas/                  ← Review Plan / answers / narrative / canonical bundle
-  copy/                     ← Traditional Chinese and English product copy
-  engine/review.py          ← prepare / preview / finalize / resume orchestration
-  engine/session.py         ← atomic canonical bundle + legacy projections
-  engine/card_renderer.py   ← deterministic private/public Markdown + HTML
-  engine/instruments.py     ← ETF allocation-vs-concentration policy
-  card-spec.md              ← Step 3 card spec (blocklist / redact / narrative rules; read only after Step 2 questions)
-  engine/trade_recap.py     ← mechanical layer: 5-dim + per-position DCA/loser classifier + attribution (pure functions, no real paths)
-  rubric/
-    vincent-yu.md           ← post-release research notes: paraphrased principles + source list; not loaded by current v2
-    vincent-yu.lens.json    ← post-release research schema asset; not connected to current v2 questions or cards
-  behavior-diagnosis.md     ← diagnostic philosophy: on the act not the person, multi-label behavior (the "why" design record)
-  card-template.html        ← review-card HTML layout example
-  mock/                     ← 12 sample sets + mock_trades + each one's driver map + SAMPLES.md
+Claude Code provides the simplest slash-command installation. Codex, Cursor, and compatible coding agents can use the same host-neutral contract by opening the repository and following [`AGENTS.md`](AGENTS.md), which routes to [`skills/fomo-kernel/SKILL.md`](skills/fomo-kernel/SKILL.md).
+
+For a host-neutral test-drive plan:
+
+```bash
+python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language en
 ```
 
-## Disclaimer
+This command returns a Review Plan; the agent follows its selected flow to present and complete the experience.
 
-The files under `rubric/` are post-release research assets distilled from public writing. They use paraphrased summaries with source lists, not verbatim quotation, reproduction, or endorsement, and current v2 does not load them as a runtime persona.
-This tool is positioned as **research / coaching support**; all output is trade-behavior review and discipline suggestions only — **not investment advice, and no buy/sell recommendation on any instrument**; final investment decisions and outcomes are your own.
-The code is licensed under the [MIT License](LICENSE); the paraphrased research content in `rubric/` has source lists and is not relicensed under MIT.
+Current owner-live acceptance focuses on Claude Code and Codex. A compatible client is not automatically an accepted client.
+
+## Platform support
+
+- Python 3.11+.
+- macOS and Linux support durable session finalization.
+- Windows can run `prepare` and `preview`, but durable `finalize` currently fails closed before committed canonical state is changed because the implementation requires POSIX locking and directory `fsync`.
+
+## What FOMO Kernel is not
+
+FOMO Kernel does not:
+
+- issue price targets or market forecasts;
+- select stocks for you;
+- make or execute the final buy/sell decision;
+- become a broker, wealth manager, or full investment operating system;
+- crawl or mirror your private research repository;
+- replace missing portfolio facts with generic advice.
+
+It is research and decision-coaching support, not investment advice. You remain responsible for every investment decision and outcome.
+
+## For contributors and maintainers
+
+Start with:
+
+- [`AGENTS.md`](AGENTS.md) — routing and non-negotiable boundaries;
+- [`docs/issue-lifecycle.md`](docs/issue-lifecycle.md) — current-context loading and issue ownership;
+- [`docs/maintainer-guide.md`](docs/maintainer-guide.md) — development, privacy, tests, mirrored surfaces, and PR conventions.
+
+Before committing repository changes:
+
+```bash
+python3 tests/run_all.py
+```
+
+The public examples and fixtures must remain synthetic. See the [MIT License](LICENSE).
