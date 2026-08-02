@@ -8,6 +8,15 @@ What this file settles:
      validate_premise's normalized output matches the schema's declared shape.
   B. validate_premise: every fail-closed branch, and that a sell of exactly
      the held quantity is accepted rather than rejected or clamped.
+  B2. validate_premise / consequence (#777, owner ruling 2026-08-02): an
+     omitted premise.price defaults to last_px's own observed close for the
+     ticker, stamped price_basis "observed"; a stated price is never
+     overridden by last_px and is stamped "user_stated"; notional divides
+     through whichever price won; and an omission with no observation
+     anywhere is still refused, naming the ticker, never answered on an
+     invented number. Exercised through consequence() itself, not only
+     validate_premise directly, so the last_px wiring between the two is
+     covered rather than assumed.
   C. portfolio_state / consequence: a buy raises the target's weight and a
      sell lowers it, matching an independently computed expectation; qty and
      notional forms of the same trade produce identical results; a brand-new
@@ -134,7 +143,11 @@ def test_schema_requires_exactly_one_of_qty_or_notional():
     assert branches.get(frozenset({"notional"})) == frozenset({"qty"}), \
         "the notional branch must require notional and forbid qty"
     assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {"ticker", "side", "price"}
+    # #777, owner ruling 2026-08-02: price is no longer required at this
+    # layer -- an omitted price defaults to the engine's own observed close
+    # rather than being refused or asked for. See section B2 below for the
+    # default-price behavior itself and the refusal that survives it.
+    assert set(schema["required"]) == {"ticker", "side"}
 
 
 def test_normalized_premise_matches_the_schemas_declared_shape():
@@ -243,6 +256,89 @@ def test_currency_defaults_from_the_ledgers_own_currency_for_a_held_ticker():
 
 def test_a_sell_is_refused_on_an_empty_ledger():
     _rejects({"ticker": "NVDA", "side": "sell", "price": 100, "qty": 1}, [], "not currently held")
+
+
+# ─── B2. price defaulting: omitted premise.price (#777, owner ruling 2026-08-02) ───
+
+def test_price_defaults_to_the_observed_close_when_omitted():
+    rows = _rows("sample_momentum.csv")   # holds AMD, MRVL, NVDA only
+    normalized = cq.validate_premise({"ticker": "PLTR", "side": "buy", "qty": 5}, rows,
+                                     last_px={"PLTR": 42.5, "NVDA": 135.0})
+    assert normalized["price"] == 42.5
+    assert normalized["price_basis"] == "observed"
+
+
+def test_a_stated_price_is_never_overridden_by_last_px():
+    rows = _rows("sample_momentum.csv")
+    normalized = cq.validate_premise({"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}, rows,
+                                     last_px={"NVDA": 999.0})
+    assert normalized["price"] == 130.0, \
+        "a stated price must win over an observed one, never be averaged or deferred to it"
+    assert normalized["price_basis"] == "user_stated"
+
+
+def test_notional_divides_through_the_defaulted_price_not_a_missing_one():
+    rows = _rows("sample_momentum.csv")
+    normalized = cq.validate_premise({"ticker": "PLTR", "side": "buy", "notional": 425.0}, rows,
+                                     last_px={"PLTR": 42.5})
+    assert normalized["price_basis"] == "observed"
+    assert abs(normalized["qty"] - 10.0) < 1e-9, "425 / 42.5 == 10 shares"
+
+
+def test_an_omitted_price_with_no_last_px_at_all_is_refused_naming_the_ticker():
+    rows = _rows("sample_momentum.csv")
+    _rejects({"ticker": "PLTR", "side": "buy", "qty": 5}, rows,
+             "no observed close for PLTR")
+
+
+def test_an_omitted_price_with_last_px_present_but_not_covering_the_ticker_is_also_refused():
+    """Distinct from the no-last_px-at-all case above: a caller may resolve
+    prices for the held book and still miss the one ticker this default
+    needs, and the refusal must still name it rather than silently reading
+    an unrelated ticker's presence in last_px as coverage."""
+    rows = _rows("sample_momentum.csv")
+    try:
+        cq.validate_premise({"ticker": "PLTR", "side": "buy", "qty": 5}, rows,
+                            last_px={"NVDA": 135.0, "AMD": 100.0, "MRVL": 60.0})
+        raise AssertionError("should have refused: PLTR has no observation in last_px")
+    except cq.ConsequenceError as exc:
+        assert "PLTR" in str(exc) and "no observed close" in str(exc)
+
+
+def test_price_basis_is_never_a_field_the_caller_may_supply():
+    """price_basis is engine-assigned output only (trade-premise.schema.json's
+    own description, consequence._FIELDS); a caller sending it is an unknown
+    field like any other, never a way to forge 'user_stated' onto a
+    defaulted premise or vice versa."""
+    rows = _rows("sample_momentum.csv")
+    _rejects({"ticker": "NVDA", "side": "buy", "price": 100, "qty": 1,
+              "price_basis": "user_stated"}, rows, "unknown fields")
+
+
+def test_consequence_itself_threads_last_px_into_the_default_not_only_validate_premise_directly():
+    """Coverage for the wiring, not just the primitive: consequence() must
+    forward its own last_px argument into validate_premise rather than this
+    suite only ever exercising validate_premise's own default parameter
+    directly. A mutation that drops `last_px=last_px` from that one call
+    site inside consequence() is invisible to every test above this one."""
+    rows = _rows("sample_momentum.csv")
+    result = cq.consequence(rows, {"ticker": "PLTR", "side": "buy", "qty": 5},
+                            last_px={"PLTR": 42.5, "AMD": 100.0, "MRVL": 60.0, "NVDA": 135.0})
+    assert result["premise"]["price"] == 42.5
+    assert result["premise"]["price_basis"] == "observed"
+
+
+def test_consequence_refuses_when_last_px_omits_the_premise_ticker_even_though_the_book_is_priced():
+    """The held book can be fully priced while the premise's own new ticker
+    still has no observation -- last_px covering every existing holding must
+    not be mistaken for covering the one ticker this default needs."""
+    rows = _rows("sample_momentum.csv")
+    try:
+        cq.consequence(rows, {"ticker": "ZZZZ", "side": "buy", "qty": 5},
+                       last_px={"AMD": 100.0, "MRVL": 60.0, "NVDA": 135.0})
+        raise AssertionError("should have refused: ZZZZ has no observation")
+    except cq.ConsequenceError as exc:
+        assert "ZZZZ" in str(exc) and "no observed close" in str(exc)
 
 
 # ───────────────── C. core arithmetic ─────────────────

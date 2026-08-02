@@ -598,5 +598,13 @@
   "candidate_comparison": {
     "line": "本期「{top}」的訊號比「{others}」更強——這只反映本期哪個模式更明顯，不代表哪條規矩更適合你。",
     "joiner": "、"
+  },
+  "disclosures": {
+    "cost_basis": "沒有取得現價，這裡的權重是用成本計算，不是市值。",
+    "cash_unreliable": "現金餘額沒有錨點，只是把現金流加總得出的粗估數字。",
+    "unmapped_driver": "這個標的還沒有板塊或 AI 分類，集中度算不到它。",
+    "unclassified_book": "至少有一檔持股還沒有板塊或 AI 分類，AI 佔比與最大板塊佔比都是用不到全部持股算出來的。",
+    "etf_not_decomposed": "至少有一檔持股是 ETF 或基金，引擎沒有拆解它的成分股。",
+    "partial_book": "至少有一個部位算不進這次的可用持股範圍，這裡的百分比都是用剩下的部分持股算的。"
   }
 }

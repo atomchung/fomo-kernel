@@ -532,5 +532,13 @@
   "candidate_comparison": {
     "line": "本期“{top}”的讯号比“{others}”更强——这只反映本期哪个模式更明显，不代表哪条规矩更适合你。",
     "joiner": "、"
+  },
+  "disclosures": {
+    "cost_basis": "没有取得现价，这里的权重是用成本计算，不是市值。",
+    "cash_unreliable": "现金余额没有锚点，只是把现金流加总得出的粗估数字。",
+    "unmapped_driver": "这个标的还没有板块或 AI 分类，集中度算不到它。",
+    "unclassified_book": "至少有一档持仓还没有板块或 AI 分类，AI 占比与最大板块占比都是用不到全部持仓算出来的。",
+    "etf_not_decomposed": "至少有一档持仓是 ETF 或基金，引擎没有拆解它的成分股。",
+    "partial_book": "至少有一个仓位算不进这次的可用持仓范围，这里的百分比都是用剩下的部分持仓算的。"
   }
 }

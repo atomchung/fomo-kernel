@@ -2119,7 +2119,25 @@ def _run_engine(paths, root, args, *, ledger_path=None):
             # instead of aliasing prev_end to its own date_end (#166).
             if previous.get("prev_end"):
                 env["TR_PREV_PREV_END"] = str(previous["prev_end"])
-        cap_override = _position_cap_override(root)          # #324:標準版單一部位上限,通用預設可被覆寫
+        # #758: an amending pass reuses the position cap the review being
+        # amended was rendered with, the same "reuse the frame" posture
+        # #665 already gave the market frame two lines up — `cmd_add_cash`
+        # alone sets `frozen_position_cap`, carrying forward whatever
+        # `state["max_position_pct"]` this pending session was originally
+        # prepared with (references/data-contract.md's own words: a
+        # standing cap change "reconciles against" the *next* review, not
+        # the one already on screen). Without this, a `set-cap` run in the
+        # same message beat as `add-cash` (`flows/first-review.md` step 6
+        # collects both) rewrites profile.json first, the recompute below
+        # would read the new value, `_candidate_rules` would emit different
+        # candidates than the ones already shown, and `_cash_recompute_drift`
+        # would refuse on "the rules the user was offered" -- correctly, by
+        # its own contract, since the candidates genuinely did move. An
+        # ordinary `prepare` carries no such attribute and is unaffected.
+        if getattr(args, "amending_session", False) and hasattr(args, "frozen_position_cap"):
+            cap_override = args.frozen_position_cap
+        else:
+            cap_override = _position_cap_override(root)      # #324:標準版單一部位上限,通用預設可被覆寫
         if cap_override is not None:
             env["TR_MAX_POSITION_PCT"] = repr(cap_override)
         for arg_name, env_name in (("driver_map", "TR_DRIVER_MAP"),
@@ -4027,6 +4045,41 @@ def _consider_sector_display(consequence, language):
         if sector:
             display[side] = card_renderer.localized_sector(sector, language)
     return display
+
+
+def _consider_disclosures_display(consequence, language):
+    """Localized companion text for each machine-readable disclosure key
+    (#739), the same shape as ``_consider_sector_display`` right above.
+
+    ``consequence.disclosures`` is the engine's own stable English
+    snake_case list (``consequence.DISCLOSURES``) -- ``required_coverage``
+    anchors a claim at it by array position
+    (references/trade-consequence.md, "What the answer owes"), so the list
+    itself must stay exactly what it is. What was missing is a human
+    sentence beside it in the language the caller actually asked for: a
+    ``--language zh-TW`` answer had nothing but the raw English key to draw
+    on, and an agent facing that gap tended to quote the key itself rather
+    than translate it on the spot (#739's own evidence). This resolves each
+    key through ``copy/<locale>.json``'s own ``disclosures`` table -- the
+    one place localized product wording is allowed to live
+    (docs/output-language.md rule 2) -- rather than duplicating a
+    translation at every call site that happens to emit this list.
+
+    A key with no copy entry cannot happen on ``en``/``zh-TW`` (held to the
+    same key-parity gate every other copy table already passes,
+    ``test_locale_copy_files_keep_key_parity``); ``.get(key, key)`` is a
+    fail-soft fallback for an unrecognized or a stored retired key
+    (``consequence.RETIRED_DISCLOSURES``) read back through ``--resolve``,
+    so a genuinely unmapped code still reads as itself instead of raising
+    mid-answer.
+
+    Returns ``{}`` when the evaluation carries no disclosure at all, so an
+    absent key reads as "nothing to add", matching ``sector_display``'s own
+    convention right above.
+    """
+    keys = consequence.get("disclosures") or ()
+    table = card_renderer.load_copy(language).get("disclosures") or {}
+    return {key: table.get(key, key) for key in keys}
 
 
 def _consider_recovery_tickers(rows, premise_ticker, _excluded_holdings=()):
@@ -6096,6 +6149,21 @@ def cmd_add_cash(args):
     review does not want a retry; it wants the frame the card being amended was
     rendered from.
 
+    **The position cap is reused on the same posture** (#758). `flows/first-
+    review.md` step 6 collects a stated cap (`set-cap`) and a cash answer in
+    the same message beat, and `set-cap` takes effect immediately by rewriting
+    `profile.json` — so a cap stated just before this command runs would
+    otherwise be picked up mid-amendment, changing `candidate_rules` under a
+    card the user has already seen and tripping the drift gate below on "the
+    rules the user was offered" the moment the two same-beat actions ran in
+    that order. `references/data-contract.md`'s own words are that a standing
+    cap change "reconciles against" the *next* review, so this pass freezes
+    the cap this pending session actually carries (`_run_engine`'s
+    `frozen_position_cap`) instead of re-reading `profile.json` live, exactly
+    as it freezes the market frame above. Both orders of the two actions now
+    succeed, and a `set-cap` run here still lands in `profile.json` for the
+    review after this one.
+
     **And it proves the facts held rather than asserting it.** The source facts
     the user's answers were made against — the input files, that frame, the
     recorded book, the diagnosis, the rules they were offered, the questions
@@ -6148,6 +6216,15 @@ def cmd_add_cash(args):
         # transaction file that grew is refused before anything is written
         # (`_verify_and_ingest_frozen_trades`).
         amending_session=True,
+        # #758: the third enforcement point of the same idea. `state`
+        # (`plan["engine_state"]`) already echoes back whichever cap this
+        # pending session was actually prepared with -- trade_recap.py stamps
+        # `state["max_position_pct"]` from the same `TR_MAX_POSITION_PCT` env
+        # var `_run_engine` sets, so reading it back here needs no second
+        # source of truth. `None` means the universal default was in force;
+        # it is still an explicit freeze, not "no opinion", which is why
+        # `_run_engine` keys off `hasattr` rather than truthiness.
+        frozen_position_cap=(plan.get("engine_state") or {}).get("max_position_pct"),
         snapshot_json=None, card_json=None, state_json=None, timeout=args.timeout)
     result = _prepare_session(rerun)
     if result["status"] == "already_committed":
@@ -7325,9 +7402,20 @@ def _cmd_consider_resolve(root, evaluation_id, decision, language):
     updated["decision"] = decision
     updated["decided_on"] = dt.date.today().isoformat()
     report = _append_evaluation_row(root, updated)
-    _emit({"status": "resolved", "root": root, "language": language,
-           "evaluation_id": evaluation_id, "decision": decision,
-           "evaluation": updated, "append": report})
+    payload = {"status": "resolved", "root": root, "language": language,
+               "evaluation_id": evaluation_id, "decision": decision,
+               "evaluation": updated, "append": report}
+    # #739: --resolve re-emits the frozen row's own consequence.disclosures,
+    # the same list the original --premise call could carry, so a caller
+    # reading this response in a non-English --language is back at the same
+    # raw-key gap without this. Same helper, same field name, so a reader
+    # that resolved an evaluation sees the identical shape it saw when it
+    # first considered the trade.
+    disclosures_display = _consider_disclosures_display(
+        updated.get("consequence") or {}, language)
+    if disclosures_display:
+        payload["disclosures_display"] = disclosures_display
+    _emit(payload)
 
 
 def cmd_consider(args):
@@ -7735,6 +7823,15 @@ def cmd_consider(args):
         # without this the only sector name in the response is the one an English
         # answer must not contain.
         payload["sector_display"] = sector_display
+    disclosures_display = _consider_disclosures_display(consequence_stored, language)
+    if disclosures_display:
+        # #739. Same posture as `sector_display` right above: `disclosures`
+        # itself stays the engine's stable English key list -- an anchor in
+        # `required_coverage` addresses it by array position -- and this adds,
+        # beside it, one localized sentence per key so a non-English answer has
+        # something to draw from besides quoting the raw machine key back at
+        # the user.
+        payload["disclosures_display"] = disclosures_display
     if price_status:
         # #629. Beside the row, never on it — the same place and for the same
         # reason as `challenge`: the row is content-addressed and this is a

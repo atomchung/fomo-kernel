@@ -1343,6 +1343,122 @@ def test_consider_requires_premise_or_resolve():
         _fails(run, "requires --premise")
 
 
+# --- #777, owner ruling 2026-08-02: an omitted premise.price defaults to
+# the engine's own observed close ---
+#
+# The requirement itself did not change in kind, only in what satisfies it:
+# a caller who states no price AND whose ticker the engine cannot price
+# anywhere is still refused, never answered on an invented number. What
+# changed is that "the engine has no observation" is no longer the only way
+# an omitted price is handled -- when the engine has one (the same last_px
+# map every other number in the answer is priced from), it is used, and the
+# caller does not have to ask, source one elsewhere, or invent one.
+
+def test_an_omitted_price_with_no_reachable_observation_is_refused():
+    """The floor this default must not weaken, through the real CLI: no
+    --prices supplied and the offline test posture (#620) blocks the
+    engine's own retrieval, so there is genuinely nothing to default to."""
+    with tempfile.TemporaryDirectory() as tmp:
+        run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                   "--premise", '{"ticker": "NVDA", "side": "buy", "qty": 5}')
+        _fails(run, "no observed close for NVDA")
+        assert _read_evaluations(tmp) == [], "a refused premise must not be recorded"
+
+
+def _priced_collision_feed(tmp, ticker="AAA", close=130.0):
+    _collision_root(tmp)   # ledger: AAA/BBB/CCC, 10 shares @ $100 each; rule r1
+    feed = os.path.join(tmp, "px.json")
+    with open(feed, "w", encoding="utf-8") as f:
+        json.dump({"as_of": "2026-07-30", "source": "fixture",
+                   "prices": [{"ticker": ticker, "close": close, "date": "2026-07-30",
+                               "currency": "USD"}]}, f)
+    return feed
+
+
+def test_an_omitted_price_defaults_to_the_supplied_observed_close():
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = _priced_collision_feed(tmp)
+        payload = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5}'))
+        premise = payload["evaluation"]["premise"]
+        assert premise["price"] == 130.0
+        assert premise["price_basis"] == "observed"
+        _check_evaluation_shape(payload["evaluation"])
+        _check_challenge_shape(payload["challenge"])
+        # The stored row carries the fact forward, readable by a later
+        # --resolve or reconciliation without recomputing anything.
+        assert _read_evaluations(tmp)[0]["premise"]["price_basis"] == "observed"
+
+
+def test_a_stated_price_is_never_overridden_through_the_real_cli():
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = _priced_collision_feed(tmp, close=999.0)   # deliberately far from the stated price
+        payload = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5, "price": 100.0}'))
+        premise = payload["evaluation"]["premise"]
+        assert premise["price"] == 100.0, "a stated price must win over an observed one"
+        assert premise["price_basis"] == "user_stated"
+        _check_evaluation_shape(payload["evaluation"])
+
+
+def test_the_defaulted_price_is_a_must_state_fact_under_position_never_for_a_stated_one():
+    """The owner ruling's own words: 'priced at the last close' is a fact
+    the user should see, not an ordinary chosen price passing in silence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = _priced_collision_feed(tmp)
+        observed = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                            "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5}'))
+        stated = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                          "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5, "price": 130.0}'))
+
+        def price_entries(payload):
+            return [e for e in payload["challenge"]["must_state"]
+                    if e["topic"] == "position"
+                    and e.get("detail", {}).get("price_basis") == "observed"]
+
+        obs_entries = price_entries(observed)
+        assert len(obs_entries) == 1, obs_entries
+        assert obs_entries[0]["value"] == 130.0
+        assert "anchor" not in obs_entries[0], (
+            "premise is not an addressable record root (answer_provenance._ANCHOR_ROOTS); "
+            "the fact is stated but never citable by path")
+        assert price_entries(stated) == [], (
+            "a user-stated price is the ordinary case and states nothing extra about itself")
+        _check_challenge_shape(observed["challenge"])
+        _check_challenge_shape(stated["challenge"])
+
+
+def test_notional_divides_through_the_defaulted_price_through_the_real_cli():
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = _priced_collision_feed(tmp, close=50.0)
+        payload = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                           "--premise", '{"ticker": "AAA", "side": "buy", "notional": 500.0}'))
+        premise = payload["evaluation"]["premise"]
+        assert premise["price_basis"] == "observed"
+        assert abs(premise["qty"] - 10.0) < 1e-9, "500 / 50 == 10 shares"
+
+
+def test_defaulted_and_stated_prices_at_the_same_number_are_still_two_evaluations():
+    """price_basis rides in the normalized premise that seeds _evaluation_id
+    (review.py), so asking the identical trade once with a stated price and
+    once letting it default to the same number must not silently converge on
+    one row -- whether the user chose the number or the engine did is a real
+    difference about what was asked, the same principle #479's decision
+    context already established for why-now."""
+    with tempfile.TemporaryDirectory() as tmp:
+        feed = _priced_collision_feed(tmp, close=130.0)
+        observed = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                            "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5}'))
+        stated = _ok(_run("consider", "--root", tmp, "--prices", feed,
+                          "--premise", '{"ticker": "AAA", "side": "buy", "qty": 5, "price": 130.0}'))
+        assert observed["evaluation"]["premise"]["price"] == stated["evaluation"]["premise"]["price"]
+        assert (observed["evaluation"]["evaluation_id"]
+                != stated["evaluation"]["evaluation_id"]), (
+            "an observed default and a user-stated price at the identical number "
+            "must remain two distinct evaluations")
+        assert len(_read_evaluations(tmp)) == 2
+
+
 # ───────────────────────── E. resolve / fold ─────────────────────────
 
 def test_resolve_appends_a_new_row_rather_than_rewriting():
@@ -3935,6 +4051,87 @@ def test_sector_display_is_absent_rather_than_empty_when_there_is_no_sector():
         # "there was one and it was not localized".
         payload = _sector_consider(tmp, "en")
         assert payload["sector_display"], "this fixture does have a largest sector"
+
+
+# --- #739: disclosure keys need a sentence the answer's own language can use ---
+#
+# `disclosures` stays the engine's stable English snake_case list --
+# required_coverage anchors a claim at it by array position -- so before this,
+# the only human text for `cost_basis`/`cash_unreliable`/etc. lived in
+# references/trade-consequence.md's English table, and an agent answering in
+# zh-TW had nothing to draw from except the raw key itself (issue #739's own
+# evidence: `"disclosures": ["cost_basis", "unclassified_book"]` quoted
+# verbatim to a Chinese-speaking user). Same shape as #746's sector_display
+# tests right above -- these mirror that structure on purpose.
+
+def test_disclosures_display_translates_every_fired_key_in_the_callers_language():
+    with tempfile.TemporaryDirectory() as tmp:
+        # No --cash and no --prices are ever supplied on this route, and this
+        # offline test posture blocks the engine's own price retrieval (#620)
+        # and this root has no prior finalized review to fall back to -- so
+        # both cost_basis and cash_unreliable fire every time, deterministically.
+        payload = _sector_consider(tmp, "zh-TW")
+        fired = payload["evaluation"]["consequence"]["disclosures"]
+        assert fired == ["cost_basis", "cash_unreliable"], fired
+        display = payload["disclosures_display"]
+        assert set(display) == set(fired)
+        # The discriminating half: a mapping table gutted down to `.get(key,
+        # key)`'s bare fallback would leave this test technically green (the
+        # keys ARE present) while answering nothing -- so assert the values,
+        # not just their presence, and assert each actually differs from its
+        # own raw machine token rather than echoing it back.
+        assert display["cost_basis"] == "沒有取得現價，這裡的權重是用成本計算，不是市值。"
+        assert display["cash_unreliable"] == "現金餘額沒有錨點，只是把現金流加總得出的粗估數字。"
+        for key, text in display.items():
+            assert text != key, f"{key} was not translated"
+
+
+def test_disclosures_display_is_english_in_english_and_differs_by_locale():
+    ids, displays = set(), []
+    for language in ("en", "zh-TW", "zh-CN"):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _sector_consider(tmp, language)
+            ids.add(payload["evaluation"]["evaluation_id"])
+            displays.append(payload["disclosures_display"]["cash_unreliable"])
+    # Same reasoning as #746's identical assertion on sector_display: a
+    # localized value must ride beside the frozen row, never on it, or asking
+    # the same trade in three languages would mint three evaluations.
+    assert len(ids) == 1, f"language changed the evaluation identity: {ids}"
+    assert len(set(displays)) == 3, f"languages did not differ: {displays}"
+    assert displays[0].isascii(), f"the en text is not English: {displays[0]!r}"
+
+
+def test_the_row_keeps_the_canonical_disclosure_keys_whatever_the_language():
+    with tempfile.TemporaryDirectory() as tmp:
+        consequence = _sector_consider(tmp, "zh-TW")["evaluation"]["consequence"]
+        # required_coverage / --agent-case anchors address this list by array
+        # position (references/trade-consequence.md); a localized value here
+        # would break every existing anchor the moment --language changed.
+        assert consequence["disclosures"] == ["cost_basis", "cash_unreliable"]
+
+
+def test_disclosures_display_is_absent_rather_than_empty_when_there_are_no_disclosures():
+    assert review_engine._consider_disclosures_display({"disclosures": []}, "en") == {}
+    assert review_engine._consider_disclosures_display({}, "en") == {}
+
+
+def test_disclosures_display_falls_back_to_the_raw_key_for_an_unmapped_code():
+    """A stored row from before a key existed, or a genuinely unrecognized
+    one, must read as itself rather than raise mid-answer -- the same
+    fail-soft posture `localized_sector` already takes for a user-invented
+    driver-map category."""
+    display = review_engine._consider_disclosures_display(
+        {"disclosures": ["mixed_currency_no_fx"]}, "zh-TW")
+    assert display == {"mixed_currency_no_fx": "mixed_currency_no_fx"}
+
+
+def test_disclosures_display_also_reaches_the_resolve_response():
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _sector_consider(tmp, "zh-TW")
+        evaluation_id = payload["evaluation"]["evaluation_id"]
+        resolved = _ok(_run("consider", "--resolve", evaluation_id, "--decision", "declined",
+                            "--root", tmp, "--language", "zh-TW"))
+        assert resolved["disclosures_display"] == payload["disclosures_display"]
 
 
 # ───── P. cash anchor default from the last finalized review (#756) ─────
