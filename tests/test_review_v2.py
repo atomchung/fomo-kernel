@@ -11466,6 +11466,78 @@ def test_a_review_refuses_a_held_currency_it_has_no_rate_for_and_converts_when_i
         assert (priced_root / "ledger.jsonl").exists()
 
 
+def test_ticker_diagnosis_price_note_carries_the_original_currency_not_the_usd_view():
+    """#750, driven through the real CLI. `ticker_diagnosis`'s #347 disclosure
+    fields (`px`/`avg_cost` -- the numbers `price_note` prints beside `cur_ret`
+    on the card, e.g. "現 {px}／均 {avg_cost}") rode the same `usd_view()`
+    aggregate the ranking/`too_heavy` threshold legitimately needs, in
+    violation of `usd_view()`'s own docstring contract: "per-ticker
+    presentation (ticker_diagnosis / best_worst / the card's single-ticker
+    numbers) always uses the original-currency, original objects." A TWD
+    position bought at 550/share and now worth 1050 printed an "avg cost" of
+    ~17.4 -- the USD-equivalent divided by the display fx rate -- silently
+    contradicting the correct TWD total sitting beside it on the same card
+    line, and every reader's most natural sanity check ("does this match what
+    I paid?") failed.
+
+    This must run on a genuinely mixed TWD+USD book, not a pure-USD one: for a
+    USD ticker `usd_view()`'s factor is `fx["USD"] == 1.0`, an identity, so a
+    pure-USD fixture cannot tell "correctly carries its own currency" apart
+    from "the currency silently collapsed to the USD-aggregate value" -- both
+    read the same number. That is exactly why the report saw AAPL unaffected
+    and only the TWD ticker corrupted; AAPL is this test's control for the
+    same reason the sibling #612 test above (currency it has no rate for /
+    converts when it does) runs both a refusal and a converted counterweight:
+    "both halves are here on purpose... the converted counterweight is what
+    makes the pair mean the rate arrived and was used."
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = _offline_engine_env(tmp)
+        mixed = _FX_TWD_ROWS + _FX_USD_ROWS
+        csv_path, envelope = _fx_case(tmp, "ticker_diag_fx", mixed, fx={"TWD": 0.0317})
+        root = pathlib.Path(tmp) / "root"
+        run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                   "--prices", envelope, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        plan = _fx_plan(root)
+
+        diagnosis = {row["ticker"]: row for row in plan["engine_card"]["ticker_diagnosis"]}
+        assert "2330.TW" in diagnosis, sorted(diagnosis)
+
+        def priced_params(ticker):
+            tags = {tag["code"]: tag["params"] for tag in diagnosis[ticker]["tags"]}
+            for code in ("disciplined_hold", "deep_underwater",
+                        "suspected_averaging_down_losing"):
+                if code in tags and tags[code].get("px") is not None:
+                    return tags[code]
+            raise AssertionError(f"{ticker} carries no #347 priced tag: {tags}")
+
+        # 1000 bought @550, 200 sold @600 (FIFO leaves the remaining 800 shares
+        # at their own 550 cost) -> 800 held @550 avg cost; current close 1050
+        # (both TWD, from _fx_case's default price envelope). cur_ret = +90.9%,
+        # so this fires `disciplined_hold`.
+        tw = priced_params("2330.TW")
+        assert abs(tw["px"] - 1050.0) < 1e-6, tw
+        assert abs(tw["avg_cost"] - 550.0) < 1e-6, tw
+        # The corrupted values this bug produced: the USD-aggregate view
+        # (original x 0.0317) divided a second time by nothing -- i.e. the
+        # figure a reader would see is the *converted* price, not the paid
+        # one. Assert the bug's actual output is absent, not just "some other
+        # number": a regression that produces a different wrong value must
+        # still fail this test.
+        assert abs(tw["px"] - 1050.0 * 0.0317) > 1.0, tw
+        assert abs(tw["avg_cost"] - 550.0 * 0.0317) > 1.0, tw
+
+        # Control (#612's sibling argument): AAPL is a USD ticker, so
+        # usd_view()'s factor was always an identity for it -- this must have
+        # been correct even with the bug present, or the test proves nothing
+        # about which currency actually rode the aggregate.
+        # 100 bought @155, 20 sold @180 -> 80 held @155; current close 210.
+        us = priced_params("AAPL")
+        assert abs(us["px"] - 210.0) < 1e-6, us
+        assert abs(us["avg_cost"] - 155.0) < 1e-6, us
+
+
 def test_the_612_refusal_is_repaired_by_fx_alone_with_no_closes_supplied():
     """#642. The refusal above names its own repair -- "Supply the rate through
     --prices (the `fx` block...)" -- but the schema required `prices` with
