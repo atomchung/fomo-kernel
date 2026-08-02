@@ -57,7 +57,7 @@ sys.path.insert(0, str(SKILL / "engine"))
 import card_renderer  # noqa: E402
 
 GOLDEN = ROOT / "tests" / "golden" / "copy-corpus.txt"
-LOCALES = ("zh-TW", "en")
+LOCALES = ("zh-TW", "zh-CN", "en")
 
 # Catalog namespaces whose wording no rendered scene claims yet. Listed here
 # rather than dumped per-key into the golden: most of them belong to the
@@ -115,6 +115,7 @@ def _annualized_gap(status):
 
 _RECONCILIATION_RULES = {
     "zh-TW": "單筆部位上限定死 30%；超過就減，不新增。",
+    "zh-CN": "单一仓位上限固定为 30%；超过就减，不新增。",
     "en": "Cap any single position at 30%; trim if it goes over, and do not add.",
 }
 

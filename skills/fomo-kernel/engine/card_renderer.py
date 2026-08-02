@@ -2360,8 +2360,13 @@ def _reconciliation_lines(bundle, language):
                                     now=_metric_display(key, now_v),
                                     direction=(recon_copy.get("direction") or {}).get(direction))
             else:
-                line = recon_copy["statement_with_metric"].format(
-                    rule=prior["rule"], then=_metric_display(key, then_v), now=_metric_display(key, now_v))
+                # Legacy commitments can carry recorded readings without the
+                # engine-owned goal or a known localized metric label. Those
+                # facts do not establish what the quantity means or which
+                # direction is better, so preserve only the commitment rather
+                # than inventing either semantic (or formatting a newer copy
+                # template with missing fields).
+                line = _format_copy(recon_copy.get("statement"), rule=prior["rule"])
         else:
             line = recon_copy["statement"].format(rule=prior["rule"])
         breached = any(entry.get("key") == "prior_commitment_breach"
