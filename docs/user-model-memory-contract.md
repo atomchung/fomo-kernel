@@ -45,7 +45,56 @@ owner's `investment-note`. The public product must treat it only as a generic,
 explicitly supplied local report. FOMO Kernel never crawls, mirrors, or copies a
 private repository automatically.
 
-## 2. Why the current product can feel less intelligent
+## 2. Product thesis: expert augmentation before guided progression
+
+The product must prove two stages in order.
+
+### Stage A — expert augmentation
+
+Start with the owner, who already has unusually rich context: research history,
+portfolio state, transaction reviews, explicit rules, mistakes, beliefs, and
+multiple investor reports.
+
+The question is not whether the system can summarize those records. It is:
+
+> Given all this context, can FOMO Kernel help the owner make one materially
+> better decision than a strong general agent or the owner alone?
+
+The improvement may be:
+
+- identifying the decision's real bottleneck sooner;
+- exposing a contradiction between the current action and the user's own model;
+- distinguishing new evidence from a price-triggered explanation;
+- separating a strong selection thesis from weak sizing or timing;
+- recognizing that apparently different positions repeat the same driver;
+- recommending a better process action: proceed, reduce, delay, collect
+  evidence, revise the reason, or cancel;
+- avoiding a repeated question because the answer is already in context.
+
+If rich context cannot produce a useful difference here, no broader memory or
+onboarding product is justified.
+
+### Stage B — guided progression
+
+Only after Stage A identifies which context actually changes decisions should
+FOMO Kernel help other users build that context more easily.
+
+The goal is not to make other users copy the owner's holdings, beliefs, or risk
+appetite. It is to compress the useful parts of the owner's decision process:
+
+- make beliefs explicit;
+- connect actions to portfolio consequences;
+- distinguish evidence from price movement;
+- preserve why a decision was made;
+- compare later outcomes with what was known at the time;
+- convert repeated mistakes into one testable improvement focus;
+- learn which personal rules deserve to survive.
+
+A less mature user should reach a useful decision context through actual
+reviews and decisions, not by completing a comprehensive investor-personality
+questionnaire.
+
+## 3. Why the current product can feel less intelligent
 
 The engine has become better at truth, replay, recovery, and portfolio
 consequence. Those are necessary capabilities.
@@ -69,7 +118,7 @@ context and preserving room for judgment.
 Harnesses may observe the product. They must not become the product's reasoning
 architecture.
 
-## 3. Three layers are sufficient
+## 4. Three layers are sufficient
 
 The first context-first product needs only three conceptual layers.
 
@@ -107,7 +156,7 @@ A decision episode combines:
 
 No other product layer is required for the first slice.
 
-## 4. One complete but sparse schema
+## 5. One complete but sparse schema
 
 The schema should define the whole shape while allowing almost every field to
 remain absent or `unknown`. Completeness of the schema must never imply
@@ -168,7 +217,7 @@ Period-specific events such as an executed trade or a historical verdict stay
 in their existing append-only stores and may be cited by the context. They are
 not copied into the projection.
 
-## 5. Why a complete schema can still go wrong
+## 6. Why a complete schema can still go wrong
 
 A complete schema is useful only with the following protections.
 
@@ -213,7 +262,7 @@ A poorly designed schema can create loading problems, but loading the complete
 schema every time would remain a product error even with a well-designed
 schema.
 
-## 6. Bootstrap experience
+## 7. Bootstrap experience
 
 The first context experience should accept the richest material the user
 already has instead of forcing an interview.
@@ -248,7 +297,7 @@ The user can say:
 
 This is a context outcome, not yet proof that decisions improve.
 
-## 7. Decision-support experience
+## 8. Decision-support experience
 
 When the user later brings a trade, the answer should follow this order.
 
@@ -298,7 +347,43 @@ After the user resolves the decision, the agent may propose a narrow update:
 
 Agent synthesis does not silently become confirmed user context.
 
-## 8. Before and after
+## 9. Two user stories
+
+### Advanced user: improve an already strong process
+
+The user already has extensive research and decision records.
+
+1. Supply the existing report.
+2. Review and correct the draft context once.
+3. Bring one real decision.
+4. Receive current portfolio consequence plus the most relevant personal
+   tension.
+5. Resolve the decision.
+6. Update only the claim or policy that genuinely changed.
+
+The product promise is:
+
+> Preserve the user's genuine edge while reducing the recurring execution
+> leakage that prevents the edge from compounding.
+
+### Developing user: reach useful context with less effort
+
+The user may have only holdings, transactions, and one current decision.
+
+1. Receive immediate current-decision value; no profile is required first.
+2. Preserve the reason and decision outcome from normal use.
+3. After several eligible decisions, surface one supported capability or risk
+   pattern.
+4. Ask the user to confirm or correct it.
+5. Propose one bounded policy or improvement focus.
+6. Reuse it in the next relevant decision.
+
+The product promise is:
+
+> Compress the work of building a disciplined decision history without asking
+> the user to maintain a full investment repository.
+
+## 10. Before and after
 
 ### Without context
 
@@ -326,7 +411,7 @@ risk pattern, belief, and chosen policy. The user experience becomes:
 
 That third state is the product outcome.
 
-## 9. What not to build
+## 11. What not to build
 
 This decision deliberately avoids:
 
@@ -346,7 +431,7 @@ Existing #403/#450 rationale work, #460 verdicts, and #650 rules may later enric
 or update `UserDecisionContext`. They are not prerequisites for the initial
 report bootstrap.
 
-## 10. Minimal validation without another harness
+## 12. Minimal validation without another harness
 
 Validation has two separate questions.
 
@@ -382,7 +467,7 @@ Use one focused route fixture and one owner verdict. Do not extend #718 or build
 a context-specific harness. If the difference is not useful, revise the context
 or decision prompt rather than expanding evaluation infrastructure.
 
-## 11. Smallest sequence
+## 13. Smallest sequence
 
 The ordering below is architectural and does not override #27.
 
@@ -431,7 +516,13 @@ Only after repeated use should existing rationale, verdict, and rule streams
 automatically propose context updates. Add a new store or object only when this
 single context projection cannot represent an observed product need.
 
-## 12. Ownership and relation to current work
+### Step 7 — productize the context-building path
+
+After the owner loop repeatedly improves decisions, identify the minimum inputs
+that produced the useful context and make those available to developing users.
+Do not copy the owner's profile. Productize the learning process.
+
+## 14. Ownership and relation to current work
 
 | Concern | Owner / relation |
 |---|---|
@@ -443,7 +534,7 @@ single context projection cannot represent an observed product need.
 | Historical verdict evidence | merged PR #460; optional enrichment |
 | M1 synthetic QA trace/accounting | #718; not a dependency and must not be extended for this work |
 
-## 13. Acceptance for this decision
+## 15. Acceptance for this decision
 
 Before implementing any context feature, a contributor must answer:
 
@@ -455,6 +546,8 @@ Before implementing any context feature, a contributor must answer:
 6. What can be removed or avoided instead of adding another workflow?
 7. How can the owner correct the model?
 8. What focused existing test proves identity, provenance, and update safety?
+9. Which part of the successful owner workflow can later be offered to a user
+   with less context?
 
 If the context does not improve a real decision, the next step is not more
 memory or more harness. The next step is to revise what context the agent sees
