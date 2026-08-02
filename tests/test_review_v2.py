@@ -2239,7 +2239,10 @@ def _fake_download(symbols, start, end=None):
         data[("Stock Splits", symbol)] = [float("nan")] * len(days)
     frame = pd.DataFrame(data, index=index)
     frame.columns = pd.MultiIndex.from_tuples(frame.columns)
-    return frame
+    # (data, per-symbol failures). XLY above is present-but-empty with *no*
+    # failure entry, which is the point: a dead symbol is a definitive answer,
+    # not a request that never came back.
+    return frame, {}
 
 
 import market_data
