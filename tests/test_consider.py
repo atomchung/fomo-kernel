@@ -3041,7 +3041,7 @@ def _fake_download(symbols, start, end=None):
         data[("Stock Splits", symbol)] = [float("nan")]
     frame = pd.DataFrame(data, index=index)
     frame.columns = pd.MultiIndex.from_tuples(frame.columns)
-    return frame
+    return frame, {}          # (data, per-symbol failures) -- nothing failed here
 
 
 import market_data

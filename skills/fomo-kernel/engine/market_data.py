@@ -80,6 +80,23 @@ an unavailable fact into zero, into a delisting, or into an identity FX rate;
 the callers' established refusals (``consequence.portfolio_state`` on a missing
 rate, ``price_feed.basis_conflicts`` on an unestablishable split basis) remain
 the residual floor.
+
+**"Unpriced" was two facts wearing one shape, and the conflation cost requests
+(#687, #743).** ``yf.download`` does not raise when a symbol's own request
+fails: it catches per symbol and returns an *empty column*, so a rate-limited
+symbol arrives in exactly the shape of a delisted one. Read as a delisting, a
+throttle became a permanent fact about a holding — and, because a bundle's
+coverage was the set it had *priced*, it also made that bundle fail to cover
+**the request that produced it**, re-fetching the whole universe on the next
+same-day command and issuing more requests into the limit that caused it.
+
+So the seam reports what failed (``_download`` returns ``(data, errors)``) and
+the bundle carries :attr:`MarketDataBundle.unresolved`. A symbol the provider
+*answered* nothing for is final for the day and covered; one whose request never
+came back is outstanding, is not covered, and gets the retry #235's rule is
+about. The distinction is tri-state on the wire — absent, not empty, on a bundle
+that cannot state it — so an older cache entry keeps the strict rule instead of
+being read as a clean bill of health.
 """
 import datetime as dt
 import os
@@ -120,6 +137,8 @@ GAP_CODES = (
     "empty_response",       # the provider answered with no rows at all
     "response_shape",       # the response did not carry the expected fields
     "symbol_unpriced",      # a requested symbol came back with no usable close
+    "symbol_rate_limited",  # the provider refused this symbol's request for rate
+    "symbol_request_failed",  # this symbol's own request failed for another reason
     "fx_unavailable",       # a requested currency has no usable rate
     "feed_incomplete",      # a supplied envelope does not cover what was asked
     "frozen_frame_gone",    # a frozen pass found no frame recorded for this request
@@ -251,9 +270,18 @@ class MarketDataBundle:
     """
 
     def __init__(self, *, source, request, frame=None, splits=None, fx=None,
-                 fx_frame=None, gaps=None, as_of=None):
+                 fx_frame=None, gaps=None, as_of=None, unresolved=None):
         self.source = source                      # yahoo | supplied | unavailable
         self.request = request
+        #: Symbols whose own request did not come back — rate limited, or failed
+        #: for another reason. Tri-state on purpose. ``None`` means *this bundle
+        #: does not state it*: a supplied envelope, a frozen frame, or a cache
+        #: entry written before this field existed. Those keep the original
+        #: strict coverage rule, so an older entry can never be read as "every
+        #: unpriced symbol was definitively answered" and silently suppress a
+        #: retry it never earned. ``[]`` is the positive statement that the
+        #: provider answered for everything asked.
+        self.unresolved = None if unresolved is None else sorted(set(unresolved))
         self.frame = frame                        # closes: index=dates, columns=symbols
         self.splits = splits or {}                # {ticker: [(date, ratio), ...]}
         self.fx = dict(fx or {"USD": 1.0})        # {currency: usd_per_unit}
@@ -319,6 +347,31 @@ class MarketDataBundle:
 
     # ── reuse ──
 
+    def _answered_symbols(self):
+        """Symbols this bundle has a *final* same-day answer for.
+
+        A price is an answer. So is a definitive "the provider returned nothing
+        for this symbol" — but only from a bundle that can tell the difference,
+        which is why `unresolved is None` falls back to the priced set alone.
+        """
+        priced = set(self.priced)
+        if self.unresolved is None:
+            return priced
+        asked = set(self.request["instruments"]) | set(self.request["benchmarks"])
+        return priced | (asked - set(self.unresolved))
+
+    def _answered_currencies(self):
+        """The same question for rates. A currency whose ``{CUR}=X`` request
+        failed is unresolved; one the provider simply has no usable rate for is
+        answered, and re-asking it today would re-fetch the whole universe for
+        an answer that cannot have changed."""
+        resolved = {code for code in self.request["currencies"] if code in self.fx}
+        if self.unresolved is None:
+            return resolved
+        unresolved = set(self.unresolved)
+        return resolved | {code for code in self.request["currencies"]
+                           if fx_symbol(code) not in unresolved}
+
     def covers(self, request):
         """Whether this bundle can answer ``request`` with no new request.
 
@@ -343,18 +396,26 @@ class MarketDataBundle:
         is knowable, which is what keeps two readers from disagreeing about it.
         """
         # Coverage is about what this bundle *resolved*, not what it was asked
-        # for. A bundle that requested {GOOD, DEAD} and priced only GOOD would
-        # otherwise "cover" a later request for DEAD, hand back a bundle with no
-        # DEAD price, and suppress the retry that a transient outage deserves
-        # (external review, finding 5). A narrower request over the priced part is
-        # still free, which is the reuse this exists for.
-        priced = set(self.priced)
-        resolved_fx = {code for code in self.request["currencies"] if code in self.fx}
-        if set(request["instruments"]) - priced:
+        # for. A bundle that requested {GOOD, DEAD} and priced only GOOD must not
+        # "cover" a later request for DEAD by handing back a bundle with no DEAD
+        # price when that symbol's request is the thing that failed — that would
+        # suppress the retry a transient outage deserves (external review,
+        # finding 5).
+        #
+        # But "unpriced" was two different facts wearing one shape, and #687 is
+        # what the conflation costs. *The provider answered and there is no close*
+        # — delisted, misspelled — is definitive: re-asking the same day cannot
+        # change it, yet the strict rule made such a bundle fail to cover **the
+        # exact request that produced it**, so every same-day command re-fetched
+        # the whole universe. *This symbol's own request never came back* is the
+        # transient one the paragraph above is about. Only the second may force a
+        # re-resolve, and `unresolved` is what separates them (see `_download`).
+        answered = self._answered_symbols()
+        if set(request["instruments"]) - answered:
             return False
-        if set(request["benchmarks"]) - priced:
+        if set(request["benchmarks"]) - answered:
             return False
-        if set(request["currencies"]) - resolved_fx:
+        if set(request["currencies"]) - self._answered_currencies():
             return False
         if self.request["window_start"] > request["window_start"]:
             return False
@@ -384,6 +445,9 @@ class MarketDataBundle:
             "splits": split_policy.to_json(self.splits),
             "fx": {code: rate for code, rate in sorted(self.fx.items())},
             "gaps": self.gaps,
+            # Absent, not empty, on a bundle that does not state it — `from_json`
+            # reads the difference and an older entry keeps the strict rule.
+            "unresolved": self.unresolved,
         }
 
     @classmethod
@@ -410,7 +474,8 @@ class MarketDataBundle:
                        splits=split_policy.normalize(blob.get("splits")),
                        fx=blob.get("fx") or {"USD": 1.0},
                        gaps=blob.get("gaps") or [],
-                       as_of=blob.get("as_of"))
+                       as_of=blob.get("as_of"),
+                       unresolved=blob.get("unresolved"))
         except (KeyError, TypeError, ValueError, MarketDataError,
                 split_policy.SplitDataError):
             return None
@@ -447,8 +512,23 @@ def _gap(code, detail=None):
     return {"code": code, "detail": detail} if detail else {"code": code}
 
 
-def _unavailable(request, gaps, source="unavailable"):
-    return MarketDataBundle(source=source, request=request, gaps=gaps)
+def _unavailable(request, gaps, source="unavailable", unresolved=None):
+    return MarketDataBundle(source=source, request=request, gaps=gaps,
+                            unresolved=unresolved)
+
+
+def _symbol_failure_gap(symbol, detail):
+    """One symbol's own request having failed, told apart from an outage.
+
+    Rate limiting is the retryable one and the one this repository has already
+    identified as common, so it gets its own stable code: a caller that cannot
+    distinguish "the source is limiting us, this is worth another moment" from
+    "the source is not answering" cannot say either to the user (#743).
+    """
+    if _rate_limited(detail):
+        return _gap("symbol_rate_limited",
+                    f"{symbol}: the provider rate-limited this symbol's request")
+    return _gap("symbol_request_failed", f"{symbol}: this symbol's request failed ({detail})")
 
 
 # ───────────────────────── the supplied adapter ─────────────────────────
@@ -579,8 +659,19 @@ def _provider_available():
     return True
 
 
+#: Substrings that mark a per-symbol failure as the provider throttling us
+#: rather than failing. ``YFRateLimitError`` is what yfinance raises on an HTTP
+#: 429; the other two catch the same condition arriving as a plain message from
+#: a version that spells it differently.
+_RATE_LIMIT_MARKERS = ("YFRateLimitError", "Too Many Requests", "429")
+
+
+def _rate_limited(detail):
+    return any(marker in str(detail or "") for marker in _RATE_LIMIT_MARKERS)
+
+
 def _download(symbols, start, end=None):
-    """The one provider call in this repository.
+    """The one provider call in this repository. Returns ``(data, errors)``.
 
     Isolated behind a module-level name for two reasons: the contract suite
     replaces it with a fake and counts invocations (the mechanical half of "one
@@ -592,12 +683,42 @@ def _download(symbols, start, end=None):
     response; ``auto_adjust=True`` matches the basis every existing reader
     assumes (verified: with actions present, closes are still retro-adjusted, so
     a split leaves no step in the series).
+
+    **Why this returns errors as well as data (#687).** ``yf.download`` does not
+    raise when a symbol's request fails. It catches per symbol, records the
+    exception in a private module global, and hands back an **empty column** —
+    so a rate-limited symbol is delivered in exactly the shape of a delisted
+    one. Measured against yfinance 1.3.0 with every HTTP entry point replaced by
+    one raising ``YFRateLimitError``: no exception, a well-formed frame, and the
+    limited symbol simply absent from ``priced``. Downstream that became
+    ``symbol_unpriced`` — the delisting code — and the ambiguity is what makes a
+    cached bundle fail to cover its own request, re-fetching the whole universe
+    on the next same-day command and issuing more requests into the very limit
+    that caused it.
+
+    Reading ``shared._ERRORS`` here is the *only* place that ambiguity can be
+    resolved, because it is the only place the distinction still exists. It is
+    returned rather than exposed as a second seam function on purpose: #621's
+    lesson is that a seam only half of which can be replaced is not a seam, and
+    a fake replacing ``_download`` alone would leave a reader of the real global
+    reporting whatever a previous real download had left behind.
+
+    It is a private global, so it is read defensively and its absence degrades
+    to "nothing is known to have failed" — which is exactly the behaviour that
+    predates this, never a fabricated failure.
     """
     import yfinance as yf
     kwargs = {"start": start, "progress": False, "auto_adjust": True, "actions": True}
     if end is not None:
         kwargs["end"] = end
-    return yf.download(list(symbols), **kwargs)
+    data = yf.download(list(symbols), **kwargs)
+    try:
+        from yfinance import shared as _yf_shared
+        errors = {str(symbol): str(detail)
+                  for symbol, detail in dict(_yf_shared._ERRORS).items()}  # noqa: SLF001
+    except Exception:  # noqa: BLE001  # a private global; its absence is not a failure
+        errors = {}
+    return data, errors
 
 
 def _field(data, name):
@@ -649,11 +770,20 @@ def _from_yahoo(request, *, root, today=None, env=None):
 
     universe = request_universe(request)
     try:
-        data = _download(universe, request["window_start"], request["window_end"])
+        data, errors = _download(universe, request["window_start"], request["window_end"])
     except Exception as exc:  # noqa: BLE001  # transport failures are many-shaped
         return _unavailable(request, [_gap("transport_failed", f"{type(exc).__name__}: {exc}")])
     if data is None or not len(data):
-        return _unavailable(request, [_gap("empty_response", "the provider returned no rows")])
+        # Every symbol failing is the *shape* of an empty response, and saying
+        # "the provider returned no rows" over a universe that was rate limited
+        # is the same conflation `_download` exists to end — one degree larger.
+        # When the failures are known, they are what gets reported.
+        failed = sorted(set(errors) & set(universe))
+        failures = [_symbol_failure_gap(symbol, errors[symbol]) for symbol in failed]
+        return _unavailable(
+            request,
+            failures or [_gap("empty_response", "the provider returned no rows")],
+            unresolved=failed)
 
     closes = _field(data, "Close")
     if closes is None:
@@ -673,18 +803,22 @@ def _from_yahoo(request, *, root, today=None, env=None):
             "the response carries closes but no Stock Splits field, so no share basis can be "
             "established for them")])
 
-    bundle = _build_yahoo_bundle(request, closes, actions)
+    bundle = _build_yahoo_bundle(request, closes, actions, errors)
     if bundle.usable:
         _cache_store(bundle, root=root, today=today)
     return bundle
 
 
-def _build_yahoo_bundle(request, closes, actions):
+def _build_yahoo_bundle(request, closes, actions, errors=None):
     """Assemble the bundle from one already-fetched response.
 
     Split out from :func:`_from_yahoo` so the contract suite can drive the pure
     normalization — FX direction, split filtering, coverage, gap codes — from a
     recorded response with no provider and no monkeypatching at all.
+
+    ``errors`` is :func:`_download`'s per-symbol failure map. It decides only
+    *which* fact an unpriced symbol is — a definitive absence or a request that
+    never came back — and never invents an observation.
     """
     try:
         import pandas as pd
@@ -692,13 +826,16 @@ def _build_yahoo_bundle(request, closes, actions):
         return _unavailable(request, [_gap(
             "provider_missing", "pandas is not installed; a price frame cannot be built")])
 
+    errors = errors or {}
+    unresolved = sorted(set(errors) & set(request_universe(request)))
     gaps = []
     instrument_symbols = sorted(set(request["instruments"]) | set(request["benchmarks"]))
     frame = _series_frame(pd, {s: closes.get(s) or [] for s in instrument_symbols})
     for symbol in instrument_symbols:
         if not (closes.get(symbol) or []):
-            gaps.append(_gap("symbol_unpriced",
-                             f"{symbol}: the provider returned no usable close"))
+            gaps.append(_symbol_failure_gap(symbol, errors[symbol]) if symbol in errors
+                        else _gap("symbol_unpriced",
+                                  f"{symbol}: the provider returned no usable close"))
 
     # A split observation is what the source reported inside the window, kept
     # only for instruments: an FX pair carries a zero-filled Stock Splits column
@@ -716,7 +853,8 @@ def _build_yahoo_bundle(request, closes, actions):
 
     fx, fx_frame = _fx_from_closes(pd, request, closes, gaps)
     return MarketDataBundle(source="yahoo", request=request, frame=frame,
-                            splits=observed_splits, fx=fx, fx_frame=fx_frame, gaps=gaps)
+                            splits=observed_splits, fx=fx, fx_frame=fx_frame, gaps=gaps,
+                            unresolved=unresolved)
 
 
 def _series_frame(pd, columns):

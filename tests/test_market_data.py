@@ -73,12 +73,16 @@ class FakeProvider:
     """Stands in for `market_data._download`, counting calls and universes."""
 
     def __init__(self, closes=None, actions=None, raises=None, empty=False,
-                 flat_columns=False):
+                 flat_columns=False, errors=None):
         self.closes = RECORDED_CLOSES if closes is None else closes
         self.actions = RECORDED_SPLITS if actions is None else actions
         self.raises = raises
         self.empty = empty
         self.flat_columns = flat_columns
+        # The per-symbol failure map the real `_download` reads out of yfinance.
+        # Default `{}` is "the provider answered for everything", which is what
+        # every pre-existing test in this file means.
+        self.errors = dict(errors or {})
         self.calls = []
 
     def __call__(self, symbols, start, end=None):
@@ -86,14 +90,15 @@ class FakeProvider:
         if self.raises is not None:
             raise self.raises
         import pandas as pd
+        errors = {s: detail for s, detail in self.errors.items() if s in set(symbols)}
         if self.empty:
-            return pd.DataFrame()
+            return pd.DataFrame(), errors
         index = sorted({day for pairs in self.closes.values() for day, _ in pairs})
         if not index:
-            return pd.DataFrame()
+            return pd.DataFrame(), errors
         idx = pd.DatetimeIndex([dt.datetime(d.year, d.month, d.day) for d in index])
         if self.flat_columns:                     # a shape this engine must refuse to guess at
-            return pd.DataFrame({"Close": [1.0] * len(index)}, index=idx)
+            return pd.DataFrame({"Close": [1.0] * len(index)}, index=idx), errors
         data = {}
         for field, source in (("Close", self.closes), ("Stock Splits", self.actions)):
             for symbol in symbols:
@@ -101,7 +106,7 @@ class FakeProvider:
                 data[(field, symbol)] = [series.get(day, float("nan")) for day in index]
         frame = pd.DataFrame(data, index=idx)
         frame.columns = pd.MultiIndex.from_tuples(frame.columns)
-        return frame
+        return frame, errors
 
 
 class provider:
@@ -476,8 +481,9 @@ def test_d_closes_without_a_split_field_are_refused_rather_than_used():
     """
     class NoActions(FakeProvider):
         def __call__(self, symbols, start, end=None):
-            frame = FakeProvider.__call__(self, symbols, start, end)
-            return frame.drop(columns=[c for c in frame.columns if c[0] == "Stock Splits"])
+            frame, errors = FakeProvider.__call__(self, symbols, start, end)
+            return frame.drop(
+                columns=[c for c in frame.columns if c[0] == "Stock Splits"]), errors
 
     with provider(NoActions()) as p:
         bundle = p.resolve(_request(currencies=[]))
@@ -486,6 +492,66 @@ def test_d_closes_without_a_split_field_are_refused_rather_than_used():
     assert bundle.frame is None and not bundle.priced
     assert [g["code"] for g in bundle.gaps] == ["response_shape"], bundle.gaps
     assert "Stock Splits" in (bundle.gaps[0].get("detail") or ""), bundle.gaps
+
+
+def test_d_a_rate_limited_symbol_is_not_reported_as_a_delisting():
+    """#743: the two failures that look identical on the wire must not read
+    identical downstream.
+
+    `yf.download` does not raise on a 429 — it records the exception per symbol
+    and hands back an empty column, which is bit-for-bit what a delisted symbol
+    returns. Reported as `symbol_unpriced`, a throttle became a permanent fact
+    about the user's holding, and nothing downstream could say "the source is
+    limiting us, this is worth another moment" rather than "this symbol has no
+    price".
+    """
+    limited = FakeProvider(errors={"DEAD": "YFRateLimitError('Too Many Requests. Rate limited.')"})
+    with provider(limited) as p:
+        bundle = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
+    codes = {gap["code"] for gap in bundle.gaps}
+    assert "symbol_rate_limited" in codes, f"a throttled symbol says so: {bundle.gaps}"
+    assert "symbol_unpriced" not in codes, (
+        f"and never wears the delisting code while it does: {bundle.gaps}")
+    assert bundle.unresolved == ["DEAD"], "it is outstanding, not answered"
+
+
+def test_d_a_symbol_that_failed_for_another_reason_is_told_apart_from_a_throttle():
+    """The taxonomy has to distinguish both ways round, or the retryable and the
+    non-retryable failure are still one bucket wearing a new name."""
+    broken = FakeProvider(errors={"DEAD": "JSONDecodeError('Expecting value')"})
+    with provider(broken) as p:
+        bundle = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
+    codes = {gap["code"] for gap in bundle.gaps}
+    assert codes & {"symbol_request_failed"}, f"an outage says so: {bundle.gaps}"
+    assert "symbol_rate_limited" not in codes, (
+        f"and is not upgraded into a throttle nobody observed: {bundle.gaps}")
+
+
+def test_d_a_universe_that_was_entirely_throttled_is_not_called_an_empty_response():
+    """The same conflation one degree larger. Every symbol failing produces the
+    *shape* of an empty response — zero rows — and "the provider returned no
+    rows" over a universe that was rate limited is the misreport this fixes."""
+    throttled = FakeProvider(empty=True, errors={
+        "NVDA": "YFRateLimitError('Too Many Requests')",
+        "AAPL": "YFRateLimitError('Too Many Requests')"})
+    with provider(throttled) as p:
+        bundle = p.resolve(_request(instruments=["NVDA", "AAPL"], benchmarks=[], currencies=[]))
+    codes = {gap["code"] for gap in bundle.gaps}
+    assert codes == {"symbol_rate_limited"}, f"it states the throttle: {bundle.gaps}"
+    assert not bundle.usable, "and it is still a degraded bundle that is never cached as a day"
+
+
+def test_d_an_unknown_provider_shape_degrades_to_the_behaviour_that_predates_it():
+    """`_download` reads a *private* yfinance global. If a future version moves
+    or renames it the map arrives empty, and empty must mean "nothing is known
+    to have failed" — the pre-#687 reading — never a fabricated failure and
+    never a suppressed retry."""
+    with provider(FakeProvider(errors={})) as p:
+        bundle = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
+    codes = {gap["code"] for gap in bundle.gaps}
+    assert codes == {"symbol_unpriced"}, (
+        f"with nothing known to have failed, an unpriced symbol is exactly what it was: "
+        f"{bundle.gaps}")
 
 
 def test_d_gap_codes_are_declared_before_they_are_emitted():
@@ -613,19 +679,23 @@ def test_e2_a_frozen_pass_reuses_the_recorded_frame_and_asks_nothing():
 def test_e2_a_frozen_pass_reuses_a_frame_the_coverage_rule_would_refuse():
     """The #665 mechanism itself, at the level it happens.
 
-    DEAD comes back present-but-empty, exactly as a delisted or misspelled symbol
-    does. `covers` then refuses to serve this request from its own stored bundle
-    — deliberately, so a transient outage gets its retry — and every later pass
-    on the same book re-resolves. That retry is right for a fresh review and
-    wrong for one being amended, and the difference is the posture, not the
-    bundle.
+    DEAD's own request fails, so it comes back unpriced *and* unresolved.
+    `covers` then refuses to serve this request from its own stored bundle —
+    deliberately, so a transient outage gets its retry — and every later pass on
+    the same book re-resolves. That retry is right for a fresh review and wrong
+    for one being amended, and the difference is the posture, not the bundle.
+
+    The refusal is driven by a failed request rather than by a merely unpriced
+    symbol because #687 made the two different things: a symbol the provider
+    definitively answered nothing for no longer forces a re-resolve, so it can
+    no longer set up this precondition.
     """
     request = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
-    with provider() as p:
+    with provider(FakeProvider(errors={"DEAD": "YFRateLimitError('Too Many Requests')"})) as p:
         stored = p.resolve(request)
         assert not stored.covers(request), (
-            "precondition: an unpriced symbol is exactly what makes the ordinary cache refuse "
-            "to serve the request that produced it")
+            "precondition: a symbol whose own request failed is exactly what makes the "
+            "ordinary cache refuse to serve the request that produced it")
         market_data.reset_memo()
         ordinary = p.resolve(request)
         assert len(p.calls) == 2, (
@@ -824,11 +894,18 @@ def test_g_coverage_is_what_a_bundle_resolved_not_what_it_was_asked_for():
 
     A bundle that requested {NVDA, DEAD} and priced only NVDA is worth caching —
     a later request needing NVDA alone must be free. What it must NOT do is answer
-    a request that still needs DEAD: comparing the new request against the cached
-    bundle's *requested* symbols returned a bundle with no DEAD price and
-    suppressed the retry a transient outage deserves (external review, finding 5).
+    a request that still needs DEAD *when DEAD's own request is what failed*:
+    comparing the new request against the cached bundle's *requested* symbols
+    returned a bundle with no DEAD price and suppressed the retry a transient
+    outage deserves (external review, finding 5).
+
+    DEAD is rate limited here rather than merely unpriced, which is the half of
+    the original rule #687 left standing. The other half — a symbol the provider
+    *answered* nothing for — is
+    :func:`test_g_a_definitively_absent_symbol_covers_the_request_that_produced_it`.
     """
-    with provider() as p:
+    limited = FakeProvider(errors={"DEAD": "YFRateLimitError('Too Many Requests')"})
+    with provider(limited) as p:
         bundle = p.resolve(_request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[]))
         assert bundle.usable and bundle.coverage()["missing"] == ["DEAD"]
         assert p.day_entries(), "a bundle with real coverage must still be cached"
@@ -842,24 +919,108 @@ def test_g_coverage_is_what_a_bundle_resolved_not_what_it_was_asked_for():
         market_data.reset_memo()
         still_needs_dead = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
         assert not bundle.covers(still_needs_dead), (
-            "a bundle that never priced DEAD does not cover a request for DEAD, however it was "
-            "labelled when the request went out")
+            "a bundle whose DEAD request failed does not cover a request for DEAD, however it "
+            "was labelled when the request went out")
         p.resolve(still_needs_dead)
         assert len(p.calls) == 2, (
             f"the unresolved symbol must be retried, not answered from a bundle that never had "
             f"it ({len(p.calls)} calls)")
 
 
+def test_g_a_definitively_absent_symbol_covers_the_request_that_produced_it():
+    """#687: a symbol that will never price must not cost the universe every time.
+
+    DEAD comes back present-but-empty with no failure recorded against it —
+    delisted, or misspelled, both ordinary in a real book. That is a *final*
+    same-day answer: re-asking cannot change it. Before this, the superset rule
+    made such a bundle fail to cover **the exact request that produced it**, so
+    every same-day `prepare`/`resume`/`consider`/`add-cash` re-fetched the whole
+    universe — paying full provider cost for every *other* symbol to re-learn
+    nothing. Worse under a provider that limits by rate: being throttled would
+    strand a symbol, and the stranding is what issued the extra requests.
+    """
+    request = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
+    with provider() as p:
+        bundle = p.resolve(request)
+        assert bundle.coverage()["missing"] == ["DEAD"], "precondition: DEAD never priced"
+        assert bundle.unresolved == [], (
+            "the provider answered for everything asked; nothing is outstanding")
+        assert bundle.covers(request), (
+            "a bundle must cover the exact request that produced it (#687)")
+
+        market_data.reset_memo()
+        p.resolve(request)
+        assert len(p.calls) == 1, (
+            f"the identical same-day request must cost no second pass ({len(p.calls)} calls)")
+
+
+def test_g_a_definitively_absent_symbol_survives_the_cache_as_answered():
+    """The #687 fix has to hold across the process boundary, because that is the
+    boundary it exists for: `prepare` and `consider` are separate CLI runs, so
+    the in-process memo cannot span them and only the disk cache can."""
+    request = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
+    with provider() as p:
+        p.resolve(request)
+        market_data.reset_memo()                  # a new process, same day, same book
+        again = p.resolve(request)
+        assert len(p.calls) == 1, (
+            f"the disk cache must answer it with no provider pass ({p.calls})")
+        assert again.source == "yahoo" and again.unresolved == [], (
+            "and it must come back still stating that nothing is outstanding")
+
+
+def test_g_an_older_cache_entry_keeps_the_strict_rule_rather_than_guessing():
+    """An entry written before `unresolved` existed cannot say which of its
+    unpriced symbols were answered, so it must not be read as though it said
+    "all of them" — that would suppress a retry it never earned. Absent is not
+    empty, and the tri-state is what carries the difference."""
+    request = _request(instruments=["NVDA", "DEAD"], benchmarks=[], currencies=[])
+    with provider() as p:
+        bundle = p.resolve(request)
+        legacy = bundle.to_json()
+        legacy.pop("unresolved")                  # exactly what an older engine wrote
+        reloaded = market_data.MarketDataBundle.from_json(legacy)
+        assert reloaded is not None and reloaded.unresolved is None
+        assert not reloaded.covers(request), (
+            "an entry that cannot state what was answered falls back to the strict rule")
+
+
 def test_g_an_unresolved_currency_is_not_covered_either():
     """The same rule on the FX axis, which has its own consequence: a bundle
     reused as though it carried a rate it never resolved sends a mixed-currency
-    book to a refusal that a retry might have avoided."""
-    with provider(FakeProvider(closes=dict(RECORDED_CLOSES, **{"TWD=X": []}))) as p:
+    book to a refusal that a retry might have avoided.
+
+    "Might have avoided" is the whole load-bearing clause, and it is only true
+    when the rate's own request failed — which is what this sets up. When the
+    provider answered and simply has no usable rate, a retry would return the
+    same nothing, so the refusal is correct and re-fetching the universe to
+    reconfirm it is the #687 waste on the FX axis."""
+    rateless = dict(RECORDED_CLOSES, **{"TWD=X": []})
+    with provider(FakeProvider(closes=rateless,
+                               errors={"TWD=X": "YFRateLimitError('Too Many Requests')"})) as p:
         bundle = p.resolve(_request(instruments=["NVDA"], benchmarks=[], currencies=["TWD"]))
         assert "TWD" not in bundle.fx
         assert not bundle.covers(_request(instruments=["NVDA"], benchmarks=[],
                                           currencies=["TWD"]))
         assert bundle.covers(_request(instruments=["NVDA"], benchmarks=[], currencies=[]))
+
+
+def test_g_a_currency_the_provider_has_no_rate_for_is_answered_not_retried():
+    """The other half, on the FX axis. No failure against `TWD=X` means the
+    provider answered: the rate does not exist today, the mixed-currency book
+    still fails closed on it, and re-asking cannot change either fact."""
+    rateless = FakeProvider(closes=dict(RECORDED_CLOSES, **{"TWD=X": []}))
+    request = _request(instruments=["NVDA"], benchmarks=[], currencies=["TWD"])
+    with provider(rateless) as p:
+        bundle = p.resolve(request)
+        assert "TWD" not in bundle.fx, "precondition: the rate really is missing"
+        assert any(gap["code"] == "fx_unavailable" for gap in bundle.gaps), (
+            "and it is still disclosed as a gap rather than silently defaulted")
+        assert bundle.covers(request), "a definitive absence covers its own request (#687)"
+        market_data.reset_memo()
+        p.resolve(request)
+        assert len(p.calls) == 1, (
+            f"re-confirming a rate the provider does not publish is not worth a pass ({p.calls})")
 
 
 def test_g_a_warm_memo_cannot_serve_an_offline_process():
