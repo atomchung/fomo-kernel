@@ -321,17 +321,19 @@ def _answers(plan, evidence=True, commitment=None):
 
 
 def _narrative(language="zh-TW"):
+    # #773: rule_rationale dropped (both language branches carried it) — it
+    # is no longer in ALLOWED_NARRATIVE, so keeping it here would make every
+    # caller of this shared fixture fail validate_narrative with "unknown
+    # narrative fields: rule_rationale".
     if language == "en":
         return {"headline": "A lower price is not automatically a stronger thesis",
                 "mirror": "The add only becomes deliberate when the reason can survive the next review.",
                 "counterfactual": "Without a new fact, the action would have been cost-basis repair.",
-                "rule_rationale": "This rule turns conviction into something falsifiable.",
                 "honesty": {"etf_metadata": "The allocation ETF is missing expense-ratio data, "
                                             "and the gap was disclosed instead of treated as zero."}}
     return {"headline": "價格變低，不等於 thesis 自動變強",
             "mirror": "這次加碼只有在理由能被下次復盤驗證時，才算有意識的決策。",
             "counterfactual": "如果沒有新事實，這個動作就只是修補成本。",
-            "rule_rationale": "這條規矩把信心變成可被推翻的判斷。",
             "honesty": {"etf_metadata": "配置型 ETF 缺費用率資料，這裡把缺口講明，而不是把缺值當成零。"}}
 
 
@@ -6786,6 +6788,163 @@ def test_mixed_market_private_card_renders_each_market_and_winning_split():
         "mixed cards must never render the top-level scope row as a combined third result"
 
 
+def _mixed_market_card_with_alpha_and_stress():
+    """#755 repro fixture: unlike ``_mixed_market_card_for_rendering`` above,
+    this one carries ``alpha_stat``/``ci95`` and ``what_if`` — the two fields
+    the reported bug needs to reproduce (a market-scoped alpha line and a
+    portfolio-wide stress line), which that shared fixture deliberately
+    omits for its own, different assertions. A single-market fixture cannot
+    exercise this at all: the grouping code this pins is inert whenever
+    ``len(markets) <= 1`` (#755's own fixture-trap warning)."""
+    return {
+        "alpha_beta_breakdown": {
+            "scope": "TW", "port_tot": 9.99, "spy_tot": -9.99,
+            "excess_vs_spy": 19.98, "beta": 99.0,
+            "alpha_stat": {"alpha_ann": 0.24, "ci95": [-0.17, 0.65]},
+            "by_market": {
+                "TW": {
+                    "bench": "^TWII", "port_tot": 0.20, "spy_tot": 0.10,
+                    "excess_vs_spy": 0.18, "beta": 1.17,
+                    "excess_split": {"excess": 0.18, "allocation": 0.0,
+                                     "selection": 0.18, "coverage": 1.0,
+                                     "proxy": {}, "unproxied": []}},
+                "US": {
+                    "bench": "SPY", "port_tot": 0.05, "spy_tot": 0.08,
+                    "excess_vs_spy": -0.08, "beta": 1.19,
+                    "excess_split": {"excess": -0.08, "allocation": 0.01,
+                                     "selection": -0.09, "coverage": 1.0,
+                                     "proxy": {}, "unproxied": []}},
+            },
+        },
+        "what_if": {
+            "scenario": {"kind": "single_ticker", "ticker": "2330.TW"},
+            "mval": 2910000, "pct": 0.80, "drop30": 873000, "drop50": 1455000,
+        },
+        "overview": {"total_pnl": 100000, "realized": 50000, "unrealized": 50000},
+        "currency_meta": {"mixed": False, "aggregate_currency": "TWD"},
+    }
+
+
+def test_market_scoped_alpha_item_carries_its_own_market_tag():
+    """#755 root cause, pinned directly on the item structure: the alpha
+    line's underlying stat is scoped to one market (``ab["scope"]``, the same
+    value its own "TW部位"/"US部位" wording reads), but the item used to carry
+    no ``market`` key at all — so the renderers' grouping loop had nothing to
+    place it under and it silently trailed after whichever market's rows
+    printed last."""
+    import card_renderer
+    card = _mixed_market_card_with_alpha_and_stress()
+    items = card_renderer._performance_items(card, "zh-TW")
+    alpha_items = [item for item in items if item.get("tag") == "alpha"]
+    assert len(alpha_items) == 1, alpha_items
+    assert alpha_items[0].get("market") == "TW", \
+        f"alpha is scoped to TW (ab['scope']) and must carry that tag: {alpha_items[0]}"
+    # It must also sit directly after TW's own rows, not after every market's
+    # rows regardless of which one it describes.
+    tags_in_order = [(item.get("tag"), item.get("market")) for item in items
+                     if item.get("tag") in ("benchmark", "split", "alpha")]
+    assert tags_in_order == [
+        ("benchmark", "TW"), ("split", "TW"), ("alpha", "TW"), ("benchmark", "US"),
+    ], tags_in_order
+
+
+def test_mixed_market_card_groups_alpha_under_tw_and_never_inside_us():
+    """#755 end-to-end reproduction, matching the issue's own Observed
+    section byte-for-byte before the fix: alpha and the exposure/stress line
+    rendered as bare continuation bullets under ``[US]``."""
+    import card_renderer
+    bundle = {
+        "schema_version": 2, "language": "zh-TW", "route": "weekly_review",
+        "engine_card": _mixed_market_card_with_alpha_and_stress(),
+        "commitment": None, "answers": {}, "thesis_updates": [],
+        "narrative": {"headline": "h", "mirror": "m", "honesty": {}},
+        "engine_state": {"date_start": "2026-01-01", "date_end": "2026-07-01",
+                         "n_round_trips": 14, "n_held": 5,
+                         "review_tier": {"tier": "behavioral"}, "metrics": {},
+                         "holdings": {"positions": {}}},
+    }
+    md = card_renderer.render_private(bundle)
+    tw_block = md.split("[TW]", 1)[1].split("[US]", 1)[0]
+    us_block = md.split("[US]", 1)[1].split("## 關鍵交易", 1)[0]
+    assert "風險調整後 alpha" in tw_block, \
+        "the TW-scoped alpha line must render under [TW], not after it"
+    assert "風險調整後 alpha" not in us_block, \
+        "the TW-scoped alpha line must never render under [US]"
+    assert "2330.TW 暴險" in us_block, \
+        "sanity: the stress line is the thing trailing after [US] in this fixture"
+    # The stress/exposure line is portfolio-wide (what_if picks the single
+    # largest concentration regardless of market), so it must not be mislabeled
+    # as belonging to either market — but it must also not read as one more
+    # bullet under [US]'s header, which the blank-line break before it exists
+    # to prevent.
+    us_lines = us_block.strip("\n").split("\n")
+    stress_index = next(i for i, line in enumerate(us_lines) if "2330.TW 暴險" in line)
+    assert us_lines[stress_index - 1] == "", \
+        f"a blank line must separate the portfolio-wide stress line from [US]'s bullets: {us_lines}"
+
+
+def test_mixed_market_html_groups_alpha_under_tw_and_never_inside_us():
+    """The HTML surface must show the same grouping the Markdown surface
+    does (#755): the issue reported both, not just one."""
+    import card_renderer
+    bundle = {
+        "schema_version": 2, "language": "zh-TW", "route": "weekly_review",
+        "engine_card": _mixed_market_card_with_alpha_and_stress(),
+        "commitment": None, "answers": {}, "thesis_updates": [],
+        "narrative": {"headline": "h", "mirror": "m", "honesty": {}},
+        "engine_state": {"date_start": "2026-01-01", "date_end": "2026-07-01",
+                         "n_round_trips": 14, "n_held": 5,
+                         "review_tier": {"tier": "behavioral"}, "metrics": {},
+                         "holdings": {"positions": {}}},
+    }
+    html = card_renderer.render_html(bundle)
+    tw_ul = html.split('[TW]</p><ul>', 1)[1].split('</ul>', 1)[0]
+    us_ul = html.split('[US]</p><ul>', 1)[1].split('</ul>', 1)[0]
+    assert "風險調整後 alpha" in tw_ul, "alpha must be an <li> inside TW's own <ul>"
+    assert "風險調整後 alpha" not in us_ul, "alpha must never be an <li> inside US's <ul>"
+    after_us_ul = html.split('[US]</p><ul>', 1)[1].split('</ul>', 1)[1]
+    assert "2330.TW 暴險" in after_us_ul.split("</div>", 1)[0], \
+        "sanity: the stress paragraph is the thing right after US's </ul> in this fixture"
+    assert 'margin-top:var(--rc-sp-4)' in after_us_ul.split("</div>", 1)[0], \
+        "the paragraph following a closed market group must carry the visual break"
+
+
+def test_single_market_card_never_prints_a_market_header():
+    """Regression guard for #755's own fixture-trap warning: the grouping
+    logic (and the blank-line/margin break it now adds) must stay completely
+    inert on a single-market card. ``len(markets) <= 1`` collapses every
+    ``market`` lookup to ``None`` for the whole block, so this is a structural
+    guarantee, not a per-string coincidence."""
+    import card_renderer
+    card = {
+        "alpha_beta_breakdown": {
+            "scope": None, "by_market": None, "bench": "SPY",
+            "port_tot": 0.20, "spy_tot": 0.10, "excess_vs_spy": 0.10, "beta": 1.10,
+            "alpha_stat": {"alpha_ann": 0.24, "ci95": [0.05, 0.45]},
+            "excess_split": {"excess": 0.10, "allocation": 0.04, "selection": 0.06,
+                             "coverage": 1.0, "proxy": {}, "unproxied": []},
+        },
+        "what_if": {"scenario": {"kind": "single_ticker", "ticker": "NVDA"},
+                    "mval": 291000, "pct": 0.80, "drop30": 87300, "drop50": 145500},
+        "overview": {"total_pnl": 100000, "realized": 50000, "unrealized": 50000},
+        "currency_meta": {"mixed": False, "aggregate_currency": "USD"},
+    }
+    bundle = {
+        "schema_version": 2, "language": "en", "route": "weekly_review",
+        "engine_card": card, "commitment": None, "answers": {}, "thesis_updates": [],
+        "narrative": {"headline": "h", "mirror": "m", "honesty": {}},
+        "engine_state": {"date_start": "2026-01-01", "date_end": "2026-07-01",
+                         "n_round_trips": 14, "n_held": 5,
+                         "review_tier": {"tier": "behavioral"}, "metrics": {},
+                         "holdings": {"positions": {}}},
+    }
+    md = card_renderer.render_private(bundle)
+    assert "[TW]" not in md and "[US]" not in md
+    html = card_renderer.render_html(bundle)
+    assert "panel-label\">[" not in html
+    assert "margin-top:var(--rc-sp-4)" not in html
+
+
 def test_display_currency_converts_aggregate_amounts():
     import card_renderer
     base = {
@@ -8525,6 +8684,155 @@ def test_headline_motive_skip_keeps_bundle_key_absent_for_replay_compat():
         assert bundle_path.read_text(encoding="utf-8") == before_retry
 
 
+def test_snapshot_strength_prefers_authored_narrative_over_the_engine_fallback():
+    """#773: the snapshot branch used to always print _snapshot_strength_line's
+    mechanical completeness sentence, ignoring narrative.get("strength")
+    unconditionally — an asymmetry with the non-snapshot branch that had no
+    route reason for it (unlike the counterfactual exception below, which
+    does). An authored strength sentence can state something specific about
+    the declared book that a two-branch completeness check cannot, so it now
+    takes the same priority the non-snapshot branch already gave it."""
+    import card_renderer
+    card = {"snapshot_summary": {"weights_available": True}}
+    copy = card_renderer.load_copy("en")
+    authored = "The book leans toward names with real pricing power."
+    blocks = card_renderer._risks_block({}, card, copy, {"strength": authored}, True)
+    panel = next(payload for kind, payload in blocks
+                if kind == "panel" and payload["style"] == "strength")
+    assert authored in str(panel["blocks"]), \
+        "authored narrative.strength must reach a snapshot card"
+
+
+def test_snapshot_strength_falls_back_to_the_engine_sentence_when_nothing_authored():
+    """The other half of the same fix: with no authored strength, the
+    snapshot branch must still fall back to _snapshot_strength_line (never a
+    blank panel) — the fix adds a priority, it does not remove the
+    fallback."""
+    import card_renderer
+    card = {"snapshot_summary": {"weights_available": True}}
+    copy = card_renderer.load_copy("en")
+    blocks = card_renderer._risks_block({}, card, copy, {}, True)
+    panel = next(payload for kind, payload in blocks
+                if kind == "panel" and payload["style"] == "strength")
+    engine_line = card_renderer._snapshot_strength_line(card, "en")
+    assert engine_line and engine_line in str(panel["blocks"])
+
+
+def test_snapshot_counterfactual_never_leaks_even_when_authored():
+    """#773: counterfactual pairs with a diagnosed behavioral hole a
+    snapshot_review cannot produce (no transaction history) — the one field
+    intentionally excluded from narrative_fields_not_rendered's route-
+    specific set, on snapshot_review only. Authoring it anyway must not leak
+    it onto the card (validate_narrative still accepts it — this is a
+    rendering boundary, not a rejection; #773's non-goals explicitly leave
+    the routing decision itself unchallenged)."""
+    import card_renderer
+    card = {"snapshot_summary": {"weights_available": True}}
+    copy = card_renderer.load_copy("en")
+    sentinel = "SENTINEL_COUNTERFACTUAL_MUST_NOT_APPEAR"
+    blocks = card_renderer._risks_block(
+        {}, card, copy, {"strength": "ok", "counterfactual": sentinel}, True)
+    assert sentinel not in str(blocks)
+
+
+def test_first_review_counterfactual_still_renders_beside_its_hole():
+    """Regression guard: the snapshot exception must not spill onto other
+    routes — counterfactual keeps its existing non-snapshot behavior."""
+    import card_renderer
+    card = {"top_holes": [{"severity": 0.6, "raw": {
+        "dim": "加碼攤平", "tickers": ["PLTR"], "number_line": "PLTR line"}}]}
+    copy = card_renderer.load_copy("en")
+    sentinel = "SENTINEL_COUNTERFACTUAL_MUST_APPEAR"
+    blocks = card_renderer._risks_block(
+        {}, card, copy, {"strength": "ok", "counterfactual": sentinel}, False)
+    assert sentinel in str(blocks)
+
+
+def test_preview_reports_a_discarded_narrative_field_on_snapshot_review():
+    """#773 acceptance criterion: preview must report, in its response, any
+    authored narrative field this route's card discarded — not a silent
+    no-op the agent can only find by diffing its own text against the card."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root)
+        answers = _snapshot_answers(plan, commitment="skip")
+        narrative = _snapshot_narrative(plan)
+        narrative["counterfactual"] = "This must be discarded on snapshot_review."
+        a_path = pathlib.Path(tmp) / "answers.json"
+        n_path = pathlib.Path(tmp) / "narrative.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        run = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                   "--answers", a_path, "--narrative", n_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        payload = json.loads(run.stdout)
+        assert payload["narrative_fields_discarded"] == ["counterfactual"]
+        assert "This must be discarded" not in payload["private_card"], \
+            "sanity: the discarded field really did not reach the card"
+
+
+def test_preview_reports_no_discarded_fields_when_nothing_route_excluded_is_authored():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _path = _snapshot_prepare(tmp, root)
+        answers = _snapshot_answers(plan, commitment="skip")
+        narrative = _snapshot_narrative(plan)
+        a_path = pathlib.Path(tmp) / "answers.json"
+        n_path = pathlib.Path(tmp) / "narrative.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        run = _run("preview", "--root", root, "--session-id", plan["session_id"],
+                   "--answers", a_path, "--narrative", n_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert json.loads(run.stdout)["narrative_fields_discarded"] == []
+
+
+def test_authoring_contract_narrative_fields_match_what_each_route_renders():
+    """#773's third acceptance criterion: the advertised list must match what
+    the renderer actually consumes, for at least first_review and
+    snapshot_review, so the two cannot drift apart again.
+
+    Generic over ALLOWED_NARRATIVE (minus honesty, which is keyed by
+    required_honesty_keys rather than a fixed field name) so a future field
+    gets the same coverage automatically — a hand-picked per-field test list
+    is exactly the surface that let #773 ship silently in the first place."""
+    import card_renderer
+
+    def bundle_for(route, narrative):
+        engine_card = ({"top_holes": [{"severity": 0.6, "raw": {
+            "dim": "加碼攤平", "tickers": ["X"], "number_line": "line"}}]}
+            if route != "snapshot_review" else {"snapshot_summary": {"weights_available": True}})
+        return {
+            "schema_version": 2, "language": "en", "route": route,
+            "engine_card": engine_card, "commitment": None, "answers": {},
+            "thesis_updates": [], "narrative": narrative,
+            "engine_state": {"date_start": "2026-01-01", "date_end": "2026-07-01",
+                             "n_round_trips": 14, "n_held": 5,
+                             "review_tier": {"tier": "behavioral"}, "metrics": {},
+                             "holdings": {"positions": {}}},
+        }
+
+    for route in ("first_review", "snapshot_review"):
+        not_rendered = set(card_renderer.narrative_fields_not_rendered(route))
+        consumed_fields = sorted(card_renderer.ALLOWED_NARRATIVE - {"honesty"} - not_rendered)
+        assert consumed_fields, f"{route}: sanity — must consume at least one field"
+        for field in consumed_fields:
+            sentinel = f"SENTINEL_{field.upper()}_{route.upper()}"
+            narrative = {"headline": "h", "mirror": "m", field: sentinel}
+            rendered = card_renderer.render_private(bundle_for(route, narrative))
+            assert sentinel in rendered, (
+                f"{route}: authoring_contract advertises {field!r} as allowed and "
+                f"not excluded by not_rendered_on_this_route, but the card never "
+                f"rendered it — the #773 defect")
+        for field in sorted(not_rendered):
+            sentinel = f"SENTINEL_{field.upper()}_{route.upper()}"
+            narrative = {"headline": "h", "mirror": "m", field: sentinel}
+            rendered = card_renderer.render_private(bundle_for(route, narrative))
+            assert sentinel not in rendered, (
+                f"{route}: {field!r} is marked not_rendered_on_this_route, but the "
+                f"sentinel leaked through — the exception list is now wrong")
+
+
 def test_headline_motive_event_copies_only_engine_context_and_routes_ticker_row():
     """#294/#288 boundary: consume existing context keys without inventing them."""
     question = {
@@ -9399,6 +9707,14 @@ def test_authoring_contract_mirrors_validation_constants():
         assert narrative_contract["allowed_fields"] == \
             sorted(review_engine.card_renderer.ALLOWED_NARRATIVE)
         assert narrative_contract["required"] == ["headline", "mirror"]
+        # #773: allowed_fields alone cannot tell the agent a field is accepted
+        # but never rendered on this route — not_rendered_on_this_route must
+        # equal the same function the renderer itself is built from, not a
+        # second hand-authored list.
+        assert narrative_contract["not_rendered_on_this_route"] == \
+            review_engine.card_renderer.narrative_fields_not_rendered("snapshot_review")
+        assert narrative_contract["not_rendered_on_this_route"] == \
+            ["counterfactual", "rule_rationale"]
         # #260: gaps the engine chose not to ask about must stay neutral
         # coverage facts — the clause is contract surface, so pin its wording.
         assert narrative_contract["unprompted_gaps"] == (
@@ -9407,6 +9723,54 @@ def test_authoring_contract_mirrors_validation_constants():
             "facts; do not frame them as the user's negligence, and do not make "
             "them the central judgment of the headline or mirror"
         )
+
+
+def test_authoring_contract_not_rendered_marker_differs_by_route():
+    """#773: first_review has no counterfactual exception (only snapshot_review
+    does — no transaction history to pair the sentence with), so its marker
+    must carry only the always-unrendered rule_rationale, not the snapshot
+    exception too."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _csv, _card, _state = _prepare_with_trades(tmp, root)
+        assert plan["route"] == "first_review"
+        narrative_contract = plan["authoring_contract"]["narrative"]
+        assert narrative_contract["not_rendered_on_this_route"] == \
+            review_engine.card_renderer.narrative_fields_not_rendered("first_review")
+        assert narrative_contract["not_rendered_on_this_route"] == ["rule_rationale"], \
+            "first_review must not inherit snapshot_review's counterfactual exception"
+
+
+def test_a_stale_rule_rationale_from_before_the_773_ruling_survives_a_finalize_retry():
+    """#773's own correctness bar: an old committed session that recorded
+    narrative.rule_rationale (from before the ruling that it is never
+    rendered) must still satisfy the documented-safe finalize retry —
+    AGENTS.md's "an existing canonical session is not data loss". A retry
+    passes no fresh --narrative, so _load_interaction falls back to the
+    *stored* value, which _draft_bundle re-validates through
+    validate_narrative on every retry. Dropping rule_rationale from
+    ALLOWED_NARRATIVE outright (the first draft of this fix) would turn that
+    replay into a hard "unknown narrative fields" rejection; keeping it
+    accepted but marked not_rendered_on_this_route is what this test pins."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "coach"
+        plan, _csv, _card, _state = _prepare_with_trades(tmp, root)
+        answers = _answers(plan, commitment="skip")
+        narrative = _narrative(language="en")
+        narrative["rule_rationale"] = "A stale sentence from before the not-rendered ruling."
+        a_path = pathlib.Path(tmp) / "answers.json"
+        n_path = pathlib.Path(tmp) / "narrative.json"
+        a_path.write_text(json.dumps(answers, ensure_ascii=False), encoding="utf-8")
+        n_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        first = _run_finalize("--root", root, "--session-id", plan["session_id"],
+                     "--answers", a_path, "--narrative", n_path)
+        assert first.returncode == 0, first.stdout + first.stderr
+        # The idempotent retry: no --answers/--narrative at all, exactly the
+        # documented-safe shape, relying entirely on what was already stored.
+        retry = _run_finalize("--root", root, "--session-id", plan["session_id"])
+        payload = json.loads(retry.stdout)
+        assert retry.returncode == 0 and payload.get("status") in ("committed", "no-op"), \
+            f"a stored rule_rationale must not fail a documented-safe finalize retry: {retry.stdout + retry.stderr}"
 
 
 def test_repair_projections_never_regresses_a_newer_last_state():

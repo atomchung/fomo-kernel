@@ -22,8 +22,49 @@ class RenderError(ValueError):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COPY_DIR = os.path.join(os.path.dirname(HERE), "copy")
-ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength", "honesty",
-                     "synthesis"}
+ALLOWED_NARRATIVE = {"headline", "mirror", "counterfactual", "rule_rationale", "strength",
+                     "honesty", "synthesis"}
+# #773: fields ALLOWED_NARRATIVE admits — so validate_narrative still accepts
+# them, and a documented-safe finalize retry on an old committed session that
+# recorded one still replays (AGENTS.md: "an existing canonical session is
+# not data loss" — _load_interaction falls back to the *stored* narrative
+# when a retry passes no fresh --narrative, and that stored value goes
+# through validate_narrative again via _draft_bundle) — that no renderer
+# consumes. Advertising a field as allowed with no route telling the agent
+# it goes nowhere is the defect #773 reports: the agent could only discover
+# the gap by diffing its own authored text against the rendered card.
+#
+# ``rule_rationale`` is never rendered on any route — see _next_block's
+# docstring for the ruling (it duplicated the engine-owned trade-off
+# sentence). Dropping it from ALLOWED_NARRATIVE outright was the first draft
+# of this fix; it was wrong; `flows/first-review.md` already carried the
+# reason why, next to the instruction not to author it: "the field survives
+# only so older sessions stay readable". A global entry here, not a per-route
+# one, is what actually matches that shape: not_rendered_on_this_route
+# reports it for every route rather than one.
+NARRATIVE_FIELDS_NEVER_RENDERED = frozenset({"rule_rationale"})
+# Fields excluded on one specific route only (on top of the global set
+# above). ``strength`` had no such reason and was simply never wired up on
+# the snapshot branch — that is a bug, fixed in ``_risks_block`` below, not
+# listed here. ``counterfactual`` pairs an authored sentence with a
+# diagnosed behavioral hole (``_hole_line``/``holes``); a snapshot_review has
+# no transaction history to diagnose one from, so there is nothing for the
+# sentence to sit beside.
+NARRATIVE_FIELDS_NOT_RENDERED_BY_ROUTE = {
+    "snapshot_review": frozenset({"counterfactual"}),
+}
+
+
+def narrative_fields_not_rendered(route):
+    """``ALLOWED_NARRATIVE`` keys this route accepts but never renders (#773).
+
+    Single source of truth for two consumers that must not drift apart again:
+    ``review.py``'s ``_authoring_contract`` (told to the agent up front) and
+    ``cmd_preview`` (what it reports back if authored anyway)."""
+    return sorted(NARRATIVE_FIELDS_NEVER_RENDERED |
+                  NARRATIVE_FIELDS_NOT_RENDERED_BY_ROUTE.get(route, frozenset()))
+
+
 DIMENSION_ID_BY_LEGACY_LABEL = {
     "出場紀律": "exit_discipline",
     "部位 sizing": "position_sizing",
@@ -153,6 +194,14 @@ _ZH_IDIOMS = (
     "兩難", "兩者", "兩極", "兩全", "兩可", "兩相", "兩敗", "兩性", "兩岸", "兩用",
     "第一", "第二", "第三", "第四", "第五",
     "一次性", "再一次", "一次到位", "一次又一次",
+    # #775: the interrogative "which one" — a numeral (一) heading a classifier
+    # (哪一次/哪一天/哪一個/哪一年/…) is part of the question word, not a count.
+    # A prefix rather than one entry per classifier: "哪" never heads a
+    # spelled-out number in any other construction, so stripping the two-
+    # character question stem is safe for every classifier it can pair with,
+    # present or future, without enumerating them. Traditional and simplified
+    # share this form (哪 has no simplified variant), so one entry covers both.
+    "哪一",
     # Simplified counterparts of the idioms above whose characters differ
     # (shared-form idioms like 一起/十分/第一 need no duplicate).
     "一时", "一连", "一举", "一样", "一体", "一线", "一员", "一环",
@@ -162,6 +211,19 @@ _ZH_IDIOMS = (
     "万一", "万分", "万万", "万全", "万难", "万象", "万能", "万无",
     "两难", "两者", "两极", "两全", "两可", "两相", "两败", "两性", "两岸", "两用",
 )
+# #775: NOT an idiom, by deliberate contrast with "哪一" above — recorded here
+# rather than added to _ZH_IDIOMS. "一塊/一块" ("together") is the second
+# construction the issue names, and it is genuinely ambiguous where "哪一" is
+# not: 塊/块 is also the colloquial money unit this table must keep catching
+# ("賺了一塊" -- CJK_CLAIMS already pins "两块" as a must-flag quantity two
+# numerals over). Stripping "一塊" as an idiom would silently open exactly the
+# false-negative hole the design bias above rules out -- a spelled-out dollar
+# figure reading as clean prose -- to fix a false positive, which the docstring
+# at the top of this section calls the wrong trade every time. The rejection
+# stands; #775's actual fix for this case is the quoted excerpt
+# ``numeric_claim`` now returns, which turns "guess which of several dozen
+# characters tripped it" into "read the six characters just quoted and reword
+# to the unambiguous 一起/一同" -- a one-glance fix rather than a search.
 
 # Consecutive CJK numerals (三十, 一百, 五萬, 二〇二六) read as an actual number.
 _CJK_COMPOUND_RE = re.compile(f"[{_CJK_NUMERALS}]{{2,}}")
@@ -196,34 +258,80 @@ def _forms_word(ch):
     return bool(ch) and "一" <= ch <= "鿿" and ch not in _CJK_NUMERALS
 
 
+def _quoted_excerpt(scan, start, end, pad=8):
+    """A short window around ``scan[start:end]`` with a little surrounding
+    context, quoted for an error message (#775).
+
+    Without this, a rejection names only the rule class ("CJK numeral with a
+    measure word"), and the author is left guessing which of several dozen
+    characters in a multi-sentence paragraph matched it — a guess that costs
+    a full ``preview`` round trip per attempt. Quoting the actual excerpt
+    turns that into something to search for, not for.
+    """
+    lo = max(0, start - pad)
+    hi = min(len(scan), end + pad)
+    return f"{'…' if lo > 0 else ''}{scan[lo:hi]}{'…' if hi < len(scan) else ''}"
+
+
 def numeric_claim(text):
     """Return a short reason if ``text`` carries a spelled-out numeric/quantity
     claim (CJK or English), else ``None``.
 
     Deterministic (regex + word tables, no LLM).  ASCII/Unicode digits are
-    handled by ``validate_narrative`` via ``re.search(r"\\d", ...)``; this
-    function only covers spelled-out forms.
+    handled by ``validate_narrative`` via ``re.search(r"\\d+", ...)``; this
+    function only covers spelled-out forms. The returned reason names the
+    matched excerpt (#775), not just the rule class, so the caller's
+    rejection message can be fixed by reading it rather than searching the
+    whole field for which of several candidate substrings tripped it.
     """
     if not isinstance(text, str):
         return None
     scan = text
     for idiom in _ZH_IDIOMS:
         scan = scan.replace(idiom, " ")
-    if _CJK_COMPOUND_RE.search(scan):
-        return "spelled-out CJK number (e.g. 三十/五萬)"
-    if _CJK_HARD_RE.search(scan):
-        return "CJK numeral with a unit (e.g. 倍/趴/%)"
+    match = _CJK_COMPOUND_RE.search(scan)
+    if match:
+        return (f"spelled-out CJK number (e.g. 三十/五萬): "
+                f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
+    match = _CJK_HARD_RE.search(scan)
+    if match:
+        return (f"CJK numeral with a unit (e.g. 倍/趴/%): "
+                f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
     for match in _CJK_SOFT_RE.finditer(scan):
         after = scan[match.end():match.end() + 1]
         if not _forms_word(after):
-            return "CJK numeral with a measure word (e.g. 成/股/次)"
-    if _CJK_PCT_RE.search(scan):
-        return "CJK percentage (百分之…)"
-    if _CJK_APPROX_RE.search(scan):
-        return "approximate CJK quantity (e.g. 幾十/數百)"
-    if _EN_UNIT_RE.search(scan) or _EN_COMPOUND_RE.search(scan) or _EN_MAG_RE.search(scan):
-        return "English number-word quantity (e.g. thirty percent)"
+            return (f"CJK numeral with a measure word (e.g. 成/股/次): "
+                    f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
+    match = _CJK_PCT_RE.search(scan)
+    if match:
+        return (f"CJK percentage (百分之…): "
+                f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
+    match = _CJK_APPROX_RE.search(scan)
+    if match:
+        return (f"approximate CJK quantity (e.g. 幾十/數百): "
+                f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
+    match = _EN_UNIT_RE.search(scan) or _EN_COMPOUND_RE.search(scan) or _EN_MAG_RE.search(scan)
+    if match:
+        return (f"English number-word quantity (e.g. thirty percent): "
+                f"{_quoted_excerpt(scan, match.start(), match.end())!r}")
     return None
+
+
+def _reject_if_numeric(value, label):
+    """Raise if ``value`` carries a digit or a spelled-out numeric claim.
+
+    Both branches name the matched excerpt, not just the rule (#775) —
+    shared by every ``validate_narrative`` field (including each
+    ``narrative.honesty`` entry) so the fix is the same one-glance read
+    everywhere the digit ban applies, not just where ``numeric_claim`` covers.
+    """
+    digit_match = re.search(r"\d+", value)
+    if digit_match:
+        quoted = _quoted_excerpt(value, digit_match.start(), digit_match.end())
+        raise RenderError(f"{label} contains digits ({quoted!r}); numeric claims must come from engine output")
+    reason = numeric_claim(value)
+    if reason:
+        raise RenderError(f"{label} contains a numeric claim ({reason}); magnitudes must come from engine output")
 
 
 def validate_narrative(narrative):
@@ -239,19 +347,11 @@ def validate_narrative(narrative):
             for hkey, hval in value.items():
                 if not isinstance(hval, str) or not hval.strip():
                     raise RenderError(f"narrative.honesty.{hkey} must be a non-empty string")
-                if re.search(r"\d", hval):
-                    raise RenderError(f"narrative.honesty.{hkey} contains digits; numeric claims must come from engine output")
-                reason = numeric_claim(hval)
-                if reason:
-                    raise RenderError(f"narrative.honesty.{hkey} contains a numeric claim ({reason}); magnitudes must come from engine output")
+                _reject_if_numeric(hval, f"narrative.honesty.{hkey}")
             continue
         if not isinstance(value, str) or not value.strip():
             raise RenderError(f"narrative.{key} must be a non-empty string")
-        if re.search(r"\d", value):
-            raise RenderError(f"narrative.{key} contains digits; numeric claims must come from engine output")
-        reason = numeric_claim(value)
-        if reason:
-            raise RenderError(f"narrative.{key} contains a numeric claim ({reason}); magnitudes must come from engine output")
+        _reject_if_numeric(value, f"narrative.{key}")
     if not narrative.get("headline") or not narrative.get("mirror"):
         raise RenderError("narrative.headline and narrative.mirror are required")
     return narrative
@@ -1875,6 +1975,20 @@ def _performance_items(card, language):
     if not vs_market_suppressed(card):
         ab = card.get("alpha_beta_breakdown") or {}
         benchmark_rows = _benchmark_rows(card)
+        # #755: on a mixed-market card the alpha stat is computed for exactly
+        # one market (`ab["scope"]`, the same value `_alpha_interval_line`'s
+        # own "TW部位"/"US部位" wording reads) — not a combined figure. Resolve
+        # it once so the item can carry the matching ``market`` tag: emitting
+        # it after the loop with no tag at all let it visually trail into
+        # whichever market's rows happened to print last (observed on a TW-
+        # scoped alpha silently rendering under a `[US]` header). ``None`` on
+        # a single-market card, matching the untagged rows the loop below
+        # already yields for one.
+        alpha_scope = ab.get("scope") if isinstance(ab.get("by_market"), dict) else None
+        if alpha_scope not in MARKET_BENCHMARKS:
+            alpha_scope = None
+        alpha_line = _alpha_interval_line(ab, language) if benchmark_rows else None
+        alpha_emitted = False
         for market, bench, row in benchmark_rows:
             # #362/#363: everything this sentence still states — the excess and
             # β — is exactly what the excess tile carries, so HTML drops it
@@ -1888,9 +2002,7 @@ def _performance_items(card, language):
                 # explanation of where the excess came from — nothing on the
                 # tile grid carries it, so it survives dedup on every surface.
                 line("split", text, market=market)
-        if benchmark_rows:
-            alpha_line = _alpha_interval_line(ab, language)
-            if alpha_line:
+            if alpha_line and market == alpha_scope:
                 # #363: the 95% interval moved into the alpha tile's own sub
                 # (_alpha_tile_sub) whenever that tile renders, so HTML no
                 # longer needs this line to carry it. html_text now holds only
@@ -1904,8 +2016,21 @@ def _performance_items(card, language):
                 # carry any of this, and a card with no alpha tile this
                 # period (mixed-market, month-gated) keeps the full sentence
                 # on HTML too, via the same kpi_id/html_text mechanism.
-                line("alpha", alpha_line, kpi_id="alpha",
+                # #755: emitted inside this market's own iteration (instead of
+                # once after the whole loop) so it sits directly beside the
+                # benchmark/split rows it is scoped to, rather than after
+                # every market's rows regardless of which one it describes.
+                line("alpha", alpha_line, market=market, kpi_id="alpha",
                      html_text=_alpha_standalone_note(ab, language))
+                alpha_emitted = True
+        if alpha_line and not alpha_emitted:
+            # A single-market card (alpha_scope is None, matching the loop's
+            # own untagged market=None row), or a mixed-market card whose
+            # scope market did not survive into benchmark_rows this period —
+            # keep the sentence rather than silently drop it (contract S-2)
+            # instead of requiring it to match a row that may not exist.
+            line("alpha", alpha_line, market=alpha_scope, kpi_id="alpha",
+                 html_text=_alpha_standalone_note(ab, language))
         attribution = _attribution_facts(card)
         if attribution:
             items.append({"kind": "attr_rows", "tag": None,
@@ -3447,7 +3572,19 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
     carries the exit-discipline/averaging-down/holding-period candidates that
     function's ``no_signal`` fallback is worded for ("no positive behavior")
     — wording that fits a transaction history, not a point-in-time holdings
-    check with none to judge."""
+    check with none to judge.
+
+    #773: that paragraph is about ``card["strength"]``, an engine artifact --
+    a different field from ``narrative.get("strength")``, the agent-authored
+    one ``ALLOWED_NARRATIVE`` advertises. The snapshot branch used to ignore
+    the authored value unconditionally and always print
+    ``_snapshot_strength_line``'s mechanical completeness sentence instead,
+    with no route reason for the asymmetry (unlike the ``counterfactual``
+    exception ``NARRATIVE_FIELDS_NOT_RENDERED_BY_ROUTE`` documents, which has
+    one). An agent-authored strength sentence can state something specific
+    about the declared book that a two-branch completeness check cannot, so
+    it now takes the same priority the trade lane already gives it, with the
+    engine sentence as the fallback when nothing was authored."""
     language = copy["language"]
     sections_copy = copy["sections"]
     missing = copy.get("block_missing") or {}
@@ -3464,8 +3601,8 @@ def _risks_block(bundle, card, copy, narrative, snapshot, trade_tickers=None):
         return [("paragraph", [note])] if note else []
     strength_label = (_copy_string(copy, "snapshot_strength", sections_copy["strength"])
                       if snapshot else sections_copy["strength"])
-    strength_line = (_snapshot_strength_line(card, language) if snapshot else
-                     narrative.get("strength") or _best_strength(card, language))
+    strength_line = narrative.get("strength") or (
+        _snapshot_strength_line(card, language) if snapshot else _best_strength(card, language))
     strength_inner = [("paragraph", [strength_line])]
     amplify = None if snapshot else amplify_row(card, language)
     if amplify:
@@ -3515,7 +3652,19 @@ def _next_block(bundle, copy, facts, state, snapshot):
     ``narrative.rule_rationale`` is deliberately no longer rendered: it is the
     agent's free-text restatement of why the rule matters, and it overlapped
     with the engine-owned trade-off line. Between an authored sentence and a
-    derived one, the card keeps the derived one.
+    derived one, the card keeps the derived one. #773: that ruling used to
+    stop at rendering — the field stayed in ``ALLOWED_NARRATIVE`` with no
+    signal attached, and ``preview`` kept silently accepting and discarding
+    it, so an agent had no way to learn the ruling short of diffing its own
+    text against the card. It stays in ``ALLOWED_NARRATIVE`` (dropping it
+    outright would fail a documented-safe ``finalize`` retry on an old
+    committed session that recorded one — replay reads the *stored*
+    narrative, not a fresh one, and re-validates it), but
+    ``NARRATIVE_FIELDS_NEVER_RENDERED`` now names it explicitly: the
+    ``authoring_contract`` reports it up front as never rendered on any
+    route, and ``preview`` reports it back if authored anyway. This
+    paragraph remains the ruling's record; the field's own advertisement no
+    longer contradicts it.
 
     §3: this block always lights — when the engine proposes no change it
     restates the standing rule, and a truly empty review says so in one
@@ -3927,8 +4076,19 @@ def render_private(bundle):
                 current_market = None
                 for item in block:
                     market = item.get("market") if len(markets) > 1 else None
-                    if market and market != current_market:
-                        lines.append(f"[{market}]")
+                    if market != current_market:
+                        if market:
+                            lines.append(f"[{market}]")
+                        elif current_market:
+                            # #755: leaving a market-grouped run for a line
+                            # that belongs to no single market (e.g. the
+                            # portfolio-wide concentration-stress fact) — a
+                            # blank line marks the break so it does not read
+                            # as one more row under the header just printed.
+                            # No new header prints here: unlike the alpha line
+                            # above (now tagged with its real scope), this
+                            # kind of line has no market of its own to claim.
+                            lines.append("")
                     current_market = market
                     lines.append(f"- {item['text']}")
                 lines.append("")
@@ -4472,6 +4632,11 @@ def render_html(bundle):
                 # The attribution bars carry these comparator rows on HTML.
                 continue
             market = item.get("market") if len(markets) > 1 else None
+            # #755: true for the first item after a market-grouped run ends
+            # (e.g. the portfolio-wide concentration-stress fact, which has no
+            # single market to be tagged with) — computed before current_market
+            # below overwrites the value it compares against.
+            left_group = bool(current_market) and not market
             if market != current_market:
                 flush()
                 if market:
@@ -4485,7 +4650,14 @@ def render_html(bundle):
                 pending.append(text)
             else:
                 flush()
-                parts.append(f"<p>{e(text)}</p>")
+                # The <ul> above is already flushed (closed), so this <p> is
+                # never nested inside a market's list — but the default
+                # ul+p gap (--rc-sp-2) reads as just another paragraph in the
+                # same flow. An existing spacing token, applied inline (no new
+                # CSS, so nothing to keep in sync across the two stylesheet
+                # copies), marks the break without inventing a new primitive.
+                style = ' style="margin-top:var(--rc-sp-4)"' if left_group else ""
+                parts.append(f"<p{style}>{e(text)}</p>")
         flush()
         return parts
 

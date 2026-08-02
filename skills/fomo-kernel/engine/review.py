@@ -3731,6 +3731,16 @@ def _authoring_contract(route):
     (thesis.MATURITY_VALUES, thesis.INFERENCE_ENUMS, card_renderer.ALLOWED_NARRATIVE);
     a contract test pins the equivalence so this cannot drift into a second
     source of truth.
+
+    #773: ``allowed_fields`` alone answered "will `validate_narrative` accept
+    this key" but not "will this route's card ever show it" — a field could
+    be accepted (some, like ``rule_rationale``, deliberately so, only to keep
+    a documented-safe ``finalize`` retry on an old committed session from
+    failing validation on its own stored narrative) and still consumed by no
+    renderer on this route, discoverable only by diffing the authored text
+    against the rendered card. ``not_rendered_on_this_route`` names that gap
+    explicitly, from the same ``card_renderer.narrative_fields_not_rendered``
+    the renderer itself is built from, so the two cannot drift apart again.
     """
     contract = {
         "thesis_updates": {
@@ -3752,6 +3762,7 @@ def _authoring_contract(route):
         "narrative": {
             "required": ["headline", "mirror"],
             "allowed_fields": sorted(card_renderer.ALLOWED_NARRATIVE),
+            "not_rendered_on_this_route": card_renderer.narrative_fields_not_rendered(route),
             "digit_ban": ("no digits and no spelled-out numeric magnitudes in any field; "
                           "numbers come only from engine artifacts"),
             "honesty_keys": "cover exactly card_plan.required_honesty_keys",
@@ -3774,6 +3785,20 @@ def _authoring_contract(route):
         contract["thesis_updates"]["route_locked"] = {"maturity": "inferred",
                                                       "source_confidence": "candidate"}
     return contract
+
+
+def _narrative_fields_discarded(narrative, route):
+    """The authored ``narrative`` keys this route's card will not render
+    (#773) -- the ones ``_authoring_contract``'s ``not_rendered_on_this_route``
+    already named, intersected with what the agent actually supplied. Empty
+    unless the agent authored one of them anyway (the contract marker is
+    informational, not a rejection: ``validate_narrative`` still accepts the
+    field, per the acceptance criteria's non-goal of not re-litigating the
+    routing decision itself)."""
+    if not isinstance(narrative, dict):
+        return []
+    not_rendered = set(card_renderer.narrative_fields_not_rendered(route))
+    return sorted(set(narrative) & not_rendered)
 
 
 def _flag_unpriced_exits(card, recent_exits, due_revisits, exit_backlog):
@@ -5903,12 +5928,19 @@ def cmd_preview(args):
                                             plan, answers, narrative,
                                             pending.get("question_surfaces"),
                                             pending.get("question_presentations"))}})
+    # #773: name any authored narrative field this route's card never reads,
+    # rather than let it go missing silently -- the agent can then compare
+    # its own draft against the two rendered cards above and see, not guess,
+    # whether the discard is expected (see authoring_contract.narrative.
+    # not_rendered_on_this_route, which already told it this up front).
+    narrative_fields_discarded = _narrative_fields_discarded(narrative, plan.get("route"))
     _emit({"status": "previewed", "session_id": args.session_id,
            "private_card": private_md, "public_card": public_md,
            "private_card_html_path": paths.get("card-private-preview.html"),
            "candidate_rules": (plan.get("card_plan") or {}).get("candidate_rules") or [],
            # #302(c): interaction-layer-only; None when there is nothing honest to compare.
            "candidate_comparison": (plan.get("card_plan") or {}).get("candidate_comparison"),
+           "narrative_fields_discarded": narrative_fields_discarded,
            "paths": paths, "next_action": "show the review-card preview (delivery contract: references/card-delivery.md); ask the user to choose one rule or skip; then finalize"})
 
 

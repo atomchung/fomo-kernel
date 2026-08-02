@@ -82,11 +82,14 @@ def _thesis_updates(plan, maturity="inferred"):
 
 
 def _narrative_for(plan, headline="A lower price is not automatically a stronger thesis"):
+    # #773: rule_rationale intentionally absent — it stays a valid field for
+    # replay compatibility (card_renderer.NARRATIVE_FIELDS_NEVER_RENDERED),
+    # but no renderer on any route consumes it, so a fixture representing
+    # good authoring practice should not model writing it.
     return {
         "headline": headline,
         "mirror": "The action is deliberate only when its reason survives the next review.",
         "counterfactual": "Without a new fact, the action would have been cost-basis repair.",
-        "rule_rationale": "This rule turns conviction into something falsifiable.",
         "honesty": {key: "This limitation is stated rather than filled in."
                     for key in plan["card_plan"]["required_honesty_keys"]},
     }
