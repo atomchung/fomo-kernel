@@ -40,6 +40,7 @@ import judge_receipts as RECEIPTS  # noqa: E402
 ENGINE_DIR = HERE.parent / "skills" / "fomo-kernel" / "engine"
 sys.path.insert(0, str(ENGINE_DIR))
 import answer_provenance  # noqa: E402
+import card_renderer  # noqa: E402
 import evaluation_challenge  # noqa: E402
 
 TOOLS_DIR = HERE.parent / "skills" / "fomo-kernel" / "tools"
@@ -400,6 +401,25 @@ def _number_fact_view(evaluation, challenge):
     return {"numbers": numbers, "dates": dates}
 
 
+def _sector_display(consequence):
+    """Mirror review.py's `_consider_sector_display` (#746) for this harness.
+
+    `judge_trade_answers.py` has no language parameter of its own — every
+    fixture's prose is English, so "en" is not a choice among several here,
+    it is the only language a fixture in this directory is ever judged in.
+    Calling `card_renderer.localized_sector` directly (rather than importing
+    review.py's own helper, which would pull in the CLI-oriented engine
+    module for one four-line pure function) keeps the sector-literal table
+    itself single-sourced without adding that dependency.
+    """
+    display = {}
+    for side in ("before", "after"):
+        sector = (consequence.get(side) or {}).get("max_sector")
+        if sector:
+            display[side] = card_renderer.localized_sector(sector, "en")
+    return display
+
+
 def _delivery_fidelity(fixture, answer, agent_case):
     """Run the production presentation check plus shared number provenance."""
     evaluation = _frozen(fixture)
@@ -412,6 +432,7 @@ def _delivery_fidelity(fixture, answer, agent_case):
     evidence = UX_RECEIPT._challenge_fidelity_payload({
         "challenge": derived,
         "presented_text": presented,
+        "sector_display": _sector_display(evaluation.get("consequence") or {}),
     })
     number_findings = BASE.R.check_number_provenance(
         answer, _number_fact_view(evaluation, derived))
@@ -425,6 +446,10 @@ def _delivery_fidelity(fixture, answer, agent_case):
             "challenge fact(s)")
     if evidence["quotes_expected"] and not evidence["quotes_verbatim"]:
         raise ValueError("presented answer does not reproduce every owed user quote verbatim")
+    if not evidence["sector_display_verbatim"]:
+        raise ValueError(
+            "presented answer names a sector that disagrees with this response's "
+            "own sector_display (#767)")
     if number_findings:
         raise ValueError("; ".join(number_findings))
     return evidence

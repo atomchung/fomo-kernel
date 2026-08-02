@@ -582,7 +582,7 @@ python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
   --require-recorded-owner-verdict --require-owner-verdict --require-timing-integrity --require-findings
 ```
 
-`--challenge-check-file` points at a transient JSON that never enters the trace, the same nature as `--grounding-check-file`. It pairs the `challenge` block **from the `consider` call's own stdout** with the exact answer text shown:
+`--challenge-check-file` points at a transient JSON that never enters the trace, the same nature as `--grounding-check-file`. It pairs the `challenge` block **from the `consider` call's own stdout** with the exact answer text shown, and — since #767 — that same call's `sector_display` block:
 
 ```json
 {
@@ -600,13 +600,14 @@ python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
     "case_required": {"for": 1, "against": 1},
     "required_coverage": [{"path": "consequence.disclosures.0", "owes": "disclosure", "key": "cost_basis"}]
   },
-  "presented_text": "On your recorded book this takes SYNTH to 27.3% and leaves 8,400 in cash. It would break your own rule: \"One name never above a quarter of the book\". Weights are on cost, not live prices. You said: \"Best setup I have seen this year.\" Liquidity, valuation, tax, whether the position still fits you, and whether this is genuinely new information were not checked."
+  "presented_text": "On your recorded book this takes SYNTH to 27.3% and leaves 8,400 in cash. It would break your own rule: \"One name never above a quarter of the book\". Weights are on cost, not live prices. You said: \"Best setup I have seen this year.\" Liquidity, valuation, tax, whether the position still fits you, and whether this is genuinely new information were not checked.",
+  "sector_display": {"before": "software and cloud", "after": "semiconductors"}
 }
 ```
 
-Paste the challenge verbatim from stdout — a truncated paste is refused rather than read as a smaller obligation — and the recorded `challenge_hash` stays auditable afterward: the block is a pure function of the persisted evaluation row, so anyone holding the root can recompute it.
+Paste the challenge verbatim from stdout — a truncated paste is refused rather than read as a smaller obligation — and the recorded `challenge_hash` stays auditable afterward: the block is a pure function of the persisted evaluation row, so anyone holding the root can recompute it. `sector_display` is captured from that same stdout the same way, verbatim; it is required whenever the response carried one, and an empty `{}` is how you paste a response that named no largest sector — omitting the key entirely is refused, not read as nothing to check.
 
-What the machine half checks, and what stays with the owner's `comprehension` verdict: load-bearing numbers as digits at any display precision, and rule-collision texts / user quotes / excluded-holding tickers verbatim, are machine-decidable; engine-vocabulary strings, boolean triggers, and `unchecked` keys reach the user only as prose in the conversation's language, which no offline comparison can judge — that half is what `comprehension` is for. See `references/ux-receipt.md` ("The second card-free route") for the complete split.
+What the machine half checks, and what stays with the owner's `comprehension` verdict: load-bearing numbers as digits at any display precision, and rule-collision texts / user quotes / excluded-holding tickers verbatim, are machine-decidable; engine-vocabulary strings, boolean triggers, and `unchecked` keys reach the user only as prose in the conversation's language, which no offline comparison can judge — that half is what `comprehension` is for. Whether the answer named the sector in `sector_display`'s own words, rather than in the engine's raw internal label, is also machine-decidable (#767) and never depends on which language the answer used. See `references/ux-receipt.md` ("The second card-free route") for the complete split.
 
 Archive like any other continued route run in this campaign: `--state-mode continued --parent-run-id <the preceding accepted run_id>`, same `--campaign`. A `consider` receipt is now formal evidence, and the old "exploratory only" caveat is gone — but a run whose trace fails `verify` is still void and has to be walked again with a fresh receipt; the trace is append-only, so there is no repair.
 
