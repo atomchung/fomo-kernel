@@ -5,7 +5,9 @@
 What this file settles:
   A. The tier is derived from evidence, never taken from the payload.
   B. The comparison never enters the query (the criterion-is-not-the-query gate),
-     and a fiscal-quarter label is not mistaken for a threshold leak.
+     a fiscal-quarter label is not mistaken for a threshold leak, and a number
+     glued directly onto the CJK character before it is still found (#752) while
+     one glued onto an ASCII letter still is not.
   C. The engine performs the comparison — including at commit time, so a line
      that is already crossed is visible before the user walks away thinking they
      set a tripwire.
@@ -269,6 +271,58 @@ def test_the_threshold_is_matched_by_value_not_by_spelling():
     assert conditions.restates_threshold("margin of .5 percent", {"value": 0.5}), \
         "a bare decimal is a quantity however it is spelled"
     assert not conditions.restates_threshold("margin in the latest quarter", {"value": 30})
+
+
+def test_numbers_in_finds_a_number_glued_directly_onto_a_cjk_character():
+    """Natural Chinese prose glues a number straight onto the character before
+    it, with no space ("的51%"). Python's Unicode-aware `\\w` treats a CJK
+    character as a word character too, so a lookbehind written against `\\w`
+    read that as the same kind of fusion `Q3` needs blocked and made virtually
+    every zh-TW/zh-CN quantity claim invisible to this scan (#752) -- this is
+    the true-positive half of the fix. The second line is the issue's own
+    end-to-end repro sentence, with two CJK-adjacent numbers in one claim."""
+    assert conditions.numbers_in("的51%") == {51.0}
+    assert conditions.numbers_in(
+        "這筆交易後,NVDA會來到帳戶的51%左右,遠超過你自己剛設的30%上限。") == {51.0, 30.0}
+
+
+def test_numbers_in_finds_a_decimal_glued_onto_a_cjk_character():
+    """The decimal branch of the pattern is exercised the same way, and the
+    whole number -- not just its integer part -- is what comes back."""
+    assert conditions.numbers_in("會來到帳戶的51.3%左右") == {51.3}
+
+
+def test_numbers_in_still_ignores_a_number_glued_onto_an_ascii_letter():
+    """The other side of #752's fix, proven in the same breath as the fix
+    itself so the two cannot silently drift apart: an ASCII letter glued onto
+    a digit is still read as a label, not a quantity -- the protection
+    `Q3`/`FY2026` need is unchanged. English keeps missing a genuinely
+    space-free fusion ("the51%") only because real English prose does not
+    write that way; the mechanism is identical to the CJK case, and this
+    limitation is accepted, not a bug the CJK fix was meant to also close."""
+    assert conditions.numbers_in("Q3") == set()
+    assert conditions.numbers_in("FY2026") == set()
+    assert conditions.numbers_in("the51%") == set()
+    assert conditions.numbers_in("v2.5") == set(), \
+        "the period exclusion must still block the decimal tail leaking as its own number"
+
+
+def test_numbers_in_is_unaffected_by_a_leading_space_or_string_start():
+    """A number with nothing blocking the character before it -- start of
+    string, or plain whitespace -- was never the bug and must keep working
+    exactly as before."""
+    assert conditions.numbers_in("的 51%") == {51.0}
+    assert conditions.numbers_in("51%的") == {51.0}
+
+
+def test_a_natural_zh_query_still_catches_a_threshold_leak():
+    """The production consumer this pattern actually serves: `restates_threshold`
+    must see a CJK-adjacent number in a *query* exactly as it would an English
+    one, or the criterion-is-not-the-query gate (section B's opening rule) is
+    blind for every zh query -- the exact failure mode #752 reports, one level
+    up from `numbers_in` itself."""
+    assert conditions.restates_threshold("最近一季的成長率是否已跌破30%？", {"value": 30})
+    assert not conditions.restates_threshold("最近一季的營收成長率是多少？", {"value": 30})
 
 
 def test_a_negative_line_cannot_slip_past_the_gate():

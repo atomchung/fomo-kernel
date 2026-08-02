@@ -172,10 +172,18 @@ _CHECK_FIELDS = frozenset({"lookup_status", "reason", "observation",
 # question that was actually shown (external review, round 1).
 _ENGINE_ASSIGNED_CHECK_FIELDS = frozenset({"user_response", "basis_resolution"})
 
-# A standalone number: `Q3` and `FY2026` are labels, not quantities, so the digit
-# glued to a word never counts as the threshold leaking into the query. A bare
-# `.5` counts — it is a quantity however it is spelled.
-_NUMBER = re.compile(r"(?<![\w.])(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
+# A standalone number: `Q3` and `FY2026` are labels, not quantities, so an
+# ASCII letter, digit, or underscore glued onto a digit never counts as the
+# threshold leaking into the query. A bare `.5` counts — it is a quantity
+# however it is spelled. The exclusion is deliberately spelled out in ASCII
+# (`A-Za-z0-9_`) rather than Python's Unicode-aware `\w`: `\w` also matches
+# every CJK character, and natural Chinese prose glues a number straight onto
+# the character before it with no space ("的51%") -- a `\w` lookbehind read
+# that as the same kind of fusion as `Q3` and made virtually every zh-TW/
+# zh-CN quantity claim invisible to this scan (#752). English keeps the
+# protection `Q3`/`FY2026` need because the letters that glue onto those
+# labels are themselves ASCII.
+_NUMBER = re.compile(r"(?<![A-Za-z0-9_.])(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
 
 
 class ConditionError(ValueError):

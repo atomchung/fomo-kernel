@@ -175,17 +175,66 @@ def test_engine_fact_claim_anchored_at_a_container_is_rejected():
 # ───────────────────────── 3. number mismatch ─────────────────────────
 
 def test_engine_fact_claim_with_a_mismatched_number_is_rejected():
+    """A number was quoted, and it is the wrong one. Refused as a mismatch --
+    the message that should send whoever reads it toward the arithmetic."""
     case = _valid_case()
     case["against"][0]["claim"] = "This grows NVDA to 55% of your book."
     _rejects("quotes a number that does not match", case)
 
 
 def test_engine_fact_claim_with_no_number_at_all_is_rejected():
-    """A number-valued anchor with a claim that cites no number at all
-    fails the same way as a wrong number -- silence is not a match."""
+    """A number-valued anchor with a claim that cites no number at all is
+    refused too, but for a *different* reason than a wrong number (#752):
+    the scanner found nothing in the claim's own prose to compare in the
+    first place, so the message must say that rather than "does not match"
+    -- which would send whoever reads it chasing the wrong repair (rereading
+    the engine's arithmetic) instead of the right one (rereading the claim's
+    own sentence). Before #752 these two cases raised byte-identical
+    messages; this assertion is the one that would have caught it."""
     case = _valid_case()
     case["against"][0]["claim"] = "This makes NVDA your largest position by far."
-    _rejects("quotes a number that does not match", case)
+    _rejects("quotes no number at all", case)
+
+
+def test_the_no_number_and_mismatch_messages_are_genuinely_distinct():
+    """Guards against a future edit re-merging the two messages by widening
+    one of the fragments the two tests above pin: each message must contain
+    its own fragment and *not* the other's, so a regression that made them
+    equal again -- even under different literal wording than #752 shipped
+    with -- still turns this test red."""
+    no_number_case = _valid_case()
+    no_number_case["against"][0]["claim"] = "This makes NVDA your largest position by far."
+    mismatch_case = _valid_case()
+    mismatch_case["against"][0]["claim"] = "This grows NVDA to 55% of your book."
+
+    try:
+        _validate(no_number_case)
+        raise AssertionError("expected the no-number case to be rejected")
+    except answer_provenance.AnswerProvenanceError as exc:
+        assert "does not match" not in str(exc), \
+            f"no-number rejection must not read as a mismatch: {exc}"
+
+    try:
+        _validate(mismatch_case)
+        raise AssertionError("expected the mismatch case to be rejected")
+    except answer_provenance.AnswerProvenanceError as exc:
+        assert "quotes no number at all" not in str(exc), \
+            f"mismatch rejection must not read as a missing number: {exc}"
+
+
+def test_a_cjk_adjacent_number_is_recognized_not_flagged_as_missing():
+    """The end-to-end regression for #752 itself, one layer above
+    conditions.numbers_in's own unit tests: a claim phrased in natural
+    zh-TW/zh-CN prose glues its number directly onto the character before it
+    ("的34%左右"), with none of the ASCII-style space real English prose
+    would have. Before #752's fix to conditions.py, the scanner found no
+    number here at all and this claim was rejected with the misleading
+    "does not match" message -- even though 34% is exactly
+    consequence.after.max_pct's own frozen value in this fixture. This case
+    must now be accepted outright."""
+    case = _valid_case()
+    case["against"][0]["claim"] = "這筆交易後,NVDA會來到帳戶的34%左右,超過你自己設的25%上限。"
+    assert _validate(case) is None
 
 
 # ───────────────────────── 4. public_fact missing citation ─────────────────────────
