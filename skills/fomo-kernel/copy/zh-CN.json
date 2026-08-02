@@ -330,14 +330,13 @@
     "backlog_span": "，期间 {first} 到 {last}",
     "backlog_top": "；最常出现：{top}",
     "sentence_end": "。",
-    "backlog_priced": " 有现价可回看的 {priced} 笔，出场后平均走势为 {avg}；其中 {rose} 笔后续上涨。",
+    "backlog_priced": " 有现价可回看的 {priced} 笔清仓，出场后平均走势为 {avg}；其中 {rose} 笔后续上涨。",
     "action_full": "清仓",
     "action_reduce": "减仓",
     "focus": "Backlog 优先回看：{ticker}，{exit_date} {action}。",
     "focus_needs_prices": " {missing} 缺冻结现价{when}，不判结果。",
-    "focus_swap": " 原标的后续 {orig}{when}；换入标的同期 {swap}；swap 净差 {net}。",
-    "focus_idle": " 卖后资金闲置，原标的同期 {orig}{when}。",
-    "focus_orig": " 原标的后续 {orig}{when}。"
+    "focus_orig": " 原标的后续 {orig}{when}。",
+    "focus_impact": " 这个决策对账户的影响是 {impact}{when}。"
   },
   "account_perf": {
     "holdings_only": "仅计持仓的累积报酬为 {value}。",

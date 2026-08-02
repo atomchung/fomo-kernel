@@ -541,6 +541,11 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5, splits=None, price
     priced = sold_before_rise = 0
     ret_sum = 0.0
     for it in hist:
+        # #670: full exits only. A trim's post-exit move measures the parcel
+        # that left while the shares that stayed captured the same move, so
+        # pooling the two produces a mean of two different quantities.
+        if it.get("kind") != "full":
+            continue
         px = (prices or {}).get(it["ticker"])
         if px and is_priced_exit(it):
             priced += 1
@@ -556,7 +561,12 @@ def scan_backlog(revisits, resolutions, prices=None, limit=5, splits=None, price
     topn = [{"revisit_id": it["revisit_id"], "ticker": it["ticker"], "exit_date": it["exit_date"],
              "exit_price": it["exit_price"], "shares_sold": it["shares_sold"], "kind": it.get("kind"),
              "notional": round(_notional(it), 2),
+             # #670: `impact` ranks the list and is now also what the card
+             # prints. `currency` rides with it because the figure is measured
+             # in the instrument's own currency — the card must never restate a
+             # parcel in the aggregate currency it was not measured in.
              "impact": round(impact, 2) if impact is not None else None,
+             "currency": str(it.get("currency") or "USD").upper(),
              "compare": cmp}
             for it, cmp, impact in scored[:limit]]
     return topn, summary, len(hist)

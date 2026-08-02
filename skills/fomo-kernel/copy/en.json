@@ -396,14 +396,13 @@
     "backlog_span": " from {first} to {last}",
     "backlog_top": "; most frequent: {top}",
     "sentence_end": ".",
-    "backlog_priced": " Across {priced} price-covered exits, the average post-exit move was {avg}; {rose} later rose.",
+    "backlog_priced": " Across {priced} price-covered full exits, the average post-exit move was {avg}; {rose} later rose.",
     "action_full": "full exit",
     "action_reduce": "reduction",
     "focus": "Backlog focus: {ticker}, {action} on {exit_date}.",
     "focus_needs_prices": " No frozen-price comparison for {missing}{when}.",
-    "focus_swap": " The original moved {orig}{when}; the replacement moved {swap}; swap net {net}.",
-    "focus_idle": " Proceeds stayed idle while the original moved {orig}{when}.",
-    "focus_orig": " The original moved {orig}{when}."
+    "focus_orig": " The original moved {orig}{when}.",
+    "focus_impact": " That decision moved the account by {impact}{when}."
   },
   "account_perf": {
     "holdings_only": "Holdings-only cumulative return was {value}.",
