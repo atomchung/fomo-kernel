@@ -113,6 +113,20 @@ def _annualized_gap(status):
     return build
 
 
+def _hole_lines_position_sizing(language):
+    """#748 item 1: the leading hole's number narration for `position_sizing`,
+    rendered through `_hole_line` into both the private-card blockquote
+    (`_read_first_panels`) and the full Risks panel — the card's most
+    prominent line, twice per card. `avg_pct` reproduces the exact 11%
+    average the defect report quoted (`against a 11% average across the
+    rest`); pinning the corrected `against an average of {avg_pct}` phrasing
+    here is what keeps the article-agreement hazard from silently coming
+    back."""
+    return _bundle(language, card={
+        "top_holes": [{"raw": {"dim": "部位 sizing", "max_ticker": "AAPL",
+                               "max_pct": 0.25, "avg_pct": 0.11}}]})
+
+
 _RECONCILIATION_RULES = {
     "zh-TW": "單筆部位上限定死 30%；超過就減，不新增。",
     "zh-CN": "单一仓位上限固定为 30%；超过就减，不新增。",
@@ -687,6 +701,11 @@ SCENES = (
     *[(f"annualized_gap/{status}", (), _annualized_gap(status))
       for status in ("no_prices", "short_price_series", "accounting_reconciliation",
                      "price_provenance", "a_status_added_later")],
+    # Not claimed as a register: `hole_lines` carries nine other templates
+    # (exit/holding/averaging_down/diversification) this one scene does not
+    # exercise, and claiming it would report every one of them unreached.
+    # Same posture as `annualized_gap` above -- a pin, not a coverage claim.
+    ("hole_lines/position_sizing", (), _hole_lines_position_sizing),
     ("reconciliation/metric-improved", ("reconciliation",), _reconciliation(("max_pos_pct", 0.51, 0.42, "down", "position_sizing"))),
     ("reconciliation/metric-worsened", (), _reconciliation(("avgdown_count", 2, 3, "down", "averaging_down"))),
     ("reconciliation/metric-unchanged", (), _reconciliation(("ai_pct", 0.4, 0.4, "down", "diversification"))),

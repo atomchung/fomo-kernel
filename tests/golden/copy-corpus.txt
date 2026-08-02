@@ -8902,7 +8902,7 @@ Mirror.
 
 - Absolute P&L is not computable this period: no trades or valuation basis.
 - Holdings-only cumulative return was 50%.
-- Add one current cash balance, and you'll see the account-level return with cash included.
+- Add a current cash balance, and you'll see the account-level return with cash included.
 - Benchmark comparison is not computable this period: no resolvable benchmark series.
 
 ## Key trades · ranked by money impact
@@ -8928,7 +8928,7 @@ Mirror.
 Performance
 Absolute P&L is not computable this period: no trades or valuation basis.
 Holdings-only cumulative return was 50%.
-Add one current cash balance, and you'll see the account-level return with cash included.
+Add a current cash balance, and you'll see the account-level return with cash included.
 Benchmark comparison is not computable this period: no resolvable benchmark series.
 Key trades · ranked by money impact
 No ranked instrument diagnosis this period.
@@ -10962,6 +10962,231 @@ language: en
 > Shareable version; amounts, dates, tickers, and exact weights removed
 
 This review did not rank a leading behavior pattern from the available history.
+
+==========================================================================
+hole_lines/position_sizing [zh-TW] private.md
+==========================================================================
+# Headline.
+
+> 復盤卡，只留在本機
+
+Mirror.
+
+> **主要風險**
+>
+> [X] 最大的行為漏洞：你最大一筆 AAPL 佔 25%，其餘平均 11%
+
+> **下次規則**
+>
+> [*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+## 這期的績效
+
+- 本期算不出帳面損益：缺交易或估值基礎。
+- 本期算不出年化報酬：現金流錨點不完整。
+- 本期無法比對大盤：缺可用的基準序列。
+
+## 關鍵交易 · 按金額排序
+
+本期沒有可排序的標的層診斷。
+
+## 風險與問題
+
+[v] 你做對的一件事：這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+
+[X] 最大的行為漏洞：你最大一筆 AAPL 佔 25%，其餘平均 11%
+
+## 下一步
+
+[*] 下次只改這一件：這次沒有新的規矩承諾；下次復盤可再選一條。
+
+==========================================================================
+hole_lines/position_sizing [zh-TW] private.html
+==========================================================================
+復盤卡
+復盤卡
+Headline.
+復盤卡，只留在本機
+Mirror.
+這期的績效
+本期算不出帳面損益：缺交易或估值基礎。
+本期算不出年化報酬：現金流錨點不完整。
+本期無法比對大盤：缺可用的基準序列。
+關鍵交易 · 按金額排序
+本期沒有可排序的標的層診斷。
+風險與問題
+你做對的一件事
+這期沒有足夠強的正向訊號；先把注意力留給最大的洞。
+最大的行為漏洞
+你最大一筆 AAPL 佔 25%，其餘平均 11%
+下一步
+下次只改這一件
+這次沒有新的規矩承諾；下次復盤可再選一條。
+session_id: corpus · language: zh-TW
+
+==========================================================================
+hole_lines/position_sizing [zh-TW] public.md
+==========================================================================
+---
+privacy: public
+language: zh-TW
+---
+
+# 復盤卡
+
+> 可分享版，已移除金額、日期、標的與精確部位
+
+這次復盤在「部位 sizing」看見低程度的行為壓力。 這次浮現的模式，關乎風險如何分配到不同部位。
+
+==========================================================================
+hole_lines/position_sizing [zh-CN] private.md
+==========================================================================
+# Headline.
+
+> 复盘卡，只留在本机
+
+Mirror.
+
+> **主要风险**
+>
+> [X] 最大的行为漏洞：你最大一笔 AAPL 占 25%，其余平均 11%
+
+> **下次规则**
+>
+> [*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+## 这期的绩效
+
+- 本期算不出账面损益：缺交易或估值基础。
+- 本期算不出年化报酬：现金流锚点不完整。
+- 本期无法比对大盘：缺可用的基准序列。
+
+## 关键交易 · 按金额排序
+
+本期没有可排序的标的层诊断。
+
+## 风险与问题
+
+[v] 你做对的一件事：这期没有足够强的正向讯号；先把注意力留给最大的洞。
+
+[X] 最大的行为漏洞：你最大一笔 AAPL 占 25%，其余平均 11%
+
+## 下一步
+
+[*] 下次只改这一件：这次没有新的规矩承诺；下次复盘可再选一条。
+
+==========================================================================
+hole_lines/position_sizing [zh-CN] private.html
+==========================================================================
+复盘卡
+复盘卡
+Headline.
+复盘卡，只留在本机
+Mirror.
+这期的绩效
+本期算不出账面损益：缺交易或估值基础。
+本期算不出年化报酬：现金流锚点不完整。
+本期无法比对大盘：缺可用的基准序列。
+关键交易 · 按金额排序
+本期没有可排序的标的层诊断。
+风险与问题
+你做对的一件事
+这期没有足够强的正向讯号；先把注意力留给最大的洞。
+最大的行为漏洞
+你最大一笔 AAPL 占 25%，其余平均 11%
+下一步
+下次只改这一件
+这次没有新的规矩承诺；下次复盘可再选一条。
+session_id: corpus · language: zh-CN
+
+==========================================================================
+hole_lines/position_sizing [zh-CN] public.md
+==========================================================================
+---
+privacy: public
+language: zh-CN
+---
+
+# 复盘卡
+
+> 可分享版，已移除金额、日期、标的与精确部位
+
+这次复盘在“部位 sizing”看见低程度的行为压力。 这次浮现的模式，关乎风险如何分配到不同部位。
+
+==========================================================================
+hole_lines/position_sizing [en] private.md
+==========================================================================
+# Headline.
+
+> Review card; stored locally only
+
+Mirror.
+
+> **Key risk**
+>
+> [X] The biggest behavioral leak: your largest single position AAPL was 25%, against an average of 11% across the rest
+
+> **Next rule**
+>
+> [*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+## Performance
+
+- Absolute P&L is not computable this period: no trades or valuation basis.
+- Annualized return is not computable this period: the cash-flow anchor is incomplete.
+- Benchmark comparison is not computable this period: no resolvable benchmark series.
+
+## Key trades · ranked by money impact
+
+No ranked instrument diagnosis this period.
+
+## Risks and problems
+
+[v] One thing you did well: No positive behavior was strong enough to claim; keep attention on the largest leak.
+
+[X] The biggest behavioral leak: your largest single position AAPL was 25%, against an average of 11% across the rest
+
+## Next step
+
+[*] Change only this next time: No new rule commitment this time; you can pick one at the next review.
+
+==========================================================================
+hole_lines/position_sizing [en] private.html
+==========================================================================
+Review Card
+Review Card
+Headline.
+Review card; stored locally only
+Mirror.
+Performance
+Absolute P&L is not computable this period: no trades or valuation basis.
+Annualized return is not computable this period: the cash-flow anchor is incomplete.
+Benchmark comparison is not computable this period: no resolvable benchmark series.
+Key trades · ranked by money impact
+No ranked instrument diagnosis this period.
+Risks and problems
+One thing you did well
+No positive behavior was strong enough to claim; keep attention on the largest leak.
+The biggest behavioral leak
+your largest single position AAPL was 25%, against an average of 11% across the rest
+Next step
+Change only this next time
+No new rule commitment this time; you can pick one at the next review.
+session_id: corpus · language: en
+
+==========================================================================
+hole_lines/position_sizing [en] public.md
+==========================================================================
+---
+privacy: public
+language: en
+---
+
+# Review Card
+
+> Shareable version; amounts, dates, tickers, and exact weights removed
+
+This review found low behavioral pressure in position sizing. The highlighted behavior concerned how risk was distributed across position sizes.
 
 ==========================================================================
 reconciliation/metric-improved [zh-TW] private.md

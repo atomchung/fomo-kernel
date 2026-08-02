@@ -54,7 +54,7 @@
   },
   "account_gate": {
     "default": "Complete the cash anchor, and you'll see the account-level return with cash included.",
-    "no_cash_anchor": "Add one current cash balance, and you'll see the account-level return with cash included.",
+    "no_cash_anchor": "Add a current cash balance, and you'll see the account-level return with cash included.",
     "mixed_trade_footprint": "Only part of the trade history carries the broker's cash amount, and the two bases cannot share one cash history.",
     "negative_cash_rollback": "Anchor the currency that has none yet, and you'll see the account-level return with cash included.",
     "cash_residual": "Update the cash position for that stretch, and you'll see the account-level return with cash included.",
@@ -517,7 +517,7 @@
     "exit_forward": "of {n_rt} decision exits ({n_scored} with forward data, {n_trunc} truncated), {early_rate} were higher {n_fwd} days later, climbing {avg_forgone} on average{winner_early}",
     "exit_winner_early": "; {winner_early} of the winners you sold kept climbing (sold too early)",
     "exit_holding": "winners held {hold_win} days / losers held {hold_lose} days (disposition gap {disp_gap})",
-    "position_sizing": "your largest single position {max_ticker} was {max_pct}, against a {avg_pct} average across the rest",
+    "position_sizing": "your largest single position {max_ticker} was {max_pct}, against an average of {avg_pct} across the rest",
     "diversification": "you hold {n} names that look diversified, but AI-capex exposure is {ai_pct}, the largest sector ({max_sector}) is {max_sector_pct} and the top three are {top3} — one and the same driver",
     "holding_no_data": "no closed round trips yet, so holding-time statistics are still pending (positions bought and not yet sold are not counted)",
     "holding_same_day": "all completed trades were same-day; no overnight holding",
