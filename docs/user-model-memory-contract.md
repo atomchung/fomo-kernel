@@ -1,571 +1,461 @@
-# User model and decision-memory contract
+# User decision context — context first, decision second
 
 Status: **research / architecture decision only**. This document does not
-activate an implementation front. The current execution queue remains the M1
-repair work named by issue #27.
+activate an implementation front. Issue #27 still owns the current M1 repair
+queue.
 
-Decision date: 2026-08-02.
+Decision date: 2026-08-03.
 
-Owners and related records: #446, #403, #450, #16, #650, #475, merged PR #460,
-and draft PR #661.
+Owners and related records: #446, #475, #403, #450, #650, merged PR #460,
+and #718.
 
-## 1. Why this document exists
+## 1. Owner decision
 
-FOMO Kernel already stores several kinds of durable history and has separate
-research tracks for behavioral style, profile distillation, standing rules,
-and cross-period rationale. What is missing is one product contract that says
-how those pieces work together to improve the user's next decision.
+FOMO Kernel should not begin its next stage by separately productizing memory,
+style, strategy, improvement focus, and verdict readers.
 
-The goal is not a more elaborate description of the user. It is:
+The first product problem is simpler:
 
-> Use a small, auditable slice of prior decisions to make the next decision
-> clearer, reduce repeated mistakes, and learn which personal strategies
-> deserve to survive.
+> Establish enough accurate context about the user that a strong agent can
+> understand the decision in front of it, then use that context to improve the
+> decision.
 
-The product must answer five different questions without collapsing them into
-one profile summary:
+A complete schema is not the problem. The failure occurs when a complete stored
+model is confused with a complete runtime prompt, or when each concept grows its
+own store, workflow, and QA harness.
 
-1. **Memory** — what happened, and what did the user actually say?
-2. **Style** — what repeated behavior is currently supported by evidence?
-3. **Strategy** — what has the user chosen as a standing expectation for future decisions?
-4. **Improvement focus** — what one behavior is the user deliberately testing now?
-5. **Verdict** — did the later decision follow the expectation, and what did the outcome teach?
+The next validated shape is therefore:
 
-These concepts have different sources, authority, lifecycles, and readers.
-They must not share one free-text `profile.md`-style source of truth.
-
-## 2. Current repository truth
-
-### Current milestone
-
-Issue #27 currently routes only two M1 repair fronts. It explicitly says not to
-merge wider M2 memory work without a new owner decision. This document may
-land as a reversible design record, but it does not place memory implementation
-on the current critical path.
-
-### Memory-related state today
-
-| Capability | Current state | Owner |
-|---|---|---|
-| Immutable review/session history | Shipped | existing session and ledger contracts |
-| Pre-trade consultation persistence and review reconciliation | Shipped for its bounded use | `consider` contract |
-| Continuing-position rationale event and bounded query | Designed; draft PR #661 contains the store/query module, but no user-facing consumer or stable integration has landed | #403 / #450 |
-| Execution-qualified cross-period self-report reader | Specified; not a complete shared runtime reader yet | #450 |
-| Behavior verdict persistence | Shipped by PR #460 as `verdicts.jsonl` | #446 cut 1 |
-| Behavior verdict readback | Missing; the store has no user-facing query/consumer | #446 |
-| Mechanical style dimension | First dimension exists; not yet a general user-model reader | #16 |
-| Standing personal strategy/rule lifecycle | Partially shipped for rules, broader lifecycle still under design | #650 |
-| Profile/distillation claim | Not shipped | #446 |
-
-This distinction matters: **stored is not remembered**. A file with no bounded
-reader that changes a later interaction is write-only schema debt, not product
-memory.
-
-## 3. Object boundaries
-
-### 3.1 Memory
-
-Memory is canonical historical evidence. It has no normative authority.
-
-Examples:
-
-- an executed trade event;
-- a contemplated decision and its resolution state;
-- the user's exact reason for continuing to hold a position;
-- a user-adopted rule and its version;
-- the portfolio basis frozen for a decision;
-- a later outcome or review-period observation.
-
-Memory preserves source identity and voice:
-
-- `user_verbatim`;
-- `engine_fact`;
-- `agent_interpretation`;
-- legacy or unknown provenance where applicable.
-
-Memory never rewrites the original event to make a newer interpretation look
-as if it had been known earlier.
-
-### 3.2 Style
-
-Style is a descriptive inference over repeated, execution-qualified behavior.
-It answers:
-
-> In this bounded class of situations, what does the user tend to do?
-
-Style is not a permanent personality and is not a recommendation.
-
-A style claim must include:
-
-- a named behavioral dimension;
-- an eligibility rule and sample count;
-- an observation window;
-- cited events or deterministic aggregates;
-- counter-evidence;
-- a status such as `candidate | supported | stable`;
-- a supersession path.
-
-There are two useful levels:
-
-1. **Recent pattern** — a small number of recent examples. Wording must stay
-   bounded: "in the recent eligible cases..."
-2. **Observed style** — enough eligible, point-in-time observations to pass the
-   dimension's sample and stability gates.
-
-A recent pattern must never be silently promoted into an observed style.
-
-### 3.3 Strategy
-
-Strategy is normative and user-owned. It answers:
-
-> What has the user chosen to do in future eligible situations?
-
-A strategy may originate from:
-
-- a direct user statement;
-- a rule the user explicitly adopts;
-- an agent proposal the user explicitly accepts;
-- a previously tested strategy that the user keeps or revises.
-
-Observed behavior cannot create a strategy. Repeatedly averaging down does not
-mean "average down" is the user's strategy. An agent suggestion cannot become
-policy merely because it was generated during a review.
-
-The first implementation should reuse #650's standing-rule lifecycle wherever
-one rule can express the strategy. A broader `Strategy` object is justified
-only after a real reader proves one rule is insufficient.
-
-### 3.4 Improvement focus
-
-An improvement focus is one temporary, user-confirmed experiment. It answers:
-
-> What one behavior are we deliberately trying to improve now, and how will we know?
-
-Conceptual fields:
-
-```yaml
-source_claim_ids: []
-target_behavior: ""
-trigger: ""
-intervention: ""
-metric: ""
-baseline_window: ""
-review_after: ""
-status: proposed | active | completed | revised | retired
-user_confirmed: true
+```text
+user-supplied report / existing local records
+                 ↓
+       one versioned UserDecisionContext
+                 ↓
+current engine-computed portfolio consequence
+                 +
+one small context view relevant to this decision
+                 ↓
+       direct personalized challenge
+                 ↓
+  candidate context update after the decision
 ```
 
-The product should allow at most one active focus in the first version. A full
-profile may contain many claims; a user cannot effectively improve ten things
-at once.
+The immediate private validation source may be a report generated from the
+owner's `investment-note`. The public product must treat it only as a generic,
+explicitly supplied local report. FOMO Kernel never crawls, mirrors, or copies a
+private repository automatically.
 
-Do not add a new persistence object first. Try representing the initial focus
-as a temporary standing rule/experiment under #650. Add a distinct object only
-if duration, measurement, or retirement cannot be represented honestly.
+## 2. Why the current product can feel less intelligent
 
-### 3.5 Verdict
+The engine has become better at truth, replay, recovery, and portfolio
+consequence. Those are necessary capabilities.
 
-A verdict is an append-only learning event about a specific period or decision.
-It answers questions such as:
+But a strong model can still appear less useful when its attention is dominated
+by:
 
-- was the strategy applicable?
-- did the user follow it?
-- was the proposed reason new evidence or only a price move?
-- did the memory intervention change the action, size, delay, or evidence collection?
-- did the prior profile claim receive support or a counterexample?
+- route mechanics;
+- schema completion;
+- required wording and coverage lists;
+- QA receipts and recovery chronology;
+- many narrowly owned stores with no current read model;
+- repeated questions whose answers are already present in the user's broader
+  context.
 
-A verdict about period N remains true about period N after the current profile
-or strategy changes. It therefore cannot live inside a supersedable profile
-projection.
+The resulting answer can be mechanically valid while missing the user's actual
+investment model. This is not solved by adding another evaluator or another
+memory workflow. It is solved by giving the agent a compact, trustworthy user
+context and preserving room for judgment.
 
-## 4. The profile layer should store claims, not a biography
+Harnesses may observe the product. They must not become the product's reasoning
+architecture.
 
-If #446 later introduces a distillation projection, its useful unit is a cited
-`ProfileClaim`, not a complete investor-personality paragraph.
+## 3. Three layers are sufficient
+
+The first context-first product needs only three conceptual layers.
+
+### A. Source evidence
+
+Evidence may include:
+
+- a user-supplied investor report;
+- transaction and position history already accepted by FOMO Kernel;
+- prior reviews and consultations;
+- the user's exact statements;
+- user-adopted rules;
+- later outcomes and verdicts.
+
+Sources remain local. Existing canonical event streams stay authoritative for
+the events they own.
+
+### B. Current user context
+
+`UserDecisionContext` is a versioned current projection of what is useful to
+know about this user when making decisions.
+
+It is not an immutable event log and not a biography. It may be rebuilt or
+superseded from its evidence.
+
+### C. Decision episode
+
+A decision episode combines:
+
+- the user's current contemplated action and reason;
+- deterministic current-book consequence;
+- the few context claims and policies relevant to this decision;
+- the agent's challenge and the user's resolution;
+- a proposed update to context when something genuinely changed.
+
+No other product layer is required for the first slice.
+
+## 4. One complete but sparse schema
+
+The schema should define the whole shape while allowing almost every field to
+remain absent or `unknown`. Completeness of the schema must never imply
+completeness of the user model.
 
 Conceptual contract:
 
 ```yaml
-claim_id: ""
-claim_kind: strength | risk_pattern | style | belief_hypothesis | unknown
-claim: ""
-scope: ""
-evidence_refs: []
-counter_evidence_refs: []
-confidence: candidate | supported | stable
-first_observed_at: ""
-last_observed_at: ""
-supersedes_claim_id: null
-status: active | superseded | retired
-future_observation: ""
+schema_version: "1"
+context_id: ""
+revision: 1
+as_of: ""
+
+sources:
+  - source_id: ""
+    source_type: user_report | transaction_history | review | consultation | user_statement
+    reference: "local opaque reference"
+    observed_at: ""
+
+claims:
+  - claim_id: ""
+    kind: capability | belief | decision_pattern | risk_pattern | preference | regime_dependency | portfolio_hypothesis
+    statement: ""
+    scope: ""
+    status: unknown | hypothesis | supported | confirmed | superseded
+    provenance: user_declared | behavior_derived | agent_synthesis
+    evidence_refs: []
+    counter_evidence_refs: []
+    confidence: low | medium | high
+    user_confirmation: unasked | confirmed | corrected
+    first_observed_at: ""
+    last_updated_at: ""
+    supersedes_claim_id: null
+
+policies:
+  - policy_id: ""
+    decision_class: ""
+    applicability: ""
+    policy: ""
+    source: user_declared | user_adopted
+    status: provisional | standing | superseded | retired
+    evidence_refs: []
+
+current_focus: null
+
+open_questions:
+  - question_id: ""
+    question: ""
+    why_it_matters: ""
+    evidence_needed: ""
 ```
 
-Important constraints:
+This one projection can express what earlier discussions called memory, style,
+strategy, improvement focus, and current profile. Those remain useful semantic
+labels, not requirements for five product objects.
 
-- no citation, no claim;
-- a multi-model agreement is not a substitute for evidence;
-- `unknown` is a useful claim kind when the record cannot yet distinguish two explanations;
-- claims are served by relevance and consequence salience, not loaded globally;
-- user-facing wording may be model-authored, but stored identity, scope,
-  evidence, and status must remain mechanically checkable.
+Period-specific events such as an executed trade or a historical verdict stay
+in their existing append-only stores and may be cited by the context. They are
+not copied into the projection.
 
-## 5. Readback: what it means and why it comes first
+## 5. Why a complete schema can still go wrong
 
-"Complete readback" does **not** mean reading a private research repository or
-running another general summary over all historical files.
+A complete schema is useful only with the following protections.
 
-Readback means:
+### Sparse, not form-driven
 
-> A current product route can retrieve a small, correctly qualified historical
-> slice from FOMO Kernel's own canonical state, and that slice causes a named,
-> user-visible difference in the current interaction.
+The product must not ask the user to fill every field. Initial context is
+created from the evidence already supplied. Missing areas stay missing.
 
-A readback is complete only when all of these hold:
+### Provenance before confidence
 
-1. **Canonical source** — the reader consumes the accepted event/store, not a
-   duplicate summary.
-2. **Correct subject** — position-cycle, decision, rule, or condition identity
-   is proven; ticker-only guesses do not cross sale/re-entry boundaries.
-3. **Voice and execution qualification** — user words, agent interpretation,
-   considered action, and executed action remain distinct.
-4. **Bounded retrieval** — the reader reports counts/truncation and does not
-   scan or inject unbounded history.
-5. **Real consumer** — a review or pre-trade route changes a question,
-   challenge, or reconciliation because of the retrieved item.
-6. **Failure safety** — corruption, ambiguity, or stale identity fails closed
-   rather than choosing a convenient memory.
+A user declaration, a behavior-derived observation, and an agent synthesis are
+not interchangeable. The schema must preserve which one produced each claim.
 
-### Already-designed readback slices that remain incomplete
+### Claims, not rigid personality slots
 
-#### A. Position-rationale readback
+A fixed field such as `investor_type: momentum` creates false completeness and
+makes contradictory behavior hard to represent. A claim collection permits
+multiple scoped and even conflicting hypotheses.
 
-#403 and draft PR #661 define an append-only rationale chain and a bounded
-query. The missing product slice is a public action/reader integration where a
-later relevant review can quote the prior statement instead of asking from
-zero. A future `consider` consumer comes only after the route's identity and
-frozen-reference questions are resolved.
+### Current projection, not historical truth
 
-#### B. Verdict readback
+The context is a working model. Superseding a claim must not rewrite the source
+report, transaction, prior statement, or old verdict.
 
-PR #460 writes replayable behavior verdicts. The first readback should surface
-a sentence that cannot be generated from the current period alone, for example
-that the same judged mismatch has occurred across multiple eligible periods.
-Removing the reader must remove that sentence.
+### Atomic revision
 
-#### C. Shared self-report readback
+Updates should produce a new revision of the context after validation. Partial
+writes, concurrent patches, ambiguous claim identity, and malformed evidence
+references fail closed.
 
-#450 defines the bounded, provenance-preserving cross-period reader. Its shape
-must become the shared foundation before a profile claim combines those events.
-Otherwise profile distillation would become another writer over records that
-current routes still cannot reliably retrieve.
+### No full runtime load
 
-This is why readback precedes profile generation. Building `ProfileClaim`
-first would create another store whose output has no proven user-facing reader.
+Storage may be complete. Runtime context must remain selective. The relevant
+view is assembled for the current decision and should normally include only:
 
-## 6. DecisionMemoryPacket
+- up to three relevant claims;
+- up to two applicable policies;
+- at most one current improvement focus;
+- the unresolved question that most changes the decision.
 
-A live decision must not load the whole user model. It receives one ephemeral,
-bounded packet assembled for that decision.
+A poorly designed schema can create loading problems, but loading the complete
+schema every time would remain a product error even with a well-designed
+schema.
 
-Conceptual output:
+## 6. Bootstrap experience
 
-```yaml
-relevant_self_reports: []       # max 2
-relevant_profile_claims: []     # max 2
-applicable_strategies: []       # max 2
-active_improvement_focus: null  # max 1
-prior_analog: null              # max 1
-relevant_verdict: null          # max 1
-current_state_refs: []
-unknowns: []
-truncation: {}
-```
+The first context experience should accept the richest material the user
+already has instead of forcing an interview.
 
-Selection priority:
+### User moment
 
-1. same proven subject or decision class;
-2. active improvement trigger;
-3. current portfolio/rule consequence;
-4. recent execution-qualified analog;
-5. evidence strength and counter-evidence;
-6. strategy applicability.
+> “Here is my investor report / historical summary. Understand how I invest so
+> you can help with later decisions.”
 
-The packet is a read projection, not canonical state. It may be rebuilt. It may
-not rewrite the events it cites.
+### Product behavior
 
-## 7. How this changes the product
+1. Read the explicitly supplied local report and any allowed FOMO Kernel state.
+2. Produce a draft `UserDecisionContext`.
+3. Show a short current understanding, not the schema:
+   - strongest supported capability;
+   - most consequential recurring risk;
+   - central belief or portfolio assumption;
+   - one contradiction or uncertainty;
+   - one candidate improvement focus.
+4. Ask at most one high-leverage correction question, such as which conclusion
+   is most inaccurate or which current behavior the user most wants to change.
+5. Save the corrected context locally as revision 1.
+6. Allow the user to start a decision immediately. No full profile ceremony is
+   required.
 
-### Before
+### Minimum useful outcome
 
-A user brings a new add decision. FOMO Kernel computes current portfolio
-consequence and challenges the current reason, but it may not reliably say:
+The user can say:
 
-- how the current reason differs from the user's prior stated reason;
-- whether a similar reason was used before;
-- whether an unresolved behavior/rule mismatch is repeating;
-- which one improvement experiment the user is currently testing.
+> “The system understands the most important way I invest and the main way I
+> tend to lose decision quality.”
 
-### After
+This is a context outcome, not yet proof that decisions improve.
 
-The same route still begins with deterministic current-book consequence. It
-then adds only the relevant historical tension, for example:
+## 7. Decision-support experience
 
-> This proposal adds the same driver as the prior eligible decision. The prior
-> recorded reason was X; the current reason adds no confirmed evidence beyond
-> the price move. Your active experiment is to separate evidence changes from
-> price changes, so the unresolved question is Y.
+When the user later brings a trade, the answer should follow this order.
 
-That sentence is valuable only if each clause is backed by the appropriate
-source and identity. It must disappear or narrow when the memory is absent,
-ambiguous, or contradicted.
+### 1. Current consequence
 
-## 8. First improvement experiment
+Engine-owned facts remain first:
 
-The first owner-live experiment should be narrower than a full user model:
+- resulting position and concentration;
+- driver overlap;
+- cash effect;
+- applicable user rule collision;
+- data limitations.
 
-> Before an add or new-risk decision, distinguish a real evidence delta from a
-> price delta and identify whether the action adds a new thesis or repeats an
-> existing driver.
+### 2. Contextual tension
 
-Candidate intervention:
+The agent selects only the context that changes this decision. Examples:
 
-1. What specific evidence is new? If none, state `price_delta_only`.
-2. Does this create a new driver/thesis exposure, or add to an existing one?
-3. What happened after the most relevant prior reason, and what is materially different now?
+- the action repeats a previously identified risk pattern;
+- the current reason conflicts with a user-confirmed policy;
+- the proposal depends on a belief the user's report marked as unproven;
+- this is the class of company or situation in which the user historically had
+  stronger or weaker decision quality.
 
-Do not turn this into a universal cash, position-size, tier, or stop-loss
-threshold. The purpose is to test whether a bounded historical intervention
-changes the decision process.
+### 3. One discriminating question
 
-## 9. Validation without a new harness
+Ask the one question that separates the best-supported interpretations. For
+example:
 
-This feature does not justify a separate memory-evaluation framework. The
-validation surface should be the same surface the user will actually consume.
+> What new evidence exists now that was not already present in the prior
+> thesis, and would you still add if the price had not moved?
 
-Use, in order:
+### 4. Decision options, not an imposed verdict
 
-1. **Focused unit and contract tests** for identity, provenance, bounded ordering,
-   truncation, idempotency, corruption, and fail-closed behavior.
-2. **One existing synthetic route fixture** proving the current review or
-   `consider` output changes because a bounded memory item is present. The
-   mutation is removal of that reader or memory row; the named historical
-   sentence/question must disappear.
-3. **One private owner-live trajectory** after the consumer exists, recording
-   only a non-sensitive verdict about whether the readback changed the decision
-   process.
+The product may make the trade-off explicit and identify reasonable process
+options such as proceed, reduce, delay, collect evidence, revise the reason, or
+cancel. The final action remains the user's.
 
-Do not build:
+### 5. Candidate context patch
 
-- a separate multi-model comparison harness;
-- a memory-specific campaign runner, dashboard, or scoring framework;
-- a second route simulator beside the existing review/consider fixtures;
-- a durable `DecisionMemoryPacket` store merely so a harness can inspect it;
-- a generic profile benchmark before one real consumer exists;
-- a broad A/B platform for a one-slice product question.
+After the user resolves the decision, the agent may propose a narrow update:
 
-The current #718 QA front owns M1 correction-turn trace and accounting. This
-memory work must not extend, depend on, or compete with that harness. Reuse an
-existing trace/receipt only if it already fits after landing; otherwise one
-focused fixture plus one owner verdict is sufficient.
+- confirm or counter one claim;
+- record a new user policy;
+- update the current improvement focus;
+- add an open question;
+- leave the context unchanged.
 
-The only evaluation question is:
+Agent synthesis does not silently become confirmed user context.
 
-> Did correctly qualified history cause one useful, named difference in the
-> real route without adding false claims or extra ceremony?
+## 8. Before and after
 
-If not, remove or narrow the memory feature rather than expanding the harness.
+### Without context
 
-## 10. What the owner-live comparison actually does
+The product computes the current book correctly but often asks from zero and
+produces a challenge that a general assistant could also produce.
 
-This check happens **after** the required readback consumer exists. It is not a
-request to run three models, not a request to copy a private repository, and not
-a prerequisite for this docs-only decision.
+The user experience is:
 
-Use one real, private decision locally and freeze the same current inputs for
-the two readings:
+> “It knows my portfolio, but it does not understand how I invest.”
 
-- same recorded book and `PortfolioBasis`;
-- same contemplated action/premise;
-- same prices and public-fact allowance;
-- same model/host where practical.
+### With context but no decision use
 
-This does not require two automated arms. Read the current route once without
-the new memory input, then once with the bounded readback, or compare the
-pre-change synthetic fixture with the post-change fixture. Record only whether
-the new history caused a named difference.
+The product can generate an impressive investor profile, but it remains a
+report generator. The user experience is:
 
-What matters:
+> “It describes me well, but I do not know what this changes.”
 
-- correctly recalling a prior user statement without turning interpretation into verbatim;
-- surfacing one relevant prior outcome or unresolved verdict;
-- avoiding a repeated known question;
-- changing the key question or challenge;
-- changing a concrete decision-process action: proceed, cancel, delay, reduce,
-  collect evidence, or revise the stated reason;
-- creating a later verdict that can determine whether the intervention helped.
+### With context used in the decision
 
-Public GitHub evidence records only a synthetic fixture or a non-sensitive
-owner verdict. No real holding, amount, date, motive, or answer enters this
-repository.
+The same current consequence is connected to the user's actual capability,
+risk pattern, belief, and chosen policy. The user experience becomes:
 
-### Pass / stop rule
+> “It remembered the part of my history that matters here and asked a harder,
+> more relevant question than I would have asked myself.”
 
-Keep a memory unit only when its readback causes a named improvement without
-introducing false identity, psychologizing, or extra ceremony.
+That third state is the product outcome.
 
-Revise or remove it when:
+## 9. What not to build
 
-- the output is effectively identical without it;
-- the same result already comes reliably from current state;
-- it adds questions whose answers do not change the response;
-- maintenance cost exceeds the observed decision value;
-- it turns a contextual pattern into a permanent personality label.
+This decision deliberately avoids:
 
-## 11. Ordered rollout
+- separate Memory, Style, Strategy, ImprovementFocus, and Verdict products;
+- a generic knowledge graph;
+- mandatory profile questionnaires;
+- automatic crawling of a private repository;
+- a permanent investor personality enum;
+- a durable per-decision context packet;
+- one prompt containing the entire context schema and all source reports;
+- a memory-specific campaign runner, dashboard, scoring framework, or model
+  panel;
+- new user-facing routes before one existing decision route proves the context
+  changes its answer.
 
-The ordering below is architectural. It does not override #27's current M1
-repair queue.
+Existing #403/#450 rationale work, #460 verdicts, and #650 rules may later enrich
+or update `UserDecisionContext`. They are not prerequisites for the initial
+report bootstrap.
 
-### Cut 0 — this design record
+## 10. Minimal validation without another harness
 
-- define the object boundaries and ownership map;
-- no schema, engine, route, persistence, or harness change.
+Validation has two separate questions.
 
-### Cut 1 — complete one self-report readback loop
+### Context quality
 
-After an owner decision reactivates M2:
+Using one private owner report locally or a synthetic public equivalent:
 
-- finish the #403/#450 public writer-reader integration;
-- prove a prior rationale changes the next relevant review;
-- use focused tests on the existing review route;
-- keep `consider` unchanged in this cut.
+- are major claims grounded in sources?
+- are fact, user statement, and inference separated?
+- does the context preserve uncertainty and counter-evidence?
+- can the owner identify and correct a wrong conclusion?
 
-### Cut 2 — give `verdicts.jsonl` its first reader
+This can be reviewed directly. It does not require an LLM judge panel.
 
-- bounded query over replayable verdicts;
-- one user-visible sentence available only from cross-period history;
-- no profile claim and no new harness.
+### Decision usefulness
 
-### Cut 3 — one pre-trade DecisionMemoryPacket
+Run one real or synthetic decision twice using the same frozen current facts:
 
-- consume the shared readback contracts;
-- one synthetic add/new-risk decision class in the existing route fixtures;
-- no generic profile onboarding or card section;
-- run one private owner-live trajectory and record only a safe verdict.
+- once with no user context;
+- once with the relevant context view.
 
-### Cut 4 — optional `ProfileClaim` projection
+The context earns its place only if it creates a named useful difference, such
+as:
 
-Only if Cuts 1–3 show that multiple raw events must be repeatedly synthesized
-and direct bounded readback is insufficient:
+- avoids a repeated question;
+- exposes a conflict with the user's own model;
+- identifies a relevant prior strength or failure pattern;
+- changes what evidence is requested;
+- changes the user's process action: proceed, reduce, delay, cancel, or collect
+  evidence.
 
-- add cited, supersedable claims;
-- serve at most two relevant claims per decision;
-- mutation-test citation and scope failures;
-- remove the feature if it does not change a downstream consumer.
+Use one focused route fixture and one owner verdict. Do not extend #718 or build
+a context-specific harness. If the difference is not useful, revise the context
+or decision prompt rather than expanding evaluation infrastructure.
 
-### Cut 5 — strategy learning
+## 11. Smallest sequence
 
-Build on #650 and #475 only after opportunity denominators and outcome history
-exist. Report rule eligibility, adherence, and observed outcomes. Do not invent
-a full-portfolio counterfactual return.
+The ordering below is architectural and does not override #27.
 
-## 12. Ownership map
+### Step 0 — stop adding product surface
 
-| Concern | Existing owner |
+Finish the current M1 repair boundary. Do not add another memory route, card,
+questionnaire, or QA platform.
+
+### Step 1 — private context prototype
+
+Use the owner's existing reports to produce one `UserDecisionContext` locally.
+No public private-data commit and no product integration yet.
+
+Review only:
+
+- what context is genuinely decision-relevant;
+- what is unsupported or contradictory;
+- which parts are stable enough to carry forward;
+- which one current improvement focus is highest leverage.
+
+### Step 2 — apply it to one real decision
+
+Combine the frozen current `TradeEvaluation` with the relevant context view.
+Observe whether the answer and the user's process improve.
+
+This is the first product proof. It comes before more memory infrastructure.
+
+### Step 3 — freeze the minimum schema
+
+Remove every field the prototype did not use. Keep one complete sparse schema
+for the remaining context.
+
+### Step 4 — add one local bootstrap/update path
+
+Accept an explicitly supplied report, produce the context, show the short
+summary, allow one correction, and persist one atomic revision.
+
+### Step 5 — integrate one existing decision route
+
+Use the context in one `consider` / add-or-new-risk flow. Do not expand to every
+review route in the same change.
+
+### Step 6 — learn from actual use
+
+Only after repeated use should existing rationale, verdict, and rule streams
+automatically propose context updates. Add a new store or object only when this
+single context projection cannot represent an observed product need.
+
+## 12. Ownership and relation to current work
+
+| Concern | Owner / relation |
 |---|---|
-| Continuing-position rationale writer and first consumer | #403 |
-| Bounded, provenance-preserving cross-period self-report reader | #450 |
-| Mechanical observed-style dimensions | #16 |
-| Profile/distillation claims and behavior verdict boundary | #446 |
-| Standing user strategy/rule lifecycle | #650 |
-| Staged product scope and later rule learning | #475 |
-| Current implementation queue | #27 |
-| M1 QA trace/accounting harness | #718; not a dependency of this memory design |
+| Current M1 implementation queue | #27 |
+| `UserDecisionContext` design and distillation projection | #446 |
+| Staged decision-memory roadmap and privacy boundary | #475 |
+| Later exact rationale evidence | #403 / #450; optional enrichment, not bootstrap prerequisite |
+| User-owned policies | #650 |
+| Historical verdict evidence | merged PR #460; optional enrichment |
+| M1 synthetic QA trace/accounting | #718; not a dependency and must not be extended for this work |
 
-Do not open a parallel memory epic or validation platform. New work belongs to
-these owners unless a measured failure proves a distinct user outcome has no
-home.
+## 13. Acceptance for this decision
 
-## 13. Engine, agent, and user authority
+Before implementing any context feature, a contributor must answer:
 
-### Engine owns
+1. What user-supplied evidence initializes the context?
+2. Which claims are fact, user declaration, or agent synthesis?
+3. What remains unknown or contradicted?
+4. Which existing decision route reads the context immediately?
+5. Which part of the answer changes because context exists?
+6. What can be removed or avoided instead of adding another workflow?
+7. How can the owner correct the model?
+8. What focused existing test proves identity, provenance, and update safety?
 
-- canonical event identity and lifecycle;
-- execution and subject qualification;
-- deterministic metrics and style dimensions;
-- rule applicability and adherence where mechanically decidable;
-- bounded query ordering/count metadata;
-- current portfolio consequences;
-- fail-closed validation and replay.
-
-### Agent owns
-
-- selecting which already-eligible memory matters to this decision;
-- explaining evidence and counter-evidence;
-- asking the one question code cannot settle;
-- proposing an improvement experiment;
-- translating engine output into direct user language.
-
-The agent may not create an engine fact, upgrade interpretation into user
-verbatim, or promote its proposal into user strategy.
-
-### User owns
-
-- the final decision;
-- confirmation or correction of motive;
-- adoption, revision, or retirement of strategy;
-- activation of an improvement focus;
-- whether a proposed memory interpretation is accepted as useful context.
-
-## 14. Simplification rules
-
-This contract simplifies the system by preferring composition over new
-abstractions:
-
-- reuse canonical events; do not copy them into a profile biography;
-- reuse #650 standing rules before adding a Strategy store;
-- reuse one temporary rule/experiment before adding an ImprovementFocus store;
-- derive `DecisionMemoryPacket` ephemerally; never persist it;
-- add `ProfileClaim` only after direct readback proves repeated synthesis is
-  required;
-- one consumer before another writer;
-- one active improvement focus, not a program of concurrent interventions;
-- one focused fixture and one owner verdict, not a harness.
-
-Every proposed object or tool must answer:
-
-1. Which current user-visible failure does it solve?
-2. Why can the existing event, rule, reader, or route not solve it?
-3. Which real consumer reads it immediately?
-4. Which existing test surface proves the change?
-5. What can be deleted or avoided because this object exists?
-
-If the answer to question 2 or 3 is unclear, do not add the abstraction.
-
-## 15. Non-goals
-
-- no implicit reading, indexing, or mirroring of a private research repository;
-- no universal investment ontology or generic memory graph;
-- no full investor biography or permanent personality type;
-- no runtime multi-model voting requirement;
-- no automatic strategy creation from observed behavior;
-- no automatic buy/sell verdict, target price, or market forecast;
-- no new store before a real reader and consumer are named;
-- no memory-specific harness, campaign runner, dashboard, or scoring system;
-- no activation of M2 while #27 keeps M1 repair as the only execution queue.
-
-## 16. Acceptance for this design decision
-
-This document is useful when a future contributor can answer, before coding:
-
-1. Which object owns this fact: memory, style, strategy, focus, or verdict?
-2. What canonical evidence and subject identity support it?
-3. Which existing issue owns the work?
-4. Which current route will read it?
-5. What user-visible behavior changes when the reader is present?
-6. How is the change later reconciled or retired?
-7. What existing test surface proves it without a new harness?
-8. What privacy-safe evidence proves it worked?
-
-If those questions cannot be answered, the proposed memory feature is not yet
-an executable slice.
+If the context does not improve a real decision, the next step is not more
+memory or more harness. The next step is to revise what context the agent sees
+and how it uses that context.
