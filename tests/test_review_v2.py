@@ -2910,6 +2910,79 @@ def test_test_drive_is_labeled_and_never_projects_into_coach_memory():
             "repair-projections must never project demo sessions into coach memory"
 
 
+def test_engine_version_dirty_ignores_untracked_but_still_catches_a_real_edit():
+    """#747: an untracked file must never flip engine_version.dirty, but an
+    actual edit to a tracked file still must.
+
+    The bug: the QA runbook's mandated HOME replacement makes git lose the
+    account's global excludes file, so a locally-ignored file (e.g.
+    `.claude/settings.local.json`) starts showing up as `??` -- untracked --
+    and every isolated QA run was reported dirty on an otherwise clean
+    checkout. The fix scopes `dirty` to tracked-file state only
+    (`git status --porcelain --untracked-files=no`), matching
+    `git describe --dirty`'s own convention, so an untracked file -- whichever
+    reason it is untracked -- can no longer manufacture the flag.
+
+    This drives real `git` against a throwaway repo rather than asserting a
+    flag was merely passed to a mocked subprocess call, because the actual
+    defect was in git's real behavior, not in this function's control flow.
+    `_engine_version`'s `repo_root` parameter exists only so this test can
+    point it somewhere other than this skill's own checkout; every production
+    call site still omits it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = pathlib.Path(tmp)
+
+        def _git(*args):
+            result = subprocess.run(["git", *args], cwd=repo, capture_output=True,
+                                    text=True, timeout=10)
+            assert result.returncode == 0, f"git {args} failed: {result.stderr}"
+            return result
+
+        _git("init", "-q")
+        _git("config", "user.email", "test@example.com")
+        _git("config", "user.name", "Test")
+        tracked = repo / "tracked.txt"
+        tracked.write_text("v1\n", encoding="utf-8")
+        _git("add", "tracked.txt")
+        _git("commit", "-q", "-m", "initial")
+
+        saved = review_engine._ENGINE_VERSION
+        try:
+            review_engine._ENGINE_VERSION = None
+            clean = review_engine._engine_version(repo_root=str(repo))
+            assert clean["source"] == "git", "a freshly committed throwaway repo must resolve to the git source"
+            assert clean["dirty"] is False, "a fresh commit with nothing changed must not be dirty"
+
+            # The #747 shape: an untracked file, however it got there, must
+            # not move the flag.
+            (repo / "untracked_scratch.tmp").write_text("noise\n", encoding="utf-8")
+            review_engine._ENGINE_VERSION = None
+            still_clean = review_engine._engine_version(repo_root=str(repo))
+            assert still_clean["dirty"] is False, \
+                "an untracked file must not report the checkout as dirty (#747)"
+
+            # The honest signal this fix must not lose: a real maintainer
+            # edit to a tracked file still fires.
+            tracked.write_text("v2\n", encoding="utf-8")
+            review_engine._ENGINE_VERSION = None
+            edited = review_engine._engine_version(repo_root=str(repo))
+            assert edited["dirty"] is True, \
+                "an edited tracked file must still report the checkout as dirty"
+
+            # And staging a new file -- the other half of "a real edit" --
+            # still fires too, even though it began life untracked.
+            _git("add", "tracked.txt")
+            (repo / "new_tracked.txt").write_text("v1\n", encoding="utf-8")
+            _git("add", "new_tracked.txt")
+            review_engine._ENGINE_VERSION = None
+            staged = review_engine._engine_version(repo_root=str(repo))
+            assert staged["dirty"] is True, \
+                "a staged new file must still report the checkout as dirty"
+        finally:
+            review_engine._ENGINE_VERSION = saved
+
+
 def test_prepare_completes_when_no_hole_and_no_headline_dimension():
     """#227: sample_insufficient (2 round trips, 41-day span) trips the
     insufficiency gate, so the card has no top hole and headline_dim is None.
