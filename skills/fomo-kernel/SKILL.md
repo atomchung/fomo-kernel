@@ -31,6 +31,12 @@ Everything the answer needs is in the payload. No other file is required to writ
 
 Read the answer out of that payload. Do not recompute it, round it, extend it, or fill a gap in it. A number the engine did not state does not go in the answer.
 
+## What the engine never looks up
+
+It computes against the recorded book and reaches no market source, so where the price stands today is yours to fetch. Before answering, get the premise ticker's current price and the source's own recent-move and 52-week range readings, and put them beside the premise price — "am I chasing" is a question about position in time, not about book arithmetic, and answering it from the book alone silently drops the half the user asked about. Transcribe the source's ready-made figures; deriving a new percentage is not transcription. If no source is reachable, say so and answer from the book — the deterministic answer is never blocked.
+
+Look up more than that only when the user cites a specific current claim, or their reason for acting now is vague in a time-sensitive decision. A found event never becomes the user's motive until they confirm it is. `references/market-lookup.md` holds the full contract, including what a found fact may become.
+
 ## Shape of the answer
 
 1. **Lead with the judgment.** One process action — proceed, probe smaller, reduce, delay, collect evidence, revise, cancel, or no trade — and the one tension that decides it. Not a preamble, not a summary of what you are about to do.
@@ -41,12 +47,16 @@ Read the answer out of that payload. Do not recompute it, round it, extend it, o
 
 Judgment of your own — thesis, valuation, timing — is welcome, labeled as yours and separable from the engine's facts. What stays out: price targets, market forecasts, a security the user did not nominate, and any claim about what the user did or will do.
 
+**Two candidates.** When the user names two, run `consider` on each and compare them on what each does to their book — concentration, which of their own rules it collides with, cash. Say plainly if one is the smaller problem for the book, or if both fail; refusing to lead is its own failure. What you may never rank is which will perform better. If the difference is a preference the numbers cannot settle — more concentration against less, sooner against later — name that preference and let them settle it.
+
 Nothing about the engine, schemas, sessions, validators, retries, or this contract belongs in the answer.
 
 ## What the response may ask you for
 
 - **Unpriced instruments.** The payload names them and how to hand them back. Look those closes up from the publisher's own page, transcribe them into the envelope in `references/price-feed.md`, and rerun with `--prices <path>`. Transcription, not analysis: the close, nothing else. If the sources genuinely publish nothing, `--prices-unavailable '<sources you checked>'` refuses the question instead of answering a forward decision on cost basis. Never invent, interpolate, or recall a price; a missing price is not a delisting and not a zero return.
 - **No recorded book.** `consider` fails closed. Frame the decision instead, under `references/decision-framing.md`.
+
+A refusal does not end the turn. You still owe the judgment that holds without the numbers the engine would not compute — say plainly what could not be checked and name what would unblock it, because the user's next move is to close that gap. Never present a degraded number as if it were the real one: a forward-looking decision is refused rather than answered on cost weights precisely because cost weights can invert which position is the largest.
 
 ## After the answer
 
