@@ -4351,6 +4351,457 @@ def test_consider_end_to_end_names_a_cash_anchor_with_no_matching_currency(): # 
                   for entry in challenge["required_coverage"]), challenge["required_coverage"]
 
 
+# ───── Q. prior_decision — one resolved same-ticker prior (#609) ─────
+#
+# The deterministic half of Decision Continuity v1: which earlier evaluation
+# reaches the agent, and what exactly is projected from it. Model quality is not
+# under test here — the owner's P1-P3 replay covers that.
+#
+# Fixture strategy, the same "test the reader, not the writer" split
+# `_write_ledger` already takes toward ledger.jsonl. Every prior is a *genuine*
+# row minted through the real CLI, then rewritten with only the four fields a
+# stored history varies in and this reader actually branches on:
+# `evaluation_id`, `decision`, `decided_on`, and `context`. Everything else —
+# premise, basis, the frozen consequence, the rule collisions — comes straight
+# out of the engine, so a fixture cannot quietly drift into a shape `consider`
+# could never have written. Hand-writing a whole row instead would let this
+# section pass over a history the product cannot produce.
+#
+# All text is fictional (AGENTS.md boundary 4).
+
+_PRIOR_CONTEXT = {"reason": "Fictional: it was the smallest line in the book and I wanted it bigger",
+                  "why_now": "Fictional: the price had run for three sessions",
+                  "evidence_refs": ["fictional-note-2401"]}
+_CURRENT_CONTEXT = {"reason": "Fictional: adding to the position I already sized up once",
+                    "why_now": "Fictional: the supplier named a second customer this morning"}
+_UNSET = object()
+
+
+def _mint_prior_template(root, ticker="NVDA", side="buy", qty=5):
+    """One genuine, schema-valid evaluation row for this ticker and side."""
+    payload = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", root,
+                       "--premise", json.dumps({"ticker": ticker, "side": side,
+                                                "price": 130.0, "qty": qty}),
+                       "--decision-context", json.dumps(_PRIOR_CONTEXT)))
+    _check_evaluation_shape(payload["evaluation"])
+    return payload["evaluation"]
+
+
+def _prior(template, evaluation_id, *, decision="declined", decided_on="2026-01-05",
+           context=_UNSET):
+    """A stored prior built from `template`. `evaluation_id` is overridden so a
+    single template can stand for several distinct historical consultations;
+    `context=None` drops the key entirely, which is what a row written before
+    --decision-context existed looks like on disk."""
+    row = json.loads(json.dumps(template))
+    row["evaluation_id"] = evaluation_id
+    row["decision"] = decision
+    row["decided_on"] = decided_on
+    if context is not _UNSET:
+        row.pop("context", None)
+        if context is not None:
+            row["context"] = context
+    return row
+
+
+def _seed_evaluations(root, rows):
+    """Replace the stored history with exactly `rows`, in exactly this order —
+    file order is what several cases below have to prove the selector ignores."""
+    with open(_evaluation_path(root), "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _consider_now(root, ticker="NVDA", side="buy", qty=9, context=_CURRENT_CONTEXT):
+    payload_args = ["consider", str(MOCK / "sample_momentum.csv"), "--root", root,
+                    "--premise", json.dumps({"ticker": ticker, "side": side,
+                                             "price": 130.0, "qty": qty})]
+    if context is not None:
+        payload_args += ["--decision-context", json.dumps(context)]
+    return _ok(_run(*payload_args))
+
+
+# ── S1. no eligible prior ──
+
+def test_s1_an_empty_history_omits_prior_decision():
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _consider_now(tmp)
+        assert "prior_decision" not in payload, (
+            "an omitted field is the contract -- never a null and never an empty object, "
+            "so no reader has to tell an empty recall from an unasked one")
+
+
+def test_s1_a_resolved_prior_on_another_ticker_is_not_recalled():
+    with tempfile.TemporaryDirectory() as tmp:
+        other = _mint_prior_template(tmp, ticker="AMD")
+        _seed_evaluations(tmp, [_prior(other, "eval-other0000000001", decision="acted")])
+        assert "prior_decision" not in _consider_now(tmp, ticker="NVDA")
+
+
+# ── S2. same-side resolved prior ──
+
+def test_s2_the_resolved_same_side_prior_is_projected_field_for_field():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-same00000000001",
+                                       decision="modified", decided_on="2026-03-11")])
+        prior = _consider_now(tmp)["prior_decision"]
+        assert prior == {
+            "evaluation_id": "eval-same00000000001",
+            "ticker": "NVDA",
+            "side": "buy",
+            # The user's exact stored words, round-tripped with no reader-side
+            # summary, translation or re-wording.
+            "reason": _PRIOR_CONTEXT["reason"],
+            "why_now": _PRIOR_CONTEXT["why_now"],
+            "evidence_refs": _PRIOR_CONTEXT["evidence_refs"],
+            # The canonical field's own name and vocabulary, not a second one.
+            "decision": "modified",
+            "decided_on": "2026-03-11",
+        }, prior
+
+
+def test_s2_a_prior_with_no_stored_evidence_refs_projects_an_empty_list():
+    """`evidence_refs` is optional on the stored envelope, so its absence is an
+    ordinary eligible row -- not a corrupt one, and not a reason to invent a
+    reference."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        bare = {"reason": _PRIOR_CONTEXT["reason"], "why_now": _PRIOR_CONTEXT["why_now"]}
+        _seed_evaluations(tmp, [_prior(template, "eval-norefs000000001", context=bare)])
+        assert _consider_now(tmp)["prior_decision"]["evidence_refs"] == []
+
+
+# ── S3. opposite-side fallback ──
+
+def test_s3_an_opposite_side_prior_is_selected_only_when_no_same_side_one_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        sell_template = _mint_prior_template(tmp, side="sell", qty=1)
+        _seed_evaluations(tmp, [_prior(sell_template, "eval-sell00000000001",
+                                       decision="acted", decided_on="2026-02-02")])
+        prior = _consider_now(tmp, side="buy")["prior_decision"]
+        assert prior["evaluation_id"] == "eval-sell00000000001"
+        # side and decision are preserved exactly, never flipped to match the
+        # current premise
+        assert prior["side"] == "sell"
+        assert prior["decision"] == "acted"
+
+
+def test_s3_a_newer_opposite_side_prior_never_beats_an_older_same_side_one():
+    """The fallback is a fallback. Side ordering outranks recency -- otherwise
+    the rule would be "newest prior" with a tie-breaker, which is a different
+    contract."""
+    with tempfile.TemporaryDirectory() as tmp:
+        buy_template = _mint_prior_template(tmp)
+        sell_template = _mint_prior_template(tmp, side="sell", qty=1)
+        _seed_evaluations(tmp, [
+            _prior(buy_template, "eval-oldbuy0000001", decided_on="2026-01-02"),
+            _prior(sell_template, "eval-newsell000001", decided_on="2026-06-30"),
+        ])
+        prior = _consider_now(tmp, side="buy")["prior_decision"]
+        assert prior["evaluation_id"] == "eval-oldbuy0000001"
+        assert prior["side"] == "buy"
+
+
+# ── S4. exact retry ──
+
+def test_s4_an_exact_retry_never_recalls_itself():
+    """Identical premise, book, day and context converge on the id already on
+    disk. Excluding the current evaluation_id is what stops the answer becoming
+    its own memory."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _consider_now(tmp, context=_PRIOR_CONTEXT)
+        evaluation_id = first["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id, "--decision", "acted"))
+
+        retry = _consider_now(tmp, context=_PRIOR_CONTEXT)
+        assert retry["evaluation"]["evaluation_id"] == evaluation_id, (
+            "precondition: the retry must actually converge on the same id, or this "
+            "case is not testing self-recall at all")
+        assert "prior_decision" not in retry
+
+
+def test_s4_a_second_evaluation_of_the_same_trade_is_still_recalled():
+    """The other side of S4: exclusion is by identity, not by similarity. A
+    different stated why_now is a different question about the same trade, mints
+    a different id, and once resolved it is an ordinary eligible prior."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _consider_now(tmp, context=_PRIOR_CONTEXT)
+        _ok(_run("consider", "--root", tmp, "--resolve",
+                 first["evaluation"]["evaluation_id"], "--decision", "declined"))
+        second = _consider_now(tmp, context=_CURRENT_CONTEXT)
+        assert second["prior_decision"]["evaluation_id"] == first["evaluation"]["evaluation_id"]
+
+
+# ── S5. unresolved or incomplete priors are skipped without defaults ──
+
+def test_s5_an_open_prior_is_ineligible():
+    """Two shapes, because one of them alone proves nothing. The first is what
+    `consider` actually leaves on disk before a --resolve; the second carries a
+    stamped date, so the resolution gate is exercised on its own instead of
+    riding on the null `decided_on` the first one also fails. A mutation that
+    accepted `open` as resolved stayed green against the first case alone."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        for label, decided_on in (("as consider writes it", None),
+                                  ("with a date stamped anyway", "2026-04-04")):
+            _seed_evaluations(tmp, [_prior(template, "eval-open00000000001",
+                                           decision="open", decided_on=decided_on)])
+            assert "prior_decision" not in _consider_now(tmp), (
+                f"an unresolved consultation must never be exposed as settled memory ({label})")
+
+
+def test_s5_an_unknown_decision_value_is_ineligible():
+    """The gate is an allow-list of the three values --resolve can record, not a
+    deny-list of `open`. A vocabulary that grew somewhere else -- #490's future
+    execution qualification is the named candidate -- must not silently become
+    recallable memory here."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-unknown00000001",
+                                       decision="executed", decided_on="2026-04-04")])
+        assert "prior_decision" not in _consider_now(tmp)
+
+
+def test_s5_a_prior_with_no_stored_context_is_ineligible():
+    """What a row written before --decision-context existed looks like: readable,
+    foldable, and simply not eligible for recall."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-legacy000000001",
+                                       decision="acted", context=None)])
+        assert "prior_decision" not in _consider_now(tmp)
+
+
+def test_s5_half_a_context_is_ineligible_rather_than_half_projected():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        for label, context in (
+                ("reason-only", {"reason": _PRIOR_CONTEXT["reason"]}),
+                ("why-now-only", {"why_now": _PRIOR_CONTEXT["why_now"]}),
+                ("blank-reason", {"reason": "   ", "why_now": _PRIOR_CONTEXT["why_now"]})):
+            _seed_evaluations(tmp, [_prior(template, "eval-partial00000001",
+                                           decision="acted", context=context)])
+            assert "prior_decision" not in _consider_now(tmp), label
+
+
+def test_s5_a_resolved_prior_with_no_decided_on_is_ineligible():
+    """`decision` and `decided_on` disagreeing is a broken row, not a row with a
+    missing date to fill in."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        for label, decided_on in (("null", None), ("empty", ""),
+                                  ("not-a-date", "last spring"),
+                                  # 3.11+ date.fromisoformat parses this; projecting
+                                  # it would mean re-rendering a date the file does
+                                  # not contain, and 3.11/3.12 must agree.
+                                  ("non-canonical", "20260105")):
+            _seed_evaluations(tmp, [_prior(template, "eval-nodate000000001",
+                                           decision="acted", decided_on=decided_on)])
+            assert "prior_decision" not in _consider_now(tmp), label
+
+
+# ── S6. multiple priors, deterministic selection ──
+
+def test_s6_newest_decided_on_wins_and_file_order_does_not_decide():
+    """The newest row is written FIRST, so a selector reading file order -- which
+    `_fold_evaluations` preserves, and which says nothing about when a decision
+    was made -- would return the wrong one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [
+            _prior(template, "eval-newest0000001", decision="acted", decided_on="2026-05-20"),
+            _prior(template, "eval-middle0000001", decision="declined", decided_on="2026-03-11"),
+            _prior(template, "eval-oldest0000001", decision="modified", decided_on="2026-01-05"),
+        ])
+        prior = _consider_now(tmp)["prior_decision"]
+        assert prior["evaluation_id"] == "eval-newest0000001"
+        assert prior["decision"] == "acted"
+
+
+def test_s6_a_same_day_tie_is_broken_by_stable_identity():
+    """Pinned, not incidental: one total order, `(decided_on, evaluation_id)`
+    descending. The winner is written second so neither file order nor
+    first-seen could produce this answer by accident."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [
+            _prior(template, "eval-zzz00000000001", decided_on="2026-04-04"),
+            _prior(template, "eval-aaa00000000001", decided_on="2026-04-04"),
+        ])
+        assert _consider_now(tmp)["prior_decision"]["evaluation_id"] == "eval-zzz00000000001"
+
+
+def test_s6_at_most_one_prior_reaches_the_agent():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, f"eval-many0000000{index:04d}",
+                                       decided_on=f"2026-0{index}-01")
+                                for index in range(1, 6)])
+        prior = _consider_now(tmp)["prior_decision"]
+        assert isinstance(prior, dict), "one projection, never a list"
+
+
+# ── S7. the acted truth boundary ──
+
+def test_s7_acted_is_projected_exactly_and_carries_no_execution_claim():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-acted0000000001",
+                                       decision="acted", decided_on="2026-02-20")])
+        prior = _consider_now(tmp)["prior_decision"]
+        assert prior["decision"] == "acted"
+        # The projection states what the user resolved and nothing about a fill,
+        # a ledger, an outcome, or whether the earlier call was right.
+        assert set(prior) == {"evaluation_id", "ticker", "side", "reason", "why_now",
+                              "evidence_refs", "decision", "decided_on"}, sorted(prior)
+
+
+def test_s7_the_instruction_surface_states_report_not_proof():
+    """The engine can only project the canonical value; what stops `acted`
+    reaching the user as an execution is the sentence SKILL.md carries beside
+    the field. Pinned here so the projection and its one runtime rule cannot be
+    separated -- exactly the mirrored-surface failure docs/maintainer-guide.md
+    names as this repository's most frequent defect."""
+    skill = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
+    line = next((entry for entry in skill.splitlines()
+                 if entry.startswith("- `prior_decision`")), None)
+    assert line, "SKILL.md must document the field it now receives"
+    assert "never proof they did it" in line, line
+    assert ("Use `prior_decision` only when it changes the current lead judgment, evidence "
+            "requirement, process action, or the one question worth asking; otherwise ignore "
+            "it.") in line, line
+    assert "recap" not in skill.lower(), (
+        "#609 adds one rule, not a mandatory history paragraph")
+
+
+# ── S8. corrupt or unreadable candidates ──
+
+def test_s8_a_corrupt_candidate_is_skipped_and_an_older_valid_row_still_wins():
+    """The existing folded-reader policy, unchanged: `thesis.read_jsonl` drops a
+    line it cannot parse, and every eligibility check here drops rather than
+    defaults. So a corrupt newer candidate is never selected, never guessed at,
+    and never blocks the valid row behind it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        valid = _prior(template, "eval-valid0000000001", decision="declined",
+                       decided_on="2026-01-05")
+        garbled_refs = _prior(template, "eval-badrefs00000001", decision="acted",
+                              decided_on="2026-09-09",
+                              context={"reason": _PRIOR_CONTEXT["reason"],
+                                       "why_now": _PRIOR_CONTEXT["why_now"],
+                                       "evidence_refs": [17, ""]})
+        path = _evaluation_path(tmp)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(valid, ensure_ascii=False) + "\n")
+            # a torn line, a JSON scalar, and a row whose stored refs are not
+            # the list of strings the envelope guarantees -- each newer than the
+            # valid row, so any of them being selected is visible
+            f.write('{"evaluation_id": "eval-torn0000000001", "decision": "acted", '
+                    '"decided_on": "2026-12-3\n')
+            f.write('"not an object"\n')
+            f.write(json.dumps(garbled_refs, ensure_ascii=False) + "\n")
+
+        prior = _consider_now(tmp)["prior_decision"]
+        assert prior["evaluation_id"] == "eval-valid0000000001"
+        assert prior["decided_on"] == "2026-01-05"
+
+
+def test_s8_a_corrupt_candidate_alone_omits_the_field_rather_than_guessing():
+    with tempfile.TemporaryDirectory() as tmp:
+        _mint_prior_template(tmp)
+        with open(_evaluation_path(tmp), "w", encoding="utf-8") as f:
+            f.write('{"evaluation_id": "eval-torn0000000001", "premise": {"ticker": "NV\n')
+        assert "prior_decision" not in _consider_now(tmp)
+
+
+# ── the four compatibility claims #609 also requires ──
+
+def test_prior_decision_changes_no_number_identity_or_challenge():
+    """Same premise, same book, same day; one root carries a resolved history and
+    the other does not. Everything the answer is computed from must be identical,
+    and the whole difference between the two responses must be this one key --
+    which is also the rollback proof: delete the projection and the response is
+    byte-for-byte what it was."""
+    with tempfile.TemporaryDirectory() as bare, tempfile.TemporaryDirectory() as remembered:
+        template = _mint_prior_template(remembered)
+        _seed_evaluations(remembered, [_prior(template, "eval-history00000001",
+                                              decision="acted", decided_on="2026-02-02")])
+        with_prior = _consider_now(remembered)
+        without = _consider_now(bare)
+
+        assert "prior_decision" in with_prior and "prior_decision" not in without
+        assert with_prior["evaluation"]["evaluation_id"] == without["evaluation"]["evaluation_id"]
+        for field in ("consequence", "rule_collisions", "premise", "basis", "decision"):
+            assert with_prior["evaluation"][field] == without["evaluation"][field], field
+        assert with_prior["challenge"] == without["challenge"]
+        # `root` and `append.path` name the temp directory, so they are the two
+        # values that legitimately differ between the two runs; everything else
+        # is compared whole.
+        def _comparable(payload):
+            return {key: (value["status"] if key == "append" else value)
+                    for key, value in payload.items()
+                    if key not in ("root", "prior_decision")}
+
+        assert _comparable(with_prior) == _comparable(without)
+
+
+def test_prior_decision_is_never_stored_on_any_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-history00000001", decision="acted")])
+        payload = _consider_now(tmp)
+        assert "prior_decision" not in payload["evaluation"]
+        for row in _read_evaluations(tmp):
+            assert "prior_decision" not in row, row
+            _check_evaluation_shape(row)
+
+
+def test_a_context_free_current_call_still_behaves_as_before():
+    """Eligibility is a property of the *stored* rows. A current call carrying no
+    --decision-context is unchanged, down to its evaluation_id, and still
+    receives the projection."""
+    with tempfile.TemporaryDirectory() as bare, tempfile.TemporaryDirectory() as remembered:
+        template = _mint_prior_template(remembered)
+        _seed_evaluations(remembered, [_prior(template, "eval-history00000001",
+                                              decision="declined")])
+        with_prior = _consider_now(remembered, context=None)
+        without = _consider_now(bare, context=None)
+        assert with_prior["evaluation"]["evaluation_id"] == without["evaluation"]["evaluation_id"]
+        assert "context" not in with_prior["evaluation"]
+        assert with_prior["prior_decision"]["evaluation_id"] == "eval-history00000001"
+
+
+def test_append_idempotency_survives_a_recalled_prior():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-history00000001", decision="acted")])
+        first = _consider_now(tmp)
+        assert first["append"]["status"] == "appended"
+        before = pathlib.Path(_evaluation_path(tmp)).read_bytes()
+        repeat = _consider_now(tmp)
+        assert repeat["append"]["status"] == "no-op"
+        assert repeat["prior_decision"] == first["prior_decision"]
+        assert pathlib.Path(_evaluation_path(tmp)).read_bytes() == before, (
+            "a repeated ask must leave the stored history byte-identical")
+
+
+def test_a_legacy_row_stays_readable_and_resolvable_while_being_ineligible():
+    """Ineligible for recall is not unreadable. The same row still folds, still
+    answers --resolve, and still reaches prepare's reconciliation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-legacy000000001",
+                                       decision="open", decided_on=None, context=None)])
+        assert "prior_decision" not in _consider_now(tmp)
+        resolved = _ok(_run("consider", "--root", tmp, "--resolve", "eval-legacy000000001",
+                            "--decision", "declined"))
+        assert resolved["evaluation"]["decision"] == "declined"
+        # and now that it is resolved it is still ineligible -- for the missing
+        # context, which is the only thing that was ever wrong with it
+        assert "prior_decision" not in _consider_now(tmp)
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

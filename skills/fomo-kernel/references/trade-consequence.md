@@ -377,3 +377,28 @@ There is no obligation to call `--resolve`, and no review step depends on it. Do
 ## What a later review does with an unresolved one
 
 An evaluation left at `decision: "open"` does not go silent. The next `prepare` reconciles it against the transaction record and carries the result in the Review Plan's `evaluation_reconciliation` — a `matched` entry names the date and quantity of a trade found for that ticker and side between the evaluation's `created` day and the review's own close; `unmatched` means none was found. This is a fact about the record, never a claim about cause: `matched` is evidence a qualifying trade happened, not evidence the user made it *because of* the evaluation, and a review never writes `decision` — that stays the user's own word, set only through `--resolve` above. Raise a surfaced evaluation the same way any other supplied fact earns a turn: judge whether it is the relevant thing to say in this scene, not an automatic prompt.
+
+## What a later consideration does with a resolved one (#609)
+
+The mirror image of the section above. When the user asks about a ticker they have already consulted you on **and settled**, the response may carry one optional `prior_decision` beside the evaluation:
+
+```json
+{
+  "evaluation_id": "eval-...",
+  "ticker": "NVDA",
+  "side": "buy",
+  "reason": "It is still my highest-conviction name and the build-out has room to run.",
+  "why_now": "Their main supplier raised capacity guidance this morning.",
+  "evidence_refs": ["Supplier capacity guidance, this morning"],
+  "decision": "declined",
+  "decided_on": "2026-03-11"
+}
+```
+
+At most one reaches you, and only when all of these hold: the same ticker, a different evaluation than this one, a complete stored `reason` and `why_now`, a resolved `decision`, and a canonical `decided_on`. The newest eligible same-side prior wins; only when there is none does the newest eligible opposite-side one take its place. An `open` evaluation is unresolved and never appears here — that one goes through the reconciliation above instead. When nothing is eligible the field is simply absent, which is why there is no empty case to write around.
+
+It is a read projection of another stored row, not a new record. It changes no number, no `rule_effect`, no `evaluation_id`, and nothing is written because of it.
+
+**Use it only when it changes the current lead judgment, evidence requirement, process action, or the one question worth asking.** Memory that does not change the answer stays silent: there is no history paragraph to write, and "you have asked about this before" is not worth a sentence on its own. What is worth one is a question their own record has earned — *last time the reason was the price move and you passed; what is different now besides the price?*
+
+Two things it is not. `decision: "acted"` is what the user **reported** doing about that consultation, exactly as `--resolve` records it — never that a trade executed, filled, or reached the ledger. And any comparison you draw from it — the same reason, a genuinely different one, a rationalization — is your judgment right now, offered as yours and labelled that way. The engine stores no pattern, no motive, and no verdict about the user, and neither should the answer imply one.

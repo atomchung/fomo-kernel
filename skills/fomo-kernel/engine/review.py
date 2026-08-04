@@ -7189,6 +7189,130 @@ def _fold_evaluations(rows):
     return latest
 
 
+# The three values `--resolve` can record. `open` is deliberately absent: it is
+# a row's starting state, not a resolution, and #609 makes an unresolved prior
+# ineligible rather than exposing an unfinished consultation as settled memory.
+PRIOR_DECISION_RESOLVED = ("acted", "declined", "modified")
+
+
+def _canonical_decided_on(value):
+    """The stored ``decided_on`` verbatim when it is already a canonical ISO
+    date, else ``None``.
+
+    Round-trip equality rather than a bare ``fromisoformat`` for two reasons.
+    It projects the stored bytes instead of a reparsed re-rendering of them, so
+    this reader can never quietly restate a date the user's file does not
+    contain — and on 3.11+ ``date.fromisoformat`` also accepts ``"20260105"``
+    and ``"2026-W01-1"``, which a reparse would silently rewrite into a
+    different-looking string. It also pins eligibility to one answer across the
+    two Python versions ``product-contract`` runs, where that function's
+    accepted grammar differs. ``_cmd_consider_resolve`` is the only writer and
+    always emits ``date.today().isoformat()``, so no row this engine produced
+    is refused here."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value if parsed.isoformat() == value else None
+
+
+def _prior_decision(root, ticker, side, current_evaluation_id):
+    """At most one earlier *resolved* consultation of the same ticker, projected
+    read-only beside the current answer (#609).
+
+    Continuity, not learning. The projection restates canonical stored fields
+    and nothing else — no summary, comparison, pattern label, inferred motive or
+    market outcome — because every one of those is the Agent's transient current
+    judgment, and this repository's standing rule is that a judgment nobody
+    recomputed is not a fact (schemas/condition-check.schema.json's boundary
+    around ``user_response``, one layer out). ``decision`` is projected under the
+    canonical field's own name and vocabulary rather than a second one: ``acted``
+    means the user *reported* acting on that consultation, and only a later
+    transaction import proves a trade happened.
+
+    Eligibility — all six, each of which drops a row rather than repairing it:
+
+    1. the same canonical ticker. Both sides of the comparison came out of
+       ``consequence.validate_premise``, so exact string equality *is* the
+       engine's normalization; re-normalizing here would be a second reader of
+       one fact (docs/development-guide.md section 7).
+    2. a different ``evaluation_id`` than the current one. An exact retry —
+       identical premise, book, day and context — converges on the id already on
+       disk, so without this the answer would recall itself.
+    3. complete stored context: both ``reason`` and ``why_now``, non-empty. The
+       envelope is written both-sides-or-nothing (``_validate_decision_context``)
+       and a half-stated recall is worse than silence.
+    4. a resolved ``decision``.
+    5. a canonical non-null ``decided_on``.
+    6. readable under the existing folded-reader policy. ``thesis.read_jsonl``
+       already drops an unparseable line, and every check here drops rather than
+       defaults, so a corrupt candidate is skipped and an older valid row still
+       wins — never a guessed field, never corrupt bytes.
+
+    Selection: newest eligible same-side prior; only when none exists, the
+    newest eligible opposite-side one. Within a side, one total order —
+    ``(decided_on, evaluation_id)`` descending — so a same-day tie is broken by
+    stable existing identity and never by raw file order, which
+    ``_fold_evaluations`` preserves and which says nothing about when a decision
+    was made.
+
+    Returns the projection dict, or ``None`` when nothing is eligible; the
+    caller omits the field entirely rather than emitting a null.
+
+    Read-only in the strong sense: the caller computes this *after* the frozen
+    consequence, the rule collisions and the ``evaluation_id`` already exist, so
+    there is no path by which a recalled row can reach this call's arithmetic,
+    its rule effects, its identity, or the row it stores."""
+    candidates = {"same": [], "opposite": []}
+    for row in _fold_evaluations(thesis.read_jsonl(_evaluation_path(root))).values():
+        evaluation_id = row.get("evaluation_id")
+        if not evaluation_id or evaluation_id == current_evaluation_id:
+            continue
+        if row.get("decision") not in PRIOR_DECISION_RESOLVED:
+            continue
+        decided_on = _canonical_decided_on(row.get("decided_on"))
+        if decided_on is None:
+            continue
+        premise = row.get("premise") or {}
+        if premise.get("ticker") != ticker:
+            continue
+        prior_side = premise.get("side")
+        if prior_side not in consequence.SIDES:
+            continue
+        context = row.get("context") or {}
+        reason, why_now = context.get("reason"), context.get("why_now")
+        if not all(isinstance(text, str) and text.strip() for text in (reason, why_now)):
+            continue
+        # Absent is the common, valid case -- `evidence_refs` is optional on the
+        # stored envelope -- and projects as the empty list the shape declares.
+        # Present but not a list of non-empty strings is a corrupt row, so it is
+        # dropped whole rather than pruned down to the entries that happen to
+        # parse: a filtered list would reach the user as everything they cited.
+        refs = context.get("evidence_refs")
+        if refs is None:
+            refs = []
+        elif not (isinstance(refs, list)
+                  and all(isinstance(ref, str) and ref.strip() for ref in refs)):
+            continue
+        candidates["same" if prior_side == side else "opposite"].append({
+            "evaluation_id": evaluation_id,
+            "ticker": ticker,
+            "side": prior_side,
+            "reason": reason,
+            "why_now": why_now,
+            "evidence_refs": list(refs),
+            "decision": row["decision"],
+            "decided_on": decided_on,
+        })
+    for bucket in ("same", "opposite"):
+        if candidates[bucket]:
+            return max(candidates[bucket],
+                       key=lambda item: (item["decided_on"], item["evaluation_id"]))
+    return None
+
+
 def _evaluation_recall(root):
     """What the user already told us, in their own words, about a ticker.
 
@@ -7839,9 +7963,26 @@ def cmd_consider(args):
     # version (evaluation_challenge.py, "Emitted, not stored"). It is
     # likewise absent from _evaluation_id's seed above — the seed identifies
     # the subject evaluated, and a presentation obligation is not part of it.
+    # #609. Read here — after the identity, the frozen consequence and the rule
+    # collisions all exist, and before the append — so the ordering itself
+    # states the boundary: nothing recalled can have reached any number above,
+    # and the file this reads is the record as it stood *before* this
+    # consultation joined it. `row["evaluation_id"]` rather than a recomputed
+    # one, so an exact retry excludes the very row it converged onto.
+    prior_decision = _prior_decision(root, premise_stored["ticker"],
+                                     premise_stored["side"], row["evaluation_id"])
     report = _append_evaluation_row(root, row)
     payload = {"status": "considered", "root": root, "language": language,
                "evaluation": row, "challenge": challenge, "append": report}
+    if prior_decision is not None:
+        # Beside the row, never on it, for the same reason `challenge` is
+        # (evaluation_challenge.py, "Emitted, not stored"): this is a read
+        # projection of *another* row, and storing it here would mint a second
+        # copy of a fact that already has a canonical home and can drift from
+        # it. Omitted outright when nothing is eligible — never `null`, never a
+        # placeholder — so the absence is the fact and no reader has to tell an
+        # empty recall from an unasked one.
+        payload["prior_decision"] = prior_decision
     sector_display = _consider_sector_display(consequence_stored, language)
     if sector_display:
         # #746. `max_sector` is a canonical engine label — `trade_recap.SECTOR_MAP`
