@@ -7195,20 +7195,19 @@ def _fold_evaluations(rows):
 PRIOR_DECISION_RESOLVED = ("acted", "declined", "modified")
 
 
-def _canonical_decided_on(value):
-    """The stored ``decided_on`` verbatim when it is already a canonical ISO
-    date, else ``None``.
+def _canonical_iso_date(value):
+    """A stored date field verbatim when it is already a canonical ISO date,
+    else ``None``. Used for both ``decided_on`` and ``created``.
 
-    Round-trip equality rather than a bare ``fromisoformat`` for two reasons.
-    It projects the stored bytes instead of a reparsed re-rendering of them, so
-    this reader can never quietly restate a date the user's file does not
-    contain — and on 3.11+ ``date.fromisoformat`` also accepts ``"20260105"``
-    and ``"2026-W01-1"``, which a reparse would silently rewrite into a
-    different-looking string. It also pins eligibility to one answer across the
-    two Python versions ``product-contract`` runs, where that function's
-    accepted grammar differs. ``_cmd_consider_resolve`` is the only writer and
-    always emits ``date.today().isoformat()``, so no row this engine produced
-    is refused here."""
+    Round-trip equality rather than a bare ``fromisoformat``, so this reader
+    projects the stored bytes instead of a reparsed re-rendering of them. Since
+    3.11 that function also accepts ``"20260105"`` and ``"2026-W01-1"``, and
+    reparsing either one would hand back a date string the user's file does not
+    contain — measured identical on 3.11.9 and 3.12.4, so this is about what
+    ``fromisoformat`` accepts, not about which interpreter is running.
+    ``_cmd_consider_resolve`` and ``cmd_consider`` are the only writers of these
+    two fields and both emit ``date.today().isoformat()``, so no row this engine
+    produced is refused here."""
     if not isinstance(value, str):
         return None
     try:
@@ -7235,9 +7234,14 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
     Eligibility — all six, each of which drops a row rather than repairing it:
 
     1. the same canonical ticker. Both sides of the comparison came out of
-       ``consequence.validate_premise``, so exact string equality *is* the
-       engine's normalization; re-normalizing here would be a second reader of
-       one fact (docs/development-guide.md section 7).
+       ``consequence._ticker``, so exact string equality is exactly as canonical
+       as that function is, and re-normalizing here would be a second reader of
+       one fact (docs/development-guide.md section 7). Note what that buys and
+       what it does not: ``_ticker`` strips but does not case-fold, so a premise
+       written ``nvda`` is a different instrument to this engine everywhere, not
+       only here — it already builds a second position beside the held ``NVDA``
+       and computes weights over both. This reader inherits that, deliberately;
+       case-folding here alone would make recall disagree with the arithmetic.
     2. a different ``evaluation_id`` than the current one. An exact retry —
        identical premise, book, day and context — converges on the id already on
        disk, so without this the answer would recall itself.
@@ -7249,14 +7253,28 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
     6. readable under the existing folded-reader policy. ``thesis.read_jsonl``
        already drops an unparseable line, and every check here drops rather than
        defaults, so a corrupt candidate is skipped and an older valid row still
-       wins — never a guessed field, never corrupt bytes.
+       wins — never a guessed field, never corrupt bytes. Nothing here may raise
+       either: a broken row must cost the user their *memory*, never the answer
+       they are asking for.
+
+    A seventh check the issue's list does not name, because it is about this
+    projection rather than about eligibility: ``premise.side`` must be a side
+    this engine recognizes. Without it a row storing anything else falls into
+    the opposite-side bucket by default and that value is handed to the agent
+    verbatim as the user's earlier direction.
 
     Selection: newest eligible same-side prior; only when none exists, the
     newest eligible opposite-side one. Within a side, one total order —
-    ``(decided_on, evaluation_id)`` descending — so a same-day tie is broken by
-    stable existing identity and never by raw file order, which
-    ``_fold_evaluations`` preserves and which says nothing about when a decision
-    was made.
+    ``(decided_on, created, evaluation_id)`` descending — never raw file order,
+    which ``_fold_evaluations`` preserves and which says nothing about when a
+    decision was made. ``created`` sits between the other two because
+    ``decided_on`` alone ties whenever a user settles two consultations of one
+    ticker in the same sitting, and ``evaluation_id`` is a content address
+    carrying no time at all: on that tie, identity alone would order two
+    consultations by hash and could hand back the older one as "the most
+    recent". Both keys are canonical stored fields, and identity stays last so
+    the order is still total. ``_evaluation_recall`` already sorts on
+    ``(created, evaluation_id)`` for the same reason.
 
     Returns the projection dict, or ``None`` when nothing is eligible; the
     caller omits the field entirely rather than emitting a null.
@@ -7267,49 +7285,81 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
     its rule effects, its identity, or the row it stores."""
     candidates = {"same": [], "opposite": []}
     for row in _fold_evaluations(thesis.read_jsonl(_evaluation_path(root))).values():
+        # Every field below is type-checked before it is used, because
+        # ``thesis.read_jsonl`` proves each surviving line is a JSON object and
+        # nothing whatever about what is inside it. A hand-edited, truncated or
+        # half-written row has to skip this candidate; it must not raise out of
+        # the decision the user is asking about right now. All three of these
+        # were live crashes before the checks existed: a non-dict ``premise`` or
+        # ``context`` reached ``.get`` on a string, and a non-string
+        # ``evaluation_id`` reached the ordering comparison below, where a str
+        # and an int are not orderable at all.
         evaluation_id = row.get("evaluation_id")
-        if not evaluation_id or evaluation_id == current_evaluation_id:
+        if not isinstance(evaluation_id, str) or evaluation_id == current_evaluation_id:
             continue
         if row.get("decision") not in PRIOR_DECISION_RESOLVED:
             continue
-        decided_on = _canonical_decided_on(row.get("decided_on"))
+        decided_on = _canonical_iso_date(row.get("decided_on"))
         if decided_on is None:
             continue
-        premise = row.get("premise") or {}
-        if premise.get("ticker") != ticker:
+        # Only a sort key, so a row whose `created` is missing or malformed is
+        # still eligible -- it simply loses a same-day tie rather than being
+        # dropped for a field the projection does not carry.
+        created = _canonical_iso_date(row.get("created")) or ""
+        premise = row.get("premise")
+        if not isinstance(premise, dict) or premise.get("ticker") != ticker:
             continue
         prior_side = premise.get("side")
         if prior_side not in consequence.SIDES:
             continue
-        context = row.get("context") or {}
+        # Absent, null and non-object all land here, and all three mean the same
+        # thing: this row carries no stated context, so there is nothing of the
+        # user's to recall.
+        context = row.get("context")
+        if not isinstance(context, dict):
+            continue
         reason, why_now = context.get("reason"), context.get("why_now")
         if not all(isinstance(text, str) and text.strip() for text in (reason, why_now)):
             continue
         # Absent is the common, valid case -- `evidence_refs` is optional on the
         # stored envelope -- and projects as the empty list the shape declares.
-        # Present but not a list of non-empty strings is a corrupt row, so it is
-        # dropped whole rather than pruned down to the entries that happen to
-        # parse: a filtered list would reach the user as everything they cited.
+        # A stored `null` reads the same way, deliberately: it is the exact
+        # value `_validate_decision_context` accepts and persists for a caller
+        # who sends the key with nothing in it, so reading it as anything but
+        # "no references" would make this reader disagree with the writer about
+        # a row the engine itself wrote. (That the schema declares a bare
+        # `array` and so does not admit the null it stores is a real
+        # writer/schema disagreement, but it is #479's to settle at the writer,
+        # not something to punish the user's `reason` and `why_now` for here.)
+        #
+        # Present and neither of those is a corrupt row, so it is dropped whole
+        # rather than pruned down to the entries that happen to parse: a
+        # filtered list would reach the user as everything they cited.
         refs = context.get("evidence_refs")
         if refs is None:
             refs = []
         elif not (isinstance(refs, list)
                   and all(isinstance(ref, str) and ref.strip() for ref in refs)):
             continue
-        candidates["same" if prior_side == side else "opposite"].append({
-            "evaluation_id": evaluation_id,
-            "ticker": ticker,
-            "side": prior_side,
-            "reason": reason,
-            "why_now": why_now,
-            "evidence_refs": list(refs),
-            "decision": row["decision"],
-            "decided_on": decided_on,
-        })
+        # The sort key travels beside the projection rather than inside it, so
+        # ordering can read a field the agent is not shown: `created` decides
+        # same-day ties and is not one of the eight fields #609 specifies.
+        # `evidence_refs` is copied because it is the one mutable value here;
+        # every other one is an immutable string, so the returned projection
+        # shares no object with the folded row.
+        candidates["same" if prior_side == side else "opposite"].append((
+            (decided_on, created, evaluation_id),
+            {"evaluation_id": evaluation_id,
+             "ticker": premise["ticker"],
+             "side": prior_side,
+             "reason": reason,
+             "why_now": why_now,
+             "evidence_refs": list(refs),
+             "decision": row["decision"],
+             "decided_on": decided_on}))
     for bucket in ("same", "opposite"):
         if candidates[bucket]:
-            return max(candidates[bucket],
-                       key=lambda item: (item["decided_on"], item["evaluation_id"]))
+            return max(candidates[bucket], key=lambda item: item[0])[1]
     return None
 
 

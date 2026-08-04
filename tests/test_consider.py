@@ -4472,6 +4472,27 @@ def test_s2_a_prior_with_no_stored_evidence_refs_projects_an_empty_list():
         assert _consider_now(tmp)["prior_decision"]["evidence_refs"] == []
 
 
+def test_s2_a_stored_null_evidence_refs_reads_as_no_references():
+    """Pinned rather than incidental. `_validate_decision_context` accepts
+    `evidence_refs: null` and stores it verbatim, so this is a value the engine
+    itself writes; reading it as anything but "no references" would make the
+    reader disagree with the writer about a row the product produced. The
+    precondition is asserted, because if the writer ever starts refusing null
+    this test would otherwise keep passing while testing nothing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        written = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                           "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+                           "--decision-context",
+                           json.dumps({"reason": _PRIOR_CONTEXT["reason"],
+                                       "why_now": _PRIOR_CONTEXT["why_now"],
+                                       "evidence_refs": None})))
+        assert written["evaluation"]["context"]["evidence_refs"] is None, (
+            "precondition: the writer must still accept and store a null here")
+        _seed_evaluations(tmp, [_prior(written["evaluation"], "eval-nullrefs00000001",
+                                       decision="acted")])
+        assert _consider_now(tmp)["prior_decision"]["evidence_refs"] == []
+
+
 # ── S3. opposite-side fallback ──
 
 def test_s3_an_opposite_side_prior_is_selected_only_when_no_same_side_one_exists():
@@ -4579,7 +4600,11 @@ def test_s5_half_a_context_is_ineligible_rather_than_half_projected():
         for label, context in (
                 ("reason-only", {"reason": _PRIOR_CONTEXT["reason"]}),
                 ("why-now-only", {"why_now": _PRIOR_CONTEXT["why_now"]}),
-                ("blank-reason", {"reason": "   ", "why_now": _PRIOR_CONTEXT["why_now"]})):
+                ("blank-reason", {"reason": "   ", "why_now": _PRIOR_CONTEXT["why_now"]}),
+                ("blank-why-now", {"reason": _PRIOR_CONTEXT["reason"], "why_now": "\t\n"}),
+                ("null-reason", {"reason": None, "why_now": _PRIOR_CONTEXT["why_now"]}),
+                ("non-string-why-now", {"reason": _PRIOR_CONTEXT["reason"], "why_now": 42}),
+                ("both-blank", {"reason": "", "why_now": ""})):
             _seed_evaluations(tmp, [_prior(template, "eval-partial00000001",
                                            decision="acted", context=context)])
             assert "prior_decision" not in _consider_now(tmp), label
@@ -4619,27 +4644,68 @@ def test_s6_newest_decided_on_wins_and_file_order_does_not_decide():
         assert prior["decision"] == "acted"
 
 
-def test_s6_a_same_day_tie_is_broken_by_stable_identity():
-    """Pinned, not incidental: one total order, `(decided_on, evaluation_id)`
-    descending. The winner is written second so neither file order nor
-    first-seen could produce this answer by accident."""
+def test_s6_a_same_day_tie_prefers_the_later_consultation():
+    """`decided_on` ties whenever the user settles two consultations of one
+    ticker in the same sitting, so `created` is the second key. Identity cannot
+    stand in for it: `evaluation_id` is a content address carrying no time, so
+    ordering on it alone hands back whichever consultation happens to hash
+    higher -- here the January one, which is the older question."""
     with tempfile.TemporaryDirectory() as tmp:
         template = _mint_prior_template(tmp)
-        _seed_evaluations(tmp, [
-            _prior(template, "eval-zzz00000000001", decided_on="2026-04-04"),
-            _prior(template, "eval-aaa00000000001", decided_on="2026-04-04"),
-        ])
-        assert _consider_now(tmp)["prior_decision"]["evaluation_id"] == "eval-zzz00000000001"
+        january = _prior(template, "eval-zzz00000000001", decided_on="2026-04-04")
+        january["created"] = "2026-01-10"
+        june = _prior(template, "eval-aaa00000000001", decided_on="2026-04-04")
+        june["created"] = "2026-06-20"
+        _seed_evaluations(tmp, [january, june])
+        assert _consider_now(tmp)["prior_decision"]["evaluation_id"] == "eval-aaa00000000001"
+
+
+def test_s6_identity_breaks_a_tie_that_dates_cannot():
+    """The last key, and the one that makes the order total. Both rows share a
+    `decided_on` and a `created`, so only identity can decide. The winner is
+    written SECOND, because `max` returns the FIRST maximal element: with
+    identity dropped from the key these two rows tie completely and the answer
+    would fall back to whichever was read first. Together with
+    `…_file_order_does_not_decide` above -- whose winner is written FIRST -- no
+    positional rule, last-wins or first-wins, satisfies both tests."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        first = _prior(template, "eval-aaa00000000002", decided_on="2026-04-04")
+        second = _prior(template, "eval-zzz00000000002", decided_on="2026-04-04")
+        first["created"] = second["created"] = "2026-02-02"
+        _seed_evaluations(tmp, [first, second])
+        assert _consider_now(tmp)["prior_decision"]["evaluation_id"] == "eval-zzz00000000002"
 
 
 def test_s6_at_most_one_prior_reaches_the_agent():
+    """One projection, and specifically the right one -- asserting only that a
+    dict came back is a shape check that no wrong answer could fail."""
     with tempfile.TemporaryDirectory() as tmp:
         template = _mint_prior_template(tmp)
         _seed_evaluations(tmp, [_prior(template, f"eval-many0000000{index:04d}",
                                        decided_on=f"2026-0{index}-01")
                                 for index in range(1, 6)])
-        prior = _consider_now(tmp)["prior_decision"]
-        assert isinstance(prior, dict), "one projection, never a list"
+        payload = _consider_now(tmp)
+        prior = payload["prior_decision"]
+        assert isinstance(prior, dict) and not isinstance(prior, list)
+        assert prior["evaluation_id"] == "eval-many00000000005"
+        assert prior["decided_on"] == "2026-05-01"
+
+
+def test_s6_the_opposite_side_bucket_is_ordered_by_the_same_rule():
+    """The fallback bucket is not a first-match scan: when two opposite-side
+    priors are eligible and no same-side one is, the newest still wins."""
+    with tempfile.TemporaryDirectory() as tmp:
+        sell_template = _mint_prior_template(tmp, side="sell", qty=1)
+        _seed_evaluations(tmp, [
+            _prior(sell_template, "eval-newsell000002", decision="acted",
+                   decided_on="2026-07-07"),
+            _prior(sell_template, "eval-oldsell000002", decision="declined",
+                   decided_on="2026-02-02"),
+        ])
+        prior = _consider_now(tmp, side="buy")["prior_decision"]
+        assert prior["evaluation_id"] == "eval-newsell000002"
+        assert prior["side"] == "sell"
 
 
 # ── S7. the acted truth boundary ──
@@ -4705,6 +4771,74 @@ def test_s8_a_corrupt_candidate_is_skipped_and_an_older_valid_row_still_wins():
         prior = _consider_now(tmp)["prior_decision"]
         assert prior["evaluation_id"] == "eval-valid0000000001"
         assert prior["decided_on"] == "2026-01-05"
+
+
+def test_s8_a_row_whose_fields_are_the_wrong_type_is_skipped_not_raised():
+    """The shape the first three cases missed, and the one that mattered most:
+    a row that parses as JSON and clears the decision and date gates, but whose
+    `premise`, `context` or `evaluation_id` is not the type the schema declares.
+    Each of these crashed the whole call before the reader type-checked them --
+    an `AttributeError` out of `consider` for the first two and a `TypeError`
+    out of the ordering comparison for the third, which takes down the decision
+    the user is asking about rather than the memory beside it. The corrupt row
+    does not even have to concern the ticker being asked."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        good = _prior(template, "eval-good00000000001", decision="declined",
+                      decided_on="2026-01-05")
+        broken = {
+            "non-dict premise": {"premise": "NVDA"},
+            "non-dict context": {"context": "the user said something"},
+            # str and int are not orderable, so this one only fires when a
+            # well-formed row is present to be compared against
+            "non-string evaluation_id": {"evaluation_id": 12345},
+            "premise of another ticker, wrong type": {"premise": ["AMD"]},
+        }
+        for label, override in broken.items():
+            row = dict(_prior(template, "eval-broken000000001", decision="acted",
+                              decided_on="2026-12-01"), **override)
+            _seed_evaluations(tmp, [good, row])
+            payload = _consider_now(tmp)
+            assert payload["status"] == "considered", label
+            assert payload["prior_decision"]["evaluation_id"] == "eval-good00000000001", label
+        # and the user's own current evaluation still reaches disk, which a
+        # raised call could not have written
+        assert any(row["premise"].get("qty") == 9 for row in _read_evaluations(tmp)
+                   if isinstance(row.get("premise"), dict))
+
+
+def test_s8_eligibility_reads_the_folded_row_not_every_row_in_the_file():
+    """The reader sits on `_fold_evaluations`, so a superseding row is what
+    counts -- both directions. An evaluation resolved and then superseded back
+    to `open` is ineligible even though a resolved line for it is still in the
+    file; the reverse is eligible even though its first line was `open`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        opened = _prior(template, "eval-folded000000001", decision="open", decided_on=None)
+        resolved = _prior(template, "eval-folded000000001", decision="acted",
+                          decided_on="2026-03-03")
+
+        _seed_evaluations(tmp, [opened, resolved])
+        assert _consider_now(tmp)["prior_decision"]["decision"] == "acted"
+
+        _seed_evaluations(tmp, [resolved, opened])
+        assert "prior_decision" not in _consider_now(tmp), (
+            "the last row for an id is the current fact, even when an earlier "
+            "line for it was resolved")
+
+
+def test_s8_a_row_storing_an_unrecognized_side_is_skipped():
+    """`premise.side` is not on #609's eligibility list because the issue takes
+    the vocabulary for granted. Unchecked, a row storing anything else lands in
+    the opposite-side bucket by default and that value is handed to the agent
+    verbatim as the user's earlier direction."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        row = _prior(template, "eval-badside000000001", decision="acted",
+                     decided_on="2026-05-05")
+        row["premise"] = dict(row["premise"], side="hold")
+        _seed_evaluations(tmp, [row])
+        assert "prior_decision" not in _consider_now(tmp)
 
 
 def test_s8_a_corrupt_candidate_alone_omits_the_field_rather_than_guessing():
