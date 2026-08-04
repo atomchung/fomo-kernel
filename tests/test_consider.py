@@ -1139,7 +1139,7 @@ def test_a_readable_ledger_with_no_trustworthy_book_fails_closed():
     What fails is one level in: `portfolio_basis.query_current_book` cannot
     state a book it trusts and returns None. This refusal is the only thing
     between that and a pre-trade answer computed against a book the engine
-    could not read (AGENTS.md boundary 6). Deleted, `basis.to_dict()` is
+    could not read (AGENTS.md invariant 2). Deleted, `basis.to_dict()` is
     reached on None, and AttributeError is not in `review.main`'s caught tuple
     -- the fail-closed boundary degrades into a traceback with no error
     payload at all.
@@ -4177,7 +4177,7 @@ def test_fallback_cash_anchor_is_none_when_the_last_reviews_cash_was_itself_unre
     """The last review's own cash reading being an unanchored csv_sum guess
     is not a firmer fact than this call would derive on its own -- promoting
     it into a synthetic anchor would misrepresent an approximation as a
-    recorded one, which is the opposite of #756's fix (AGENTS.md boundary 6:
+    recorded one, which is the opposite of #756's fix (AGENTS.md invariant 2:
     fail closed rather than answer with false confidence)."""
     with tempfile.TemporaryDirectory() as tmp:
         state = dict(_ANCHORED_CASH_STATE,

@@ -30,7 +30,7 @@ its disclosure obligations were instructions an agent had to remember, which
 is the weakest enforcement tier this repository recognizes
 (docs/development-guide.md section 4).
 
-The relationship to SKILL.md rule 8
+The relationship to SKILL.md's answer shape
 ------------------------------------
 Rule 8 says a freeform answer — explicitly including a ``consider`` call —
 is brief: no chart, no artifact, no multi-tool production. The same rule

@@ -341,7 +341,7 @@ def resolve_cash_anchor_input(raw_anchor, held_mv, aggregate_currency):
     an amended review converts against the numbers the user actually saw.
     Fails closed rather than converting against a garbage denominator: a
     non-finite or non-positive ``held_mv`` refuses, the same zero/invalid-
-    denominator rule this book keeps everywhere else (AGENTS.md boundary 6).
+    denominator rule this book keeps everywhere else (AGENTS.md invariant 2).
 
     ``aggregate_currency`` is the currency ``held_mv`` is measured in — USD
     for a mixed-currency book, the book's own single currency otherwise
@@ -1518,7 +1518,7 @@ def dim_alpha_beta(rows, data, rf_annual=RF_ANNUAL, market_weights=None):
 
 def market_weight_rollup(weights, ticker_market):
     """市場別權重彙總(#759):「台股/美股各佔多少」直接算成一個數字,不逼 agent
-    自己把 per-ticker 權重加總(AGENTS.md 邊界 1 禁止的正是這件事)。
+    自己把 per-ticker 權重加總(AGENTS.md 邊界 2 禁止的正是這件事)。
 
     分組鍵複用 dim_alpha_beta 的 by_market 拆帳同一份 per-row market 來源
     (`r.get("market", "US")`,呼叫端傳入的 ticker_market 即那份對照表)——不是

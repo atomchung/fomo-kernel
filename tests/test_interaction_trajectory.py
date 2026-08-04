@@ -2578,11 +2578,12 @@ def test_runtime_contract_contains_fixed_fallback_and_no_file_only_success():
 
 
 def test_every_runtime_adapter_routes_to_one_shared_contract():
-    surfaces = [
-        ROOT / "AGENTS.md",
-        ROOT / "skills" / "fomo-kernel" / "SKILL.md",
-        *sorted((ROOT / "skills" / "fomo-kernel" / "flows").glob("*.md")),
-    ]
+    # #507 dropped the two entry points: the ordinary decision lane resolves no
+    # adapter at all now. Every flow still does, and the glob is deliberately
+    # still a glob -- a new flow that forgets the shared contract is exactly
+    # what this catches, and that failure did not go away with the floor.
+    surfaces = [*sorted((ROOT / "skills" / "fomo-kernel" / "flows").glob("*.md"))]
+    assert surfaces, "no flow files found -- the enumeration is broken, not the tree"
     missing = [str(path.relative_to(ROOT)) for path in surfaces
                if "references/interaction-delivery.md" not in path.read_text(encoding="utf-8")]
     assert not missing, f"runtime surfaces bypass the shared adapter contract: {missing}"

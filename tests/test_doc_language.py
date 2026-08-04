@@ -48,16 +48,14 @@ AGENT_RUNTIME_SURFACES = (
     SKILL_DIR / "flows",
     SKILL_DIR / "references",
 )
-# #666: the root floor is loaded before routed references, so it must defer the
-# private-surface gate to the engine projection rather than carry a kind list
-# that becomes stale as soon as the engine supports another opportunity.
-AGENT_QUESTION_OPPORTUNITY_RULE = (
-    "only when the engine projects `question_opportunity` on the queue row"
-)
-RETIRED_AGENT_QUESTION_SURFACE_ENUM = "only for `add_thesis` and `headline_motive`"
+# #507: the CLI whitelist is derived live from build_parser(), so this check is
+# a drift gate rather than a wording lock -- a new subcommand missing from the
+# floor still reddens. What #507 retired is the *second copy*: SKILL.md used to
+# restate the same sixteen commands, and a duplicated list is exactly the
+# always-loaded prose that slice deletes. The floor keeps the list; the runtime
+# contract routes to the floor.
 NON_NEGOTIABLE_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
-    Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
     Path("skills/fomo-kernel/references/agent-boundaries.md"): "The agent may not:",
 }
 # #543: same two guaranteed-delivery entry points as NON_NEGOTIABLE_SECTIONS
@@ -92,55 +90,25 @@ CARD_INVITATION_REQUIRED_PHRASES = (
     "never dressed up as an invitation",
 )
 
-FREEFORM_ANSWER_SECTIONS = {
-    Path("AGENTS.md"): "## Non-negotiable boundaries",
-    Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
-}
-FREEFORM_ANSWER_REQUIRED_PHRASES = (
-    "no chart, no rendered artifact, no multi-tool production",
-    "`references/freeform-answers.md`",
-    # The effort ceiling must not read as licence to drop a disclosure the
-    # surface already owes. #479's visible two-sided challenge is delivered
-    # through `consider`, which this rule names -- an entry point carrying
-    # "answered briefly" without this clause invites compressing that away.
-    "Brevity bounds what an answer produces, never which facts it owes",
-    # #543 second cut (owner reversal 2026-07-29): the named set stopped
-    # being empty, so the entry points must now say what it always meant --
-    # a ceiling on the agent's own unprompted production, never a licence to
-    # refuse an explicit user request. Without this clause in both places, a
-    # future edit could silently narrow "no chart unless asked" back into
-    # "no chart, full stop" in one entry point while the other still permits
-    # it, the same one-sided-drop shape the phrase above already guards.
-    "bounds what the agent decides to produce on its own initiative, never what the user explicitly asks for",
-    # #629 (owner ruling 2026-07-30): the one carve-out. Price recovery IS
-    # multi-tool production by the letter of the rule above, so an entry point
-    # carrying only that rule tells a host not to do the thing the ruling
-    # requires -- and the failure is silent, because the host then relays a
-    # concentration answer weighted on cost. Same one-sided-drop shape as the
-    # two phrases above: the exception dropped from one entry point while the
-    # other keeps it makes Claude and Codex behave differently on the identical
-    # engine. Every phrase below is a half that fails on its own.
-    #
-    # The exception itself, stated as narrowly as the ruling states it.
-    "recovering a price the engine could not retrieve is completing the input, not production",
-    # Without this the carve-out reads as a general loosening of rule 8 -- the
-    # 34-turn failure `references/freeform-answers.md` exists to prevent, now
-    # with a citable licence.
-    "It licenses no chart, artifact, or other multi-tool work",
-    # The bound the ruling required in the contract rather than in a maintainer's
-    # client configuration: what kind of task it is, how many instruments, and
-    # who may run it. The delegation clause deliberately names no model, tier, or
-    # subagent mechanism (owner ruling 2026-07-26) -- a Claude model named in a
-    # cross-host public skill is dead text on one client and a wrong instruction
-    # on another -- so it states the outcome and lets the host decide how.
-    "transcription, not analysis",
-    "at most twenty instruments",
-    "delegated to whatever faster tier the host has",
-    # What it degrades to, and the half a reader is most likely to "simplify"
-    # away as inconsistent with the review-card lane's never-stall rule. Both
-    # lanes are right; `references/price-feed.md` carries the reason.
-    "refused rather than answered on cost basis",
-)
+# #507 retired this phrase set with the prose it pinned. The freeform
+# production policy collapsed to one sentence in `SKILL.md` -- answer directly,
+# do not produce an unrequested artifact -- so ten literals spread across two
+# entry points now pin text that no longer exists. What each phrase actually
+# protected, and where that protection lives now:
+#
+#   - the effort ceiling itself -> the surviving sentence in `SKILL.md`;
+#   - "Brevity bounds ... never which facts it owes" -> mechanical, not prose:
+#     `evaluation_challenge.build_challenge` computes `required_coverage` per
+#     call and `answer_provenance.validate_agent_case` refuses a case that
+#     drops an owed fact (`tests/test_evaluation_challenge.py`,
+#     `tests/test_consider.py` section M);
+#   - the five price-recovery clauses -> the engine emits the recovery kit and
+#     `--prices-unavailable` refuses a forward decision on cost basis, gated by
+#     `tests/test_consider.py` section O. `SKILL.md` keeps the one instruction
+#     a host cannot read off the payload: look the closes up and hand them back.
+#
+# Deleting the wording lock is not deleting the rule. The rule that had no
+# mechanism kept its sentence; the rules that had one stopped being restated.
 # #597 lane 1a: a decision the user brings with no recorded book is framed
 # rather than refused. Same guaranteed-delivery pair, because the two halves
 # fail in opposite directions and each half alone is worse than neither. An
@@ -150,9 +118,14 @@ FREEFORM_ANSWER_REQUIRED_PHRASES = (
 # behaviour the owner-live walk on 2026-07-30 ruled against. The shape phrase
 # is load-bearing on its own: narrating an unchecked fact back at the user is
 # the caveat-filler pattern #552 owns, and this is its second instance.
+# #507 narrowed this to one entry point rather than dropping a phrase. The
+# guaranteed-delivery pair became a single floor when SKILL.md stopped carrying
+# a second copy of the boundaries, so "both entry points" is now "the floor" --
+# but every phrase below still guards a failure nothing mechanical catches, and
+# each stayed. Losing one is still a host that refuses a user it should have
+# helped, or invents the portfolio numbers it has no book for.
 NO_BOOK_FRAMING_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
-    Path("skills/fomo-kernel/SKILL.md"): "## Non-negotiable rules",
 }
 NO_BOOK_FRAMING_REQUIRED_PHRASES = (
     # The route exists at all.
@@ -212,9 +185,13 @@ EVIDENCE_INVITATION_REQUIRED_PHRASES = (
 # point already states this where it discusses the book; adding a ninth
 # non-negotiable rule so the headings could match would grow the entry-point
 # prompt the maintainer guide deliberately keeps thin.
+# #507: SKILL.md's `## Agent artifact contract` was deep-review ceremony and is
+# gone with it, so the positive rule is checked on the floor alone. The
+# retired-phrase scan below is unchanged and still sweeps every agent runtime
+# surface -- that half is what actually stopped three runtime files from going
+# on teaching the rule #562 retired, and narrowing it would be the regression.
 RECORDED_BOOK_SECTIONS = {
     Path("AGENTS.md"): "## Non-negotiable boundaries",
-    Path("skills/fomo-kernel/SKILL.md"): "## Agent artifact contract",
 }
 RECORDED_BOOK_REQUIRED_PHRASES = (
     # The positive rule that replaced the eligibility gate.
@@ -312,6 +289,12 @@ SHARED_FLOOR_PHRASES = (
 # AGENTS.md on the root-to-cwd path plus the user's global file. Half of it is
 # this repository's share; the global file is not ours to measure.
 CODEX_INSTRUCTION_BUDGET_BYTES = 16 * 1024
+# #507: the same 16 KiB, applied to a different failure. Codex's cap is about
+# one client's discovery limit; this one is about what every host pays before
+# it can answer a live decision at all. The pair measured here was 30,431 bytes
+# on `main@4e7a15e` and instructed a further ~156 KB of routed prose; the slice
+# that shrank it left this behind so the loading chain cannot quietly grow back.
+ALWAYS_LOADED_RUNTIME_BUDGET_BYTES = 16 * 1024
 # `CLAUDE.md` may still be *named* where a file legitimately describes the
 # adapter's role or the authority split. Everywhere else, naming it as the home
 # of a shared rule points a reader at a file that no longer holds it.
@@ -928,23 +911,6 @@ def markdown_section(text, heading):
     return text[content_start:] if next_heading < 0 else text[content_start:next_heading]
 
 
-def _agents_question_surface_drift_violations(text):
-    """Return root-floor violations without duplicating the engine's kinds.
-
-    The queue row's ``question_opportunity`` projection is the eligibility
-    gate. Keeping this helper deliberately ignorant of the set of kinds makes
-    a new engine-owned opportunity reachable without another prose update.
-    """
-    workflow = markdown_section(text, "## Workflow")
-    violations = []
-    if AGENT_QUESTION_OPPORTUNITY_RULE not in workflow:
-        violations.append("workflow does not defer private surfaces to question_opportunity")
-    retired_kinds = ("`add_thesis`", "`headline_motive`")
-    if any(kind in workflow for kind in retired_kinds):
-        violations.append("workflow reintroduced a private-surface kind enumeration")
-    return violations
-
-
 def test_implementation_markdown_is_english_only():
     violations = []
     for rel, path in implementation_markdown_files():
@@ -982,45 +948,6 @@ def test_review_py_is_a_non_negotiable_boundary():
             assert f"`{command}`" in section, f"{rel}: boundary omits {command}"
 
 
-def test_agents_private_surface_gate_uses_the_engine_projection():
-    """#666: root AGENTS.md must not decide eligibility from a prose kind list."""
-    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    violations = _agents_question_surface_drift_violations(text)
-    assert not violations, "AGENTS.md private-surface gate drifted:\n" + "\n".join(violations)
-
-
-def test_agents_private_surface_enum_revival_is_caught():
-    """Mutation proof: restoring the old enum makes the root-floor gate fail."""
-    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    mutated = text.replace(
-        AGENT_QUESTION_OPPORTUNITY_RULE, RETIRED_AGENT_QUESTION_SURFACE_ENUM, 1)
-    assert AGENT_QUESTION_OPPORTUNITY_RULE not in markdown_section(mutated, "## Workflow")
-    assert RETIRED_AGENT_QUESTION_SURFACE_ENUM in markdown_section(mutated, "## Workflow")
-    problems = _agents_question_surface_drift_violations(mutated)
-    assert any("kind enumeration" in problem for problem in problems), (
-        "restoring the retired question-kind enum left the drift regression green"
-    )
-
-
-def test_freeform_answer_shape_is_a_boundary_in_both_entry_points():
-    """#543: an ad hoc informational question -- including a `consider`
-    call -- must default to a quick, direct, textual answer with no chart,
-    artifact, or multi-tool production, and a chart may only ever come from
-    a small pre-defined set. This is a must-always-land rule per
-    docs/development-guide.md section 6, so it belongs in both
-    guaranteed-delivery entry points, not only in the soft-routed reference
-    (`references/freeform-answers.md`) that carries the full rationale and
-    the named set. Checking for the same literal phrase in both files is
-    what stops a future edit from silently dropping the rule out of one of
-    them while leaving it in the other -- the exact gap that section names
-    as uncaught for a second such rule.
-    """
-    for rel, heading in FREEFORM_ANSWER_SECTIONS.items():
-        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
-        for phrase in FREEFORM_ANSWER_REQUIRED_PHRASES:
-            assert phrase in section, f"{rel}: missing freeform-answer-shape phrase {phrase!r}"
-
-
 def test_the_card_invitation_rule_is_stated_and_routed_to_its_owner():
     """#623/#617: the card surface must carry the invitation rule *and* name
     `decision-framing.md` as the file that owns it. A card policy that merely
@@ -1045,26 +972,6 @@ def test_card_invitation_rule_mutations_are_caught():
             f"dropping {phrase!r} left the gate green"
 
 
-def test_freeform_answer_shape_mutations_are_caught():
-    """Mutation proof for the check above. Drives the same markdown_section
-    + literal-phrase logic against the real, committed entry-point text with
-    one required phrase removed, rather than a synthetic stand-in -- so this
-    proves dropping the rule from a real file is caught, not just that the
-    `in` operator works on a hand-written fixture.
-    """
-    for rel, heading in FREEFORM_ANSWER_SECTIONS.items():
-        text = (ROOT / rel).read_text(encoding="utf-8")
-        for phrase in FREEFORM_ANSWER_REQUIRED_PHRASES:
-            assert phrase in text, (
-                f"fixture assumption broken: {rel} no longer contains {phrase!r}"
-            )
-            mutated_text = text.replace(phrase, "", 1)
-            mutated_section = markdown_section(mutated_text, heading)
-            assert phrase not in mutated_section, (
-                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
-            )
-
-
 def test_recorded_book_rule_is_stated_in_both_entry_points():
     """#549: every accepted source records the book at the time it arrives,
     which kind of source it was never decides eligibility, and a newer
@@ -1072,7 +979,7 @@ def test_recorded_book_rule_is_stated_in_both_entry_points():
     rule PR #562 shipped in the engine; a host reading a stale entry point can
     refuse a valid refresh or describe the recorded book falsely while every
     engine test stays green, and Claude and Codex can diverge on the same
-    engine. Same guaranteed-delivery pair as FREEFORM_ANSWER_SECTIONS
+    engine. Checked on the floor alone since #507.
     (docs/development-guide.md section 6), checked for this rule.
     """
     for rel, heading in RECORDED_BOOK_SECTIONS.items():
@@ -1127,7 +1034,7 @@ def test_no_book_framing_rule_is_stated_in_both_entry_points():
     refusal. A host reading a stale entry point either refuses a user it should
     have helped or invents the portfolio numbers it has no book for, and Claude
     and Codex can diverge on the same engine. Same guaranteed-delivery pair as
-    FREEFORM_ANSWER_SECTIONS (docs/development-guide.md section 6).
+    the floor alone since #507 (docs/development-guide.md section 6).
     """
     for rel, heading in NO_BOOK_FRAMING_SECTIONS.items():
         section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
@@ -1265,7 +1172,13 @@ def test_agent_runtime_surfaces_do_not_import_engine_internals():
 
 
 def test_snapshot_runtime_uses_raw_facts_through_review_only():
-    surfaces = [Path("AGENTS.md"), SKILL_DIR / "SKILL.md",
+    # #507: loading a book from broker data is a routed task, not the live
+    # decision lane, so the entry point is checked where the floor now routes
+    # it -- `references/data-contract.md` -- and on the flow that runs it. The
+    # two prose-as-mechanism locks below are unchanged and still sit on the
+    # flow, which is what actually protects the OCR and weight-derivation
+    # mistakes; neither ever depended on the floor restating the flag.
+    surfaces = [SKILL_DIR / "references/data-contract.md",
                 SKILL_DIR / "flows/snapshot-review.md"]
     for rel in surfaces:
         text = (ROOT / rel).read_text(encoding="utf-8")
@@ -1347,6 +1260,38 @@ def floor_violations(text):
             for phrase in SHARED_FLOOR_PHRASES if collapsed(phrase) not in body]
 
 
+def always_loaded_runtime_violations(root):
+    """Reasons the always-loaded runtime contract has grown back (#507).
+
+    `AGENTS.md` and `SKILL.md` are the two files a host reads before it can
+    answer anything; every other runtime document is soft-routed and reached
+    only when its task is actually invoked. #507 collapsed that pair from
+    30,431 bytes to a small contract, and the budget is what keeps the
+    collapse from being undone one useful paragraph at a time -- the failure
+    it prevents is the one that motivated the slice, a host arriving at a
+    live decision holding a procedure manual instead of the engine's answer.
+
+    Deliberately a byte budget over the *pair*, not a line count over each:
+    the tax is what a host loads before its first word, and moving prose from
+    one file to the other does not reduce it.
+    """
+    surfaces = [root / "AGENTS.md", root / "skills" / "fomo-kernel" / "SKILL.md"]
+    problems = []
+    missing = [str(path.relative_to(root)) for path in surfaces if not path.is_file()]
+    if missing:
+        return [f"always-loaded runtime surface is missing: {', '.join(missing)}"]
+    sizes = {path.relative_to(root): path.stat().st_size for path in surfaces}
+    total = sum(sizes.values())
+    if total > ALWAYS_LOADED_RUNTIME_BUDGET_BYTES:
+        problems.append(
+            f"the always-loaded runtime contract is {total} bytes, over the "
+            f"{ALWAYS_LOADED_RUNTIME_BUDGET_BYTES}-byte budget #507 set: "
+            + ", ".join(f"{rel} {size}" for rel, size in sorted(sizes.items()))
+            + ". Route the new material to the document that owns its task "
+              "instead of adding it to the floor.")
+    return problems
+
+
 def codex_discovery_violations(root):
     """Reasons Codex's discovery of the shared floor is compromised under ``root``.
 
@@ -1418,6 +1363,44 @@ def test_agents_md_is_the_shared_always_on_floor():
     problems = floor_violations((ROOT / SHARED_FLOOR).read_text(encoding="utf-8"))
     problems += codex_discovery_violations(ROOT)
     assert not problems, f"{SHARED_FLOOR} is not the shared floor:\n  " + "\n  ".join(problems)
+
+
+def test_the_always_loaded_runtime_contract_stays_inside_its_budget():
+    """#507: what a host loads before answering a live decision is bounded.
+
+    This is the mechanism that replaced several deleted wording locks. Those
+    pinned individual sentences and could not see the actual regression -- a
+    floor that keeps every pinned phrase and still grows a route manual around
+    them. A budget over the pair sees exactly that and nothing else.
+    """
+    problems = always_loaded_runtime_violations(ROOT)
+    assert not problems, "the always-loaded runtime contract grew back:\n  " + "\n  ".join(problems)
+
+
+def test_always_loaded_runtime_budget_mutations_are_caught():
+    """Mutation proof: a floor over budget, and a missing surface, both redden.
+
+    Without the second half a rename would silently disable the gate -- the
+    check would find nothing to measure and report nothing wrong.
+    """
+    assert ALWAYS_LOADED_RUNTIME_BUDGET_BYTES == 16 * 1024, \
+        "the budget #507 agreed is 16 KiB; changing it needs an owner ruling, not an edit"
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp)
+        skill_dir = fake / "skills" / "fomo-kernel"
+        skill_dir.mkdir(parents=True)
+        assert always_loaded_runtime_violations(fake), \
+            "a tree with neither surface would stay green"
+        (fake / "AGENTS.md").write_text("floor", encoding="utf-8")
+        assert always_loaded_runtime_violations(fake), \
+            "a tree missing SKILL.md would stay green"
+        (skill_dir / "SKILL.md").write_text("contract", encoding="utf-8")
+        assert not always_loaded_runtime_violations(fake), "fixture assumption broken"
+        (skill_dir / "SKILL.md").write_text(
+            "x" * ALWAYS_LOADED_RUNTIME_BUDGET_BYTES, encoding="utf-8")
+        problems = always_loaded_runtime_violations(fake)
+        assert any("over the" in problem for problem in problems), \
+            "an over-budget runtime contract left the gate green"
 
 
 def test_the_maintainer_guide_holds_the_shared_contract():
@@ -1562,12 +1545,8 @@ def main():
         test_demo_card_numbers_match_across_all_surfaces,
         test_readme_heading_structure_matches_across_languages,
         test_review_py_is_a_non_negotiable_boundary,
-        test_agents_private_surface_gate_uses_the_engine_projection,
-        test_agents_private_surface_enum_revival_is_caught,
-        test_freeform_answer_shape_is_a_boundary_in_both_entry_points,
         test_the_card_invitation_rule_is_stated_and_routed_to_its_owner,
         test_card_invitation_rule_mutations_are_caught,
-        test_freeform_answer_shape_mutations_are_caught,
         test_recorded_book_rule_is_stated_in_both_entry_points,
         test_no_agent_runtime_surface_teaches_the_retired_completeness_rule,
         test_recorded_book_rule_mutations_are_caught,
@@ -1579,6 +1558,8 @@ def main():
         test_agent_runtime_surface_scope_is_bounded,
         test_claude_md_is_a_host_adapter_over_the_shared_floor,
         test_agents_md_is_the_shared_always_on_floor,
+        test_the_always_loaded_runtime_contract_stays_inside_its_budget,
+        test_always_loaded_runtime_budget_mutations_are_caught,
         test_the_maintainer_guide_holds_the_shared_contract,
         test_no_shared_rule_is_cited_as_the_claude_adapters,
         test_instruction_authority_mutations_are_caught,

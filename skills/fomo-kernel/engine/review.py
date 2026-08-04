@@ -819,7 +819,7 @@ def _fallback_cash_anchor(root):
     individually unreliable even though the account overall read reliable.
     Promoting an unreliable running sum into a synthetic anchor would
     misrepresent an approximation as a recorded fact — the opposite of this
-    fix, and the same fail-closed rule AGENTS.md boundary 6 states everywhere
+    fix, and the same fail-closed rule AGENTS.md invariant 2 states everywhere
     else in this product.
     """
     state = _previous_state(root)
@@ -5718,7 +5718,7 @@ def _preview_receipt_key(plan, answers, narrative,
     user was shown, with the one field the lifecycle deliberately defers.
 
     `commitment` is excluded, and that is a contract statement rather than a
-    convenience. The documented order (`AGENTS.md` step 6) is: show the card,
+    convenience. The documented order (`flows/first-review.md` step 6) is: show the card,
     *then* ask the user to choose a candidate rule, supply a custom one, or
     skip, *then* write that choice to `answers.commitment` and finalize. The
     choice is made after the card was shown, so requiring it to have been in
@@ -7829,7 +7829,7 @@ def cmd_consider(args):
     # reads the values just frozen and returns that obligation as data —
     # which facts, whose exact words, which of their own rules, which
     # limitations, and what the engine never looked at — so a brief answer
-    # (SKILL.md rule 8) is bounded from below by a computed list rather than
+    # (SKILL.md's answer shape) is bounded from below by a computed list rather than
     # by what an agent remembers of references/trade-consequence.md.
     #
     # Emitted beside the row, never onto it: it is a pure function of

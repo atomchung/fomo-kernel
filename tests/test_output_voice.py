@@ -6,9 +6,19 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VOICE = ROOT / "docs" / "output-voice.md"
+# #507 took the two guaranteed-delivery entry points out of this map. The
+# registry is a nine-rule authority with its own witness system, and loading it
+# before every answer was the harness tax that slice removed; what a live
+# decision actually needs -- value first, one lead judgment with its strongest
+# counter, at most one advancing question -- is stated directly in `SKILL.md`'s
+# answer shape, where a host reads it without a second file.
+#
+# The two route references stay, and they are the reason this is a re-pointing
+# rather than a deletion: `trade-consequence.md` and `decision-framing.md` are
+# the surfaces #676 actually proved the authority on, they are still routed
+# from the floor for the tasks that own them, and an unreferenced authority is
+# text nothing loads.
 POINTERS = {
-    ROOT / "AGENTS.md": "docs/output-voice.md",
-    ROOT / "skills" / "fomo-kernel" / "SKILL.md": "docs/output-voice.md",
     ROOT / "skills" / "fomo-kernel" / "references" / "trade-consequence.md": "output-voice.md",
     ROOT / "skills" / "fomo-kernel" / "references" / "decision-framing.md": "output-voice.md",
 }
@@ -33,12 +43,6 @@ def test_actual_instruction_paths_load_the_authority():
     for path, pointer in POINTERS.items():
         text = path.read_text(encoding="utf-8")
         assert pointer in text, f"{path.relative_to(ROOT)} does not point to output voice"
-
-
-def test_skill_keeps_the_global_pointer_instead_of_the_retired_route_local_voice_copy():
-    text = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
-    assert "Apply the global output-voice contract to the route structure in `references/trade-consequence.md`." in text
-    assert "Shape the reply decision-first: one supported decision tension leads" not in text
 
 
 def test_stable_rule_registry_has_complete_unique_mappings():
@@ -83,7 +87,6 @@ def main():
     tests = [
         test_global_authority_and_route_boundaries,
         test_actual_instruction_paths_load_the_authority,
-        test_skill_keeps_the_global_pointer_instead_of_the_retired_route_local_voice_copy,
         test_stable_rule_registry_has_complete_unique_mappings,
         test_registry_mutations_are_caught,
         test_synthetic_witness_oracle_passes_and_covers_every_failure_class,

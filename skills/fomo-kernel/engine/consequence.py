@@ -129,7 +129,7 @@ SIDES = ("buy", "sell")
 # TWD to the dollar, the smaller of two holdings reads as 97% of the book and
 # the larger as 3%. A reader told the numbers are incomplete cannot tell that
 # the ranking is backwards. `portfolio_state` now refuses instead, which is
-# what AGENTS.md boundary 6 already said ("a missing or incompatible
+# what AGENTS.md invariant 2 already said ("a missing or incompatible
 # valuation or FX rate ... fail closed") and what #497 established for the
 # canonical PortfolioBasis lane; the legacy CSV lane was the one that never
 # got it. The key survives in schemas/trade-evaluation.schema.json's enum for
@@ -152,7 +152,7 @@ SIDES = ("buy", "sell")
 # either (`trade_recap.cash_position`'s `unmatched_anchors`). Before #688 this
 # was a pure silent drop: `balance`/`reliable` could read back a perfectly
 # healthy `true` while a user-declared sum sat nowhere in the response at
-# all — AGENTS.md boundary 6 requires this fail closed instead, the same way
+# all — AGENTS.md invariant 2 requires this fail closed instead, the same way
 # an unusable holding is excluded-and-named rather than dropped-and-silent.
 DISCLOSURES = ("cost_basis", "cash_unreliable", "unmapped_driver",
                "unclassified_book", "etf_not_decomposed", "partial_book",

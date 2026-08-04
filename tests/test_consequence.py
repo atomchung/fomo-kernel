@@ -480,7 +480,7 @@ def test_mixed_currency_without_an_fx_map_is_refused_not_disclosed():
     said "aggregate figures are incomplete". They were not incomplete, they
     were a different book: at ~31 TWD to the dollar the smaller holding reads
     as the larger one. A reader cannot recover that from a disclosure, so the
-    state is refused, matching #497's canonical lane and AGENTS.md boundary 6."""
+    state is refused, matching #497's canonical lane and AGENTS.md invariant 2."""
     rows = _rows("sample_tw_mixed.csv")   # TWD + USD
     premise = {"ticker": "AAPL", "side": "buy", "price": 190.0, "qty": 10.0}
     try:
@@ -871,7 +871,7 @@ def test_a_flowless_cash_anchor_converts_once_fx_already_covers_its_currency():
 
 
 def test_a_flowless_cash_anchor_never_refuses_the_whole_evaluation():
-    """AGENTS.md boundary 6 requires either an honest conversion or a named
+    """AGENTS.md invariant 2 requires either an honest conversion or a named
     exclusion, never a silent drop -- but it does not require refusing the
     entire computation, and this fixture is the reason: nothing else in this
     one-holding USD book reads JPY at all, so raising

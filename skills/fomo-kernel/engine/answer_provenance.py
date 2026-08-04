@@ -421,7 +421,7 @@ def _assert_no_internal_leak(text, label):
     ordinary English and passes; "cost_basis" is a payload key and does not.
 
     A claim is prose the user reads. This says nothing about how long it is
-    — SKILL.md rule 8 owns that — only that a limitation has to be described
+    — SKILL.md's answer shape owns that — only that a limitation has to be described
     rather than named by its field."""
     folded = str(text).casefold()
     for token in _INTERNAL_TOKENS:
