@@ -443,7 +443,7 @@ def test_d_every_provider_failure_is_a_stable_code_and_never_a_number():
         assert bundle.frame is None, f"{expected} must not produce a frame"
         assert bundle.fx == {"USD": 1.0}, (
             f"{expected} must not invent a rate: a missing rate resolved as 1.0 inverts which "
-            f"holding is largest, the failure AGENTS.md boundary 6 forbids ({bundle.fx})")
+            f"holding is largest, the failure AGENTS.md invariant 2 forbids ({bundle.fx})")
         assert not bundle.usable, f"{expected} must never be cached as a successful day"
 
 
@@ -1252,7 +1252,7 @@ GRANDFATHERED_PROVIDER_SITES = {
     # Not on any supported route: `prepare` builds market context from the shared
     # price frame (`trade_recap.market_context_from_prices`), and this module's
     # own `fetch_series` is reachable only by invoking `engine/market_context.py`
-    # directly, which AGENTS.md boundary 7 forbids. Left alone deliberately rather
+    # directly, which AGENTS.md invariant 1 forbids. Left alone deliberately rather
     # than wrapped in an adapter no supported route reaches (#605 non-goals).
     "market_context.py",
 }

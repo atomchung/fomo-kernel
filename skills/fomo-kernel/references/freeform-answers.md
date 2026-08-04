@@ -108,7 +108,7 @@ not a new rendering: it is the same engine-rendered artifact
 rather than a freshly composed one. The card's own P&L sparkline stays
 exactly as scoped before — part of the card's own rendering, not a
 detachable chart reachable on its own — and privacy still defaults to
-`card-private.*` per SKILL.md rule 5 / AGENTS.md boundary 5: asking for the
+`card-private.*` per AGENTS.md invariant 4 / AGENTS.md invariant 4: asking for the
 card in freeform conversation does not loosen that default, and only
 `card-public.md` is share-safe, on request.
 
@@ -133,7 +133,7 @@ rather than a rule this entry restates.
 Every field in the Positions view must come from an engine-computed
 current-book snapshot obtained through `engine/review.py` — the same
 numbers-from-engine and CLI-only boundary (SKILL.md rules 1 and 2; AGENTS.md
-boundaries 1 and 7) every other number in this product already obeys, never
+invariants 2 and 1) every other number in this product already obeys, never
 a value the agent recomputes from a CSV, and never one read by importing an
 engine module directly. The dedicated read-only outlet is
 `engine/review.py positions` (#561): no CSV, no premise, no supplied
@@ -160,9 +160,9 @@ above — a different chart, a different table, more detail than Rule 1's
 default — meet that request instead of declining it on this file's
 authority. Every other non-negotiable rule still applies in full to however
 that request gets answered: numbers still come only from the engine
-(SKILL.md rule 1 / AGENTS.md boundary 1), trade data still stays local
-(SKILL.md rule 5 / AGENTS.md boundary 5), and a market price is still never
-invented (SKILL.md rule 4; AGENTS.md states the same prohibition in its
+(AGENTS.md invariant 2 / AGENTS.md invariant 2), trade data still stays local
+(AGENTS.md invariant 4 / AGENTS.md invariant 4), and a market price is still never
+invented (AGENTS.md invariant 2; AGENTS.md states the same prohibition in its
 Workflow section rather than as a numbered boundary). This file bounds what
 the agent reaches for unasked; it was never written to tell a user no.
 

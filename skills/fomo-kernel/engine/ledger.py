@@ -85,7 +85,7 @@ SNAPSHOT_POSITION_KEYS = frozenset({
     "ticker", "shares", "avg_cost", "market_value", "market", "currency", "carried",
     "since", "since_basis", "cycle_seq", "add_count",
 })
-# 引擎指派、永遠不收 agent 供給的持倉欄位(SKILL.md 不可協商規則 1:數字來自引擎產物)。
+# 引擎指派、永遠不收 agent 供給的持倉欄位(AGENTS.md 不可協商邊界 2:數字來自引擎產物)。
 # snapshot_adapter.normalize_envelope 預設拒收它們;只有 book_refresh 採納自己剛問到的
 # 答案時才開鎖,而那一條路上的值是引擎自己算出來的。
 ENGINE_ASSIGNED_POSITION_KEYS = frozenset({"since", "since_basis", "cycle_seq", "add_count"})

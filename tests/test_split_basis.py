@@ -459,7 +459,7 @@ def _reviewed_root(tmp, splits):
 
 def _considered_book(tmp):
     """`consider`'s own view of the recorded book, through the CLI -- the
-    boundary an agent actually calls (SKILL.md rule 2)."""
+    boundary an agent actually calls (AGENTS.md invariant 1)."""
     run = subprocess.run(
         [sys.executable, os.path.join(ENGINE, "review.py"), "consider", "--root", tmp,
          "--premise", '{"ticker": "CASHY", "side": "buy", "qty": 1, "price": 1.0, '

@@ -144,7 +144,7 @@ def test_an_appearance_asks_how_long_and_at_what_cost():
 
 
 def test_a_confirmed_appearance_dates_its_cycle_from_the_months_the_user_gave():
-    """The engine converts the month count, never the agent (SKILL.md rule 1).
+    """The engine converts the month count, never the agent (AGENTS.md invariant 2).
 
     Eighteen months before the 2026-07-15 declaration is 2025-01-15, and that
     date — not the declaration's — is what the position's cycle is measured

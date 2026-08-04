@@ -1757,8 +1757,11 @@ def test_delivery_contract_exists_and_is_routed():
     assert "--format private-markdown" in text, \
         "delivery contract must document the direct terminal fallback command"
 
-    assert "references/card-delivery.md" in (SKILL / "SKILL.md").read_text(encoding="utf-8")
-    assert "references/card-delivery.md" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    # #507: a card is produced by the deep-review lane, which is routed rather
+    # than always loaded, so the entry points stopped naming its delivery
+    # contract. `card-spec.md` is the card's own authority and still routes it,
+    # and the per-flow loop below is the check that actually matters -- every
+    # flow that renders a card must route delivery or declare it renders none.
     assert "references/card-delivery.md" in (SKILL / "card-spec.md").read_text(encoding="utf-8")
     assert FLOW_FILES, "at least one flow file must exist to route card delivery"
     # A flow that renders no card has nothing to route through the delivery

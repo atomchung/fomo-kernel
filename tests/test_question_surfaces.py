@@ -616,8 +616,12 @@ def test_published_schemas_and_cross_client_contract_are_routed():
     for phrase in ("validated_dynamic", "engine_fallback", "native_options",
                    "plain_text", "surface_digest"):
         assert phrase in text
-    for rel in ("AGENTS.md", "skills/fomo-kernel/SKILL.md",
-                "skills/fomo-kernel/flows/first-review.md",
+    # #507: adapter resolution left the ordinary decision lane, so the two
+    # guaranteed-delivery entry points no longer route it -- plain text is the
+    # only required host presentation there and a validated private surface is
+    # never authored. The flows that still run the question lifecycle are where
+    # the contract has to stay reachable, and they are what this now checks.
+    for rel in ("skills/fomo-kernel/flows/first-review.md",
                 "skills/fomo-kernel/flows/weekly-review.md"):
         assert "references/interaction-delivery.md" in (ROOT / rel).read_text(encoding="utf-8")
 
