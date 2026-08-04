@@ -226,9 +226,9 @@ read by no mechanical consumer, and repeatedly invited misreading.
   work wait for one bounded maintenance slice unless the current test can
   false-pass a milestone gate. Do not open a micro-PR for every small test
   improvement; collect related work under one owner, use focused tests during
-  implementation, and run the complete offline suite when the bounded change
-  is ready to commit as `docs/maintainer-guide.md` requires (#402, #464, #483 owner decision
-  2026-07-30).
+  implementation, and run `python3 tests/run_all.py --group product` when the
+  bounded change is ready for review as `docs/maintainer-guide.md` requires
+  (#402, #464, #483 owner decision 2026-07-30; group split #492).
 - **Quarantine an edge-case class into one owning track.** When a cross-cutting
   class such as stock splits, mixed-currency valuation, corruption recovery,
   or same-day mutation appears, do not widen the current feature PR one

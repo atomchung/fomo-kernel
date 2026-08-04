@@ -69,14 +69,34 @@ The synchronization chain is: `build_honesty_ledger()` ↔ renderer and copy ↔
 
 ## Tests
 
-Run before and after changing the engine or runtime contract:
+`tests/run_all.py` is the one registry of every offline deterministic suite, and each entry declares who a red result implicates (#492):
+
+- **`product`** — a red result means product runtime, canonical state, privacy, recovery, replay, compatibility, or an explicitly supported user surface may be wrong.
+- **`qa-eval`** — a red result means the maintainer's own evidence system is wrong: the synthetic operator, the receipt and archive workflow, campaign lineage, the judge harness, the question-episode bank, or QA-only tooling and its documentation.
+- When it is not obvious which one a suite is, it stays in `product`. Being slow is not a reason to move one; `qa-eval` is about who a failure implicates, not about cost.
 
 ```bash
-python3 tests/run_all.py
-TR_TEST_NETWORK=1 python3 tests/run_all.py  # optional beta-direction and market-context network smoke
+python3 tests/run_all.py --group product   # what the blocking CI job runs
+python3 tests/run_all.py --group qa-eval   # the maintainer evidence system's own suites
+python3 tests/run_all.py                   # the whole registry — `--group all` is still the default
+TR_TEST_NETWORK=1 python3 tests/run_all.py # optional beta-direction and market-context network smoke
 ```
 
-The default suite is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, the card copy corpus, the question-episode bank's mechanical half ([evals/episodes/](../evals/episodes/README.md)), documentation language, and agent workflow boundaries.
+The registry is offline, deterministic, and does not require pytest. It covers engine units, JSON/state contracts, price paths, the snapshot-anchored ledger, revisit/swap behavior, market context, problem tracking, persona fixtures, the state loop, artifact checkers, local data controls, session idempotency, the v2 review lifecycle, the card copy corpus, the question-episode bank's mechanical half ([evals/episodes/](../evals/episodes/README.md)), documentation language, and agent workflow boundaries.
+
+### Which evidence, and when
+
+```text
+focused tests during development
+→ blocking product-contract CI before merge
+→ QA/eval evidence when that tooling or a formal acceptance campaign is in scope
+```
+
+**While implementing**, run the suites your change actually touches. Every suite file is executable on its own (`python3 tests/test_consider.py`), and `tests/offline_posture.py` gives a direct run the same market posture the registry does, so a focused run and a registry run cannot disagree (#620). Do not run the whole registry at every checkpoint: it measures roughly three minutes, and a receipt, campaign or episode-bank failure has no business blocking a reversible local commit — that pressure is what makes an implementer edit product code to get a checkpoint through.
+
+**Before merge**, `product-contract` runs `--group product` on Python 3.11 and 3.12; that is the blocking result. `qa-eval-tooling` reports separately under its own name: it blocks when the pull request changes QA/eval-owned files (`qa/`, `evals/`, or a suite registered as `qa-eval`), and on `main`, scheduled and manual runs; on an ordinary product pull request it still runs and its red is still visible, but it is advisory. The two results may never be reported as each other — a skipped or red `qa-eval` is not a product pass, and a green `product` is not formal QA acceptance.
+
+**Run the whole registry** (`--group all`) before a formal owner-live QA campaign, before a release or readiness claim, when shared test-runner infrastructure changes, and when the owning issue names it as acceptance evidence. `docs/qa-runbook.md`'s preflight requests `all` explicitly for exactly that reason.
 
 After an intended wording change, regenerate the copy golden in the same commit and read its diff:
 
@@ -84,9 +104,7 @@ After an intended wording change, regenerate the copy golden in the same commit 
 python3 tests/copy_corpus.py --update
 ```
 
-Do not commit after changing engine output, price handling, sorting, or orchestration unless the complete offline suite passes.
-
-**Only one client blocks on it.** `.github/workflows/tests.yml` runs the same suite on every push and pull request, on every client — but it reports, and `main` carries no required status check. The one gate that *blocks* is a committed Claude Code hook (`.claude/hooks/pre_commit_test_gate.sh`), so on Codex, Cursor, or any other client the rule is identical and nothing stops a red commit from being created, pushed, and merged. Run the suite yourself before committing there. Do not read the missing hook as a lighter standard; it is an unenforced one, which is why `AGENTS.md` states the rule for every client rather than leaving it here, and #592 owns closing the gap.
+**Only one client blocks, and it no longer blocks on behavior.** `.github/workflows/tests.yml` runs the registry on every push and pull request, on every client — but it reports, and `main` carries no required status check. The one gate that *blocks* is a committed Claude Code hook (`.claude/hooks/pre_commit_test_gate.sh`), and #492 narrowed it to `tests/test_repo_hygiene.py` — repository integrity that changes no behavior and that no behavioural suite can see. It used to invoke the whole registry, which was both the coupling above and a gate that could not finish inside its own timeout, so on any real engine commit it had already been failing open. Behaviour is now gated by `product-contract` before merge, on every client equally, and nothing stops a red commit from being created, pushed, and merged. Run `--group product` yourself before opening the pull request. Do not read the missing hook as a lighter standard; it is an unenforced one, which is why `AGENTS.md` states the rule for every client rather than leaving it here, and #592 owns closing the gap.
 
 ## Dogfood QA
 

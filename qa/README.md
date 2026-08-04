@@ -23,10 +23,18 @@ under `skills/` would imply there are two things to install, and there is exactl
 | `tests/test_skill_commands.py` | Drift gate: every `ux_receipt.py` command in `SKILL.md` must parse against the real CLI, and the documented event order must replay into a trace that verifies (#520). |
 | `tests/test_isolation_gate.py` | Refusal gate: `qa_env.sh` must stop every command while the account's own `~/.trade-coach` is still reachable, and what `isolate` prints must satisfy the check that refused (#557). |
 
-All three test files run inside `tests/run_all.py`, the repository's actual commit gate.
+All three test files are registered in `tests/run_all.py`, in its `qa-eval` group (#492).
+They run on `--group qa-eval` and on the default `--group all`, and CI reports them under
+its own `qa-eval-tooling` job — separately from `product-contract`, because a red result
+here means the maintainer's evidence system is wrong, not that a user is getting a wrong
+number. That job blocks a merge when the pull request changes QA/eval-owned files, and on
+`main`, scheduled and manual runs; on an ordinary product pull request it still runs and
+is still visible, but it is advisory.
+
 Maintainer tooling is not product code, but a gate that lives outside the runner is
 enforced by whoever remembers — which is how `SKILL.md` accumulated commands that
-could not be executed as written.
+could not be executed as written. Registered-but-separately-attributed is the point:
+the suites never stopped running.
 
 ## Relationship to `docs/qa-runbook.md`
 

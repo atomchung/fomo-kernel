@@ -158,8 +158,14 @@ def _run_suite(repo_root: Path, runner: Path | None = None) -> int:
             child_env["PYTHONPATH"] = (
                 user_site if not previous_pythonpath else f"{user_site}{os.pathsep}{previous_pythonpath}"
             )
+        # #492: name the group rather than inherit the runner's default. `all`
+        # is still that default, kept for compatibility, but this is the formal
+        # acceptance path -- the one place whose whole job is to be the
+        # complete evidence run. A path that inherits a default narrows
+        # silently the day the default moves, and a narrowed QA preflight
+        # still prints a pass.
         result = subprocess.run(
-            [sys.executable, str(runner)],
+            [sys.executable, str(runner), "--group", "all"],
             cwd=repo_root,
             capture_output=True,
             text=True,

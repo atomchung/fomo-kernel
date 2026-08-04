@@ -214,6 +214,27 @@ def test_every_suite_that_drives_a_priced_route_declares_its_market_posture():
 
 WORKFLOW_REL_PATH = os.path.join(".github", "workflows", "tests.yml")
 
+# #492: the two halves of the old single `test` job. Both run the offline,
+# deterministic registry -- they differ in who a red result implicates and in
+# whether it blocks a product merge, never in whether the suites ran. Named
+# once so the checks below cannot drift into watching one half.
+OFFLINE_CI_JOBS = ("product-contract", "qa-eval-tooling")
+
+
+def _registry_run_lines(job_lines):
+    """Lines in a job that actually invoke the suite registry.
+
+    Comments are excluded, and so is the `--scope` call, which asks the
+    registry a path-ownership question and runs no suite. Both would otherwise
+    be matched by a bare `"run_all.py" in line` scan -- the same
+    "matched text, not what the text means" trap `_installs_yfinance` above
+    documents, and it caught this file's first draft.
+    """
+    return [line for line in job_lines
+            if "run_all.py" in line
+            and not line.strip().startswith("#")
+            and "--scope" not in line]
+
 
 def _nested_block(lines, key):
     """Lines nested one level under a `key:` mapping entry, the key line
@@ -273,7 +294,7 @@ def _sequence_items(lines):
 
 def _installs_yfinance(job_lines):
     """Whether a job's own lines contain a real `pip install ... yfinance`,
-    never a bare substring match. The `test` job's own comment explains, in
+    never a bare substring match. Each offline job's own comment explains, in
     prose, why yfinance is deliberately *not* installed there -- and that
     sentence contains the word "yfinance" -- so a naive `"yfinance" in line`
     scan reports the job as violating the posture its own comment is
@@ -291,9 +312,9 @@ def test_the_workflow_block_scanner_reads_only_its_own_nesting_level():
     """`_nested_block`'s own oracle (development-guide.md #2: a checker with
     no failing-mutation proof is not evidence). The fixture plants the two
     things that would fool a scanner that degraded to substring search: a
-    coincidental `jobs:`/`test:` line sitting deep inside another job's
-    `run:` block, and a bare `push:` key with nothing nested under it. A
-    scanner not tracking indentation would truncate the real `test` job
+    coincidental `jobs:`/`product-contract:` line sitting deep inside another
+    job's `run:` block, and a bare `push:` key with nothing nested under it. A
+    scanner not tracking indentation would truncate the real blocking job
     early or bleed the sibling job's content across the boundary, and still
     pass today's file -- this fixture is what would catch it.
     """
@@ -305,13 +326,13 @@ on:
   schedule:
     - cron: "1 2 3 4 5"
 jobs:
-  test:
+  product-contract:
     runs-on: ubuntu-latest
     steps:
       - name: a
         run: |
           echo "jobs:"
-          echo "test:"
+          echo "product-contract:"
   network-smoke:
     if: something
     steps:
@@ -332,11 +353,11 @@ jobs:
     assert _sequence_items(_nested_block(on_block, "schedule")) == ['cron: "1 2 3 4 5"']
 
     jobs_block = _nested_block(fixture, "jobs")
-    test_block = _nested_block(jobs_block, "test")
+    test_block = _nested_block(jobs_block, "product-contract")
     assert any('echo "jobs:"' in line for line in test_block), test_block
-    assert any('echo "test:"' in line for line in test_block), test_block
+    assert any('echo "product-contract:"' in line for line in test_block), test_block
     assert not _installs_yfinance(test_block), (
-        "the test job's own block must not include the sibling "
+        "the blocking job's own block must not include the sibling "
         "network-smoke job's content")
 
     network_block = _nested_block(jobs_block, "network-smoke")
@@ -381,25 +402,31 @@ def test_ci_cannot_run_the_offline_suite_twice_on_one_ref():
         "other branch still races its own pull_request run on one commit")
 
 
-def test_the_blocking_test_job_never_installs_yfinance():
-    """The suite every PR and every push to `main` blocks on must stay
-    offline by construction, per #620/#625's rule that a suite's answer may
-    not depend on how it was launched -- #637's root cause was exactly this
+def test_the_offline_ci_jobs_never_install_yfinance():
+    """The suites every PR and every push to `main` reads must stay offline
+    by construction, per #620/#625's rule that a suite's answer may not
+    depend on how it was launched -- #637's root cause was exactly this
     posture missing on one of the two launch paths CI itself uses.
     `market_data.resolve` only reaches its recorded-response fake when no
-    real provider is importable; installing yfinance in the blocking job
+    real provider is importable; installing yfinance in either offline job
     would let it silently start resolving live closes, reintroducing the
-    flake and the network dependency #625 removed and this job's own
+    flake and the network dependency #625 removed and each job's own
     comment already promises against.
+
+    #492 split the old single `test` job in two. Both halves are checked,
+    because a posture that holds on the blocking job and not on its sibling
+    is the same one-launch-path-only gap #637 was.
     """
     jobs_block = _nested_block(_lines(WORKFLOW_REL_PATH), "jobs")
     assert jobs_block is not None, "tests.yml has no top-level `jobs:` mapping"
-    test_job = _nested_block(jobs_block, "test")
-    assert test_job, "tests.yml has no `test:` job -- the blocking suite has no home"
-    assert not _installs_yfinance(test_job), (
-        "the blocking `test` job installs yfinance -- every PR and every "
-        "push to main blocks on this suite staying offline by construction "
-        "(#620, #625, #637); yfinance belongs only in network-smoke")
+    for name in OFFLINE_CI_JOBS:
+        job = _nested_block(jobs_block, name)
+        assert job, f"tests.yml has no `{name}:` job -- an offline suite has no home"
+        assert not _installs_yfinance(job), (
+            f"the offline `{name}` job installs yfinance -- every PR and every "
+            "push to main reads these suites on the promise that they are "
+            "offline by construction (#620, #625, #637); yfinance belongs "
+            "only in network-smoke")
 
     # Sanity check on the scan's own scope, against the real file rather
     # than only the synthetic fixture above: network-smoke installs
@@ -415,35 +442,254 @@ def test_a_failing_run_can_be_attributed_to_the_tree_it_tested():
     """#637: two CI triggers on one branch reported against the same
     `headSha` while actually testing two different trees, and nothing in
     either run's own output said so -- a maintainer had to open both runs
-    and reconstruct which checkout produced which answer. The blocking job
-    must print its own trigger and the commit it actually resolved before
-    the suite that might fail, or a red run still hides the one fact that
-    would have explained it: a step placed after a failed step does not run
-    by default, so attribution after the suite step is attribution nobody
-    ever sees on the run that needed it.
+    and reconstruct which checkout produced which answer. A job that runs
+    suites must print its own trigger and the commit it actually resolved
+    before the suite that might fail, or a red run still hides the one fact
+    that would have explained it: a step placed after a failed step does not
+    run by default, so attribution after the suite step is attribution
+    nobody ever sees on the run that needed it.
+
+    #492 made this apply to two jobs rather than one. Attribution on the
+    blocking half only would leave the QA/eval half exactly as unreadable as
+    the whole thing was before #637.
     """
     jobs_block = _nested_block(_lines(WORKFLOW_REL_PATH), "jobs")
-    test_job = _nested_block(jobs_block, "test") or []
-    joined = "\n".join(test_job)
-    assert "git rev-parse HEAD" in joined, (
-        "the blocking `test` job never resolves and prints `git rev-parse "
-        "HEAD` -- a failing run cannot be attributed to the tree it "
-        "actually checked out (a plain push vs. a PR's ephemeral merge "
-        "commit), which is what made the #637 double run unreadable")
-    assert "github.event_name" in joined, (
-        "the blocking `test` job never prints its own trigger event -- "
-        "attribution needs both which tree and which trigger produced it")
+    for name in OFFLINE_CI_JOBS:
+        job = _nested_block(jobs_block, name) or []
+        joined = "\n".join(job)
+        assert "git rev-parse HEAD" in joined, (
+            f"the `{name}` job never resolves and prints `git rev-parse "
+            "HEAD` -- a failing run cannot be attributed to the tree it "
+            "actually checked out (a plain push vs. a PR's ephemeral merge "
+            "commit), which is what made the #637 double run unreadable")
+        assert "github.event_name" in joined, (
+            f"the `{name}` job never prints its own trigger event -- "
+            "attribution needs both which tree and which trigger produced it")
 
-    attribution_at = next(
-        (i for i, line in enumerate(test_job) if "git rev-parse HEAD" in line), None)
-    suite_at = next(
-        (i for i, line in enumerate(test_job) if "run_all.py" in line), None)
-    assert attribution_at is not None and suite_at is not None
-    assert attribution_at < suite_at, (
-        "the tree-attribution step must run before `tests/run_all.py` -- "
-        "a failing suite step aborts the job before a later step runs, so "
-        "attribution placed after it never shows up on the run it was "
-        "meant to explain")
+        runs = _registry_run_lines(job)
+        attribution_at = next(
+            (i for i, line in enumerate(job)
+             if "git rev-parse HEAD" in line and not line.strip().startswith("#")), None)
+        suite_at = next((i for i, line in enumerate(job) if line in runs), None)
+        assert attribution_at is not None and suite_at is not None, name
+        assert attribution_at < suite_at, (
+            f"the tree-attribution step in `{name}` must run before "
+            "`tests/run_all.py` -- a failing suite step aborts the job "
+            "before a later step runs, so attribution placed after it never "
+            "shows up on the run it was meant to explain")
+
+
+# --- #492: product / QA-eval ownership, and the ways it collapses back ------
+#
+# The split is the kind of thing that changes no behaviour and therefore no
+# behavioural suite can see -- the class this file exists for. Every way it
+# dies is silent: a suite added without an owner, a group that quietly becomes
+# the whole registry, CI running `all` under a name that says `product`, or the
+# path-ownership map used to decide whether QA/eval blocks drifting away from
+# the registry it is supposed to describe. Each of those leaves a green run
+# reporting a boundary that no longer exists.
+
+
+def _registry():
+    """The live `tests/run_all.py` module.
+
+    Imported rather than re-parsed or re-declared: a second copy of the suite
+    list is the exact defect #492 forbids, and it would drift in the direction
+    that always wins -- the copy nobody runs stops matching the one that gates.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "run_all_registry", os.path.join(ROOT, "tests", "run_all.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_registry_run_scan_reads_intent_not_substrings():
+    """`_registry_run_lines`' own oracle (development-guide #2).
+
+    Its first draft matched every line containing `run_all.py`, which pulled
+    in a *comment* naming the path and reported a correct workflow as broken.
+    That is `_installs_yfinance`'s "matched text, not what the text means"
+    trap one file later. The `--scope` call is excluded for a different
+    reason: it asks the registry a path-ownership question and runs no suite,
+    so counting it would let a job satisfy "runs its group" by never running
+    anything.
+    """
+    job = [
+        "    steps:",
+        "      # tests/run_all.py holds the one ownership declaration this reads",
+        "      - name: Decide scope",
+        "        run: git diff --name-only base HEAD | python3 tests/run_all.py --scope",
+        "      - name: Run suites",
+        "        run: python3 tests/run_all.py --group product",
+    ]
+    assert _registry_run_lines(job) == [
+        "        run: python3 tests/run_all.py --group product"], _registry_run_lines(job)
+    assert _registry_run_lines(["      - run: echo unrelated"]) == []
+
+
+def test_every_registered_suite_names_its_owner():
+    """A new suite must not be able to join without someone deciding whether
+    a red result there implicates the product or the maintainer's own
+    evidence system. Registration is a three-tuple, so the omission is a
+    crash at import rather than a silent default -- which is what "the two
+    groups cannot collapse back together" has to mean mechanically, since a
+    default would quietly re-merge them one suite at a time.
+    """
+    registry = _registry()
+    assert registry.GROUPS == ("product", "qa-eval"), registry.GROUPS
+    problems = []
+    for entry in registry.SUITES:
+        if len(entry) != 3:
+            problems.append(f"{entry!r}: expected (label, path, group)")
+            continue
+        label, rel, group = entry
+        if group not in registry.GROUPS:
+            problems.append(f"{rel}: unknown owner {group!r}, expected one of {registry.GROUPS}")
+    assert not problems, "\n  ".join(["registry entries without a valid owner:"] + problems)
+
+
+def test_the_two_groups_partition_the_registry_exactly():
+    """`product` + `qa-eval` must be `all` -- same suites, same order, no
+    suite claimed twice, none claimed by neither. A suite in both groups is
+    the copy #492's rollback note forbids.
+
+    What this deliberately does not claim: it derives `all` from `SUITES`, so
+    deleting an entry outright keeps the partition consistent and stays green.
+    That hole is older than the split -- the flat registry had it too -- and
+    closing it needs a separate answer to "which suites *should* be
+    registered", which is not this check and not #492. Said here because a
+    docstring that implied otherwise would be the more dangerous half.
+    """
+    registry = _registry()
+    everything = [rel for _, rel in registry.suites_for("all")]
+    product = [rel for _, rel in registry.suites_for("product")]
+    qa_eval = [rel for _, rel in registry.suites_for("qa-eval")]
+
+    assert everything == [rel for _, rel, _ in registry.SUITES], (
+        "`--group all` no longer runs the registry in registry order")
+    assert not set(product) & set(qa_eval), (
+        f"suites claimed by both groups: {sorted(set(product) & set(qa_eval))} -- "
+        "move the suite, never copy its assertions into both groups")
+    assert sorted(product + qa_eval) == sorted(everything), (
+        "the two groups do not add up to the whole registry: "
+        f"missing {sorted(set(everything) - set(product) - set(qa_eval))}")
+
+
+def test_neither_group_can_quietly_become_the_whole_registry():
+    """The vacuous forms, pinned at both extremes.
+
+    If `qa-eval` empties, `--group product` silently becomes the old flat
+    57-suite gate and #492 is undone with every command still green. If
+    `product` empties or shrinks to a rump, the blocking CI job passes
+    because it is testing almost nothing -- the fake-green shape this
+    repository has now shipped several times. Neither is visible from a
+    passing run, so both ends are asserted rather than the middle.
+    """
+    registry = _registry()
+    product = registry.suites_for("product")
+    qa_eval = registry.suites_for("qa-eval")
+    total = len(registry.SUITES)
+
+    assert qa_eval, (
+        "no suite is owned by `qa-eval` -- `--group product` is now the whole "
+        "registry under a narrower name, which is the state #492 removed")
+    assert len(product) < total, (
+        "`--group product` selects the entire registry -- the split exists in "
+        "the labels and not in what runs")
+    # The product group is the one a merge blocks on. It must stay the
+    # substantial half: QA/eval is maintainer tooling, and a repository whose
+    # blocking evidence is a minority of its suites has moved product
+    # coverage out of the gate rather than moved QA tooling out of the way.
+    assert len(product) > total // 2, (
+        f"only {len(product)}/{total} suites block a product merge -- product "
+        "coverage has been reclassified out of the blocking gate, which is "
+        "not what `qa-eval` is for")
+
+
+def test_ci_runs_each_group_under_its_own_named_job():
+    """The split has to reach CI, not only the runner. `product-contract`
+    running the default `all` would restore one indistinguishable result
+    under a name promising two, and nothing in the runner's own tests would
+    notice -- the job name would still be there and every suite would still
+    run.
+    """
+    jobs_block = _nested_block(_lines(WORKFLOW_REL_PATH), "jobs")
+    expected = {"product-contract": "--group product", "qa-eval-tooling": "--group qa-eval"}
+    for name, flag in expected.items():
+        job = _nested_block(jobs_block, name)
+        assert job, f"tests.yml has no `{name}:` job"
+        runs = _registry_run_lines(job)
+        assert runs, f"the `{name}` job never runs tests/run_all.py"
+        # The whole command, not a substring of it. A looser check passes on
+        # `run: echo python3 tests/run_all.py --group product`, which runs
+        # nothing, and on `--group product --group all`, which runs everything
+        # because argparse keeps the last value -- both leaving a job named for
+        # one group quietly doing something else.
+        for line in runs:
+            command = line.split("run:", 1)[1].strip() if "run:" in line else line.strip()
+            assert command == f"python3 tests/run_all.py {flag}", (
+                f"the `{name}` job's registry command is {command!r}, not "
+                f"'python3 tests/run_all.py {flag}' -- a job named for one "
+                "group must run that group, and only that group")
+
+
+def test_the_path_owner_map_and_the_registry_cannot_drift():
+    """CI asks one question the suite list alone cannot answer -- "did this
+    diff touch QA/eval's own files?" -- and #492 forbids answering it from a
+    second hand-maintained list. `--scope` reads the registry, so this pins
+    the join: every QA/eval-owned suite must be recognised as QA/eval-owned
+    by the same function CI calls, and a product suite must not be.
+
+    Drift here is silent and one-directional in the worst way: the map stops
+    covering a QA file, QA/eval stops blocking its own changes, and the
+    only symptom is a green square.
+    """
+    registry = _registry()
+    for _, rel, group in registry.SUITES:
+        owned = registry.qa_eval_owns(rel)
+        assert owned == (group == "qa-eval"), (
+            f"{rel} is registered as `{group}` but the path-ownership map says "
+            f"qa_eval_owns={owned} -- CI's blocking decision and the runner's "
+            "suite selection disagree about who owns this file")
+
+    # The evidence system's subjects that are not whole directories. A path map
+    # naming a file that no longer exists has stopped covering anything, and
+    # the symptom is a green square -- so the names are checked against disk,
+    # and each must really be outside the prefix list or it is dead weight
+    # pretending to add coverage.
+    for rel in registry.QA_EVAL_OWNED_FILES:
+        assert os.path.isfile(os.path.join(ROOT, rel)), (
+            f"QA_EVAL_OWNED_FILES names {rel}, which does not exist -- the "
+            "blocking decision no longer covers whatever replaced it")
+        assert not any(rel.startswith(p) for p in registry.QA_EVAL_OWNED_PREFIXES), (
+            f"{rel} is already covered by a prefix; listing it separately "
+            "suggests coverage the prefix list already provides")
+        assert registry.qa_eval_owns(rel), rel
+
+    assert registry.scope_of(["skills/fomo-kernel/engine/review.py"]) == "product-only"
+    assert registry.scope_of([]) == "product-only"
+    qa_owned_suite = next(rel for _, rel, group in registry.SUITES if group == "qa-eval")
+    assert registry.scope_of(
+        ["skills/fomo-kernel/engine/review.py", qa_owned_suite]) == "qa-eval-owned", (
+        "one QA/eval-owned path in a mixed diff must make the whole diff "
+        "QA/eval-owned -- the blocking decision fails closed or it is not one")
+
+
+def test_formal_qa_preflight_asks_for_the_whole_registry_explicitly():
+    """`docs/qa-runbook.md`'s preflight is the formal-acceptance path, and
+    #492 kept `all` as the default only for compatibility. A path that
+    inherits a default is a path that silently narrows the day the default
+    changes, and this one's whole job is to be the complete evidence run --
+    so it must name `all` rather than rely on being handed it.
+    """
+    source = open(os.path.join(ROOT, "skills", "fomo-kernel", "tools", "qa_preflight.py"),
+                  encoding="utf-8").read()
+    assert '"--group", "all"' in source or "'--group', 'all'" in source, (
+        "qa_preflight runs the deterministic suite without naming a group -- "
+        "the formal QA evidence path must request `all` explicitly, not "
+        "inherit whatever the runner's default happens to be")
 
 
 def main():

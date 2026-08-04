@@ -30,6 +30,8 @@ script must inspect `tool_input.command` from stdin and exit immediately for
 unrelated commands. Follow the self-filtering pattern in
 `pre_commit_test_gate.sh`.
 
-That gate is the mechanical half of a shared rule — the offline suite must be
-green before a commit — and it exists only here. The rule itself is stated in
-`AGENTS.md` for every client precisely because no other client enforces it.
+That gate is the mechanical half of a shared rule and it exists only here.
+Since #492 it covers repository integrity (`tests/test_repo_hygiene.py`), not
+the whole registry: behaviour is gated by the blocking `product-contract` CI
+job before merge. The rule itself is stated in `AGENTS.md` for every client
+precisely because no other client enforces it.

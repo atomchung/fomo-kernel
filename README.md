@@ -248,10 +248,10 @@ Start with:
 - [`docs/issue-lifecycle.md`](docs/issue-lifecycle.md) — current-context loading and issue ownership;
 - [`docs/maintainer-guide.md`](docs/maintainer-guide.md) — development, privacy, tests, mirrored surfaces, and PR conventions.
 
-Before committing repository changes:
+Before opening a pull request:
 
 ```bash
-python3 tests/run_all.py
+python3 tests/run_all.py --group product
 ```
 
 The public examples and fixtures must remain synthetic. See the [MIT License](LICENSE).
