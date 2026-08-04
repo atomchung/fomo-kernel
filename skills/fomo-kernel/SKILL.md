@@ -28,6 +28,7 @@ Everything the answer needs is in the payload. No other file is required to writ
 - `evaluation.rule_collisions` — the user's own rules this trade touches, each with the `rule_effect` naming how it moves.
 - `challenge` — computed for this call, and the closest thing to a checklist you get: `must_state` (facts this answer owes, each with the record `anchor` it came from), `rule_effects` (with `must_convey` / `must_not_convey` per rule — say the first, never the second), `quote_verbatim` (the user's own words, reproduced unreworded and never relabeled as an outside source), `unchecked` (what nobody looked at — silence here reads as a clean bill of health), and `case_required`.
 - `disclosures_display` — each disclosure already written as a sentence in the user's language. Use it rather than translating a key.
+- `prior_decision` — present only when the user already resolved one earlier consideration of this same ticker: their own stored words, and what they reported doing about it, never proof they did it. Use `prior_decision` only when it changes the current lead judgment, evidence requirement, process action, or the one question worth asking; otherwise ignore it.
 
 Read the answer out of that payload. Do not recompute it, round it, extend it, or fill a gap in it. A number the engine did not state does not go in the answer.
 
