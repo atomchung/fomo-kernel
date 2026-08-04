@@ -55,7 +55,22 @@ GROUPS = ("product", "qa-eval")
 # the agent-level evaluation harness, with `docs/eval-design.md` as its
 # authority: the checkers there grade fixtures and judge output, and nothing a
 # user runs reaches them.
-QA_EVAL_OWNED_PREFIXES = ("qa/", "evals/", "tests/agent/")
+QA_EVAL_OWNED_PREFIXES = ("qa/", "evals/", "tests/agent/", "skills/fomo-kernel/evals/")
+
+# The evidence system is not only directories: two of its subjects live among
+# the runtime tools. Each entry names the `qa-eval` suite that tests it, and
+# `tests/test_repo_hygiene.py` fails if one stops existing -- a path map that
+# points at a deleted file is how it goes quiet.
+#
+# `ux_receipt.py` is listed even though `tests/test_interaction_trajectory.py`
+# is `product`: the two questions are different. "Who does a red implicate"
+# decides the suite's group; "does this diff put the pull request inside the
+# evidence system's own scope" decides whether the QA/eval job blocks. Editing
+# the receipt tool moves `qa/tests/test_skill_commands.py`, so it does.
+QA_EVAL_OWNED_FILES = (
+    "skills/fomo-kernel/tools/qa_preflight.py",   # tests/test_qa_preflight.py
+    "skills/fomo-kernel/tools/ux_receipt.py",     # qa/tests/test_skill_commands.py
+)
 
 SUITES = [
     ("Engine unit tests", "tests/test_engine_units.py", "product"),
@@ -202,11 +217,12 @@ def suites_for(group):
 def qa_eval_owns(path):
     """Whether ``path`` belongs to the maintainer evidence system.
 
-    Two ways in, because the system is not one directory: the QA and eval
-    trees, and the individual suites registered as ``qa-eval`` that live under
-    ``tests/`` beside product suites. Reading the second out of ``SUITES``
-    rather than restating it is the point -- a suite reclassified in the
-    registry moves the blocking decision with it, in the same commit.
+    Three ways in, because the system is not one directory: the QA and eval
+    trees, the individual suites registered as ``qa-eval`` that live under
+    ``tests/`` beside product suites, and the named tool files under
+    ``skills/fomo-kernel/tools/``. Reading the second out of ``SUITES`` rather
+    than restating it is the point -- a suite reclassified in the registry
+    moves the blocking decision with it, in the same commit.
     """
     norm = str(path).replace(os.sep, "/")
     # Not `lstrip("./")`: that strips a *set* of characters, so a dotfile
@@ -214,6 +230,8 @@ def qa_eval_owns(path):
     if norm.startswith("./"):
         norm = norm[2:]
     if any(norm.startswith(prefix) for prefix in QA_EVAL_OWNED_PREFIXES):
+        return True
+    if norm in QA_EVAL_OWNED_FILES:
         return True
     return norm in {rel.replace(os.sep, "/") for _, rel in suites_for("qa-eval")}
 

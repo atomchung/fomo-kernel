@@ -42,13 +42,21 @@
 # defect as one in a docstring.
 #
 # Green -> allow. Red -> DENY the commit and hand the failure tail back.
-# Never hard-fails the harness: on any internal problem it allows (exit 0).
+#
+# What "never hard-fails the harness" does and does not cover. It allows (exit
+# 0) when the *harness* cannot run the gate: no project directory, no gate
+# file, no python3. It does NOT allow when the gate itself runs and returns
+# non-zero -- an ImportError or a syntax error in the gate is a broken gate,
+# and a broken gate that waves commits through is the failure this whole file
+# exists to prevent.
 
 input="$(cat)"
 
-# Only act on git commit commands (critical — see header).
+# Only act on git commit commands (critical — see header). The cheap substring
+# test just avoids spawning python on every unrelated Bash call; the regex
+# below is the real filter.
 case "$input" in
-  *"git commit"*) : ;;
+  *"git"*"commit"*) : ;;
   *) exit 0 ;;
 esac
 is_commit="$(printf '%s' "$input" | python3 -c '
@@ -57,9 +65,15 @@ try:
     cmd = json.load(sys.stdin).get("tool_input", {}).get("command", "")
 except Exception:
     cmd = ""
-print("1" if re.search(r"(^|&&|;|\||\n)\s*git\s+commit\b", cmd) else "0")
+# `git commit`, and also `git -C <path> commit` / `git --no-pager commit`:
+# git accepts global options before the subcommand, and a filter that only
+# knew the bare form let `git -C . commit` past the gate entirely.
+pattern = r"(^|&&|;|\||\n)\s*git\s+((-[^\s]+|--[^\s]+)(\s+[^\s-][^\s]*)?\s+)*commit\b"
+print("1" if re.search(pattern, cmd) else "0")
 ' 2>/dev/null)"
 [ "$is_commit" = "1" ] || exit 0
+
+command -v python3 >/dev/null 2>&1 || exit 0   # no interpreter -> cannot gate
 
 dir="${CLAUDE_PROJECT_DIR:-.}"
 cd "$dir" 2>/dev/null || exit 0

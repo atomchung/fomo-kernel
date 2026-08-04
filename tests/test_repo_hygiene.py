@@ -294,7 +294,7 @@ def _sequence_items(lines):
 
 def _installs_yfinance(job_lines):
     """Whether a job's own lines contain a real `pip install ... yfinance`,
-    never a bare substring match. The `test` job's own comment explains, in
+    never a bare substring match. Each offline job's own comment explains, in
     prose, why yfinance is deliberately *not* installed there -- and that
     sentence contains the word "yfinance" -- so a naive `"yfinance" in line`
     scan reports the job as violating the posture its own comment is
@@ -312,9 +312,9 @@ def test_the_workflow_block_scanner_reads_only_its_own_nesting_level():
     """`_nested_block`'s own oracle (development-guide.md #2: a checker with
     no failing-mutation proof is not evidence). The fixture plants the two
     things that would fool a scanner that degraded to substring search: a
-    coincidental `jobs:`/`test:` line sitting deep inside another job's
-    `run:` block, and a bare `push:` key with nothing nested under it. A
-    scanner not tracking indentation would truncate the real `test` job
+    coincidental `jobs:`/`product-contract:` line sitting deep inside another
+    job's `run:` block, and a bare `push:` key with nothing nested under it. A
+    scanner not tracking indentation would truncate the real blocking job
     early or bleed the sibling job's content across the boundary, and still
     pass today's file -- this fixture is what would catch it.
     """
@@ -552,9 +552,15 @@ def test_every_registered_suite_names_its_owner():
 
 def test_the_two_groups_partition_the_registry_exactly():
     """`product` + `qa-eval` must be `all` -- same suites, same order, no
-    suite in both and none in neither. A suite in both groups is the copy
-    #492's rollback note forbids; a suite in neither is coverage that
-    silently left the gate while every command still reports green.
+    suite claimed twice, none claimed by neither. A suite in both groups is
+    the copy #492's rollback note forbids.
+
+    What this deliberately does not claim: it derives `all` from `SUITES`, so
+    deleting an entry outright keeps the partition consistent and stays green.
+    That hole is older than the split -- the flat registry had it too -- and
+    closing it needs a separate answer to "which suites *should* be
+    registered", which is not this check and not #492. Said here because a
+    docstring that implied otherwise would be the more dangerous half.
     """
     registry = _registry()
     everything = [rel for _, rel in registry.suites_for("all")]
@@ -616,9 +622,17 @@ def test_ci_runs_each_group_under_its_own_named_job():
         assert job, f"tests.yml has no `{name}:` job"
         runs = _registry_run_lines(job)
         assert runs, f"the `{name}` job never runs tests/run_all.py"
-        assert all(flag in line for line in runs), (
-            f"the `{name}` job runs the registry without `{flag}`: {runs} -- "
-            "a job named for one group must run that group")
+        # The whole command, not a substring of it. A looser check passes on
+        # `run: echo python3 tests/run_all.py --group product`, which runs
+        # nothing, and on `--group product --group all`, which runs everything
+        # because argparse keeps the last value -- both leaving a job named for
+        # one group quietly doing something else.
+        for line in runs:
+            command = line.split("run:", 1)[1].strip() if "run:" in line else line.strip()
+            assert command == f"python3 tests/run_all.py {flag}", (
+                f"the `{name}` job's registry command is {command!r}, not "
+                f"'python3 tests/run_all.py {flag}' -- a job named for one "
+                "group must run that group, and only that group")
 
 
 def test_the_path_owner_map_and_the_registry_cannot_drift():
@@ -639,6 +653,20 @@ def test_the_path_owner_map_and_the_registry_cannot_drift():
             f"{rel} is registered as `{group}` but the path-ownership map says "
             f"qa_eval_owns={owned} -- CI's blocking decision and the runner's "
             "suite selection disagree about who owns this file")
+
+    # The evidence system's subjects that are not whole directories. A path map
+    # naming a file that no longer exists has stopped covering anything, and
+    # the symptom is a green square -- so the names are checked against disk,
+    # and each must really be outside the prefix list or it is dead weight
+    # pretending to add coverage.
+    for rel in registry.QA_EVAL_OWNED_FILES:
+        assert os.path.isfile(os.path.join(ROOT, rel)), (
+            f"QA_EVAL_OWNED_FILES names {rel}, which does not exist -- the "
+            "blocking decision no longer covers whatever replaced it")
+        assert not any(rel.startswith(p) for p in registry.QA_EVAL_OWNED_PREFIXES), (
+            f"{rel} is already covered by a prefix; listing it separately "
+            "suggests coverage the prefix list already provides")
+        assert registry.qa_eval_owns(rel), rel
 
     assert registry.scope_of(["skills/fomo-kernel/engine/review.py"]) == "product-only"
     assert registry.scope_of([]) == "product-only"
