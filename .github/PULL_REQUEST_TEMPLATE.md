@@ -4,11 +4,14 @@
 
 ## Tests
 
-- [ ] `python3 tests/run_all.py` complete offline suite passes (paste the tail below).
+- [ ] `python3 tests/run_all.py --group product` passes (paste the tail below). This is the group the blocking `product-contract` CI job runs.
 
 ```text
 (suite tail here)
 ```
+
+- [ ] If this PR changes QA/eval-owned files (`qa/`, `evals/`, or a suite registered as `qa-eval`): `python3 tests/run_all.py --group qa-eval` passes too, and its tail is below. A `qa-eval` result that was skipped or red is never described as a product pass, and a green `product` result is never described as formal QA acceptance.
+- [ ] If this is release or formal-QA preparation, or it changes shared test-runner infrastructure: `python3 tests/run_all.py --group all` passes.
 
 ## If this adds or changes a checker, gate, or test
 

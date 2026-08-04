@@ -8,8 +8,8 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/pre_commit_test_gate.sh\"",
             "if": "Bash(git commit*)",
-            "timeout": 60,
-            "statusMessage": "commit gate: 7 套測試須全綠"
+            "timeout": 20,
+            "statusMessage": "commit gate: repository hygiene (~0.1s)"
           }
         ]
       }

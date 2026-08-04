@@ -25,8 +25,15 @@ concurrency:
   group: tests-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+# #492:這份 workflow 曾經只有一個 `test` job,把產品正確性和 QA/eval 工具正確性壓成同
+# 一個無法歸因的紅綠燈。現在是兩個各自具名的證據源,合起來仍然覆蓋整份 registry:
+#   product-contract  — 每個產品 PR 都阻擋,3.11 + 3.12,跑 `--group product`
+#   qa-eval-tooling   — 各自具名,3.11 + 3.12,跑 `--group qa-eval`;只有在這個 PR 真的
+#                       動到 QA/eval 自己的檔案,或在 main / 排程 / 手動這種正式場合,
+#                       才是阻擋性的,否則是 advisory(仍然會跑、仍然看得到紅)
+# 兩個 group 的聯集就是 `--group all`,所以離線確定性覆蓋面沒有下降,只是變得可歸因。
 jobs:
-  test:
+  product-contract:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -56,20 +63,90 @@ jobs:
       # 「未安裝→不連網」降級 → CI 維持離線、確定性(不抓即時股價、不 flaky),順便驗證優雅降級。
       - name: Install runtime deps (offline by design — no yfinance)
         run: python3 -m pip install pandas rich
-      - name: Run full test suite (offline, deterministic)
-        run: python3 tests/run_all.py
+      - name: Run product-contract suites (offline, deterministic)
+        run: python3 tests/run_all.py --group product
+
+  # #492:maintainer 自己的證據系統——synthetic operator、receipt/campaign 譜系、judge
+  # 互鎖、episode bank、QA-only 工具漂移。這裡紅掉代表「我們蒐證的能力壞了」,不代表使用者
+  # 拿到錯的數字;把兩者壓成同一個狀態,會讓一個 fixture 漂移去逼實作者改產品程式碼。
+  # 它照樣每次都跑、照樣每個 Python 版本都跑——降的是「誰該被它擋下來」,不是覆蓋面。
+  qa-eval-tooling:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      # fetch-depth: 0 是這個 job 專屬的:下面那步要對 base 做 diff,而 checkout 預設的
+      # 淺 clone 沒有 base 那顆 commit。product-contract 不需要,所以不付這個代價。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: State which tree and trigger this run actually tested
+        run: |
+          echo "event: ${{ github.event_name }}"
+          echo "resolved commit: $(git rev-parse HEAD)"
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "ephemeral merge of head ${{ github.event.pull_request.head.sha }}" \
+                 "into base ${{ github.event.pull_request.base.sha }}"
+          fi
+      # 「這次 run 有沒有資格擋下 merge」由 registry 自己回答:`--scope` 讀的是
+      # tests/run_all.py 裡那份唯一的擁有權宣告,不是第二份手維護的路徑清單——兩份清單
+      # 會漂移,而漂移的方向永遠是「QA 悄悄不再擋自己的改動」。
+      # 讀不到 diff 就當成 owned:失敗方向朝著「多擋一次」,絕不無聲降級成 advisory。
+      - name: Decide whether this run owns a blocking QA/eval verdict
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            verdict="qa-eval-owned"
+          elif ! changed="$(git diff --name-only '${{ github.event.pull_request.base.sha }}' HEAD)"; then
+            verdict="qa-eval-owned"
+          else
+            verdict="$(printf '%s\n' "$changed" | python3 tests/run_all.py --scope)"
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "scope verdict: $verdict"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install runtime deps (offline by design — no yfinance)
+        run: python3 -m pip install pandas rich
+      # 這一步永遠 continue-on-error,阻擋與否交給下一步用明確的 shell 判斷——不是因為
+      # 動態 `continue-on-error: ${{ ... }}` 不能用,而是因為它的行為只能在 GitHub 上驗,
+      # 本機驗不到的構造不該拿來當閘門的樞紐。下面那步兩條路都印得出來、也 exit 得掉。
+      - name: Run qa-eval-tooling suites (offline, deterministic)
+        id: suites
+        continue-on-error: true
+        run: python3 tests/run_all.py --group qa-eval
+      # advisory 不等於看不見。紅掉而這個 PR 沒動到 QA/eval 檔案時,job 綠(不擋 merge),
+      # 但留下 warning annotation 並明講「這不是產品 pass」——#492 兩個方向的謊都要擋:
+      # QA 紅不得被說成產品壞掉,產品綠也不得被說成通過了正式 QA。
+      - name: State this job's standing, and block when this run owns the verdict
+        if: always()
+        run: |
+          echo "scope:  ${{ steps.scope.outputs.verdict }}"
+          echo "suites: ${{ steps.suites.outcome }}"
+          if [ "${{ steps.suites.outcome }}" = "success" ]; then
+            exit 0
+          fi
+          if [ "${{ steps.scope.outputs.verdict }}" = "qa-eval-owned" ]; then
+            echo "::error::qa-eval-tooling is red and this run owns a blocking verdict (it changed QA/eval-owned files, or it is a main/scheduled/manual run)."
+            exit 1
+          fi
+          echo "::warning::qa-eval-tooling is red and advisory here — this pull request changed no QA/eval-owned file, so it does not block merge. It is also not a QA pass: do not describe this pull request as QA-verified."
 
   # 線上半邊的訊號源(#62):裝 yfinance、設 TR_TEST_NETWORK=1 跑全套(含 β 方向 network smoke)。
   # 非阻塞:只在排程/手動觸發跑,紅了不擋任何 merge —— 行情/yfinance 抖動不該綁架 PR,
   # 但「線上半邊完全沒訊號」也不行(SELL_EARLY_TH 類突變曾三套全綠存活)。
+  # 這裡刻意跑預設的 `all`(product + qa-eval),因為它是排程/手動的正式全量路徑(#492)。
   network-smoke:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      # 跟 test job 同樣的歸因(#637),但少了 PR 那一段:這個 job 的 `if:` 只讓 schedule
-      # 和 workflow_dispatch 進來,兩者都沒有 pull_request payload,寫了也永遠不會印。
+      # 跟 product-contract job 同樣的歸因(#637),但少了 PR 那一段:這個 job 的 `if:` 只讓
+      # schedule 和 workflow_dispatch 進來,兩者都沒有 pull_request payload,寫了也永遠不會印。
       - name: State which tree and trigger this run actually tested
         run: |
           echo "event: ${{ github.event_name }}"
@@ -80,4 +157,4 @@ jobs:
       - name: Install runtime deps (with yfinance — online on purpose)
         run: python3 -m pip install pandas rich yfinance
       - name: Run full suite + network smoke (non-blocking)
-        run: TR_TEST_NETWORK=1 python3 tests/run_all.py
+        run: TR_TEST_NETWORK=1 python3 tests/run_all.py --group all

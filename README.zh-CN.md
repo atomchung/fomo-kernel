@@ -219,10 +219,10 @@ FOMO Kernel 不会：
 - [`docs/issue-lifecycle.md`](docs/issue-lifecycle.md) — context 加载与 issue owner；
 - [`docs/maintainer-guide.md`](docs/maintainer-guide.md) — 开发、隐私、测试、mirrored surfaces 与 PR 规范。
 
-提交 repository 改动前：
+开 pull request 前：
 
 ```bash
-python3 tests/run_all.py
+python3 tests/run_all.py --group product
 ```
 
 公开示例与 fixture 必须保持 synthetic。授权见 [MIT License](LICENSE)。
