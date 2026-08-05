@@ -76,6 +76,7 @@ sys.path.insert(0, HERE)
 import ledger as lg  # noqa: E402
 import portfolio_basis  # noqa: E402
 import snapshot_adapter  # noqa: E402
+import symbols  # noqa: E402  # #803/#806 一條 ticker identity 規則,與帳本共用
 
 SCHEMA_V = 1
 
@@ -211,8 +212,26 @@ def _recorded_book_partition(derived, units):
 
 
 def _declared_map(anchor):
-    return {row["ticker"]: row for row in anchor.get("positions") or []
-            if isinstance(row, dict) and row.get("ticker")}
+    """This declaration's rows, keyed the way the recorded book is keyed (#806).
+
+    ``ledger.derive_holdings`` has returned a canonically-keyed book since #803
+    while this map kept the anchor's *stored* spelling, so every position of a
+    book whose anchor predates that merge fell through every join built on the
+    pair — the refresh lane read a legacy book as having nothing in common with
+    itself, and reported each position as both appeared and disappeared.
+
+    ``symbols.by_canonical_identity`` is the same rule ``ledger.reconcile`` and
+    ``ledger.snapshot_reconciliation`` use, and it is used here rather than a
+    local ``.upper()`` for the reason it exists: one declaration holding the
+    same instrument under two spellings is a real disagreement this lane must
+    still report, so those keep their stored keys and fall through to the
+    mismatch that named them, instead of one silently winning by insertion
+    order. An already-canonical anchor — every anchor the engine has written
+    since #803 — comes back byte-identical.
+    """
+    return symbols.by_canonical_identity(
+        {row["ticker"]: row for row in anchor.get("positions") or []
+         if isinstance(row, dict) and row.get("ticker")})
 
 
 def _pending_confirmations(diff, derived, declared, partition, units):
@@ -411,19 +430,29 @@ def _validated_answers(pending, answers):
     """
     if not isinstance(answers, list):
         raise RefreshError("answers must be a list of {ticker, classification} objects")
+    # #806. The receipt named these; the answer echoes the name back. Matched on
+    # the raw string, an answer spelled differently from the receipt is refused
+    # as an item this refresh never raised — the same "not held, only the case
+    # differs" refusal #803 closed, one lane over, and here it strands a whole
+    # adoption because every raised item then reads as unanswered. Keyed by
+    # identity, `aaa` answers the confirmation raised for `AAA`, and answering
+    # one confirmation twice under two spellings is still a repeat.
     by_ticker = {row["ticker"]: row for row in pending}
+    by_identity = symbols.by_canonical_identity(by_ticker)
     seen = {}
     for index, row in enumerate(answers):
         if not isinstance(row, dict):
             raise RefreshError(f"answers[{index}] must be an object")
         ticker = row.get("ticker")
-        if ticker not in by_ticker:
+        key = ticker if ticker in by_identity else (symbols.canonical_ticker(ticker) or ticker)
+        if key not in by_identity:
             raise RefreshError(
                 f"this refresh raised no confirmation for {ticker!r}; "
                 "answerable: " + ", ".join(sorted(by_ticker)))
-        if ticker in seen:
+        if key in seen:
             raise RefreshError(f"answers repeat {ticker}")
-        raised = by_ticker[ticker]
+        raised = by_identity[key]
+        ticker = raised["ticker"]     # the receipt's own name for it, in every message below
         classification = row.get("classification")
         allowed = CLASSIFICATIONS_BY_KIND[raised["kind"]]
         if classification not in allowed:
@@ -437,13 +466,13 @@ def _validated_answers(pending, answers):
             raise RefreshError(f"{ticker}: this refresh did not ask for {extra}")
         for absent in sorted(expected - supplied):
             raise RefreshError(f"{ticker}: {absent} is required to adopt this appearance")
-        seen[ticker] = {
+        seen[key] = {
             "classification": classification,
             "held_months": _held_months(row.get("held_months"), ticker) if wants_detail else None,
             "avg_cost": (_answer_avg_cost(row.get("avg_cost"), ticker)
                          if wants_detail and raised.get("needs_avg_cost") else None),
         }
-    missing = sorted(set(by_ticker) - set(seen))
+    missing = sorted(by_identity[key]["ticker"] for key in set(by_identity) - set(seen))
     if missing:
         raise RefreshError("unanswered confirmations: " + ", ".join(missing))
     return seen
@@ -555,7 +584,13 @@ def _carried_start(row, recorded, derived, as_of):
     """
     if row.get("since_basis"):
         return row
-    ticker = row.get("ticker")
+    # #806. Two canonical books are being joined against a row whose spelling is
+    # whatever the caller supplied — this envelope may still be a raw one. Looked
+    # up unfolded, a continuously-held position simply is not found and takes the
+    # "it is appearing" branch: the start the user answered for is spent again,
+    # and #539's whole outcome (a position nobody sold keeps its cycle) silently
+    # stops applying to any book spelled differently from the record.
+    ticker = symbols.canonical_ticker(row.get("ticker")) or row.get("ticker")
     held = derived.get(ticker) or {}
     if not held:
         return row
@@ -672,18 +707,33 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
     file, and every ``since`` in the adopted book was either computed a few lines
     above by ``_appearance_stamp`` or carried off the record by that primitive.
     """
+    # #806. A receipt is durable state and froze the spelling of the day, while
+    # `derived` is the canonical book. Joined unfolded, a receipt written before
+    # #803 cannot find any of the positions it is about: a `not_captured` answer
+    # raises "no longer in the recorded book to carry forward" about a position
+    # sitting in the book, and a confirmed sale raises "no recorded cycle to
+    # close" — a hard refusal, mid-adoption, for the user's own holdings. Keyed
+    # by identity from here down, through the rule `ledger.reconcile` uses, so
+    # every join below and every row this writes agree with the book, while a
+    # receipt naming one instrument twice still keeps both keys and fails closed
+    # rather than one spelling silently winning. Messages keep the receipt's own
+    # name for a position: that is the word the user was shown.
+    raised_by = symbols.by_canonical_identity(
+        {row["ticker"]: row for row in receipt.get("pending_confirmations") or []
+         if isinstance(row, dict) and row.get("ticker")})
     classifications = _validated_answers(receipt.get("pending_confirmations") or [], answers)
-    resupply = sorted(ticker for ticker, value in classifications.items()
+    resupply = sorted((raised_by.get(ticker) or {}).get("ticker", ticker)
+                      for ticker, value in classifications.items()
                       if value["classification"] == "resupply")
     if resupply:
         return {"status": "resupply", "refresh_id": receipt.get("refresh_id"),
                 "tickers": resupply}
 
     derived = lg.holdings_as_of(events, snapshot["as_of"], splits=splits)
-    by_ticker = {row["ticker"]: row for row in receipt.get("pending_confirmations") or []}
     carried, sold, appeared = [], [], {}
     for ticker, answer in sorted(classifications.items()):
-        kind = by_ticker[ticker]["kind"]
+        raised = raised_by[ticker]
+        kind = raised["kind"]
         if kind == "appearance":
             appeared[ticker] = answer
             continue
@@ -692,7 +742,8 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
         if answer["classification"] == "not_captured":
             fact = derived.get(ticker)
             if not fact:
-                raise RefreshError(f"{ticker} is no longer in the recorded book to carry forward")
+                raise RefreshError(
+                    f"{raised['ticker']} is no longer in the recorded book to carry forward")
             carried.append(_carried_row(ticker, fact))
         elif answer["classification"] == "sold":
             sold.append(ticker)
@@ -700,7 +751,7 @@ def build_adoption(receipt, events, snapshot, anchor, answers, *, today=None, sp
     supplied = []
     for row in anchor.get("positions") or []:
         row = _supplied_row(row)
-        answer = appeared.get(row.get("ticker"))
+        answer = appeared.get(symbols.canonical_ticker(row.get("ticker")) or row.get("ticker"))
         supplied.append(_appearance_stamp(row, answer, snapshot["as_of"]) if answer else row)
     envelope = {"as_of": snapshot["as_of"], "positions": supplied + carried}
     if snapshot.get("cash") is not None:
