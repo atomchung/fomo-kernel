@@ -1528,6 +1528,151 @@ def test_resolve_rejects_a_decision_of_open():
         assert "invalid choice" in run.stderr.lower()
 
 
+# ── E2. asking again does not erase the answer the user gave (#810) ──
+#
+# `_evaluation_id` is a content address over premise, basis, day, frozen
+# consequence, rule collisions and context, so an identical ask converges on the
+# id already on disk — it *is* that evaluation, asked again, not a new
+# consultation. `_append_evaluation_row`'s byte-identical idempotency missed
+# that case by exactly the two fields a resolution writes, so the retry appended
+# a fresh `open` row and `_fold_evaluations`' latest-wins semantics reverted the
+# user's own `declined`. Everything downstream followed: `_prior_decision`
+# requires a resolved decision, so that evaluation became permanently ineligible
+# as memory, and `_evaluation_reconciliation` put a settled consultation back on
+# the review plan. Found by #27's resolve-then-identical-retry preflight probe.
+
+_RETRY_PREMISE = '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}'
+_RETRY_CONTEXT = ('{"reason": "fictional: adding on the pullback", '
+                  '"why_now": "fictional: it reached my stated add level"}')
+
+
+def _considered(root, context=_RETRY_CONTEXT):
+    return _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", root,
+                    "--premise", _RETRY_PREMISE, "--decision-context", context))
+
+
+def test_an_identical_retry_leaves_a_resolved_decision_resolved():
+    """The defect, as the user meets it: they declined this trade, asked the
+    same question again, and the record forgot they had answered."""
+    with tempfile.TemporaryDirectory() as tmp:
+        evaluation_id = _considered(tmp)["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                 "--decision", "declined"))
+        retry = _considered(tmp)
+        assert retry["evaluation"]["evaluation_id"] == evaluation_id, (
+            "the retry did not converge on the same evaluation; this case is "
+            "about the one that does")
+        folded = review_engine._fold_evaluations(_read_evaluations(tmp))
+        assert folded[evaluation_id]["decision"] == "declined", (
+            "asking again reverted the user's own recorded decision: "
+            f"{folded[evaluation_id]['decision']!r}")
+        assert folded[evaluation_id]["decided_on"] == dt.date.today().isoformat()
+
+
+def test_the_retry_states_the_record_rather_than_contradicting_it():
+    """A no-op append is not enough on its own: the answer handed back must not
+    present a settled consultation as still open, or the agent reads one fact
+    and the file holds another."""
+    with tempfile.TemporaryDirectory() as tmp:
+        evaluation_id = _considered(tmp)["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                 "--decision", "declined"))
+        retry = _considered(tmp)
+        assert retry["evaluation"]["decision"] == "declined", retry["evaluation"]
+        assert retry["evaluation"]["decided_on"] == dt.date.today().isoformat()
+        assert retry["append"]["status"] == "no-op", (
+            f"the retry wrote a row it did not need to: {retry['append']}")
+        assert len(_read_evaluations(tmp)) == 2, _read_evaluations(tmp)
+
+
+def test_a_settled_evaluation_survives_a_retry_as_recallable_memory():
+    """Why the reversion mattered beyond the file. `_prior_decision` requires a
+    resolved decision, so a reverted one is not merely mis-stated — it is gone
+    as memory, and the continuity #609 exists to provide is destroyed by the
+    most ordinary action there is: asking again."""
+    other = ('{"reason": "fictional: thinking about the same add again", '
+             '"why_now": "fictional: it dipped a second time today"}')
+    with tempfile.TemporaryDirectory() as tmp:
+        evaluation_id = _considered(tmp)["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                 "--decision", "declined"))
+        _considered(tmp)                                   # the identical retry
+        later = _considered(tmp, context=other)            # a genuinely new question
+        assert later["evaluation"]["evaluation_id"] != evaluation_id, (
+            "a different stated why_now must mint its own evaluation")
+        prior = later.get("prior_decision")
+        assert prior, "the settled consultation came back as no memory at all"
+        assert prior["evaluation_id"] == evaluation_id, prior
+        assert prior["decision"] == "declined", prior
+
+
+def test_a_retry_of_an_unresolved_evaluation_behaves_exactly_as_before():
+    """The gate's other end. Only a *resolved* row is protected; an evaluation
+    still open must keep the plain byte-identical no-op it always had, or this
+    rule would be "a retry writes nothing" rather than "a retry does not
+    un-resolve"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _considered(tmp)
+        second = _considered(tmp)
+        assert second["evaluation"]["evaluation_id"] == first["evaluation"]["evaluation_id"]
+        assert second["evaluation"]["decision"] == "open", second["evaluation"]
+        assert second["append"]["status"] == "no-op", second["append"]
+        assert len(_read_evaluations(tmp)) == 1, _read_evaluations(tmp)
+
+
+def test_a_resolved_decision_can_still_be_corrected():
+    """`--resolve` is the one writer of this field and keeps its whole range:
+    a user who said `declined` and then acted must be able to say so."""
+    with tempfile.TemporaryDirectory() as tmp:
+        evaluation_id = _considered(tmp)["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                 "--decision", "declined"))
+        _considered(tmp)
+        corrected = _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                             "--decision", "acted"))
+        assert corrected["decision"] == "acted", corrected
+        folded = review_engine._fold_evaluations(_read_evaluations(tmp))
+        assert folded[evaluation_id]["decision"] == "acted", folded[evaluation_id]
+
+
+def test_a_corrupt_stored_decision_is_not_adopted_onto_a_fresh_evaluation():
+    """The guard reads the resolution vocabulary, not "whatever the last row
+    said". A hand-edited or half-written `decision` is not a resolution, and
+    copying it onto this call's row would hand the agent a state no `--resolve`
+    ever recorded and no reader has a meaning for -- the same drops-rather-than-
+    defaults posture `_prior_decision` takes over every field it reads."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _considered(tmp)
+        evaluation_id = first["evaluation"]["evaluation_id"]
+        junk = dict(first["evaluation"], decision="sold", decided_on="2026-08-01")
+        with open(_evaluation_path(tmp), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(junk, ensure_ascii=False, sort_keys=True) + "\n")
+        retry = _considered(tmp)
+        assert retry["evaluation"]["evaluation_id"] == evaluation_id
+        assert retry["evaluation"]["decision"] == "open", (
+            "a decision outside the resolution vocabulary was adopted as one: "
+            f"{retry['evaluation']['decision']!r}")
+        assert retry["evaluation"]["decided_on"] is None, retry["evaluation"]
+
+
+def test_a_genuinely_different_question_still_appends_its_own_row():
+    """The rule must key on identity, not on "this ticker was resolved once".
+    A different premise is a different evaluation and is written normally, even
+    while an earlier one for the same ticker sits resolved."""
+    with tempfile.TemporaryDirectory() as tmp:
+        evaluation_id = _considered(tmp)["evaluation"]["evaluation_id"]
+        _ok(_run("consider", "--root", tmp, "--resolve", evaluation_id,
+                 "--decision", "declined"))
+        bigger = _ok(_run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+                          "--premise",
+                          '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 9}',
+                          "--decision-context", _RETRY_CONTEXT))
+        assert bigger["evaluation"]["evaluation_id"] != evaluation_id
+        assert bigger["evaluation"]["decision"] == "open", bigger["evaluation"]
+        assert bigger["append"]["status"] == "appended", bigger["append"]
+        assert len(_read_evaluations(tmp)) == 3, _read_evaluations(tmp)
+
+
 # ───────────────────────── F. schema and vocabulary drift ─────────────────────────
 
 def test_created_row_round_trips_against_the_schema():
