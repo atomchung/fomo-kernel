@@ -6541,7 +6541,9 @@ def _anchor_position_row(position, anchor_date):
         raise ReviewError(f"the ledger's snapshot anchor has a non-numeric cost basis for {ticker}")
     if not math.isfinite(price) or price <= 0:
         raise ReviewError(f"the ledger's snapshot anchor has a non-positive cost basis for {ticker}")
-    return {"ticker": symbols.canonical_ticker(ticker), "side": "buy", "qty": shares,
+    return {"ticker": symbols.canonical_ticker(ticker),
+            "ticker_as_loaded": ticker,   # #807, as in `_ledger_trade_row`
+            "side": "buy", "qty": shares,
             "price": price, "date": anchor_date, "market": (position.get("market") or "US"),
             "currency": (position.get("currency") or "USD").upper()}
 
@@ -6563,7 +6565,15 @@ def _ledger_trade_row(event):
     if (not isinstance(ticker, str) or not ticker.strip() or side not in ("buy", "sell")
             or not math.isfinite(qty) or qty <= 0 or not math.isfinite(price) or price <= 0):
         return None
-    return {"ticker": symbols.canonical_ticker(ticker), "side": side, "qty": qty,
+    return {"ticker": symbols.canonical_ticker(ticker),
+            # #807: the spelling the ledger actually stored, carried in the same
+            # field `trade_recap.load` fills from a CSV. Without it this
+            # reconstruction hands trade_recap a history with the spellings
+            # erased, so the cycle sequence counts canonically here and
+            # per-spelling in `derive_holdings` — two producers reading one
+            # event stream and minting two different durable ids for one cycle.
+            "ticker_as_loaded": ticker,
+            "side": side, "qty": qty,
             "price": price, "date": date, "market": (event.get("market") or "US"),
             "currency": (event.get("currency") or "USD").upper()}
 
@@ -6875,15 +6885,23 @@ def _consider_valuation_frame(basis, feed, *, agent_supplied):
     return frame.to_dict()
 
 
-def _ticker_collision_detail(events, splits):
-    """The ledger's own words for a two-spelling ticker collision, or ``None``.
+# The integrity issues whose whole content is "two spellings, and the record
+# cannot say which" — the ones a refusal can hand back to the user in words they
+# can act on. `bad_ticker_collision` is one declaration holding an instrument
+# twice (#803); `bad_cycle_identity_ambiguous` is one cycle's durable id having
+# two prior claims after a mixed-spelling cycle closed (#807).
+_TICKER_IDENTITY_ISSUES = frozenset({"bad_ticker_collision", "bad_cycle_identity_ambiguous"})
+
+
+def _ticker_identity_detail(events, splits):
+    """The ledger's own words for an unresolvable ticker identity, or ``None``.
 
     Read back off ``ledger.derive_holdings``' integrity record rather than
     re-detected here, so the refusal the user sees and the condition that
     stopped the book are the same fact (#803). Called only after
     ``query_current_book`` has already refused, so the second derivation costs
     nothing on any path that answers, and it never raises: a book too corrupt
-    to derive at all is one this helper simply has no collision to report for,
+    to derive at all is one this helper simply has nothing to report for,
     and the general refusal below stands.
     """
     try:
@@ -6891,7 +6909,7 @@ def _ticker_collision_detail(events, splits):
     except Exception:                                       # noqa: BLE001
         return None
     named = [row.get("detail") for row in integrity
-             if isinstance(row, dict) and row.get("issue") == "bad_ticker_collision"
+             if isinstance(row, dict) and row.get("issue") in _TICKER_IDENTITY_ISSUES
              and isinstance(row.get("detail"), str)]
     return "; ".join(named) if named else None
 
@@ -6982,19 +7000,19 @@ def _consider_rows(args, root, feed=None, last_px=None, splits=None, *, agent_su
             reference_as_of=dt.date.today().isoformat(),
             splits=splits)
         if basis is None:
-            # #803. `query_current_book` returns None for every unknowable
+            # #803/#807. `query_current_book` returns None for every unknowable
             # book, which is the right shape for corruption nobody can act on
-            # — but a ticker collision *is* actionable, and a refusal the user
-            # cannot act on is indistinguishable from a broken product. Named
-            # here, on the refusal path only, so failing closed still says
-            # which two records to reconcile.
-            collision = _ticker_collision_detail(events, splits)
+            # — but a ticker identity the record cannot settle *is* actionable,
+            # and a refusal the user cannot act on is indistinguishable from a
+            # broken product. Named here, on the refusal path only, so failing
+            # closed still says which two records to reconcile.
+            collision = _ticker_identity_detail(events, splits)
             if collision:
                 raise ReviewError(
                     f"{ledger_path} records {collision}. Those are one instrument to this "
-                    "engine, and which of the two declarations is the position is not "
-                    "derivable from the record — so no consequence is computed rather than "
-                    "one of them silently winning. Record it one way, then ask again.")
+                    "engine, and the record does not say which of the two the current "
+                    "position continues — so no consequence is computed rather than one of "
+                    "them silently winning. Record it one way, then ask again.")
             raise ReviewError(
                 f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
                 "separate historical transaction view")

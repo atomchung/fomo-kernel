@@ -906,6 +906,259 @@ def test_two_spellings_in_one_book_pick_the_stored_id_deterministically():
             f"argument order changed the durable id: {forwards} vs {backwards}")
 
 
+# ── I2. …and which *cycle* each of those identifiers belongs to (#807) ──
+#
+# Section I preserved a spelling. It did so with the first spelling seen across
+# the ticker's whole history, while the sequence counted cycles on the canonical
+# ticker — two halves that describe a real cycle only while a book has exactly
+# one. After a full exit and a differently-spelled re-entry they describe a cycle
+# that never existed, so #805 shipped preserving an id and moving it in the same
+# breath:
+#
+#     buy aaa → sell aaa → buy AAA
+#     minted before #803:   AAA#2026-03-05#1
+#     main@d7dac38:         aaa#2026-03-05#2
+#
+# `cycle_identity.CycleIdentities` binds the identity to the fill that *opened*
+# the cycle, and every producer of a cycle_id reads it. These cases pin the four
+# histories that tell the two rules apart, and then that the three producers
+# reach the same answer on one event stream — because "each looked correct on its
+# own" is how the pair above shipped.
+
+_REOPEN = [["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+           ["aaa", 100, 12.0, "SELL", "2026-02-05", "Trade"],
+           ["AAA", 100, 11.0, "BUY", "2026-03-05", "Trade"]]
+
+
+def _events_from(csv_rows):
+    """The same fills as ledger events, spelling preserved as a pre-#803 import
+    wrote them. `ledger.trades_from_csv` canonicalizes on the way in since #803,
+    so a mixed-case *event* stream is by definition a legacy one — which is
+    exactly the history whose ids must not move."""
+    return [_trade(row[4], row[0], row[3].lower(), row[1], row[2]) for row in csv_rows]
+
+
+def test_a_reopened_position_keeps_the_id_its_own_cycle_was_opened_with():
+    """The user closed this position and bought it back, and their broker
+    changed the case of its export in between. The current cycle's thesis,
+    decision cursor and revisit identity are all filed under the id the earlier
+    engine minted; re-minting it detaches every one of them at once, and a
+    transaction-origin thesis is not eligible for `build_snapshot_cycle_relinks`'
+    narrow repair, so nothing puts it back."""
+    assert (ledger_engine.derive_holdings(_events_from(_REOPEN))
+            ["holdings"]["AAA"]["cycle_id"]) == "AAA#2026-03-05#1", (
+        "the ledger re-minted the current cycle's durable id")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_csv(os.path.join(tmp, "reopen.csv"), _REOPEN)
+        payload = _ok(_run("prepare", path, "--root", tmp, "--route", "weekly_review"))
+        positions = (payload.get("review_plan") or {}).get("missing_thesis_positions") or []
+        by_ticker = {row.get("ticker"): row for row in positions if isinstance(row, dict)}
+        assert by_ticker["AAA"]["cycle_id"] == "AAA#2026-03-05#1", (
+            "the CSV lane re-minted it on the route a user actually walks: "
+            f"{by_ticker['AAA']['cycle_id']!r}")
+
+
+def test_the_reverse_spelling_order_preserves_its_own_current_cycle_id():
+    """The mirror case, and not a duplicate of the one above: keeping the
+    *earliest* spelling happens to be right for one of the two orders and wrong
+    for the other, so a rule that only preserved the first would pass half of
+    this pair."""
+    reversed_rows = [["AAA", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                     ["AAA", 100, 12.0, "SELL", "2026-02-05", "Trade"],
+                     ["aaa", 100, 11.0, "BUY", "2026-03-05", "Trade"]]
+    assert (ledger_engine.derive_holdings(_events_from(reversed_rows))
+            ["holdings"]["AAA"]["cycle_id"]) == "aaa#2026-03-05#1", (
+        "the re-entry did not keep the spelling it was opened with")
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = tr_engine.load([_write_csv(os.path.join(tmp, "r.csv"), reversed_rows)])
+        assert (tr_engine.current_cycle_add_cursors(rows)["AAA"]["cycle_id"]
+                == "aaa#2026-03-05#1")
+
+
+def test_a_same_spelling_multi_cycle_history_stays_byte_identical():
+    """The control that keeps the fix honest. Counting the sequence per spelling
+    reproduces the pre-#803 producer *because* that producer keyed everything on
+    the raw ticker — so a book that always spelled itself one way must still
+    count 1, 2, 3, and a rule that reset the sequence per cycle would give this
+    position the id of the one the user already sold, thesis and all."""
+    same = [["AAA", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+            ["AAA", 100, 12.0, "SELL", "2026-02-05", "Trade"],
+            ["AAA", 100, 11.0, "BUY", "2026-03-05", "Trade"]]
+    assert (ledger_engine.derive_holdings(_events_from(same))
+            ["holdings"]["AAA"]["cycle_id"]) == "AAA#2026-03-05#2"
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = tr_engine.load([_write_csv(os.path.join(tmp, "s.csv"), same)])
+        assert tr_engine.current_cycles(rows)["AAA"] == {"start": "2026-03-05", "seq": 2}
+        assert (tr_engine.current_cycle_add_cursors(rows)["AAA"]["cycle_id"]
+                == "AAA#2026-03-05#2")
+
+
+def test_a_mixed_case_add_or_sell_does_not_move_the_id_the_cycle_opened_with():
+    """A cycle has one opening. Everything after it — an add, a partial sell —
+    updates the canonical position and leaves the identity alone, including the
+    `decision_cursor` the add advances, which embeds the same string."""
+    events = _events_from([["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                           ["AAA", 50, 12.0, "BUY", "2026-02-05", "Trade"],
+                           ["aaa", 20, 13.0, "SELL", "2026-02-20", "Trade"]])
+    held = ledger_engine.derive_holdings(events)["holdings"]["AAA"]
+    assert held["cycle_id"] == "aaa#2026-01-05#1", (
+        f"a same-cycle fill moved the durable id: {held['cycle_id']!r}")
+    assert held["shares"] == 130.0, "the fills did not all land on one position"
+    assert held["decision_cursor"] == "aaa#2026-01-05#1#add#1", held
+
+
+def test_a_transaction_origin_thesis_survives_the_re_entry_it_is_about():
+    """The whole point, stated as what the user experiences. Their thesis for
+    this position is on file under the id the earlier engine minted. If the id
+    moves, `missing_thesis_positions` reports the position as having none and
+    the review asks them to write it again — the most effortful thing it ever
+    asks — while the answer they already gave sits in the same file."""
+    legacy_id = "AAA#2026-03-05#1"
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "theses.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "cycle_id": legacy_id, "ticker": "AAA",
+                "thesis_id": "thesis-legacy000000002", "event_id": "ev-legacy000000002",
+                "origin": "trades", "maturity": "stated",
+                "source_confidence": "user_stated", "status": "open",
+                "position_status": "open", "session_id": "sess-legacy00000001",
+                "thesis": "fictional: bought back after the first exit worked",
+            }, ensure_ascii=False) + "\n")
+        path = _write_csv(os.path.join(tmp, "reopen.csv"), _REOPEN)
+        plan = (_ok(_run("prepare", path, "--root", tmp,
+                         "--route", "weekly_review")).get("review_plan") or {})
+        missing = {row.get("ticker") for row in plan.get("missing_thesis_positions") or []}
+        assert "AAA" not in missing, (
+            "the position was reported as having no thesis while its own thesis "
+            f"is on file: {plan.get('missing_thesis_positions')}")
+        active = {row.get("cycle_id") for row in
+                  (plan.get("state_snapshot") or {}).get("thesis_states") or []}
+        assert legacy_id in active, f"the stored thesis lost its cycle: {sorted(active)}"
+
+
+def test_no_relink_is_what_saves_a_transaction_origin_thesis():
+    """The control for the case above: `build_snapshot_cycle_relinks` repairs a
+    *snapshot*-inferred cycle only, so it cannot be what kept that thesis
+    attached. Without this, a reader could conclude the id is free to move
+    because something downstream will reconnect it."""
+    prior = {"cycle_id": "AAA#2026-03-05#1", "ticker": "AAA",
+             "thesis_id": "thesis-legacy000000002", "event_id": "ev-legacy000000002",
+             "origin": "trades", "maturity": "stated", "source_confidence": "user_stated",
+             "status": "open", "position_status": "open",
+             "cycle_provenance": {"kind": "snapshot_inference",
+                                  "snapshot_as_of": "2026-02-01"}}
+    assert thesis_engine.build_snapshot_cycle_relinks(
+        [prior], {"AAA": {"cycle_id": "aaa#2026-03-05#2", "cycle_start": "2026-03-05"}},
+        "sess-000000000002", "2026-04-01") == [], (
+        "a transaction-origin thesis must not be relinkable; if it were, this "
+        "whole section would be testing a safety net instead of the rule")
+
+
+def test_an_already_queued_exit_still_dedupes_against_the_derived_one():
+    """`revisit._revisit_id` embeds `cycle_id`, so an exit queued before the
+    canonical merge stops recognising itself the moment its cycle is re-minted:
+    the same sale is enqueued a second time and the 30/60/90 follow-up asks
+    about it twice."""
+    events = _events_from([["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                           ["aaa", 100, 12.0, "SELL", "2026-02-05", "Trade"],
+                           ["AAA", 100, 11.0, "BUY", "2026-03-05", "Trade"],
+                           ["AAA", 100, 14.0, "SELL", "2026-04-05", "Trade"]])
+    second = [row for row in revisit_engine.detect_exits(events)
+              if row["exit_date"] == "2026-04-05"]
+    assert len(second) == 1, second
+    assert second[0]["cycle_id"] == "AAA#2026-03-05#1", (
+        f"the queued exit's durable id was re-minted: {second[0]['cycle_id']!r}")
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger_path = _write_ledger(tmp, events)
+        queue_path = os.path.join(tmp, "revisit.jsonl")
+        already = dict(second[0],
+                       type="revisit", revisit_id=revisit_engine._revisit_id(second[0]))
+        with open(queue_path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(already, ensure_ascii=False) + "\n")
+        new, dup = revisit_engine.enqueue_from_ledger(
+            ledger_path, queue_path, today=dt.date(2026, 4, 10))
+        assert not [row for row in new if row["exit_date"] == "2026-04-05"], (
+            f"the sale already being tracked was queued a second time: {new}")
+        assert dup >= 1
+
+
+def test_the_three_producers_agree_on_one_event_stream():
+    """#807's parity criterion. `trade_recap`, `ledger` and `revisit` each mint
+    `cycle_id` from their own walk over the same fills, so "each is correct" has
+    never implied "they agree" — and a thesis bound through one lane is read
+    through another."""
+    fills = [["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+             ["aaa", 100, 12.0, "SELL", "2026-02-05", "Trade"],
+             ["AAA", 100, 11.0, "BUY", "2026-03-05", "Trade"]]
+    events = _events_from(fills)
+    ledger_id = ledger_engine.derive_holdings(events)["holdings"]["AAA"]["cycle_id"]
+    recap_id = tr_engine.current_cycle_add_cursors(
+        review_engine._rows_from_ledger(events))["AAA"]["cycle_id"]
+    closed_id = [row for row in revisit_engine.detect_exits(events)][0]["cycle_id"]
+    assert ledger_id == recap_id == "AAA#2026-03-05#1", (
+        f"the two book producers disagree: ledger={ledger_id!r} recap={recap_id!r}")
+    assert closed_id == "aaa#2026-01-05#1", (
+        f"the exit lane named a cycle neither book producer minted: {closed_id!r}")
+
+
+def test_a_declared_cycle_sequence_reaches_the_exit_queue_too():
+    """The same divergence one field over, and it needs no mixed case at all:
+    `ledger` read a declaration's own `cycle_seq` while `revisit` hard-coded 1,
+    so a position sold after being rebought queued an exit under an id no reader
+    of the book would ever produce — its thesis and its follow-up permanently
+    apart."""
+    anchor = _snapshot("2026-01-01", [dict(_position("AAA", 100, 100.0),
+                                           since="2026-01-01",
+                                           since_basis="snapshot_anchor", cycle_seq=2)])
+    events = [anchor, _trade("2026-02-05", "AAA", "sell", 100, 120.0)]
+    assert (ledger_engine.derive_holdings([anchor])["holdings"]["AAA"]["cycle_id"]
+            == "AAA#2026-01-01#2")
+    exits = revisit_engine.detect_exits(events)
+    assert len(exits) == 1 and exits[0]["cycle_id"] == "AAA#2026-01-01#2", (
+        f"the exit queue named a different cycle than the book: {exits}")
+
+
+def test_overlapping_legacy_identities_fail_closed_and_name_both_spellings():
+    """The one shape no rule can recover. Two spellings inside a cycle that then
+    closed means the pre-#803 reader was running two positions here, so the
+    cycle opening after it has two already-minted ids with a claim on it and no
+    evidence to choose between them. Choosing anyway would file this week's
+    position under an id that may belong to a cycle the user already closed —
+    with its thesis, its conditions and its verdict attached — so the book fails
+    closed and the refusal names the spellings, the same posture
+    `bad_ticker_collision` takes one ambiguity up."""
+    events = _events_from([["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                           ["AAA", 50, 11.0, "BUY", "2026-01-20", "Trade"],
+                           ["aaa", 150, 12.0, "SELL", "2026-02-05", "Trade"],
+                           ["aaa", 100, 11.0, "BUY", "2026-03-05", "Trade"]])
+    derived = ledger_engine.derive_holdings(events)
+    named = [row for row in derived["integrity"]
+             if row["issue"] == "bad_cycle_identity_ambiguous"]
+    assert len(named) == 1 and named[0]["ticker"] == "AAA", derived["integrity"]
+    assert "'AAA'" in named[0]["detail"] and "'aaa'" in named[0]["detail"], named
+    assert portfolio_basis_engine.query_current_book(events) is None, (
+        "an unrecoverable durable identity must make the book unknowable, "
+        "not a silently chosen id")
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(tmp, events)
+        payload = _fails(_consider(tmp, {"ticker": "AAA", "side": "buy",
+                                         "price": 13.0, "qty": 10}), "'aaa'")
+        assert "'AAA'" in payload["error"]
+
+
+def test_one_spelling_throughout_never_reaches_that_refusal():
+    """The gate's other end. A book that spells itself one way must never see
+    the refusal above however many times it closes and reopens — otherwise the
+    rule is not "an unrecoverable identity" but "this ticker traded a lot"."""
+    events = _events_from([["AAA", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                           ["AAA", 50, 11.0, "BUY", "2026-01-20", "Trade"],
+                           ["AAA", 150, 12.0, "SELL", "2026-02-05", "Trade"],
+                           ["AAA", 100, 11.0, "BUY", "2026-03-05", "Trade"]])
+    derived = ledger_engine.derive_holdings(events)
+    assert derived["integrity"] == [], derived["integrity"]
+    assert derived["holdings"]["AAA"]["cycle_id"] == "AAA#2026-03-05#2"
+
+
 # ── J. every lane that uses a ticker as a key ──
 #
 # The failure this section answers is not "a comparison was missed" but the

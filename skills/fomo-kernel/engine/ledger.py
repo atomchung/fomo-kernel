@@ -50,6 +50,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
+import cycle_identity
 import splits as sp
 import symbols
 
@@ -545,18 +546,20 @@ def derive_holdings(events, splits=None, as_of=None):
     anchor = latest_anchor(events, declared_only=True)
     integrity = []
     pos = {}
-    seq_base = defaultdict(int)      # ticker → 最後用過的 cycle 序號(清倉後保留,重建 +1)
-    # #803: canonical identity → the spelling this ledger actually stored for it.
-    # The book is keyed canonically from here down, so a legacy `nvda` row lands
-    # on the `NVDA` it names instead of beside it. `cycle_id` is then built from
-    # the *stored* spelling below, because a cycle_id is a durable identifier
-    # theses.jsonl already holds foreign keys to: reading history correctly must
-    # not silently re-mint the ids that history is bound by.
-    stored_as = {}
+    # #803/#807: the book is keyed canonically from here down, so a legacy `nvda`
+    # row lands on the `NVDA` it names instead of beside it — while `cycle_id`
+    # keeps being minted from what this cycle was *opened* with, because a
+    # cycle_id is a durable identifier theses.jsonl already holds foreign keys
+    # to. `cycle_identity` owns that second rule for all three producers; the
+    # sequence it hands back is the per-spelling one the pre-#803 `seq_base`
+    # counted, which is why a re-entry spelled differently keeps its own id
+    # instead of inheriting the canonical ticker's total cycle count.
+    identities = cycle_identity.CycleIdentities()
     anchor_date = None
 
     if anchor is not None:
         anchor_date = dt.date.fromisoformat(str(anchor["as_of"]))
+        declared_as = {}                 # canonical → this declaration's own spelling
         for p in anchor.get("positions", []):
             # Canonical before the guard below, never after it (#803): a
             # non-string ticker is exactly the malformed row that guard exists
@@ -581,9 +584,9 @@ def derive_holdings(events, splits=None, as_of=None):
             # older case and keeps its existing last-one-wins overwrite, which
             # `review._rows_from_ledger` deliberately mirrors.
             declared = p.get("ticker")
-            if stored_as.setdefault(t, declared) != declared:
+            if declared_as.setdefault(t, declared) != declared:
                 integrity.append({"issue": "bad_ticker_collision", "ticker": t,
-                                  "detail": f"declared as {stored_as[t]!r} and {declared!r}"})
+                                  "detail": f"declared as {declared_as[t]!r} and {declared!r}"})
                 continue
             ac = p.get("avg_cost")
             try:
@@ -599,9 +602,9 @@ def derive_holdings(events, splits=None, as_of=None):
                       "add_count": _anchored_add_count(p, t, integrity),
                       # A declaration states shares in its own as_of basis (#558).
                       "basis_date": anchor_date}
-            # cycle 序號單一事實源:seq_base(清倉後仍保留,重建 +1)。錨點列帶得動它時
-            # 就沿用,否則 1 —— 一份沒有序號的宣告本來就說不出它是第幾段(#539)。
-            seq_base[t] = _anchored_cycle_seq(p, t, integrity)
+            # 這份宣告就是這個 cycle 的開場,所以身分在這裡綁定:拼法用它自己宣告的那個,
+            # 序號用它帶得動的那個,否則 1 —— 一份沒有序號的宣告本來就說不出它是第幾段(#539)。
+            identities.opened(t, declared, seq=_anchored_cycle_seq(p, t, integrity))
 
     trades = []
     for ev in events:
@@ -625,11 +628,14 @@ def derive_holdings(events, splits=None, as_of=None):
             integrity.append({"issue": "bad_trade_event",
                               "detail": json.dumps(ev, ensure_ascii=False)[:120]})
             continue
-        stored_as.setdefault(t, executed_as)
-        trades.append((d, t, act, qty, px, ev))
+        # The spelling travels with the fill rather than being collapsed here:
+        # which cycle a spelling belongs to is only decidable in date order,
+        # below, and folding it now is exactly the whole-history `setdefault`
+        # #807 replaced.
+        trades.append((d, t, act, qty, px, ev, executed_as))
     trades.sort(key=lambda x: x[0])       # stable:同日保持匯入序
 
-    for d, t, act, qty, px, ev in trades:
+    for d, t, act, qty, px, ev, executed_as in trades:
         cur = pos.get(t)
         if cur is not None:
             # #558: put the running position in this trade's own basis before
@@ -638,12 +644,13 @@ def derive_holdings(events, splits=None, as_of=None):
             _carry_position(cur, split_events.get(t), d)
         if act == "buy":
             if cur is None or cur["shares"] <= EPS:
-                seq_base[t] += 1
+                identities.opened(t, executed_as)
                 pos[t] = {"shares": qty, "cost_total": qty * px,
                           "currency": ev.get("currency", "USD"), "market": ev.get("market", "US"),
                           "origin": "trades", "since": d.isoformat(),
                           "add_count": 0, "basis_date": d}
             else:
+                identities.filled(t, executed_as)
                 cur["shares"] += qty
                 cur["add_count"] += 1
                 if cur["cost_total"] is not None:    # 錨點均價未宣告 → 總成本不可知,None 傳播
@@ -653,6 +660,7 @@ def derive_holdings(events, splits=None, as_of=None):
                 integrity.append({"issue": "oversell", "ticker": t,
                                   "date": d.isoformat(), "qty": round(qty, 4)})
                 continue
+            identities.filled(t, executed_as)
             if qty > cur["shares"] + EPS:
                 integrity.append({"issue": "oversell", "ticker": t, "date": d.isoformat(),
                                   "qty": round(qty - cur["shares"], 4)})
@@ -661,7 +669,8 @@ def derive_holdings(events, splits=None, as_of=None):
                 cur["cost_total"] -= take * (cur["cost_total"] / cur["shares"])
             cur["shares"] -= take
             if cur["shares"] <= EPS:
-                pos.pop(t)                # 清倉;seq_base 留著給重建 +1
+                pos.pop(t)                # 清倉;序號留在 identities 裡給重建 +1
+                identities.closed(t)
 
     # #558 tail: a split after the last trade — or after the anchor, for a book
     # with no trades in that ticker at all — still moves the share count. This
@@ -679,6 +688,19 @@ def derive_holdings(events, splits=None, as_of=None):
             p["shares"] *= factor
             _moved_basis(p, events_t, basis, as_of)
 
+    # #807. A cycle that carried two spellings and then closed means the pre-#803
+    # replay was running two positions here, so the cycle that opened after it
+    # has two already-minted identities with a claim on it and nothing in the
+    # rows to choose between them. Picking one by insertion order would file this
+    # week's position under an id that may belong to a cycle the user already
+    # closed — with its thesis, conditions and verdict attached. `bad_` fails the
+    # whole book closed through `portfolio_basis._bad_integrity`, naming the
+    # spellings, which is the same posture `bad_ticker_collision` takes one
+    # ambiguity up. Repairing it would need a migration and none is authorized.
+    for canonical, spellings in identities.conflicts().items():
+        integrity.append({"issue": "bad_cycle_identity_ambiguous", "ticker": canonical,
+                          "detail": "recorded as " + " and ".join(repr(s) for s in spellings)})
+
     holdings = {}
     for t in sorted(pos):
         p = pos[t]
@@ -689,14 +711,16 @@ def derive_holdings(events, splits=None, as_of=None):
         # 會解成 None,那檔就退出持有期診斷,而不是被編一個日期進去(#531 owner ruling)。
         # `since` 仍留錨點日:它本來就是「這檔何時進到帳本」的記帳事實,而 cycle_id 才是
         # 持有期的量測基準,所以下游每個讀 since 的人拿到的仍是合法日期。
-        # #803: built from the spelling this ledger stored, not from the
-        # canonical key above. A cycle_id is durable — theses.jsonl holds
-        # foreign keys to it — so reading a legacy book correctly must not
-        # re-mint the identifiers that book's own theses are bound by. Every
-        # already-canonical ledger (all of them, save a hand-written one) has
-        # the two spellings equal and this line is byte-identical to before.
-        name = stored_as.get(t, t)
-        cycle_id = f"{name}#unknown" if p.get("cycle_unknown") else f"{name}#{p['since']}#{seq_base[t]}"
+        # #803/#807: built from what *this cycle* was opened with, not from the
+        # canonical key above and not from the first spelling in the ticker's
+        # whole history. A cycle_id is durable — theses.jsonl holds foreign keys
+        # to it — so reading a legacy book correctly must not re-mint the
+        # identifiers that book's own theses are bound by. Every already-canonical
+        # ledger (all of them, save a hand-written one) has the two spellings
+        # equal and this line is byte-identical to before.
+        name = identities.spelling(t) or t
+        seq = identities.sequence(t) or 1
+        cycle_id = f"{name}#unknown" if p.get("cycle_unknown") else f"{name}#{p['since']}#{seq}"
         add_count = p.get("add_count", 0)
         holdings[t] = {"shares": round(p["shares"], 4),
                        "avg_cost": round(ac, 4) if ac is not None else None,
