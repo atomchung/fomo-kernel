@@ -1520,6 +1520,12 @@ def _gate_current_view(card, state, detail):
     card["honesty_ledger"] = honesty
 
 
+#: The book-against-book re-keying, owned by `symbols` since `ledger.reconcile`
+#: needs the identical rule and cannot import this module (#805). Kept as a name
+#: here because every call site below reads better for it.
+_by_canonical_identity = symbols.by_canonical_identity
+
+
 def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
     """Make ledger holdings/cycles canonical and gate divergent card surfaces.
 
@@ -1551,8 +1557,13 @@ def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
     restatement of those trades, which is why they are skipped there rather
     than loosened for everyone.
     """
-    raw_positions = dict(((state.get("holdings") or {}).get("positions") or {}))
-    canonical = dict(derived.get("holdings") or {})
+    # Both sides read through one identity rule (#803). `derived` is the
+    # ledger's canonical book; `state` carries whatever spelling the trade source
+    # used, so an exact set comparison reports a phantom `ticker_set` difference
+    # for a book that matches perfectly — and gates it on a disagreement about
+    # case.
+    raw_positions = _by_canonical_identity((state.get("holdings") or {}).get("positions"))
+    canonical = _by_canonical_identity(derived.get("holdings"))
     raw_tickers, canonical_tickers = set(raw_positions), set(canonical)
     mismatches = []
     for ticker in sorted(raw_tickers | canonical_tickers):
@@ -7446,7 +7457,12 @@ def _evaluation_recall(root):
             created = dt.date.fromisoformat(str(row.get("created")))
         except (TypeError, ValueError):
             continue
-        recall.setdefault(str(ticker), []).append({
+        # Keyed canonically (#803): the lookup side is a holding's own
+        # spelling and this side is whatever the stored premise froze, so
+        # indexing on the raw string loses a legacy row's statement against
+        # a canonical position and vice versa. `_recalled_entry_statement`
+        # reads the same rule.
+        recall.setdefault(symbols.canonical_ticker(ticker), []).append({
             "evaluation_id": row.get("evaluation_id"),
             "created": created,
             "reason": reason,
@@ -7508,7 +7524,7 @@ def _recalled_entry_statement(recall, ticker, cycle_id):
     start, seq = _cycle_entry(cycle_id)
     if start is None or seq != 1:
         return None
-    eligible = [item for item in (recall or {}).get(str(ticker), [])
+    eligible = [item for item in (recall or {}).get(symbols.canonical_ticker(ticker), [])
                 if item["created"] <= start]
     if not eligible:
         return None
@@ -7573,8 +7589,14 @@ def _evaluation_reconciliation(root, rows, date_end):
             created_date = None
         match = None
         if created_date is not None and end is not None and ticker and side:
+            # #803, storage-reader half: `ticker` came off a stored evaluation
+            # row, which froze whatever case the user typed before the rule
+            # existed, while `rows` are the canonical book. Comparing them raw
+            # reports a trade that plainly happened as `unmatched`.
             candidates = sorted(
-                (r for r in rows if r.get("ticker") == ticker and r.get("side") == side
+                (r for r in rows
+                 if symbols.canonical_ticker(r.get("ticker")) == symbols.canonical_ticker(ticker)
+                 and r.get("side") == side
                  and isinstance(r.get("date"), dt.date) and created_date <= r["date"] <= end),
                 key=lambda r: r["date"])
             if candidates:

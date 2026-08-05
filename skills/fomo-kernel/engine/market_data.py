@@ -104,6 +104,7 @@ import os
 import fetch_cache
 import price_feed
 import splits as split_policy
+import symbols  # #803 一條 ticker identity 規則,與 price_feed 共用
 
 __all__ = [
     "MarketDataError",
@@ -182,7 +183,13 @@ def _symbols(values, where):
     same universe in a different order must produce one entry, not two."""
     out = set()
     for value in values or ():
-        name = str(value or "").strip()
+        # #803: the request is one side of a join — `coverage()` and
+        # `to_price_feed_envelope` test it against `bundle.priced`, which the
+        # parsed feed keys canonically. Stripping without folding case is how a
+        # quote that was actually retrieved comes back as `missing`, and it is
+        # also a second cache entry for one universe. `_currencies` below has
+        # folded case for exactly as long as it has existed.
+        name = symbols.canonical_ticker(value) or str(value or "").strip()
         if not name:
             raise MarketDataError(f"{where} carries an empty symbol")
         out.add(name)

@@ -386,10 +386,15 @@ def to_frame(feed, tickers=None):
         import pandas as pd
     except ImportError:
         return None, "pandas is not installed; the supplied price feed cannot be applied"
-    wanted = set(tickers) if tickers is not None else set(feed["prices"])
+    # Canonical on both sides (#803). The parsed feed is keyed canonically, but
+    # a caller builds its request from its own rows — `trade_recap` requests the
+    # broker's spelling verbatim — so an exact membership test drops a quote that
+    # was actually retrieved and reports the instrument unpriced.
+    wanted = ({symbols.canonical_ticker(t) for t in tickers} if tickers is not None
+              else set(feed["prices"]))
     columns = {}
     for ticker, row in feed["prices"].items():
-        if ticker not in wanted:
+        if symbols.canonical_ticker(ticker) not in wanted:
             continue
         series = {dt.date.fromisoformat(day): value for day, value in row["history"]}
         if series:
@@ -414,7 +419,12 @@ def fx_rates(feed):
 
 def splits_map(feed, tickers=None):
     """``{ticker: [(date, ratio), ...]}`` in ``fetch_splits`` shape."""
-    wanted = None if tickers is None else set(tickers)
+    # Canonical on both sides (#803), for the same reason `to_frame` above is —
+    # and it is the same filter, so leaving one of the two raw is how a split
+    # observation that *was* retrieved gets dropped and a share count never
+    # rebases across it. A wrong share count surfaces months later, if at all.
+    wanted = (None if tickers is None
+              else {symbols.canonical_ticker(t) for t in tickers})
     out = {}
     for ticker, row in (feed or {}).get("prices", {}).items():
         if wanted is not None and ticker not in wanted:

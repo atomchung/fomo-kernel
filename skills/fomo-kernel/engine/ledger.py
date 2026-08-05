@@ -807,6 +807,14 @@ def reconcile(events, declared_positions, splits=None):
             dec[t] = float(p.get("shares", 0))
         except (TypeError, ValueError):
             continue
+    # #803/#805: `derived` is canonical, so comparing it against the declaration's
+    # stored spelling reported *both* books as missing the other's position — for
+    # a declaration and a ledger that agree, and even when both are written the
+    # same non-canonical way. Same rule and same ambiguity carve-out as
+    # `review._overlay_ledger_holdings`: two spellings inside one declaration are
+    # a real difference this function exists to name, so they keep their keys and
+    # fall through to the mismatch rather than one silently winning.
+    dec = symbols.by_canonical_identity(dec)
     match, mismatch = [], []
     for t in sorted(set(dec) | set(derived)):
         ds = derived.get(t, {}).get("shares")
@@ -947,6 +955,15 @@ def snapshot_reconciliation(events, declared, splits=None):
     declared_map = _declared_positions_map(declared)
 
     derived = holdings_as_of(events, declared_as_of, splits=splits)
+    # #803/#805: `reconcile`'s sibling, a hundred lines up, and the same
+    # one-sided comparison — `derived` is canonical while the declaration keeps
+    # its own spelling, so a book and a declaration that agree came back
+    # `adjusted`, with the whole position listed as `only_derived` *and*
+    # `only_declared`. It needs no unusual input: two views written the same
+    # non-canonical way did it. Same ambiguity carve-out too — one declaration
+    # naming an instrument twice is a real difference this diff exists to
+    # report, so those keep their stored spelling and stay listed.
+    declared_map = symbols.by_canonical_identity(declared_map)
 
     positions = []
     for ticker in sorted(set(derived) | set(declared_map)):
@@ -1055,8 +1072,18 @@ def trades_from_csv(path, today=None):
 
 
 def _trade_key(ev):
-    """去重鍵,對齊 trade_recap.load() 的 seen tuple 精度(qty round2 / px round4)。"""
-    return (ev.get("ticker"), str(ev.get("action", "")).lower(),
+    """去重鍵,對齊 trade_recap.load() 的 seen tuple 精度(qty round2 / px round4)。
+
+    Ticker 走 canonical identity(#803)。`trades_from_csv` 把匯入的 symbol 正規化,
+    舊帳本裡卻可能存著小寫拼法——只正規化其中一側,同一筆成交的新舊兩份就不再是
+    同一個 key,週度重匯入會把它當成新交易再寫一次,持倉靜默翻倍。兩側讀同一條
+    規則,舊列的 bytes 不動。"""
+    # `or` the stored value: a ticker this rule cannot canonicalize (a
+    # hand-edited non-string) must keep its own identity here, or two
+    # genuinely different malformed rows both key on None and dedupe
+    # silently drops one — the same class of defect this line fixes.
+    return (symbols.canonical_ticker(ev.get("ticker")) or ev.get("ticker"),
+            str(ev.get("action", "")).lower(),
             round(float(ev.get("qty", 0)), 2), round(float(ev.get("price", 0)), 4),
             str(ev.get("date")))
 
