@@ -3214,11 +3214,11 @@ def main():
         "requested_display_currency": requested_display or None,
         # ⚠️ 分桶刻意吃「原幣」物件(decision_rts/held,非 _u 版):桶的意義就是原幣會計事實,換成 _u = 全桶變 USD 廢掉
         "pnl_by_currency": pnl_by_currency(decision_rts, held, last_px, cur_map) if mixed_ccy else None,
-        "alpha_beta_note": (
-            f"α/β 已 per-market 分算:頂層數字僅含 {ab.get('scope')} 部位(對 {ab.get('bench')}),"
-            f"其他市場見 by_market——不合成總 α"
-            if isinstance(ab, dict) and ab.get("scope")
-            else ("多幣別組合(單一市場)的 α/β 按該市場大盤計" if mixed_ccy else None)),
+        # #689:曾有一個 alpha_beta_note 鍵在此——全庫零讀者(card_renderer.py 只讀
+        # currencies/mixed/aggregate_currency/fx/pnl_by_currency 這五個 currency_meta
+        # 鍵),值是未經 copy/ 在地化的繁中字面量,和已正確接上卡片的 alpha_beta_breakdown
+        # (見上面 `"alpha_beta_breakdown": ab`)是兩條不同路徑。移除,而非翻譯:#416/#429
+        # 同一條「沒有讀者的欄位不該存在」規則,這裡是它漏掉的一個實例。
     }
 
     # 帳戶現金地基（#171）：現金流 + 現金餘額錨點 → cash_position（多幣別 per-currency 各算再 fx 聚合）。
