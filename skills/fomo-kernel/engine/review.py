@@ -7657,12 +7657,41 @@ def _append_evaluation_row(root, row):
     ``evaluation_id`` is already byte-identical to ``row``, appending is
     skipped — a retried ``consider`` or ``--resolve`` call is a no-op, not a
     duplicate line.
+
+    Returns ``(recorded_row, report)``: what the record now says about this
+    evaluation, and what this call did to the file. The two are separate
+    because they can differ, in exactly one case (#810).
+
+    **An ``open`` row never lands on an evaluation the user already resolved.**
+    ``_evaluation_id`` is a content address over the premise, the basis, the
+    day, the frozen consequence, the rule collisions and the context, so an
+    incoming row carrying an id already on disk *is* that evaluation asked
+    again — not a new consultation, which would have minted a new id. The
+    byte-identical guard above misses this by exactly the two fields a
+    resolution writes: the stored row says ``declined``/``2026-08-05`` and the
+    freshly built one says ``open``/``None``, so the append proceeded and
+    ``_fold_evaluations``' latest-wins semantics silently reverted the user's
+    own answer — the one piece of state in this product only they can author.
+    Everything downstream followed: ``_prior_decision`` requires a resolved
+    decision, so the evaluation became permanently ineligible as memory, and
+    ``_evaluation_reconciliation`` put a settled consultation back on the review
+    plan. ``cmd_consider``'s docstring already stated the rule this restores —
+    ``decision`` moves through ``consider --resolve`` alone.
+
+    The resolution is carried onto the row rather than the append merely
+    skipped, so the caller reports the record instead of contradicting it, and
+    so a row that differs in some field outside the seed (``agent_case``) is
+    still written with the decision the record holds.
     """
     path = _evaluation_path(root)
     existing = thesis.read_jsonl(path)
     current = _fold_evaluations(existing).get(row.get("evaluation_id"))
+    if (isinstance(current, dict) and row.get("decision") == "open"
+            and current.get("decision") in PRIOR_DECISION_RESOLVED):
+        row = dict(row, decision=current["decision"],
+                   decided_on=current.get("decided_on"))
     if current is not None and session.canonical(current) == session.canonical(row):
-        return {"path": path, "appended": 0, "status": "no-op"}
+        return row, {"path": path, "appended": 0, "status": "no-op"}
     os.makedirs(root, exist_ok=True)
     prefix = ""
     if os.path.exists(path) and os.path.getsize(path) > 0:
@@ -7672,7 +7701,7 @@ def _append_evaluation_row(root, row):
                 prefix = "\n"
     with open(path, "a", encoding="utf-8") as f:
         f.write(prefix + json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-    return {"path": path, "appended": 1, "status": "appended"}
+    return row, {"path": path, "appended": 1, "status": "appended"}
 
 
 def _cmd_consider_resolve(root, evaluation_id, decision, language):
@@ -7688,7 +7717,7 @@ def _cmd_consider_resolve(root, evaluation_id, decision, language):
     updated = dict(current)
     updated["decision"] = decision
     updated["decided_on"] = dt.date.today().isoformat()
-    report = _append_evaluation_row(root, updated)
+    _recorded, report = _append_evaluation_row(root, updated)
     payload = {"status": "resolved", "root": root, "language": language,
                "evaluation_id": evaluation_id, "decision": decision,
                "evaluation": updated, "append": report}
@@ -8107,7 +8136,10 @@ def cmd_consider(args):
     # one, so an exact retry excludes the very row it converged onto.
     prior_decision = _prior_decision(root, premise_stored["ticker"],
                                      premise_stored["side"], row["evaluation_id"])
-    report = _append_evaluation_row(root, row)
+    # #810: `row` is rebound to what the record says, so a retry of an
+    # evaluation the user already settled answers with that settlement rather
+    # than presenting it back to them as still open.
+    row, report = _append_evaluation_row(root, row)
     payload = {"status": "considered", "root": root, "language": language,
                "evaluation": row, "challenge": challenge, "append": report}
     if prior_decision is not None:
