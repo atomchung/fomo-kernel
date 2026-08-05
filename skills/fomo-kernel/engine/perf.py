@@ -450,6 +450,24 @@ def account_perf(rows, px, cash_flows, cash_data, cur_map,
     # 持倉柱 hold_twr 已在 out 照給。判定用相對量綱(殘差換 USD / 帳戶總值峰值),對齊 #172 相對哲學。
     # 中性文案:殘差成因可能漏記入金/提款/股息,不斷言是哪種(#180 契約)。
     if cash_residuals:
+        # #690: cash_residuals is read straight off the ledger's own declared
+        # snapshot `cash` dicts (trade_recap._cash_snaps), a source independent
+        # of cash_flows/cur_map — a currency can be declared there (e.g. a
+        # foreign-currency balance reported once through a positions snapshot)
+        # with no matching cash-flow row and no held ticker in it, so it never
+        # enters `value_ccys` and `fx_at` below has no rate column for it at
+        # all (`cols` is keyed exactly by `value_ccys`, not by whatever
+        # currencies happen to show up in a residual). That is the same "a
+        # currency this aggregation needs a rate for has none" situation
+        # `fx_missing` above already gates; matching its posture — fail closed
+        # with a named reason — rather than letting `fx_at` raise a bare
+        # KeyError, or silently treating an unconvertible residual as small
+        # enough to ignore.
+        unpriced = sorted({r["currency"] for r in cash_residuals
+                           if r["currency"] != "USD" and r["currency"] not in value_ccys})
+        if unpriced:
+            out["gate"] = _reason("cash_residual_fx_missing", currencies=unpriced)
+            return out
         acct_scale = max((abs(v) for v in V), default=0.0) or 1.0
         blocking = [r for r in cash_residuals
                     if abs(r["residual"]) * fx_at(r["currency"], n - 1) / acct_scale > RESIDUAL_TAINT_TH]

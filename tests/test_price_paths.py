@@ -943,6 +943,56 @@ def test_acct_small_residual_not_gated():
     assert a["acct_twr"] is not None, ("小缺口不該撤數字", a)
 
 
+def test_acct_residual_currency_outside_value_set_gates_instead_of_crashing():
+    """#690: cash_residuals is read straight off the ledger's own declared
+    snapshot `cash` dicts (trade_recap._cash_snaps via cash_reconcile_residuals),
+    a source independent of cash_flows/cur_map. A currency can be declared
+    there — e.g. a foreign-currency balance reported once through a positions
+    snapshot's `cash` envelope — with no matching cash-flow row and no held
+    ticker in it anywhere in the book. Such a currency never enters
+    value_ccys, so `fx_at` (keyed exactly by value_ccys) has no rate column
+    for it at all.
+
+    Before the fix this was an uncaught KeyError inside the blocking-residual
+    filter — reproduced directly here, and independently through a real
+    `review.py prepare/refresh/finalize` cycle (issue #690's own investigation
+    thread). The fix must fail closed with a named gate, the same posture
+    `missing_fx` already uses for "a currency this aggregation needs a rate
+    for has none" — never crash, and never silently treat an unconvertible
+    residual as small enough to ignore."""
+    px = _px_frame({"X": _lin(100, 150)})
+    resid = [{"currency": "JPY", "start": "2024-01-02", "end": "2024-06-01",
+              "prev_balance": 0.0, "next_balance": 5000.0,
+              "flows_sum": 0.0, "residual": 5000.0}]      # JPY: no cash-flow row, no held ticker
+    a = pf.account_perf([_row(0)], px, [_cf(0, -1000, "trade")],
+                        _cashd("anchored", {"USD": _anch(0)}), {"X": "USD"},
+                        cash_residuals=resid)
+    assert a["acct_twr"] is None and a["irr_annual"] is None, a
+    assert a["hold_twr"] is not None and abs(a["hold_twr"] - 0.5) < 1e-9, a["hold_twr"]
+    assert a["gate"]["status"] == "cash_residual_fx_missing", a["gate"]
+    assert a["gate"]["data"]["currencies"] == ["JPY"], a["gate"]
+
+
+def test_acct_residual_currency_inside_value_set_still_sizes_normally():
+    """The #690 guard must not over-fire: a residual currency that IS in
+    value_ccys (here, a currency carried by a cash-flow row, with its rate
+    supplied via fx_spot — same fixture shape as
+    test_acct_partial_broken_rollback_gated) still reaches the ordinary
+    cash_residual size check unchanged, rather than being swept into the new
+    fx-missing gate just for being non-USD."""
+    px = _px_frame({"X": _lin(100, 150)})
+    flows = [_cf(0, -1000, "trade"), _cf(50, -10000, "withdrawal", ccy="TWD")]
+    cd = {"source": "anchored", "reliable": True,
+          "by_currency": {"USD": _anch(0), "TWD": _anch(-10000)}}
+    resid = [{"currency": "TWD", "start": "2024-01-02", "end": "2024-06-01",
+              "prev_balance": 0.0, "next_balance": -10_000_000.0,
+              "flows_sum": 0.0, "residual": -10_000_000.0}]   # huge in TWD -> should still block
+    a = pf.account_perf([_row(0)], px, flows, cd, {"X": "USD"},
+                        fx_spot={"USD": 1.0, "TWD": 0.03}, cash_residuals=resid)
+    assert a["gate"]["status"] == "cash_residual", a["gate"]
+    assert a["gate"]["data"]["currency"] == "TWD", a["gate"]
+
+
 # ─────────────── H2. cash_reconcile_residuals(#180 多錨點對帳殘差純函式)───────────────
 def _snap(as_of, **cash):
     return {"as_of": as_of, "cash": cash}
