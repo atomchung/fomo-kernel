@@ -436,8 +436,12 @@ def _canonical_rows(rows):
         if canonical is None:
             continue
         spellings.setdefault(canonical, set()).add(row["ticker"])
+        # Compared canonically too (#803): `US` and `us` are one market, and
+        # reading them as two would refuse an ordinary book for a collision
+        # that exists only in the spelling of its metadata.
         facts.setdefault(canonical, set()).add(
-            (str(row.get("currency") or "USD"), str(row.get("market") or "US")))
+            (str(row.get("currency") or "USD").strip().upper(),
+             str(row.get("market") or "US").strip().upper()))
     for canonical, written in sorted(spellings.items()):
         # Both conditions, not either: one spelling recorded two ways is
         # trade_recap.currency_map's long-standing case and is left to it, and

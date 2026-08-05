@@ -386,10 +386,15 @@ def to_frame(feed, tickers=None):
         import pandas as pd
     except ImportError:
         return None, "pandas is not installed; the supplied price feed cannot be applied"
-    wanted = set(tickers) if tickers is not None else set(feed["prices"])
+    # Canonical on both sides (#803). The parsed feed is keyed canonically, but
+    # a caller builds its request from its own rows — `trade_recap` requests the
+    # broker's spelling verbatim — so an exact membership test drops a quote that
+    # was actually retrieved and reports the instrument unpriced.
+    wanted = ({symbols.canonical_ticker(t) for t in tickers} if tickers is not None
+              else set(feed["prices"]))
     columns = {}
     for ticker, row in feed["prices"].items():
-        if ticker not in wanted:
+        if symbols.canonical_ticker(ticker) not in wanted:
             continue
         series = {dt.date.fromisoformat(day): value for day, value in row["history"]}
         if series:

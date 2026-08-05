@@ -335,7 +335,11 @@ def rebase_rows(rows, splits):
         return 0
     changed = 0
     for row in rows:
-        events = events_by_ticker.get(row["ticker"])
+        # Canonical on both sides (#803): `normalize` keys the map
+        # canonically, so looking it up with a raw row spelling silently
+        # finds nothing and leaves the row on a pre-split basis — a wrong
+        # share count, not a missing feature.
+        events = events_by_ticker.get(symbols.canonical_ticker(row["ticker"]))
         if not events:
             continue
         factor = factor_after(events, row["date"])

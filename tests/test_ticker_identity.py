@@ -26,6 +26,7 @@ Where the rest of the contract is proved:
   Section F below pins the one comparison those cannot make: that two spellings
   of one premise produce the *same* frozen identity.
 """
+import datetime as dt
 import json
 import os
 import pathlib
@@ -44,6 +45,9 @@ offline_posture.apply()
 import consequence as consequence_engine  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
 import portfolio_basis as portfolio_basis_engine  # noqa: E402
+import price_feed as price_feed_engine  # noqa: E402
+import review as review_engine  # noqa: E402
+import splits as split_engine  # noqa: E402
 import symbols  # noqa: E402
 
 
@@ -504,6 +508,134 @@ def test_an_unusable_symbol_is_still_refused_by_the_envelope_that_owns_it():
         for bad in ("aa aa", "@@@", "a" * 25):
             _fails(_consider(tmp, {"ticker": bad, "side": "buy", "price": 120.0, "qty": 1}),
                    "not a usable engine symbol")
+
+
+# ── G. producer/consumer pairs outside the `consider` lane ──
+#
+# Every case above this section drives `consider`. That is exactly why the first
+# cut of this fix shipped six one-sided normalizations: canonicalizing a producer
+# (a writer, a map's keys, an index) while its matching consumer (a dedupe key, a
+# lookup, a membership test) still read the raw spelling. Each pair below is a
+# real defect that was green under 13/13 mutations and 47/47 suites, because
+# nothing in the suite reached the lane it lived in.
+
+def test_reimporting_a_csv_against_a_legacy_ledger_does_not_duplicate_the_trade():
+    """`trades_from_csv` canonicalizes on the way in; `_trade_key` is what
+    decides whether an incoming fill is one the ledger already has. With only
+    the writer canonical, the weekly re-import stopped recognising its own
+    earlier rows and appended them again — a silently doubled position, written
+    into append-only state, which is the exact class of defect #803 exists to
+    kill."""
+    import csv
+    legacy = [_trade("2026-01-05", "aaa", "buy", 100, 100.0)]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "trades.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+            writer.writerow(["aaa", 100, 100.0, "BUY", "2026-01-05", "Trade"])
+        incoming, _skipped, _future = ledger_engine.trades_from_csv(
+            path, today=dt.date(2026, 6, 1))
+        fresh, dup = ledger_engine.dedupe_against(legacy, incoming)
+        assert (len(fresh), dup) == (0, 1), (
+            f"the same fill was re-appended: fresh={len(fresh)} dup={dup}")
+        holdings = ledger_engine.derive_holdings(legacy + fresh)["holdings"]
+        assert holdings["AAA"]["shares"] == 100.0, (
+            f"the position doubled on re-import: {holdings['AAA']['shares']}")
+
+
+def test_a_split_map_rebases_the_rows_it_describes_whatever_case_either_uses():
+    """`splits.normalize` keys the map canonically; `rebase_rows` is what reads
+    it. Looking it up with the row's own spelling silently found nothing and
+    left the row on a pre-split basis — a wrong share count, not a missing
+    feature, and one that only appears months after the split."""
+    for map_case, row_case in (("aaa", "aaa"), ("AAA", "aaa"), ("aaa", "AAA")):
+        rows = [{"ticker": row_case, "side": "buy", "qty": 100.0, "price": 100.0,
+                 "date": dt.date(2026, 1, 5), "market": "US", "currency": "USD"}]
+        changed = split_engine.rebase_rows(rows, {map_case: [["2026-03-01", 10.0]]})
+        assert changed == 1 and rows[0]["qty"] == 1000.0 and rows[0]["price"] == 10.0, (
+            f"map {map_case!r} / row {row_case!r} left the row unrebased: {rows[0]}")
+
+
+def test_metadata_case_alone_is_not_a_collision_but_a_real_disagreement_still_is():
+    """The collision guard reads currency/market through the same case rule it
+    reads tickers through. Without that, `US` and `us` looked like two different
+    instruments and an ordinary book was refused outright — the guard firing on
+    the spelling of its own metadata rather than on anything about the book. The
+    second half is the half that matters: relaxing it must not make it stop
+    catching the disagreement it exists for."""
+    def rows(second_market, second_currency):
+        return [{"ticker": "AAA", "side": "buy", "qty": 10, "price": 100.0,
+                 "date": dt.date(2026, 1, 2), "currency": "USD", "market": "US"},
+                {"ticker": "aaa", "side": "buy", "qty": 10, "price": 100.0,
+                 "date": dt.date(2026, 1, 3), "currency": second_currency,
+                 "market": second_market}]
+
+    state = consequence_engine.portfolio_state(rows("us", "USD"))
+    assert state["held"]["AAA"]["shares"] == 20, (
+        "a book whose market differed only in case was refused as a collision")
+
+    try:
+        consequence_engine.portfolio_state(rows("TW", "TWD"))
+    except consequence_engine.ConsequenceError as exc:
+        assert "'AAA'" in str(exc) and "'aaa'" in str(exc), str(exc)
+    else:
+        raise AssertionError(
+            "two genuinely different currencies behind one canonical symbol were merged")
+
+
+def test_a_retrieved_quote_prices_the_instrument_whatever_case_requested_it():
+    """The parsed feed is keyed canonically; a caller builds its request from its
+    own rows and may spell them any way. An exact membership test dropped a
+    quote that had actually been retrieved and reported the instrument
+    unpriced — a book falling back to cost basis for no real reason."""
+    feed = {"as_of": "2026-01-06", "prices": {
+        "AAA": {"close": 120.0, "currency": "USD",
+                "history": [["2026-01-05", 118.0], ["2026-01-06", 120.0]]}}}
+    frame, note = price_feed_engine.to_frame(feed, tickers=["aaa"])
+    assert frame is not None, f"a retrieved AAA quote was dropped for an 'aaa' request: {note}"
+    assert "AAA" in frame.columns
+
+
+def test_a_stored_statement_is_recalled_against_the_position_it_is_about():
+    """`_evaluation_recall` indexes stored premises; `_recalled_entry_statement`
+    looks the index up with a holding's own spelling. Indexing raw lost a legacy
+    row's statement against a canonical position and a canonical row's against a
+    legacy-spelled one — the user's own words, silently absent from the question
+    that was written to carry them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "trade_evaluations.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "evaluation_id": "eval-legacy0000000001", "created": "2026-01-05",
+                "premise": {"ticker": "aaa", "side": "buy"},
+                "context": {"reason": "the thesis I wrote down at entry",
+                            "why_now": "the quarter had just closed"}}) + "\n")
+        recall = review_engine._evaluation_recall(tmp)
+        assert set(recall) == {"AAA"}, f"indexed under the stored spelling: {sorted(recall)}"
+        for spelling in ("AAA", "aaa"):
+            assert review_engine._recalled_entry_statement(
+                recall, spelling, "AAA#2026-02-01#1") is not None, (
+                f"the user's own words went missing for a {spelling!r} position")
+
+
+def test_the_recorded_book_and_the_engine_state_agree_across_spelling():
+    """`_overlay_ledger_holdings` compares the ledger's canonical book against
+    whatever spelling the trade source wrote into engine state. An exact set
+    comparison reported a phantom `ticker_set` difference for two books that
+    match perfectly, and gated a valid one on a disagreement about case."""
+    card = {}
+    state = {"holdings": {"positions": {"aaa": {"shares": 100.0}}}}
+    derived = {"holdings": {"AAA": {"shares": 100.0}}}
+    _card, _state, reconciliation = review_engine._overlay_ledger_holdings(card, state, derived)
+    # Scoped to `ticker_set` deliberately: this fixture carries no prices, so a
+    # `valuation` mismatch is the correct reading of it and is not what this
+    # case is about. What must not appear is "these two books hold different
+    # instruments", asserted for a book whose share counts match exactly.
+    kinds = [row["kind"] for row in reconciliation["mismatches"]]
+    assert "ticker_set" not in kinds, (
+        f"two spellings of one matching book read as different instruments: "
+        f"{reconciliation['mismatches']}")
+    assert reconciliation["raw_positions_n"] == reconciliation["canonical_positions_n"] == 1
 
 
 def _tests():

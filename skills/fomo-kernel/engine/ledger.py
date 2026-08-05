@@ -1055,8 +1055,13 @@ def trades_from_csv(path, today=None):
 
 
 def _trade_key(ev):
-    """去重鍵,對齊 trade_recap.load() 的 seen tuple 精度(qty round2 / px round4)。"""
-    return (ev.get("ticker"), str(ev.get("action", "")).lower(),
+    """去重鍵,對齊 trade_recap.load() 的 seen tuple 精度(qty round2 / px round4)。
+
+    Ticker 走 canonical identity(#803)。`trades_from_csv` 把匯入的 symbol 正規化,
+    舊帳本裡卻可能存著小寫拼法——只正規化其中一側,同一筆成交的新舊兩份就不再是
+    同一個 key,週度重匯入會把它當成新交易再寫一次,持倉靜默翻倍。兩側讀同一條
+    規則,舊列的 bytes 不動。"""
+    return (symbols.canonical_ticker(ev.get("ticker")), str(ev.get("action", "")).lower(),
             round(float(ev.get("qty", 0)), 2), round(float(ev.get("price", 0)), 4),
             str(ev.get("date")))
 

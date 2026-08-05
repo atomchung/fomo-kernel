@@ -1551,8 +1551,16 @@ def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
     restatement of those trades, which is why they are skipped there rather
     than loosened for everyone.
     """
-    raw_positions = dict(((state.get("holdings") or {}).get("positions") or {}))
-    canonical = dict(derived.get("holdings") or {})
+    # Both sides read through one identity rule (#803). `derived` is the
+    # ledger's canonical book; `state` carries whatever spelling the trade source
+    # used, so an exact set comparison reports a phantom `ticker_set` difference
+    # for a book that matches perfectly — and gates it on a disagreement about
+    # case.
+    raw_positions = {symbols.canonical_ticker(t) or t: row
+                     for t, row in ((state.get("holdings") or {}).get("positions")
+                                    or {}).items()}
+    canonical = {symbols.canonical_ticker(t) or t: row
+                 for t, row in (derived.get("holdings") or {}).items()}
     raw_tickers, canonical_tickers = set(raw_positions), set(canonical)
     mismatches = []
     for ticker in sorted(raw_tickers | canonical_tickers):
@@ -7446,7 +7454,12 @@ def _evaluation_recall(root):
             created = dt.date.fromisoformat(str(row.get("created")))
         except (TypeError, ValueError):
             continue
-        recall.setdefault(str(ticker), []).append({
+        # Keyed canonically (#803): the lookup side is a holding's own
+        # spelling and this side is whatever the stored premise froze, so
+        # indexing on the raw string loses a legacy row's statement against
+        # a canonical position and vice versa. `_recalled_entry_statement`
+        # reads the same rule.
+        recall.setdefault(symbols.canonical_ticker(ticker), []).append({
             "evaluation_id": row.get("evaluation_id"),
             "created": created,
             "reason": reason,
@@ -7508,7 +7521,7 @@ def _recalled_entry_statement(recall, ticker, cycle_id):
     start, seq = _cycle_entry(cycle_id)
     if start is None or seq != 1:
         return None
-    eligible = [item for item in (recall or {}).get(str(ticker), [])
+    eligible = [item for item in (recall or {}).get(symbols.canonical_ticker(ticker), [])
                 if item["created"] <= start]
     if not eligible:
         return None
