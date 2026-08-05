@@ -45,6 +45,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import cycle_identity  # noqa: E402  # #807 一條 cycle 身分規則,與帳本/CSV 車道共用
 import ledger as lg  # noqa: E402  # 同目錄,共用 load/append 與錨點語意
 import splits as split_policy  # noqa: E402  # #550 分割規則單一實作(純標準庫,不連網)
 import symbols  # noqa: E402  # #803 一條 ticker identity 規則,與帳本共用
@@ -97,7 +98,6 @@ def detect_exits(events, splits=None):
     anchor = lg.latest_anchor(events, declared_only=True)
     shares = {}
     since = {}
-    seq = {}
     # Per-ticker date the running balance is currently stated in the basis of;
     # None = nothing held yet, so a split older than the first trade multiplies
     # zero shares and cannot move anything.
@@ -110,11 +110,17 @@ def detect_exits(events, splits=None):
     # `AAA` has its balance sitting under one key and its sale under another,
     # the sale finds no shares to reduce, and the exit vanishes from the queue
     # entirely — the user closed a position and the review never asks about it.
-    # `cycle_id` is still minted from the stored spelling, because `_revisit_id`
-    # embeds it and an already-queued exit must keep deduping against itself.
-    stored_as = {}
+    # #807: `cycle_id` is minted from what *this cycle* was opened with, through
+    # the rule `derive_holdings` uses, because `_revisit_id` embeds it and an
+    # already-queued exit must keep deduping against itself. Deriving it here a
+    # second time is what let this lane and the ledger disagree about the same
+    # cycle: a declaration's own `cycle_seq` was read by one and hard-coded to 1
+    # by the other, so a rebought-then-sold position queued an exit under an id
+    # no reader of the book would ever produce.
+    identities = cycle_identity.CycleIdentities()
     if anchor is not None:
         anchor_date = dt.date.fromisoformat(str(anchor["as_of"]))
+        integrity = []
         for p in anchor.get("positions", []):
             declared = p.get("ticker") if isinstance(p, dict) else None
             t = symbols.canonical_ticker(declared) or declared
@@ -123,10 +129,10 @@ def detect_exits(events, splits=None):
             except (AttributeError, TypeError, ValueError):
                 continue
             if t and sh > lg.EPS:
-                stored_as.setdefault(t, declared)
+                identities.opened(t, declared,
+                                  seq=lg._anchored_cycle_seq(p, t, integrity))
                 shares[t] = sh
                 since[t] = anchor_date.isoformat()
-                seq[t] = 1
                 # A declared position states the share count as of the anchor
                 # day, so a split after it still has to be carried forward.
                 basis_at[t] = anchor_date
@@ -141,13 +147,13 @@ def detect_exits(events, splits=None):
         if anchor_date is not None and d <= anchor_date:
             continue
         executed_as, t = t, (symbols.canonical_ticker(t) or t)
-        stored_as.setdefault(t, executed_as)
         trades.append((d, t, act, qty, px,
                        str(ev.get("market") or "US"),
-                       str(ev.get("currency") or "USD").upper()))
+                       str(ev.get("currency") or "USD").upper(),
+                       executed_as))
     trades.sort(key=lambda x: x[0])
     exits = []
-    for d, t, act, qty, px, market, currency in trades:
+    for d, t, act, qty, px, market, currency, executed_as in trades:
         cur = shares.get(t, 0.0)
         if split_events.get(t):
             factor = split_policy.factor_between(split_events[t], basis_at.get(t), d)
@@ -157,18 +163,22 @@ def detect_exits(events, splits=None):
         basis_at[t] = d
         if act == "buy":
             if cur <= lg.EPS:
-                seq[t] = seq.get(t, 0) + 1
+                identities.opened(t, executed_as)
                 since[t] = d.isoformat()
+            else:
+                identities.filled(t, executed_as)
             shares[t] = cur + qty
             continue
         if cur <= lg.EPS:
             continue                                  # 賣超/無倉賣:ledger integrity 已記,不進 revisit
+        identities.filled(t, executed_as)
         take = min(qty, cur)
         left = cur - take
         if left <= lg.EPS or take >= cur * REDUCE_TH - lg.EPS:
             exits.append({"ticker": t,
-                          "cycle_id": (f"{stored_as.get(t, t)}#{since.get(t, '?')}"
-                                       f"#{seq.get(t, 1)}"),
+                          "cycle_id": (f"{identities.spelling(t) or t}"
+                                       f"#{since.get(t, '?')}"
+                                       f"#{identities.sequence(t) or 1}"),
                           "exit_date": d.isoformat(),
                           "exit_price": round(px, 6),
                           "shares_sold": round(take, 4),
@@ -176,6 +186,8 @@ def detect_exits(events, splits=None):
                           "kind": "full" if left <= lg.EPS else "reduce",
                           "market": market, "currency": currency})
         shares[t] = left
+        if left <= lg.EPS:
+            identities.closed(t)
     # #485 Slice C:確認消失的出場沒有 sell trade,走不進上面的 trade walk。從同一個
     # detect_exits 出來,是為了讓「出場」只有一個來源集合——enqueue/recent/due/backlog/
     # horizon marker 全部沿用既有路徑,不需要各自再記得多讀一個地方(#461 明確要求)。
