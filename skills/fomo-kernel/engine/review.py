@@ -7608,8 +7608,14 @@ def _evaluation_reconciliation(root, rows, date_end):
             created_date = None
         match = None
         if created_date is not None and end is not None and ticker and side:
+            # #803, storage-reader half: `ticker` came off a stored evaluation
+            # row, which froze whatever case the user typed before the rule
+            # existed, while `rows` are the canonical book. Comparing them raw
+            # reports a trade that plainly happened as `unmatched`.
             candidates = sorted(
-                (r for r in rows if r.get("ticker") == ticker and r.get("side") == side
+                (r for r in rows
+                 if symbols.canonical_ticker(r.get("ticker")) == symbols.canonical_ticker(ticker)
+                 and r.get("side") == side
                  and isinstance(r.get("date"), dt.date) and created_date <= r["date"] <= end),
                 key=lambda r: r["date"])
             if candidates:

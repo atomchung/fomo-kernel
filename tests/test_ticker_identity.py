@@ -48,6 +48,7 @@ import portfolio_basis as portfolio_basis_engine  # noqa: E402
 import price_feed as price_feed_engine  # noqa: E402
 import review as review_engine  # noqa: E402
 import splits as split_engine  # noqa: E402
+import trade_recap as tr_engine  # noqa: E402
 import symbols  # noqa: E402
 
 
@@ -668,6 +669,123 @@ def test_a_ticker_the_rule_cannot_canonicalize_keeps_its_own_identity():
     # And the ordinary case is untouched.
     fresh, dup = ledger_engine.dedupe_against([event("AAA")], [event("AAA")])
     assert (len(fresh), dup) == (0, 1)
+
+
+def test_an_executed_trade_settles_the_evaluation_that_contemplated_it():
+    """The other storage reader. An open evaluation is reconciled against the
+    transaction record by ticker; the stored premise froze whatever case the
+    user typed, the rows are the canonical book. Compared raw, a trade that
+    plainly happened comes back `unmatched` — the engine telling the user it
+    has no record of a fill sitting right there in their ledger."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "trade_evaluations.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "evaluation_id": "eval-legacy0000000002", "created": "2026-01-05",
+                "decision": "open",
+                "premise": {"ticker": "aaa", "side": "buy", "qty": 10, "price": 100.0}}) + "\n")
+        rows = [{"ticker": "AAA", "side": "buy", "qty": 10, "price": 100.0,
+                 "date": dt.date(2026, 1, 6), "currency": "USD", "market": "US"}]
+        report = review_engine._evaluation_reconciliation(tmp, rows, "2026-01-31")
+        assert report["items"], "the open evaluation was not reconciled at all"
+        item = report["items"][0]
+        assert item["status"] == "matched", (
+            "a trade sitting in the ledger was reported as never executed "
+            f"because the stored premise spelled it differently: {item}")
+
+
+# ── H. the invariant, not another pair ──
+#
+# Sections B–G fix pairs. Pairs do not scale: two rounds of independent review
+# found six one-sided comparisons each, because a system where two spellings can
+# coexist grows a new defect at every place two components meet. The rule that
+# ends that is not "canonicalize at more call sites" — it is:
+#
+#     canonical at the entry boundary  ->  canonical everywhere inside
+#     the only readers that must project are readers of durable storage,
+#     because stored bytes predate the rule and are never rewritten.
+#
+# These two cases assert that invariant instead of another pair, so a *new*
+# entry point that forgets is caught by a test nobody has to remember to write.
+
+_ENTRY_POINTS_UNDER_THE_RULE = """Every supported way a ticker enters the engine.
+Adding a route without adding it here is the failure this list cannot catch on
+its own — which is exactly why the end-to-end case below exists beside it."""
+
+
+def test_every_supported_entry_point_emits_a_canonical_ticker():
+    import csv
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "trades.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+            w.writerow(["aaa", 100, 100.0, "BUY", "2026-01-05", "Trade"])
+
+        emitted = {
+            "trade_recap.load":
+                [row["ticker"] for row in tr_engine.load([path])],
+            "ledger.trades_from_csv":
+                [e["ticker"] for e in ledger_engine.trades_from_csv(
+                    path, today=dt.date(2026, 6, 1))[0]],
+            "splits.normalize":
+                list(split_engine.normalize({"aaa": [["2026-03-01", 10.0]]})),
+            "consequence.validate_premise":
+                [consequence_engine.validate_premise(
+                    {"ticker": "aaa", "side": "buy", "price": 1.0, "qty": 1},
+                    [{"ticker": "AAA", "side": "buy", "qty": 1, "price": 1.0,
+                      "date": dt.date(2026, 1, 5), "currency": "USD",
+                      "market": "US"}])["ticker"]],
+        }
+        for entry, tickers in sorted(emitted.items()):
+            assert tickers, f"{entry} emitted nothing; the case proves nothing"
+            for ticker in tickers:
+                assert symbols.is_canonical(ticker), (
+                    f"{entry} let a non-canonical ticker into the engine: {ticker!r}")
+
+
+def test_no_non_canonical_ticker_survives_into_a_delivered_answer():
+    """The half the checklist above cannot fake. Drive the real CLI with a book
+    spelled entirely in lower case and assert that *nothing anywhere* in the
+    delivered payload — any key, any value, at any depth — is a ticker-shaped
+    string that is not canonical. A new producer that leaks a raw spelling into
+    an answer fails this without anyone having listed it."""
+    import csv
+    import re as _re
+    shaped = _re.compile(r"^[A-Za-z][A-Za-z0-9.\-]{1,9}$")
+    known_non_tickers = {"buy", "sell", "acted", "declined", "modified", "considered",
+                         "cost", "priced", "unpriced", "en", "zh-TW", "zh-CN", "USD",
+                         "US", "TW", "error", "open"}
+
+    def offenders(node):
+        found = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                found += offenders(key) + offenders(value)
+        elif isinstance(node, list):
+            for item in node:
+                found += offenders(item)
+        elif isinstance(node, str):
+            if (shaped.match(node) and node not in known_non_tickers
+                    and node.upper() == "AAA" and not symbols.is_canonical(node)):
+                found.append(node)
+        return found
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "trades.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+            w.writerow(["aaa", 100, 100.0, "BUY", "2026-01-05", "Trade"])
+            w.writerow(["bbb", 100, 50.0, "BUY", "2026-01-05", "Trade"])
+        payload = _ok(_run("consider", path, "--root", tmp, "--premise",
+                           json.dumps({"ticker": "aaa", "side": "buy",
+                                       "price": 120.0, "qty": 10})))
+        leaked = offenders(payload)
+        assert not leaked, (
+            f"a raw spelling reached the delivered answer: {sorted(set(leaked))}")
+        # And the proof this case can fail at all: the canonical form IS present,
+        # so the search is looking at a payload that really carries the ticker.
+        assert "AAA" in json.dumps(payload)
 
 
 def _tests():

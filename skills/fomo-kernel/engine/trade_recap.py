@@ -10,6 +10,7 @@ fomo-kernel · trade-recap engine v0.2
 import csv, math, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
 import instruments as instrument_policy
+import symbols
 import market_context as market_context_engine
 import market_data
 import price_feed
@@ -212,7 +213,12 @@ def load(paths):
                 seen.add(rec)
                 # 多市場欄位(#51/#129 PR-2a):可選 Market/Currency 欄,缺 = 美股 USD(向後相容)。
                 # 原幣記帳鐵律(prd-ledger §2):price 永遠是原幣,換算只發生在聚合視圖(usd_view)與呈現層。
-                rows.append(dict(ticker=sym, side=act.lower(), qty=qty, price=px, date=d,
+                # #803: canonical at the boundary. Everything downstream of
+                # `load` compares, keys and joins on this value, so normalizing
+                # here is what makes "the engine is canonical inside" true by
+                # construction rather than by every consumer remembering.
+                rows.append(dict(ticker=symbols.canonical_ticker(sym),
+                                 side=act.lower(), qty=qty, price=px, date=d,
                                  market=(r.get("Market") or "US").strip() or "US",
                                  currency=(r.get("Currency") or "USD").strip().upper() or "USD"))
     stats["loaded"] = len(rows)
