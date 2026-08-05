@@ -12341,6 +12341,36 @@ def test_single_currency_and_display_only_gaps_are_untouched_by_the_fx_refusal()
             "a display-only gap must not disturb the held-currency aggregate"
 
 
+def test_mixed_currency_card_never_carries_the_retired_alpha_beta_note():
+    """#689: `currency_meta` had a fifth key with zero readers anywhere.
+
+    `alpha_beta_note` was a Traditional-Chinese sentence `trade_recap.py` wrote
+    into every mixed-currency `currency_meta`, beside `mixed`, `aggregate_currency`,
+    `fx`, and `pnl_by_currency` -- the four keys `card_renderer.py` actually reads
+    (`_currency`, `_display_context`, the pnl-by-currency rows). Nothing consumed
+    it: no renderer, no schema (`currency_meta` is declared in none), no
+    `copy/<locale>.json` route. An agent reading `engine_card` directly -- a
+    legitimate consumer this product's own architecture recognizes (`AGENTS.md`
+    rule 2) -- had no signal the field was never meant to reach a user, so a raw
+    zh-TW sentence could have surfaced on an English card.
+
+    This drives a real mixed-currency book through the CLI on the exact branch
+    that used to populate the field (`mixed_ccy` true, no per-market alpha/beta
+    scope resolved) and pins its absence, so a reintroduction fails here instead
+    of riding along unread again.
+    """
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root:
+        env = _offline_engine_env(tmp)
+        csv_path, envelope = _fx_case(tmp, "no_alpha_beta_note",
+                                      _FX_TWD_ROWS + _FX_USD_ROWS, fx={"TWD": 0.0317})
+        run = _run("prepare", csv_path, "--root", root, "--language", "en",
+                   "--prices", envelope, env=env)
+        assert run.returncode == 0, run.stdout + run.stderr
+        meta = _fx_plan(root)["engine_card"]["currency_meta"]
+        assert meta["mixed"] is True, meta   # the branch the retired field used to populate
+        assert "alpha_beta_note" not in meta, meta
+
+
 def test_only_the_adapter_lane_skips_the_recorded_book_reconciliation():
     """#630's one deliberate asymmetry, pinned so it stays deliberate.
 
