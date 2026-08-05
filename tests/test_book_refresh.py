@@ -1400,6 +1400,207 @@ def test_the_adapter_validator_is_shared_not_reimplemented():
         raise AssertionError("an invalid adopted book must fail closed")
 
 
+# ─────────── F. a legacy book reconciles against itself (#806) ───────────
+#
+# `ledger.derive_holdings` has returned a canonically-keyed book since #803,
+# while every join in this module kept the anchor's or the receipt's *stored*
+# spelling. A book whose anchor predates that merge therefore had nothing in
+# common with itself: each position was reported as both appeared and
+# disappeared, a `not_captured` answer refused to carry forward a position
+# sitting in the book, and a confirmed sale had "no recorded cycle to close".
+#
+# The rule these joins needed already existed — `symbols.by_canonical_identity`,
+# which `ledger.reconcile` and `ledger.snapshot_reconciliation` use. It
+# canonicalizes an unambiguous key and deliberately leaves two spellings of one
+# instrument inside a single book listed separately, so a real disagreement is
+# still reported rather than resolved by insertion order. Fictional symbols only.
+
+# ACME carries the one fact only the recorded row can state: the user's own
+# estimate of when they started holding it. The derived book cannot restate it —
+# it would say `snapshot_anchor`, dated at the declaration — so this position is
+# the discriminator between reading the record and falling back to the book.
+LEGACY_SEED = {"type": "snapshot", "as_of": "2026-06-30", "source": "user_declared",
+               "is_complete": True, "snapshot_id": "snapshot-legacy00000000",
+               "positions": [
+                   {"ticker": "acme", "shares": 100.0, "avg_cost": 12.0,
+                    "market": "US", "currency": "USD",
+                    "since": "2024-02-01", "since_basis": "user_estimate"},
+                   {"ticker": "widget", "shares": 50.0, "avg_cost": 30.0,
+                    "market": "US", "currency": "USD"}]}
+
+
+def test_a_legacy_anchor_reconciles_against_itself():
+    """The whole defect in one assertion. Re-supplying the same book unchanged
+    must be a no-op; keyed on the stored spelling it read as every position
+    both appearing and disappearing at once — so the lane asked the user to
+    classify their entire portfolio as a set of unexplained changes."""
+    same = [{"ticker": "ACME", "shares": 100, "avg_cost": 12.0,
+             "market": "US", "currency": "USD"},
+            {"ticker": "WIDGET", "shares": 50, "avg_cost": 30.0,
+             "market": "US", "currency": "USD"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        receipt = _cli(_root(tmp, events=(LEGACY_SEED,)), _snapshot(tmp, same))
+        assert receipt.get("status") != "error", receipt
+        summary = receipt.get("summary") or {}
+        assert summary.get("only_declared") == [] and summary.get("only_derived") == [], (
+            "the book was reported as having nothing in common with itself: "
+            f"{summary}")
+        assert receipt.get("pending_confirmations") == [], (
+            f"a book that did not change raised confirmations: {receipt}")
+
+
+def test_a_legacy_anchor_still_reports_the_one_position_that_really_left():
+    """The control. Canonicalizing the join must not also swallow a real
+    difference — otherwise this fix would trade a flood of phantom questions
+    for silence about a position that actually disappeared."""
+    with tempfile.TemporaryDirectory() as tmp:
+        kept = [{"ticker": "WIDGET", "shares": 50, "avg_cost": 30.0,
+                 "market": "US", "currency": "USD"}]
+        receipt = _cli(_root(tmp, events=(LEGACY_SEED,)), _snapshot(tmp, kept))
+        pending = receipt.get("pending_confirmations") or []
+        assert [row["ticker"] for row in pending] == ["ACME"], receipt
+        assert pending[0]["kind"] == "disappearance"
+        assert pending[0]["cycle_id"] == "acme#2024-02-01#1", (
+            "the durable cycle the answer would close was re-minted: "
+            f"{pending[0]['cycle_id']!r}")
+
+
+def _legacy_receipt_and_book(tmp):
+    """A receipt written before #803 — its `pending_confirmations` froze the
+    spelling of the day — against the canonical book it is about."""
+    root = _root(tmp, events=(LEGACY_SEED,))
+    events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+    snapshot, anchor = snapshot_adapter.normalize_book(
+        {"as_of": "2026-07-15",
+         "positions": [{"ticker": "WIDGET", "shares": 50, "avg_cost": 30.0,
+                        "market": "US", "currency": "USD"}]},
+        today="2026-07-20")
+    receipt = br.plan_refresh(events, snapshot, anchor)
+    stored = [dict(row, ticker=row["ticker"].lower())
+              for row in receipt["pending_confirmations"]]
+    return events, snapshot, anchor, dict(receipt, pending_confirmations=stored)
+
+
+def test_a_stored_receipt_carries_forward_a_position_that_is_in_the_book():
+    """`not_captured` means "the view missed it, it is still mine". Read against
+    the canonical book with the receipt's own spelling, the position is not
+    found and the refusal says it "is no longer in the recorded book to carry
+    forward" — about a holding sitting in that very book, mid-adoption."""
+    with tempfile.TemporaryDirectory() as tmp:
+        events, snapshot, anchor, receipt = _legacy_receipt_and_book(tmp)
+        result = br.build_adoption(receipt, events, snapshot, anchor,
+                                   [{"ticker": "acme", "classification": "not_captured"}])
+        assert result["status"] == "adopt", result
+        assert result["carried"] == ["ACME"], result
+        adopted = {row["ticker"] for row in result["anchor"]["positions"]}
+        assert adopted == {"ACME", "WIDGET"}, adopted
+
+
+def test_a_stored_receipt_can_still_close_the_cycle_it_named():
+    """The other branch of the same question. `sold` needs the position's
+    recorded `cycle_id` to write a fill-free absence; the miss made it raise
+    "has no recorded cycle to close" instead, so a user confirming a sale could
+    not complete the refresh at all."""
+    with tempfile.TemporaryDirectory() as tmp:
+        events, snapshot, anchor, receipt = _legacy_receipt_and_book(tmp)
+        result = br.build_adoption(receipt, events, snapshot, anchor,
+                                   [{"ticker": "acme", "classification": "sold"}])
+        assert result["status"] == "adopt" and result["sold"] == ["ACME"], result
+        assert [row["cycle_id"] for row in result["absences"]] == ["acme#2024-02-01#1"], (
+            "the absence must close the cycle the record already minted: "
+            f"{result['absences']}")
+
+
+def test_an_answer_spelled_differently_from_the_receipt_still_answers_it():
+    """The user echoes back the name they were shown, and a client may not
+    preserve its case. Matched on the raw string, the answer is refused as an
+    item this refresh never raised *and* the raised item counts as unanswered —
+    two refusals for one keystroke."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        snapshot, anchor = snapshot_adapter.normalize_book(
+            {"as_of": "2026-07-15", "positions": KEPT}, today="2026-07-20")
+        receipt = br.plan_refresh(events, snapshot, anchor)
+        result = br.build_adoption(receipt, events, snapshot, anchor,
+                                   [{"ticker": "acme", "classification": "not_captured"}])
+        assert result["status"] == "adopt" and result["carried"] == ["ACME"], result
+
+        try:
+            br.build_adoption(receipt, events, snapshot, anchor,
+                              [{"ticker": "acme", "classification": "not_captured"},
+                               {"ticker": "ACME", "classification": "sold"}])
+        except br.RefreshError as exc:
+            assert "repeat" in str(exc), exc
+        else:
+            raise AssertionError("one confirmation answered twice must still be a repeat")
+
+
+def test_an_answer_for_something_never_raised_is_still_refused_by_name():
+    """The gate's other end: folding case must not turn "answerable by identity"
+    into "answerable"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp)
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        snapshot, anchor = snapshot_adapter.normalize_book(
+            {"as_of": "2026-07-15", "positions": KEPT}, today="2026-07-20")
+        receipt = br.plan_refresh(events, snapshot, anchor)
+        try:
+            br.build_adoption(receipt, events, snapshot, anchor,
+                              [{"ticker": "ACME", "classification": "not_captured"},
+                               {"ticker": "nosuch", "classification": "sold"}])
+        except br.RefreshError as exc:
+            assert "raised no confirmation for 'nosuch'" in str(exc), exc
+            return
+        raise AssertionError("an answer nobody asked for must be refused by name")
+
+
+def test_one_anchor_declaring_two_spellings_is_still_named_not_merged():
+    """`by_canonical_identity`'s deliberate carve-out, exercised through this
+    lane. Which of two declared share counts is the position is not derivable
+    from the record, so both keys survive and the disagreement is reported —
+    the alternative is a position count that under-reports its own input."""
+    twice = {"type": "snapshot", "as_of": "2026-06-30", "source": "user_declared",
+             "is_complete": True, "snapshot_id": "snapshot-twospell000000",
+             "positions": [
+                 {"ticker": "ACME", "shares": 100.0, "avg_cost": 12.0,
+                  "market": "US", "currency": "USD"},
+                 {"ticker": "acme", "shares": 40.0, "avg_cost": 15.0,
+                  "market": "US", "currency": "USD"}]}
+    assert sorted(br._declared_map(twice)) == ["ACME", "acme"], (
+        "two spellings of one instrument were merged into one declared row")
+    # And the ledger's own refusal for that declaration is untouched: this
+    # module must not become a second, softer opinion about a book #803 already
+    # says is unknowable.
+    assert [row["issue"] for row in lg.derive_holdings([twice])["integrity"]] \
+        == ["bad_ticker_collision"]
+
+
+def test_a_legacy_book_keeps_the_start_the_user_already_answered():
+    """`_carried_start` joins two canonical books against a row whose spelling
+    is whatever the caller supplied. Missed, the position takes the "it is
+    appearing" branch: #539's outcome — a position nobody sold keeps its cycle —
+    silently stops applying, and the user is asked again how long they have held
+    something the record already knows."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _root(tmp, events=(LEGACY_SEED,))
+        events, _ = lg.load_ledger(os.path.join(root, "ledger.jsonl"))
+        _snap, anchor = br.carry_recorded_starts(
+            {"as_of": "2026-07-15",
+             "positions": [{"ticker": "acme", "shares": 100, "avg_cost": 12.0,
+                            "market": "US", "currency": "USD"}]},
+            events, today="2026-07-15")
+        carried = {row["ticker"]: row for row in anchor["positions"]}
+        # The user's own estimate, not the declaration date the derived book
+        # would supply. Both branches write *a* start, so only a fact the record
+        # alone holds tells reading it from falling back to the book.
+        assert carried["ACME"].get("since") == "2024-02-01", (
+            f"the recorded start was not carried onto the legacy row: {carried}")
+        assert carried["ACME"].get("since_basis") == "user_estimate", (
+            "the user's stated holding period was replaced by a date derived "
+            f"from the declaration: {carried}")
+
+
 # ─────────────────────────── runner ───────────────────────────
 
 def _main():
