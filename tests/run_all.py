@@ -81,6 +81,7 @@ SUITES = [
     ("Market-data resolver contract (#605)", "tests/test_market_data.py", "product"),
     ("Condition slots (#412)", "tests/test_conditions.py", "product"),
     ("Hypothetical-trade consequence (Layer 2)", "tests/test_consequence.py", "product"),
+    ("Canonical ticker identity (#803)", "tests/test_ticker_identity.py", "product"),
     ("Pre-trade evaluation CLI (Layer 2 entry point)", "tests/test_consider.py", "product"),
     ("Synthetic consider QA walkthrough (#718)", "tests/test_synthetic_walk.py", "qa-eval"),
     ("Read-only current-book outlet (#561)", "tests/test_positions.py", "product"),

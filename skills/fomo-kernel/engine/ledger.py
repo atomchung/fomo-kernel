@@ -51,6 +51,7 @@ import tempfile
 from collections import defaultdict
 
 import splits as sp
+import symbols
 
 SCHEMA_V = 1
 DEFAULT_LEDGER = os.path.expanduser("~/.trade-coach/ledger.jsonl")
@@ -545,12 +546,22 @@ def derive_holdings(events, splits=None, as_of=None):
     integrity = []
     pos = {}
     seq_base = defaultdict(int)      # ticker → 最後用過的 cycle 序號(清倉後保留,重建 +1)
+    # #803: canonical identity → the spelling this ledger actually stored for it.
+    # The book is keyed canonically from here down, so a legacy `nvda` row lands
+    # on the `NVDA` it names instead of beside it. `cycle_id` is then built from
+    # the *stored* spelling below, because a cycle_id is a durable identifier
+    # theses.jsonl already holds foreign keys to: reading history correctly must
+    # not silently re-mint the ids that history is bound by.
+    stored_as = {}
     anchor_date = None
 
     if anchor is not None:
         anchor_date = dt.date.fromisoformat(str(anchor["as_of"]))
         for p in anchor.get("positions", []):
-            t = p.get("ticker") if isinstance(p, dict) else None
+            # Canonical before the guard below, never after it (#803): a
+            # non-string ticker is exactly the malformed row that guard exists
+            # for, and canonicalizing past it would key the book on `None`.
+            t = symbols.canonical_ticker(p.get("ticker")) if isinstance(p, dict) else None
             try:
                 sh = float(p.get("shares"))
             except (AttributeError, TypeError, ValueError):
@@ -560,6 +571,19 @@ def derive_holdings(events, splits=None, as_of=None):
                                   "detail": json.dumps(p, ensure_ascii=False)[:120]})
                 continue
             if sh <= EPS:
+                continue
+            # #803. One declaration may not hold the same instrument under two
+            # different spellings: which of the two share counts is the position
+            # is not derivable from the rows, and collapsing them would silently
+            # state a holding the user never declared. `bad_` fails the whole
+            # book closed through `portfolio_basis._bad_integrity`, naming both.
+            # A ticker declared twice under the *same* spelling is a different,
+            # older case and keeps its existing last-one-wins overwrite, which
+            # `review._rows_from_ledger` deliberately mirrors.
+            declared = p.get("ticker")
+            if stored_as.setdefault(t, declared) != declared:
+                integrity.append({"issue": "bad_ticker_collision", "ticker": t,
+                                  "detail": f"declared as {stored_as[t]!r} and {declared!r}"})
                 continue
             ac = p.get("avg_cost")
             try:
@@ -591,6 +615,17 @@ def derive_holdings(events, splits=None, as_of=None):
         d, t, act, qty, px = n
         if anchor_date is not None and d <= anchor_date:
             continue                      # snapshot = as_of 收盤後狀態;同日/更早的交易已反映在宣告內
+        # #803. Two spellings of one symbol are one instrument's executions, so
+        # a legacy `nvda` buy adds to the declared `NVDA` rather than opening a
+        # phantom position beside it. Unlike two declarations of one holding,
+        # there is nothing ambiguous to refuse here: a trade list is a sequence
+        # of fills, and applying them all in order is the only reading.
+        executed_as, t = t, symbols.canonical_ticker(t)
+        if t is None:
+            integrity.append({"issue": "bad_trade_event",
+                              "detail": json.dumps(ev, ensure_ascii=False)[:120]})
+            continue
+        stored_as.setdefault(t, executed_as)
         trades.append((d, t, act, qty, px, ev))
     trades.sort(key=lambda x: x[0])       # stable:同日保持匯入序
 
@@ -654,7 +689,14 @@ def derive_holdings(events, splits=None, as_of=None):
         # 會解成 None,那檔就退出持有期診斷,而不是被編一個日期進去(#531 owner ruling)。
         # `since` 仍留錨點日:它本來就是「這檔何時進到帳本」的記帳事實,而 cycle_id 才是
         # 持有期的量測基準,所以下游每個讀 since 的人拿到的仍是合法日期。
-        cycle_id = f"{t}#unknown" if p.get("cycle_unknown") else f"{t}#{p['since']}#{seq_base[t]}"
+        # #803: built from the spelling this ledger stored, not from the
+        # canonical key above. A cycle_id is durable — theses.jsonl holds
+        # foreign keys to it — so reading a legacy book correctly must not
+        # re-mint the identifiers that book's own theses are bound by. Every
+        # already-canonical ledger (all of them, save a hand-written one) has
+        # the two spellings equal and this line is byte-identical to before.
+        name = stored_as.get(t, t)
+        cycle_id = f"{name}#unknown" if p.get("cycle_unknown") else f"{name}#{p['since']}#{seq_base[t]}"
         add_count = p.get("add_count", 0)
         holdings[t] = {"shares": round(p["shares"], 4),
                        "avg_cost": round(ac, 4) if ac is not None else None,
@@ -976,7 +1018,11 @@ def trades_from_csv(path, today=None):
                 skipped += 1
                 continue
             act = (r.get("Action") or "").strip().upper()
-            sym = (r.get("Symbol") or "").strip()
+            # #803: canonical on the way in, so a broker export spelling a
+            # symbol in lower case cannot author a second instrument in an
+            # append-only file. Rows already written stay exactly as they are —
+            # `derive_holdings` projects those at read time instead.
+            sym = symbols.canonical_ticker(r.get("Symbol"))
             if act not in ("BUY", "SELL") or not sym:
                 skipped += 1
                 continue
