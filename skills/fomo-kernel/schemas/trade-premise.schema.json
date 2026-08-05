@@ -10,7 +10,7 @@
     "ticker": {
       "type": "string",
       "pattern": "^[A-Za-z0-9^][A-Za-z0-9.\\-^=]{0,19}$",
-      "description": "The complete engine symbol, in the same form the ledger's own rows use (for example NVDA, 2330.TW). Matching the ledger's convention is what lets before/after states compare the same instrument rather than two strings that merely look alike."
+      "description": "The complete engine symbol (for example NVDA, 2330.TW). Surrounding whitespace and letter case are the caller's to get wrong: the engine canonicalizes both through engine/symbols.py's one rule (#803), so `nvda` names the held NVDA rather than a second instrument beside it, and the same canonical identity is what before/after states, the price map and prior-decision recall all compare. This pattern still decides what the envelope ADMITS, and it decides it on the canonical form -- case is identity, shape is admission, and canonicalizing widens neither."
     },
     "side": {
       "enum": ["buy", "sell"],

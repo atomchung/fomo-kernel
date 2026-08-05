@@ -36,7 +36,7 @@
           "ticker": {
             "type": "string",
             "pattern": "^[A-Za-z0-9^][A-Za-z0-9.\\-^=]{0,19}$",
-            "description": "The complete engine symbol, matching the trade rows (for example NVDA, 2330.TW, ^TWII)."
+            "description": "The complete engine symbol (for example NVDA, 2330.TW, ^TWII). Canonicalized on the way in through engine/symbols.py, the same rule the book's own identities use (#803), so a close published for `nvda` prices the NVDA the holdings and the premise both name."
           },
           "close": {
             "type": "number",

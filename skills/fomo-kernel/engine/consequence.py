@@ -110,6 +110,7 @@ import re
 from collections.abc import Mapping
 
 import instruments
+import symbols
 import trade_recap
 
 
@@ -345,9 +346,21 @@ def _positive_number(value, field):
 
 
 def _ticker(value):
+    """The premise's instrument identity — canonical, then admitted.
+
+    The exception to the "deliberately not imported" note above, and the reason
+    it is an exception: shape is this envelope's own business, but *identity* is
+    the book's. ``symbols.canonical_ticker`` is the one rule the holdings map,
+    the price map and the prior-decision reader all read the same way, so a
+    premise written ``nvda`` names the held ``NVDA`` here rather than minting a
+    second position beside it (#803). ``_TICKER_RE`` still decides what this
+    envelope accepts, unchanged, and is applied to the canonical form — the
+    pattern already admits both cases, so no input that was accepted before is
+    rejected now and none that was rejected is accepted.
+    """
     if not isinstance(value, str) or not value.strip():
         raise ConsequenceError("premise.ticker must be a non-empty string")
-    symbol = value.strip()
+    symbol = symbols.canonical_ticker(value)
     if not _TICKER_RE.match(symbol):
         raise ConsequenceError(f"premise.ticker is not a usable engine symbol: {value!r}")
     return symbol
@@ -379,6 +392,73 @@ def _fifo_held(rows):
     docstring for why the two bases must not be mixed."""
     _, open_lots = trade_recap.round_trips(rows)
     return trade_recap.fifo_held(open_lots)
+
+
+def _canonical_rows(rows):
+    """``rows`` with one canonical instrument identity each (#803).
+
+    The book side of the premise fix, and the reason it is here rather than at
+    each row source: ``validate_premise`` now canonicalizes the premise, so a
+    book still carrying a *non*-canonical spelling of that same instrument
+    would no longer match it — the defect would simply move from "lower-case
+    premise, upper-case book" to "canonical premise, lower-case book". Both
+    supported row sources therefore pass through this one function: the CSV
+    lane (``trade_recap.load``) and the ledger lane
+    (:func:`rows_from_portfolio_basis`). It is the arithmetic's own boundary,
+    so no ``cycle_id`` — a durable identifier derived from the *stored*
+    spelling elsewhere in the engine — is re-derived by anything here.
+
+    Identity is preserved when nothing changes: a book already spelled
+    canonically (every broker export in the wild, every fixture in this
+    repository) gets back the same list holding the same row objects. That is
+    not an optimization. ``portfolio_state`` distinguishes the one appended
+    hypothetical row from history by ``is not`` (#751), and copying rows
+    unconditionally would silently break that identity check.
+
+    Two rows whose spellings differ but canonicalize to one symbol are the same
+    instrument's executions and are merged by every downstream sum, which is
+    correct — unless the two stored rows disagree about what that instrument
+    *is*. A ``TWD`` row and a ``USD`` row that collapse into one symbol are not
+    reconcilable by case-folding, and merging them would put two currencies'
+    face values behind a single share count. That fails closed, naming both
+    spellings, rather than double-counting silently (#803's legacy-collision
+    rule). A disagreement between two rows that already share one spelling is
+    not this function's to judge — ``trade_recap.currency_map`` has owned that
+    since #51 and still does.
+    """
+    if not rows:
+        return rows
+    spellings, facts = {}, {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        canonical = symbols.canonical_ticker(row.get("ticker"))
+        if canonical is None:
+            continue
+        spellings.setdefault(canonical, set()).add(row["ticker"])
+        facts.setdefault(canonical, set()).add(
+            (str(row.get("currency") or "USD"), str(row.get("market") or "US")))
+    for canonical, written in sorted(spellings.items()):
+        # Both conditions, not either: one spelling recorded two ways is
+        # trade_recap.currency_map's long-standing case and is left to it, and
+        # two spellings agreeing on the facts are one instrument's executions.
+        # Only the intersection is a collision case-folding created.
+        if len(written) > 1 and len(facts[canonical]) > 1:
+            raise ConsequenceError(
+                f"this book records {', '.join(repr(name) for name in sorted(written))} — one "
+                f"instrument ({canonical}) — under more than one currency/market: "
+                + "; ".join(f"{cur}/{mkt}" for cur, mkt in sorted(facts[canonical]))
+                + ". Case alone cannot reconcile them, and adding them together would put two "
+                f"denominators behind one share count. Record {canonical} one way in the "
+                "history, then ask again.")
+    if all(written == {canonical} for canonical, written in spellings.items()):
+        return rows          # already canonical throughout: same list, same row objects
+    out = []
+    for row in rows:
+        canonical = symbols.canonical_ticker(row.get("ticker")) if isinstance(row, Mapping) else None
+        out.append(row if canonical is None or row["ticker"] == canonical
+                   else dict(row, ticker=canonical))
+    return out
 
 
 def integrity_exclusions(basis):
@@ -422,7 +502,10 @@ def integrity_exclusions(basis):
             raise ConsequenceError(
                 "canonical PortfolioBasis has an integrity warning that cannot be scoped "
                 f"to one holding: {named}")
-        out[ticker.strip()] = reason
+        # Keyed canonically (#803), because every reader of this map compares it
+        # against a holding or a premise that is canonical by the time it gets
+        # here. A warning naming `nvda` scopes to the `NVDA` it is about.
+        out[symbols.canonical_ticker(ticker)] = reason
     return out
 
 
@@ -463,12 +546,11 @@ def _refuse_premise_on_integrity(premise, excluded_holdings):
     """
     if not isinstance(premise, Mapping):
         return
-    ticker = premise.get("ticker")
-    if not isinstance(ticker, str) or not ticker.strip():
+    ticker = symbols.canonical_ticker(premise.get("ticker"))
+    if ticker is None:
         return
-    ticker = ticker.strip()
     for row in excluded_holdings or ():
-        if (isinstance(row, Mapping) and row.get("ticker") == ticker
+        if (isinstance(row, Mapping) and symbols.canonical_ticker(row.get("ticker")) == ticker
                 and row.get("reason") in INTEGRITY_EXCLUSION_REASONS):
             raise ConsequenceError(
                 f"this book's record for {ticker} carries an integrity warning "
@@ -540,10 +622,17 @@ def rows_from_portfolio_basis(basis):
         raise ConsequenceError("canonical PortfolioBasis has invalid as_of") from exc
 
     rows, excluded = [], []
-    for ticker in sorted(holdings):
-        holding = holdings[ticker]
-        if not isinstance(ticker, str) or not isinstance(holding, Mapping):
+    for stored in sorted(holdings):
+        holding = holdings[stored]
+        if not isinstance(stored, str) or not isinstance(holding, Mapping):
             raise ConsequenceError("canonical PortfolioBasis has invalid holding")
+        # #803. The basis is the ledger lane's canonical book and
+        # ``ledger.derive_holdings`` already keys it canonically; a book written
+        # before that did not, and this adapter is where it reaches arithmetic
+        # that now compares against a canonical premise. Read through the one
+        # rule rather than trusting the key, so a legacy row projects onto the
+        # instrument it names instead of beside it.
+        ticker = symbols.canonical_ticker(stored)
         if ticker in integrity:
             # Checked before shares and cost, because those are the values the
             # warning is about: a clamped replay leaves a perfectly well-formed
@@ -567,14 +656,20 @@ def rows_from_portfolio_basis(basis):
         if price is None or not math.isfinite(price) or price <= 0:
             excluded.append({"ticker": ticker, "reason": "unavailable_cost"})
             continue
-        rows.append({"ticker": ticker, "side": "buy", "qty": qty, "price": price,
+        # The row carries the *stored* spelling, so ``_canonical_rows`` below
+        # still sees two legacy spellings of one symbol and can refuse a book
+        # whose two records disagree, instead of being handed a collapse that
+        # already happened.
+        rows.append({"ticker": stored, "side": "buy", "qty": qty, "price": price,
                      "date": as_of, "market": holding.get("market", "US"),
                      "currency": holding.get("currency", "USD")})
     # A warning naming a ticker this book does not hold excludes nothing from
     # the denominator, and is recorded anyway -- see the docstring. Appended
     # after the holdings loop, then sorted, so the list stays one ticker-ordered
     # record whichever half an entry came from.
-    for ticker in sorted(set(integrity) - set(holdings)):
+    held_symbols = {symbols.canonical_ticker(stored) for stored in holdings
+                    if isinstance(stored, str)}
+    for ticker in sorted(set(integrity) - held_symbols):
         excluded.append({"ticker": ticker, "reason": integrity[ticker]})
     excluded.sort(key=lambda row: row["ticker"])
     if not rows:
@@ -586,7 +681,7 @@ def rows_from_portfolio_basis(basis):
         raise ConsequenceError(
             "canonical PortfolioBasis has no usable holding: "
             + ", ".join(f"{row['ticker']} ({row['reason']})" for row in excluded))
-    return rows, excluded
+    return _canonical_rows(rows), excluded
 
 
 # ─────────────────────────────── validation ───────────────────────────────
@@ -628,7 +723,12 @@ def validate_premise(premise, rows, last_px=None):
     is consumed here and converted to qty — it never appears on the
     normalized form, so nothing downstream of validation has to handle both
     shapes of the same fact.
+
+    `rows` reach the held-shares check through `_canonical_rows` (#803), the
+    same boundary every other entry point here uses, so "is this held" is asked
+    of one instrument identity on both sides rather than of two spellings.
     """
+    rows = _canonical_rows(rows)
     if not isinstance(premise, dict):
         raise ConsequenceError("premise must be an object")
     unknown = set(premise) - _FIELDS
@@ -739,7 +839,14 @@ def portfolio_state(rows, last_px=None, max_pos_override=None, cash_anchor=None,
     Historical rows keep exactly the flow dates they always had; only the one
     hypothetical row's date is ever overridden, and only for this purpose —
     `held`/`weights`/round-trips below still read `premise_row`'s real date.
+
+    Every ticker below is one canonical instrument identity (#803).
+    `_canonical_rows` returns the caller's own list untouched when it already
+    is one — which is what keeps `premise_row`'s `is not` identity above intact
+    on the path that matters, since `consequence()` canonicalizes the history
+    once before appending the (already canonical) hypothetical row.
     """
+    rows = _canonical_rows(rows)
     last_px = last_px or {}
     fx = dict(fx or {})
     fx.setdefault("USD", 1.0)
@@ -1013,6 +1120,12 @@ def consequence(rows, premise, last_px=None, max_pos_override=None, cash_anchor=
     `premise` back (see that function), so the default is resolved exactly
     once per `consider` call.
     """
+    # #803. Once, here, before either state is built: `before` and `after` must
+    # be the same book plus one row, and canonicalizing them independently would
+    # be two chances to disagree. Everything below — including `portfolio_state`'s
+    # own pass — then sees a list that is already canonical and is handed back
+    # unchanged, which is what preserves `premise_row`'s identity in `after`.
+    rows = _canonical_rows(rows)
     _refuse_premise_on_integrity(premise, excluded_holdings)
     normalized = validate_premise(premise, rows, last_px=last_px)
     premise_row = _premise_row(normalized)
@@ -1306,6 +1419,11 @@ def rule_collision(rows, premise, rules_report, last_px=None, max_pos_override=N
     against must say so rather than pass as the same claim.
     """
     tracking = rules_report[0]
+    # #803. `consequence` canonicalizes its own copy, but the two
+    # `trade_recap.positions` calls below read `rows` directly — the avgdown
+    # rule would otherwise be judged against a differently-spelled book than the
+    # concentration rules beside it.
+    rows = _canonical_rows(rows)
     result = consequence(rows, premise, last_px=last_px, max_pos_override=max_pos_override,
                          cash_anchor=cash_anchor, fx=fx, before_override=before_override,
                          excluded_holdings=excluded_holdings)

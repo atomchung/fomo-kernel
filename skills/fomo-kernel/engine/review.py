@@ -44,6 +44,7 @@ import revisit
 import session
 import snapshot_adapter
 import splits as split_policy   # #550 一份分割規則;別名讓 `splits=` 參數不遮蔽模組
+import symbols
 import thesis
 import trade_recap
 import verdicts
@@ -971,7 +972,7 @@ def _consider_market_universe(args, root):
             return None                                     # _consider_rows refuses, with its message
         for row in rows or ():
             currency = str(row.get("currency") or "USD").upper()
-            tickers[row["ticker"]] = currency
+            tickers[symbols.canonical_ticker(row["ticker"])] = currency
             currencies.add(currency)
             day = str(row["date"])
             origin = day if origin is None else min(origin, day)
@@ -982,7 +983,7 @@ def _consider_market_universe(args, root):
             return None
         anchor_row = ledger.latest_anchor(events or [], declared_only=True) or {}
         for position in anchor_row.get("positions") or ():
-            ticker = str(position.get("ticker") or "").strip()
+            ticker = symbols.canonical_ticker(position.get("ticker"))
             if ticker:
                 currency = str(position.get("currency") or "USD").upper()
                 tickers[ticker] = currency
@@ -992,7 +993,7 @@ def _consider_market_universe(args, root):
         for event in events or ():
             if event.get("type") != "trade":
                 continue
-            ticker = str(event.get("ticker") or "").strip()
+            ticker = symbols.canonical_ticker(event.get("ticker"))
             if ticker:
                 currency = str(event.get("currency") or "USD").upper()
                 tickers.setdefault(ticker, currency)
@@ -4122,10 +4123,10 @@ def _consider_recovery_tickers(rows, premise_ticker, _excluded_holdings=()):
     legacy union directly mutation-testable without creating a second recovery
     taxonomy or persistence surface.
     """
-    tickers = {str(row.get("ticker") or "").strip()
+    tickers = {symbols.canonical_ticker(row.get("ticker"))
                for row in rows or () if isinstance(row, dict)}
     if premise_ticker:
-        tickers.add(str(premise_ticker).strip())
+        tickers.add(symbols.canonical_ticker(premise_ticker))
     return {ticker for ticker in tickers if ticker}
 
 
@@ -6529,8 +6530,8 @@ def _anchor_position_row(position, anchor_date):
         raise ReviewError(f"the ledger's snapshot anchor has a non-numeric cost basis for {ticker}")
     if not math.isfinite(price) or price <= 0:
         raise ReviewError(f"the ledger's snapshot anchor has a non-positive cost basis for {ticker}")
-    return {"ticker": ticker.strip(), "side": "buy", "qty": shares, "price": price,
-            "date": anchor_date, "market": (position.get("market") or "US"),
+    return {"ticker": symbols.canonical_ticker(ticker), "side": "buy", "qty": shares,
+            "price": price, "date": anchor_date, "market": (position.get("market") or "US"),
             "currency": (position.get("currency") or "USD").upper()}
 
 
@@ -6551,8 +6552,8 @@ def _ledger_trade_row(event):
     if (not isinstance(ticker, str) or not ticker.strip() or side not in ("buy", "sell")
             or not math.isfinite(qty) or qty <= 0 or not math.isfinite(price) or price <= 0):
         return None
-    return {"ticker": ticker.strip(), "side": side, "qty": qty, "price": price, "date": date,
-            "market": (event.get("market") or "US"),
+    return {"ticker": symbols.canonical_ticker(ticker), "side": side, "qty": qty,
+            "price": price, "date": date, "market": (event.get("market") or "US"),
             "currency": (event.get("currency") or "USD").upper()}
 
 
@@ -6605,7 +6606,9 @@ def _rows_from_ledger(events):
         by_ticker = {}
         for position in anchor.get("positions") or []:
             if isinstance(position, dict) and isinstance(position.get("ticker"), str):
-                by_ticker[position["ticker"]] = position
+                # Canonical, like `derive_holdings`' own key since #803, so the
+                # mirrored overwrite stays a mirror.
+                by_ticker[symbols.canonical_ticker(position["ticker"])] = position
             else:
                 by_ticker[id(position)] = position   # malformed entry: let _anchor_position_row reject it
         for position in by_ticker.values():
@@ -6861,6 +6864,27 @@ def _consider_valuation_frame(basis, feed, *, agent_supplied):
     return frame.to_dict()
 
 
+def _ticker_collision_detail(events, splits):
+    """The ledger's own words for a two-spelling ticker collision, or ``None``.
+
+    Read back off ``ledger.derive_holdings``' integrity record rather than
+    re-detected here, so the refusal the user sees and the condition that
+    stopped the book are the same fact (#803). Called only after
+    ``query_current_book`` has already refused, so the second derivation costs
+    nothing on any path that answers, and it never raises: a book too corrupt
+    to derive at all is one this helper simply has no collision to report for,
+    and the general refusal below stands.
+    """
+    try:
+        integrity = ledger.derive_holdings(events, splits=splits).get("integrity") or ()
+    except Exception:                                       # noqa: BLE001
+        return None
+    named = [row.get("detail") for row in integrity
+             if isinstance(row, dict) and row.get("issue") == "bad_ticker_collision"
+             and isinstance(row.get("detail"), str)]
+    return "; ".join(named) if named else None
+
+
 def _consider_rows(args, root, feed=None, last_px=None, splits=None, *, agent_supplied=False):
     """Resolve the book ``consider`` reasons over: the supplied CSV paths, or
     a reconstruction from ``<root>/ledger.jsonl`` when none are given (issue
@@ -6947,6 +6971,19 @@ def _consider_rows(args, root, feed=None, last_px=None, splits=None, *, agent_su
             reference_as_of=dt.date.today().isoformat(),
             splits=splits)
         if basis is None:
+            # #803. `query_current_book` returns None for every unknowable
+            # book, which is the right shape for corruption nobody can act on
+            # — but a ticker collision *is* actionable, and a refusal the user
+            # cannot act on is indistinguishable from a broken product. Named
+            # here, on the refusal path only, so failing closed still says
+            # which two records to reconcile.
+            collision = _ticker_collision_detail(events, splits)
+            if collision:
+                raise ReviewError(
+                    f"{ledger_path} records {collision}. Those are one instrument to this "
+                    "engine, and which of the two declarations is the position is not "
+                    "derivable from the record — so no consequence is computed rather than "
+                    "one of them silently winning. Record it one way, then ask again.")
             raise ReviewError(
                 f"no trustworthy canonical current book in {ledger_path}; pass CSV paths for the "
                 "separate historical transaction view")
@@ -7233,15 +7270,16 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
 
     Eligibility — all six, each of which drops a row rather than repairing it:
 
-    1. the same canonical ticker. Both sides of the comparison came out of
-       ``consequence._ticker``, so exact string equality is exactly as canonical
-       as that function is, and re-normalizing here would be a second reader of
-       one fact (docs/development-guide.md section 7). Note what that buys and
-       what it does not: ``_ticker`` strips but does not case-fold, so a premise
-       written ``nvda`` is a different instrument to this engine everywhere, not
-       only here — it already builds a second position beside the held ``NVDA``
-       and computes weights over both. This reader inherits that, deliberately;
-       case-folding here alone would make recall disagree with the arithmetic.
+    1. the same canonical ticker. The current side came out of
+       ``consequence._ticker``, which since #803 canonicalizes case as well as
+       whitespace through ``symbols.canonical_ticker``, so a premise written
+       ``nvda`` recalls the user's earlier consultation of ``NVDA`` — the same
+       identity the arithmetic beside it now uses, never a second case rule
+       owned by recall. The stored side is read through that *same* function
+       rather than trusted, because rows written before #803 froze whatever
+       case the user typed and this repository does not rewrite append-only
+       history to make a reader's life easier: the bytes on disk stay as they
+       were, and the projection below restates the canonical identity.
     2. a different ``evaluation_id`` than the current one. An exact retry —
        identical premise, book, day and context — converges on the id already on
        disk, so without this the answer would recall itself.
@@ -7307,7 +7345,7 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
         # dropped for a field the projection does not carry.
         created = _canonical_iso_date(row.get("created")) or ""
         premise = row.get("premise")
-        if not isinstance(premise, dict) or premise.get("ticker") != ticker:
+        if not isinstance(premise, dict) or symbols.canonical_ticker(premise.get("ticker")) != ticker:
             continue
         prior_side = premise.get("side")
         if prior_side not in consequence.SIDES:
@@ -7350,7 +7388,10 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
         candidates["same" if prior_side == side else "opposite"].append((
             (decided_on, created, evaluation_id),
             {"evaluation_id": evaluation_id,
-             "ticker": premise["ticker"],
+             # The canonical identity, not the stored spelling: this field is
+             # the instrument the recalled decision was about, and a pre-#803
+             # row that froze `nvda` is still a decision about `NVDA`.
+             "ticker": ticker,
              "side": prior_side,
              "reason": reason,
              "why_now": why_now,
@@ -7743,7 +7784,7 @@ def cmd_consider(args):
         # two are indistinguishable, which is the point.
         feed, market_bundle = _resolve_consider_prices(
             args, root,
-            premise_ticker=str(premise_payload.get("ticker") or "").strip() or None,
+            premise_ticker=symbols.canonical_ticker(premise_payload.get("ticker")),
             premise_currency=str(premise_payload.get("currency") or "").strip() or None)
     if feed is not None:
         last_px = {ticker: row["close"] for ticker, row in feed["prices"].items()}
@@ -7809,7 +7850,11 @@ def cmd_consider(args):
     # Exclusions travel through disclosures and provenance, never through the
     # price manifest: neither an integrity orphan nor an unusable quantity
     # becomes repairable because a close was fetched for it.
-    premise_ticker = str(premise_payload.get("ticker") or "").strip()
+    # Canonical, like every other identity this answer compares (#803): the
+    # price universe and the recovery list are matched against the book's own
+    # keys, so an agent that spelled the premise in lower case must not request
+    # a quote for a second instrument beside the one it is asking about.
+    premise_ticker = symbols.canonical_ticker(premise_payload.get("ticker")) or ""
     priced_universe = None
     price_status = None
     if canonical_basis is not None:
@@ -7861,7 +7906,8 @@ def cmd_consider(args):
         # of current holdings, so scope the same recovery helper to that result
         # rather than every historical row in the supplied files.
         current_tickers = set(result["before"].get("held") or {})
-        current_rows = [row for row in rows if row.get("ticker") in current_tickers]
+        current_rows = [row for row in rows
+                        if symbols.canonical_ticker(row.get("ticker")) in current_tickers]
         priced_universe = _consider_recovery_tickers(
             current_rows, premise_ticker, excluded_holdings)
         price_status = _consider_price_feed_status(

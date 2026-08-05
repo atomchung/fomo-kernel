@@ -82,6 +82,8 @@ real CLI, #583).
 import bisect
 import datetime as dt
 
+import symbols
+
 __all__ = [
     "SplitDataError",
     "EXECUTION_BAND",
@@ -186,7 +188,9 @@ def normalize(mapping):
         raise SplitDataError("split events must be a {ticker: [[date, ratio], ...]} mapping")
     out = {}
     for ticker, rows in mapping.items():
-        name = str(ticker or "").strip()
+        # Canonical (#803): this map is looked up by the book's own canonical
+        # key, so a map written `nvda` must rebase the `NVDA` it describes.
+        name = symbols.canonical_ticker(ticker)
         if not name:
             raise SplitDataError("split events carry an empty ticker")
         events = normalize_events(rows, name)

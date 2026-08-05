@@ -33,6 +33,8 @@ import os
 import re
 import threading
 
+import symbols
+
 import instruments
 import ledger
 import trade_recap
@@ -94,9 +96,15 @@ def _product(left, right, label):
 
 
 def _ticker(value, index):
+    """This position's canonical identity, or a named refusal.
+
+    The case rule is ``symbols.canonical_ticker``'s since #803 rather than this
+    module's own — behaviour here is unchanged, the point is that there is now
+    exactly one definition of it for the ledger and the premise to share.
+    ``TICKER_RE`` still owns what this envelope admits."""
     if not isinstance(value, str):
         raise SnapshotError(f"positions[{index}].ticker must be a string")
-    symbol = value.strip().upper()
+    symbol = symbols.canonical_ticker(value) or ""
     if not TICKER_RE.fullmatch(symbol):
         raise SnapshotError(f"positions[{index}].ticker is not a normalized symbol")
     return symbol

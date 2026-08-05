@@ -27,6 +27,8 @@ import json
 import os
 from collections import defaultdict
 
+import symbols
+
 
 ALLOCATION_KINDS = {
     "broad_market_etf",
@@ -90,7 +92,7 @@ def load_map(path):
         for key in ("name", "expense_ratio", "tracking_error", "source", "as_of"):
             if key in meta:
                 clean[key] = meta[key]
-        _MAP[ticker.strip().upper()] = clean
+        _MAP[symbols.canonical_ticker(ticker)] = clean
         result["loaded"] += 1
     _LOAD_RESULT = result
     return result
@@ -103,7 +105,7 @@ def load_from_env():
 
 def info(ticker):
     """Return conservative metadata.  Unknown tickers never receive exemption."""
-    symbol = str(ticker or "").strip().upper()
+    symbol = symbols.canonical_ticker(ticker) or ""
     meta = dict(_MAP.get(symbol) or {"kind": "equity"})
     meta["ticker"] = symbol
     meta["is_etf"] = meta["kind"] in ETF_KINDS

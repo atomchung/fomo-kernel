@@ -61,6 +61,7 @@ import os
 import re
 
 import splits as split_policy
+import symbols
 
 # The envelope's own version. Bump only on a breaking shape change; the parser
 # accepts a payload without the field so a hand-written envelope stays valid.
@@ -146,7 +147,13 @@ def _text(value, where, required=True):
 
 
 def _ticker(value, where):
-    symbol = _text(value, where)
+    """Canonical (#803), then admitted by this envelope's own pattern.
+
+    A supplied quote keys the map the book is priced from, so a close published
+    for ``nvda`` has to reach the ``NVDA`` the holdings and the premise both
+    name — otherwise the identity fix would leave a canonical book unpriced by
+    its own price envelope."""
+    symbol = symbols.canonical_ticker(_text(value, where))
     if not _TICKER_RE.match(symbol):
         raise PriceFeedError(f"{where} is not a usable engine symbol: {value!r}")
     return symbol
