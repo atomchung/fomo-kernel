@@ -9,7 +9,6 @@ fomo-kernel · trade-recap engine v0.2
 """
 import csv, math, os, re, sys, statistics, datetime as dt
 from collections import Counter, defaultdict, deque
-import cycle_identity
 import instruments as instrument_policy
 import symbols
 import market_context as market_context_engine
@@ -233,11 +232,6 @@ def load(paths):
                 # 多市場欄位(#51/#129 PR-2a):可選 Market/Currency 欄,缺 = 美股 USD(向後相容)。
                 # 原幣記帳鐵律(prd-ledger §2):price 永遠是原幣,換算只發生在聚合視圖(usd_view)與呈現層。
                 rows.append(dict(ticker=canon,
-                                 # 這份對帳單自己存的拼法。`cycle_id` 由它鑄造
-                                 # (見 `stored_spellings`):cycle_id 是 theses.jsonl
-                                 # 已經握有外鍵的耐久識別碼,把舊帳本讀對不該順手把
-                                 # 那些 id 重鑄一次。ledger.derive_holdings 同一招。
-                                 ticker_as_loaded=sym,
                                  side=act.lower(), qty=qty, price=px, date=d,
                                  market=(r.get("Market") or "US").strip() or "US",
                                  currency=(r.get("Currency") or "USD").strip().upper() or "USD"))
@@ -603,66 +597,41 @@ def positions(rows):
     held = {t: (sh, c) for t, (sh, c) in pos.items() if sh > 1e-6}
     return held, avg_down
 
-def stored_spellings(rows):
-    """canonical identity → 這份來源最早存下來的拼法(#803/#805)。
-
-    帳本從 `load` 以下一律用 canonical 當鍵,所以舊的 `aaa` 成交會落在它指名的 `AAA`
-    上而不是旁邊多開一檔。已經是 canonical 的來源(絕大多數)兩個拼法相等。
-
-    #807 起這**不再**是鑄 cycle_id 的規則:一個 cycle 的身分由開它的那筆成交決定
-    (`_cycle_walk` / `cycle_identity`),而不是整段歷史裡最早出現的那個拼法——後者
-    在清倉後改用另一種拼法重建時,描述的是一個不存在的 cycle。這個函式只剩一個讀者:
-    連建倉日都算不出來的 ticker(CSV 缺期初持倉)。那種 ticker 沒有 cycle 可以指認,
-    所以它保留 #807 之前的答案,原封不動。
-    """
-    out = {}
-    for r in rows:
-        t = r.get("ticker")
-        if t:
-            out.setdefault(t, r.get("ticker_as_loaded") or t)
-    return out
-
-
 def _cycle_walk(rows):
     """One pass over the fills, producing everything a cycle reader needs (#807).
 
-    每個當前持倉 ticker 的 position cycle 起始日、序號(第幾次建倉)、加碼次數,以及這個
-    cycle 是用哪個拼法開的。與 positions() 同累加邏輯(sell 只在有倉時減 → 不跌負),
-    所以 cycle 判定跟持倉一致(雙審 gemini#1:修負數誤判 + codex#4:單一 ledger)。
-    序號讓同 ticker 清倉後重建不撞 id(雙審 codex#3)。CSV 缺期初持倉 → 該 ticker 不在
-    `start` 裡,呼叫端標 #unknown。
+    每個當前持倉 ticker 的 position cycle 起始日、序號(第幾次建倉)與加碼次數。
+    與 positions() 同累加邏輯(sell 只在有倉時減 → 不跌負),所以 cycle 判定跟持倉一致
+    (雙審 gemini#1:修負數誤判 + codex#4:單一 ledger)。序號讓同 ticker 清倉後重建不撞
+    id(雙審 codex#3)。CSV 缺期初持倉 → 該 ticker 不在 `start` 裡,呼叫端標 #unknown。
 
-    帳本從 `load` 以下一律用 canonical 當鍵,所以舊的 `aaa` 成交會落在它指名的 `AAA`
-    上而不是旁邊多開一檔;而 `cycle_id` 仍用**開這個 cycle 的那筆成交存下來的**拼法與
-    序號鑄造。規則本身住在 `cycle_identity`,與 `ledger.derive_holdings`、
-    `revisit.detect_exits` 同一份——三份各自實作正是 #805 只修對一個 cycle 的原因。
+    #814:序號按 **canonical** ticker 計,拼法也一律 canonical。這條車道與帳本車道
+    (`ledger.derive_holdings`)因此對同一個 cycle 鑄出同一個 id——先前 CSV 這側用
+    存下來的拼法、帳本那側寫入時就已 canonical,於是賣掉的部位其出場敘事歸在
+    `AAA#…`、thesis 卻掛在 `aaa#…`,永遠不會被結案。
 
     兩個讀者(`current_cycles` / `current_cycle_add_cursors`)先前各走一次幾乎相同的
     迴圈;合併成一次是為了讓它們不可能對「這是第幾個 cycle」給出不同答案。
     """
-    identities = cycle_identity.CycleIdentities()
     sh = defaultdict(float)
+    seq = defaultdict(int)
     start, add_count = {}, defaultdict(int)
     for r in rows:
         t = r["ticker"]
-        spelling = r.get("ticker_as_loaded") or t
         if r["side"] == "buy":
             if sh[t] <= 1e-6:                        # 從 0/清倉後 建倉 = 新 cycle（閾值對齊 positions held）
-                identities.opened(t, spelling)
+                seq[t] += 1
                 start[t] = r["date"].isoformat()
                 add_count[t] = 0
             else:
-                identities.filled(t, spelling)
                 add_count[t] += 1
             sh[t] += r["qty"]
         elif r["side"] == "sell" and sh[t] > 1e-6:  # 明確 sell（防 deposit 等誤觸，雙審）；只在有倉時減
-            identities.filled(t, spelling)
             sh[t] = max(0.0, sh[t] - r["qty"])      # 截斷防跌負（oversell 賣超持倉）→ 否則後續 buy 被負數污染（雙審 blocker）
             if sh[t] <= 1e-6:                       # 清倉 → cycle 結束
                 start.pop(t, None)
                 add_count.pop(t, None)
-                identities.closed(t)
-    return identities, start, add_count
+    return seq, start, add_count
 
 
 def current_cycles(rows):
@@ -673,8 +642,8 @@ def current_cycles(rows):
     拼法相等,答案與過去 byte-identical。組 cycle_id 的完整字串請讀
     `current_cycle_add_cursors`,不要在呼叫端自己拼一次。
     """
-    identities, start, _add_count = _cycle_walk(rows)
-    return {t: {"start": start[t], "seq": identities.sequence(t)} for t in start}
+    seq, start, _add_count = _cycle_walk(rows)
+    return {t: {"start": start[t], "seq": seq[t]} for t in start}
 
 
 def current_cycle_add_cursors(rows):
@@ -684,11 +653,10 @@ def current_cycle_add_cursors(rows):
     not depend on the portfolio-wide averaging-down count, so an add in one
     ticker cannot cause another ticker's thesis question to reappear.
     """
-    identities, start, add_count = _cycle_walk(rows)
+    seq, start, add_count = _cycle_walk(rows)
     out = {}
     for ticker in sorted(start):
-        cycle_id = (f"{identities.spelling(ticker) or ticker}"
-                    f"#{start[ticker]}#{identities.sequence(ticker)}")
+        cycle_id = f"{ticker}#{start[ticker]}#{seq[ticker]}"
         count = add_count[ticker]
         out[ticker] = {
             "cycle_id": cycle_id,
@@ -2594,7 +2562,6 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 帳戶級 cash_weight 改存頂層 cash 欄位（#171 PR-1：有現金錨點才可信，取代原「沒現金算不準」）。
     cyc = current_cycles(rows)                              # 雙審修：與 positions() 同邏輯（不跌負）+ cycle 序號
     add_cursors = current_cycle_add_cursors(rows)
-    stored = stored_spellings(rows)                         # #807:只剩下面 #unknown 那條退路在用
     holdings = {t: {"shares": round(sh, 4), "cost": round(c, 2),
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
                     # #664: the position's own native currency (same reader as
@@ -2608,7 +2575,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                     # #807:三段式那條直接讀 add_cursors 已經組好的字串,不在這裡重組一次——
                     # 「同一個 cycle 兩個地方各自鑄一次 id」正是這次要關掉的形狀。
                     "cycle_id": (add_cursors[t]["cycle_id"] if t in add_cursors
-                                 else f"{stored.get(t, t)}#unknown"),
+                                 else f"{t}#unknown"),
                     "add_count": (add_cursors.get(t) or {}).get("add_count", 0),
                     "decision_cursor": (add_cursors.get(t) or {}).get("decision_cursor")}
                 for t, (sh, c) in held.items()}
