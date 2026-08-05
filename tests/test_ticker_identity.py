@@ -44,9 +44,12 @@ import offline_posture  # noqa: E402
 offline_posture.apply()
 import consequence as consequence_engine  # noqa: E402
 import ledger as ledger_engine  # noqa: E402
+import market_data as market_data_engine  # noqa: E402
 import portfolio_basis as portfolio_basis_engine  # noqa: E402
 import price_feed as price_feed_engine  # noqa: E402
 import review as review_engine  # noqa: E402
+import revisit as revisit_engine  # noqa: E402
+import thesis as thesis_engine  # noqa: E402
 import splits as split_engine  # noqa: E402
 import trade_recap as tr_engine  # noqa: E402
 import symbols  # noqa: E402
@@ -707,12 +710,13 @@ def test_an_executed_trade_settles_the_evaluation_that_contemplated_it():
 # These two cases assert that invariant instead of another pair, so a *new*
 # entry point that forgets is caught by a test nobody has to remember to write.
 
-_ENTRY_POINTS_UNDER_THE_RULE = """Every supported way a ticker enters the engine.
-Adding a route without adding it here is the failure this list cannot catch on
-its own — which is exactly why the end-to-end case below exists beside it."""
-
-
 def test_every_supported_entry_point_emits_a_canonical_ticker():
+    """Every supported way a ticker enters the engine, checked one by one.
+
+    A hand-maintained list, and honest about it: a route added without being
+    added here is the one failure this case cannot catch. That is precisely why
+    the end-to-end case below exists beside it — it needs no list.
+    """
     import csv
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "trades.csv")
@@ -750,13 +754,18 @@ def test_no_non_canonical_ticker_survives_into_a_delivered_answer():
     string that is not canonical. A new producer that leaks a raw spelling into
     an answer fails this without anyone having listed it."""
     import csv
-    import re as _re
-    shaped = _re.compile(r"^[A-Za-z][A-Za-z0-9.\-]{1,9}$")
-    known_non_tickers = {"buy", "sell", "acted", "declined", "modified", "considered",
-                         "cost", "priced", "unpriced", "en", "zh-TW", "zh-CN", "USD",
-                         "US", "TW", "error", "open"}
+    # Every ticker the book is written with, and every one of them lower-case,
+    # so the scan is over the whole book rather than one symbol somebody
+    # remembered to name. A leak in the *second* holding is the thing a
+    # hard-coded symbol cannot see.
+    book = [("aaa", 100, 100.0), ("bbb", 100, 50.0), ("ccc.tw", 100, 30.0)]
+    canonical_book = {symbols.canonical_ticker(sym) for sym, _, _ in book}
+    assert all(not symbols.is_canonical(sym) for sym, _, _ in book), (
+        "the fixture must be written non-canonically or it proves nothing")
 
     def offenders(node):
+        """Any spelling of any book ticker that is not that ticker's canonical
+        identity — at any key, any value, any depth."""
         found = []
         if isinstance(node, dict):
             for key, value in node.items():
@@ -765,27 +774,257 @@ def test_no_non_canonical_ticker_survives_into_a_delivered_answer():
             for item in node:
                 found += offenders(item)
         elif isinstance(node, str):
-            if (shaped.match(node) and node not in known_non_tickers
-                    and node.upper() == "AAA" and not symbols.is_canonical(node)):
+            if (symbols.canonical_ticker(node) in canonical_book
+                    and not symbols.is_canonical(node)):
                 found.append(node)
         return found
 
+    # Both delivered routes, because one of them cannot see this defect at all.
+    # `consider` re-derives the book through `consequence`, which canonicalizes
+    # again on its own -- so `trade_recap.load` can stop canonicalizing
+    # entirely and the `consider` payload stays clean. Verified by mutation:
+    # reverting the boundary leaves this case green on `consider` alone. It is
+    # `prepare` that hands the engine's own spelling to the user.
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "trades.csv")
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
-            w.writerow(["aaa", 100, 100.0, "BUY", "2026-01-05", "Trade"])
-            w.writerow(["bbb", 100, 50.0, "BUY", "2026-01-05", "Trade"])
-        payload = _ok(_run("consider", path, "--root", tmp, "--premise",
-                           json.dumps({"ticker": "aaa", "side": "buy",
-                                       "price": 120.0, "qty": 10})))
-        leaked = offenders(payload)
-        assert not leaked, (
-            f"a raw spelling reached the delivered answer: {sorted(set(leaked))}")
-        # And the proof this case can fail at all: the canonical form IS present,
-        # so the search is looking at a payload that really carries the ticker.
-        assert "AAA" in json.dumps(payload)
+            for sym, qty, px in book:
+                w.writerow([sym, qty, px, "BUY", "2026-01-05", "Trade"])
+        delivered = {
+            "consider": _ok(_run("consider", path, "--root", tmp, "--premise",
+                                 json.dumps({"ticker": "aaa", "side": "buy",
+                                             "price": 120.0, "qty": 10}))),
+            "prepare": _ok(_run("prepare", path, "--root", tmp,
+                                "--route", "weekly_review")),
+        }
+        for route, payload in sorted(delivered.items()):
+            leaked = offenders(payload)
+            assert not leaked, (
+                f"{route} put a raw spelling in the delivered answer: {sorted(set(leaked))}")
+            # And the proof the scan can fail at all: the book's tickers really
+            # are in this payload, canonically, so it was looking at something.
+            serialized = json.dumps(payload)
+            missing = sorted(t for t in canonical_book if t not in serialized)
+            assert not missing, f"{route}'s payload never carried {missing}; the scan proved nothing"
+        # The one deliberate exception, stated rather than left to be noticed:
+        # a `cycle_id` embeds the spelling its book was recorded under and is
+        # never re-minted (section I). It is not a ticker, so the scan above
+        # does not flag it -- but a reader comparing the two rules should see
+        # them named together.
+        assert any("aaa#" in json.dumps(payload) for payload in delivered.values()), (
+            "no durable id carried a stored spelling; section I's carve-out is untested here")
+
+
+# ── I. the identifiers history is already bound by ──
+#
+# "Canonical everywhere inside" has exactly one carve-out, and it is not a
+# weakening of the rule but the other half of it: a durable identifier minted
+# *before* the rule may not be re-minted by it. `cycle_id` embeds the ticker's
+# spelling, and `theses.jsonl` holds foreign keys to that string —
+# `thesis.stable_thesis_id` is its digest — so canonicalizing a legacy book's
+# rows without preserving the spelling files this week's position under an id
+# no thesis was ever written against. #803's acceptance says it in as many
+# words: legacy rows stay readable "without rewriting stored bytes or changing
+# existing durable IDs". `ledger.derive_holdings` already carries this carve-out
+# (`stored_as`); these cases are the CSV route reaching the same answer.
+
+def _write_csv(path, rows):
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Symbol", "Quantity", "Price", "Action", "TradeDate", "RecordType"])
+        for row in rows:
+            w.writerow(row)
+    return path
+
+
+def test_a_legacy_lower_case_book_keeps_the_cycle_id_its_theses_are_bound_to():
+    """Driven through `prepare`, because that is the route the defect lives on
+    and no search for `trade_recap.load(` can see it: `review._run_engine`
+    starts `trade_recap.py` as a *subprocess*. Canonicalizing the row without
+    preserving the spelling moved this position's `cycle_id` from
+    `aaa#2026-01-05#1` to `AAA#2026-01-05#1` — a brand-new identifier for a
+    cycle whose thesis is still filed under the old one, and nothing anywhere
+    says so."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_csv(os.path.join(tmp, "legacy.csv"),
+                          [["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                           ["BBB", 50, 20.0, "BUY", "2026-02-10", "Trade"]])
+        payload = _ok(_run("prepare", path, "--root", tmp, "--route", "weekly_review"))
+        positions = (payload.get("review_plan") or {}).get("missing_thesis_positions") or []
+        by_ticker = {p.get("ticker"): p for p in positions if isinstance(p, dict)}
+        assert "AAA" in by_ticker, (
+            f"the position is not keyed by its canonical identity: {sorted(by_ticker)}")
+        assert by_ticker["AAA"]["cycle_id"] == "aaa#2026-01-05#1", (
+            "the cycle_id theses.jsonl holds a foreign key to was re-minted: "
+            f"{by_ticker['AAA']['cycle_id']!r}")
+        # The already-canonical holding beside it is the control: its two
+        # spellings are equal, so nothing about it may move either.
+        assert by_ticker["BBB"]["cycle_id"] == "BBB#2026-02-10#1"
+
+
+def test_a_reimport_whose_broker_changed_the_export_case_does_not_double_the_position():
+    """The dedupe key is the instrument's identity, not the export's spelling.
+    Keyed on the raw symbol, a weekly re-import whose broker started emitting
+    upper case stopped recognising its own earlier rows and appended them a
+    second time — 200 shares where the user holds 100, in append-only state."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _write_csv(os.path.join(tmp, "week1.csv"),
+                           [["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"]])
+        second = _write_csv(os.path.join(tmp, "week2.csv"),
+                            [["AAA", 100, 10.0, "BUY", "2026-01-05", "Trade"],
+                             ["AAA", 50, 12.0, "BUY", "2026-02-10", "Trade"]])
+        rows = tr_engine.load([first, second])
+        held = {}
+        for row in rows:
+            held[row["ticker"]] = held.get(row["ticker"], 0.0) + row["qty"]
+        assert held == {"AAA": 150.0}, (
+            f"the re-imported fill was counted twice: {held}")
+        assert tr_engine._LOAD_STATS["skip_dup"] == 1, (
+            "the overlapping row was not recognised as one already loaded: "
+            f"{tr_engine._LOAD_STATS}")
+        # ...and the cycle it opened still answers to the id it was opened with.
+        cursors = tr_engine.current_cycle_add_cursors(rows)
+        assert cursors["AAA"]["cycle_id"] == "aaa#2026-01-05#1", cursors
+
+
+def test_two_spellings_in_one_book_pick_the_stored_id_deterministically():
+    """`load` sorts by date, so "the spelling this book stored" is the earliest
+    fill's — not whichever file happened to be passed first. Without that, the
+    same two CSVs in the other order would mint two different `cycle_id`s for
+    one position, and a thesis would relink or not depending on argument order."""
+    with tempfile.TemporaryDirectory() as tmp:
+        early = _write_csv(os.path.join(tmp, "early.csv"),
+                           [["aaa", 100, 10.0, "BUY", "2026-01-05", "Trade"]])
+        late = _write_csv(os.path.join(tmp, "late.csv"),
+                          [["AAA", 40, 11.0, "BUY", "2026-03-02", "Trade"]])
+        forwards = tr_engine.current_cycle_add_cursors(tr_engine.load([early, late]))
+        backwards = tr_engine.current_cycle_add_cursors(tr_engine.load([late, early]))
+        assert forwards["AAA"]["cycle_id"] == backwards["AAA"]["cycle_id"] == "aaa#2026-01-05#1", (
+            f"argument order changed the durable id: {forwards} vs {backwards}")
+
+
+# ── J. every lane that uses a ticker as a key ──
+#
+# The failure this section answers is not "a comparison was missed" but the
+# reason one keeps being missed: the previous rounds tested the lane that had
+# just been edited. A ticker is a join key in more lanes than the one a change
+# touches — the driver map, the market-data request, the split filter, the
+# thesis relink, the exit queue — and each is a producer and a consumer that
+# have to agree. Each case below drives one of those lanes and nothing else.
+
+def test_a_supplied_driver_map_classifies_the_position_it_names():
+    """The map is authored per-review against uncommon holdings; keyed raw
+    while every `driver()` lookup arrives canonical, an entry the author wrote
+    is silently invisible and the holding renders 未分類 — the one outcome the
+    map exists to prevent, reported as if no entry had been supplied."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "driver_map.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"bbb": ["Test theme", 1]}, f)
+        assert tr_engine.load_driver_map(path) == 1
+        try:
+            assert tr_engine.driver("BBB") == ("Test theme", 1), (
+                f"a supplied classification did not reach the position: {tr_engine.driver('BBB')}")
+        finally:
+            # Both spellings: the module map is process-global, and a failure
+            # here must not leave a stray key for the next case to trip over.
+            tr_engine._DRIVER_MAP.pop("BBB", None)
+            tr_engine._DRIVER_MAP.pop("bbb", None)
+
+
+def test_a_market_data_request_is_the_same_key_the_bundle_answers_with():
+    """`coverage()` and `to_price_feed_envelope` test the request against the
+    parsed feed's own keys, and the feed is canonical. A request that only
+    strips reports an instrument that *was* retrieved as `missing` — and asks
+    the same universe twice under two cache keys."""
+    request = market_data_engine.build_request(
+        instruments=["aaa", "BBB"], currencies=["usd", "twd"],
+        window_start="2026-01-01")
+    assert request["instruments"] == ["AAA", "BBB"], request["instruments"]
+    # The currency side has folded case since it was written; this is the
+    # asymmetry that made the instrument side wrong.
+    assert request["currencies"] == ["TWD"], request["currencies"]
+
+
+def test_a_split_survives_the_filter_that_selects_it():
+    """`to_frame` was fixed for exactly this and `splits_map` — the same filter
+    over the same feed, one function below — was not. A dropped split means the
+    share count never rebases across it."""
+    feed = price_feed_engine.parse({
+        "as_of": "2026-01-06", "source": "test",
+        "prices": [{"ticker": "aaa", "date": "2026-01-06", "close": 10.0,
+                    "currency": "USD",
+                    "splits": [{"date": "2026-01-05", "ratio": 10.0}]}]})
+    assert sorted(feed["prices"]) == ["AAA"], "the parsed feed is keyed canonically"
+    assert price_feed_engine.splits_map(feed, tickers=["aaa"]), (
+        "the 10:1 split was dropped by the filter that asked for it")
+    assert (price_feed_engine.splits_map(feed, tickers=["aaa"])
+            == price_feed_engine.splits_map(feed, tickers=["AAA"])), (
+        "the filter answers differently depending on how the caller spelled it")
+
+
+def test_a_legacy_thesis_relinks_onto_the_position_it_is_about():
+    """`theses.jsonl` froze the spelling of the day; `positions` is the
+    canonical book. Joined raw, the thesis is invisible to its own position:
+    the relink never happens and the user is asked to restate a thesis they
+    already wrote."""
+    def relinks_for(stored_ticker):
+        prior = {
+            "cycle_id": f"{stored_ticker}#unknown", "ticker": stored_ticker,
+            "thesis_id": "thesis-legacy000000001", "event_id": "ev-legacy000000001",
+            "origin": "snapshot", "maturity": "inferred",
+            "source_confidence": "candidate", "status": "open",
+            "position_status": "open",
+            "cycle_provenance": {"kind": "snapshot_inference",
+                                 "snapshot_as_of": "2026-02-01"},
+        }
+        positions = {"AAA": {"cycle_id": "aaa#2026-01-05#1",
+                             "cycle_start": "2026-01-05"}}
+        return thesis_engine.build_snapshot_cycle_relinks(
+            [prior], positions, "sess-000000000001", "2026-03-01")
+
+    assert relinks_for("AAA"), (
+        "the canonical control produced no relink; the case proves nothing")
+    assert relinks_for("aaa"), (
+        "a thesis stored under the older spelling never found its position")
+
+
+def test_an_exit_is_detected_when_the_sale_is_spelled_differently_than_the_buy():
+    """The exit queue reads the same ledger events the book does. Keyed raw
+    while the book is canonical, the sale finds no shares to reduce and the
+    exit disappears: the user closed a position and the 30/60/90 review never
+    asks about it. The `cycle_id` still carries the stored spelling, because
+    `revisit._revisit_id` embeds it and an already-queued exit has to keep
+    deduping against itself."""
+    events = [
+        {"type": "trade", "date": "2026-01-05", "ticker": "aaa",
+         "action": "buy", "qty": 100, "price": 10.0},
+        {"type": "trade", "date": "2026-03-01", "ticker": "AAA",
+         "action": "sell", "qty": 100, "price": 15.0},
+    ]
+    assert not (ledger_engine.derive_holdings(events).get("holdings") or {}), (
+        "the book must read this as fully exited, or the case is about something else")
+    exits = revisit_engine.detect_exits(events)
+    assert len(exits) == 1, f"the exit vanished from the queue: {exits}"
+    assert exits[0]["ticker"] == "AAA" and exits[0]["kind"] == "full"
+    assert exits[0]["cycle_id"] == "aaa#2026-01-05#1", (
+        f"the queued exit's durable id was re-minted: {exits[0]['cycle_id']}")
+
+
+def test_a_queued_exit_finds_the_quote_the_review_is_already_holding():
+    """The storage-reader half of the same lane: rows already in
+    `revisit.jsonl` carry the spelling of the day, while the price map is
+    canonical. Read raw, the comparison reports the price as missing and the
+    card asks the user to supply something the engine has."""
+    item = {"ticker": "aaa", "exit_price": 15.0, "exit_date": "2026-03-01",
+            "shares_sold": 100.0}
+    out = revisit_engine.compare(item, {"AAA": 18.0})
+    assert out["needs_prices"] == [], (
+        f"a quote the review already holds was reported missing: {out}")
+    assert out["orig_ret"] is not None, out
 
 
 def _tests():

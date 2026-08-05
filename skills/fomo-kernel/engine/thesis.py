@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 
+import symbols  # #803 一條 ticker identity 規則,與帳本/引擎共用
+
 
 ADD_DECISIONS = {
     "planned_tranche",
@@ -272,12 +274,18 @@ def build_snapshot_cycle_relinks(states, active_positions, session_id, review_da
     states = [row for row in (states or []) if isinstance(row, dict)]
     positions = active_positions or {}
     state_cycles = {row.get("cycle_id") for row in states if row.get("cycle_id")}
+    # #803, the storage-reader half: these rows came off `theses.jsonl` and
+    # froze whatever spelling the book used when they were written, while
+    # `positions` is the canonical current book. Keyed raw, a legacy thesis is
+    # invisible to the position it is about — the relink never happens and the
+    # user is asked to restate a thesis they already gave.
     open_by_ticker = {}
     for row in states:
         if (not row.get("ticker") or row.get("position_status") == "closed"
                 or row.get("final_outcome")):
             continue
-        open_by_ticker.setdefault(row["ticker"], []).append(row)
+        key = symbols.canonical_ticker(row["ticker"]) or row["ticker"]
+        open_by_ticker.setdefault(key, []).append(row)
 
     review_day = _iso_date(review_date)
     relinks = []
@@ -287,7 +295,8 @@ def build_snapshot_cycle_relinks(states, active_positions, session_id, review_da
         target_cycle = position.get("cycle_id")
         if not target_cycle or target_cycle in state_cycles:
             continue
-        open_states = open_by_ticker.get(ticker) or []
+        open_states = open_by_ticker.get(
+            symbols.canonical_ticker(ticker) or ticker) or []
         if len(open_states) != 1:
             continue
         prior = open_states[0]

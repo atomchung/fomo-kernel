@@ -47,6 +47,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ledger as lg  # noqa: E402  # 同目錄,共用 load/append 與錨點語意
 import splits as split_policy  # noqa: E402  # #550 分割規則單一實作(純標準庫,不連網)
+import symbols  # noqa: E402  # #803 一條 ticker identity 規則,與帳本共用
 
 DEFAULT_QUEUE = os.path.expanduser("~/.trade-coach/revisit.jsonl")
 REDUCE_TH = 0.5            # 單筆賣出 ≥ 賣前持倉 50% = 大減倉,也排入(#32)
@@ -102,15 +103,27 @@ def detect_exits(events, splits=None):
     # zero shares and cannot move anything.
     basis_at = {}
     anchor_date = None
+    # #803/#805: canonical identity → the spelling this ledger stored for it,
+    # the same pair `ledger.derive_holdings` keeps. This lane reads the very
+    # same events, so keying it by the raw spelling while the book is canonical
+    # is not a cosmetic disagreement: a position opened as `aaa` and sold as
+    # `AAA` has its balance sitting under one key and its sale under another,
+    # the sale finds no shares to reduce, and the exit vanishes from the queue
+    # entirely — the user closed a position and the review never asks about it.
+    # `cycle_id` is still minted from the stored spelling, because `_revisit_id`
+    # embeds it and an already-queued exit must keep deduping against itself.
+    stored_as = {}
     if anchor is not None:
         anchor_date = dt.date.fromisoformat(str(anchor["as_of"]))
         for p in anchor.get("positions", []):
-            t = p.get("ticker") if isinstance(p, dict) else None
+            declared = p.get("ticker") if isinstance(p, dict) else None
+            t = symbols.canonical_ticker(declared) or declared
             try:
                 sh = float(p.get("shares"))
             except (AttributeError, TypeError, ValueError):
                 continue
             if t and sh > lg.EPS:
+                stored_as.setdefault(t, declared)
                 shares[t] = sh
                 since[t] = anchor_date.isoformat()
                 seq[t] = 1
@@ -127,6 +140,8 @@ def detect_exits(events, splits=None):
         d, t, act, qty, px = n
         if anchor_date is not None and d <= anchor_date:
             continue
+        executed_as, t = t, (symbols.canonical_ticker(t) or t)
+        stored_as.setdefault(t, executed_as)
         trades.append((d, t, act, qty, px,
                        str(ev.get("market") or "US"),
                        str(ev.get("currency") or "USD").upper()))
@@ -152,7 +167,8 @@ def detect_exits(events, splits=None):
         left = cur - take
         if left <= lg.EPS or take >= cur * REDUCE_TH - lg.EPS:
             exits.append({"ticker": t,
-                          "cycle_id": f"{t}#{since.get(t, '?')}#{seq.get(t, 1)}",
+                          "cycle_id": (f"{stored_as.get(t, t)}#{since.get(t, '?')}"
+                                       f"#{seq.get(t, 1)}"),
                           "exit_date": d.isoformat(),
                           "exit_price": round(px, 6),
                           "shares_sold": round(take, 4),
@@ -583,7 +599,12 @@ def compare(item, prices, splits=None, price_basis=None):
     unbounded rebase, which is what this function did when it simply assumed
     every quote postdated every split in the map."""
     needs = []
-    t = item["ticker"]
+    # #803/#805, the storage-reader half: `item` came off revisit.jsonl, which
+    # froze whatever spelling the ledger used when the exit was queued, while
+    # `prices` and `price_basis` are keyed canonically. Read raw, a queued exit
+    # never finds its own quote and the review asks the user to supply a price
+    # it is already holding.
+    t = symbols.canonical_ticker(item["ticker"]) or item["ticker"]
     px = (prices or {}).get(t)
     orig_ret = None
     unpriced = not is_priced_exit(item)
@@ -601,10 +622,13 @@ def compare(item, prices, splits=None, price_basis=None):
         num = den = 0.0
         complete = True
         for s in item["swaps"]:
-            spx = (prices or {}).get(s["ticker"])
+            # Same stored row, same projection: the swap legs were written with
+            # the spelling of the day too.
+            st = symbols.canonical_ticker(s["ticker"]) or s["ticker"]
+            spx = (prices or {}).get(st)
             amt = s["price"] * s["qty"]
             if spx is None:
-                needs.append(s["ticker"])
+                needs.append(st)
                 complete = False
                 continue
             num += amt * (spx / s["price"] - 1.0)

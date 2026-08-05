@@ -137,6 +137,10 @@ def driver(t):
     找不到才試尾綴正規化後的形式(#741,例:若 6488.TW 曾建檔,6488.TWO 會在此接上)。
     兩者都落空才是真的未分類——正規化只換一種寫法去比對,不會讓本來就沒建檔的標的
     憑空冒出分類。"""
+    # 查找端刻意不再 fold 一次:寫入端(load_driver_map / 內建表)都是 canonical,
+    # 而每個呼叫端拿的都是 `load` 邊界產出的 canonical ticker。實測過:整個 product
+    # group 跑完,進到這裡的非 canonical 值只有空字串(fold 對它是恆等)。加一條沒有
+    # 任何情境能證偽的防線,只會讓下一個人以為這裡守著什麼。
     if t in _DRIVER_MAP:
         return _DRIVER_MAP[t]
     canon = _driver_canonical_suffix(t)
@@ -160,7 +164,11 @@ def load_driver_map(path):
     ok = 0
     for t, v in m.items():
         try:
-            _DRIVER_MAP[t] = (v[0], int(v[1]))
+            # #803: every `driver(t)` lookup arrives canonical (it is called with
+            # a key off `held`/`risk_mv`/`projection`), so a supplied entry keyed
+            # in any other case is silently invisible and the position renders
+            # 未分類 — the one thing this map exists to prevent.
+            _DRIVER_MAP[symbols.canonical_ticker(t) or t] = (v[0], int(v[1]))
             ok += 1
         except (KeyError, IndexError, TypeError, ValueError):
             _DM_SKIPPED += 1                       # 壞的跳過,不連累好的
@@ -193,6 +201,12 @@ def load(paths):
                 if not sym:
                     stats["skip_no_sym"] += 1
                     continue
+                # #803: canonical at the boundary. Everything downstream of
+                # `load` compares, keys and joins on this value, so normalizing
+                # here is what makes "the engine is canonical inside" true by
+                # construction rather than by every consumer remembering.
+                # Non-empty by the guard above, so this is never `None`.
+                canon = symbols.canonical_ticker(sym)
                 try:
                     qty = abs(float(r["Quantity"])); px = float(r["Price"])
                     # TradeDate 解析納入同一 try(triad/Codex):壞/缺日期 → 這列歸 skip_parse,
@@ -204,7 +218,11 @@ def load(paths):
                 if px <= 0 or qty <= 0:   # 濾掉 split/free-share/journal 等 price=0 的偽交易
                     stats["skip_zero"] += 1
                     continue
-                key = (sym, act.lower(), round(qty, 2), round(px, 4), d)
+                # 去重鍵是「identity」不是「拼法」:鍵在 raw sym 上時,券商改了匯出的
+                # 大小寫,每週增量匯入就認不得自己上週那幾列,原封不動再 append 一次
+                # → append-only 狀態裡持倉靜默翻倍。occ 同理,它數的是「同一檔的第幾筆
+                # 成交」。
+                key = (canon, act.lower(), round(qty, 2), round(px, 4), d)
                 k = occ[key]; occ[key] += 1   # #14:同檔內第 k 筆同鍵成交,序號進 dedup key → 獨立成交不互殺
                 rec = key + (k,)
                 if rec in seen:           # 跨檔完全相同(同序號)= 重疊期重複,跳過
@@ -213,11 +231,12 @@ def load(paths):
                 seen.add(rec)
                 # 多市場欄位(#51/#129 PR-2a):可選 Market/Currency 欄,缺 = 美股 USD(向後相容)。
                 # 原幣記帳鐵律(prd-ledger §2):price 永遠是原幣,換算只發生在聚合視圖(usd_view)與呈現層。
-                # #803: canonical at the boundary. Everything downstream of
-                # `load` compares, keys and joins on this value, so normalizing
-                # here is what makes "the engine is canonical inside" true by
-                # construction rather than by every consumer remembering.
-                rows.append(dict(ticker=symbols.canonical_ticker(sym),
+                rows.append(dict(ticker=canon,
+                                 # 這份對帳單自己存的拼法。`cycle_id` 由它鑄造
+                                 # (見 `stored_spellings`):cycle_id 是 theses.jsonl
+                                 # 已經握有外鍵的耐久識別碼,把舊帳本讀對不該順手把
+                                 # 那些 id 重鑄一次。ledger.derive_holdings 同一招。
+                                 ticker_as_loaded=sym,
                                  side=act.lower(), qty=qty, price=px, date=d,
                                  market=(r.get("Market") or "US").strip() or "US",
                                  currency=(r.get("Currency") or "USD").strip().upper() or "USD"))
@@ -583,6 +602,26 @@ def positions(rows):
     held = {t: (sh, c) for t, (sh, c) in pos.items() if sh > 1e-6}
     return held, avg_down
 
+def stored_spellings(rows):
+    """canonical identity → 這份來源實際存下來的拼法(#803/#805)。
+
+    帳本從 `load` 以下一律用 canonical 當鍵,所以舊的 `aaa` 成交會落在它指名的
+    `AAA` 上而不是旁邊多開一檔。但 `cycle_id` 必須用**存下來的**拼法鑄造:
+    theses.jsonl 對 cycle_id 握有外鍵(`thesis.stable_thesis_id` 是它的 digest),
+    把歷史讀對不可以順手重鑄歷史賴以綁定的識別碼——那會讓既有 thesis 靜默失聯。
+    `ledger.derive_holdings` 的 `stored_as` 是同一招,這裡是它在 CSV 車道的對應物。
+
+    已經是 canonical 的來源(絕大多數)兩個拼法相等,結果與過去 byte-identical。
+    同一檔出現兩種拼法時取日期序最早的那筆——`load` 已排序,所以是決定性的。
+    """
+    out = {}
+    for r in rows:
+        t = r.get("ticker")
+        if t:
+            out.setdefault(t, r.get("ticker_as_loaded") or t)
+    return out
+
+
 def current_cycles(rows):
     """每個當前持倉 ticker 的 position cycle 起始日 + 序號(第幾次建倉)。與 positions() 同累加邏輯
     (sell 只在有倉時減 → 不跌負),所以 cycle 判定跟持倉一致(雙審 gemini#1:修負數誤判 + codex#4:單一 ledger)。
@@ -627,8 +666,9 @@ def current_cycle_add_cursors(rows):
                 start.pop(ticker, None)
                 add_count.pop(ticker, None)
     out = {}
+    stored = stored_spellings(rows)
     for ticker in sorted(start):
-        cycle_id = f"{ticker}#{start[ticker]}#{seq[ticker]}"
+        cycle_id = f"{stored.get(ticker, ticker)}#{start[ticker]}#{seq[ticker]}"
         count = add_count[ticker]
         out[ticker] = {
             "cycle_id": cycle_id,
@@ -2533,6 +2573,7 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
     # 帳戶級 cash_weight 改存頂層 cash 欄位（#171 PR-1：有現金錨點才可信，取代原「沒現金算不準」）。
     cyc = current_cycles(rows)                              # 雙審修：與 positions() 同邏輯（不跌負）+ cycle 序號
     add_cursors = current_cycle_add_cursors(rows)
+    stored = stored_spellings(rows)                         # #805:cycle_id 用存下來的拼法鑄造(見該函式)
     holdings = {t: {"shares": round(sh, 4), "cost": round(c, 2),
                     "avg_cost": round(c / sh, 4) if sh > 1e-9 else None,
                     # #664: the position's own native currency (same reader as
@@ -2543,7 +2584,8 @@ def build_state(rows, rts, held, dims, overview, ab, rx, currency_meta=None,
                     "cycle_start": cyc.get(t, {}).get("start"),
                     # 算不出開倉（CSV 缺期初持倉）→ 標 #unknown，不 fallback 裸 ticker（雙審 codex#4）
                     # ⚠️ 格式契約 = 頂部 CYCLE_ID_RE / CYCLE_ID_UNKNOWN_RE(#61):改這裡必先改常數,契約測試會抓
-                    "cycle_id": f"{t}#{cyc[t]['start']}#{cyc[t]['seq']}" if t in cyc else f"{t}#unknown",
+                    "cycle_id": (f"{stored.get(t, t)}#{cyc[t]['start']}#{cyc[t]['seq']}"
+                                 if t in cyc else f"{stored.get(t, t)}#unknown"),
                     "add_count": (add_cursors.get(t) or {}).get("add_count", 0),
                     "decision_cursor": (add_cursors.get(t) or {}).get("decision_cursor")}
                 for t, (sh, c) in held.items()}
