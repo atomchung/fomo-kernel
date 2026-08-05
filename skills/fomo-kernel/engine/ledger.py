@@ -1061,7 +1061,12 @@ def _trade_key(ev):
     舊帳本裡卻可能存著小寫拼法——只正規化其中一側,同一筆成交的新舊兩份就不再是
     同一個 key,週度重匯入會把它當成新交易再寫一次,持倉靜默翻倍。兩側讀同一條
     規則,舊列的 bytes 不動。"""
-    return (symbols.canonical_ticker(ev.get("ticker")), str(ev.get("action", "")).lower(),
+    # `or` the stored value: a ticker this rule cannot canonicalize (a
+    # hand-edited non-string) must keep its own identity here, or two
+    # genuinely different malformed rows both key on None and dedupe
+    # silently drops one — the same class of defect this line fixes.
+    return (symbols.canonical_ticker(ev.get("ticker")) or ev.get("ticker"),
+            str(ev.get("action", "")).lower(),
             round(float(ev.get("qty", 0)), 2), round(float(ev.get("price", 0)), 4),
             str(ev.get("date")))
 

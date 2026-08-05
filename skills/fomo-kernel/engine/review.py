@@ -1520,6 +1520,31 @@ def _gate_current_view(card, state, detail):
     card["honesty_ledger"] = honesty
 
 
+def _by_canonical_identity(positions):
+    """``{canonical ticker: row}``, except where that would hide a difference.
+
+    Two spellings of one instrument inside a single book is exactly the kind of
+    disagreement this reconciliation exists to report, so they are *not*
+    resolved here by insertion order — they keep their stored keys and fall
+    through to the ``ticker_set`` mismatch that named them before #803, rather
+    than one silently winning and the position count under-reporting its own
+    input. Unambiguous keys canonicalize, which is the whole point: a book
+    spelled one way must not read as different from the same book spelled
+    another. A key this rule cannot canonicalize keeps itself.
+    """
+    grouped = {}
+    for ticker, row in (positions or {}).items():
+        grouped.setdefault(symbols.canonical_ticker(ticker) or ticker, []).append((ticker, row))
+    out = {}
+    for key, entries in grouped.items():
+        if len(entries) == 1:
+            out[key] = entries[0][1]
+            continue
+        for ticker, row in entries:
+            out[ticker] = row
+    return out
+
+
 def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
     """Make ledger holdings/cycles canonical and gate divergent card surfaces.
 
@@ -1556,11 +1581,8 @@ def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):
     # used, so an exact set comparison reports a phantom `ticker_set` difference
     # for a book that matches perfectly — and gates it on a disagreement about
     # case.
-    raw_positions = {symbols.canonical_ticker(t) or t: row
-                     for t, row in ((state.get("holdings") or {}).get("positions")
-                                    or {}).items()}
-    canonical = {symbols.canonical_ticker(t) or t: row
-                 for t, row in (derived.get("holdings") or {}).items()}
+    raw_positions = _by_canonical_identity((state.get("holdings") or {}).get("positions"))
+    canonical = _by_canonical_identity(derived.get("holdings"))
     raw_tickers, canonical_tickers = set(raw_positions), set(canonical)
     mismatches = []
     for ticker in sorted(raw_tickers | canonical_tickers):

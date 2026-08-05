@@ -436,9 +436,12 @@ def _canonical_rows(rows):
         if canonical is None:
             continue
         spellings.setdefault(canonical, set()).add(row["ticker"])
-        # Compared canonically too (#803): `US` and `us` are one market, and
-        # reading them as two would refuse an ordinary book for a collision
-        # that exists only in the spelling of its metadata.
+        # Case-folded before comparison (#803): `US` and `us` are one market,
+        # and reading them as two would refuse an ordinary book for a
+        # collision that exists only in the spelling of its metadata. Folded
+        # inline rather than through `symbols.canonical_ticker` on purpose —
+        # that function is the *ticker* identity rule and says so; borrowing
+        # it for a currency would make its one job two.
         facts.setdefault(canonical, set()).add(
             (str(row.get("currency") or "USD").strip().upper(),
              str(row.get("market") or "US").strip().upper()))

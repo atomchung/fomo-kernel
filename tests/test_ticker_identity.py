@@ -638,6 +638,38 @@ def test_the_recorded_book_and_the_engine_state_agree_across_spelling():
     assert reconciliation["raw_positions_n"] == reconciliation["canonical_positions_n"] == 1
 
 
+def test_canonicalizing_a_comparison_never_hides_the_difference_it_reports():
+    """Found reviewing the fix itself. Keying two maps canonically to compare
+    them is right — unless two of one map's own keys collapse into one, which
+    is precisely the disagreement the reconciliation exists to name. Resolved by
+    insertion order it became a silently-dropped position and a count that
+    under-reported its own input: the same defect class this whole change is
+    about, reintroduced by the fix for it."""
+    state = {"holdings": {"positions": {"aaa": {"shares": 100.0}, "AAA": {"shares": 50.0}}}}
+    derived = {"holdings": {"AAA": {"shares": 150.0}}}
+    _card, _state, rec = review_engine._overlay_ledger_holdings({}, state, derived)
+    assert rec["raw_positions_n"] == 2, (
+        f"the reconciliation under-reported its own input: {rec['raw_positions_n']} of 2")
+    assert "ticker_set" in [row["kind"] for row in rec["mismatches"]], (
+        "one instrument spelled two ways inside one book was resolved silently")
+
+
+def test_a_ticker_the_rule_cannot_canonicalize_keeps_its_own_identity():
+    """`_trade_key` is a dedupe key. Canonicalizing to `None` for a shape the
+    rule does not handle makes every such row equal to every other, so dedupe
+    drops one — silently, in the append-only path. The stored value is the
+    fallback, so an unhandled shape is still itself."""
+    def event(ticker):
+        return {"type": "trade", "date": "2026-01-05", "ticker": ticker,
+                "action": "buy", "qty": 1, "price": 1.0}
+    fresh, dup = ledger_engine.dedupe_against([event(123)], [event(456)])
+    assert (len(fresh), dup) == (1, 0), (
+        f"two distinct malformed rows deduped onto one key: fresh={len(fresh)} dup={dup}")
+    # And the ordinary case is untouched.
+    fresh, dup = ledger_engine.dedupe_against([event("AAA")], [event("AAA")])
+    assert (len(fresh), dup) == (0, 1)
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]
