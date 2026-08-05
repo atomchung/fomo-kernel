@@ -1027,6 +1027,40 @@ def test_a_queued_exit_finds_the_quote_the_review_is_already_holding():
     assert out["orig_ret"] is not None, out
 
 
+def test_a_declaration_reconciles_against_the_ledger_it_agrees_with():
+    """`ledger.reconcile`, the standalone sibling of `_overlay_ledger_holdings`
+    — which was fixed for this and left this one raw. `derived` is canonical
+    and the declaration keeps its stored spelling, so the report claimed *both*
+    books were missing the other's position. The worst case needs no exotic
+    input at all: a declaration and a ledger written the same non-canonical way
+    still read as a total mismatch."""
+    def report(declared, ledger_spelling):
+        return ledger_engine.reconcile(
+            [{"type": "trade", "date": "2026-01-05", "ticker": ledger_spelling,
+              "action": "buy", "qty": 100, "price": 10.0}],
+            [{"ticker": declared, "shares": 100}])
+
+    for declared, ledger_spelling in (("aaa", "AAA"), ("AAA", "aaa"),
+                                      ("aaa", "aaa"), ("AAA", "AAA")):
+        out = report(declared, ledger_spelling)
+        assert out["clean"] and out["match"] == ["AAA"], (
+            f"declared {declared!r} against a ledger of {ledger_spelling!r} "
+            f"reported a difference that does not exist: {out}")
+
+
+def test_reconciling_across_case_still_names_a_declaration_that_disagrees_with_itself():
+    """The carve-out that keeps the fix above from becoming the defect it
+    replaces: two spellings inside *one* declaration are a real difference this
+    function exists to report, not something to resolve by insertion order."""
+    out = ledger_engine.reconcile(
+        [{"type": "trade", "date": "2026-01-05", "ticker": "AAA",
+          "action": "buy", "qty": 100, "price": 10.0}],
+        [{"ticker": "aaa", "shares": 60}, {"ticker": "AAA", "shares": 40}])
+    assert not out["clean"], (
+        "a declaration holding one instrument under two spellings was silently merged")
+    assert "only_declared" in {m["kind"] for m in out["mismatch"]}, out["mismatch"]
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

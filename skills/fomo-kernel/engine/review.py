@@ -1520,29 +1520,10 @@ def _gate_current_view(card, state, detail):
     card["honesty_ledger"] = honesty
 
 
-def _by_canonical_identity(positions):
-    """``{canonical ticker: row}``, except where that would hide a difference.
-
-    Two spellings of one instrument inside a single book is exactly the kind of
-    disagreement this reconciliation exists to report, so they are *not*
-    resolved here by insertion order — they keep their stored keys and fall
-    through to the ``ticker_set`` mismatch that named them before #803, rather
-    than one silently winning and the position count under-reporting its own
-    input. Unambiguous keys canonicalize, which is the whole point: a book
-    spelled one way must not read as different from the same book spelled
-    another. A key this rule cannot canonicalize keeps itself.
-    """
-    grouped = {}
-    for ticker, row in (positions or {}).items():
-        grouped.setdefault(symbols.canonical_ticker(ticker) or ticker, []).append((ticker, row))
-    out = {}
-    for key, entries in grouped.items():
-        if len(entries) == 1:
-            out[key] = entries[0][1]
-            continue
-        for ticker, row in entries:
-            out[ticker] = row
-    return out
+#: The book-against-book re-keying, owned by `symbols` since `ledger.reconcile`
+#: needs the identical rule and cannot import this module (#805). Kept as a name
+#: here because every call site below reads better for it.
+_by_canonical_identity = symbols.by_canonical_identity
 
 
 def _overlay_ledger_holdings(card, state, derived, *, declared_anchor=True):

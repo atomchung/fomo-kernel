@@ -807,6 +807,14 @@ def reconcile(events, declared_positions, splits=None):
             dec[t] = float(p.get("shares", 0))
         except (TypeError, ValueError):
             continue
+    # #803/#805: `derived` is canonical, so comparing it against the declaration's
+    # stored spelling reported *both* books as missing the other's position — for
+    # a declaration and a ledger that agree, and even when both are written the
+    # same non-canonical way. Same rule and same ambiguity carve-out as
+    # `review._overlay_ledger_holdings`: two spellings inside one declaration are
+    # a real difference this function exists to name, so they keep their keys and
+    # fall through to the mismatch rather than one silently winning.
+    dec = symbols.by_canonical_identity(dec)
     match, mismatch = [], []
     for t in sorted(set(dec) | set(derived)):
         ds = derived.get(t, {}).get("shares")

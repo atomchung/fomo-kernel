@@ -67,3 +67,32 @@ def is_canonical(value):
     projecting", without a second copy of the rule at each call site.
     """
     return isinstance(value, str) and value == canonical_ticker(value)
+
+
+def by_canonical_identity(rows):
+    """``{canonical ticker: row}``, except where that would hide a difference.
+
+    The re-keying every book-against-book comparison needs, stated once. Two
+    spellings of one instrument inside a *single* book is exactly the kind of
+    disagreement such a reconciliation exists to report, so they are **not**
+    resolved here by insertion order — they keep their stored keys and fall
+    through to the mismatch that named them before #803, rather than one
+    silently winning while the position count under-reports its own input.
+    Unambiguous keys canonicalize, which is the whole point: a book spelled one
+    way must not read as different from the same book spelled another. A key
+    this rule cannot canonicalize keeps itself.
+
+    It lives here rather than beside either caller because a second copy that
+    merely agrees today is the drift this module exists to prevent.
+    """
+    grouped = {}
+    for ticker, row in (rows or {}).items():
+        grouped.setdefault(canonical_ticker(ticker) or ticker, []).append((ticker, row))
+    out = {}
+    for key, entries in grouped.items():
+        if len(entries) == 1:
+            out[key] = entries[0][1]
+            continue
+        for ticker, row in entries:
+            out[ticker] = row
+    return out
