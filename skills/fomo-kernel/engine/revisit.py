@@ -227,7 +227,15 @@ def absence_exits(events, splits=None):
         key = (deriving_before[row["index"]], row["date"])
         if key not in cache:
             cache[key] = lg.holdings_as_of(events[:row["index"]], row["date"], splits=splits)
-        prior = cache[key].get(row["ticker"]) or {}
+        # #803/#805, the third reader in this lane: `row` came off a stored
+        # `position_absence` event and froze the spelling of the day, while
+        # `holdings_as_of` returns the canonical book. Looked up raw, the prior
+        # position is simply not found and every fact below silently degrades to
+        # its empty default — a confirmed disappearance reports `shares_sold: 0`
+        # with no cost basis, and a TWD holding leaves the book as USD.
+        # `cycle_id` is copied from the stored row and is never re-minted here.
+        canonical = symbols.canonical_ticker(row["ticker"]) or row["ticker"]
+        prior = cache[key].get(canonical) or {}
         try:
             shares = round(float(prior.get("shares")), 4)
         except (TypeError, ValueError):
@@ -236,7 +244,7 @@ def absence_exits(events, splits=None):
             cost = abs(float(prior.get("cost_total")))
         except (TypeError, ValueError):
             cost = None
-        out.append({"ticker": row["ticker"], "cycle_id": row["cycle_id"],
+        out.append({"ticker": canonical, "cycle_id": row["cycle_id"],
                     "exit_date": row["date"], "exit_price": None,
                     "shares_sold": shares, "shares_before": shares, "kind": "full",
                     "market": str(prior.get("market") or "US"),

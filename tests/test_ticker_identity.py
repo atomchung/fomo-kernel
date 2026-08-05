@@ -1061,6 +1061,71 @@ def test_reconciling_across_case_still_names_a_declaration_that_disagrees_with_i
     assert "only_declared" in {m["kind"] for m in out["mismatch"]}, out["mismatch"]
 
 
+def test_a_confirmed_disappearance_carries_the_facts_of_the_position_that_left():
+    """The third reader in the exit lane, and the one that degrades silently
+    rather than refusing: a stored `position_absence` carries the spelling of
+    the day while `holdings_as_of` is canonical, so the prior position is not
+    found and every fact falls to its empty default — zero shares, no cost
+    basis, and a TWD holding leaving the book as USD."""
+    events = [
+        {"type": "trade", "date": "2026-01-05", "ticker": "aaa", "action": "buy",
+         "qty": 100, "price": 10.0, "market": "TW", "currency": "TWD"},
+        {"type": "position_absence", "date": "2026-03-01", "ticker": "aaa",
+         "cycle_id": "aaa#2026-01-05#1", "absence_id": "abs-000000000001"},
+    ]
+    rows = revisit_engine.absence_exits(events)
+    assert len(rows) == 1, rows
+    row = rows[0]
+    assert row["shares_sold"] == 100.0, (
+        f"the position that left was reported as empty: {row}")
+    assert row["cost_basis"] == 1000.0, row
+    assert (row["market"], row["currency"]) == ("TW", "TWD"), (
+        f"a TWD holding left the book as {row['currency']}: {row}")
+    assert row["ticker"] == "AAA"
+    assert row["cycle_id"] == "aaa#2026-01-05#1", (
+        "the stored absence's own cycle_id must be copied, never re-minted")
+
+
+def test_a_newer_declaration_reconciles_against_the_book_it_agrees_with():
+    """`snapshot_reconciliation` is `reconcile`'s sibling a hundred lines up in
+    the same file, and had the same one-sided comparison. This is the `refresh`
+    diff the user reads: two views that agree reported the whole position as
+    both `only_derived` and `only_declared` — the book emptied and refilled
+    itself. Two views written the same non-canonical way did it."""
+    def status(recorded, declared):
+        events = [{"type": "snapshot", "as_of": "2026-01-01",
+                   "source": "user_declared",
+                   "positions": [{"ticker": recorded, "shares": 100,
+                                  "avg_cost": 10.0}]}]
+        report = ledger_engine.snapshot_reconciliation(
+            events, {"as_of": "2026-02-01",
+                     "positions": [{"ticker": declared, "shares": 100,
+                                    "avg_cost": 10.0}]})
+        return report["status"], (report.get("diff") or {}).get("positions") or []
+
+    for recorded, declared in (("aaa", "aaa"), ("aaa", "AAA"),
+                               ("AAA", "aaa"), ("AAA", "AAA")):
+        state, diff = status(recorded, declared)
+        assert state == "reconciled" and not diff, (
+            f"a book of {recorded!r} against a declaration of {declared!r} "
+            f"reported a change that did not happen: {diff}")
+
+
+def test_reconciling_a_declaration_across_case_still_names_one_that_disagrees_with_itself():
+    """Same carve-out, the `refresh` side: a declaration naming one instrument
+    twice is a real difference the diff exists to report."""
+    events = [{"type": "snapshot", "as_of": "2026-01-01", "source": "user_declared",
+               "positions": [{"ticker": "AAA", "shares": 100, "avg_cost": 10.0}]}]
+    report = ledger_engine.snapshot_reconciliation(
+        events, {"as_of": "2026-02-01",
+                 "positions": [{"ticker": "aaa", "shares": 60, "avg_cost": 10.0},
+                               {"ticker": "AAA", "shares": 40, "avg_cost": 10.0}]})
+    assert report["status"] == "adjusted", report
+    kinds = {row["kind"] for row in (report.get("diff") or {}).get("positions") or []}
+    assert "only_declared" in kinds, (
+        f"a declaration holding one instrument under two spellings was merged: {kinds}")
+
+
 def _tests():
     return [(name, obj) for name, obj in sorted(globals().items())
             if name.startswith("test_") and callable(obj)]

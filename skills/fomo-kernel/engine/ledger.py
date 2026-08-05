@@ -955,6 +955,15 @@ def snapshot_reconciliation(events, declared, splits=None):
     declared_map = _declared_positions_map(declared)
 
     derived = holdings_as_of(events, declared_as_of, splits=splits)
+    # #803/#805: `reconcile`'s sibling, a hundred lines up, and the same
+    # one-sided comparison — `derived` is canonical while the declaration keeps
+    # its own spelling, so a book and a declaration that agree came back
+    # `adjusted`, with the whole position listed as `only_derived` *and*
+    # `only_declared`. It needs no unusual input: two views written the same
+    # non-canonical way did it. Same ambiguity carve-out too — one declaration
+    # naming an instrument twice is a real difference this diff exists to
+    # report, so those keep their stored spelling and stay listed.
+    declared_map = symbols.by_canonical_identity(declared_map)
 
     positions = []
     for ticker in sorted(set(derived) | set(declared_map)):
