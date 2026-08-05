@@ -1460,9 +1460,9 @@ def test_a_legacy_anchor_still_reports_the_one_position_that_really_left():
         pending = receipt.get("pending_confirmations") or []
         assert [row["ticker"] for row in pending] == ["ACME"], receipt
         assert pending[0]["kind"] == "disappearance"
-        assert pending[0]["cycle_id"] == "acme#2024-02-01#1", (
-            "the durable cycle the answer would close was re-minted: "
-            f"{pending[0]['cycle_id']!r}")
+        assert pending[0]["cycle_id"] == "ACME#2024-02-01#1", (
+            "#814: the cycle this answer would close is named by the one "
+            f"canonical id every lane mints: {pending[0]['cycle_id']!r}")
 
 
 def _legacy_receipt_and_book(tmp):
@@ -1500,15 +1500,19 @@ def test_a_stored_receipt_can_still_close_the_cycle_it_named():
     """The other branch of the same question. `sold` needs the position's
     recorded `cycle_id` to write a fill-free absence; the miss made it raise
     "has no recorded cycle to close" instead, so a user confirming a sale could
-    not complete the refresh at all."""
+    not complete the refresh at all.
+
+    Since #814 the id carries no spelling, so the receipt's stored spelling is
+    projected onto the canonical book and the absence closes the same cycle
+    every other lane names."""
     with tempfile.TemporaryDirectory() as tmp:
         events, snapshot, anchor, receipt = _legacy_receipt_and_book(tmp)
         result = br.build_adoption(receipt, events, snapshot, anchor,
                                    [{"ticker": "acme", "classification": "sold"}])
         assert result["status"] == "adopt" and result["sold"] == ["ACME"], result
-        assert [row["cycle_id"] for row in result["absences"]] == ["acme#2024-02-01#1"], (
-            "the absence must close the cycle the record already minted: "
-            f"{result['absences']}")
+        assert [row["cycle_id"] for row in result["absences"]] == ["ACME#2024-02-01#1"], (
+            "#814: the absence closes the cycle under the canonical id the book "
+            f"derives, which is the id the review asked the thesis under: {result['absences']}")
 
 
 def test_an_answer_spelled_differently_from_the_receipt_still_answers_it():

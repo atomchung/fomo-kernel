@@ -6542,7 +6542,6 @@ def _anchor_position_row(position, anchor_date):
     if not math.isfinite(price) or price <= 0:
         raise ReviewError(f"the ledger's snapshot anchor has a non-positive cost basis for {ticker}")
     return {"ticker": symbols.canonical_ticker(ticker),
-            "ticker_as_loaded": ticker,   # #807, as in `_ledger_trade_row`
             "side": "buy", "qty": shares,
             "price": price, "date": anchor_date, "market": (position.get("market") or "US"),
             "currency": (position.get("currency") or "USD").upper()}
@@ -6566,13 +6565,6 @@ def _ledger_trade_row(event):
             or not math.isfinite(qty) or qty <= 0 or not math.isfinite(price) or price <= 0):
         return None
     return {"ticker": symbols.canonical_ticker(ticker),
-            # #807: the spelling the ledger actually stored, carried in the same
-            # field `trade_recap.load` fills from a CSV. Without it this
-            # reconstruction hands trade_recap a history with the spellings
-            # erased, so the cycle sequence counts canonically here and
-            # per-spelling in `derive_holdings` — two producers reading one
-            # event stream and minting two different durable ids for one cycle.
-            "ticker_as_loaded": ticker,
             "side": side, "qty": qty,
             "price": price, "date": date, "market": (event.get("market") or "US"),
             "currency": (event.get("currency") or "USD").upper()}
@@ -6885,12 +6877,12 @@ def _consider_valuation_frame(basis, feed, *, agent_supplied):
     return frame.to_dict()
 
 
-# The integrity issues whose whole content is "two spellings, and the record
-# cannot say which" — the ones a refusal can hand back to the user in words they
-# can act on. `bad_ticker_collision` is one declaration holding an instrument
-# twice (#803); `bad_cycle_identity_ambiguous` is one cycle's durable id having
-# two prior claims after a mixed-spelling cycle closed (#807).
-_TICKER_IDENTITY_ISSUES = frozenset({"bad_ticker_collision", "bad_cycle_identity_ambiguous"})
+# The integrity issue whose whole content is "two spellings, and the record
+# cannot say which" — the one a refusal can hand back to the user in words they
+# can act on: one declaration holding an instrument twice (#803). Its cycle-level
+# sibling retired with #814, which stopped deriving a durable id from a spelling
+# at all, so a cycle can no longer have two prior claims on it.
+_TICKER_IDENTITY_ISSUES = frozenset({"bad_ticker_collision"})
 
 
 def _ticker_identity_detail(events, splits):
