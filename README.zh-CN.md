@@ -50,7 +50,7 @@ FOMO Kernel 会针对当下使用最窄、但仍有价值的路径。即时交�
 
 交易前回答会先说明真正影响决策的张力与最强反方，不会先塞满工具流程或 caveat。
 
-复盘会先把完整卡片显示在对话中，再请你选择规则。文件生成不等于交付；结果必须真正到达你面前。
+复盘的设计是先把完整卡片显示在对话中，再请你选择规则 — 单纯生成文件不算交付；结果必须真正到达你面前。这个交付契约目前在 Claude Code 上已完整验证。在没有原生选项控件与对话内丰富渲染的 host 上，交付还没有验证到相同标准；详见下方“版本与已知限制”。
 
 ### 5. 最终动作仍由你负责
 
@@ -86,7 +86,7 @@ cd fomo-kernel
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
 mkdir -p ~/.claude/skills
@@ -190,13 +190,24 @@ python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language zh-C
 
 这个命令会返回 Review Plan；Agent 再按照它选择的 flow 呈现并完成体验。
 
-目前 owner-live acceptance 聚焦 Claude Code 与 Codex。能够兼容运行，不代表已经完成产品验收。
+引擎与离线测试套件已完成机械验证；owner-live acceptance — 也就是在真实决策中确认实用性、交付与延迟 — 不论在 Claude Code、Codex 还是其他 host 上都还没有发生。能够兼容运行，不代表已经完成产品验收。
 
 ## 平台支持
 
 - Python 3.11+。
 - macOS 与 Linux 支持 durable session finalization。
 - Windows 可以运行 `prepare` 与 `preview`；但 durable `finalize` 目前会在改动已提交的 canonical state 前 fail closed，因为实现依赖 POSIX locking 与 directory `fsync`。
+
+## 版本与已知限制
+
+这是 **v0.1.0**，FOMO Kernel 第一个打 tag 的版本。这是早期软件：引擎契约与离线测试套件是稳定的部分，实时对话体验还没有经过 owner-live acceptance。
+
+host 支持分级：
+
+- **Claude Code** — 交付机制已验证的路径：slash-command 安装、原生选项控件、对话内卡片交付都能完整运作。这是机制层的陈述，不是“答案有用”的裁决。
+- **Codex、Cursor 与其他兼容的 coding agent** — 引擎、CLI 与 [`AGENTS.md`](AGENTS.md) 里的 host-neutral contract 都能运作。交互式选项控件与对话内卡片交付在这些 host 上**还没有**验证；见 [issue #230](https://github.com/atomchung/fomo-kernel/issues/230)。本地卡片文件无论如何都会写入。
+
+已知缺陷请查 [GitHub issue tracker](https://github.com/atomchung/fomo-kernel/issues)，不在这里列清单 — 清单会随每次修复变动。
 
 ## FOMO Kernel 不做什么
 

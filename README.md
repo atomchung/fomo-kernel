@@ -50,7 +50,7 @@ The questions therefore focus on why now, what changed, what would prove the the
 
 A pre-trade answer leads with the decision-relevant tension and strongest rebuttal, not with tool narration or a wall of caveats.
 
-A review shows the complete card in the conversation before asking you to choose a rule. A generated file is not treated as delivery; the result has to reach you.
+A review is designed to show the complete card in the conversation before asking you to choose a rule — a generated file by itself is not delivery; the result has to reach you. That delivery contract is verified end to end on Claude Code. On a host without native option controls and inline rich rendering, it is not yet verified to the same standard; see **Version and known limitations** below.
 
 ### 5. You keep the final action
 
@@ -115,7 +115,7 @@ cd fomo-kernel
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
 mkdir -p ~/.claude/skills
@@ -219,13 +219,24 @@ python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language en
 
 This command returns a Review Plan; the agent follows its selected flow to present and complete the experience.
 
-Current owner-live acceptance focuses on Claude Code and Codex. A compatible client is not automatically an accepted client.
+The engine and the offline test suite are mechanically verified; owner-live acceptance — usefulness, delivery, and latency confirmed on a real decision — has not happened yet, on Claude Code, Codex, or any other host. A compatible client is not automatically an accepted client.
 
 ## Platform support
 
 - Python 3.11+.
 - macOS and Linux support durable session finalization.
 - Windows can run `prepare` and `preview`, but durable `finalize` currently fails closed before committed canonical state is changed because the implementation requires POSIX locking and directory `fsync`.
+
+## Version and known limitations
+
+This is **v0.1.0**, FOMO Kernel's first tagged release. It is early software: the engine contracts and the offline test suite are the stable part, and the live conversational experience has not yet been through owner-live acceptance.
+
+Host support tiers:
+
+- **Claude Code** — the path whose delivery mechanics are verified: slash-command install, native option controls, and inline card delivery all work end to end. That is a mechanical statement, not a verdict that the answers are useful.
+- **Codex, Cursor, and other compatible agents** — the engine, the CLI, and the host-neutral contract in [`AGENTS.md`](AGENTS.md) all work. Interactive option controls and in-conversation card delivery are **not** verified there; see [issue #230](https://github.com/atomchung/fomo-kernel/issues/230). The local card files are always written regardless.
+
+For known defects, check the [GitHub issue tracker](https://github.com/atomchung/fomo-kernel/issues) rather than a list here — it changes with every fix.
 
 ## What FOMO Kernel is not
 

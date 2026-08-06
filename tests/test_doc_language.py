@@ -25,6 +25,7 @@ GTM_MARKDOWN_ALLOWLIST = {
 ROOT_IMPLEMENTATION_DOCS = {
     Path("AGENTS.md"),
     Path("BACKLOG.md"),
+    Path("CHANGELOG.md"),
     Path("CLAUDE.md"),
 }
 IMPLEMENTATION_DOC_DIRS = (

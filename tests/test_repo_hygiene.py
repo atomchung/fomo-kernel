@@ -27,6 +27,7 @@ suite is offline and does not run GitHub Actions.
 Run:
   python3 tests/test_repo_hygiene.py
 """
+import json
 import os
 import subprocess
 import sys
@@ -690,6 +691,44 @@ def test_formal_qa_preflight_asks_for_the_whole_registry_explicitly():
         "qa_preflight runs the deterministic suite without naming a group -- "
         "the formal QA evidence path must request `all` explicitly, not "
         "inherit whatever the runner's default happens to be")
+
+
+def test_the_plugin_manifest_describes_the_product_the_skill_contract_describes():
+    """`.claude-plugin/plugin.json`'s `description` is what a Claude Code
+    plugin listing shows, and `skills/fomo-kernel/SKILL.md`'s frontmatter
+    `description` is what routes a live request. They describe one product,
+    and nothing behavioural reads the manifest -- so when the contract moved
+    on, the manifest silently did not.
+
+    That is exactly what happened before `v0.1.0`: `SKILL.md` had become the
+    pre-trade decision lane while the manifest still called the product a way
+    to review a trade CSV into a card. Every suite stayed green, because a
+    stale sentence in a manifest raises nothing. The skill contract is the
+    authority (`AGENTS.md`: "`SKILL.md` is its contract"); the manifest is its
+    projection, so this compares rather than lets a second wording exist.
+    """
+    manifest_path = os.path.join(ROOT, ".claude-plugin", "plugin.json")
+    with open(manifest_path, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    skill_path = os.path.join(ROOT, "skills", "fomo-kernel", "SKILL.md")
+    with open(skill_path, encoding="utf-8") as handle:
+        skill = handle.read()
+    if not skill.startswith("---\n"):
+        raise AssertionError(f"{skill_path} has no frontmatter block to read")
+    frontmatter = skill.split("---\n", 2)[1]
+    described = [line for line in frontmatter.splitlines()
+                 if line.startswith("description:")]
+    assert len(described) == 1, (
+        f"expected exactly one `description:` line in {skill_path}'s "
+        f"frontmatter, found {len(described)} -- extraction likely broken")
+    contract = described[0].split("description:", 1)[1].strip()
+    assert contract, "SKILL.md frontmatter description is empty"
+    assert manifest.get("description") == contract, (
+        ".claude-plugin/plugin.json and skills/fomo-kernel/SKILL.md describe "
+        "the product differently. SKILL.md's frontmatter is the authority; "
+        "copy it into the manifest.\n"
+        f"  SKILL.md: {contract}\n"
+        f"  manifest: {manifest.get('description')}")
 
 
 def main():
